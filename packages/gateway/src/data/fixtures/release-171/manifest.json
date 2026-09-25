@@ -1,0 +1,522 @@
+{
+  "release": "v0.4.22",
+  "revision": "c77ba95eced1cea1f8b09cd0b51901d0db99de2e",
+  "schema": 171,
+  "sha256": "b99c2dd7bffc6ed396f2dab8758b3b02748397a8e46dbb6a0f2edaa9d03e0f39",
+  "before": {
+    "sources": [
+      {
+        "id": "browser-history:fixture",
+        "type": "browser-history",
+        "account_id": "fixture"
+      },
+      {
+        "id": "chrome-bookmarks:fixture",
+        "type": "chrome-bookmarks",
+        "account_id": "fixture"
+      },
+      {
+        "id": "claude-code:fixture",
+        "type": "claude-code",
+        "account_id": "fixture"
+      },
+      {
+        "id": "codex:fixture",
+        "type": "codex",
+        "account_id": "fixture"
+      },
+      {
+        "id": "coinbase:fixture",
+        "type": "coinbase",
+        "account_id": "fixture"
+      },
+      {
+        "id": "enable-banking-accounts:fixture",
+        "type": "enable-banking-accounts",
+        "account_id": "fixture"
+      },
+      {
+        "id": "github-commits:fixture",
+        "type": "github-commits",
+        "account_id": "fixture"
+      },
+      {
+        "id": "github:fixture",
+        "type": "github",
+        "account_id": "fixture"
+      },
+      {
+        "id": "gmail:fixture",
+        "type": "gmail",
+        "account_id": "fixture"
+      },
+      {
+        "id": "google-calendar:fixture",
+        "type": "google-calendar",
+        "account_id": "fixture"
+      },
+      {
+        "id": "google-contacts:fixture",
+        "type": "google-contacts",
+        "account_id": "fixture"
+      },
+      {
+        "id": "google-drive:fixture",
+        "type": "google-drive",
+        "account_id": "fixture"
+      },
+      {
+        "id": "granola-meetings:fixture",
+        "type": "granola-meetings",
+        "account_id": "fixture"
+      },
+      {
+        "id": "hermes:fixture",
+        "type": "hermes",
+        "account_id": "fixture"
+      },
+      {
+        "id": "imap:fixture",
+        "type": "imap",
+        "account_id": "fixture"
+      },
+      {
+        "id": "local-files:fixture",
+        "type": "local-files",
+        "account_id": "fixture"
+      },
+      {
+        "id": "lunchflow-accounts:fixture",
+        "type": "lunchflow-accounts",
+        "account_id": "fixture"
+      },
+      {
+        "id": "notion-databases:fixture",
+        "type": "notion-databases",
+        "account_id": "fixture"
+      },
+      {
+        "id": "notion-pages:fixture",
+        "type": "notion-pages",
+        "account_id": "fixture"
+      },
+      {
+        "id": "obsidian-notes:fixture",
+        "type": "obsidian-notes",
+        "account_id": "fixture"
+      },
+      {
+        "id": "onedrive:fixture",
+        "type": "onedrive",
+        "account_id": "fixture"
+      },
+      {
+        "id": "openclaw:fixture",
+        "type": "openclaw",
+        "account_id": "fixture"
+      },
+      {
+        "id": "outlook-calendar:fixture",
+        "type": "outlook-calendar",
+        "account_id": "fixture"
+      },
+      {
+        "id": "outlook-email:fixture",
+        "type": "outlook-email",
+        "account_id": "fixture"
+      },
+      {
+        "id": "pi:fixture",
+        "type": "pi",
+        "account_id": "fixture"
+      },
+      {
+        "id": "plaid:fixture",
+        "type": "plaid",
+        "account_id": "fixture"
+      },
+      {
+        "id": "strava-activities:fixture",
+        "type": "strava-activities",
+        "account_id": "fixture"
+      },
+      {
+        "id": "web:fixture",
+        "type": "web",
+        "account_id": "fixture"
+      },
+      {
+        "id": "whatsapp-messages:fixture",
+        "type": "whatsapp-messages",
+        "account_id": "fixture"
+      }
+    ],
+    "documents": [
+      {
+        "id": "0c0a35d6-e57b-487f-aec7-cc2c6706f953",
+        "source_id": "obsidian-notes:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "1077b9a2-4505-4978-b28a-e3b9bf3cdbfc",
+        "source_id": "github-commits:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "18c64578-27a7-47da-aeff-d34f3baa5ba4",
+        "source_id": "google-contacts:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "2df50f20-d2e6-4187-86cb-4ef87dde461a",
+        "source_id": "web:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "327e51f8-bd40-46e0-a22a-59b10f020be0",
+        "source_id": "notion-pages:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "3f4adec8-a88e-40b4-bde2-52344bc3efd6",
+        "source_id": "local-files:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "46ca4294-9c45-4439-a61e-ffa1d0621f75",
+        "source_id": "enable-banking-accounts:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "4a78f26e-2019-4971-973c-37e3a5d48470",
+        "source_id": "pi:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "4bc057d5-aa31-4932-8411-bf4ae37f8cda",
+        "source_id": "granola-meetings:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "61bf5298-eca6-4798-b445-3b7e2ebb5455",
+        "source_id": "hermes:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "6bcbe349-aa66-46b7-82e4-76df1d110c1c",
+        "source_id": "strava-activities:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "6da6cb22-3754-449f-81fd-a4757508dc6d",
+        "source_id": "claude-code:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "75c6bcf6-afe1-49b1-bb38-864f26d00624",
+        "source_id": "outlook-email:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "796cc947-3e3c-4ad0-9e06-c95f4d6bb5a4",
+        "source_id": "google-drive:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "907e2291-3c6d-4bd7-8bf8-314310fe88b1",
+        "source_id": "codex:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "94609f36-d6b9-4839-8def-cfcf735ee528",
+        "source_id": "coinbase:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "95b6959b-eab6-46cf-aa96-4fa7edeefc9a",
+        "source_id": "outlook-calendar:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "994e5d9d-5744-40f9-888f-de5055af5db3",
+        "source_id": "whatsapp-messages:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "9c3ff3fb-bf56-4d09-8ebc-ce3a42f29e5c",
+        "source_id": "chrome-bookmarks:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "a3962440-1a28-4e49-8bb3-139b0b35f0c2",
+        "source_id": "google-calendar:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "bad82484-69a2-4408-9253-30923ee300cf",
+        "source_id": "plaid:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "c13b8bd0-921f-4a3d-bd79-7f861ded0afb",
+        "source_id": "openclaw:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "c5ae602e-1693-495b-be05-977f2158fa5d",
+        "source_id": "notion-databases:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "cbce28de-0a70-46d0-be9f-28a50d7e7849",
+        "source_id": "browser-history:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "d282a364-1681-4267-b216-e4665e492f7d",
+        "source_id": "gmail:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "d7245e5a-998c-4879-9d15-4ae3b1fd2e2a",
+        "source_id": "github:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "ec954666-b102-4374-9dc4-d08c6dc323e6",
+        "source_id": "lunchflow-accounts:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "f75377d5-b79f-49b2-b82d-b8a5076dae8a",
+        "source_id": "imap:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      },
+      {
+        "id": "f9adc61d-43af-47d1-8ae4-707b16ab9f90",
+        "source_id": "onedrive:fixture",
+        "external_id": "fixture-document",
+        "content_hash": "fixture-content"
+      }
+    ],
+    "cursors": [
+      {
+        "source_id": "browser-history:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"browser-history\"}"
+      },
+      {
+        "source_id": "chrome-bookmarks:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"chrome-bookmarks\"}"
+      },
+      {
+        "source_id": "claude-code:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"claude-code\"}"
+      },
+      {
+        "source_id": "codex:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"codex\"}"
+      },
+      {
+        "source_id": "coinbase:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"coinbase\"}"
+      },
+      {
+        "source_id": "enable-banking-accounts:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"enable-banking-accounts\"}"
+      },
+      {
+        "source_id": "github-commits:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"github-commits\"}"
+      },
+      {
+        "source_id": "github:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"github\"}"
+      },
+      {
+        "source_id": "gmail:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"gmail\"}"
+      },
+      {
+        "source_id": "google-calendar:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"google-calendar\"}"
+      },
+      {
+        "source_id": "google-contacts:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"google-contacts\"}"
+      },
+      {
+        "source_id": "google-drive:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"google-drive\"}"
+      },
+      {
+        "source_id": "granola-meetings:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"granola-meetings\"}"
+      },
+      {
+        "source_id": "hermes:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"hermes\"}"
+      },
+      {
+        "source_id": "imap:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"imap\"}"
+      },
+      {
+        "source_id": "local-files:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"local-files\"}"
+      },
+      {
+        "source_id": "lunchflow-accounts:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"lunchflow-accounts\"}"
+      },
+      {
+        "source_id": "notion-databases:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"notion-databases\"}"
+      },
+      {
+        "source_id": "notion-pages:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"notion-pages\"}"
+      },
+      {
+        "source_id": "obsidian-notes:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"obsidian-notes\"}"
+      },
+      {
+        "source_id": "onedrive:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"onedrive\"}"
+      },
+      {
+        "source_id": "openclaw:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"openclaw\"}"
+      },
+      {
+        "source_id": "outlook-calendar:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"outlook-calendar\"}"
+      },
+      {
+        "source_id": "outlook-email:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"outlook-email\"}"
+      },
+      {
+        "source_id": "pi:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"pi\"}"
+      },
+      {
+        "source_id": "plaid:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"plaid\"}"
+      },
+      {
+        "source_id": "strava-activities:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"strava-activities\"}"
+      },
+      {
+        "source_id": "web:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"web\"}"
+      },
+      {
+        "source_id": "whatsapp-messages:fixture",
+        "device_id": "",
+        "cursor": "{\"fixtureBookmark\":\"whatsapp-messages\"}"
+      }
+    ],
+    "rules": [
+      {
+        "id": "4beb1b35-f764-4120-9030-a0189b827217",
+        "kind": "user",
+        "side_a_alias_type": "email",
+        "side_a_alias": "m.reeves@example.org",
+        "side_b_alias_type": "email",
+        "side_b_alias": "maya@example.org",
+        "winner_side": "b",
+        "reason": null,
+        "created_at": "2026-09-19T10:17:45.506Z",
+        "created_by": "fixture-operator",
+        "active": 1,
+        "deactivated_at": null,
+        "group_id": null
+      }
+    ],
+    "accessLevels": [
+      {
+        "id": "fixture-access",
+        "name": "Fictional read access",
+        "revision": 2,
+        "created_at": 1767225600000,
+        "updated_at": 1767225600000,
+        "revoked_at": null
+      }
+    ],
+    "accessCapabilities": [
+      {
+        "level_id": "fixture-access",
+        "capability": "direct",
+        "source_mode": "allowlist",
+        "source_ids": "[\"gmail:fixture\"]",
+        "release_mode": null,
+        "policy_family_id": null
+      }
+    ],
+    "equivalences": [
+      {
+        "from_id": "fixture-former-person",
+        "to_id": "fixture-person",
+        "applied_at": "2026-01-01"
+      }
+    ]
+  }
+}

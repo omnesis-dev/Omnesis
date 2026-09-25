@@ -1,0 +1,13 @@
+{
+  "triggers": ["vendor", "globex", "nimbus", "evaluation", "comparison"],
+  "placeholders": {
+    "docExternalIds": [
+      "synth-gmail-003",
+      "synth-gdrive-002",
+      "synth-notion-page-003",
+      "synth-gcal-003",
+      "synth-whatsapp-001"
+    ],
+    "personNames": ["Jane Doe"]
+  }
+}

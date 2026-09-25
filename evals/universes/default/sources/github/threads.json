@@ -1,0 +1,456 @@
+{
+  "repo": "northstar-labs/atlas",
+  "threads": [
+    {
+      "__typename": "Issue",
+      "number": 1,
+      "title": "Search results drop the last page when a repository filter is active",
+      "body": "Filtering by repository and paging to the end loses the final page. The cursor advances past the last row before the filter is applied, so the tail is never returned.\n\nSteps: open Saved Views, apply a repository filter, page to the end.",
+      "state": "OPEN",
+      "createdAt": "2026-05-11T09:12:00Z",
+      "updatedAt": "2026-05-13T16:40:00Z",
+      "closedAt": null,
+      "url": "https://github.com/northstar-labs/atlas/issues/1",
+      "author": { "__typename": "User", "login": "jane-doe", "name": "Jane Doe" },
+      "labels": { "nodes": [{ "name": "bug" }, { "name": "search" }] },
+      "assignees": {
+        "nodes": [{ "__typename": "User", "login": "john-smith", "name": "John Smith" }]
+      },
+      "milestone": { "title": "v2.1" },
+      "comments": {
+        "totalCount": 1,
+        "nodes": [
+          {
+            "author": { "__typename": "User", "login": "john-smith", "name": "John Smith" },
+            "body": "Reproduced. The filter is applied after the page slice, so the boundary row is consumed and discarded. Taking this one.",
+            "createdAt": "2026-05-13T16:40:00Z"
+          }
+        ]
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 2,
+      "title": "Timeline chart bins events on the browser's local offset",
+      "body": "Two viewers in different time zones see the same workspace split across different days. The bucketing runs on local time; it should normalize to UTC before binning and only format in local time at render.",
+      "state": "OPEN",
+      "createdAt": "2026-05-12T11:30:00Z",
+      "updatedAt": "2026-05-12T11:30:00Z",
+      "closedAt": null,
+      "url": "https://github.com/northstar-labs/atlas/issues/2",
+      "author": { "__typename": "User", "login": "alex-chen", "name": "Alex Chen" },
+      "labels": { "nodes": [{ "name": "bug" }, { "name": "charts" }] },
+      "assignees": { "nodes": [] },
+      "milestone": null,
+      "comments": { "totalCount": 0, "nodes": [] }
+    },
+    {
+      "__typename": "PullRequest",
+      "number": 3,
+      "title": "Fix the off-by-one in the results cursor",
+      "body": "Applies the repository filter before the page slice, so the tail row survives.\n\nCloses #1. The timeline bucketing in #2 is a separate walk over the same rows and is untouched here.",
+      "state": "MERGED",
+      "createdAt": "2026-05-14T08:05:00Z",
+      "updatedAt": "2026-05-15T11:22:00Z",
+      "closedAt": "2026-05-15T11:22:00Z",
+      "url": "https://github.com/northstar-labs/atlas/pull/3",
+      "author": { "__typename": "User", "login": "john-smith", "name": "John Smith" },
+      "labels": { "nodes": [{ "name": "bug" }] },
+      "assignees": { "nodes": [] },
+      "milestone": { "title": "v2.1" },
+      "isDraft": false,
+      "merged": true,
+      "mergedAt": "2026-05-15T11:22:00Z",
+      "mergedBy": { "__typename": "User", "login": "alex-chen", "name": "Alex Chen" },
+      "baseRefName": "main",
+      "headRefName": "fix/results-cursor",
+      "additions": 41,
+      "deletions": 12,
+      "changedFiles": 3,
+      "files": {
+        "nodes": [
+          { "path": "src/search/cursor.ts", "additions": 18, "deletions": 9 },
+          { "path": "src/search/filters.ts", "additions": 6, "deletions": 3 },
+          { "path": "test/search/cursor.test.ts", "additions": 17, "deletions": 0 }
+        ]
+      },
+      "reviews": {
+        "nodes": [
+          {
+            "author": { "__typename": "User", "login": "alex-chen", "name": "Alex Chen" },
+            "state": "APPROVED",
+            "body": "Reads well. The boundary test is the part I care about — thanks for adding it.",
+            "submittedAt": "2026-05-15T10:48:00Z",
+            "comments": {
+              "nodes": [
+                {
+                  "author": { "__typename": "User", "login": "alex-chen", "name": "Alex Chen" },
+                  "body": "Worth a comment here saying the slice must stay after the filter, or someone will swap them back.",
+                  "path": "src/search/cursor.ts",
+                  "createdAt": "2026-05-15T10:46:00Z"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "closingIssuesReferences": {
+        "nodes": [{ "number": 1, "repository": { "nameWithOwner": "northstar-labs/atlas" } }]
+      },
+      "mergeCommit": { "oid": "cc24947363923ca2b79eb6e9cd441ed5072e3eaa" },
+      "comments": {
+        "totalCount": 1,
+        "nodes": [
+          {
+            "author": { "__typename": "User", "login": "jane-doe", "name": "Jane Doe" },
+            "body": "Confirmed against the saved view that showed the bug. Ship it.",
+            "createdAt": "2026-05-15T09:30:00Z"
+          }
+        ]
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 4,
+      "title": "Export to CSV times out on large workspaces",
+      "body": "The export builds the whole workbook in memory before the first byte goes out, so anything past a few hundred thousand rows hits the request timeout.",
+      "state": "OPEN",
+      "createdAt": "2026-05-16T14:20:00Z",
+      "updatedAt": "2026-05-17T09:05:00Z",
+      "closedAt": null,
+      "url": "https://github.com/northstar-labs/atlas/issues/4",
+      "author": { "__typename": "User", "login": "dave-ortiz", "name": "Dave Ortiz" },
+      "labels": { "nodes": [{ "name": "performance" }] },
+      "assignees": {
+        "nodes": [{ "__typename": "User", "login": "john-smith", "name": "John Smith" }]
+      },
+      "milestone": null,
+      "comments": {
+        "totalCount": 1,
+        "nodes": [
+          {
+            "author": { "__typename": "User", "login": "emma-park", "name": "Emma Park" },
+            "body": "Streaming the rows would also drop the memory ceiling we raised last quarter.",
+            "createdAt": "2026-05-17T09:05:00Z"
+          }
+        ]
+      }
+    },
+    {
+      "__typename": "PullRequest",
+      "number": 5,
+      "title": "Stream the CSV export instead of buffering the workbook",
+      "body": "Writes rows to the response as they are read.\n\nCloses #4.",
+      "state": "OPEN",
+      "createdAt": "2026-05-18T07:40:00Z",
+      "updatedAt": "2026-05-19T15:10:00Z",
+      "closedAt": null,
+      "url": "https://github.com/northstar-labs/atlas/pull/5",
+      "author": { "__typename": "User", "login": "john-smith", "name": "John Smith" },
+      "labels": { "nodes": [{ "name": "performance" }] },
+      "assignees": { "nodes": [] },
+      "milestone": null,
+      "isDraft": false,
+      "merged": false,
+      "mergedAt": null,
+      "mergedBy": null,
+      "baseRefName": "main",
+      "headRefName": "perf/stream-csv-export",
+      "additions": 132,
+      "deletions": 58,
+      "changedFiles": 4,
+      "files": {
+        "nodes": [
+          { "path": "src/export/csv.ts", "additions": 74, "deletions": 51 },
+          { "path": "src/export/stream.ts", "additions": 39, "deletions": 0 },
+          { "path": "src/http/routes/export.ts", "additions": 12, "deletions": 7 },
+          { "path": "test/export/csv.test.ts", "additions": 7, "deletions": 0 }
+        ]
+      },
+      "reviews": {
+        "nodes": [
+          {
+            "author": { "__typename": "User", "login": "emma-park", "name": "Emma Park" },
+            "state": "CHANGES_REQUESTED",
+            "body": "The shape is right. One thing blocks it: a mid-stream failure now leaves a half-written file with a success status.",
+            "submittedAt": "2026-05-19T15:10:00Z",
+            "comments": {
+              "nodes": [
+                {
+                  "author": { "__typename": "User", "login": "emma-park", "name": "Emma Park" },
+                  "body": "Set the status before the first write and abort the response on error, otherwise the client cannot tell a truncated export from a complete one.",
+                  "path": "src/export/stream.ts",
+                  "createdAt": "2026-05-19T15:08:00Z"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "closingIssuesReferences": {
+        "nodes": [{ "number": 4, "repository": { "nameWithOwner": "northstar-labs/atlas" } }]
+      },
+      "mergeCommit": null,
+      "comments": { "totalCount": 0, "nodes": [] }
+    },
+    {
+      "__typename": "Issue",
+      "number": 7,
+      "title": "Document the plugin lifecycle hooks",
+      "body": "The hook order is only discoverable by reading the loader. Activation, dataset grant, and teardown all need a written contract before the plugin API is called stable.",
+      "state": "OPEN",
+      "createdAt": "2026-05-22T10:00:00Z",
+      "updatedAt": "2026-05-24T12:35:00Z",
+      "closedAt": null,
+      "url": "https://github.com/northstar-labs/atlas/issues/7",
+      "author": { "__typename": "User", "login": "emma-park", "name": "Emma Park" },
+      "labels": { "nodes": [{ "name": "docs" }, { "name": "plugins" }] },
+      "assignees": { "nodes": [] },
+      "milestone": { "title": "v2.2" },
+      "comments": {
+        "totalCount": 2,
+        "nodes": [
+          {
+            "author": { "__typename": "Bot", "login": "atlas-ci[bot]" },
+            "body": "Docs preview built for this branch.",
+            "createdAt": "2026-05-23T06:00:00Z"
+          },
+          {
+            "author": { "__typename": "User", "login": "john-smith", "name": "John Smith" },
+            "body": "Agreed. The teardown ordering is the part people get wrong, so lead with it.",
+            "createdAt": "2026-05-24T12:35:00Z"
+          }
+        ]
+      }
+    },
+    {
+      "__typename": "PullRequest",
+      "number": 8,
+      "title": "Add the plugin lifecycle reference",
+      "body": "First pass at the hook contract. Closing this one unmerged — the docs site rework landed a different page layout, so the remaining gap is tracked on #7.",
+      "state": "CLOSED",
+      "createdAt": "2026-05-25T09:15:00Z",
+      "updatedAt": "2026-05-28T17:00:00Z",
+      "closedAt": "2026-05-28T17:00:00Z",
+      "url": "https://github.com/northstar-labs/atlas/pull/8",
+      "author": { "__typename": "User", "login": "emma-park", "name": "Emma Park" },
+      "labels": { "nodes": [{ "name": "docs" }] },
+      "assignees": { "nodes": [] },
+      "milestone": null,
+      "isDraft": false,
+      "merged": false,
+      "mergedAt": null,
+      "mergedBy": null,
+      "baseRefName": "main",
+      "headRefName": "docs/plugin-lifecycle",
+      "additions": 218,
+      "deletions": 4,
+      "changedFiles": 2,
+      "files": {
+        "nodes": [
+          { "path": "docs/plugins/lifecycle.md", "additions": 214, "deletions": 0 },
+          { "path": "docs/plugins/index.md", "additions": 4, "deletions": 4 }
+        ]
+      },
+      "reviews": {
+        "nodes": [
+          {
+            "author": { "__typename": "User", "login": "dave-ortiz", "name": "Dave Ortiz" },
+            "state": "PENDING",
+            "body": "",
+            "submittedAt": null,
+            "comments": { "nodes": [] }
+          },
+          {
+            "author": { "__typename": "User", "login": "john-smith", "name": "John Smith" },
+            "state": "COMMENTED",
+            "body": "",
+            "submittedAt": "2026-05-27T08:20:00Z",
+            "comments": {
+              "nodes": [
+                {
+                  "author": { "__typename": "User", "login": "john-smith", "name": "John Smith" },
+                  "body": "This section describes the old two-phase activation. It was collapsed into one call last release.",
+                  "path": "docs/plugins/lifecycle.md",
+                  "createdAt": "2026-05-27T08:19:00Z"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "closingIssuesReferences": { "nodes": [] },
+      "mergeCommit": null,
+      "comments": {
+        "totalCount": 1,
+        "nodes": [
+          {
+            "author": { "__typename": "User", "login": "emma-park", "name": "Emma Park" },
+            "body": "Rewriting against the new layout rather than rebasing this. Closing.",
+            "createdAt": "2026-05-28T17:00:00Z"
+          }
+        ]
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 9,
+      "title": "Nightly build fails on the ARM runner",
+      "body": "The nightly job started failing at the image pull step. The base tag moved and the new image no longer carries the toolchain the build expects.",
+      "state": "CLOSED",
+      "createdAt": "2026-06-01T05:40:00Z",
+      "updatedAt": "2026-06-03T14:10:00Z",
+      "closedAt": "2026-06-03T14:10:00Z",
+      "url": "https://github.com/northstar-labs/atlas/issues/9",
+      "author": { "__typename": "User", "login": "carol-nakamura", "name": "Carol Nakamura" },
+      "labels": { "nodes": [{ "name": "ci" }] },
+      "assignees": {
+        "nodes": [{ "__typename": "User", "login": "carol-nakamura", "name": "Carol Nakamura" }]
+      },
+      "milestone": null,
+      "comments": {
+        "totalCount": 1,
+        "nodes": [
+          {
+            "author": { "__typename": "User", "login": "alex-chen", "name": "Alex Chen" },
+            "body": "Pinning the digest is the fix. A floating tag on a build image is a time bomb either way.",
+            "createdAt": "2026-06-02T09:25:00Z"
+          }
+        ]
+      }
+    },
+    {
+      "__typename": "PullRequest",
+      "number": 10,
+      "title": "Pin the ARM build image for the nightly job",
+      "body": "Pins the base image by digest and adds a comment naming the toolchain version it carries.\n\nCloses #9.",
+      "state": "MERGED",
+      "createdAt": "2026-06-02T10:05:00Z",
+      "updatedAt": "2026-06-03T14:10:00Z",
+      "closedAt": "2026-06-03T14:10:00Z",
+      "url": "https://github.com/northstar-labs/atlas/pull/10",
+      "author": { "__typename": "User", "login": "carol-nakamura", "name": "Carol Nakamura" },
+      "labels": { "nodes": [{ "name": "ci" }] },
+      "assignees": { "nodes": [] },
+      "milestone": null,
+      "isDraft": false,
+      "merged": true,
+      "mergedAt": "2026-06-03T14:10:00Z",
+      "mergedBy": { "__typename": "User", "login": "john-smith", "name": "John Smith" },
+      "baseRefName": "main",
+      "headRefName": "ci/pin-arm-image",
+      "additions": 9,
+      "deletions": 3,
+      "changedFiles": 1,
+      "files": {
+        "nodes": [{ "path": ".ci/nightly.yml", "additions": 9, "deletions": 3 }]
+      },
+      "reviews": {
+        "nodes": [
+          {
+            "author": { "__typename": "User", "login": "john-smith", "name": "John Smith" },
+            "state": "APPROVED",
+            "body": "Good. Please open a follow-up for the renewal reminder so the pin does not rot silently.",
+            "submittedAt": "2026-06-03T13:55:00Z",
+            "comments": { "nodes": [] }
+          }
+        ]
+      },
+      "closingIssuesReferences": {
+        "nodes": [{ "number": 9, "repository": { "nameWithOwner": "northstar-labs/atlas" } }]
+      },
+      "mergeCommit": { "oid": "3a37e17138de6008ef047843171cb00f27bc425b" },
+      "comments": { "totalCount": 0, "nodes": [] }
+    },
+    {
+      "__typename": "Issue",
+      "number": 12,
+      "title": "Rate limit the webhook retry loop",
+      "body": "A subscriber returning 500 gets retried immediately and forever. @jane-doe hit this with a staging endpoint that was down for an afternoon; the queue never drained.\n\nA capped exponential backoff with a dead-letter after the last attempt would be enough.",
+      "state": "OPEN",
+      "createdAt": "2026-06-08T16:45:00Z",
+      "updatedAt": "2026-06-09T10:20:00Z",
+      "closedAt": null,
+      "url": "https://github.com/northstar-labs/atlas/issues/12",
+      "author": { "__typename": "User", "login": "dave-ortiz", "name": "Dave Ortiz" },
+      "labels": { "nodes": [{ "name": "reliability" }, { "name": "webhooks" }] },
+      "assignees": {
+        "nodes": [{ "__typename": "User", "login": "dave-ortiz", "name": "Dave Ortiz" }]
+      },
+      "milestone": { "title": "v2.2" },
+      "comments": {
+        "totalCount": 1,
+        "nodes": [
+          {
+            "author": { "__typename": "User", "login": "carol-nakamura", "name": "Carol Nakamura" },
+            "body": "The dead-letter needs a surface too, or the failures just move somewhere nobody looks.",
+            "createdAt": "2026-06-09T10:20:00Z"
+          }
+        ]
+      }
+    }
+  ],
+  "discussions": [
+    {
+      "number": 6,
+      "title": "How should plugins declare their data requirements?",
+      "body": "A plugin needs to say which datasets it reads before it is granted anything. Manifest field, or a call at activation time?",
+      "createdAt": "2026-05-20T13:00:00Z",
+      "updatedAt": "2026-05-21T08:15:00Z",
+      "url": "https://github.com/northstar-labs/atlas/discussions/6",
+      "author": { "__typename": "User", "login": "dave-ortiz", "name": "Dave Ortiz" },
+      "category": { "name": "Ideas" },
+      "answer": { "id": "DC_answer_6" },
+      "comments": {
+        "totalCount": 1,
+        "nodes": [
+          {
+            "author": { "__typename": "User", "login": "emma-park", "name": "Emma Park" },
+            "body": "Manifest. A declaration made at activation time cannot be reviewed before the plugin is installed, which is the only moment the decision matters.",
+            "createdAt": "2026-05-21T08:15:00Z",
+            "isAnswer": true,
+            "replies": { "nodes": [] }
+          }
+        ]
+      }
+    },
+    {
+      "number": 11,
+      "title": "Where should the query language go next?",
+      "body": "Saved views cover the common questions, but anything with a join is still a support request. Two directions have come up: a small expression language over the existing filters, or a full text-to-query layer.\n\nThe timezone problem in #2 is worth settling first either way — a query language that inherits it will bake it in.",
+      "createdAt": "2026-06-05T09:00:00Z",
+      "updatedAt": "2026-06-07T11:45:00Z",
+      "url": "https://github.com/northstar-labs/atlas/discussions/11",
+      "author": { "__typename": "User", "login": "john-smith", "name": "John Smith" },
+      "category": { "name": "Roadmap" },
+      "answer": null,
+      "comments": {
+        "totalCount": 2,
+        "nodes": [
+          {
+            "author": { "__typename": "User", "login": "alex-chen", "name": "Alex Chen" },
+            "body": "Expression language first. It is a smaller surface, and it gives the text-to-query layer something to compile into later instead of generating SQL directly.",
+            "createdAt": "2026-06-06T14:30:00Z",
+            "isAnswer": false,
+            "replies": {
+              "nodes": [
+                {
+                  "author": { "__typename": "User", "login": "jane-doe", "name": "Jane Doe" },
+                  "body": "That also keeps the permission check in one place. Anything generating SQL directly has to re-derive who may read what.",
+                  "createdAt": "2026-06-06T15:10:00Z"
+                }
+              ]
+            }
+          },
+          {
+            "author": { "__typename": "User", "login": "emma-park", "name": "Emma Park" },
+            "body": "Whichever lands first needs an error surface people can act on. The current parser failure is a stack trace in a toast.",
+            "createdAt": "2026-06-07T11:45:00Z",
+            "isAnswer": false,
+            "replies": { "nodes": [] }
+          }
+        ]
+      }
+    }
+  ]
+}

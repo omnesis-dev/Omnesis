@@ -1,0 +1,5 @@
+# Run outputs are never committed. The committed artifacts are: ledger.jsonl
+# (the authoritative iteration-history — scorecard rows), spend-ledger.jsonl
+# (the in-repo spend-receipt journal), and the pinned *.json knobs.
+runs/
+scorecard*.json

@@ -1,0 +1,96 @@
+{
+  "watch": {
+    "name": "invoice-and-receipt-both-arrived",
+    "nl_query": "Tell me when both an invoice and its receipt have arrived by email for the same job.",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "invoice_email",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email",
+          "people": [
+            {
+              "role": "sender",
+              "isSelf": false
+            }
+          ]
+        },
+        "output_map": {
+          "thread_id": "$e.metadata.extra.threadId",
+          "doc_id": "$e.docId"
+        },
+        "recall": {
+          "semantic": {
+            "query": "invoice bill amount due payable",
+            "threshold": 0.35
+          }
+        },
+        "judge": {
+          "proposition": "This email is an invoice asking the user to pay",
+          "output_schema": {}
+        }
+      },
+      {
+        "id": "receipt_email",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email",
+          "people": [
+            {
+              "role": "sender",
+              "isSelf": false
+            }
+          ]
+        },
+        "output_map": {
+          "thread_id": "$e.metadata.extra.threadId",
+          "doc_id": "$e.docId"
+        },
+        "recall": {
+          "semantic": {
+            "query": "receipt payment confirmation paid thank you",
+            "threshold": 0.35
+          }
+        },
+        "judge": {
+          "proposition": "This email is a receipt confirming a payment the user made",
+          "output_schema": {}
+        }
+      },
+      {
+        "id": "both_sides",
+        "type": "stateful.and",
+        "comment": "Both halves must land on the same thread; after thirty days an invoice with no receipt is a different watch's problem.",
+        "inputs": {
+          "invoice_email": {
+            "role": "arm",
+            "key": {
+              "thread_id": ".thread_id"
+            }
+          },
+          "receipt_email": {
+            "role": "arm",
+            "key": {
+              "thread_id": ".thread_id"
+            }
+          }
+        },
+        "on_collision": "reset",
+        "deadline": "30 days",
+        "output_map": {
+          "invoice": "$n.invoice_email.doc_id",
+          "receipt": "$n.receipt_email.doc_id"
+        }
+      }
+    ],
+    "sink": {
+      "input": "both_sides"
+    }
+  }
+}

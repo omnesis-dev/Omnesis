@@ -1,0 +1,102 @@
+[
+  {
+    "externalId": "synth-gcontact-001",
+    "personRef": "p_jane",
+    "givenName": "Jane",
+    "familyName": "Doe",
+    "company": "Acme Corp",
+    "title": "Product Lead",
+    "createdAt": "2024-01-12T10:00:00Z",
+    "modifiedAt": "2025-09-05T09:30:00Z"
+  },
+  {
+    "externalId": "synth-gcontact-002",
+    "personRef": "p_alex",
+    "givenName": "Alex",
+    "familyName": "Chen",
+    "company": "Globex",
+    "title": "Senior Engineer",
+    "createdAt": "2024-04-18T11:00:00Z",
+    "modifiedAt": "2025-09-09T14:00:00Z"
+  },
+  {
+    "externalId": "synth-gcontact-003",
+    "personRef": "p_emma",
+    "givenName": "Emma",
+    "familyName": "Park",
+    "company": "Acme Corp",
+    "title": "Chief of Staff",
+    "createdAt": "2023-09-01T10:00:00Z",
+    "modifiedAt": "2025-09-08T17:00:00Z"
+  },
+  {
+    "externalId": "synth-gcontact-004",
+    "personRef": "p_dave",
+    "givenName": "Dave",
+    "familyName": "Ortiz",
+    "company": "Ortiz Studio",
+    "title": "Founder",
+    "createdAt": "2022-04-04T10:00:00Z",
+    "modifiedAt": "2025-09-06T18:00:00Z"
+  },
+  {
+    "externalId": "synth-gcontact-005",
+    "personRef": "p_carol",
+    "givenName": "Carol",
+    "familyName": "Nakamura",
+    "company": "Globex",
+    "title": "Engineering Manager",
+    "createdAt": "2024-06-15T10:00:00Z",
+    "modifiedAt": "2025-09-07T07:00:00Z"
+  },
+  {
+    "externalId": "synth-gcontact-006",
+    "personRef": "p_jane",
+    "givenName": "Jane",
+    "familyName": "Doe (legacy)",
+    "company": "Acme",
+    "title": "Product Manager",
+    "createdAt": "2023-08-01T10:00:00Z",
+    "modifiedAt": "2023-12-15T10:00:00Z"
+  },
+  {
+    "externalId": "synth-gcontact-007",
+    "personRef": "p_alex",
+    "givenName": "Alex",
+    "familyName": "Chen (mobile)",
+    "company": null,
+    "title": null,
+    "createdAt": "2024-05-20T10:00:00Z",
+    "modifiedAt": "2024-05-20T10:00:00Z"
+  },
+  {
+    "externalId": "synth-gcontact-008",
+    "personRef": "p_emma",
+    "givenName": "Emma",
+    "familyName": "Park (CC)",
+    "company": "Acme Corp",
+    "title": null,
+    "createdAt": "2023-11-01T10:00:00Z",
+    "modifiedAt": "2023-11-01T10:00:00Z"
+  },
+  {
+    "externalId": "synth-gcontact-009",
+    "personRef": "p_dave",
+    "givenName": "Dave",
+    "familyName": "Ortiz (personal)",
+    "company": null,
+    "title": null,
+    "createdAt": "2022-06-10T10:00:00Z",
+    "modifiedAt": "2024-01-01T10:00:00Z"
+  },
+  {
+    "externalId": "synth-gcontact-010",
+    "personRef": "p_carol",
+    "givenName": "Carol",
+    "familyName": "Nakamura (run group)",
+    "company": null,
+    "title": null,
+    "createdAt": "2024-07-01T10:00:00Z",
+    "modifiedAt": "2025-09-08T07:00:00Z"
+  }
+]

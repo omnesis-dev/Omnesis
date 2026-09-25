@@ -1,0 +1,32 @@
+{
+  "watch": {
+    "name": "analytics-source-errors",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "txn",
+        "type": "source.analytics_row",
+        "table": "northstar_transactions",
+        "op": ["inserted"],
+        "predicate": "amount > $key.threshold AND merchant_name LIKE 'x",
+        "output_map": {
+          "doc_id": "$e.table"
+        }
+      },
+      {
+        "id": "gate",
+        "type": "stateless.transform",
+        "inputs": {
+          "txn": {
+            "role": "arm"
+          }
+        },
+        "query": "SELECT true AS fires"
+      }
+    ],
+    "sink": {
+      "input": "gate"
+    }
+  }
+}

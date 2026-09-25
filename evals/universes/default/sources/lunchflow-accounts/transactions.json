@@ -1,0 +1,152 @@
+[
+  {
+    "account_id": 481,
+    "transactions": [
+      {
+        "id": "lf-txn-001",
+        "accountId": 481,
+        "amount": -42.5,
+        "currency": "GBP",
+        "date": "2025-06-20",
+        "merchant": "Riverbend Market",
+        "description": "Weekly groceries",
+        "isPending": false
+      },
+      {
+        "id": "lf-txn-002",
+        "accountId": 481,
+        "amount": 1800.0,
+        "currency": "GBP",
+        "date": "2025-06-25",
+        "description": "Monthly salary",
+        "isPending": false
+      },
+      {
+        "id": "lf-txn-003",
+        "accountId": 481,
+        "amount": -64.9,
+        "currency": "GBP",
+        "date": "2025-06-22",
+        "merchant": "Northstar Hardware",
+        "description": "Shelf brackets and paint",
+        "isPending": false
+      },
+      {
+        "id": "lf-txn-004",
+        "accountId": 481,
+        "amount": -9.99,
+        "currency": "GBP",
+        "date": "2025-06-18",
+        "merchant": "Vela Streaming",
+        "description": "Monthly subscription",
+        "isPending": false
+      },
+      {
+        "id": "lf-txn-005",
+        "accountId": 481,
+        "amount": -38.25,
+        "currency": "GBP",
+        "date": "2025-06-16",
+        "merchant": "Cityline Transit",
+        "description": "Travel card top-up",
+        "isPending": false
+      },
+      {
+        "id": "lf-txn-006",
+        "accountId": 481,
+        "amount": -129.99,
+        "currency": "GBP",
+        "date": "2025-06-12",
+        "merchant": "Stellar Sound",
+        "description": "Studio headphones",
+        "isPending": false
+      },
+      {
+        "id": "lf-txn-007",
+        "accountId": 481,
+        "amount": -54.2,
+        "currency": "GBP",
+        "date": "2025-06-06",
+        "merchant": "Lumen Energy",
+        "description": "Electricity June 2025",
+        "isPending": false
+      },
+      {
+        "id": "lf-txn-008",
+        "accountId": 481,
+        "amount": -300.0,
+        "currency": "GBP",
+        "date": "2025-05-28",
+        "merchant": "Rainy Day Saver",
+        "description": "Monthly savings transfer",
+        "isPending": false
+      }
+    ]
+  },
+  {
+    "account_id": 902,
+    "transactions": [
+      {
+        "id": "lf-txn-101",
+        "accountId": 902,
+        "amount": 300.0,
+        "currency": "GBP",
+        "date": "2025-05-28",
+        "description": "Monthly savings transfer",
+        "isPending": false
+      },
+      {
+        "id": null,
+        "accountId": 902,
+        "amount": 1.12,
+        "currency": "GBP",
+        "date": "2025-06-19",
+        "description": "Savings interest",
+        "isPending": false
+      },
+      {
+        "id": "lf-txn-102",
+        "accountId": 902,
+        "amount": 300.0,
+        "currency": "GBP",
+        "date": "2025-04-28",
+        "description": "Monthly savings transfer",
+        "isPending": false
+      }
+    ]
+  },
+  {
+    "account_id": 1203,
+    "transactions": [
+      {
+        "id": "lf-txn-201",
+        "accountId": 1203,
+        "amount": -15.99,
+        "currency": "EUR",
+        "date": "2025-06-21",
+        "merchant": "Vela Streaming",
+        "description": "Travel plan",
+        "isPending": false
+      },
+      {
+        "id": "lf-txn-202",
+        "accountId": 1203,
+        "amount": 200.0,
+        "currency": "EUR",
+        "date": "2025-06-15",
+        "description": "Top-up from current account",
+        "isPending": false
+      },
+      {
+        "id": "lf-txn-203",
+        "accountId": 1203,
+        "amount": -42.1,
+        "currency": "EUR",
+        "date": "2025-06-09",
+        "merchant": "Cedar Cafe",
+        "description": "Lunch in Lisbon",
+        "isPending": false
+      }
+    ]
+  }
+]

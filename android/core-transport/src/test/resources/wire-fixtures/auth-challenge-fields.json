@@ -1,0 +1,18 @@
+{
+  "flowId": "fixture-flow",
+  "type": "challenge",
+  "id": "question-fields",
+  "challenge": {
+    "kind": "fields",
+    "title": "Enter credentials",
+    "fields": [
+      {
+        "name": "token",
+        "label": "Token",
+        "type": "secret",
+        "required": true
+      }
+    ]
+  },
+  "expectsAnswer": true
+}

@@ -1,0 +1,1018 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agents &amp; MCP — Omnesis Docs</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32" />
+    <link rel="icon" type="image/png" href="/favicon-16.png" sizes="16x16" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- Resolve the theme before first paint: the stored choice, else the OS preference. -->
+    <script>
+      (function () {
+        var root = document.documentElement;
+        root.classList.add("js");
+        var t;
+        try {
+          t = localStorage.getItem("omnesis-theme");
+        } catch (e) {}
+        if (t !== "light" && t !== "dark") {
+          t =
+            window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+        }
+        root.setAttribute("data-theme", t);
+      })();
+    </script>
+
+    <meta
+      name="description"
+      content="Connect external agents to Omnesis over MCP: access levels, privacy policy, audit, the answer API, client setup, and the OpenClaw and Hermes integrations."
+    />
+    <link rel="canonical" href="https://omnesis.dev/docs/connect" />
+    <meta name="theme-color" content="#0d1117" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="/footer-social.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <nav id="nav">
+      <div class="container">
+        <a href="/" class="nav-logo" aria-label="Omnesis"
+          ><span class="nav-logo-mark" aria-hidden="true"></span>MNESIS</a
+        >
+        <div class="nav-right">
+          <ul class="nav-links">
+            <li><a href="/">Context Layer</a></li>
+            <li><a href="/brain">Omnesis Brain</a></li>
+            <li><a href="/vision">Vision</a></li>
+            <li><a href="/docs/" aria-current="page">Docs</a></li>
+          </ul>
+          <a
+            class="nav-icon-btn"
+            href="#"
+            data-oss-open
+            aria-label="Omnesis on GitHub"
+            title="Omnesis on GitHub"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path
+                d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+              />
+            </svg>
+          </a>
+          <button
+            id="theme-toggle"
+            class="theme-toggle"
+            type="button"
+            aria-label="Switch between dark and light theme"
+            title="Toggle theme"
+          >
+            <svg
+              class="icon-sun"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="4" />
+              <path
+                d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"
+              />
+            </svg>
+            <svg
+              class="icon-moon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <div class="docs-shell">
+      <aside class="docs-sidebar">
+        <nav aria-label="Documentation">
+          <ul class="side-pages">
+            <li><a href="/docs/">Overview</a></li>
+            <li><a href="/docs/install">Install</a></li>
+            <li><a href="/docs/setup">Setup</a></li>
+            <li><a href="/docs/search">Search</a></li>
+            <li><a href="/docs/agent">The agent</a></li>
+            <li>
+              <a href="/docs/connect" aria-current="page">Agents &amp; MCP</a>
+              <ul class="side-sub">
+                <li><a href="#access-levels">Access levels</a></li>
+                <li><a href="#privacy-policy">Privacy policy</a></li>
+                <li><a href="#audit">Audit</a></li>
+                <li><a href="#answer">The answer API</a></li>
+                <li><a href="#bring-your-own-agent">Bring your own agent</a></li>
+                <li><a href="#openclaw-hermes">OpenClaw &amp; Hermes</a></li>
+                <li><a href="#custom-agents">Custom agents</a></li>
+              </ul>
+            </li>
+            <li><a href="/docs/apps">Mobile apps</a></li>
+            <li><a href="/docs/notifications">Notifications</a></li>
+            <li><a href="/docs/operating">Operating</a></li>
+            <li><a href="/docs/security">Security</a></li>
+            <li><a href="/docs/updating">Backup &amp; updates</a></li>
+            <li><a href="/docs/sources">Available sources</a></li>
+            <li><a href="/docs/building-sources">Building sources</a></li>
+            <li><a href="/docs/experimental">Experimental</a></li>
+          </ul>
+        </nav>
+      </aside>
+
+      <main id="main" class="docs-content">
+        <p class="docs-kicker">Use</p>
+        <h1>Agents &amp; MCP</h1>
+        <p class="docs-lead">
+          External agents are AI tools outside Omnesis, such as Claude, ChatGPT, Codex, OpenClaw and
+          Hermes, that read your data over MCP. This page is for anyone connecting one, or their own
+          code: the access levels that decide what an agent may do, the privacy policy that reviews
+          its answers, the audit trail, the answer API, and the setup for each client. The built-in
+          chat agent is covered on <a href="/docs/agent">The agent</a>.
+        </p>
+
+        <h2 id="access-levels">Access levels</h2>
+        <p>
+          Omnesis serves one MCP endpoint, <code>/mcp</code>, and external agents sign in to it with
+          OAuth. Each sign-in you approve becomes a <strong>connection</strong>: a named entry that
+          acts with the authority you delegated to it. A connection is not a device; it cannot push
+          data or manage the gateway.
+        </p>
+        <p>
+          Every connection uses one <strong>access level</strong>, a named set of permissions that
+          one connection or many can share. An access level turns on any combination of three
+          permissions:
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Permission</th>
+              <th>What the agent gets</th>
+              <th>Privacy review</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Answer</strong></td>
+              <td>
+                An answer tool and a status tool. The Omnesis agent answers the question from your
+                data, and only the released answer reaches the external agent.
+              </td>
+              <td>Yes, under the privacy policy the level names</td>
+            </tr>
+            <tr>
+              <td><strong>Direct</strong></td>
+              <td>
+                Read-only retrieval tools that return raw records: search, document fetch and URL
+                lookup, people lookup, connection trails, and bounded SQL over the analytics
+                database.
+              </td>
+              <td>No</td>
+            </tr>
+            <tr>
+              <td><strong>Notes</strong></td>
+              <td>
+                An <code>add_note</code> tool that saves a note, with no read, edit, or delete
+                authority.
+              </td>
+              <td>Not applicable: nothing is read</td>
+            </tr>
+          </tbody>
+        </table>
+        <figure class="diagram">
+          <ol class="flow">
+            <li class="flow-step">
+              <span class="flow-title">External agent</span
+              ><span class="flow-desc">Claude, ChatGPT, Codex, OpenClaw, Hermes</span>
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">/mcp</span
+              ><span class="flow-desc"
+                >OAuth sign-in you approved; its access level decides which route it may take</span
+              >
+            </li>
+          </ol>
+          <div class="lanes">
+            <section class="lane">
+              <p class="lane-title">Answer</p>
+              <ol class="flow">
+                <li class="flow-step">
+                  <span class="flow-title">Omnesis agent</span
+                  ><span class="flow-desc">reads the permitted sources and drafts an answer</span>
+                </li>
+                <li class="flow-step flow-gate">
+                  <span class="flow-title">Privacy reviewer</span
+                  ><span class="flow-desc"
+                    >checks the draft against the level's privacy policy</span
+                  >
+                </li>
+                <li class="flow-step">
+                  <span class="flow-title">Outcome</span
+                  ><span class="flow-desc"
+                    >shared, shared with details removed, held for your approval, or not
+                    shared</span
+                  >
+                </li>
+              </ol>
+              <p class="lane-note">Every exchange is listed under Audit → Answer.</p>
+            </section>
+            <section class="lane">
+              <p class="lane-title">Direct</p>
+              <ol class="flow">
+                <li class="flow-step">
+                  <span class="flow-title">Read-only tools</span
+                  ><span class="flow-desc"
+                    >search, fetch, people, trails, SQL over the permitted sources</span
+                  >
+                </li>
+                <li class="flow-step">
+                  <span class="flow-title">Raw results</span
+                  ><span class="flow-desc">go straight to the agent; no reviewer</span>
+                </li>
+              </ol>
+              <p class="lane-note">
+                Only for an access level that grants Direct. Every call is listed under Audit →
+                Direct.
+              </p>
+            </section>
+          </div>
+          <figcaption>
+            An external agent reaches your data through one of two routes: Answer passes every
+            answer through the privacy reviewer before release, while Direct returns raw read-only
+            results with no review and must be granted explicitly.
+          </figcaption>
+        </figure>
+        <p>
+          An Answer permission normally names the privacy policy that reviews each answer. You can
+          instead choose <strong>Release answers automatically</strong>, which the portal marks as
+          high risk: source boundaries and the audit still apply, but no reviewer checks the answer,
+          including the built-in check that blocks credentials. When an access level reaches only
+          selected sources, a question about a source outside them is answered plainly as out of
+          reach, rather than with evidence from a permitted source passed off as coming from the
+          excluded one.
+        </p>
+        <p>
+          Neither Answer nor Direct browses or searches the live internet: both answer only from
+          data Omnesis has already captured. An agent that needs current outside facts, such as
+          weather or transport delays, should combine the Omnesis result with its own search tools.
+        </p>
+        <div class="callout warn">
+          <strong>Direct bypasses the privacy reviewer.</strong> Raw personal data returned by its
+          tools goes to the external agent and its model provider. That model may be remote, and
+          Omnesis cannot retract data already sent, logged, retained, or placed in a transcript.
+          Retrieved content is untrusted data and may contain prompt injection; it is never an
+          instruction to the agent. Do not use Direct to reconstruct content that Answer denied,
+          reduced, or held for approval. Enable Direct only on an access level whose connections are
+          agents you trust with that data.
+        </div>
+
+        <h3 id="source-boundaries">Source boundaries</h3>
+        <p>
+          A source here is one account or stream, such as
+          <code>gmail:maya.reeves@example.com</code>, not the whole provider or the collector that
+          hosts it. Checked sources are always allowed. You also choose whether sources connected
+          later stay blocked or are allowed automatically; a boundary that keeps future sources
+          blocked must allow at least one current source. When Answer and Direct are both enabled,
+          they share one source selection by default, and an advanced choice gives each its own.
+        </p>
+        <p>
+          A source-restricted Direct permission gets search, document fetch, URL lookup, and SQL
+          only. Analytics tables that several source accounts write to stay outside a
+          source-restricted access level, even when every contributing account is selected.
+        </p>
+
+        <h3 id="notes">Notes</h3>
+        <p>
+          <code>add_note</code> saves to the same notes source as <strong>Tell Omnesis</strong> in
+          the portal and mobile apps. The gateway records the connection's name with the capture
+          time and any context, and the day's note document names that connection as the entry's
+          author, with you as its recipient. A note you capture yourself stays yours, and an agent
+          never becomes a person in the people graph. A client can include a known capture time,
+          time zone, or location, and reuse a UUID <code>id</code> when it retries the same capture.
+        </p>
+
+        <h3 id="managing-access">Managing access levels and connections</h3>
+        <p>
+          <strong>Settings → Access</strong> in the portal lists each access level followed by the
+          connections and <a href="/docs/setup#device-access-level">integrations</a> that use it. A
+          level shows its permissions, the sources it reaches, and its privacy policy. A connection
+          shows its name, the app it signed in from, and when it was last used, and expands to its
+          sign-ins. <code>omnesis access levels</code> prints the same list from the CLI.
+        </p>
+        <ul>
+          <li>
+            <strong>Edit a level</strong>: the change applies to every connection and integration
+            that uses it, and the editor names them before you save. Old access tokens stop working
+            at once, and each client picks up the new rules on its next refresh without signing in
+            again.
+          </li>
+          <li>
+            <strong>Create a level</strong> with <strong>New access level</strong>, before any agent
+            connects if you like. Rename a level at any time, and delete it once nothing uses it.
+          </li>
+          <li>
+            <strong>Rename, move, or remove a connection</strong>. Moving it to a new level starts
+            that level from the connection's current permissions. Removing one connection leaves
+            every other connection working.
+          </li>
+        </ul>
+
+        <h2 id="privacy-policy">Privacy policy</h2>
+        <p>
+          A privacy policy is a named Markdown document that tells the privacy reviewer what an
+          Answer may release. Policies are listed in the portal under
+          <strong>Settings → Policies</strong>, and each opens on its own page for editing. Every
+          access level that uses a policy links to it from <strong>Settings → Access</strong>, and
+          one policy can serve several access levels. A new policy starts from a built-in template
+          or as a copy of an existing one.
+        </p>
+        <p>
+          The built-in templates, from most to least protective, are <strong>Guarded</strong>,
+          <strong>Balanced</strong>, <strong>Open</strong> and <strong>Unfiltered</strong>; a fresh
+          install starts from Guarded. Every template holds for your approval anything that
+          identifies or reaches another person (their phone numbers, email addresses, postal
+          addresses, financial account or card numbers, and health details) even when it comes from
+          your own contacts, messages, or files. A person's name alone, and your own contact
+          details, follow the template's decision table.
+        </p>
+        <p>
+          Identity-document contents are never released automatically, and Guarded, Balanced and
+          Open also never release exact health or financial details automatically.
+        </p>
+        <p>
+          Credentials depend on the template. Guarded, Balanced and Open block credentials outright:
+          they cannot be released even with your approval. Unfiltered holds them for your approval,
+          one request at a time.
+        </p>
+        <p>
+          The editor shows a line and character diff before saving. Each policy keeps its own
+          history, and restoring an older version adds a new current entry without deleting later
+          ones. A policy you adopted keeps its text; a change to a built-in template reaches your
+          installation only when you adopt that template again.
+        </p>
+        <p>
+          You approve or deny each held answer on its own. Editing a policy requires a signed-in
+          portal session; the mobile apps list the policies and show each one's text under their own
+          Settings, but do not edit them.
+        </p>
+
+        <h2 id="audit">Audit</h2>
+        <p>
+          The <strong>Audit</strong> page in the portal shows what external agents asked and what
+          left your machine, and names the connection behind each request.
+        </p>
+        <p>
+          The <strong>Answer</strong> tab lists every exchange, newest first and grouped by day,
+          with its outcome: shared, shared with details removed, not shared, failed, or still in
+          progress. An exchange reviewed under a named policy says so and links to it. Anything
+          waiting for your decision is pinned above the list with the held answer and both choices.
+          While decisions are waiting, the Audit entry in the portal's sidebar and in the mobile
+          apps' menu shows their count. A status filter narrows the list to one outcome; it applies
+          to the activity already loaded, so load older activity to look further back.
+        </p>
+        <p>
+          The <strong>Direct</strong> tab lists the raw reads made with Direct tools, grouped into
+          sessions: one per conversation or workflow ID the caller supplied, or per stretch of
+          activity with no gap longer than an hour. Opening a session lists each tool call with its
+          outcome, arguments, and results. These transcripts record what left your machine; nothing
+          in them passed the privacy reviewer.
+        </p>
+        <p>
+          Every approval, denial, permission change, removal, and tool call by a connection is also
+          written to the access ledger. <code>omnesis access audit</code> prints it newest first and
+          pages through it with the cursor it prints. <code>--connection &lt;id&gt;</code> narrows
+          it to one connection, using the ID shown on that connection's row on the Access page. The
+          same data is served at <code>GET /admin/access/audit</code>.
+        </p>
+
+        <h2 id="answer">The answer API</h2>
+        <p>
+          Scripts and integrations can ask Omnesis a question without MCP. The answer goes through
+          the same Omnesis agent and the same privacy review as an Answer over MCP. From the CLI:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis answer "When is my next dentist appointment?"</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis answer "Summarize last week's project threads" --allow-approval</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis answer --task TASK_ID --wait</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          Each call returns one of four outcomes: the answer, the answer with details removed, a
+          refusal, or approval required. By default an answer that the policy would hold for
+          approval is refused instead, because a script usually cannot wait for you.
+          <code>--allow-approval</code> holds it instead: the command prints a task ID, you decide
+          under Audit, and <code>omnesis answer --task TASK_ID --wait</code> collects the result,
+          waiting 60 seconds by default (<code>--wait-timeout</code> up to an hour).
+        </p>
+        <p>
+          <code>--workflow</code> and <code>--conversation</code> continue an earlier thread,
+          <code>--purpose</code> tells the privacy reviewer what the answer is for, and
+          <code>--json</code> prints the full response.
+        </p>
+        <p>
+          Over HTTP, the same call is <code>POST /answer</code> with a JSON body carrying
+          <code>question</code>, and optionally <code>workflowId</code>,
+          <code>conversationId</code>, <code>workflowName</code>, <code>workflowPurpose</code>,
+          <code>clientRequestId</code> (an idempotency key for retries), and
+          <code>approval</code> (<code>"never"</code>, the default, or <code>"allow"</code>). Poll a
+          held answer at <code>GET /answer/tasks/&lt;id&gt;</code>. The request carries no time
+          zone, so dates are read in the gateway's own zone.
+        </p>
+        <p>
+          The token needs the <code>answer</code> scope, or <code>admin</code>; the
+          <a href="/docs/#devices-and-tokens">scope table</a> lists which devices hold it. An
+          <a href="/docs/setup#device-access-level">integration</a> answers under its access level's
+          sources and privacy policy, and is refused until you give it one. Inside an OpenClaw or
+          Hermes shell, <code>omnesis answer</code> refuses to ask and points the agent to its
+          native <code>omnesis_answer</code> tool, which waits for slow answers properly.
+        </p>
+
+        <h2 id="bring-your-own-agent">Bring your own agent</h2>
+        <p>
+          Any client that speaks Streamable HTTP MCP and completes OAuth can connect to
+          <code>/mcp</code>; clients that cannot do both are not supported. The client discovers the
+          gateway's OAuth metadata, signs in, and stores and refreshes its own tokens. Sign-in needs
+          <code>gateway.publicBaseUrl</code> set, as described below; only a client on the gateway's
+          own machine that connects over a loopback address can sign in without it. Where each
+          client runs decides which address it can use:
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Client</th>
+              <th>Runs on</th>
+              <th>Address it needs</th>
+              <th>Setup</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Claude Code</td>
+              <td>your machine</td>
+              <td>a configured HTTPS address its machine can reach</td>
+              <td><a href="#claude-code">Claude Code</a></td>
+            </tr>
+            <tr>
+              <td>Codex</td>
+              <td>your machine</td>
+              <td>a configured HTTPS address its machine can reach</td>
+              <td><a href="#codex">Codex</a></td>
+            </tr>
+            <tr>
+              <td>Claude Desktop, Claude Cowork</td>
+              <td>Anthropic's servers</td>
+              <td>
+                a public HTTPS address, such as a
+                <a href="#tailscale-funnel">Tailscale Funnel</a> name
+              </td>
+              <td><a href="#claude-desktop">Claude Desktop and Cowork</a></td>
+            </tr>
+            <tr>
+              <td>ChatGPT</td>
+              <td>OpenAI's servers</td>
+              <td>
+                a public HTTPS address, such as a
+                <a href="#tailscale-funnel">Tailscale Funnel</a> name
+              </td>
+              <td><a href="#chatgpt">ChatGPT</a></td>
+            </tr>
+            <tr>
+              <td>OpenClaw, Hermes</td>
+              <td>your machine</td>
+              <td>a configured HTTPS address its machine can reach</td>
+              <td><a href="#openclaw-hermes">OpenClaw and Hermes</a></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3 id="mcp-address">Choose the address</h3>
+        <p>
+          <code>gateway.publicBaseUrl</code> (or the <code>OMNESIS_PUBLIC_BASE_URL</code>
+          environment variable) is the gateway's HTTPS address for MCP sign-in: the OAuth issuer
+          every client remembers, so pick it once and keep it. Until it is set, the portal's
+          <strong>Connect an agent</strong> button stays hidden and only loopback sign-ins work. A
+          client on your machine, such as Claude Code, Codex, OpenClaw or Hermes, can use this
+          address or one listed in <code>gateway.mcpResourceUrls</code>, as long as its machine can
+          reach it.
+        </p>
+        <p>
+          Hosted connectors run on their provider's servers, so they can reach your gateway only at
+          an Internet-reachable HTTPS address, and that address must be
+          <code>gateway.publicBaseUrl</code> or one of the listed extras. A name that resolves only
+          inside your tailnet or your home network cannot serve them, and the request may fail
+          before the gateway sees it. <a href="#tailscale-funnel">Tailscale Funnel</a> publishes the
+          gateway's tailnet name without a domain of your own; a domain you own goes through
+          <a href="/docs/setup#public-domain">From the Internet</a>.
+        </p>
+        <p>
+          To accept sign-ins at more than one address, list each extra address as an exact
+          <code>/mcp</code> URL in <code>gateway.mcpResourceUrls</code>, each on its own origin. The
+          addresses share connections, but a token issued for one address is not valid at another.
+          Once <code>gateway.publicBaseUrl</code> is set, loopback is no longer accepted implicitly;
+          list it in <code>gateway.mcpResourceUrls</code> if a local client uses it. Keeping an old
+          address listed lets clients refresh while they move to the new one, though some clients
+          ask you to sign in again.
+        </p>
+        <p>
+          A reverse proxy in front of the gateway must forward the root-level
+          <code>/.well-known/oauth-protected-resource/*</code> and
+          <code>/.well-known/oauth-authorization-server/*</code> discovery paths, plus the issuer's
+          <code>.well-known/openid-configuration</code> path.
+        </p>
+        <p>
+          Clients register either with a Client ID Metadata Document, a small JSON file published at
+          the client's HTTPS identifier, or through Dynamic Client Registration. Omnesis fetches a
+          metadata document directly, refuses redirects and private-network destinations, and
+          validates its redirect URLs before showing the approval screen.
+        </p>
+
+        <h3 id="tailscale-funnel">Publish the gateway with Tailscale Funnel</h3>
+        <p>
+          If the gateway already serves a
+          <a href="/docs/setup#certificates">Tailscale certificate</a>, Tailscale Funnel gives it
+          the public address hosted connectors need, with no domain, router port or reverse proxy.
+          Tailscale's relays accept connections for the machine's MagicDNS name on port 443 and pass
+          them to the Tailscale daemon on the gateway machine, which terminates TLS and forwards
+          each request to the gateway on <code>localhost</code>. Funnel listens only on ports 443,
+          8443 and 10000, so the public address has no <code>:7600</code>; your own devices keep
+          dialling port 7600 as before.
+        </p>
+        <ol>
+          <li>
+            Allow Funnel for the tailnet. It needs MagicDNS and HTTPS certificates, as the Tailscale
+            certificate does, and the <code>funnel</code> node attribute in the tailnet policy file.
+            The first <code>tailscale funnel</code> run prints a link that adds it.
+          </li>
+          <li>
+            On the gateway machine, publish port 443 and forward it to the gateway (on Linux, as
+            root or the machine's Tailscale operator). <code>https+insecure</code> is needed because
+            the gateway's certificate names the MagicDNS name, not <code>localhost</code>; that hop
+            never leaves the machine. <code>--bg</code> keeps Funnel running across restarts.
+          </li>
+          <li>
+            Add <code>OMNESIS_TRUST_PROXY=true</code> to <code>~/.config/omnesis/.env</code>. Every
+            Funnel request reaches the gateway from the Tailscale daemon on the same machine, and
+            the gateway exempts same-machine callers from its rate limits. With this setting it
+            takes the client's address from the <code>X-Forwarded-For</code> header Tailscale sets,
+            so its limits apply to each Internet client.
+          </li>
+          <li>
+            Set the public address, without a port, and restart the gateway. The portal's
+            <strong>Connect an agent</strong> dialog then shows
+            <code>https://studio.tail-example.ts.net/mcp</code>.
+          </li>
+          <li>
+            From a device outside the tailnet, such as a phone on mobile data, open
+            <code>https://studio.tail-example.ts.net/.well-known/oauth-protected-resource/mcp</code
+            >. It returns a short JSON document naming that <code>/mcp</code> address. Then add the
+            connector: <a href="#chatgpt">ChatGPT</a> or
+            <a href="#claude-desktop">Claude Desktop and Cowork</a>.
+          </li>
+        </ol>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p class="t-dim"># step 2</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">tailscale funnel --bg https+insecure://localhost:7600</span>
+            </p>
+            <p class="t-dim"># step 4</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis config set /gateway/publicBaseUrl https://studio.tail-example.ts.net</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis service restart gateway</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          The gateway keeps listening on its tailnet and home-network addresses for your devices, so
+          with <code>OMNESIS_TRUST_PROXY</code> set it logs a warning at start: a client that
+          reaches port 7600 directly could name its own address in that header and choose which rate
+          limit it counts against. It can never pass as the gateway machine itself. Keep port 7600
+          closed to the Internet.
+        </p>
+        <p>
+          Funnel publishes the whole gateway, not only <code>/mcp</code>. A connector needs the
+          discovery documents under <code>/.well-known/</code>, the sign-in endpoints under
+          <code>/oauth/</code>, and the approval page, which loads the portal's styles and scripts;
+          the portal's login page and the pairing endpoint become reachable from the Internet too.
+          Every route that returns your data still requires a device token, a portal session or an
+          approved OAuth token. Portal login and pairing are rate-limited per client address, and a
+          pairing code is single-use and expires in ten minutes. A connector's sign-in grants
+          nothing until you <a href="#approving-a-connection">approve it</a> in a signed-in portal
+          or a paired phone; the approval page alone shows only a code.
+        </p>
+        <p>
+          The public address is also where the Notion, Outlook and Strava sources send their sign-in
+          back once <code>gateway.publicBaseUrl</code> is set:
+          <code>https://studio.tail-example.ts.net/oauth/callback</code>. Add that redirect address
+          to the app you registered with the provider before you next sign one of them in.
+          <code>tailscale funnel reset</code> takes the gateway off the Internet again, along with
+          any other Tailscale Serve configuration on the machine; hosted connectors stop working
+          until it is published again.
+        </p>
+
+        <h3 id="approving-a-connection">Approve the connection</h3>
+        <p>
+          When an agent signs in, its browser opens an approval page. If that browser is signed in
+          to the portal, approve there. Otherwise the page shows a short code and a QR code. Enter
+          the code in the portal under <strong>Settings → Access → Connect an agent</strong> or in
+          either mobile app, or scan the QR code with the phone's camera to open the installed
+          Omnesis app with the code filled in. Paired phones also receive a generic notification
+          that opens the code-entry screen.
+        </p>
+        <p>
+          The QR code holds only the short-lived code, and entering it shows the request without
+          approving it; you still review and confirm the permissions, sources, and privacy policy.
+          The approval page itself is never paired as a device.
+        </p>
+        <p>
+          Approval starts at the <strong>Connection</strong> step. The name is filled in from the
+          name the client reports, numbered if that name is taken, and you can change it. Then
+          choose the access level:
+        </p>
+        <ul>
+          <li>
+            <strong>An existing level</strong> goes straight to review. Connections on the same
+            level share its permissions.
+          </li>
+          <li>
+            <strong>New access level</strong> asks for a name, then Answer, Direct and Notes, the
+            sources and privacy policy, and a review of the resulting access. The review says when
+            the chosen level is already used by other connections.
+          </li>
+          <li>
+            <strong>Replace a connection</strong>, for an agent signing in again, takes over that
+            connection's name and access level. Once the new sign-in completes, the old one stops
+            working; if it never completes, nothing is revoked.
+          </li>
+        </ul>
+        <p>
+          Omnesis never adds a request to an existing connection or access level because a name or
+          client matches; it only suggests. When the same app is already connected, the step
+          preselects that connection's access level, and a new level starts from a copy of its
+          permissions. When the request comes from a managed integration already connected on the
+          same device, the step opens on replacing that connection. A request that needs Answer,
+          such as a managed integration's, can only use an access level that includes Answer.
+        </p>
+
+        <h3 id="claude-code">Claude Code</h3>
+        <p>
+          Choose one setup path: add the server by hand, or install the Claude plugin. Do not do
+          both, because the plugin declares the same connection.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p class="t-dim"># by hand</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >claude mcp add --transport http --scope user omnesis
+                https://gateway.example.org/mcp</span
+              >
+            </p>
+          </div>
+        </div>
+        <p>
+          Then open Claude Code, run <code>/mcp</code>, select Omnesis, and complete the sign-in in
+          your browser.
+        </p>
+        <p>
+          The Claude plugin adds Omnesis setup and usage guidance and declares the same HTTP
+          connection. It asks for your gateway's MCP URL (the HTTPS URL ending in
+          <code>/mcp</code>), and it neither launches an Omnesis process nor stores a gateway
+          credential:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">/plugin marketplace add omnesis-dev/Omnesis</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">/plugin install omnesis@omnesis</span>
+            </p>
+          </div>
+        </div>
+
+        <h3 id="claude-desktop">Claude Desktop and Cowork</h3>
+        <p>
+          A custom connector is brokered through your Claude account: Claude connects to it from
+          Anthropic's servers, not from your computer, even in Claude Desktop and Cowork. A local or
+          Tailscale-only address therefore does not work here, even though your own machine can
+          reach it. Claude Code runs on your machine and can use a local address; see
+          <a href="#claude-code">Claude Code</a>.
+        </p>
+        <p>
+          Publish the gateway first, with <a href="#tailscale-funnel">Tailscale Funnel</a> or a
+          <a href="/docs/setup#public-domain">domain of your own</a>. Then, on claude.ai or in
+          Claude Desktop, open <strong>Customize → Connectors</strong>, add a custom connector, and
+          enter your gateway's public HTTPS URL ending in <code>/mcp</code>. Connect it, approve the
+          connection in Omnesis, then enable the connector in a conversation. On Team or Enterprise
+          plans, an organization owner must add the custom connector before members can connect it.
+        </p>
+
+        <h3 id="chatgpt">ChatGPT</h3>
+        <p>
+          ChatGPT adds a custom MCP server as a developer-mode app. Developer mode is a feature of
+          ChatGPT on the web, and whether your account can use it depends on your plan and, for a
+          workspace, its administrators. Publish the gateway first, with
+          <a href="#tailscale-funnel">Tailscale Funnel</a> or a
+          <a href="/docs/setup#public-domain">domain of your own</a>, then:
+        </p>
+        <ol>
+          <li>In ChatGPT on the web, turn on developer mode in the settings.</li>
+          <li>
+            Create an app for a remote MCP server. Enter the MCP URL shown under
+            <strong>Settings → Access → Connect an agent</strong> in the portal, the public HTTPS
+            address ending in <code>/mcp</code>, and choose OAuth as its authentication.
+          </li>
+          <li>
+            Complete the sign-in ChatGPT opens and
+            <a href="#approving-a-connection">approve the connection</a> in Omnesis.
+          </li>
+          <li>Enable the app in a new conversation.</li>
+        </ol>
+        <p>
+          ChatGPT's menu names change; OpenAI's
+          <a href="https://developers.openai.com/api/docs/guides/developer-mode"
+            >developer mode guide</a
+          >
+          has the current path. Keep one sign-in attempt open at a time; if several authorization
+          windows appear, close them all and start once more.
+        </p>
+
+        <h3 id="codex">Codex</h3>
+        <p>Install the guidance, then register your gateway separately:</p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">codex plugin marketplace add omnesis-dev/Omnesis</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">codex plugin add omnesis@omnesis-openai</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >codex mcp add omnesis --url https://gateway.example.org/mcp
+                --oauth-client-registration dcr --oauth-resource
+                https://gateway.example.org/mcp</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >codex mcp login omnesis --scopes omnesis:access,offline_access</span
+              >
+            </p>
+          </div>
+        </div>
+        <div class="callout">
+          <strong>For Codex, the plugin is guidance, not a connection.</strong> It teaches Codex how
+          to use Answer, Direct, and Notes, while the separate MCP entry holds your gateway URL and
+          sign-in. Install both, then start a new conversation. The Claude plugin declares the
+          connection itself.
+        </div>
+
+        <h2 id="openclaw-hermes">OpenClaw and Hermes</h2>
+        <p>
+          The managed OpenClaw and Hermes integrations index the agent's conversations in Omnesis,
+          send its questions to <code>/mcp</code>, and deliver finished answers back to the
+          conversation that asked. Their inboxes and conversation routing survive restarts. The
+          gateway states which tools it offers, and <code>omnesis connect</code> installs only
+          those.
+        </p>
+        <h3 id="harness-install">Install</h3>
+        <p>
+          Make the gateway reachable from the machine that runs the agent at an address it accepts
+          for sign-in (see <a href="#mcp-address">Choose the address</a>), then run one line on that
+          machine. The installer's <code>--openclaw</code> and <code>--hermes</code> roles install
+          the CLI and connect the agent in a single step; the gateway's own install printed this
+          line with its URL and certificate fingerprint. Mint the pairing code it asks for with
+          <code>omnesis devices pair --kind agent</code>, or in the portal under
+          <strong>Settings → Devices</strong>. The role refuses a machine that does not already have
+          OpenClaw or Hermes; it never installs them for you.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >curl -fsSL https://omnesis.dev/install.sh | sh -s -- --openclaw --gateway-url
+                https://gateway.example.io:7600 --trust-fingerprint sha256:&lt;fingerprint&gt;</span
+              >
+            </p>
+          </div>
+        </div>
+        <p>
+          On a machine that already has the Omnesis CLI, the same work is one command. The role runs
+          it for you; run it yourself to see each step:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis connect openclaw</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis connect hermes</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          The command finds the agent's installation, installs its Omnesis plugin and skill,
+          establishes TLS trust, pairs the machine as an agent device, and starts the OAuth sign-in.
+          Pass <code>--gateway-url</code> and <code>--code</code> to answer its questions up front,
+          and <code>--trust-fingerprint sha256:…</code> to check the gateway's certificate against a
+          fingerprint you were given instead of trusting whatever answers. It then waits up to ten
+          minutes for you to <a href="#approving-a-connection">approve the connection</a>, so leave
+          it running until it finishes. Restart the OpenClaw or Hermes gateway afterwards.
+        </p>
+        <p>
+          <code>connect</code> warns when the plugin it is about to install differs in version from
+          the gateway. Omnesis versions all its parts together, so the usual cause is an agent
+          machine that updates on its own schedule.
+        </p>
+
+        <h3 id="harness-refresh">Refresh after an update</h3>
+        <p>
+          After updating Omnesis, refresh the installed plugin and skill in place, then restart the
+          OpenClaw or Hermes gateway. Re-running the installer role with neither
+          <code>--gateway-url</code> nor <code>--code</code> does the same.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis connect openclaw --refresh</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis connect hermes --refresh</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          A refresh keeps the paired device, repairs the sign-in when needed, and uses no pairing
+          code. It also re-establishes TLS trust, so a renewed gateway certificate needs a refresh,
+          not a new pairing. When a refresh does need a new approval, the approval screen suggests
+          replacing the integration's existing connection, which keeps its name and access level.
+        </p>
+        <p>
+          <code>omnesis update</code> refreshes the plugin for you, and a fleet update restarts the
+          agent's gateway too; <a href="/docs/updating#fleet-update">Fleet update</a> covers the
+          restart order. A refresh that failed shows in <code>omnesis devices list</code> and
+          <code>omnesis doctor</code> with the command that fixes it, and as a chip on the portal's
+          Devices page.
+        </p>
+
+        <h3 id="harness-access">Pairing and corpus access</h3>
+        <p>
+          The installed plugin renews its sign-in on its own, on start and on a timer. Renewal
+          re-keys the connection you approved and cannot widen it, so removing that connection ends
+          reads at once. When the integration does need you, <code>omnesis devices list</code> and
+          the portal's Devices page mark it <em>needs re-authorization</em> and print the command to
+          run on that machine.
+        </p>
+        <div class="callout">
+          <strong>Pairing and corpus access are separate.</strong> The agent device's own
+          credentials send conversation transcripts to the gateway; they cannot read your data.
+          Reading goes through the connection, under its access level's permissions, sources, and
+          privacy policy. Removing the connection stops reads and leaves the pairing in place.
+          Revoking the agent device is the broader action: it also revokes that installation's
+          sign-in on its connection, even when the sign-in's current token has already expired.
+        </div>
+
+        <h2 id="custom-agents">Custom agents</h2>
+        <p>
+          An agent that does not speak MCP can use the answer API above, or call the gateway's HTTPS
+          read API directly. The read endpoints cover search, documents, people, event trails,
+          recent records, and bounded SQL, and enforce the scopes of the token presented. This is
+          lower-level than an MCP connection: nothing reviews the results, and your agent owns its
+          request flow, its citations, and any data it sends to a model. The commands on
+          <a href="/docs/search">Search</a> are thin clients over these endpoints and a good place
+          to start. Mint a token with only the scopes it needs, as described under
+          <a href="/docs/setup#tokens">Tokens</a>.
+        </p>
+
+        <nav class="docs-pager" aria-label="Pages">
+          <a href="/docs/agent"
+            ><span class="pager-label">Previous</span><span class="pager-title">The agent</span></a
+          >
+          <a class="pager-next" href="/docs/apps"
+            ><span class="pager-label">Next</span><span class="pager-title">Mobile apps</span></a
+          >
+        </nav>
+      </main>
+    </div>
+
+    <footer class="site-footer">
+      <div class="container">
+        <div class="footer-inner">
+          <div class="footer-base">© 2026 Omnesis</div>
+          <nav class="footer-links" aria-label="Footer">
+            <a href="/docs/">Docs</a>
+            <a href="/privacy">Privacy</a>
+            <a class="footer-mail" href="mailto:contact@omnesis.dev">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="2" y="4" width="20" height="16" rx="2" />
+                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+              </svg>
+              contact@omnesis.dev
+            </a>
+            <a class="footer-gh" href="#" data-oss-open>
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path
+                  d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+                />
+              </svg>
+              GitHub
+            </a>
+            <a
+              class="footer-social footer-x"
+              href="https://x.com/Omnesisdev"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Omnesis on X"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>@Omnesisdev
+            </a>
+            <a
+              class="footer-social footer-discord"
+              href="https://discord.gg/4Y8pQHrVv"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Join Omnesis on Discord"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>Discord
+            </a>
+          </nav>
+        </div>
+      </div>
+    </footer>
+
+    <script src="/docs/docs.js"></script>
+  </body>
+</html>

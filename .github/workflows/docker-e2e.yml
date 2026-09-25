@@ -1,0 +1,64 @@
+# Containerized security E2E: fresh-install, plaintext->encrypted migration,
+# backup/restore with a recovery code, dedicated-user isolation, and the
+# headless passphrase keyring — each against the real CLI + gateway from
+# source inside a clean Linux container — plus the dedicated-account gateway
+# installed, updated and rolled back by scripts/hardened-gateway.sh under real
+# systemd. It runs for every admitted full request and for an explicit manual
+# target, never from a pull request.
+name: docker-e2e
+
+# Full validation supplies one immutable source revision to this reusable lane.
+# Manual full requests enter through the guarded admission controller.
+on:
+  workflow_call:
+    inputs:
+      target_sha:
+        description: "Exact 40-character source revision to validate"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+jobs:
+  scenarios:
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: lane [docker-security]
+        run: scripts/docker-e2e/run.sh
+      - name: Clean up dangling e2e images
+        if: always()
+        run: docker image prune -f --filter label=none >/dev/null 2>&1 || true
+
+  hardened-systemd:
+    runs-on: [self-hosted, Linux]
+    # The scenario builds several releases of the monorepo inside the container.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: lane [docker-hardened-systemd]
+        run: scripts/docker-e2e/systemd/run.sh
+      - name: Clean up dangling e2e images
+        if: always()
+        run: docker image prune -f --filter label=none >/dev/null 2>&1 || true

@@ -1,0 +1,38 @@
+{
+  "name": "@omnesis/extension",
+  "version": "0.5.11",
+  "license": "AGPL-3.0-or-later",
+  "private": true,
+  "type": "module",
+  "description": "Omnesis browser-capture Manifest V3 extension — pairs to the gateway and pushes captured web pages over HTTP.",
+  "main": "src/push/index.ts",
+  "exports": {
+    ".": "./src/push/index.ts",
+    "./capture/lifecycle": "./src/capture/lifecycle.ts",
+    "./scripts/test-manifest": "./scripts/test-manifest.mjs"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "generate:icons": "node scripts/generate-icons.mjs",
+    "generate:store-assets": "node scripts/generate-store-assets.mjs",
+    "package:store": "node scripts/package-store.mjs",
+    "package:store:release": "node scripts/package-store.mjs --release",
+    "smoke:chromium": "npm run build && node scripts/smoke-lifecycle.mjs"
+  },
+  "dependencies": {
+    "@omnesis/core": "*",
+    "@omnesis/provider-web": "*",
+    "@omnesis/types": "*",
+    "defuddle": "^0.19.3",
+    "turndown": "^7.2.2",
+    "turndown-plugin-gfm": "^1.0.2"
+  },
+  "devDependencies": {
+    "@types/turndown": "^5.0.6",
+    "esbuild": "^0.28.2",
+    "jszip": "^3.10.1",
+    "linkedom": "^0.18.13",
+    "playwright": "^1.60.0",
+    "sharp": "^0.35.4"
+  }
+}

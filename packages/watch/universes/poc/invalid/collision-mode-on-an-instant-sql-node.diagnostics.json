@@ -1,0 +1,24 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "MAX_LIVE_INSTANCES_WITHOUT_SPAWN",
+      "severity": "error",
+      "path": "/watch/nodes/1/max_live_instances",
+      "message": "Only 'spawn' creates parallel instances per key; 'reset' keeps at most one.",
+      "details": {
+        "nodeId": "check",
+        "declared": "reset"
+      }
+    },
+    {
+      "code": "COLLISION_MODE_NOT_APPLICABLE",
+      "severity": "error",
+      "path": "/watch/nodes/1/on_collision",
+      "message": "Node 'check' evaluates instantly on arm — with no timer, persistence or accumulation there is no instance to collide with.",
+      "details": {
+        "nodeId": "check"
+      }
+    }
+  ]
+}

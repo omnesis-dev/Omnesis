@@ -1,0 +1,12 @@
+[
+  "packages/providers-synth/browser-history",
+  "packages/providers-synth/chrome",
+  "packages/providers-synth/enable-banking",
+  "packages/providers-synth/github",
+  "packages/providers-synth/granola",
+  "packages/providers-synth/lunchflow",
+  "packages/providers-synth/notion",
+  "packages/providers-synth/obsidian",
+  "packages/providers-synth/plaid",
+  "packages/providers-synth/whatsapp"
+]

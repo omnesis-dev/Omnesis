@@ -1,0 +1,277 @@
+{
+  "accountsPages": [
+    {
+      "accounts": [
+        {
+          "uuid": "acc-btc",
+          "currency": "BTC",
+          "type": "ACCOUNT_TYPE_CRYPTO",
+          "available_balance": {
+            "value": "0.50000000",
+            "currency": "BTC"
+          },
+          "hold": {
+            "value": "0.00000001",
+            "currency": "BTC"
+          }
+        },
+        {
+          "uuid": "acc-eth",
+          "currency": "ETH",
+          "type": "ACCOUNT_TYPE_CRYPTO",
+          "available_balance": {
+            "value": "2.000000000000000000",
+            "currency": "ETH"
+          },
+          "hold": {
+            "value": "0",
+            "currency": "ETH"
+          }
+        },
+        {
+          "uuid": "acc-doge",
+          "currency": "DOGE",
+          "type": "ACCOUNT_TYPE_CRYPTO",
+          "available_balance": {
+            "value": "0",
+            "currency": "DOGE"
+          },
+          "hold": {
+            "value": "0",
+            "currency": "DOGE"
+          }
+        }
+      ],
+      "has_next": true,
+      "cursor": "acc-1"
+    },
+    {
+      "accounts": [
+        {
+          "uuid": "acc-usd",
+          "currency": "USD",
+          "type": "ACCOUNT_TYPE_FIAT",
+          "available_balance": {
+            "value": "1234.56",
+            "currency": "USD"
+          },
+          "hold": {
+            "value": "0",
+            "currency": "USD"
+          }
+        }
+      ],
+      "has_next": false
+    }
+  ],
+  "portfolios": {
+    "portfolios": [
+      {
+        "uuid": "cb-pf-0001",
+        "name": "Default",
+        "type": "DEFAULT",
+        "deleted": false
+      }
+    ]
+  },
+  "breakdowns": {
+    "cb-pf-0001": {
+      "breakdown": {
+        "spot_positions": [
+          {
+            "asset": "BTC",
+            "is_cash": false,
+            "total_balance_crypto": 0.50000001,
+            "available_to_trade_crypto": 0.5,
+            "cost_basis": {
+              "value": "21000.55",
+              "currency": "USD"
+            },
+            "total_balance_fiat": 33000.123456,
+            "allocation": 0.84,
+            "unrealized_pnl": 12000,
+            "account_uuid": "acc-btc"
+          },
+          {
+            "asset": "ETH",
+            "is_cash": false,
+            "total_balance_crypto": 2,
+            "available_to_trade_crypto": 2,
+            "cost_basis": {
+              "value": "4800.20",
+              "currency": "USD"
+            },
+            "total_balance_fiat": 6200,
+            "allocation": 0.12,
+            "unrealized_pnl": 1399.8,
+            "account_uuid": "acc-eth"
+          },
+          {
+            "asset": "USD",
+            "is_cash": true,
+            "total_balance_crypto": 1234.56,
+            "available_to_trade_crypto": 1234.56,
+            "cost_basis": {
+              "value": "1234.56",
+              "currency": "USD"
+            },
+            "total_balance_fiat": 1234.56,
+            "allocation": 0.04,
+            "account_uuid": "acc-usd"
+          }
+        ]
+      }
+    }
+  },
+  "ordersPages": [
+    {
+      "orders": [
+        {
+          "order_id": "ord-1",
+          "product_id": "BTC-USD",
+          "side": "BUY",
+          "status": "FILLED",
+          "order_type": "MARKET",
+          "filled_size": "0.50000000",
+          "average_filled_price": "42000.12",
+          "filled_value": "21000.06",
+          "total_fees": "10.50",
+          "created_time": "2025-12-10T12:00:00Z",
+          "last_fill_time": "2025-12-10T12:00:01Z"
+        }
+      ],
+      "has_next": true,
+      "cursor": "ord-1"
+    },
+    {
+      "orders": [
+        {
+          "order_id": "ord-2",
+          "product_id": "ETH-USD",
+          "side": "SELL",
+          "status": "OPEN",
+          "order_type": "LIMIT",
+          "filled_size": "0",
+          "total_fees": "0",
+          "created_time": "2025-12-12T08:30:00Z"
+        },
+        {
+          "order_id": "ord-3",
+          "product_id": "BTC-USD",
+          "side": "BUY",
+          "status": "FILLED",
+          "order_type": "MARKET",
+          "filled_size": "0.25000000",
+          "average_filled_price": "43000.00",
+          "filled_value": "10750.00",
+          "total_fees": "5.25",
+          "created_time": "2025-12-15T09:15:00Z",
+          "last_fill_time": "2025-12-15T09:15:02Z"
+        }
+      ],
+      "has_next": false
+    }
+  ],
+  "fillsPages": [
+    {
+      "fills": [
+        {
+          "trade_id": "trade-1",
+          "order_id": "ord-1",
+          "product_id": "BTC-USD",
+          "side": "BUY",
+          "liquidity_indicator": "TAKER",
+          "price": "42000.12",
+          "size": "0.50000000",
+          "size_in_quote": false,
+          "commission": "10.50",
+          "trade_time": "2025-12-10T12:00:01Z"
+        },
+        {
+          "trade_id": "trade-2",
+          "order_id": "ord-3",
+          "product_id": "BTC-USD",
+          "side": "BUY",
+          "liquidity_indicator": "MAKER",
+          "price": "43000.00",
+          "size": "0.25000000",
+          "size_in_quote": false,
+          "commission": "5.25",
+          "trade_time": "2025-12-15T09:15:02Z"
+        }
+      ],
+      "has_next": false
+    }
+  ],
+  "v2AccountsPages": [
+    {
+      "data": [
+        {
+          "id": "wallet-btc",
+          "name": "BTC Wallet",
+          "currency": "BTC"
+        }
+      ],
+      "pagination": {
+        "next_starting_after": null
+      }
+    }
+  ],
+  "v2TransactionsPages": {
+    "wallet-btc": [
+      {
+        "data": [
+          {
+            "id": "txn-1",
+            "type": "buy",
+            "status": "completed",
+            "amount": {
+              "amount": "0.50000000",
+              "currency": "BTC"
+            },
+            "native_amount": {
+              "amount": "21000.06",
+              "currency": "USD"
+            },
+            "description": "Bought 0.5 BTC",
+            "created_at": "2025-12-10T12:00:00Z"
+          },
+          {
+            "id": "txn-2",
+            "type": "staking_reward",
+            "status": "completed",
+            "amount": {
+              "amount": "0.01000000",
+              "currency": "ETH"
+            },
+            "native_amount": {
+              "amount": "30.00",
+              "currency": "USD"
+            },
+            "description": "Staking reward",
+            "created_at": "2025-12-11T00:00:00Z"
+          },
+          {
+            "id": "txn-3",
+            "type": "send",
+            "status": "completed",
+            "amount": {
+              "amount": "-0.10000000",
+              "currency": "BTC"
+            },
+            "native_amount": {
+              "amount": "-500.00",
+              "currency": "USD"
+            },
+            "description": "Sent 0.1 BTC",
+            "created_at": "2025-12-13T18:45:00Z"
+          }
+        ],
+        "pagination": {
+          "next_starting_after": null
+        }
+      }
+    ]
+  },
+  "v2Grant": true
+}

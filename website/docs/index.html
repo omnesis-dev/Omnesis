@@ -1,0 +1,805 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Overview — Omnesis Docs</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32" />
+    <link rel="icon" type="image/png" href="/favicon-16.png" sizes="16x16" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- Resolve the theme before first paint: the stored choice, else the OS preference. -->
+    <script>
+      (function () {
+        var root = document.documentElement;
+        root.classList.add("js");
+        var t;
+        try {
+          t = localStorage.getItem("omnesis-theme");
+        } catch (e) {}
+        if (t !== "light" && t !== "dark") {
+          t =
+            window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+        }
+        root.setAttribute("data-theme", t);
+      })();
+    </script>
+
+    <meta
+      name="description"
+      content="How Omnesis fits together: the gateway, collectors, paired devices and external agents, the scopes each holds, what leaves your machines, and where your data lives."
+    />
+    <link rel="canonical" href="https://omnesis.dev/docs/" />
+    <meta name="theme-color" content="#0d1117" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="/footer-social.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <nav id="nav">
+      <div class="container">
+        <a href="/" class="nav-logo" aria-label="Omnesis"
+          ><span class="nav-logo-mark" aria-hidden="true"></span>MNESIS</a
+        >
+        <div class="nav-right">
+          <ul class="nav-links">
+            <li><a href="/">Context Layer</a></li>
+            <li><a href="/brain">Omnesis Brain</a></li>
+            <li><a href="/vision">Vision</a></li>
+            <li><a href="/docs/" aria-current="page">Docs</a></li>
+          </ul>
+          <a
+            class="nav-icon-btn"
+            href="#"
+            data-oss-open
+            aria-label="Omnesis on GitHub"
+            title="Omnesis on GitHub"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path
+                d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+              />
+            </svg>
+          </a>
+          <button
+            id="theme-toggle"
+            class="theme-toggle"
+            type="button"
+            aria-label="Switch between dark and light theme"
+            title="Toggle theme"
+          >
+            <svg
+              class="icon-sun"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="4" />
+              <path
+                d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"
+              />
+            </svg>
+            <svg
+              class="icon-moon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <div class="docs-shell">
+      <aside class="docs-sidebar">
+        <nav aria-label="Documentation">
+          <ul class="side-pages">
+            <li>
+              <a href="/docs/" aria-current="page">Overview</a>
+              <ul class="side-sub">
+                <li><a href="#how-it-fits-together">How it fits together</a></li>
+                <li><a href="#the-gateway">The gateway</a></li>
+                <li><a href="#the-collector">The collector</a></li>
+                <li><a href="#devices-and-tokens">Devices and connections</a></li>
+                <li><a href="#sources-and-providers">Sources and providers</a></li>
+                <li><a href="#documents-and-the-index">Documents and the index</a></li>
+                <li><a href="#people-and-reference-graphs">People and graphs</a></li>
+                <li><a href="#analytics">Analytics</a></li>
+                <li><a href="#the-agent">The agent</a></li>
+                <li><a href="#where-your-data-lives">Where your data lives</a></li>
+                <li><a href="#help">Help and support</a></li>
+                <li><a href="#where-next">Where next</a></li>
+              </ul>
+            </li>
+            <li><a href="/docs/install">Install</a></li>
+            <li><a href="/docs/setup">Setup</a></li>
+            <li><a href="/docs/search">Search</a></li>
+            <li><a href="/docs/agent">The agent</a></li>
+            <li><a href="/docs/connect">Agents &amp; MCP</a></li>
+            <li><a href="/docs/apps">Mobile apps</a></li>
+            <li><a href="/docs/notifications">Notifications</a></li>
+            <li><a href="/docs/operating">Operating</a></li>
+            <li><a href="/docs/security">Security</a></li>
+            <li><a href="/docs/updating">Backup &amp; updates</a></li>
+            <li><a href="/docs/sources">Available sources</a></li>
+            <li><a href="/docs/building-sources">Building sources</a></li>
+            <li><a href="/docs/experimental">Experimental</a></li>
+          </ul>
+        </nav>
+      </aside>
+
+      <main id="main" class="docs-content">
+        <p class="docs-ai-notice">
+          <span class="docs-ai-badge" aria-hidden="true">AI</span>
+          <span
+            >This documentation was generated by AI Agents, for AI Agents. If anything is incorrect
+            or missing, contact <a href="mailto:contact@omnesis.dev">contact@omnesis.dev</a>.</span
+          >
+        </p>
+        <p class="docs-kicker">Documentation</p>
+        <h1>Overview</h1>
+        <p class="docs-lead">
+          Omnesis indexes and searches your email, messages, notes, files, health data and calendars
+          in one place, on machines you own. This page explains the parts it is made of and where
+          your data lives. Read it before you <a href="/docs/install">install</a>; every other page
+          assumes these terms.
+        </p>
+
+        <h2 id="how-it-fits-together">How it fits together</h2>
+        <p>
+          One <strong>gateway</strong> holds everything. Every other component is a
+          <strong>device</strong> paired to it with its own token: the collector that syncs your
+          accounts, the CLI, the portal in your browser, the phone apps and the browser extension.
+          External AI agents reach the gateway too, through approved connections rather than as
+          devices.
+        </p>
+
+        <figure class="diagram">
+          <ol class="flow">
+            <li class="flow-step">
+              <span class="flow-title">Sources</span
+              ><span class="flow-desc">Gmail, WhatsApp, Apple Notes, Strava, Obsidian…</span>
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Collector</span
+              ><span class="flow-desc"
+                >syncs each source on a schedule, on the machine that has it</span
+              >
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Gateway</span
+              ><span class="flow-desc"
+                >stores, indexes and searches documents, runs the agent, serves the portal on port
+                <code>7600</code></span
+              >
+            </li>
+          </ol>
+          <div class="lanes">
+            <section class="lane">
+              <p class="lane-title">Push data in</p>
+              <ol class="flow">
+                <li class="flow-step">
+                  <span class="flow-title">Phone apps and the browser extension</span
+                  ><span class="flow-desc"
+                    >health, activity, location visits and photo text from phones; pages you read
+                    from the browser</span
+                  >
+                </li>
+              </ol>
+              <p class="lane-note">
+                Each holds write scopes for its own source types only; the extension can never read.
+              </p>
+            </section>
+            <section class="lane">
+              <p class="lane-title">Read and manage</p>
+              <ol class="flow">
+                <li class="flow-step">
+                  <span class="flow-title">CLI, portal and phone apps</span
+                  ><span class="flow-desc"
+                    >search, SQL, the agent, sources, devices, settings, notifications</span
+                  >
+                </li>
+              </ol>
+              <p class="lane-note">Device tokens, minted at pairing.</p>
+            </section>
+            <section class="lane">
+              <p class="lane-title">Ask over MCP</p>
+              <ol class="flow">
+                <li class="flow-step">
+                  <span class="flow-title">External agents</span
+                  ><span class="flow-desc">Claude, ChatGPT, Codex and others</span>
+                </li>
+              </ol>
+              <p class="lane-note">OAuth connections, limited by an access level.</p>
+            </section>
+          </div>
+          <figcaption>
+            Sources flow through a collector into the gateway. Phone apps and the browser extension
+            also push their own data straight to the gateway; the CLI, portal and phone apps read
+            and manage it; external agents ask questions over MCP.
+          </figcaption>
+        </figure>
+
+        <p>
+          The <strong>gateway</strong> owns all state: documents, the search index, analytics,
+          people, devices, external-agent connections and configuration. The
+          <strong>collector</strong> pulls data out of your accounts and local apps and sends it to
+          the gateway. The gateway and a collector can share a machine or run on different ones.
+        </p>
+
+        <h2 id="the-gateway">The gateway</h2>
+        <p>
+          The gateway is one process serving HTTPS on port <code>7600</code>. It hosts the document
+          store (SQLite), the indexer, the hybrid search pipeline,
+          <a href="/docs/agent">the agent</a>, the analytics database, the device and token
+          registry, and the <strong>portal</strong>: its built-in web interface at
+          <code>https://&lt;gateway-host&gt;:7600/portal/</code>.
+        </p>
+        <p>
+          It serves HTTPS only; there is no plain-HTTP mode. Which certificate it serves, and what
+          that means for browsers and phones, is covered in
+          <a href="/docs/setup#certificates">Setup → Certificates</a>. Every route declares the
+          scope it requires, and a route that declares none can never be served. Only a small
+          surface is public: the health check, pairing-code redemption, the portal's login page and
+          static files, the OAuth sign-in endpoints that external agents and provider sign-ins
+          redirect through, and a few non-secret lookups such as model logos. Everything else needs
+          a token with the right scope.
+        </p>
+
+        <h3 id="outbound-connections">What leaves your machines</h3>
+        <p>
+          Your documents are never sent to an Omnesis service. The gateway and collectors make these
+          outbound requests, each of which you enabled or can switch off:
+        </p>
+        <ul>
+          <li>
+            <strong>Your sources' own services.</strong> A collector signs in to Gmail, Notion,
+            Strava and the other accounts you add, and reads from them.
+          </li>
+          <li>
+            <strong>A release check.</strong> The gateway asks its Git host or container registry
+            for the newest stable release shortly after it starts and every 24 hours. The request
+            carries no identifier or corpus data. Turn it off with
+            <code>omnesis config set /releaseCheck false</code>.
+          </li>
+          <li>
+            <strong>Phone wake-ups.</strong> For an official app build, after you approve it on that
+            phone, the gateway sends the hosted relay an empty request that makes the phone wake up
+            and fetch its notification from the gateway. The relay never sees notification text or
+            the gateway's address. With your own push credentials, the gateway talks to Apple's and
+            Google's push services directly instead. See
+            <a href="/docs/notifications">Notifications</a>.
+          </li>
+          <li>
+            <strong>Models you choose.</strong> Model files are downloaded when you install one. A
+            remote model (Codex, Anthropic, an OpenAI-compatible server) receives the questions and
+            data you send it; local models send nothing. See
+            <a href="/docs/operating#models">Models</a>.
+          </li>
+        </ul>
+
+        <h2 id="the-collector">The collector</h2>
+        <p>
+          The collector is the process that syncs sources on a machine. It listens on no port of its
+          own, apart from short-lived localhost listeners that catch a provider's OAuth redirect
+          during sign-in. It sends documents to the gateway over HTTPS and holds one WebSocket open
+          for live control. Which sources it runs, and their configuration, come from the gateway,
+          so you manage sources in one place and the collector follows.
+        </p>
+        <p>
+          It can run on a different machine from the gateway. A common split is the gateway on an
+          always-on server and the collector on the desktop where your accounts and local app data
+          live. On the same LAN, a collector finds the gateway through mDNS. See
+          <a href="/docs/setup#collector">Setup → Collector on another machine</a>.
+        </p>
+
+        <h2 id="devices-and-tokens">Devices and connections</h2>
+        <p>
+          A <strong>device</strong> is anything paired to the gateway with its own token: a
+          collector, the CLI, a portal browser, an iOS or Android app, the browser extension, a
+          machine running an <a href="/docs/connect#openclaw-hermes">OpenClaw or Hermes</a> harness,
+          or an <strong>integration</strong> (someone else's code that asks Omnesis questions for
+          you, such as a voice-assistant handler). A device pairs by redeeming a single-use pairing
+          code: 10 characters, valid for 10 minutes by default. The gateway then issues a token
+          limited to the scopes that kind of device needs. How to pair each kind is on
+          <a href="/docs/setup#pairing">Setup</a>.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Scope</th>
+                <th>What it allows</th>
+                <th>Held by default by</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>read</code></td>
+                <td>Search and read documents, analytics and people.</td>
+                <td>Collector, CLI, portal, phone apps.</td>
+              </tr>
+              <tr>
+                <td><code>read:bulk</code></td>
+                <td>
+                  Enumerate the whole corpus at once: full document lists, dumps of analytics
+                  tables. Includes <code>read</code>.
+                </td>
+                <td>No device; add it to a token you create.</td>
+              </tr>
+              <tr>
+                <td><code>admin</code></td>
+                <td>
+                  Manage sources, devices, tokens, models and configuration. Also covers
+                  <code>answer</code>, but not <code>read</code>.
+                </td>
+                <td>CLI, portal, phone apps.</td>
+              </tr>
+              <tr>
+                <td><code>answer</code></td>
+                <td>
+                  Ask questions through the privacy-reviewed Answer endpoint, and nothing else.
+                </td>
+                <td>Integrations.</td>
+              </tr>
+              <tr>
+                <td><code>write:&lt;source-type&gt;</code></td>
+                <td>Push documents and analytics rows for one source type.</td>
+                <td>
+                  Phone apps, for the sources they host on the phone; the browser extension, as
+                  <code>write:web</code> and nothing else.
+                </td>
+              </tr>
+              <tr>
+                <td><code>write:*</code></td>
+                <td>Push documents and rows for any source type.</td>
+                <td>Collector.</td>
+              </tr>
+              <tr>
+                <td><code>push:claim</code></td>
+                <td>Collect the notifications queued for this device.</td>
+                <td>Phone apps.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          A harness machine's device token carries one narrow scope,
+          <code>subscriptions:receive</code>, for the harness plugin's own traffic and none of the
+          above. An integration can hold only <code>answer</code>, <code>push:claim</code> and write
+          scopes, whatever token you create for it. A phone's write scopes follow the sources its
+          app version hosts, so a phone picks up a new source's scope when it next connects, without
+          pairing again. Revoking a device invalidates its tokens but keeps its identity, so it can
+          be <a href="/docs/setup#repairing-a-device">brought back</a>; each device also reports its
+          version, as described in <a href="/docs/updating#compatibility">version compatibility</a>.
+        </p>
+        <p>
+          On first start the gateway writes a <strong>bootstrap admin token</strong> to
+          <code>~/.config/omnesis/token</code>, readable only by your user. The collector on the
+          same machine uses it to pair itself and saves its own token to
+          <code>collector-token</code>. The CLI on that machine reads it too, which is why commands
+          such as <code>omnesis devices pair</code> work on the gateway host without a login.
+        </p>
+        <p>
+          An external AI agent that reads your data over MCP is not a device. Each agent you approve
+          becomes a <strong>connection</strong>, which signs in with OAuth and is governed by an
+          <strong>access level</strong>: a named set of permissions that says which of Answer,
+          Direct and Notes it may use, which sources those reach, and which privacy policy reviews
+          its answers. Removing a connection affects no other connection. See
+          <a href="/docs/connect#access-levels">Agents &amp; MCP</a>.
+        </p>
+
+        <h2 id="sources-and-providers">Sources and providers</h2>
+        <p>
+          A <strong>source</strong> is one account's data from one platform, identified as
+          <code>type:account</code>, for example <code>gmail:maya@example.com</code>. Its
+          <strong>source type</strong> is the kind of data, such as <code>gmail</code>. A
+          <strong>provider</strong> is one sign-in that serves several source types: authenticate
+          Google once and get Gmail, Calendar, Drive and Contacts.
+        </p>
+        <p>Sources run in one of three places:</p>
+        <ul>
+          <li>
+            <strong>On a collector</strong>, the common case. The collector syncs cloud APIs (Gmail,
+            Notion, Strava) and local app data (Apple Notes, iMessage, Obsidian) on a schedule.
+          </li>
+          <li>
+            <strong>On a phone.</strong> The app reads Apple Health, Health Connect, call logs,
+            location visits and on-device photo text on the phone and pushes them to the gateway.
+          </li>
+          <li>
+            <strong>In the gateway.</strong> The Web Pages source (type <code>web</code>) lives in
+            the gateway itself, and the browser extension pushes the pages you read to it.
+          </li>
+        </ul>
+        <p>
+          The full catalogue is on <a href="/docs/sources">Available sources</a>, and adding,
+          pausing and removing sources is under
+          <a href="/docs/sources#managing-sources">Managing sources</a>. Writing your own is covered
+          in <a href="/docs/building-sources">Building sources</a>.
+        </p>
+
+        <h2 id="documents-and-the-index">Documents and the index</h2>
+        <p>
+          Everything a source syncs becomes a <strong>document</strong>: Markdown content plus
+          metadata (type, timestamps, source URL, the people involved), stored in SQLite. Ingest
+          never waits for indexing. Each new document wakes the indexer, a background worker in the
+          gateway. It splits the document into chunks suited to its type, adds them to a keyword
+          index (SQLite FTS5), and embeds them with the configured embedding model into a vector
+          index (HNSW).
+        </p>
+        <p>
+          A search queries both indexes and merges the results, so exact terms and paraphrases both
+          match. Without an embedding model, search falls back to keywords alone. How ranking works,
+          and the query syntax, are on <a href="/docs/search">Search</a>.
+        </p>
+
+        <h2 id="people-and-reference-graphs">People and reference graphs</h2>
+        <p>
+          Documents mention people: senders, recipients, chat participants, contacts. The gateway
+          resolves those mentions across sources, so an email address, a phone number and a
+          contact-card name become one person. Ambiguous cases appear as merge suggestions you
+          confirm in the portal.
+        </p>
+        <p>
+          It also records references between documents (links, shared attachments, threads) in a
+          reference graph. Search results show how often each document is referenced, and a
+          document's <em>trail</em> follows those references to reconstruct the story around it.
+        </p>
+        <p>
+          A link can be recorded before its target exists: a chat can mention a pull request before
+          you connect GitHub. Once the target document is indexed, the link resolves to it. When the
+          same page exists both as a browser capture and as a document from a dedicated source, the
+          graph points at the dedicated source's document and keeps the capture as a second copy.
+        </p>
+
+        <h2 id="analytics">Analytics</h2>
+        <p>
+          Structured sources emit typed rows alongside their documents: health samples, screen-time
+          sessions, calendar events, bank transactions, activities. These land in a DuckDB database
+          next to the document store, one table per record type, with rows linked back to their
+          documents.
+        </p>
+        <p>
+          You query them with plain SQL: <code>omnesis sql "..."</code> from the CLI, or
+          <strong>Debug → SQL</strong> in the portal. Queries are read-only; each runs in a
+          sandboxed connection with writes and external access disabled.
+        </p>
+
+        <h2 id="the-agent">The agent</h2>
+        <p>
+          The agent is a chat interface over your data, running inside the gateway. It answers
+          questions by searching documents, following trails, looking up people and querying
+          analytics, and cites the documents it used. It never changes your documents; the only
+          thing it writes is its own memory, which cites its evidence. It starts working once you
+          assign a model to it, local or remote. See
+          <a href="/docs/agent">The agent</a>.
+        </p>
+
+        <h2 id="where-your-data-lives">Where your data lives</h2>
+        <p>
+          Omnesis keeps its state in one directory, <code>~/.config/omnesis</code> (set
+          <code>OMNESIS_CONFIG_DIR</code> to move it; a
+          <a href="/docs/security#hardened-gateway">hardened gateway</a> uses
+          <code>/var/lib/omnesis-gateway</code>). <code>omnesis backup</code> is the supported way
+          to capture it; see <a href="/docs/updating#backup">Backup</a>.
+        </p>
+        <p>
+          With encryption at rest, the stores and stored credentials in that directory are encrypted
+          with keys that a <strong>root key</strong> unlocks. The root key is kept in your operating
+          system's keyring, or sealed by a passphrase file, and never in the directory itself. A
+          copy of the directory alone therefore cannot be opened on another machine: also keep the
+          recovery code from <code>omnesis keyring export-recovery</code>.
+        </p>
+        <p>
+          If the root key is missing, the gateway refuses to open the stores rather than fall back
+          to plaintext. A collector on another machine keeps its own keys and encrypts the provider
+          data it stores the same way. Your source apps' own databases and Omnesis's logs are
+          outside this encryption. See <a href="/docs/security#encryption">Encryption at rest</a>.
+        </p>
+        <p>
+          The last column of the table applies to an install with encryption at rest; without it,
+          every file is plaintext, readable only by your user.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Path</th>
+                <th>What it is</th>
+                <th>Encrypted at rest</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>omnesis.json</code></td>
+                <td>Configuration, owned by the gateway; collectors fetch it.</td>
+                <td>No; secrets it names live in <code>config-secrets/</code>.</td>
+              </tr>
+              <tr>
+                <td><code>.env</code></td>
+                <td>
+                  Environment for the services: gateway URL, certificate paths, bind address and,
+                  under Docker, the image tag.
+                </td>
+                <td>No.</td>
+              </tr>
+              <tr>
+                <td><code>docker-compose.yml</code></td>
+                <td>
+                  The container stack, on a <a href="/docs/install#docker">Docker</a> install.
+                </td>
+                <td>No.</td>
+              </tr>
+              <tr>
+                <td><code>OMNESIS.md</code></td>
+                <td>
+                  Optional standing instructions you write for the agent; see
+                  <a href="/docs/agent#standing-instructions">The agent</a>.
+                </td>
+                <td>No.</td>
+              </tr>
+              <tr>
+                <td><code>token</code></td>
+                <td>The bootstrap admin token, written on the gateway's first start.</td>
+                <td>Yes.</td>
+              </tr>
+              <tr>
+                <td><code>collector-token</code></td>
+                <td>The collector's own token, saved when it pairs.</td>
+                <td>Yes.</td>
+              </tr>
+              <tr>
+                <td><code>cache/omnesis.cache.json</code></td>
+                <td>
+                  The collector's copy of the gateway's configuration, rewritten after every
+                  successful fetch. A collector that starts while the gateway is unreachable runs on
+                  it if it is less than 24 hours old, and fetches the current configuration once it
+                  connects. Do not edit it.
+                </td>
+                <td>Yes.</td>
+              </tr>
+              <tr>
+                <td><code>config-secrets/</code></td>
+                <td>Secrets the configuration refers to, such as model API keys.</td>
+                <td>Yes.</td>
+              </tr>
+              <tr>
+                <td><code>keyring/storage-keys/</code></td>
+                <td>The per-store keys, each usable only with the root key.</td>
+                <td>Yes, by the root key.</td>
+              </tr>
+              <tr>
+                <td><code>&lt;provider&gt;-credentials.json</code></td>
+                <td>
+                  An OAuth client you registered yourself, such as your Google client; set it with
+                  <code>omnesis creds set &lt;provider&gt;</code>.
+                </td>
+                <td>Yes.</td>
+              </tr>
+              <tr>
+                <td><code>&lt;provider&gt;/&lt;account&gt;/credentials.json</code></td>
+                <td>
+                  An API key you pasted for one account, kept per account so several accounts of a
+                  source can be connected side by side.
+                </td>
+                <td>Yes.</td>
+              </tr>
+              <tr>
+                <td><code>&lt;provider&gt;/&lt;account&gt;/tokens.json</code></td>
+                <td>OAuth tokens for a Google, Microsoft, Notion or Strava account.</td>
+                <td>Yes.</td>
+              </tr>
+              <tr>
+                <td><code>whatsapp/&lt;account&gt;/auth/</code></td>
+                <td>WhatsApp session files.</td>
+                <td>Yes.</td>
+              </tr>
+              <tr>
+                <td><code>whatsapp/&lt;account&gt;/store.db</code></td>
+                <td>The WhatsApp message archive.</td>
+                <td>Yes.</td>
+              </tr>
+              <tr>
+                <td><code>apple-imessage/transcripts.db</code></td>
+                <td>Voice-note transcripts made on the collector.</td>
+                <td>Yes.</td>
+              </tr>
+              <tr>
+                <td><code>enable-banking/&lt;account&gt;/bootstrap/</code></td>
+                <td>Transaction pages fetched at consent time, removed once imported.</td>
+                <td>Yes.</td>
+              </tr>
+              <tr>
+                <td><code>omnesis.db</code></td>
+                <td>SQLite: documents, sources, devices, tokens, people, links, sync state.</td>
+                <td>Yes.</td>
+              </tr>
+              <tr>
+                <td><code>index.db</code></td>
+                <td>SQLite: document chunks and the keyword index.</td>
+                <td>Yes.</td>
+              </tr>
+              <tr>
+                <td><code>index.usearch</code>, <code>index.usearch.enc</code></td>
+                <td>
+                  The vector index, a cache that can be rebuilt. With encryption at rest it is kept
+                  on disk as <code>index.usearch.enc</code>; a plaintext working copy exists only
+                  while the gateway runs and is removed when it stops.
+                </td>
+                <td>Yes, while the gateway is stopped.</td>
+              </tr>
+              <tr>
+                <td><code>analytics.db</code></td>
+                <td>
+                  DuckDB: typed rows from structured sources. The
+                  <code>analytics.db.tmp/</code> directory beside it holds temporary files while the
+                  gateway runs.
+                </td>
+                <td>Yes.</td>
+              </tr>
+              <tr>
+                <td><code>conversations/</code></td>
+                <td>Agent conversations, one JSON file each.</td>
+                <td>No.</td>
+              </tr>
+              <tr>
+                <td><code>gateway.lock</code></td>
+                <td>
+                  Marks the directory as owned by a running gateway; a second gateway refuses to
+                  start while it is held.
+                </td>
+                <td>No.</td>
+              </tr>
+              <tr>
+                <td><code>models/</code></td>
+                <td>Downloaded local model files.</td>
+                <td>No.</td>
+              </tr>
+              <tr>
+                <td><code>tls/</code></td>
+                <td>The gateway's TLS certificate and key.</td>
+                <td>No.</td>
+              </tr>
+              <tr>
+                <td><code>backups/</code>, <code>exports/</code></td>
+                <td>Backups and exports you create.</td>
+                <td>Yes.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="help">Help and support</h2>
+        <p>
+          If this documentation is wrong or incomplete, email
+          <a href="mailto:contact@omnesis.dev">contact@omnesis.dev</a>. Ask usage questions in
+          <a href="https://github.com/omnesis-dev/Omnesis/discussions">GitHub Discussions</a>,
+          report bugs through the
+          <a href="https://github.com/omnesis-dev/Omnesis/issues/new/choose">issue tracker</a>, and
+          read the
+          <a href="https://github.com/omnesis-dev/Omnesis/blob/main/CONTRIBUTING.md"
+            >contribution guide</a
+          >
+          before proposing a code change. For a phone-app problem, include what
+          <a href="/docs/apps">Mobile apps</a> asks for.
+        </p>
+        <div class="callout warn">
+          <p>
+            <strong>Never include your data in a report.</strong> Emails, messages, contacts, health
+            records, names and other indexed details are private, and so are tokens and pairing
+            codes. Reproduce a problem with invented examples. Report a vulnerability through the
+            <a href="https://github.com/omnesis-dev/Omnesis/blob/main/SECURITY.md"
+              >private security disclosure process</a
+            >, not a public issue.
+          </p>
+        </div>
+
+        <h2 id="where-next">Where next</h2>
+        <div class="cards">
+          <a class="card" href="/docs/install">
+            <h3 id="card-install">Install</h3>
+            <p>One command to a running gateway and collector.</p>
+          </a>
+          <a class="card" href="/docs/setup">
+            <h3 id="card-setup">Setup</h3>
+            <p>Pair the portal, other machines, phones and the browser extension.</p>
+          </a>
+          <a class="card" href="/docs/search">
+            <h3 id="card-search">Search</h3>
+            <p>Query syntax, filters and SQL.</p>
+          </a>
+          <a class="card" href="/docs/operating">
+            <h3 id="card-operating">Operating</h3>
+            <p>Services, monitoring, configuration and models.</p>
+          </a>
+          <a class="card" href="/docs/sources">
+            <h3 id="card-sources">Available sources</h3>
+            <p>Every source Omnesis can sync, and what each needs.</p>
+          </a>
+        </div>
+        <nav class="docs-pager" aria-label="Pages">
+          <a class="pager-next" href="/docs/install"
+            ><span class="pager-label">Next</span><span class="pager-title">Install</span></a
+          >
+        </nav>
+      </main>
+    </div>
+
+    <footer class="site-footer">
+      <div class="container">
+        <div class="footer-inner">
+          <div class="footer-base">© 2026 Omnesis</div>
+          <nav class="footer-links" aria-label="Footer">
+            <a href="/docs/">Docs</a>
+            <a href="/privacy">Privacy</a>
+            <a class="footer-mail" href="mailto:contact@omnesis.dev">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="2" y="4" width="20" height="16" rx="2" />
+                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+              </svg>
+              contact@omnesis.dev
+            </a>
+            <a class="footer-gh" href="#" data-oss-open>
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path
+                  d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+                />
+              </svg>
+              GitHub
+            </a>
+            <a
+              class="footer-social footer-x"
+              href="https://x.com/Omnesisdev"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Omnesis on X"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>@Omnesisdev
+            </a>
+            <a
+              class="footer-social footer-discord"
+              href="https://discord.gg/4Y8pQHrVv"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Join Omnesis on Discord"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>Discord
+            </a>
+          </nav>
+        </div>
+      </div>
+    </footer>
+
+    <script src="/docs/docs.js"></script>
+  </body>
+</html>

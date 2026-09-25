@@ -1,0 +1,6 @@
+{
+  "kind": "rate-limit",
+  "scope": "source",
+  "retryAfterMs": 60000,
+  "message": "429"
+}

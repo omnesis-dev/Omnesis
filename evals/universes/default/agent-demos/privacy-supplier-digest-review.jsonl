@@ -1,0 +1,9 @@
+# The privacy review of the supplier-digest draft. It allows the draft as written,
+# so what leaves is what was drafted and the release step reports `identical`.
+#
+# The submit_privacy_review call carries no recorded result: the replay backend
+# invokes the reviewer's real submission tool, which is what makes this a review
+# the gateway acts on rather than a transcript of one.
+{"afterMs":30,"event":{"type":"agent.message.start","payload":{"sessionId":"$SESSION","messageId":"$MSG","role":"assistant"}}}
+{"afterMs":120,"event":{"type":"agent.tool.start","payload":{"sessionId":"$SESSION","messageId":"$MSG","toolCallId":"tc_privacy_review_supplier","tool":"submit_privacy_review","args":{"decision":"allow","confidence":0.93,"findings":[{"category":"no_private_information","detailLevel":"existence","subject":"unknown","disposition":"allow","description":"The answer names two supplier organisations and the stage each review has reached. It carries no private information about a person."}],"rationale":"The request asks which supplier reviews are open. The answer stays at the level of organisations and process steps, naming no person, contact detail or figure, so the policy permits releasing it as drafted."},"intent":"Submit the privacy review"}}}
+{"afterMs":40,"event":{"type":"agent.message.end","payload":{"sessionId":"$SESSION","messageId":"$MSG","stopReason":"end_turn"}}}

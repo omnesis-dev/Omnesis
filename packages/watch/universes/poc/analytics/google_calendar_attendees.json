@@ -1,0 +1,138 @@
+[
+  {
+    "event_id": "evt-20260325-catchup",
+    "person_id": "0a1b2c3d-0000-4000-8000-000000000001"
+  },
+  {
+    "event_id": "evt-20260325-catchup",
+    "person_id": "7b2c9f45-0000-4000-8000-000000000007"
+  },
+  {
+    "event_id": "evt-20260402-review",
+    "person_id": "0a1b2c3d-0000-4000-8000-000000000001"
+  },
+  {
+    "event_id": "evt-20260402-review",
+    "person_id": "b3f2a9d4-0000-4000-8000-000000000002"
+  },
+  {
+    "event_id": "evt-20260419-handover",
+    "person_id": "0a1b2c3d-0000-4000-8000-000000000001"
+  },
+  {
+    "event_id": "evt-20260419-handover",
+    "person_id": "7b2c9f45-0000-4000-8000-000000000007"
+  },
+  {
+    "event_id": "evt-20260430-planning",
+    "person_id": "0a1b2c3d-0000-4000-8000-000000000001"
+  },
+  {
+    "event_id": "evt-20260430-planning",
+    "person_id": "5e7a1c88-0000-4000-8000-000000000004"
+  },
+  {
+    "event_id": "evt-20260515-reconnect",
+    "person_id": "0a1b2c3d-0000-4000-8000-000000000001"
+  },
+  {
+    "event_id": "evt-20260515-reconnect",
+    "person_id": "7b2c9f45-0000-4000-8000-000000000007"
+  },
+  {
+    "event_id": "evt-20260306-standup",
+    "person_id": "0a1b2c3d-0000-4000-8000-000000000001"
+  },
+  {
+    "event_id": "evt-20260306-standup",
+    "person_id": "b3f2a9d4-0000-4000-8000-000000000002"
+  },
+  {
+    "event_id": "evt-20260313-standup",
+    "person_id": "0a1b2c3d-0000-4000-8000-000000000001"
+  },
+  {
+    "event_id": "evt-20260313-standup",
+    "person_id": "b3f2a9d4-0000-4000-8000-000000000002"
+  },
+  {
+    "event_id": "evt-20260320-design",
+    "person_id": "0a1b2c3d-0000-4000-8000-000000000001"
+  },
+  {
+    "event_id": "evt-20260320-design",
+    "person_id": "5e7a1c88-0000-4000-8000-000000000004"
+  },
+  {
+    "event_id": "evt-20260327-standup",
+    "person_id": "0a1b2c3d-0000-4000-8000-000000000001"
+  },
+  {
+    "event_id": "evt-20260327-standup",
+    "person_id": "b3f2a9d4-0000-4000-8000-000000000002"
+  },
+  {
+    "event_id": "evt-20260403-budget",
+    "person_id": "0a1b2c3d-0000-4000-8000-000000000001"
+  },
+  {
+    "event_id": "evt-20260403-budget",
+    "person_id": "2f4d6b90-0000-4000-8000-000000000005"
+  },
+  {
+    "event_id": "evt-20260410-standup",
+    "person_id": "0a1b2c3d-0000-4000-8000-000000000001"
+  },
+  {
+    "event_id": "evt-20260410-standup",
+    "person_id": "b3f2a9d4-0000-4000-8000-000000000002"
+  },
+  {
+    "event_id": "evt-20260417-design",
+    "person_id": "0a1b2c3d-0000-4000-8000-000000000001"
+  },
+  {
+    "event_id": "evt-20260417-design",
+    "person_id": "5e7a1c88-0000-4000-8000-000000000004"
+  },
+  {
+    "event_id": "evt-20260424-standup",
+    "person_id": "0a1b2c3d-0000-4000-8000-000000000001"
+  },
+  {
+    "event_id": "evt-20260424-standup",
+    "person_id": "b3f2a9d4-0000-4000-8000-000000000002"
+  },
+  {
+    "event_id": "evt-20260501-budget",
+    "person_id": "0a1b2c3d-0000-4000-8000-000000000001"
+  },
+  {
+    "event_id": "evt-20260501-budget",
+    "person_id": "2f4d6b90-0000-4000-8000-000000000005"
+  },
+  {
+    "event_id": "evt-20260508-standup",
+    "person_id": "0a1b2c3d-0000-4000-8000-000000000001"
+  },
+  {
+    "event_id": "evt-20260508-standup",
+    "person_id": "b3f2a9d4-0000-4000-8000-000000000002"
+  },
+  {
+    "event_id": "evt-20260522-design",
+    "person_id": "0a1b2c3d-0000-4000-8000-000000000001"
+  },
+  {
+    "event_id": "evt-20260522-design",
+    "person_id": "5e7a1c88-0000-4000-8000-000000000004"
+  },
+  {
+    "event_id": "evt-20260528-standup",
+    "person_id": "0a1b2c3d-0000-4000-8000-000000000001"
+  },
+  {
+    "event_id": "evt-20260528-standup",
+    "person_id": "b3f2a9d4-0000-4000-8000-000000000002"
+  }
+]

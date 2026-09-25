@@ -1,0 +1,80 @@
+[
+  {
+    "id": "local-2025-09-02T08:15:00.000Z",
+    "placeName": "Studio Northstar",
+    "subLocality": "North Quarter",
+    "locality": "Example City",
+    "administrativeArea": "Example Region",
+    "country": "Exampleland",
+    "latitude": 12.3456,
+    "longitude": -45.6789,
+    "horizontalAccuracyM": 42,
+    "arrivalTime": "2025-09-02T08:15:00.000Z",
+    "departureTime": "2025-09-02T10:45:00.000Z"
+  },
+  {
+    "id": "local-2025-09-04T12:05:00.000Z",
+    "placeName": "Riverside Observatory",
+    "subLocality": "River Ward",
+    "locality": "Example City",
+    "administrativeArea": "Example Region",
+    "country": "Exampleland",
+    "latitude": 12.3567,
+    "longitude": -45.6678,
+    "horizontalAccuracyM": 31,
+    "arrivalTime": "2025-09-04T12:05:00.000Z",
+    "departureTime": "2025-09-04T13:20:00.000Z"
+  },
+  {
+    "id": "local-2025-09-07T16:30:00.000Z",
+    "placeName": "Juniper Workshop",
+    "subLocality": "South Arcade",
+    "locality": "Example City",
+    "administrativeArea": "Example Region",
+    "country": "Exampleland",
+    "latitude": 12.3678,
+    "longitude": -45.6567,
+    "horizontalAccuracyM": 55,
+    "arrivalTime": "2025-09-07T16:30:00.000Z",
+    "departureTime": "2025-09-07T19:10:00.000Z"
+  },
+  {
+    "id": "local-2025-09-11T09:00:00.000Z",
+    "placeName": "Atlas Reading Room",
+    "subLocality": "Library District",
+    "locality": "Example City",
+    "administrativeArea": "Example Region",
+    "country": "Exampleland",
+    "latitude": 12.3789,
+    "longitude": -45.6456,
+    "horizontalAccuracyM": 28,
+    "arrivalTime": "2025-09-11T09:00:00.000Z",
+    "departureTime": "2025-09-11T11:35:00.000Z"
+  },
+  {
+    "id": "local-2025-09-13T14:20:00.000Z",
+    "placeName": "Maple Glasshouse",
+    "subLocality": "Garden Ward",
+    "locality": "Example City",
+    "administrativeArea": "Example Region",
+    "country": "Exampleland",
+    "latitude": 12.389,
+    "longitude": -45.6345,
+    "horizontalAccuracyM": 36,
+    "arrivalTime": "2025-09-13T14:20:00.000Z",
+    "departureTime": "2025-09-13T16:05:00.000Z"
+  },
+  {
+    "id": "local-2025-09-16T18:10:00.000Z",
+    "placeName": "Copper Lantern Hall",
+    "subLocality": "East Terrace",
+    "locality": "Example City",
+    "administrativeArea": "Example Region",
+    "country": "Exampleland",
+    "latitude": 12.3901,
+    "longitude": -45.6234,
+    "horizontalAccuracyM": 47,
+    "arrivalTime": "2025-09-16T18:10:00.000Z",
+    "departureTime": "2025-09-16T20:40:00.000Z"
+  }
+]

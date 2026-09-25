@@ -1,0 +1,52 @@
+{
+  "self": "p_maya",
+  "people": [
+    {
+      "id": "p_maya",
+      "name": "Maya Reeves",
+      "emails": ["maya@example.com"],
+      "phones": ["+15550100100"],
+      "extra": {
+        "enableBankingAccountId": "jptrip-eb",
+        "lunchflowAccountId": "jptrip-lf"
+      }
+    },
+    {
+      "id": "p_jamie",
+      "name": "Jamie Lopez",
+      "emails": ["jamie.lopez@example.com"],
+      "phones": ["+15550100101"]
+    },
+    {
+      "id": "p_agency",
+      "name": "Studio Northstar Travel",
+      "emails": ["bookings@studionorthstar.example.com"]
+    },
+    {
+      "id": "p_hotel",
+      "name": "Tokyo Riverside Hotel",
+      "emails": ["reservations@riverside-tokyo.example.com"]
+    },
+    {
+      "id": "p_ryokan",
+      "name": "Kyoto Ryokan Sakura",
+      "emails": ["stay@ryokan-sakura.example.com"]
+    },
+    {
+      "id": "p_sushi",
+      "name": "Sushi Aoyama",
+      "emails": ["reserve@sushi-aoyama.example.com"]
+    },
+    {
+      "id": "p_kaiseki",
+      "name": "Hanami Tei Kaiseki",
+      "emails": ["yoyaku@hanami-tei.example.com"]
+    },
+    {
+      "id": "p_teamlab",
+      "name": "teamLab Planets Tokyo",
+      "emails": ["tickets@teamlab-planets.example.com"]
+    }
+  ],
+  "orgs": []
+}

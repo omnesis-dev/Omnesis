@@ -1,0 +1,13 @@
+{
+  "triggers": ["test mixed source decks"],
+  "placeholders": {
+    "docExternalIds": [
+      "synth-gmail-001",
+      "synth-gmail-002",
+      "synth-gmail-003",
+      "synth-whatsapp-001",
+      "synth-whatsapp-002",
+      "synth-gdrive-001"
+    ]
+  }
+}

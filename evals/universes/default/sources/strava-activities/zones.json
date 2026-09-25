@@ -1,0 +1,124 @@
+[
+  {
+    "activityId": 102,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 0,
+    "maxValue": 120,
+    "timeSeconds": 374
+  },
+  {
+    "activityId": 102,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 120,
+    "maxValue": 150,
+    "timeSeconds": 329
+  },
+  {
+    "activityId": 102,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 150,
+    "maxValue": 170,
+    "timeSeconds": 0
+  },
+  {
+    "activityId": 102,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 170,
+    "maxValue": 190,
+    "timeSeconds": 0
+  },
+  {
+    "activityId": 102,
+    "zoneType": "heartrate",
+    "bucketIndex": 4,
+    "minValue": 190,
+    "maxValue": null,
+    "timeSeconds": 0
+  },
+
+  {
+    "activityId": 103,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 0,
+    "maxValue": 120,
+    "timeSeconds": 285
+  },
+  {
+    "activityId": 103,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 120,
+    "maxValue": 150,
+    "timeSeconds": 402
+  },
+  {
+    "activityId": 103,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 150,
+    "maxValue": 170,
+    "timeSeconds": 0
+  },
+  {
+    "activityId": 103,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 170,
+    "maxValue": 190,
+    "timeSeconds": 0
+  },
+  {
+    "activityId": 103,
+    "zoneType": "heartrate",
+    "bucketIndex": 4,
+    "minValue": 190,
+    "maxValue": null,
+    "timeSeconds": 0
+  },
+
+  {
+    "activityId": 104,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 0,
+    "maxValue": 120,
+    "timeSeconds": 1516
+  },
+  {
+    "activityId": 104,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 120,
+    "maxValue": 150,
+    "timeSeconds": 54
+  },
+  {
+    "activityId": 104,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 150,
+    "maxValue": 170,
+    "timeSeconds": 0
+  },
+  {
+    "activityId": 104,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 170,
+    "maxValue": 190,
+    "timeSeconds": 0
+  },
+  {
+    "activityId": 104,
+    "zoneType": "heartrate",
+    "bucketIndex": 4,
+    "minValue": 190,
+    "maxValue": null,
+    "timeSeconds": 0
+  }
+]

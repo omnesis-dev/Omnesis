@@ -1,0 +1,46 @@
+{
+  "note": "Both halves land on thread T-3001 inside the deadline, so the AND completes. A second thread gets an invoice and no receipt, so its instance runs out the deadline and expires.",
+  "recall": [
+    {
+      "nodeId": "invoice_email",
+      "documentId": "d0c00001-0000-4000-8000-000000000012",
+      "score": 0.7,
+      "title": "Invoice 2026-03 for March retainer"
+    },
+    {
+      "nodeId": "receipt_email",
+      "documentId": "d0c00001-0000-4000-8000-000000000013",
+      "score": 0.7,
+      "title": "Receipt — payment received, thank you"
+    },
+    {
+      "nodeId": "invoice_email",
+      "documentId": "d0c00001-0000-4000-8000-000000000014",
+      "score": 0.8,
+      "title": "Invoice 2026-04, due on receipt"
+    }
+  ],
+  "judgements": [
+    {
+      "nodeId": "invoice_email",
+      "documentId": "d0c00001-0000-4000-8000-000000000012",
+      "fired": true,
+      "output": {},
+      "title": "Invoice 2026-03 for March retainer"
+    },
+    {
+      "nodeId": "receipt_email",
+      "documentId": "d0c00001-0000-4000-8000-000000000013",
+      "fired": true,
+      "output": {},
+      "title": "Receipt — payment received, thank you"
+    },
+    {
+      "nodeId": "invoice_email",
+      "documentId": "d0c00001-0000-4000-8000-000000000014",
+      "fired": true,
+      "output": {},
+      "title": "Invoice 2026-04, due on receipt"
+    }
+  ]
+}

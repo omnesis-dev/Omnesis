@@ -1,0 +1,15 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "COLLISION_MODE_REQUIRED",
+      "severity": "error",
+      "path": "/watch/nodes/1/on_collision",
+      "message": "Node 'trend' holds state, so what a colliding arm does must be an explicit choice.",
+      "details": {
+        "nodeId": "trend",
+        "legal": ["reset", "ignore", "spawn", "accumulate"]
+      }
+    }
+  ]
+}

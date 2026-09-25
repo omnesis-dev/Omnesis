@@ -1,0 +1,294 @@
+{
+  "trace": {
+    "watch": "major-life-turning-point",
+    "records": [
+      {
+        "seq": -1,
+        "nodeId": "weekly_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -1,
+        "nodeId": "turning_point_review",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -1,
+        "nodeId": "monthly_cap",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -2,
+        "nodeId": "weekly_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -2,
+        "nodeId": "turning_point_review",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -2,
+        "nodeId": "monthly_cap",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "within the cooldown"
+      },
+      {
+        "seq": -3,
+        "nodeId": "weekly_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -3,
+        "nodeId": "turning_point_review",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -3,
+        "nodeId": "monthly_cap",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "within the cooldown"
+      },
+      {
+        "seq": -4,
+        "nodeId": "weekly_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -4,
+        "nodeId": "turning_point_review",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -4,
+        "nodeId": "monthly_cap",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "within the cooldown"
+      },
+      {
+        "seq": -5,
+        "nodeId": "weekly_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -5,
+        "nodeId": "turning_point_review",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -5,
+        "nodeId": "monthly_cap",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "within the cooldown"
+      },
+      {
+        "seq": -6,
+        "nodeId": "weekly_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -6,
+        "nodeId": "turning_point_review",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -6,
+        "nodeId": "monthly_cap",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -7,
+        "nodeId": "weekly_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -7,
+        "nodeId": "turning_point_review",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -7,
+        "nodeId": "monthly_cap",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "within the cooldown"
+      },
+      {
+        "seq": -8,
+        "nodeId": "weekly_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -8,
+        "nodeId": "turning_point_review",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -8,
+        "nodeId": "monthly_cap",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "within the cooldown"
+      },
+      {
+        "seq": -9,
+        "nodeId": "weekly_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -9,
+        "nodeId": "turning_point_review",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -9,
+        "nodeId": "monthly_cap",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "within the cooldown"
+      },
+      {
+        "seq": -10,
+        "nodeId": "weekly_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -10,
+        "nodeId": "turning_point_review",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -10,
+        "nodeId": "monthly_cap",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "within the cooldown"
+      },
+      {
+        "seq": -11,
+        "nodeId": "weekly_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -11,
+        "nodeId": "turning_point_review",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -11,
+        "nodeId": "monthly_cap",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -12,
+        "nodeId": "weekly_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -12,
+        "nodeId": "turning_point_review",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -12,
+        "nodeId": "monthly_cap",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "within the cooldown"
+      },
+      {
+        "seq": -13,
+        "nodeId": "weekly_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -13,
+        "nodeId": "turning_point_review",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -13,
+        "nodeId": "monthly_cap",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "within the cooldown"
+      }
+    ],
+    "firings": [
+      {
+        "seq": -1,
+        "nodeId": "monthly_cap",
+        "keyHash": "e3b0c44298fc1c149afbf4c8996fb924:0",
+        "key": "singleton",
+        "firedAt": "2026-03-01T20:00:00.000Z",
+        "payload": {
+          "summary": "A relocation was arranged and confirmed across several channels this fortnight."
+        },
+        "documentIds": []
+      },
+      {
+        "seq": -6,
+        "nodeId": "monthly_cap",
+        "keyHash": "e3b0c44298fc1c149afbf4c8996fb924:0",
+        "key": "singleton",
+        "firedAt": "2026-04-05T20:00:00.000Z",
+        "payload": {
+          "summary": "A relocation was arranged and confirmed across several channels this fortnight."
+        },
+        "documentIds": []
+      },
+      {
+        "seq": -11,
+        "nodeId": "monthly_cap",
+        "keyHash": "e3b0c44298fc1c149afbf4c8996fb924:0",
+        "key": "singleton",
+        "firedAt": "2026-05-10T20:00:00.000Z",
+        "payload": {
+          "summary": "A relocation was arranged and confirmed across several channels this fortnight."
+        },
+        "documentIds": []
+      }
+    ]
+  },
+  "backtest": {
+    "events": 1208,
+    "days": 90,
+    "firings": 0,
+    "reachByNode": { "turning_point_review": 13 },
+    "totalReaches": 13,
+    "unboundedNodes": []
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "sourceId": "fixture:workspace:demo",
+  "state": "completed",
+  "members": [
+    {
+      "sourceId": "fixture:workspace:demo",
+      "deviceId": "fixture-device-a",
+      "state": "completed",
+      "notices": [
+        {
+          "kind": "coverage-partial",
+          "severity": "info",
+          "title": "Only recent history is reachable",
+          "detail": "Earlier history was not supplied."
+        }
+      ]
+    },
+    {
+      "sourceId": "fixture:workspace:demo",
+      "deviceId": "fixture-device-b",
+      "state": "error",
+      "errorMessage": "Connection refused",
+      "notices": [
+        {
+          "kind": "error",
+          "severity": "error",
+          "title": "The last sync failed",
+          "detail": "Connection refused",
+          "steps": [
+            "Check the network connection.",
+            "Sync again."
+          ],
+          "since": "2030-01-01T00:00:00.000Z"
+        },
+        {
+          "kind": "replica-dispute",
+          "severity": "info",
+          "title": "Some items were restored on this device"
+        },
+        {
+          "kind": "fixture-future-kind",
+          "severity": "fixture-future-severity",
+          "title": "A notice from a newer gateway"
+        }
+      ]
+    }
+  ]
+}

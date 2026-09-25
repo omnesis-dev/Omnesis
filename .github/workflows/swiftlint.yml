@@ -1,0 +1,116 @@
+name: swiftlint
+
+# Full validation supplies one immutable source revision to this reusable lane.
+# Manual full requests enter through the guarded admission controller.
+on:
+  workflow_call:
+    inputs:
+      target_sha:
+        description: "Exact 40-character source revision to validate"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  # Both linters are pinned to an exact release, checksum-verified. An
+  # unpinned installer resolves to whatever the toolchain publisher shipped
+  # most recently, so a new upstream version can change verdicts with no code
+  # change. Bumping a version here is a deliberate edit that lands
+  # together with whatever reformatting or re-baselining it demands.
+  SWIFTFORMAT_VERSION: "0.62.1"
+  SWIFTFORMAT_SHA256: "7cb1cb1fae04932047c7015441c543848e8e60e1572d808d080e0a1f1661114a"
+  SWIFTLINT_VERSION: "0.65.1"
+  SWIFTLINT_SHA256: "c1e429b0599cf1b516f369a2d9ec04eaf0e436f3c12b637df8851fa52ff694d0"
+
+jobs:
+  swiftlint:
+    # A macOS runner because SwiftLint's `portable_swiftlint` release asset is
+    # a macOS binary, and because --baseline support needs a recent SwiftLint
+    # (added in 0.57.0). The Docker-based norio-nomura/action-swiftlint@3.2.1
+    # bundles an older version that silently ignores the flag.
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Install SwiftLint
+        # The upstream release asset rather than `brew install swiftlint`: brew
+        # tracks the newest formula, so the version a run uses is whatever the
+        # machine last happened to resolve. See the SWIFTLINT_VERSION note
+        # above; the checksum makes the download reproducible and tamper-evident.
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/swiftlint-$SWIFTLINT_VERSION"
+          mkdir -p "$dest"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/portable_swiftlint.zip" \
+            "https://github.com/realm/SwiftLint/releases/download/$SWIFTLINT_VERSION/portable_swiftlint.zip"
+          echo "$SWIFTLINT_SHA256  $RUNNER_TEMP/portable_swiftlint.zip" | shasum -a 256 -c -
+          unzip -qo "$RUNNER_TEMP/portable_swiftlint.zip" -d "$dest"
+          chmod +x "$dest/swiftlint"
+          echo "$dest" >> "$GITHUB_PATH"
+
+      - name: lane [swiftlint]
+        # --baseline suppresses the pre-existing violations recorded in
+        # .swiftlint-baseline.json so only NEW violations fail CI. When
+        # the iOS code is cleaned up, regenerate the baseline (or delete
+        # it) to ratchet the standard tighter. The baseline matches a
+        # violation by (file, rule, reason), and several reasons embed the
+        # file's current line count — so a change that shifts line counts (a
+        # reformat above all) can unmatch entries, and needs the baseline
+        # regenerated in the same commit.
+        run: |
+          swiftlint version
+          swiftlint lint --strict --baseline .swiftlint-baseline.json --reporter github-actions-logging
+
+  swiftformat:
+    # A macOS runner because SwiftFormat's `swiftformat.zip` release asset is a
+    # macOS binary, and the format check is fast enough that a native runner
+    # costs nothing.
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Install SwiftFormat
+        # The upstream release asset rather than `brew install swiftformat`.
+        # SwiftFormat enables new rules by default as it releases them, so an
+        # unpinned install silently widens what `--lint` demands and reddens a
+        # tree nobody touched. See the SWIFTFORMAT_VERSION note above.
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/swiftformat-$SWIFTFORMAT_VERSION"
+          mkdir -p "$dest"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/swiftformat.zip" \
+            "https://github.com/nicklockwood/SwiftFormat/releases/download/$SWIFTFORMAT_VERSION/swiftformat.zip"
+          echo "$SWIFTFORMAT_SHA256  $RUNNER_TEMP/swiftformat.zip" | shasum -a 256 -c -
+          unzip -qo "$RUNNER_TEMP/swiftformat.zip" -d "$dest"
+          chmod +x "$dest/swiftformat"
+          echo "$dest" >> "$GITHUB_PATH"
+
+      - name: lane [swiftformat]
+        run: |
+          swiftformat --version
+          swiftformat --lint ios

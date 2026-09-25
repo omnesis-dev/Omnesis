@@ -1,0 +1,639 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Vision — Omnesis</title>
+    <meta
+      name="description"
+      content="Where Omnesis is going: from indexing your entire digital life to understanding it — a private system that surfaces the right thing at the right time."
+    />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <script src="/oss-modal.js" defer></script>
+    <meta name="theme-color" content="#06090f" />
+    <meta property="og:title" content="Vision — Omnesis" />
+    <meta
+      property="og:description"
+      content="Where Omnesis is going: from indexing your entire digital life to understanding it."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Set the theme before first paint, sharing the persisted choice with the
+         landing page so a visitor's light/dark preference carries across. -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("omnesis-theme");
+          document.documentElement.setAttribute("data-theme", t === "light" ? "light" : "dark");
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "dark");
+        }
+      })();
+    </script>
+
+    <style>
+      :root {
+        --bg-deep: #06090f;
+        --text-primary: #e6edf3;
+        --text-secondary: #8b949e;
+        --accent: #58a6ff;
+        --border: #30363d;
+        --border-subtle: #21262d;
+        --nav-bg: rgba(6, 9, 15, 0.85);
+        --grid-line: rgba(88, 166, 255, 0.06);
+        --font-sans:
+          "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      }
+
+      :root[data-theme="light"] {
+        --bg-deep: #ffffff;
+        --text-primary: #0f172a;
+        --text-secondary: #475569;
+        --accent: #0969da;
+        --border: #d0d7de;
+        --border-subtle: #d8dee4;
+        --nav-bg: rgba(255, 255, 255, 0.82);
+        --grid-line: rgba(9, 105, 218, 0.05);
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+        -webkit-tap-highlight-color: transparent;
+      }
+      body {
+        font-family: var(--font-sans);
+        color: var(--text-primary);
+        background: var(--bg-deep);
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+        line-height: 1.6;
+        min-height: 100svh;
+      }
+
+      /* Faint page-wide grid, echoing the landing backdrop. */
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: -1;
+        pointer-events: none;
+        background-image:
+          linear-gradient(var(--grid-line) 1px, transparent 1px),
+          linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+        background-size: 56px 56px;
+        mask-image: radial-gradient(90rem 60rem at 50% 0%, #000 0%, transparent 70%);
+        -webkit-mask-image: radial-gradient(90rem 60rem at 50% 0%, #000 0%, transparent 70%);
+      }
+
+      a {
+        color: inherit;
+      }
+
+      /* ── Nav ── */
+      #nav {
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        padding: 16px 0;
+        background: var(--nav-bg);
+        backdrop-filter: blur(20px) saturate(180%);
+        -webkit-backdrop-filter: blur(20px) saturate(180%);
+        border-bottom: 1px solid var(--border-subtle);
+      }
+      #nav .nav-inner {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 0 24px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .nav-logo {
+        font-size: 23px;
+        font-weight: 700;
+        color: var(--text-primary);
+        text-decoration: none;
+        letter-spacing: -0.02em;
+        text-transform: uppercase;
+      }
+      .nav-logo-mark {
+        display: inline-block;
+        width: 0.83em;
+        height: 0.83em;
+        vertical-align: -0.066em;
+        margin-right: 0.026em;
+        background-color: #fff;
+        -webkit-mask: url(/omnesis-mark.svg) no-repeat center / contain;
+        mask: url(/omnesis-mark.svg) no-repeat center / contain;
+      }
+      :root[data-theme="light"] .nav-logo-mark {
+        background-color: var(--text-primary);
+      }
+      .nav-right {
+        display: flex;
+        align-items: center;
+        gap: 24px;
+      }
+      .nav-links {
+        display: flex;
+        gap: 28px;
+        list-style: none;
+      }
+      .nav-links a {
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--text-secondary);
+        text-decoration: none;
+        transition: color 0.2s ease;
+      }
+      .nav-links a:hover {
+        color: var(--text-primary);
+      }
+      /* The page you are on is marked, not linked away from. */
+      .nav-links a[aria-current="page"] {
+        color: var(--text-primary);
+        font-weight: 600;
+      }
+      @media (max-width: 560px) {
+        .nav-right {
+          gap: 14px;
+        }
+        .nav-links {
+          gap: 16px;
+        }
+        .nav-links a {
+          font-size: 13px;
+        }
+      }
+      .theme-toggle,
+      .nav-icon-btn,
+      .nav-burger {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 38px;
+        height: 38px;
+        padding: 0;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: transparent;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition:
+          color 0.2s ease,
+          border-color 0.2s ease;
+      }
+      .theme-toggle:hover,
+      .nav-icon-btn:hover,
+      .nav-burger:hover {
+        color: var(--text-primary);
+        border-color: var(--accent);
+      }
+      .theme-toggle svg,
+      .nav-icon-btn svg,
+      .nav-burger svg {
+        width: 18px;
+        height: 18px;
+      }
+      .theme-toggle .icon-moon {
+        display: none;
+      }
+      :root[data-theme="light"] .theme-toggle .icon-sun {
+        display: none;
+      }
+      :root[data-theme="light"] .theme-toggle .icon-moon {
+        display: block;
+      }
+      .nav-burger {
+        display: none;
+      }
+      .nav-burger .icon-close,
+      #nav.menu-open .nav-burger .icon-open {
+        display: none;
+      }
+      #nav.menu-open .nav-burger .icon-close {
+        display: block;
+      }
+      .site-footer {
+        border-top: 1px solid var(--border-subtle);
+        padding: 28px 0;
+      }
+      .site-footer .nav-inner {
+        max-width: 1020px;
+        margin: 0 auto;
+        padding: 0 24px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        flex-wrap: wrap;
+      }
+      .footer-links {
+        display: flex;
+        align-items: center;
+        gap: 24px;
+        flex-wrap: wrap;
+      }
+      .footer-links a,
+      .footer-base {
+        color: var(--text-secondary);
+        font-size: 13px;
+        text-decoration: none;
+      }
+      .footer-mail,
+      .footer-gh {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+      }
+      .footer-mail svg,
+      .footer-gh svg {
+        width: 15px;
+        height: 15px;
+      }
+      @media (max-width: 768px) {
+        #nav .nav-inner {
+          position: relative;
+        }
+        .nav-links {
+          display: none;
+        }
+        .nav-burger {
+          display: inline-flex;
+        }
+        #nav.menu-open .nav-links {
+          position: absolute;
+          top: calc(100% + 16px);
+          left: 0;
+          right: 0;
+          display: grid;
+          gap: 0;
+          padding: 8px 24px 12px;
+          background: var(--nav-bg);
+          border-bottom: 1px solid var(--border-subtle);
+        }
+        #nav.menu-open .nav-links a {
+          display: block;
+          padding: 10px 0;
+        }
+      }
+
+      /* ── Vision prose ── */
+      .vision {
+        max-width: 1020px;
+        margin: 0 auto;
+        padding: clamp(56px, 11vh, 104px) 24px clamp(72px, 14vh, 128px);
+      }
+      .vision h1 {
+        font-size: clamp(30px, 5vw, 42px);
+        font-weight: 800;
+        letter-spacing: -0.03em;
+        line-height: 1.1;
+        margin-bottom: clamp(24px, 4vh, 36px);
+      }
+      .vision p {
+        font-size: 17px;
+        line-height: 1.6;
+        color: var(--text-secondary);
+      }
+      .vision h2 {
+        font-size: clamp(20px, 3vw, 24px);
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        line-height: 1.25;
+        margin: clamp(40px, 7vh, 60px) 0 16px;
+      }
+      .vision p a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      .vision p a:hover {
+        text-decoration: underline;
+      }
+      .vision p + p {
+        margin-top: 15px;
+      }
+      .vision ul {
+        font-size: 17px;
+        line-height: 1.6;
+        color: var(--text-secondary);
+        margin: 15px 0;
+        padding-left: 22px;
+      }
+      .vision li + li {
+        margin-top: 6px;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+      }
+    </style>
+    <link rel="stylesheet" href="/footer-social.css" />
+  </head>
+  <body>
+    <nav id="nav">
+      <div class="nav-inner">
+        <a href="/" class="nav-logo" aria-label="Omnesis"
+          ><span class="nav-logo-mark" aria-hidden="true"></span>MNESIS</a
+        >
+        <div class="nav-right">
+          <ul class="nav-links" id="primary-navigation">
+            <li><a href="/">Context Layer</a></li>
+            <li><a href="/brain">Omnesis Brain</a></li>
+            <li><a href="/vision" aria-current="page">Vision</a></li>
+          </ul>
+          <a
+            class="nav-icon-btn"
+            href="#"
+            data-oss-open
+            aria-label="Omnesis on GitHub"
+            title="Omnesis on GitHub"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path
+                d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+              />
+            </svg>
+          </a>
+          <button
+            id="theme-toggle"
+            class="theme-toggle"
+            type="button"
+            aria-label="Switch between dark and light theme"
+            title="Toggle theme"
+          >
+            <svg
+              class="icon-sun"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="4" />
+              <path
+                d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"
+              />
+            </svg>
+            <svg
+              class="icon-moon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          </button>
+          <button
+            id="nav-burger"
+            class="nav-burger"
+            type="button"
+            aria-label="Open navigation menu"
+            aria-controls="primary-navigation"
+            aria-expanded="false"
+          >
+            <svg
+              class="icon-open"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              aria-hidden="true"
+            >
+              <path d="M3 6h18M3 12h18M3 18h18" />
+            </svg>
+            <svg
+              class="icon-close"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              aria-hidden="true"
+            >
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <main>
+      <article class="vision">
+        <h1>Omnesis Vision</h1>
+
+        <p>
+          Everything you do leaves a trail — emails, messages, files, calendar events, notes,
+          photos, bank transactions, even the little things your phone quietly records about your
+          health. All of it is scattered across a dozen apps and platforms that don’t talk to each
+          other, and nothing you own can see across them.
+        </p>
+
+        <h2>What exists today</h2>
+
+        <p>
+          The first thing Omnesis does is fix that. It plugs into the sources that actually matter
+          in your life, keeps them in sync, and indexes everything quietly in the background — on
+          your own machine. One search engine for your entire digital life. One SQL query engine for
+          all your structured data — health, finance, workouts, and the rest. The bar I am setting
+          for myself is that your digital life’s index should fit on a 16GB Mac mini.
+        </p>
+
+        <p>
+          Today’s AI agents can reach some of this data through MCP connectors, but there is no
+          connector for your iMessage and WhatsApp history, your Apple Health data, or the web pages
+          you have read. And an agent that doesn’t know where an answer lives has to ask every
+          connector it has, burning latency and quota along the way. An agent pointed at Omnesis has
+          one place to look.
+        </p>
+
+        <p>
+          But search alone isn’t enough, because your life doesn’t happen inside one app. A single
+          story — a trip, a project, a friendship — usually plays out across a WhatsApp thread, a
+          few documents in Drive, a calendar invite, a handful of photos. The same goes for the
+          people in it. So Omnesis works out the connections between each piece of data and builds a
+          graph:
+        </p>
+        <ul>
+          <li>
+            Omnesis knows when a person in a WhatsApp conversation is the same person as the
+            recipient of an email you sent.
+          </li>
+          <li>
+            Omnesis knows that a contract you uploaded to Google Drive was shared in that same email
+            thread.
+          </li>
+          <li>
+            Omnesis knows that you have an almost identical copy of that contract somewhere else in
+            your Drive.
+          </li>
+          <li>
+            Omnesis knows that a landscaping company’s web page in its index was opened because your
+            husband sent you the link on iMessage.
+          </li>
+          <li>
+            Omnesis knows that you decided to call that company after visiting their site, because a
+            Granola transcript records a call to a phone number that appeared on that page.
+          </li>
+        </ul>
+        <p>
+          With search alone, a request about “gardening” might turn up the visited web page and the
+          contract, but miss all the adjacent context in WhatsApp and iMessage — and never piece
+          together the timeline of what actually happened. The graph is what makes that adjacent
+          context cheap to retrieve.
+        </p>
+
+        <p>
+          That’s the foundation. On top of it sits the Omnesis agent, which you can ask about the
+          most private corners of your digital life. It runs against your indexed corpus on your own
+          Mac mini, and the local databases can be encrypted at rest. If you enable cloud inference,
+          I recommend a zero-data-retention provider. The built-in agent has no web navigation or
+          search: it can answer from your corpus, but it has no way to push anything out of it. If
+          you’d rather, you can plug in your own agent — Hermes, OpenClaw, Claude — and get the
+          benefit of Omnesis with something that can actually act on the world. How much that agent
+          gets to see is up to you. At one end, Direct mode hands it raw retrieval over the sources
+          you tick and nothing else. At the other, you write a privacy policy in plain language and
+          a privacy reviewer applies it to every answer before it leaves: release it, hold it back,
+          redact the sensitive parts, or escalate to your phone so you decide.
+        </p>
+
+        <h2>Where it goes</h2>
+
+        <p>
+          Everything above is already implemented. What interests me now is the leap from a system
+          that stores your context to one that understands it. What I’ve built so far is reactive:
+          it answers when you ask. I want something that tells you what you need to know, exactly
+          when you need to know it. So much of life is made of open loops — decisions you haven’t
+          made, tasks you haven’t handled, commitments you need to meet — and each one holds a
+          little of your attention until it’s closed. Imagine a product that carried that load for
+          you:
+        </p>
+        <ul>
+          <li>
+            A brief before a concert: when it starts, that you and a friend agreed to meet an hour
+            earlier, and the key details from the event page you’d already read.
+          </li>
+          <li>
+            A reminder about the email from your lawyer you still need to answer — the one asking
+            for three documents — along with the news that two of them are already in your Google
+            Drive and the third you’ll have to request from your accountant.
+          </li>
+          <li>A heads-up to renew your passport before it expires.</li>
+          <li>
+            A gentle nudge to call your mum, because you usually call once a week and it’s been ten
+            days.
+          </li>
+          <li>
+            A prompt to follow up with your previous landlord, because a week ago he promised your
+            deposit back within two business days and it still doesn’t show in your bank records.
+          </li>
+        </ul>
+
+        <p>
+          This is what the <a href="/brain">Omnesis Brain</a> is for: a layer that works quietly in
+          the background to make sense of what the index holds, and that only ever reasons from what
+          your data actually recorded. It is early. The data foundation underneath it — sync, index,
+          graph — is the part that is solid, and it is the part I am opening up. I would like a
+          community to form around it, building their own algorithms and experiments on top of a
+          substrate they don’t have to rebuild first.
+        </p>
+      </article>
+    </main>
+
+    <footer class="site-footer">
+      <div class="nav-inner">
+        <div class="footer-base">© 2026 Omnesis</div>
+        <nav class="footer-links" aria-label="Footer">
+          <a href="/privacy">Privacy</a>
+          <a class="footer-mail" href="mailto:contact@omnesis.dev">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <rect x="2" y="4" width="20" height="16" rx="2" />
+              <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+            </svg>
+            contact@omnesis.dev
+          </a>
+          <a class="footer-gh" href="#" data-oss-open>
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path
+                d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+              />
+            </svg>
+            GitHub
+          </a>
+          <a
+            class="footer-social footer-x"
+            href="https://x.com/Omnesisdev"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Omnesis on X"
+          >
+            <span class="footer-social-icon" aria-hidden="true"></span>@Omnesisdev
+          </a>
+          <a
+            class="footer-social footer-discord"
+            href="https://discord.gg/4Y8pQHrVv"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Join Omnesis on Discord"
+          >
+            <span class="footer-social-icon" aria-hidden="true"></span>Discord
+          </a>
+        </nav>
+      </div>
+    </footer>
+
+    <script>
+      (function () {
+        const btn = document.getElementById("theme-toggle");
+        if (!btn) return;
+        btn.addEventListener("click", () => {
+          const light = document.documentElement.getAttribute("data-theme") !== "light";
+          document.documentElement.setAttribute("data-theme", light ? "light" : "dark");
+          try {
+            localStorage.setItem("omnesis-theme", light ? "light" : "dark");
+          } catch (e) {
+            /* private mode / storage blocked — theme still applies for the session */
+          }
+        });
+      })();
+      (function () {
+        const nav = document.getElementById("nav");
+        const burger = document.getElementById("nav-burger");
+        if (!nav || !burger) return;
+        burger.addEventListener("click", () => {
+          const open = nav.classList.toggle("menu-open");
+          burger.setAttribute("aria-expanded", String(open));
+          burger.setAttribute(
+            "aria-label",
+            open ? "Close navigation menu" : "Open navigation menu",
+          );
+        });
+      })();
+    </script>
+  </body>
+</html>

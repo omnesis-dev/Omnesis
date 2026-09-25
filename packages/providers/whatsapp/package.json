@@ -1,0 +1,29 @@
+{
+  "name": "@omnesis/provider-whatsapp",
+  "version": "0.5.11",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/fake-server.ts"
+  },
+  "dependencies": {
+    "@hapi/boom": "^9.1.3",
+    "@omnesis/core": "*",
+    "@omnesis/source-sdk": "*",
+    "@omnesis/types": "*",
+    "@whiskeysockets/baileys": "7.0.0-rc13",
+    "better-sqlite3": "^13.0.3",
+    "better-sqlite3-multiple-ciphers": "^13.0.3",
+    "pino": "^10.3.1",
+    "qrcode-terminal": "^0.12.0",
+    "sharp": "^0.35.4"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11"
+  },
+  "files": [
+    "dist"
+  ]
+}

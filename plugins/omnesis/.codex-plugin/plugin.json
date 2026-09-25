@@ -1,0 +1,29 @@
+{
+  "name": "omnesis",
+  "version": "0.5.11",
+  "description": "Connect a private Omnesis Gateway, then use its OAuth-protected Answer, Direct, and Notes capabilities.",
+  "author": {
+    "name": "Adrien Conrath",
+    "url": "https://omnesis.dev"
+  },
+  "homepage": "https://omnesis.dev",
+  "repository": "https://github.com/omnesis-dev/Omnesis",
+  "license": "AGPL-3.0-or-later",
+  "keywords": ["mcp", "knowledge-base", "personal-data", "local", "privacy"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Omnesis",
+    "shortDescription": "Connect and use your private Omnesis Gateway",
+    "longDescription": "Guides the one-time private Gateway connection required by ChatGPT, then uses privacy-reviewed Answer tools, raw read-only Direct tools, and note capture according to the approved connection's access level.",
+    "developerName": "Omnesis",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://omnesis.dev",
+    "defaultPrompt": [
+      "Help me connect Omnesis to ChatGPT.",
+      "Ask Omnesis what is on my agenda next week.",
+      "Ask Omnesis for the latest updates on a topic from my personal records."
+    ],
+    "brandColor": "#111827"
+  }
+}

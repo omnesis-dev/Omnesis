@@ -1,0 +1,59 @@
+{
+  "trace": {
+    "watch": "alice-decided-to-leave",
+    "records": [
+      {
+        "seq": 18,
+        "nodeId": "alice_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 60,
+        "nodeId": "alice_email",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 60,
+        "nodeId": "any_signal",
+        "key": "singleton",
+        "transition": "fired",
+        "detail": "via alice_email"
+      },
+      {
+        "seq": 60,
+        "nodeId": "decided_judge",
+        "key": "person=b3f2a9d4-0000-4000-8000-000000000002",
+        "transition": "fired"
+      }
+    ],
+    "firings": [
+      {
+        "seq": 60,
+        "nodeId": "decided_judge",
+        "keyHash": "34fab429cdec5ce99dec6a30a4d214d3:0",
+        "key": "person=b3f2a9d4-0000-4000-8000-000000000002",
+        "firedAt": "2026-03-05T08:30:00.000Z",
+        "payload": {
+          "confidence": "clear",
+          "evidence": [
+            "d0c00001-0000-4000-8000-000000000002",
+            "d0c00001-0000-4000-8000-000000000003"
+          ]
+        },
+        "documentIds": ["d0c00001-0000-4000-8000-000000000002"]
+      }
+    ],
+    "ended": "fired"
+  },
+  "backtest": {
+    "events": 1208,
+    "days": 90,
+    "firings": 0,
+    "reachByNode": { "alice_chats": 22, "alice_email": 24 },
+    "totalReaches": 46,
+    "unboundedNodes": []
+  }
+}

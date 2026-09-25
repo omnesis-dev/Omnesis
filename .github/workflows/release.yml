@@ -1,0 +1,483 @@
+name: release
+
+# Fires on a pushed product tag. Cutting and pushing that tag is the operator's
+# deliberate act (`npm run release -- tag`, then `git push origin vX.Y.Z`); this
+# workflow is everything that follows it.
+#
+# Publication is armed separately from the trigger. Until the repository
+# variable OMNESIS_RELEASE_PUBLISH is set to `1`, every distribution step runs
+# in dry-run: packages are packed rather than published, images are built
+# rather than pushed, and the GitHub Release is described rather than created.
+# So a pushed tag on an unarmed repository proves the whole pipeline and
+# distributes nothing.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to run against (must already exist)"
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  # Publication destination and authorization are independent from arming.
+  # An unset destination preserves the public npm registry as the default.
+  PACKAGE_REGISTRY: ${{ vars.OMNESIS_RELEASE_REGISTRY || 'https://registry.npmjs.org' }}
+  # The single arming switch. Anything other than the exact string `1` leaves
+  # every publishing step in dry-run.
+  ARMED: ${{ vars.OMNESIS_RELEASE_PUBLISH == '1' }}
+
+jobs:
+  # ------------------------------------------------------------------
+  # verify — the tag says what the tree says, and main CI already
+  # approved this exact commit. Nothing is built until both hold.
+  # ------------------------------------------------------------------
+  verify:
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      sha: ${{ steps.version.outputs.sha }}
+      armed: ${{ vars.OMNESIS_RELEASE_PUBLISH == '1' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: The tag equals the checked-in product version
+        id: version
+        run: |
+          node scripts/release/check-product-version.mjs "$RELEASE_TAG"
+          echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
+          tag_sha=$(git rev-parse "$RELEASE_TAG^{commit}")
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            target_sha=$(git rev-parse "$GITHUB_SHA^{commit}")
+            [ "$tag_sha" = "$target_sha" ] || {
+              echo "The pushed tag does not resolve to the immutable event revision."
+              exit 1
+            }
+          else
+            target_sha="$tag_sha"
+          fi
+          echo "sha=$target_sha" >> "$GITHUB_OUTPUT"
+
+      - name: The tagged commit is on main
+        env:
+          REPOSITORY_TOKEN: ${{ github.token }}
+        run: |
+          auth_header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$REPOSITORY_TOKEN" | base64 | tr -d '\n')"
+          git -c "http.${GITHUB_SERVER_URL}/.extraheader=$auth_header" \
+            fetch origin main:refs/remotes/origin/main
+          git merge-base --is-ancestor "${{ steps.version.outputs.sha }}" origin/main \
+            || { echo "The tagged commit is not an ancestor of main."; exit 1; }
+
+      - name: Check out the CI admission ledger
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ci-admission-state
+          path: .ci-admission-state
+          persist-credentials: false
+
+      - name: Verify the full-CI ledger at the tagged commit
+        run: node scripts/release/ci-verdict.mjs "${{ steps.version.outputs.sha }}" < .ci-admission-state/ledger.json
+
+      - name: The published installer mirrors the canonical one
+        run: cmp scripts/install.sh website/install.sh
+
+      - name: Report the arming state
+        run: |
+          if [ "$ARMED" = "true" ]; then
+            echo "::notice::Publication is ARMED — this run distributes artifacts."
+          else
+            echo "::notice::Publication is NOT armed (repository variable OMNESIS_RELEASE_PUBLISH != 1). Every distribution step is a dry run."
+          fi
+
+  # ------------------------------------------------------------------
+  # packages — build, prove the artifact against a local registry, then
+  # publish it. The local round-trip runs whether or not publication is
+  # armed: it is the check that the staged graph installs and runs.
+  # ------------------------------------------------------------------
+  packages:
+    needs: verify
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      # npm provenance is signed from the workflow's OIDC identity.
+      id-token: write
+    env:
+      TEST_HOME: /tmp/omnesis-release-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          persist-credentials: false
+
+      - name: Verify fixed release revision
+        env:
+          TARGET_SHA: ${{ needs.verify.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build packages
+        run: npm run build
+
+      - name: Write Verdaccio config
+        run: |
+          cat > /tmp/verdaccio-release-${{ github.run_id }}.yml << 'VERDACCIO_CONF'
+          storage: /verdaccio/storage
+          auth:
+            htpasswd:
+              file: /verdaccio/htpasswd
+              max_users: -1
+          uplinks:
+            npmjs:
+              url: https://registry.npmjs.org/
+              timeout: 30s
+          packages:
+            'omnesis':
+              access: $all
+              publish: $all
+            '@omnesis/*':
+              access: $all
+              publish: $all
+            '**':
+              access: $all
+              proxy: npmjs
+          VERDACCIO_CONF
+
+      - name: Start Verdaccio
+        run: |
+          docker run -d \
+            --name verdaccio-release-${{ github.run_id }} \
+            -p 0:4873 \
+            -v /tmp/verdaccio-release-${{ github.run_id }}.yml:/verdaccio/conf/config.yaml:ro \
+            verdaccio/verdaccio@sha256:9d622d256378c6e7ae09f384774ee2f0f8ac67a66c066db55921a0b7218abc4c # v5
+          VERDACCIO_PORT=$(docker inspect --format \
+            '{{(index (index .NetworkSettings.Ports "4873/tcp") 0).HostPort}}' \
+            verdaccio-release-${{ github.run_id }})
+          echo "VERDACCIO_PORT=$VERDACCIO_PORT" >> "$GITHUB_ENV"
+          for i in $(seq 30); do
+            curl -sf "http://localhost:$VERDACCIO_PORT/-/ping" && break
+            sleep 1
+          done
+
+      - name: Local-registry round trip
+        run: |
+          npm set "//localhost:$VERDACCIO_PORT/:_authToken" "verdaccio-release"
+          mkdir -p "$TEST_HOME/.npm-global"
+          echo "//localhost:$VERDACCIO_PORT/:_authToken=verdaccio-release" > "$TEST_HOME/.npmrc"
+          npm run release:publish -- \
+            --registry "http://localhost:$VERDACCIO_PORT" --tag latest --access public
+          HOME="$TEST_HOME" NPM_CONFIG_PREFIX="$TEST_HOME/.npm-global" \
+            bash scripts/install.sh --method package --client-only --no-keyring \
+              --registry "http://localhost:$VERDACCIO_PORT"
+          INSTALLED=$("$TEST_HOME/.npm-global/bin/omnesis" --version)
+          [ "$INSTALLED" = "${{ needs.verify.outputs.version }}" ] \
+            || { echo "installed $INSTALLED, expected ${{ needs.verify.outputs.version }}"; exit 1; }
+
+      # Pack every staged package so the release can state a digest for each
+      # published tarball, and mirror the installer served at
+      # https://omnesis.dev/install.sh so it has a checksummed copy pinned to
+      # this version. The tarballs themselves stay a workflow artifact: they are
+      # for inspecting a release, not a second place to download it from.
+      - name: Checksums of the release artifacts
+        run: |
+          rm -rf release/tarballs release/artifacts
+          # Staged with the access the publish uses, so these sums describe
+          # the tarballs that were (or would be) published.
+          npm run release:publish -- --dry-run --access public
+          mkdir -p release/artifacts
+          cp scripts/install.sh release/artifacts/install.sh
+          ( cd release && sha256sum tarballs/*.tgz artifacts/install.sh ) > release/SHA256SUMS.txt
+          cat release/SHA256SUMS.txt
+
+      - name: Validate the publication registry
+        if: needs.verify.outputs.armed == 'true'
+        run: |
+          node -e '
+            const raw = process.argv[1];
+            if (/[\u0000-\u001f\u007f]/u.test(raw)) throw new Error("registry URL contains control characters");
+            const url = new URL(raw);
+            if (url.username || url.password) throw new Error("registry URL must not contain credentials");
+            const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
+            if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
+              throw new Error("registry URL must use HTTPS unless it is loopback");
+            }
+          ' "$PACKAGE_REGISTRY"
+
+      - name: Configure the publication registry
+        if: needs.verify.outputs.armed == 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: ${{ env.PACKAGE_REGISTRY }}
+
+      - name: Re-attest remote tag before configured-registry publication
+        if: needs.verify.outputs.armed == 'true' && vars.OMNESIS_RELEASE_REGISTRY != ''
+        env:
+          REPOSITORY_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ needs.verify.outputs.sha }}
+        run: |
+          auth_header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$REPOSITORY_TOKEN" | base64 | tr -d '\n')"
+          remote_sha=$(git -c "http.${GITHUB_SERVER_URL}/.extraheader=$auth_header" ls-remote --tags origin "refs/tags/$RELEASE_TAG^{}" | awk 'NR == 1 { print $1 }')
+          if [ -z "$remote_sha" ]; then
+            remote_sha=$(git -c "http.${GITHUB_SERVER_URL}/.extraheader=$auth_header" ls-remote --tags origin "refs/tags/$RELEASE_TAG" | awk 'NR == 1 { print $1 }')
+          fi
+          [ "$remote_sha" = "$TARGET_SHA" ] || {
+            echo "Remote tag $RELEASE_TAG no longer resolves to the verified commit."
+            exit 1
+          }
+
+      - name: Publish to configured registry
+        if: needs.verify.outputs.armed == 'true' && vars.OMNESIS_RELEASE_REGISTRY != ''
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.OMNESIS_RELEASE_REGISTRY_TOKEN }}
+        run: |
+          [ -n "$NODE_AUTH_TOKEN" ] \
+            || { echo "OMNESIS_RELEASE_REGISTRY_TOKEN is required for configured-registry publication."; exit 1; }
+          npm run release:publish -- \
+            --registry "$PACKAGE_REGISTRY" \
+            --tag latest \
+            --access public
+
+      - name: Re-attest remote tag before npmjs publication
+        if: needs.verify.outputs.armed == 'true' && vars.OMNESIS_RELEASE_REGISTRY == ''
+        env:
+          REPOSITORY_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ needs.verify.outputs.sha }}
+        run: |
+          auth_header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$REPOSITORY_TOKEN" | base64 | tr -d '\n')"
+          remote_sha=$(git -c "http.${GITHUB_SERVER_URL}/.extraheader=$auth_header" ls-remote --tags origin "refs/tags/$RELEASE_TAG^{}" | awk 'NR == 1 { print $1 }')
+          if [ -z "$remote_sha" ]; then
+            remote_sha=$(git -c "http.${GITHUB_SERVER_URL}/.extraheader=$auth_header" ls-remote --tags origin "refs/tags/$RELEASE_TAG" | awk 'NR == 1 { print $1 }')
+          fi
+          [ "$remote_sha" = "$TARGET_SHA" ] || {
+            echo "Remote tag $RELEASE_TAG no longer resolves to the verified commit."
+            exit 1
+          }
+
+      - name: Publish to npmjs with provenance
+        if: needs.verify.outputs.armed == 'true' && vars.OMNESIS_RELEASE_REGISTRY == ''
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          OMNESIS_ALLOW_PUBLIC_NPM_PUBLISH: "1"
+          NPM_CONFIG_PROVENANCE: "true"
+        run: |
+          npm run release:publish -- \
+            --registry https://registry.npmjs.org \
+            --tag latest \
+            --access public
+
+      - name: Publication dry run (not armed)
+        if: needs.verify.outputs.armed != 'true'
+        run: |
+          echo "Publication is not armed; the staged graph was packed and verified against a"
+          echo "local registry, and nothing was sent to the configured package registry."
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-artifacts
+          path: |
+            release/tarballs/*.tgz
+            release/artifacts/install.sh
+            release/SHA256SUMS.txt
+
+      - name: Cleanup
+        if: always()
+        run: |
+          npm config delete "//localhost:$VERDACCIO_PORT/:_authToken" || true
+          docker rm -f verdaccio-release-${{ github.run_id }} || true
+          rm -f /tmp/verdaccio-release-${{ github.run_id }}.yml
+          rm -rf "$TEST_HOME"
+          git checkout -- . 2>/dev/null || true
+
+  # ------------------------------------------------------------------
+  # images — version-tagged gateway and collector images. Built on every
+  # run; pushed only when publication is armed.
+  #
+  # Sequenced after `packages` rather than run beside it: an armed run that
+  # pushed images for a version whose packages failed to publish would leave
+  # half a release in the world.
+  # ------------------------------------------------------------------
+  images:
+    needs: [verify, packages]
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # The published image suffix and the Dockerfile stage that builds it.
+        # The updater is its own image because the container that drives an
+        # upgrade cannot be one of the containers being replaced.
+        include:
+          - image: gateway
+            target: gateway-runtime
+          - image: collector
+            target: collector-runtime
+          - image: updater
+            target: updater
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          persist-credentials: false
+
+      - name: Verify fixed release revision
+        env:
+          TARGET_SHA: ${{ needs.verify.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Log in to GHCR
+        if: needs.verify.outputs.armed == 'true'
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/omnesis-${{ matrix.image }}
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}},value=${{ env.RELEASE_TAG }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.RELEASE_TAG }}
+            type=sha
+
+      - name: Re-attest remote tag before image publication
+        if: needs.verify.outputs.armed == 'true'
+        env:
+          REPOSITORY_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ needs.verify.outputs.sha }}
+        run: |
+          auth_header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$REPOSITORY_TOKEN" | base64 | tr -d '\n')"
+          remote_sha=$(git -c "http.${GITHUB_SERVER_URL}/.extraheader=$auth_header" ls-remote --tags origin "refs/tags/$RELEASE_TAG^{}" | awk 'NR == 1 { print $1 }')
+          if [ -z "$remote_sha" ]; then
+            remote_sha=$(git -c "http.${GITHUB_SERVER_URL}/.extraheader=$auth_header" ls-remote --tags origin "refs/tags/$RELEASE_TAG" | awk 'NR == 1 { print $1 }')
+          fi
+          [ "$remote_sha" = "$TARGET_SHA" ] || {
+            echo "Remote tag $RELEASE_TAG no longer resolves to the verified commit."
+            exit 1
+          }
+
+      - name: Build ${{ needs.verify.outputs.armed == 'true' && 'and push' || '(no push — not armed)' }}
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          platforms: linux/amd64,linux/arm64
+          push: ${{ needs.verify.outputs.armed == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  # ------------------------------------------------------------------
+  # github-release — the release notes are the changelog section the
+  # release commit generated, with the artifact checksums appended.
+  # ------------------------------------------------------------------
+  github-release:
+    needs: [verify, packages, images]
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          persist-credentials: false
+
+      - name: Verify fixed release revision
+        env:
+          TARGET_SHA: ${{ needs.verify.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: release-artifacts
+          path: release
+
+      - name: Compose the release notes
+        run: |
+          node --input-type=module -e '
+            import { readChangelogSection } from "./scripts/release/changelog.mjs";
+            import { readFileSync, writeFileSync } from "node:fs";
+            const version = process.env.RELEASE_TAG.replace(/^v/, "");
+            const section = readChangelogSection(process.cwd(), version)
+              ?? "_No changelog section for this version._";
+            const sums = readFileSync("release/SHA256SUMS.txt", "utf8").trim();
+            writeFileSync(
+              "release/NOTES.md",
+              `${section}\n\n## Checksums (SHA-256)\n\n\`\`\`\n${sums}\n\`\`\`\n`,
+            );
+          '
+          cat release/NOTES.md
+
+      - name: Create the GitHub Release
+        if: needs.verify.outputs.armed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY_TOKEN: ${{ github.token }}
+        run: |
+          auth_header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$REPOSITORY_TOKEN" | base64 | tr -d '\n')"
+          remote_sha=$(git -c "http.${GITHUB_SERVER_URL}/.extraheader=$auth_header" ls-remote --tags origin "refs/tags/$RELEASE_TAG^{}" | awk 'NR == 1 { print $1 }')
+          if [ -z "$remote_sha" ]; then
+            remote_sha=$(git -c "http.${GITHUB_SERVER_URL}/.extraheader=$auth_header" ls-remote --tags origin "refs/tags/$RELEASE_TAG" | awk 'NR == 1 { print $1 }')
+          fi
+          [ "$remote_sha" = "${{ needs.verify.outputs.sha }}" ] || {
+            echo "Remote tag $RELEASE_TAG no longer resolves to the verified commit."
+            exit 1
+          }
+          gh release create "$RELEASE_TAG" \
+            --verify-tag \
+            --target "${{ needs.verify.outputs.sha }}" \
+            --title "Omnesis ${RELEASE_TAG#v}" \
+            --notes-file release/NOTES.md \
+            release/artifacts/install.sh \
+            release/SHA256SUMS.txt
+
+      - name: Release dry run (not armed)
+        if: needs.verify.outputs.armed != 'true'
+        run: |
+          echo "Publication is not armed; the notes above and the artifacts attached to this"
+          echo "run are what the GitHub Release would carry."
+
+      - name: Next step
+        run: |
+          echo "::notice::Public code and channels are done. Submitting the mobile and browser-extension builds is a separate, credentialed step outside this repository."

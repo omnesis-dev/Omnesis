@@ -1,0 +1,33 @@
+{
+  "watch": {
+    "name": "attachment-from-anyone",
+    "nl_query": "Tell me whenever an attachment arrives, whoever it is from.",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "REPLACE-WITH-GET-/admin/watch/ontology",
+    "nodes": [
+      {
+        "id": "attachment",
+        "type": "source.document_event",
+        "comment": "The cheapest watch there is: a structural filter, no recall arm and no judge, so it costs nothing per document and nothing per firing. Worth copying as the starting point for anything you can express as 'a document of this kind arrived' — and worth reaching for before a semantic arm, because a filter that can answer the question is free and a judge is not.",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "attachment"
+        },
+        "output_map": {
+          "doc_id": "$e.docId",
+          "title": "$e.title",
+          "arrived_at": "$e.semanticTime"
+        }
+      }
+    ],
+    "sink": {
+      "input": "attachment",
+      "output_map": {
+        "evidence": "$n.attachment.doc_id",
+        "title": "$n.attachment.title",
+        "arrived_at": "$n.attachment.arrived_at"
+      }
+    }
+  }
+}

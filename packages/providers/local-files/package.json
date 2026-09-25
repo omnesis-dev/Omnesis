@@ -1,0 +1,16 @@
+{
+  "dependencies": {
+    "@omnesis/core": "*",
+    "@omnesis/source-sdk": "*",
+    "@omnesis/types": "*",
+    "picomatch": "^4.0.2"
+  },
+  "files": [
+    "dist"
+  ],
+  "license": "AGPL-3.0-or-later",
+  "main": "src/index.ts",
+  "name": "@omnesis/provider-local-files",
+  "type": "module",
+  "version": "0.5.11"
+}

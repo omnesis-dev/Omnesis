@@ -1,0 +1,52 @@
+{
+  "trace": {
+    "watch": "tax-loop-closed",
+    "records": [
+      {
+        "seq": 186,
+        "nodeId": "tax_loop_update",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 186,
+        "nodeId": "became_closed",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": 221,
+        "nodeId": "tax_loop_update",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 221,
+        "nodeId": "became_closed",
+        "key": "singleton",
+        "transition": "fired"
+      }
+    ],
+    "firings": [
+      {
+        "seq": 221,
+        "nodeId": "became_closed",
+        "keyHash": "e3b0c44298fc1c149afbf4c8996fb924:0",
+        "key": "singleton",
+        "firedAt": "2026-03-18T16:30:00.000Z",
+        "payload": { "loop": "File the self-assessment return" },
+        "documentIds": []
+      }
+    ],
+    "ended": "fired"
+  },
+  "backtest": {
+    "events": 221,
+    "days": 18,
+    "firings": 1,
+    "reachByNode": {},
+    "totalReaches": 0,
+    "unboundedNodes": [],
+    "endedEarly": "fired"
+  }
+}

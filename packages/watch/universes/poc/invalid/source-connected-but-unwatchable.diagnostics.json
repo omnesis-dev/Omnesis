@@ -1,0 +1,22 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "SOURCE_NOT_WATCHABLE",
+      "severity": "error",
+      "path": "/watch/nodes/0/filter/source",
+      "message": "Source 'riverside-archive' is connected and indexed, but publishes no document-event profile, so nothing can watch its events.",
+      "details": {
+        "sourceId": "riverside-archive",
+        "known": [
+          "gmail",
+          "whatsapp-messages",
+          "apple-imessage",
+          "apple-call-log",
+          "google-calendar",
+          "google-drive"
+        ]
+      }
+    }
+  ]
+}

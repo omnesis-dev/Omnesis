@@ -1,0 +1,401 @@
+# XcodeGen spec for the Omnesis iOS app.
+#
+# This declares a real iOS application target (runnable on device /
+# simulator, uploadable to TestFlight) whose source files live in
+# Sources/Omnesis — shared with the SwiftPM library in Package.swift.
+#
+# Regenerate the .xcodeproj after edits:
+#
+#   cd ios && xcodegen generate && open Omnesis.xcodeproj
+#
+# Install prerequisite: `brew install xcodegen` (one-time).
+#
+# IMPORTANT: do NOT add `info:` or `entitlements:` keys on the target —
+# those tell XcodeGen to *generate* those files, which overwrites our
+# hand-authored Info.plist / Omnesis.entitlements. Instead we reference
+# them via INFOPLIST_FILE / CODE_SIGN_ENTITLEMENTS build settings.
+
+name: Omnesis
+options:
+  bundleIdPrefix: dev.omnesis
+  deploymentTarget:
+    iOS: "17.0"
+  xcodeVersion: "26.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    CODE_SIGN_STYLE: Automatic
+    PRODUCT_BUNDLE_IDENTIFIER: $(OMNESIS_BUNDLE_ID)
+    MARKETING_VERSION: "0.5.11"
+    CURRENT_PROJECT_VERSION: "294"
+    TARGETED_DEVICE_FAMILY: "1,2" # iPhone + iPad
+    SWIFT_STRICT_CONCURRENCY: targeted
+    # Point at our custom Info.plist + entitlements (instead of letting
+    # XcodeGen regenerate defaults).
+    INFOPLIST_FILE: Info.plist
+    CODE_SIGN_ENTITLEMENTS: Omnesis.entitlements
+    # Skip the auto-generated launch screen — we rely on Info.plist's
+    # UILaunchScreen key instead.
+    GENERATE_INFOPLIST_FILE: NO
+  configs:
+    Debug:
+      OMNESIS_APNS_ENVIRONMENT: development
+    Release:
+      OMNESIS_APNS_ENVIRONMENT: production
+
+configFiles:
+  # Config.xcconfig is tracked and #include?s Local.xcconfig (gitignored).
+  # Create Local.xcconfig from Local.xcconfig.example and set
+  # DEVELOPMENT_TEAM there so signing survives `xcodegen generate`.
+  Debug: Config.xcconfig
+  Release: Config.xcconfig
+
+packages:
+  SwiftDraw:
+    url: https://github.com/swhitty/SwiftDraw.git
+    exactVersion: 0.29.0
+
+targets:
+  Omnesis:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources/Omnesis
+      - path: Resources/Assets.xcassets
+      - path: Resources/BrandSymbols.xcassets
+      - path: Resources/Fonts
+      - path: Resources/AppPrivacy/PrivacyInfo.xcprivacy
+    dependencies:
+      # Widget extension (iOS 18 Control Center / Lock Screen control) —
+      # production app only. Follow-up: decide
+      # whether OmnesisDemo wants its own widgets (it would need a
+      # demo-prefixed extension bundle id and the omnesis-demo:// scheme).
+      - target: OmnesisWidgets
+        embed: true
+      # Apple Watch companion — carries the "Ask Omnesis" App Shortcut so
+      # watch Siri recognises the phrase (an iPhone-only shortcut never
+      # reaches the watch). XcodeGen embeds a watchOS app dependency into
+      # the app's Watch content folder so the two install together.
+      # Production app only, like the widget.
+      - target: OmnesisWatch
+        embed: true
+      # Content-free APNs wakes are rendered here after a device-scoped claim
+      # over the gateway's pinned connection.
+      - target: OmnesisNotificationService
+        embed: true
+      - package: SwiftDraw
+    settings:
+      configs:
+        Release:
+          # Archives must sign every embedded bundle with its App Store
+          # distribution profile. Debug retains the project-wide automatic
+          # signing so local device development stays frictionless.
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: Apple Distribution
+          PROVISIONING_PROFILE_SPECIFIER: Omnesis App Store
+    # HealthKit is autolinked from `import HealthKit` in SampleReader /
+    # HealthKitClient / BackgroundDelivery / AppleHealthSource. The
+    # entitlements file + Info.plist usage description are what Apple
+    # actually checks at runtime.
+
+  # OmnesisDemo — sibling app, identical code, different identity.
+  #
+  # Intended for pairing against the synthetic / replay demo gateway
+  # spun up by `scripts/start-demo-gateway.sh`. Installs side-by-side
+  # with the production Omnesis app on the same device:
+  #
+  #   - Bundle id `dev.omnesis.ios.demo` → distinct app slot
+  #   - Display name "Omnesis Demo"      → visually distinct on home
+  #   - Demo keychain access group       → demo gateway URL + token
+  #                                        live in a separate bucket,
+  #                                        production pairing untouched
+  #
+  # Build + install locally:
+  #   cd ios && xcodegen generate && xcodebuild -project Omnesis.xcodeproj \
+  #     -scheme OmnesisDemo -configuration Debug \
+  #     -destination 'platform=iOS,id=<UDID>' -allowProvisioningUpdates build
+  #   xcrun devicectl device install app --device <UDID> \
+  #     ~/Library/Developer/Xcode/DerivedData/Omnesis-*/Build/Products/Debug-iphoneos/OmnesisDemo.app
+  OmnesisDemo:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources/Omnesis
+      - path: Resources/Assets.xcassets
+      - path: Resources/BrandSymbols.xcassets
+      - path: Resources/Fonts
+      - path: Resources/AppPrivacy/PrivacyInfo.xcprivacy
+    dependencies:
+      - package: SwiftDraw
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(OMNESIS_BUNDLE_ID).demo
+        PRODUCT_NAME: OmnesisDemo
+        INFOPLIST_FILE: Info-Demo.plist
+        CODE_SIGN_ENTITLEMENTS: Omnesis-Demo.entitlements
+        # Picks the hue-shifted (orange) icon from the shared asset catalog
+        # so the demo app is visually distinct from the blue/cyan production
+        # app on the home screen at a glance.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon-Demo
+
+  OmnesisNotificationService:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Sources/OmnesisNotificationService
+        excludes:
+          - PrivacyInfo.xcprivacy
+      - path: Sources/OmnesisNotificationService/PrivacyInfo.xcprivacy
+      # These files are deliberately dual-target members: app and extension
+      # share one wire client, one Keychain posture and one TLS pinning path.
+      - path: Sources/Omnesis/Notifications/NotificationClaimer.swift
+      - path: Sources/Omnesis/Pairing/Keychain.swift
+      - path: Sources/Omnesis/Pairing/PairingCredentialBundle.swift
+      - path: Sources/Omnesis/Pairing/PairingTlsMode.swift
+      - path: Sources/Omnesis/Pairing/PinnedSession.swift
+      - path: Sources/Omnesis/Transport/OmnesisURLSession.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(OMNESIS_BUNDLE_ID).notification-service
+        PRODUCT_NAME: OmnesisNotificationService
+        INFOPLIST_FILE: Sources/OmnesisNotificationService/Info.plist
+        CODE_SIGN_ENTITLEMENTS: OmnesisNotificationService.entitlements
+        GENERATE_INFOPLIST_FILE: NO
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
+      configs:
+        Release:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: Apple Distribution
+          PROVISIONING_PROFILE_SPECIFIER: Omnesis Notification Service App Store
+
+  # OmnesisWidgets — WidgetKit extension embedded in the production
+  # Omnesis app. Hosts the iOS 18+ Control Center / Lock Screen control.
+  # The two shared intent files are compiled into BOTH the app and this
+  # extension: dual target
+  # membership is what lets a Control Center button launch its container
+  # app (the extension-side run returns an OpenURLIntent to
+  # omnesis://capture; an app-side run flips CaptureRouter directly).
+  OmnesisWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Sources/OmnesisWidgets
+        excludes:
+          - PrivacyInfo.xcprivacy
+      - path: Sources/OmnesisWidgets/PrivacyInfo.xcprivacy
+      # Shared brand symbols (the "omnesis.mic" custom symbol the Control
+      # Center button uses). Included in both the app and this extension
+      # so each bundle carries its own copy — extensions can't read the
+      # host app's asset catalog at runtime.
+      - path: Resources/BrandSymbols.xcassets
+      - path: Sources/Omnesis/Intents/OpenCaptureControlIntent.swift
+      - path: Sources/Omnesis/Intents/CaptureRouter.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(OMNESIS_BUNDLE_ID).widgets
+        INFOPLIST_FILE: Sources/OmnesisWidgets/Info.plist
+        # No entitlements: the extension holds no keychain / gateway
+        # access — it only launches the app into capture.
+        CODE_SIGN_ENTITLEMENTS: ""
+        SKIP_INSTALL: YES
+      configs:
+        Release:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: Apple Distribution
+          PROVISIONING_PROFILE_SPECIFIER: Omnesis Widgets App Store
+
+  # OmnesisWatch — the Apple Watch companion app (single-target SwiftUI
+  # watchOS app, WKApplication). It holds no gateway pairing: its
+  # "Ask Omnesis" and "Omnesis note" App Shortcuts dictate a question or a
+  # note and relay it to the paired iPhone over WatchConnectivity, which
+  # answers the ask via the shared SiriAskRunner and saves the note via the
+  # shared NoteCaptureService, replying with the result. That is why the
+  # only relay sources it shares are SiriAsk.swift, WatchNote.swift and
+  # WatchRelayDelivery.swift (the outcomes, their spoken copy, the relay
+  # wires and the delivery window) — everything else lives on the phone.
+  # WatchComplication.swift, the complication link contract, is shared
+  # with the complications extension.
+  OmnesisWatch:
+    type: application
+    platform: watchOS
+    deploymentTarget: "10.0"
+    dependencies:
+      # The Ask Omnesis and Omnesis note complications, embedded in the
+      # watch app's PlugIns so they install with it.
+      - target: OmnesisWatchWidgets
+        embed: true
+    sources:
+      - path: Sources/OmnesisWatch
+        excludes:
+          - PrivacyInfo.xcprivacy
+      - path: Sources/OmnesisWatch/PrivacyInfo.xcprivacy
+      # Shared, pure relay contracts — dual target membership with the app
+      # so both speak identical copy and agree on the WatchConnectivity
+      # message shape. Each target compiles its own copy (no cross-module
+      # dependency); the wire is plain [String: String]. SiriAsk carries
+      # the ask relay; WatchNote carries the note relay.
+      - path: Sources/Omnesis/Intents/SiriAsk.swift
+      - path: Sources/Omnesis/Intents/WatchNote.swift
+      # The delivery window, the queued fallback's wire and the phone's
+      # relay dedupe — shared so both ends agree on the queued payload.
+      - path: Sources/Omnesis/Intents/WatchRelayDelivery.swift
+      # The complication link contract, shared with OmnesisWatchWidgets so
+      # the link a complication opens is the one this app parses.
+      - path: Sources/Omnesis/Intents/WatchComplication.swift
+      # Watch app icon — a separate asset catalog (not the iOS
+      # Assets.xcassets, which carries iOS-only image sets) holding the
+      # single-size watchOS AppIcon.
+      - path: Resources/WatchAssets.xcassets
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(OMNESIS_BUNDLE_ID).watchkitapp
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # Distinct product name (→ OmnesisWatch.app) so the watch bundle
+        # never collides with the phone app's Omnesis.app in a shared build
+        # dir. The Siri phrase reads the *display* name ("Omnesis", set in
+        # the watch Info.plist's CFBundleDisplayName), so it stays
+        # "Ask Omnesis" regardless of this.
+        PRODUCT_NAME: OmnesisWatch
+        INFOPLIST_FILE: Sources/OmnesisWatch/Info.plist
+        # Watch app: no keychain / HealthKit entitlements (the relay needs
+        # none — the phone owns the pairing).
+        CODE_SIGN_ENTITLEMENTS: ""
+        # Apple Watch device family.
+        TARGETED_DEVICE_FAMILY: "4"
+      configs:
+        Release:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: Apple Distribution
+          PROVISIONING_PROFILE_SPECIFIER: Omnesis Watch App Store
+
+  # OmnesisWatchWidgets — WidgetKit extension embedded in the watch app,
+  # hosting the Ask Omnesis and Omnesis note complications. Each one only
+  # opens the watch app at its WatchComplication link, where the app
+  # presents dictation — so, like OmnesisWidgets, it holds no pairing or
+  # keychain access and needs no entitlements.
+  OmnesisWatchWidgets:
+    type: app-extension
+    platform: watchOS
+    deploymentTarget: "10.0"
+    sources:
+      - path: Sources/OmnesisWatchWidgets
+        excludes:
+          - PrivacyInfo.xcprivacy
+      - path: Sources/OmnesisWatchWidgets/PrivacyInfo.xcprivacy
+      - path: Sources/Omnesis/Intents/WatchComplication.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(OMNESIS_BUNDLE_ID).watchkitapp.widgets
+        INFOPLIST_FILE: Sources/OmnesisWatchWidgets/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ""
+        SKIP_INSTALL: YES
+        TARGETED_DEVICE_FAMILY: "4"
+      configs:
+        Release:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: Apple Distribution
+          PROVISIONING_PROFILE_SPECIFIER: Omnesis Watch Widgets App Store
+
+  OmnesisTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/OmnesisTests
+    dependencies:
+      - target: Omnesis
+    settings:
+      base:
+        # Unit tests don't need an Info.plist — XcodeGen's default
+        # is fine.
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: ""
+        CODE_SIGN_ENTITLEMENTS: ""
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Omnesis.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Omnesis"
+
+  # UI test target for OmnesisDemo — used by scripts/record-demos.sh
+  # to drive automated demo screen recordings on the simulator. Each
+  # test method replays a synthetic conversation scenario (type prompt,
+  # wait for agent response, open citations drawer).
+  OmnesisDemoUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests/OmnesisDemoUITests
+    dependencies:
+      - target: OmnesisDemo
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: ""
+        CODE_SIGN_ENTITLEMENTS: ""
+        TEST_TARGET_NAME: OmnesisDemo
+
+  OmnesisPushSpikeUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests/OmnesisPushSpikeUITests
+    dependencies:
+      - target: Omnesis
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: ""
+        CODE_SIGN_ENTITLEMENTS: ""
+        TEST_TARGET_NAME: Omnesis
+
+schemes:
+  # The push-spike UI-test scheme references the production target, so
+  # XcodeGen does not autocreate a separate production app scheme. Keep an
+  # explicit shared scheme for headless CI and TestFlight archives.
+  Omnesis:
+    build:
+      targets:
+        Omnesis: all
+    run:
+      config: Debug
+    test:
+      targets:
+        - OmnesisTests
+    archive:
+      config: Release
+    profile:
+      config: Release
+
+  # Explicit shared scheme for the demo app so `xcodebuild -scheme
+  # OmnesisDemo … archive` works headlessly (TestFlight delivery, CI).
+  # Without this, only Xcode's open-time autocreated scheme exists,
+  # which isn't present in a fresh `xcodegen generate` checkout.
+  OmnesisDemo:
+    build:
+      targets:
+        OmnesisDemo: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+    profile:
+      config: Release
+
+  OmnesisDemoUITests:
+    build:
+      targets:
+        OmnesisDemo: all
+        OmnesisDemoUITests: [testing]
+    test:
+      targets:
+        - OmnesisDemoUITests
+
+  OmnesisPushSpikeUITests:
+    build:
+      targets:
+        Omnesis: all
+        OmnesisPushSpikeUITests: [testing]
+    test:
+      targets:
+        - OmnesisPushSpikeUITests

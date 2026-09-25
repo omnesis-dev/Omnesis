@@ -1,0 +1,8 @@
+# Code owners for Omnesis.
+#
+# Used to auto-request review on pull requests, and — if branch protection is
+# configured to require code-owner review — to gate merges. See:
+# https://docs.github.com/en/repositories/managing-your-repositories-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Default owner for everything in the repository.
+* @adrienconrath

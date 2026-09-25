@@ -1,0 +1,43 @@
+{
+  "watch": {
+    "name": "canary",
+    "nl_query": "Tell me the moment an email containing OMNESIS-PING-7391 arrives.",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "REPLACE-WITH-GET-/admin/watch/ontology",
+    "nodes": [
+      {
+        "id": "ping",
+        "type": "source.document_event",
+        "comment": "A token that exists nowhere in any corpus, so this watch is perfectly silent until the operator sends it to themselves \u2014 which makes it a deterministic stimulus with no false-positive risk. The lexical arm is what makes that possible: an embedding cannot retrieve a rare token, and a filter alone cannot look inside the message. Note the arm reads the TITLE, because a journal event carries no body \u2014 the token has to be in the subject line. The proposition says 'title' rather than 'subject' for the same reason: the evidence a judge is handed has a `title` field and no `subject` one, and a model asked to confirm something about a field it cannot see will decline for want of it.",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email"
+        },
+        "recall": {
+          "lexical": {
+            "terms": ["OMNESIS-PING-7391"],
+            "match": "token"
+          }
+        },
+        "judge": {
+          "proposition": "The title of this document contains the exact text OMNESIS-PING-7391",
+          "output_schema": {
+            "seen": "bool"
+          }
+        },
+        "output_map": {
+          "doc_id": "$e.docId",
+          "arrived_at": "$e.semanticTime"
+        }
+      }
+    ],
+    "sink": {
+      "input": "ping",
+      "output_map": {
+        "evidence": "$n.ping.doc_id",
+        "arrived_at": "$n.ping.arrived_at"
+      }
+    }
+  }
+}

@@ -1,0 +1,1162 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Install — Omnesis Docs</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32" />
+    <link rel="icon" type="image/png" href="/favicon-16.png" sizes="16x16" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- Resolve the theme before first paint: the stored choice, else the OS preference. -->
+    <script>
+      (function () {
+        var root = document.documentElement;
+        root.classList.add("js");
+        var t;
+        try {
+          t = localStorage.getItem("omnesis-theme");
+        } catch (e) {}
+        if (t !== "light" && t !== "dark") {
+          t =
+            window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+        }
+        root.setAttribute("data-theme", t);
+      })();
+    </script>
+
+    <meta
+      name="description"
+      content="Install Omnesis with one command: the CLI, TLS, gateway and collector services, and the embedding model. Also Docker, from source, and uninstalling."
+    />
+    <link rel="canonical" href="https://omnesis.dev/docs/install" />
+    <meta name="theme-color" content="#0d1117" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="/footer-social.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <nav id="nav">
+      <div class="container">
+        <a href="/" class="nav-logo" aria-label="Omnesis"
+          ><span class="nav-logo-mark" aria-hidden="true"></span>MNESIS</a
+        >
+        <div class="nav-right">
+          <ul class="nav-links">
+            <li><a href="/">Context Layer</a></li>
+            <li><a href="/brain">Omnesis Brain</a></li>
+            <li><a href="/vision">Vision</a></li>
+            <li><a href="/docs/" aria-current="page">Docs</a></li>
+          </ul>
+          <a
+            class="nav-icon-btn"
+            href="#"
+            data-oss-open
+            aria-label="Omnesis on GitHub"
+            title="Omnesis on GitHub"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path
+                d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+              />
+            </svg>
+          </a>
+          <button
+            id="theme-toggle"
+            class="theme-toggle"
+            type="button"
+            aria-label="Switch between dark and light theme"
+            title="Toggle theme"
+          >
+            <svg
+              class="icon-sun"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="4" />
+              <path
+                d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"
+              />
+            </svg>
+            <svg
+              class="icon-moon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <div class="docs-shell">
+      <aside class="docs-sidebar">
+        <nav aria-label="Documentation">
+          <ul class="side-pages">
+            <li><a href="/docs/">Overview</a></li>
+            <li>
+              <a href="/docs/install" aria-current="page">Install</a>
+              <ul class="side-sub">
+                <li><a href="#requirements">Requirements</a></li>
+                <li><a href="#one-command-install">One-command install</a></li>
+                <li><a href="#first-run">First run</a></li>
+                <li><a href="#add-your-first-source">First source</a></li>
+                <li><a href="#docker">Docker</a></li>
+                <li><a href="#from-source">From source</a></li>
+                <li><a href="#uninstall">Uninstall</a></li>
+              </ul>
+            </li>
+            <li><a href="/docs/setup">Setup</a></li>
+            <li><a href="/docs/search">Search</a></li>
+            <li><a href="/docs/agent">The agent</a></li>
+            <li><a href="/docs/connect">Agents &amp; MCP</a></li>
+            <li><a href="/docs/apps">Mobile apps</a></li>
+            <li><a href="/docs/notifications">Notifications</a></li>
+            <li><a href="/docs/operating">Operating</a></li>
+            <li><a href="/docs/security">Security</a></li>
+            <li><a href="/docs/updating">Backup &amp; updates</a></li>
+            <li><a href="/docs/sources">Available sources</a></li>
+            <li><a href="/docs/building-sources">Building sources</a></li>
+            <li><a href="/docs/experimental">Experimental</a></li>
+          </ul>
+        </nav>
+      </aside>
+
+      <main id="main" class="docs-content">
+        <p class="docs-kicker">Start</p>
+        <h1>Install</h1>
+        <p class="docs-lead">
+          This page installs Omnesis on the machine that will run your gateway, usually an always-on
+          computer. One command installs the CLI, sets up TLS, registers the gateway and a collector
+          as services, and downloads an embedding model. A second machine that only collects, or one
+          running an agent harness, uses the same installer with a
+          <a href="#roles">role flag</a>.
+        </p>
+        <p>The installer can deliver Omnesis in two ways:</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Method</th>
+                <th>Flag</th>
+                <th>The host needs</th>
+                <th>Choose it when</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Source</td>
+                <td><em>(default)</em></td>
+                <td>Node 24, git, about 3.5 GB of memory; a C/C++ toolchain on Linux</td>
+                <td>You want the default: a checkout of the release, built on the machine.</td>
+              </tr>
+              <tr>
+                <td>Docker</td>
+                <td><code>--docker</code></td>
+                <td>Docker with the Compose plugin</td>
+                <td>
+                  You want containers and no Node on the host. See <a href="#docker">Docker</a>.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="requirements">Requirements</h2>
+        <ul>
+          <li>
+            <strong>macOS</strong>, Apple silicon or Intel. Every source is available, and local
+            embeddings use Metal acceleration on Apple silicon.
+          </li>
+          <li>
+            <strong>Linux</strong>, amd64 or arm64. Source installs need glibc 2.35 or newer; Docker
+            hosts do not. Cloud and cross-platform sources work; the Apple, Things and Screen Time
+            sources need a Mac, which can run a <a href="/docs/setup#collector">collector</a> for a
+            Linux gateway. Local embeddings use a CUDA or Vulkan GPU when one is present and the CPU
+            otherwise; <code>OMNESIS_LLAMA_GPU=false</code> forces the CPU.
+          </li>
+          <li><strong>Windows</strong> is not supported.</li>
+          <li>
+            <strong>Node.js 24 or newer</strong>, which the installer installs if it is missing. A
+            Docker host does not need it.
+          </li>
+          <li><strong>git</strong>, for a source install only.</li>
+          <li>
+            <strong>About 3.5 GB of memory</strong> for a source install, which builds Omnesis on
+            the machine. The installer refuses a smaller machine before it fetches or builds
+            Omnesis, though it may already have installed Node 24. On a machine with swap to spare,
+            <code>OMNESIS_BUILD_MEMORY_MB=4096</code> builds anyway.
+          </li>
+        </ul>
+        <div class="callout">
+          <p>
+            <span class="pill">macOS</span> The Apple sources read local databases, so the collector
+            needs Full Disk Access. The installer opens the settings pane for it; you can also grant
+            it later. See <a href="/docs/operating#full-disk-access">Full Disk Access</a>.
+          </p>
+        </div>
+
+        <h2 id="one-command-install">One-command install</h2>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">curl -fsSL https://omnesis.dev/install.sh | sh</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          The script runs as your user. It uses sudo only for Linux prerequisites (Node, git and
+          build tools) when they are missing, and on Linux to make you the machine's Tailscale
+          operator when <code>tailscale cert</code> refuses your user. Before it changes anything,
+          it prints the role, delivery method and release it is about to install;
+          <code>--dry-run</code> stops there. Then it:
+        </p>
+        <ol>
+          <li>Checks the platform: macOS or Linux, amd64 or arm64. Anything else is refused.</li>
+          <li>Installs Node 24 if needed: Homebrew on macOS, NodeSource on Linux.</li>
+          <li>
+            For a Linux source install, installs make, C/C++ compilers and Python 3 if they are
+            missing.
+          </li>
+          <li>
+            Installs the newest stable release of the <code>omnesis</code> CLI (a checkout in
+            <code>~/omnesis</code>), with the command at <code>~/.local/bin/omnesis</code>. If that
+            directory is not on your PATH, it adds it once to the profile file your shell reads,
+            marked as added by the installer, and tells you the command that makes it available in
+            the current terminal.
+          </li>
+          <li>
+            Sets up TLS: a Tailscale certificate when Tailscale is running, a mkcert certificate
+            with <code>--mkcert</code>, and otherwise the gateway's own self-signed certificate.
+            <a href="/docs/setup#certificates">Certificates</a> explains what each one means for
+            browsers and phones.
+          </li>
+          <li>
+            Sets up encryption at rest when the machine has a usable OS keyring, and asks what to do
+            when it has none (see <a href="#first-run">First run</a>).
+          </li>
+          <li>
+            Registers the gateway and the collector as user services (launchd agents on macOS,
+            systemd user units on Linux) and starts them.
+          </li>
+          <li>Downloads the embedding model you chose, so semantic search works from the start.</li>
+          <li>
+            If <code>codex</code> is installed, offers to set up the agent with a ChatGPT sign-in
+            (see <a href="#first-run">First run</a>).
+          </li>
+          <li>
+            Prints the exact command another machine runs to join this gateway, as a collector or an
+            agent-harness host, with the gateway's URL and certificate fingerprint, and how to mint
+            the pairing code that command asks for.
+          </li>
+        </ol>
+
+        <h3 id="roles">Roles</h3>
+        <p>
+          With no role flag the installer sets up the gateway machine, as above. Each run installs
+          one role.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Role</th>
+                <th>What it installs</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><em>(no flag)</em></td>
+                <td>
+                  The gateway machine: gateway, collector, TLS, encryption at rest, embedding model,
+                  services.
+                </td>
+              </tr>
+              <tr>
+                <td><code>--collector</code></td>
+                <td>
+                  A collector for a gateway on another machine: the CLI, a pairing with that
+                  gateway, and the collector service. No gateway, embedding model or index.
+                </td>
+              </tr>
+              <tr>
+                <td><code>--openclaw</code> / <code>--hermes</code></td>
+                <td>
+                  An agent-harness machine: the CLI, then a pairing with a gateway on another
+                  machine and the harness's Omnesis plugin. The harness must already be installed;
+                  the installer never installs it. See
+                  <a href="/docs/connect#openclaw-hermes">OpenClaw and Hermes</a>.
+                </td>
+              </tr>
+              <tr>
+                <td><code>--client-only</code></td>
+                <td>The CLI alone, for a machine you only query from.</td>
+              </tr>
+              <tr>
+                <td><code>--docker</code></td>
+                <td>
+                  The gateway machine as containers, or with <code>--collector</code> a collector in
+                  a container. The harness roles are refused, because their plugin runs inside the
+                  harness itself. See <a href="#docker">Docker</a>.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          The collector and harness roles take the gateway's address and ask for a pairing code,
+          which you mint on the gateway host with
+          <code>omnesis devices pair --kind collector</code> (or <code>--kind agent</code> for a
+          harness), or in the portal under <strong>Settings → Devices</strong>:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >curl -fsSL https://omnesis.dev/install.sh | sh -s -- --collector --gateway-url
+                https://gateway.example.io:7600 --trust-fingerprint sha256:&lt;fingerprint&gt;</span
+              >
+            </p>
+            <p>Pairing code:</p>
+            <p>Collector studio-mini is online.</p>
+          </div>
+        </div>
+        <p>
+          Leave out <code>--gateway-url</code> and the installer looks for a gateway on the local
+          network, shows you what answered and its certificate fingerprint, and asks before pairing.
+          If nothing answers, or there is no terminal to confirm with, it stops and asks you to name
+          the gateway.
+          <a href="/docs/setup#collector">Setup → Collector on another machine</a> explains each
+          step and the commands underneath.
+        </p>
+
+        <h3 id="installer-flags">Installer flags</h3>
+        <p>
+          Pass flags after <code>sh -s --</code>, as in the examples above. The role flags are in
+          <a href="#roles">Roles</a>.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Flag</th>
+                <th>Effect</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>--version X.Y.Z</code></td>
+                <td>Install an exact release (source tag or Docker image).</td>
+              </tr>
+              <tr>
+                <td><code>--commit &lt;full-sha&gt;</code></td>
+                <td>
+                  Source installs only: install an exact 40-character commit available from the
+                  configured repository. Intended for controlled testing between releases.
+                </td>
+              </tr>
+              <tr>
+                <td><code>--edge</code></td>
+                <td>
+                  Install the <code>main</code> branch from source. Docker installs release images
+                  only, so it refuses this flag.
+                </td>
+              </tr>
+              <tr>
+                <td><code>--source-dir &lt;dir&gt;</code></td>
+                <td>
+                  Where a source install is checked out (environment:
+                  <code>OMNESIS_SOURCE_DIR</code>). Default <code>~/omnesis</code>.
+                </td>
+              </tr>
+              <tr>
+                <td><code>--force</code></td>
+                <td>Allow an existing checkout to move to an older release.</td>
+              </tr>
+              <tr>
+                <td><code>--port &lt;port&gt;</code></td>
+                <td>Gateway port. Default 7600.</td>
+              </tr>
+              <tr>
+                <td><code>--mkcert</code></td>
+                <td>
+                  Use a mkcert certificate instead of Tailscale, covering the host name and its
+                  current network addresses.
+                </td>
+              </tr>
+              <tr>
+                <td><code>--no-tls</code></td>
+                <td>Skip TLS setup; the gateway keeps its self-signed certificate.</td>
+              </tr>
+              <tr>
+                <td>
+                  <code>--tls-cert &lt;path&gt;</code>, <code>--tls-key &lt;path&gt;</code>,
+                  <code>--tls-ca &lt;path&gt;</code>
+                </td>
+                <td>
+                  With <code>--docker</code>: serve a certificate you issued. See
+                  <a href="#docker-tls">TLS in Docker</a>.
+                </td>
+              </tr>
+              <tr>
+                <td><code>--build</code></td>
+                <td>
+                  With <code>--docker</code>: build the images from the checkout this script came
+                  from instead of pulling published ones.
+                </td>
+              </tr>
+              <tr>
+                <td><code>--hardened</code>, <code>--no-hardened</code></td>
+                <td>
+                  Linux with systemd: run the gateway under a dedicated system account, with its own
+                  state in <code>/var/lib/omnesis-gateway</code>. The installer prints the root
+                  command that does it and does not run it. Refused while a gateway service of yours
+                  is registered. <code>--no-hardened</code> keeps the gateway under your account
+                  without asking. See
+                  <a href="/docs/security#hardened-gateway">Hardened gateway</a>.
+                </td>
+              </tr>
+              <tr>
+                <td><code>--embedder &lt;id&gt;</code></td>
+                <td>
+                  Install this embedding model instead of asking. List the ids with
+                  <code>omnesis model catalog --role embed</code>, which needs no running gateway.
+                </td>
+              </tr>
+              <tr>
+                <td><code>--no-model</code></td>
+                <td>Install no embedding model; search is keyword-only until you add one.</td>
+              </tr>
+              <tr>
+                <td><code>--no-keyring</code></td>
+                <td>Don't set up encryption at rest.</td>
+              </tr>
+              <tr>
+                <td><code>--keyring-passphrase-file &lt;path&gt;</code></td>
+                <td>
+                  When no OS keyring is usable, set up encryption at rest with the passphrase in
+                  this file instead of asking.
+                </td>
+              </tr>
+              <tr>
+                <td><code>--no-service</code></td>
+                <td>
+                  Don't register services; you start the daemons yourself. Refused with
+                  <code>--docker</code>, which registers none.
+                </td>
+              </tr>
+              <tr>
+                <td><code>--no-modify-path</code></td>
+                <td>Leave your shell profile alone and print the PATH line to add instead.</td>
+              </tr>
+              <tr>
+                <td><code>--gateway-url &lt;url&gt;</code></td>
+                <td>
+                  With a collector or harness role: the gateway to pair with. Without it, the local
+                  network is searched and you confirm what answered.
+                </td>
+              </tr>
+              <tr>
+                <td><code>--trust-fingerprint sha256:…</code></td>
+                <td>
+                  With a collector or harness role: accept the gateway only if its certificate has
+                  this fingerprint.
+                </td>
+              </tr>
+              <tr>
+                <td><code>--code &lt;code&gt;</code></td>
+                <td>
+                  With a collector or harness role: the pairing code, for an unattended install.
+                  Without it you are asked, which keeps the code out of shell history.
+                </td>
+              </tr>
+              <tr>
+                <td><code>--dry-run</code></td>
+                <td>
+                  Check the flags and platform, print what would be installed, and exit without
+                  changing anything.
+                </td>
+              </tr>
+              <tr>
+                <td><code>--no-prompt</code></td>
+                <td>
+                  Never ask. Optional choices take their default, and a required choice stops and
+                  names the flag it needs. A sudo password prompt also fails immediately.
+                </td>
+              </tr>
+              <tr>
+                <td><code>OMNESIS_NETWORK_TIMEOUT_SECONDS</code></td>
+                <td>
+                  Environment variable: how long a download may stall before it is retried or fails.
+                  Default 300 seconds, at most one day.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          <a href="https://github.com/omnesis-dev/Omnesis/blob/main/scripts/install.sh"
+            ><code>scripts/install.sh</code></a
+          >
+          documents every flag in its header.
+        </p>
+
+        <h2 id="first-run">First run</h2>
+        <p>
+          The installer may ask up to five questions. It reads the answers from your terminal, not
+          from standard input, because under <code>curl … | sh</code> standard input is the script
+          itself. Each has a flag, so an unattended install can answer in advance.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Question</th>
+                <th>When it is asked</th>
+                <th>Answer it in advance with</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Run the gateway as a dedicated account?</td>
+                <td>First, on a Linux host with systemd that has no gateway yet. Optional.</td>
+                <td><code>--hardened</code> or <code>--no-hardened</code></td>
+              </tr>
+              <tr>
+                <td>Which embedding model?</td>
+                <td>
+                  Every gateway install except a hardened one, unless the model is served by an HTTP
+                  backend. Required.
+                </td>
+                <td><code>--embedder &lt;id&gt;</code> or <code>--no-model</code></td>
+              </tr>
+              <tr>
+                <td>What to do without a keyring?</td>
+                <td>Only when the machine has no usable OS keyring. Required.</td>
+                <td>
+                  <code>--keyring-passphrase-file &lt;path&gt;</code> or
+                  <code>--no-keyring</code>
+                </td>
+              </tr>
+              <tr>
+                <td>Set up the agent with Codex?</td>
+                <td>
+                  When <code>codex</code> is installed and the agent has no model yet. Optional.
+                </td>
+                <td>Nothing; an unattended install skips it.</td>
+              </tr>
+              <tr>
+                <td>Which address should other machines use?</td>
+                <td>After a self-signed or mkcert gateway starts. Optional.</td>
+                <td>Nothing; an unattended install keeps the default.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          <strong>Embedding model.</strong> The installer lists the models built into the CLI, marks
+          a default (the model this machine already uses, or the recommended one), and takes a
+          number. You answer before anything is downloaded, registered or started.
+          <code>--no-model</code> leaves search keyword-only.
+        </p>
+        <p>
+          <strong>No usable keyring.</strong> This happens on a headless Linux machine with no
+          unlocked login keyring, or on a Mac whose login keychain is locked. Encryption at rest
+          needs a key the machine can keep, so the installer offers three answers: continue without
+          encryption at rest, protect the key with a generated passphrase file, or stop so you can
+          unlock a keyring first.
+        </p>
+        <p>
+          The passphrase option creates an owner-only passphrase file, prints a recovery code once
+          (write it down), and configures the services to use it. An install without encryption at
+          rest can add it later with <code>omnesis secure</code>, which backs up, encrypts what is
+          on disk and restarts the gateway. See
+          <a href="/docs/security#encryption">Encryption at rest</a>.
+        </p>
+        <p id="codex-offer">
+          <strong>Codex.</strong> The offer appears once an ordinary gateway is healthy, when a
+          <code>codex</code> command is on your PATH and the agent has no model. The installer never
+          runs that command; it only takes it as a sign the offer is relevant. If you accept,
+          Omnesis signs in to ChatGPT with a device code in its own private Codex home, never
+          copying another installation's credentials. It assigns <code>codex/gpt-5.6-luna</code>
+          to the agent only if your account's model list includes it. A failed sign-in or check
+          leaves the agent unassigned and prints how to retry.
+        </p>
+        <p>
+          Accepting turns on remote inference for the whole gateway: conversation context, relevant
+          Omnesis data and tool results are sent to OpenAI, and any other remote model you configure
+          later is allowed too. Collector, harness, client-only, Docker and hardened installs, and
+          installs with
+          <code>--no-service</code>, never make this offer.
+        </p>
+        <p>
+          <strong>Address for other machines.</strong> The installer lists the names and network
+          addresses in the gateway's certificate. Choose one the other machine can reach. It is
+          saved as <code>OMNESIS_GATEWAY_URL</code> and used in the join commands it prints. The
+          default is <code>omnesis.local</code> for a self-signed certificate and
+          <code>&lt;hostname&gt;.local</code> for mkcert; an IP address works on a network without
+          mDNS.
+        </p>
+        <p>
+          Without a terminal (a container build, a provisioning script, a systemd unit), the
+          installer cannot ask the required questions and refuses rather than choosing for you. Pass
+          their flags and it runs unattended.
+        </p>
+
+        <h3 id="open-the-portal">Open the portal</h3>
+        <p>
+          Open the portal at the address the installer printed:
+          <code>https://&lt;magicdns-name&gt;:7600/portal/</code> after a Tailscale certificate,
+          otherwise <code>https://localhost:7600/portal/</code>. With the self-signed certificate
+          your browser warns once; accept it. The portal asks for a pairing code, which you mint on
+          the gateway host:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p class="t-dim"># the code the portal asks for</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis devices pair --kind portal</span>
+            </p>
+            <p class="t-dim"># are the services up?</p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis service status</span></p>
+            <p class="t-dim"># follow the gateway log</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis service logs gateway -f</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          The CLI on the gateway host needs no login: it uses the gateway's
+          <a href="/docs/#devices-and-tokens">bootstrap admin token</a>. On a Docker install the
+          daemons are containers, so use the <code>docker compose</code> commands under
+          <a href="#docker">Docker</a> in place of <code>omnesis service</code>.
+        </p>
+        <p>
+          A phone and a browser are optional. Pair the iOS or Android app by scanning a code from
+          <code>omnesis devices pair --kind ios</code> (or <code>--kind android</code>); see
+          <a href="/docs/setup#phones">Setup → Phones</a>. The
+          <a
+            href="https://chromewebstore.google.com/detail/omnesis-browser-capture/akojepkcdbncipjdonhnnfmjacknplmn"
+            >Omnesis Browser Capture</a
+          >
+          extension pairs with <code>omnesis devices pair --kind browser</code> and needs a
+          certificate the browser trusts; see
+          <a href="/docs/setup#browser-extension">Setup → Browser extension</a>.
+        </p>
+
+        <h2 id="add-your-first-source">Add your first source</h2>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span> <span class="t-cmd">omnesis sources add gmail</span>
+            </p>
+            <p class="t-dim"># or run it bare for an interactive picker across all sources</p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis sources add</span></p>
+          </div>
+        </div>
+        <p>
+          For Google, a wizard walks you through creating your own OAuth client, which takes about
+          five minutes once per install. There is no shared client: your credentials and tokens stay
+          on your machines.
+        </p>
+        <p>
+          In the portal, use <strong>+ Add source</strong> on the Sources page. Adding, pausing and
+          removing sources is covered in
+          <a href="/docs/sources#managing-sources">Managing sources</a>, and the full catalogue,
+          with what each source needs, is on <a href="/docs/sources">Available sources</a>.
+        </p>
+
+        <h2 id="docker">Docker</h2>
+        <p>
+          The Docker install is the same installer with a flag. The gateway and the collector run as
+          containers from published images tagged by release. The host needs Docker with the Compose
+          plugin, <code>curl</code> and a POSIX shell; no Node, checkout or compiler. The installer
+          uses release images only, so it refuses <code>--edge</code>;
+          <code>--version X.Y.Z</code> selects an exact release.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >curl -fsSL https://omnesis.dev/install.sh | sh -s -- --docker</span
+              >
+            </p>
+          </div>
+        </div>
+        <p>
+          It writes <code>~/.config/omnesis/docker-compose.yml</code>, pulls the images, starts the
+          gateway, waits for it to answer <code>/health</code>, and starts the collector, which
+          pairs itself. The config directory is mounted into the containers
+          <em>at the same absolute path</em>, so the data, the token, the certificate and the
+          compose file are all readable on the host, and a path means the same thing inside and
+          outside the containers.
+        </p>
+        <p>
+          <code>omnesis</code> on this host is a wrapper that runs the CLI inside the container: the
+          gateway's, or the collector's on a machine that only collects. The source, device, model,
+          TLS, query and update commands on this site work unchanged. The daemons are containers
+          rather than services, so manage them with <code>docker compose</code> instead of
+          <code>omnesis service</code>:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span> <span class="t-cmd">omnesis sources add gmail</span>
+            </p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis status</span></p>
+            <p class="t-dim"># the containers themselves: ps, logs -f, restart</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">docker compose -f ~/.config/omnesis/docker-compose.yml ps</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >docker compose -f ~/.config/omnesis/docker-compose.yml logs -f</span
+              >
+            </p>
+          </div>
+        </div>
+        <p>
+          With no version flag, the installer asks the image registry for its tags, picks the
+          highest stable release available for every image the stack needs, and records that tag so
+          updates and rollbacks are repeatable. <code>OMNESIS_IMAGE_REPO</code> changes the registry
+          used for both the lookup and the pull. Updating is
+          <a href="/docs/updating#docker-update"><code>omnesis update</code></a
+          >, as on any other install.
+        </p>
+        <p>
+          Tag discovery works only on registries that allow anonymous reads. For a private registry,
+          log Docker in first, then pin an exact release with
+          <code>--version</code>. Paste the token only at Docker's password prompt, never on the
+          installer's command line:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">docker login ghcr.io -u YOUR_GITHUB_USERNAME</span>
+            </p>
+            <p class="t-dim">
+              # paste a classic GitHub token with read:packages at Docker's password prompt
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >curl -fsSL https://omnesis.dev/install.sh | sh -s -- --docker --version X.Y.Z</span
+              >
+            </p>
+          </div>
+        </div>
+        <p>
+          The account you log in with must itself have access to the image. If access is denied, the
+          installer prints the <code>docker login &lt;registry&gt;</code> command to run; it never
+          runs that command or reads the token itself.
+        </p>
+        <p>A second machine that only collects can run its collector in a container too:</p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >curl -fsSL https://omnesis.dev/install.sh | sh -s -- --docker --collector
+                --gateway-url https://&lt;gateway-host&gt;:7600 --trust-fingerprint
+                sha256:&lt;fingerprint&gt;</span
+              >
+            </p>
+          </div>
+        </div>
+
+        <h3 id="docker-tls">TLS in Docker</h3>
+        <p>
+          Under Docker the gateway serves its own self-signed certificate unless you give it one.
+          That is enough for the CLI, the phone apps and collectors. It is not enough for browsers
+          or the <a href="/docs/setup#browser-extension">browser extension</a>, which cannot connect
+          through it at all. For those, issue a certificate on the host and hand it to the
+          container, as below. The container cannot reach the host's Tailscale daemon or install a
+          mkcert authority in your browser, so <code>--mkcert</code> and <code>--no-tls</code> are
+          refused under <code>--docker</code>.
+        </p>
+        <p>
+          The self-signed certificate covers <code>localhost</code>, the gateway's mDNS names, the
+          service name <code>gateway</code> that the collector container dials, and the host names
+          and LAN addresses the installer passes in. The banner prints the join command for another
+          machine with <code>--trust-fingerprint</code>. A certificate minted earlier is kept,
+          because paired phones and collectors pin it. If it no longer covers the host's name or
+          addresses, <code>omnesis tls renew --force</code> mints a new one, and every phone and
+          collector paired with the old one must pair again.
+        </p>
+        <figure class="diagram">
+          <ol class="flow">
+            <li class="flow-step">
+              <span class="flow-title">Issue on the host</span
+              ><span class="flow-desc"
+                >Tailscale or mkcert writes the certificate, its key and, for a private authority,
+                the root CA into <code>~/.config/omnesis/tls/</code></span
+              >
+            </li>
+            <li class="flow-step flow-gate">
+              <span class="flow-title">Installer checks</span
+              ><span class="flow-desc"
+                >The <code>--tls-*</code> files sit in the config directory, the key matches, and
+                the certificate is valid and names a host</span
+              >
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Mounted into the containers</span
+              ><span class="flow-desc">the config directory, at the same path</span>
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Gateway container serves it</span
+              ><span class="flow-desc">and answers to every name the certificate covers</span>
+            </li>
+          </ol>
+          <div class="lanes">
+            <section class="lane">
+              <p class="lane-title">Inside the compose network</p>
+              <ol class="flow">
+                <li class="flow-step">
+                  <span class="flow-title">Collector and updater</span
+                  ><span class="flow-desc"
+                    >dial <code>https://&lt;name&gt;:7600</code> and verify the name, trusting
+                    <code>rootCA.pem</code> when you passed <code>--tls-ca</code></span
+                  >
+                </li>
+              </ol>
+            </section>
+            <section class="lane">
+              <p class="lane-title">From outside</p>
+              <ol class="flow">
+                <li class="flow-step">
+                  <span class="flow-title">Browser, extension, phones</span
+                  ><span class="flow-desc"
+                    >dial <code>https://&lt;name&gt;:&lt;published port&gt;</code>; a browser trusts
+                    it through a public chain or the authority you installed</span
+                  >
+                </li>
+              </ol>
+            </section>
+          </div>
+          <figcaption>
+            You issue the certificate on the host; the installer checks it, the containers see it
+            through the mounted config directory, and every client, inside or outside Docker,
+            reaches the gateway by a name the certificate covers.
+          </figcaption>
+        </figure>
+        <p>
+          With Tailscale on the host, issue the certificate for the machine's MagicDNS name. The
+          host needs what a <a href="/docs/setup#certificates">native install</a> needs: it has
+          joined the tailnet, with MagicDNS and HTTPS certificates enabled. On Linux,
+          <code>tailscale cert</code> runs as root unless your user is the machine's Tailscale
+          operator (<code>tailscale set --operator=$USER</code>); a key written under
+          <code>sudo</code> belongs to root, so <code>chown</code> both files to your user before
+          installing. A publicly chained certificate like this one needs no <code>--tls-ca</code>,
+          and phones paired against it keep working when it renews.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">mkdir -p ~/.config/omnesis/tls</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >tailscale cert --cert-file ~/.config/omnesis/tls/tailscale.crt --key-file
+                ~/.config/omnesis/tls/tailscale.key studio.tail-example.ts.net</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >curl -fsSL https://omnesis.dev/install.sh | sh -s -- --docker --tls-cert
+                ~/.config/omnesis/tls/tailscale.crt --tls-key
+                ~/.config/omnesis/tls/tailscale.key</span
+              >
+            </p>
+          </div>
+        </div>
+        <p>
+          With mkcert, issue the certificate for the names you will use and pass the authority's
+          root with <code>--tls-ca</code>. Your browser needs that root installed once, and phones
+          pair against the certificate by fingerprint.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >mkcert -cert-file ~/.config/omnesis/tls/mkcert.crt -key-file
+                ~/.config/omnesis/tls/mkcert.key studio-northstar.local localhost</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">cp "$(mkcert -CAROOT)/rootCA.pem" ~/.config/omnesis/tls/</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >curl -fsSL https://omnesis.dev/install.sh | sh -s -- --docker --tls-cert
+                ~/.config/omnesis/tls/mkcert.crt --tls-key ~/.config/omnesis/tls/mkcert.key --tls-ca
+                ~/.config/omnesis/tls/rootCA.pem</span
+              >
+            </p>
+          </div>
+        </div>
+        <p>
+          The installer refuses a file outside the config directory or linked from elsewhere, the
+          gateway's own <code>tls/cert.pem</code> and <code>key.pem</code>, a key that does not
+          match, an expired certificate, one that chains to no trusted root (unless
+          <code>--tls-ca</code> names its authority), and one that names no specific host. A host
+          that only collects (<code>--docker --collector</code>) takes <code>--tls-ca</code> alone,
+          to verify a gateway behind a private authority.
+        </p>
+        <p>
+          Renewing is up to you: re-issue into the same files with the tool that made them. The
+          gateway picks the new certificate up within the hour, or at once after
+          <code>omnesis tls reload</code>, without a restart. A later run of the installer without
+          the flags keeps the certificate it recorded. What a renewal means for paired clients is in
+          <a href="/docs/security#pinned-clients">Clients that pinned the old certificate</a>.
+        </p>
+
+        <h3 id="docker-limits">What a container cannot do</h3>
+        <ul>
+          <li>
+            <strong>The Apple sources need a Mac.</strong> Apple Notes, Messages, Calendar,
+            Reminders, Contacts, Things and Screen Time read macOS databases that do not exist in a
+            Linux container. The usual setup is a Docker gateway with a native collector on the Mac,
+            installed with the <code>--collector</code> command the gateway's install prints.
+            Sources that sync over the network work fully in the container.
+          </li>
+          <li>
+            <strong>Discovery does not cross the Docker bridge.</strong> A container collector
+            cannot search the LAN for a gateway, so <code>--docker --collector</code> requires
+            <code>--gateway-url</code>, naming the gateway by a name its certificate covers.
+          </li>
+          <li>
+            <strong>Certificates are issued on the host.</strong> The container cannot run
+            <code>tailscale cert</code> or <code>mkcert</code>; it serves what
+            <a href="#docker-tls">you hand it</a>, and renews only its own self-signed default.
+          </li>
+          <li>
+            <strong>There is no OS keyring in a container.</strong> Encryption at rest uses a
+            passphrase file instead: the installer offers to generate one, readable only by you, in
+            the config directory, and the gateway reads it at start. Keep that file; without it the
+            data cannot be opened.
+          </li>
+          <li>
+            <strong>The OAuth callback ports stay published.</strong> A provider redirects your
+            browser to <code>http://localhost:3000</code>–<code>3003</code>, so the collector
+            container publishes those host ports; they cannot move without re-registering every
+            OAuth client. If something else holds one, free it. A host that will never complete an
+            OAuth sign-in can let the kernel pick the ports with
+            <code>OMNESIS_OAUTH_HOST_PORTS=ephemeral</code>.
+          </li>
+        </ul>
+
+        <h2 id="from-source">From source</h2>
+        <p>For development, run the two daemons directly from a checkout:</p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">git clone https://github.com/omnesis-dev/Omnesis.git</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">cd Omnesis &amp;&amp; npm install</span>
+            </p>
+            <p class="t-dim"># terminal 1</p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">npm run gateway</span></p>
+            <p class="t-dim"># terminal 2</p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">npm run collector</span></p>
+            <p class="t-dim"># any CLI command</p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">npm run cli -- status</span></p>
+          </div>
+        </div>
+        <p>
+          <code>npm run gateway</code> and <code>npm run collector</code> are the checkout's
+          equivalents of <code>omnesis gateway serve</code> and <code>omnesis collector run</code>.
+          <code>npm run collector</code> and <code>npm run cli</code> trust the gateway's
+          self-signed certificate for you. To run them as supervised services instead of in two
+          terminals, use <code>npm run cli -- service install</code>.
+        </p>
+
+        <h2 id="uninstall">Uninstall</h2>
+        <p>
+          Removing Omnesis reverses the install you made. Your data stays in the config directory
+          until you delete it, so take a <a href="/docs/updating#backup">backup</a> first if you may
+          want it back.
+        </p>
+        <p>
+          <strong>1. On a second machine, remove its device from the gateway first.</strong> For a
+          collector, move or detach the sources it hosts (see
+          <a href="/docs/sources#managing-sources">Managing sources</a>), then on the gateway host
+          run <code>omnesis devices revoke &lt;device&gt; --forget</code>, which deletes the device
+          and is refused while it still hosts sources. Revoking a harness machine's device also
+          signs its agent out of its connection.
+        </p>
+        <p><strong>2. Stop and remove the services and the software</strong>, by install shape:</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Install</th>
+                <th>Remove it with</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Source (default)</td>
+                <td>
+                  <code>omnesis service uninstall</code>, then
+                  <code>rm -rf ~/omnesis ~/.local/lib/omnesis</code> and
+                  <code>rm -f ~/.local/bin/omnesis</code> (use your <code>--source-dir</code> if you
+                  set one).
+                </td>
+              </tr>
+              <tr>
+                <td>Docker</td>
+                <td>
+                  <code
+                    >docker compose -f ~/.config/omnesis/docker-compose.yml --profile update down
+                    --rmi all</code
+                  >, then <code>rm -f ~/.local/bin/omnesis</code>.
+                </td>
+              </tr>
+              <tr>
+                <td>Hardened gateway</td>
+                <td>
+                  <code>sudo omnesis-gateway-admin uninstall</code>, which removes the service and
+                  the releases but keeps <code>/var/lib/omnesis-gateway</code> and the passphrase in
+                  <code>/etc/omnesis-gateway</code>. Delete both yourself when you no longer need
+                  the data. Remove your own collector and CLI as for a source install.
+                </td>
+              </tr>
+              <tr>
+                <td>Client only</td>
+                <td>As for a source install; there are no services.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          The installer may also have added a PATH line to your shell profile, under the comment
+          <code># Added by the Omnesis installer</code>; delete both lines. On a harness machine,
+          remove the Omnesis plugin from OpenClaw or Hermes the way that harness removes plugins.
+        </p>
+        <p>
+          <strong>3. Delete the data and keys, if you want them gone.</strong>
+          <code>rm -rf ~/.config/omnesis</code> removes the data, tokens, credentials and, with a
+          passphrase file, the key that opens them. With an OS keyring, the root key is stored there
+          under the service name <code>dev.omnesis</code>: on macOS, run
+          <code>security delete-generic-password -s dev.omnesis</code> until it reports that nothing
+          was found; on Linux, run <code>secret-tool clear service dev.omnesis</code>. On a Mac,
+          also remove the collector from <strong>Full Disk Access</strong> in System Settings.
+        </p>
+        <nav class="docs-pager" aria-label="Pages">
+          <a href="/docs/"
+            ><span class="pager-label">Previous</span><span class="pager-title">Overview</span></a
+          >
+          <a class="pager-next" href="/docs/setup"
+            ><span class="pager-label">Next</span><span class="pager-title">Setup</span></a
+          >
+        </nav>
+      </main>
+    </div>
+
+    <footer class="site-footer">
+      <div class="container">
+        <div class="footer-inner">
+          <div class="footer-base">© 2026 Omnesis</div>
+          <nav class="footer-links" aria-label="Footer">
+            <a href="/docs/">Docs</a>
+            <a href="/privacy">Privacy</a>
+            <a class="footer-mail" href="mailto:contact@omnesis.dev">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="2" y="4" width="20" height="16" rx="2" />
+                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+              </svg>
+              contact@omnesis.dev
+            </a>
+            <a class="footer-gh" href="#" data-oss-open>
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path
+                  d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+                />
+              </svg>
+              GitHub
+            </a>
+            <a
+              class="footer-social footer-x"
+              href="https://x.com/Omnesisdev"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Omnesis on X"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>@Omnesisdev
+            </a>
+            <a
+              class="footer-social footer-discord"
+              href="https://discord.gg/4Y8pQHrVv"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Join Omnesis on Discord"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>Discord
+            </a>
+          </nav>
+        </div>
+      </div>
+    </footer>
+
+    <script src="/docs/docs.js"></script>
+  </body>
+</html>

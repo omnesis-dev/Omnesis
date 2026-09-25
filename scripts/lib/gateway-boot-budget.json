@@ -1,0 +1,18 @@
+{
+  "seconds": 90,
+  "why": "How long a test or developer path that spawns an Omnesis Gateway or an external harness host waits for its declared readiness condition. Most callers wait for /health; harness conformance waits for the loaded plugin service. One number, because independently chosen ones produced false reds: a suite that dies in its hook reports as a failed file with no failing test, which reads like a broken feature rather than a harness that stopped waiting. Sized for the slowest honest boot rather than the typical one \u2014 a cold tsx transform of the whole gateway on a machine running a full test lane. Nothing is served by failing fast here: a runtime that is never going to boot fails the surrounding hook either way, and every second shaved off this number buys nothing except a red tree on a loaded machine. Consumers must read this file rather than restate the number; scripts/gateway-boot-budget.test.mjs reddens if one drifts, and it reddens on a NEW runtime-readiness wait that does not read it \u2014 a fifth budget hiding in a second E2E harness is exactly how the first four happened.",
+  "consumers": [
+    "packages/collector/src/e2e/gateway-env.ts",
+    "packages/collector/src/e2e/harness-runtime-conformance.ts",
+    "packages/collector/src/e2e/harness.ts",
+    "packages/collector/src/e2e/multi-collector-harness.ts",
+    "packages/collector/src/e2e/synth-harness.ts",
+    "packages/collector/src/e2e/tofu.e2e.test.ts",
+    "scripts/dev-instance.sh",
+    "scripts/dev-scripts-smoke.test.mjs",
+    "scripts/generate-ios-app-store-screenshots.sh",
+    "scripts/ios-push-spike.sh",
+    "scripts/shot-portal.sh",
+    "scripts/synth-gateway.sh"
+  ]
+}

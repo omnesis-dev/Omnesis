@@ -1,0 +1,11 @@
+{
+  "triggers": [
+    "where was i on september 2",
+    "where was i on 2 september",
+    "where did i go on september 2"
+  ],
+  "placeholders": {
+    "docExternalIds": [],
+    "personNames": []
+  }
+}

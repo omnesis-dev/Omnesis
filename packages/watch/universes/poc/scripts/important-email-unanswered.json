@@ -1,0 +1,82 @@
+{
+  "note": "Five inbound emails are judged important and none is answered inside three days except the venue thread, which gets a reply on day 3. Four waits therefore run concurrently on four keys, and each firing has to carry its own thread's reason rather than the most recent arm's.",
+  "recall": [
+    {
+      "nodeId": "inbound_email",
+      "documentId": "d0c00001-0000-4000-8000-000000000007",
+      "score": 0.8,
+      "title": "Contract signature needed before Friday"
+    },
+    {
+      "nodeId": "inbound_email",
+      "documentId": "d0c00001-0000-4000-8000-000000000008",
+      "score": 0.8,
+      "title": "Re-reading the brief before Thursday"
+    },
+    {
+      "nodeId": "inbound_email",
+      "documentId": "d0c00001-0000-4000-8000-000000000009",
+      "score": 0.8,
+      "title": "Two options for the venue deposit"
+    },
+    {
+      "nodeId": "inbound_email",
+      "documentId": "d0c00001-0000-4000-8000-000000000010",
+      "score": 0.8,
+      "title": "Did the paperwork arrive?"
+    },
+    {
+      "nodeId": "inbound_email",
+      "documentId": "d0c00001-0000-4000-8000-000000000011",
+      "score": 0.8,
+      "title": "Can you confirm the venue?"
+    }
+  ],
+  "judgements": [
+    {
+      "nodeId": "inbound_email",
+      "documentId": "d0c00001-0000-4000-8000-000000000007",
+      "fired": true,
+      "output": {
+        "importance_reason": "a contract needs signing before Friday"
+      },
+      "title": "Contract signature needed before Friday"
+    },
+    {
+      "nodeId": "inbound_email",
+      "documentId": "d0c00001-0000-4000-8000-000000000008",
+      "fired": true,
+      "output": {
+        "importance_reason": "the brief is being re-read before a Thursday meeting"
+      },
+      "title": "Re-reading the brief before Thursday"
+    },
+    {
+      "nodeId": "inbound_email",
+      "documentId": "d0c00001-0000-4000-8000-000000000009",
+      "fired": true,
+      "output": {
+        "importance_reason": "two venue-deposit options are waiting on a decision"
+      },
+      "title": "Two options for the venue deposit"
+    },
+    {
+      "nodeId": "inbound_email",
+      "documentId": "d0c00001-0000-4000-8000-000000000010",
+      "fired": true,
+      "output": {
+        "importance_reason": "paperwork was sent and nobody confirmed it arrived"
+      },
+      "title": "Did the paperwork arrive?"
+    },
+    {
+      "nodeId": "inbound_email",
+      "documentId": "d0c00001-0000-4000-8000-000000000011",
+      "fired": true,
+      "output": {
+        "importance_reason": "a venue needs confirming"
+      },
+      "title": "Can you confirm the venue?"
+    }
+  ]
+}

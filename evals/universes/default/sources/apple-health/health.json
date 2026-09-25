@@ -1,0 +1,498 @@
+{
+  "accountId": "ios-synth-johnsmith",
+  "device": "Apple Watch Series 9",
+  "sourceApp": "com.apple.Health",
+  "body": [
+    {
+      "metric": "HKQuantityTypeIdentifierBodyMass",
+      "slug": "body_mass",
+      "unit": "kg",
+      "values": [74.2, 74.1, 74.3, 74.0, 73.9, 74.2, 74.1, 74.0, 73.9, 74.1, 74.0, 73.9, 74.0, 74.1]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierBodyFatPercentage",
+      "slug": "body_fat_pct",
+      "unit": "%",
+      "values": [16.2, 16.1, 16.3, 16.0, 15.9]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierBodyMassIndex",
+      "slug": "bmi",
+      "unit": "",
+      "values": [22.4, 22.4, 22.5, 22.4, 22.3]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierHeight",
+      "slug": "height",
+      "unit": "cm",
+      "values": [182.0]
+    }
+  ],
+  "activity": [
+    {
+      "metric": "HKQuantityTypeIdentifierStepCount",
+      "slug": "steps",
+      "unit": "count",
+      "values": [
+        8420, 11250, 7830, 13402, 9120, 6540, 14210, 9870, 10456, 12012, 8023, 11308, 9456, 10987
+      ]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierDistanceWalkingRunning",
+      "slug": "distance_walk_run",
+      "unit": "m",
+      "values": [
+        6320, 8430, 5870, 10050, 6840, 4905, 10660, 7400, 7840, 9010, 6020, 8480, 7090, 8240
+      ]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierActiveEnergyBurned",
+      "slug": "active_kcal",
+      "unit": "kcal",
+      "values": [420, 580, 390, 620, 480, 340, 690, 510, 535, 620, 415, 580, 470, 540]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierBasalEnergyBurned",
+      "slug": "basal_kcal",
+      "unit": "kcal",
+      "values": [1750, 1730, 1740, 1755, 1745, 1730, 1760, 1740, 1745, 1750, 1735, 1745, 1740, 1745]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierAppleExerciseTime",
+      "slug": "exercise_minutes",
+      "unit": "min",
+      "values": [38, 62, 31, 75, 48, 25, 88, 52, 60, 70, 40, 65, 50, 60]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierAppleStandTime",
+      "slug": "stand_minutes",
+      "unit": "min",
+      "values": [12, 14, 11, 14, 13, 10, 14, 12, 13, 14, 11, 14, 13, 13]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierFlightsClimbed",
+      "slug": "flights",
+      "unit": "count",
+      "values": [12, 22, 8, 28, 14, 6, 32, 18, 20, 24, 11, 22, 16, 18]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierVO2Max",
+      "slug": "vo2max",
+      "unit": "ml/kg·min",
+      "values": [48.2, 48.5, 48.3, 48.6, 48.7]
+    }
+  ],
+  "vitals": [
+    {
+      "metric": "HKQuantityTypeIdentifierHeartRate",
+      "slug": "heart_rate",
+      "unit": "bpm",
+      "values": [
+        68, 142, 165, 72, 58, 70, 132, 168, 75, 60, 71, 145, 162, 73, 59, 70, 138, 168, 74, 61, 69,
+        144, 165, 74, 60, 71, 140, 168
+      ]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierRestingHeartRate",
+      "slug": "resting_hr",
+      "unit": "bpm",
+      "values": [55, 55, 57, 56, 55, 54, 59, 56, 61, 55, 63, 60, 54, 55]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierHeartRateVariabilitySDNN",
+      "slug": "hrv",
+      "unit": "ms",
+      "values": [50, 49, 46, 48, 50, 52, 40, 45, 36, 49, 34, 39, 50, 48]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierBloodPressureSystolic",
+      "slug": "bp_systolic",
+      "unit": "mmHg",
+      "values": [118, 120, 117, 122, 119]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierBloodPressureDiastolic",
+      "slug": "bp_diastolic",
+      "unit": "mmHg",
+      "values": [76, 78, 75, 80, 77]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierOxygenSaturation",
+      "slug": "spo2",
+      "unit": "%",
+      "values": [98, 97, 98, 99, 98, 97, 98, 98, 99, 98]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierRespiratoryRate",
+      "slug": "respiratory_rate",
+      "unit": "breaths/min",
+      "values": [14, 15, 13, 14, 15, 14, 13, 15, 14, 14]
+    }
+  ],
+  "nutrition": [
+    {
+      "metric": "HKQuantityTypeIdentifierDietaryEnergyConsumed",
+      "slug": "energy_kcal",
+      "unit": "kcal",
+      "values": [2210, 2340, 2120, 2480, 2290, 1980, 2520, 2240, 2310, 2420, 2150, 2380, 2270, 2330]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierDietaryProtein",
+      "slug": "protein_g",
+      "unit": "g",
+      "values": [128, 142, 118, 148, 132, 108, 154, 136, 138, 144, 122, 140, 130, 134]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierDietaryCarbohydrates",
+      "slug": "carbs_g",
+      "unit": "g",
+      "values": [240, 268, 220, 296, 248, 198, 308, 254, 260, 282, 226, 270, 244, 258]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierDietaryFatTotal",
+      "slug": "fat_g",
+      "unit": "g",
+      "values": [82, 88, 78, 96, 85, 72, 102, 86, 88, 92, 78, 88, 82, 86]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierDietaryWater",
+      "slug": "water_ml",
+      "unit": "ml",
+      "values": [2800, 3100, 2600, 3200, 2900, 2400, 3300, 2950, 3000, 3100, 2700, 3050, 2850, 2900]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierDietaryCaffeine",
+      "slug": "caffeine_mg",
+      "unit": "mg",
+      "values": [185, 195, 175, 220, 190, 165, 230, 200, 205, 215, 180, 200, 190, 195]
+    }
+  ],
+  "environment": [
+    {
+      "metric": "HKQuantityTypeIdentifierEnvironmentalAudioExposure",
+      "slug": "env_audio_db",
+      "unit": "dBASPL",
+      "values": [62, 68, 58, 71, 65]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierHeadphoneAudioExposure",
+      "slug": "headphone_audio_db",
+      "unit": "dBASPL",
+      "values": [72, 78, 68, 82, 75, 70, 80, 73, 76, 78]
+    }
+  ],
+  "sleep": [
+    {
+      "nightOf": "2025-09-01",
+      "stages": [
+        ["inBed", 0, 5],
+        ["asleepCore", 5, 60],
+        ["asleepDeep", 65, 30],
+        ["asleepREM", 95, 20],
+        ["asleepCore", 115, 90],
+        ["asleepDeep", 205, 25],
+        ["asleepREM", 230, 25],
+        ["asleepCore", 255, 90],
+        ["awake", 345, 5],
+        ["asleepCore", 350, 60],
+        ["asleepREM", 410, 25],
+        ["awake", 435, 10]
+      ]
+    },
+    {
+      "nightOf": "2025-09-02",
+      "stages": [
+        ["inBed", 0, 5],
+        ["asleepCore", 5, 75],
+        ["asleepDeep", 80, 40],
+        ["asleepREM", 120, 25],
+        ["asleepCore", 145, 80],
+        ["asleepDeep", 225, 35],
+        ["asleepREM", 260, 30],
+        ["asleepCore", 290, 100],
+        ["awake", 390, 5],
+        ["asleepCore", 395, 40],
+        ["awake", 435, 5]
+      ]
+    },
+    {
+      "nightOf": "2025-09-03",
+      "stages": [
+        ["inBed", 0, 8],
+        ["asleepCore", 8, 70],
+        ["asleepDeep", 78, 35],
+        ["asleepREM", 113, 22],
+        ["asleepCore", 135, 85],
+        ["asleepDeep", 220, 30],
+        ["asleepREM", 250, 28],
+        ["asleepCore", 278, 95],
+        ["asleepREM", 373, 22],
+        ["awake", 395, 10]
+      ]
+    },
+    {
+      "nightOf": "2025-09-04",
+      "stages": [
+        ["inBed", 0, 6],
+        ["asleepCore", 6, 65],
+        ["asleepDeep", 71, 32],
+        ["asleepREM", 103, 20],
+        ["asleepCore", 123, 80],
+        ["asleepDeep", 203, 28],
+        ["asleepREM", 231, 26],
+        ["asleepCore", 257, 92],
+        ["awake", 349, 4],
+        ["asleepCore", 353, 55],
+        ["asleepREM", 408, 22],
+        ["awake", 430, 8]
+      ]
+    },
+    {
+      "nightOf": "2025-09-05",
+      "stages": [
+        ["inBed", 0, 5],
+        ["asleepCore", 5, 80],
+        ["asleepDeep", 85, 38],
+        ["asleepREM", 123, 28],
+        ["asleepCore", 151, 92],
+        ["asleepDeep", 243, 32],
+        ["asleepREM", 275, 30],
+        ["asleepCore", 305, 110],
+        ["asleepREM", 415, 18],
+        ["awake", 433, 7]
+      ]
+    },
+    {
+      "nightOf": "2025-09-06",
+      "stages": [
+        ["inBed", 0, 7],
+        ["asleepCore", 7, 90],
+        ["asleepDeep", 97, 42],
+        ["asleepREM", 139, 30],
+        ["asleepCore", 169, 110],
+        ["asleepDeep", 279, 38],
+        ["asleepREM", 317, 32],
+        ["asleepCore", 349, 95],
+        ["awake", 444, 6]
+      ]
+    },
+    {
+      "nightOf": "2025-09-07",
+      "stages": [
+        ["inBed", 0, 4],
+        ["asleepCore", 4, 55],
+        ["asleepDeep", 59, 28],
+        ["asleepREM", 87, 18],
+        ["asleepCore", 105, 70],
+        ["asleepDeep", 175, 25],
+        ["asleepREM", 200, 24],
+        ["asleepCore", 224, 85],
+        ["awake", 309, 8],
+        ["asleepCore", 317, 50],
+        ["awake", 367, 13]
+      ]
+    },
+    {
+      "nightOf": "2025-09-08",
+      "stages": [
+        ["inBed", 0, 6],
+        ["asleepCore", 6, 68],
+        ["asleepDeep", 74, 34],
+        ["asleepREM", 108, 24],
+        ["asleepCore", 132, 88],
+        ["asleepDeep", 220, 30],
+        ["asleepREM", 250, 26],
+        ["asleepCore", 276, 96],
+        ["asleepREM", 372, 20],
+        ["awake", 392, 8]
+      ]
+    },
+    {
+      "nightOf": "2025-09-09",
+      "stages": [
+        ["inBed", 0, 22],
+        ["asleepCore", 22, 70],
+        ["awake", 92, 14],
+        ["asleepCore", 106, 74],
+        ["asleepDeep", 180, 16],
+        ["asleepCore", 196, 84],
+        ["awake", 280, 18],
+        ["asleepREM", 298, 18],
+        ["asleepCore", 316, 40]
+      ]
+    },
+    {
+      "nightOf": "2025-09-10",
+      "stages": [
+        ["inBed", 0, 7],
+        ["asleepCore", 7, 74],
+        ["asleepDeep", 81, 32],
+        ["asleepREM", 113, 24],
+        ["asleepCore", 137, 92],
+        ["asleepDeep", 229, 28],
+        ["asleepREM", 257, 24],
+        ["asleepCore", 281, 96],
+        ["asleepREM", 377, 18],
+        ["awake", 395, 9]
+      ]
+    },
+    {
+      "nightOf": "2025-09-11",
+      "stages": [
+        ["inBed", 0, 34],
+        ["asleepCore", 34, 58],
+        ["awake", 92, 22],
+        ["asleepCore", 114, 66],
+        ["asleepDeep", 180, 12],
+        ["awake", 192, 16],
+        ["asleepCore", 208, 70],
+        ["awake", 278, 12],
+        ["asleepREM", 290, 16],
+        ["asleepCore", 306, 30]
+      ]
+    },
+    {
+      "nightOf": "2025-09-12",
+      "stages": [
+        ["inBed", 0, 12],
+        ["asleepCore", 12, 72],
+        ["awake", 84, 14],
+        ["asleepCore", 98, 80],
+        ["asleepDeep", 178, 20],
+        ["asleepREM", 198, 20],
+        ["asleepCore", 218, 90],
+        ["awake", 308, 12],
+        ["asleepREM", 320, 22]
+      ]
+    },
+    {
+      "nightOf": "2025-09-13",
+      "stages": [
+        ["inBed", 0, 5],
+        ["asleepCore", 5, 76],
+        ["asleepDeep", 81, 40],
+        ["asleepREM", 121, 26],
+        ["asleepCore", 147, 94],
+        ["asleepDeep", 241, 34],
+        ["asleepREM", 275, 26],
+        ["asleepCore", 301, 98],
+        ["asleepREM", 399, 22],
+        ["awake", 421, 7]
+      ]
+    },
+    {
+      "nightOf": "2025-09-14",
+      "stages": [
+        ["inBed", 0, 6],
+        ["asleepCore", 6, 72],
+        ["asleepDeep", 78, 34],
+        ["asleepREM", 112, 24],
+        ["asleepCore", 136, 90],
+        ["asleepDeep", 226, 30],
+        ["asleepREM", 256, 26],
+        ["asleepCore", 282, 92],
+        ["asleepREM", 374, 20],
+        ["awake", 394, 8]
+      ]
+    }
+  ],
+  "mindful": [
+    { "dateOf": "2025-09-01", "startHour": 22, "durationMin": 10 },
+    { "dateOf": "2025-09-03", "startHour": 7, "durationMin": 15 },
+    { "dateOf": "2025-09-05", "startHour": 22, "durationMin": 10 },
+    { "dateOf": "2025-09-07", "startHour": 21, "durationMin": 20 },
+    { "dateOf": "2025-09-09", "startHour": 7, "durationMin": 12 },
+    { "dateOf": "2025-09-11", "startHour": 22, "durationMin": 15 },
+    { "dateOf": "2025-09-13", "startHour": 21, "durationMin": 18 }
+  ],
+  "workouts": [
+    {
+      "type": "running",
+      "dateOf": "2025-09-01",
+      "startHour": 6,
+      "durationMin": 50,
+      "distanceM": 9200,
+      "energyKcal": 620
+    },
+    {
+      "type": "running",
+      "dateOf": "2025-09-04",
+      "startHour": 6,
+      "durationMin": 49,
+      "distanceM": 8230,
+      "energyKcal": 540
+    },
+    {
+      "type": "running",
+      "dateOf": "2025-09-07",
+      "startHour": 6,
+      "durationMin": 60,
+      "distanceM": 11200,
+      "energyKcal": 780
+    },
+    {
+      "type": "running",
+      "dateOf": "2025-09-08",
+      "startHour": 7,
+      "durationMin": 126,
+      "distanceM": 22400,
+      "energyKcal": 1450
+    },
+    {
+      "type": "running",
+      "dateOf": "2025-09-09",
+      "startHour": 7,
+      "durationMin": 33,
+      "distanceM": 5100,
+      "energyKcal": 320
+    },
+    {
+      "type": "running",
+      "dateOf": "2025-09-10",
+      "startHour": 6,
+      "durationMin": 52,
+      "distanceM": 9200,
+      "energyKcal": 600
+    },
+    {
+      "type": "running",
+      "dateOf": "2025-09-11",
+      "startHour": 6,
+      "durationMin": 48,
+      "distanceM": 7800,
+      "energyKcal": 510
+    },
+    {
+      "type": "running",
+      "dateOf": "2025-09-12",
+      "startHour": 6,
+      "durationMin": 59,
+      "distanceM": 9800,
+      "energyKcal": 670
+    },
+    {
+      "type": "running",
+      "dateOf": "2025-09-13",
+      "startHour": 7,
+      "durationMin": 140,
+      "distanceM": 25200,
+      "energyKcal": 1620
+    },
+    {
+      "type": "cycling",
+      "dateOf": "2025-09-05",
+      "startHour": 18,
+      "durationMin": 45,
+      "distanceM": 18000,
+      "energyKcal": 480
+    },
+    {
+      "type": "hiking",
+      "dateOf": "2025-09-14",
+      "startHour": 16,
+      "durationMin": 240,
+      "distanceM": 14000,
+      "energyKcal": 1100
+    }
+  ]
+}

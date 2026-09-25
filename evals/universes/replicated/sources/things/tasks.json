@@ -1,0 +1,35 @@
+[
+  {
+    "externalId": "synth-things-001",
+    "title": "Draft Q3 OKRs proposal",
+    "notes": "Cover product, growth, and infra goals. Pull last-quarter retro themes from notes.",
+    "createdAt": "2025-09-04T08:15:00Z",
+    "modifiedAt": "2025-09-04T08:15:00Z",
+    "deadline": "2025-09-10T17:00:00Z",
+    "project": "Q3 planning",
+    "tags": ["planning", "leadership"],
+    "status": "open"
+  },
+  {
+    "externalId": "synth-things-002",
+    "title": "Reply to Jane re: vendor evaluation",
+    "notes": "Send the comparison spreadsheet, flag the SOC2 gap on Globex.",
+    "createdAt": "2025-09-05T09:30:00Z",
+    "modifiedAt": "2025-09-06T11:00:00Z",
+    "deadline": "2025-09-07T17:00:00Z",
+    "project": "Vendor evaluation",
+    "tags": ["acme", "vendor"],
+    "status": "open"
+  },
+  {
+    "externalId": "synth-things-003",
+    "title": "Renew domain ortiz.studio",
+    "notes": "Dave's site. Annual renewal due mid-September.",
+    "createdAt": "2025-09-06T07:45:00Z",
+    "modifiedAt": "2025-09-08T18:20:00Z",
+    "deadline": "2025-09-15T23:59:00Z",
+    "project": "Personal",
+    "tags": ["personal", "admin"],
+    "status": "done"
+  }
+]

@@ -1,0 +1,23 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "SQL_TABLE_UNKNOWN",
+      "severity": "error",
+      "path": "/watch/nodes/1/query",
+      "message": "No analytics table 'documents' in the catalog. SQL nodes read the analytics store only — document and cognitive data arrive through source nodes.",
+      "details": {
+        "table": "documents",
+        "known": [
+          "health_vitals",
+          "health_sleep",
+          "plaid_transactions",
+          "google_calendar_events",
+          "google_calendar_attendees",
+          "people",
+          "apple_call_log"
+        ]
+      }
+    }
+  ]
+}

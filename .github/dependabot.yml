@@ -1,0 +1,85 @@
+# Dependabot configuration.
+#
+# Strategy:
+#  - Group related ecosystems so a typescript-eslint patch bump doesn't
+#    create three separate PRs.
+#  - Cap open PRs per ecosystem so a quiet week doesn't backlog into
+#    twenty queued bumps.
+#  - Patch-level updates from trusted ecosystems are auto-merged once CI
+#    passes — see .github/workflows/dependabot-auto-merge.yml.
+#  - Minor / major bumps stay as human-reviewed PRs.
+#
+# Re-tune the groups when a frequently-bumped library starts producing
+# its own dedicated PR every week — pull it into an existing group or
+# add a new one.
+
+version: 2
+
+updates:
+  # ----------------------------------------------------------------------
+  # npm — root + every workspace package share one package-lock.json,
+  # so a single ecosystem entry covers all of packages/*.
+  # ----------------------------------------------------------------------
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: "Europe/London"
+    open-pull-requests-limit: 5
+    versioning-strategy: increase-if-necessary
+    labels:
+      - dependencies
+      - javascript
+    groups:
+      # All @types/* travel together — bumping one rarely makes sense in
+      # isolation and they almost never conflict with each other.
+      types:
+        patterns:
+          - "@types/*"
+      # ESLint + plugins + typescript-eslint are released in lockstep often
+      # enough that grouping them avoids 4-5 PRs per release wave.
+      eslint:
+        patterns:
+          - "eslint"
+          - "eslint-*"
+          - "@eslint/*"
+          - "typescript-eslint"
+          - "@typescript-eslint/*"
+      vitest:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
+      hono:
+        patterns:
+          - "hono"
+          - "@hono/*"
+      prettier:
+        patterns:
+          - "prettier"
+          - "prettier-*"
+      better-sqlite3:
+        patterns:
+          - "better-sqlite3"
+          - "@types/better-sqlite3"
+      # Catch-all for everything else minor/patch — keeps the dashboard
+      # from drowning in tiny bumps. Named groups above take priority.
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  # ----------------------------------------------------------------------
+  # github-actions — bumps for `uses: actions/foo@vX` references.
+  # ----------------------------------------------------------------------
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - ci
+    groups:
+      actions:
+        update-types: ["minor", "patch"]

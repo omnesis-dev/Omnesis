@@ -1,0 +1,38 @@
+[
+  {
+    "externalId": "call-log:2026-09-09",
+    "date": "2026-09-09",
+    "calls": [
+      {
+        "time": "2026-09-09T20:12:00Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 1440,
+        "connected": true,
+        "counterparty": "p_nora"
+      }
+    ]
+  },
+  {
+    "externalId": "call-log:2026-09-15",
+    "date": "2026-09-15",
+    "calls": [
+      {
+        "time": "2026-09-15T12:48:00Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 260,
+        "connected": true,
+        "counterparty": "p_theo"
+      },
+      {
+        "time": "2026-09-15T17:03:00Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_iris"
+      }
+    ]
+  }
+]

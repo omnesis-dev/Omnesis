@@ -1,0 +1,46 @@
+{
+  "note": "Thread T-3001 accepts a quote and is invoiced after it, in that order, so the sequence completes. A second invoice arrives on a thread that never accepted anything: it is the sequence's second element with the first still unfilled, so it is dropped rather than stashed.",
+  "recall": [
+    {
+      "nodeId": "quote_accepted",
+      "documentId": "d0c00001-0000-4000-8000-000000000018",
+      "score": 0.72,
+      "title": "Happy to proceed with the quote"
+    },
+    {
+      "nodeId": "invoice_issued",
+      "documentId": "d0c00001-0000-4000-8000-000000000019",
+      "score": 0.72,
+      "title": "Invoice attached, 30-day terms"
+    },
+    {
+      "nodeId": "invoice_issued",
+      "documentId": "d0c00001-0000-4000-8000-000000000015",
+      "score": 0.8,
+      "title": "Invoice attached, 14-day terms"
+    }
+  ],
+  "judgements": [
+    {
+      "nodeId": "quote_accepted",
+      "documentId": "d0c00001-0000-4000-8000-000000000018",
+      "fired": true,
+      "output": {},
+      "title": "Happy to proceed with the quote"
+    },
+    {
+      "nodeId": "invoice_issued",
+      "documentId": "d0c00001-0000-4000-8000-000000000019",
+      "fired": true,
+      "output": {},
+      "title": "Invoice attached, 30-day terms"
+    },
+    {
+      "nodeId": "invoice_issued",
+      "documentId": "d0c00001-0000-4000-8000-000000000015",
+      "fired": true,
+      "output": {},
+      "title": "Invoice attached, 14-day terms"
+    }
+  ]
+}

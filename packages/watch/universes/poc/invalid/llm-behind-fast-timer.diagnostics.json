@@ -1,0 +1,15 @@
+{
+  "valid": true,
+  "diagnostics": [
+    {
+      "code": "LINT_LLM_BEHIND_FAST_TIMER",
+      "severity": "warning",
+      "path": "/watch/nodes/1",
+      "message": "'judge' invokes a model on a cadence of about every 5 minutes. Put a procedural gate in front of it.",
+      "details": {
+        "nodeId": "judge",
+        "intervalMs": 300000
+      }
+    }
+  ]
+}

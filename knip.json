@@ -1,0 +1,175 @@
+{
+  "$schema": "https://unpkg.com/knip@latest/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": [
+        "scripts/*.{ts,mjs}",
+        "scripts/release/*.mjs",
+        "bench/*.ts",
+        "evals/universes/*/_build/*.mjs",
+        "evals/universes/*/agent-demos/_build/*.mjs"
+      ]
+    },
+    "packages/agent": {
+      "entry": ["src/**/*.test.ts"]
+    },
+    "packages/core": {
+      "entry": [
+        "src/subpath/*.ts",
+        "src/**/*.test.ts",
+        "src/doctor/security-worker-entry.ts",
+        "src/doctor/register-tsx.mjs",
+        "scripts/*.{ts,mjs}"
+      ]
+    },
+    "packages/types": {
+      "entry": ["src/**/*.test.ts"]
+    },
+    "packages/config": {
+      "entry": ["src/**/*.test.ts"]
+    },
+    "packages/agent-integration": {
+      "entry": [
+        "openclaw-entry.mjs",
+        "src/**/*.test.ts",
+        "test/openclaw_mcp_probe.mjs",
+        "test/openclaw_plugin_probe.mjs"
+      ],
+      "ignoreDependencies": ["openclaw"]
+    },
+    "packages/source-sdk": {},
+    "packages/gateway": {
+      "entry": [
+        "src/server.ts",
+        "src/workers/*.ts",
+        "src/icon-rasterize-worker.ts",
+        "src/transcribe/whisper-worker.ts",
+        "src/indexer/usearch-validate-subprocess.ts",
+        "src/**/*.test.ts",
+        "src/search/bench-*.ts",
+        "src/search/matrix-*.ts",
+        "src/search/probe-*.ts",
+        "src/near-dupes/index.ts",
+        "portal/index.html",
+        "portal/js/app.js",
+        "portal/vendor/*.js",
+        "scripts/*.mjs"
+      ],
+      "project": ["src/**/*.ts", "portal/js/**/*.js", "portal/vendor/**/*.js"]
+    },
+    "packages/collector": {
+      "entry": [
+        "src/auth-subprocess.ts",
+        "src/**/*.test.ts",
+        "src/**/fixtures/*.mjs",
+        "src/e2e/brain-bench/codex-fixture.mjs"
+      ],
+      "ignoreDependencies": [
+        "@omnesis/provider-android-call-log-synth",
+        "@omnesis/provider-apple",
+        "@omnesis/provider-apple-health-synth",
+        "@omnesis/provider-apple-synth",
+        "@omnesis/provider-browser-history",
+        "@omnesis/provider-browser-history-synth",
+        "@omnesis/provider-chrome",
+        "@omnesis/provider-chrome-synth",
+        "@omnesis/provider-claude-code",
+        "@omnesis/provider-codex",
+        "@omnesis/provider-coinbase",
+        "@omnesis/provider-coinbase-synth",
+        "@omnesis/provider-core-location-visits-synth",
+        "@omnesis/provider-enable-banking",
+        "@omnesis/provider-enable-banking-synth",
+        "@omnesis/provider-github",
+        "@omnesis/provider-github-synth",
+        "@omnesis/provider-google",
+        "@omnesis/provider-google-synth",
+        "@omnesis/provider-granola",
+        "@omnesis/provider-granola-synth",
+        "@omnesis/provider-health-connect-synth",
+        "@omnesis/provider-hermes",
+        "@omnesis/provider-imap",
+        "@omnesis/provider-local-files",
+        "@omnesis/provider-lunchflow",
+        "@omnesis/provider-lunchflow-synth",
+        "@omnesis/provider-notion",
+        "@omnesis/provider-notion-synth",
+        "@omnesis/provider-obsidian",
+        "@omnesis/provider-obsidian-synth",
+        "@omnesis/provider-openclaw",
+        "@omnesis/provider-outlook",
+        "@omnesis/provider-outlook-synth",
+        "@omnesis/provider-pi",
+        "@omnesis/provider-plaid",
+        "@omnesis/provider-plaid-synth",
+        "@omnesis/provider-screen-time",
+        "@omnesis/provider-screen-time-synth",
+        "@omnesis/provider-strava",
+        "@omnesis/provider-strava-synth",
+        "@omnesis/provider-things",
+        "@omnesis/provider-things-synth",
+        "@omnesis/provider-whatsapp",
+        "@omnesis/provider-whatsapp-synth"
+      ]
+    },
+    "packages/cli": {
+      "entry": ["src/**/*.test.ts"]
+    },
+    "packages/cli-shared": {
+      "entry": ["src/**/*.test.ts"]
+    },
+    "packages/providers/*": {
+      "entry": ["src/**/*.test.ts"]
+    },
+    "packages/providers/whatsapp": {
+      "entry": ["src/**/*.test.ts", "src/import/import-worker.ts", "src/import/register-tsx.mjs"]
+    },
+    "packages/near-dupes": {
+      "entry": [
+        "src/runner/cli.ts",
+        "src/report/cli.ts",
+        "src/report/comparison.ts",
+        "src/filters/annotate.ts",
+        "src/**/*.test.ts"
+      ]
+    },
+    "packages/watch": {
+      "entry": ["src/**/*.test.ts", "universes/*/_build/*.mjs", "scripts/*.ts"]
+    },
+    "packages/providers-synth/*": {
+      "entry": ["src/**/*.test.ts"]
+    },
+    "extension": {
+      "entry": [
+        "src/chrome/background.ts",
+        "src/chrome/options.ts",
+        "src/chrome/popup.ts",
+        "src/chrome/content.ts",
+        "src/**/*.test.ts"
+      ]
+    }
+  },
+  "ignore": [
+    "website/**",
+    ".claude/**",
+    "worker.js",
+    "integrations/**",
+    "extension/scripts/test-manifest.d.mts"
+  ],
+  "rules": {
+    "files": "error",
+    "dependencies": "error",
+    "devDependencies": "error",
+    "unresolved": "error",
+    "binaries": "warn",
+    "exports": "warn",
+    "types": "warn",
+    "nsExports": "warn",
+    "nsTypes": "warn",
+    "enumMembers": "warn",
+    "duplicates": "warn",
+    "unlisted": "off"
+  },
+  "ignoreDependencies": ["nx", "patch-package"],
+  "ignoreBinaries": ["python3"]
+}

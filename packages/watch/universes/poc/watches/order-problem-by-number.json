@@ -1,0 +1,43 @@
+{
+  "watch": {
+    "name": "order-problem-by-number",
+    "nl_query": "Tell me if there's a problem or a delay with order XR-4471.",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "order_mail",
+        "type": "source.document_event",
+        "comment": "The order number is the whole point: an embedding cannot retrieve it, so the lexical arm nominates and the judge decides whether what it nominated is a problem.",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email"
+        },
+        "recall": {
+          "lexical": {
+            "terms": ["XR-4471"],
+            "match": "token"
+          }
+        },
+        "judge": {
+          "proposition": "This email reports a problem, delay or change to order XR-4471 rather than merely confirming it",
+          "output_schema": {
+            "kind": "enum[delay, problem, cancelled, other]"
+          }
+        },
+        "output_map": {
+          "doc_id": "$e.docId",
+          "kind": "$judge.kind"
+        }
+      }
+    ],
+    "sink": {
+      "input": "order_mail",
+      "output_map": {
+        "evidence": "$n.order_mail.doc_id",
+        "kind": "$n.order_mail.kind"
+      }
+    }
+  }
+}

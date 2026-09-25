@@ -1,0 +1,14 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "SPAWN_WITH_CANCEL_INPUT",
+      "severity": "error",
+      "path": "/watch/nodes/2/on_collision",
+      "message": "'spawn' with a cancel input is ambiguous — a cancel for key K cannot name which of K's parallel instances it ends.",
+      "details": {
+        "nodeId": "waiting"
+      }
+    }
+  ]
+}

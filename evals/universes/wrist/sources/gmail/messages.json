@@ -1,0 +1,38 @@
+[
+  {
+    "externalId": "wrist-gmail-race-entry",
+    "subject": "Entry confirmed — Paris Riverside Triathlon",
+    "from": "p_club",
+    "fromEmail": "entries@riverbend.example",
+    "to": ["self"],
+    "toEmails": ["maya.reeves@example.com"],
+    "body": "Hi Maya,\n\nYour entry for the Paris Riverside Triathlon is confirmed. Olympic distance, wave 3.\n\nRace day: Monday 21 September 2026\nTransition opens: 06:15\nWave 3 start: 08:40\nVenue: Riverside Park, Paris\n\nBring photo ID and your club licence to registration the day before.\n\nRiverbend Tri Club",
+    "sentAt": "2026-06-30T09:12:00Z",
+    "threadId": "t_paris_tri_entry",
+    "labels": ["INBOX", "Triathlon"]
+  },
+  {
+    "externalId": "wrist-gmail-eurostar",
+    "subject": "Your booking is confirmed — London to Paris",
+    "from": "p_rail",
+    "fromEmail": "bookings@eurostar.example",
+    "to": ["self"],
+    "toEmails": ["maya.reeves@example.com"],
+    "body": "Booking confirmation\n\nReservation: NX8823U\nPassenger: Maya Reeves\n\nOutbound — Sunday 20 September 2026\nLondon St Pancras International 08:01 → Paris Gare du Nord 11:17\nCoach 12, seat 41, Standard Premier\n\nReturn — Tuesday 22 September 2026\nParis Gare du Nord 18:13 → London St Pancras International 19:39\nCoach 9, seat 22, Standard Premier\n\nPlease arrive at least 60 minutes before departure for check-in and security.",
+    "sentAt": "2026-07-14T16:40:00Z",
+    "threadId": "t_eurostar_nx8823u",
+    "labels": ["INBOX", "Travel"]
+  },
+  {
+    "externalId": "wrist-gmail-welcome-guide",
+    "subject": "Welcome guide — your Paris stay",
+    "from": "p_iris",
+    "fromEmail": "iris.kelland@example.org",
+    "to": ["self"],
+    "toEmails": ["maya.reeves@example.com"],
+    "body": "Hi Maya,\n\nLooking forward to hosting you this weekend. Everything you need is below.\n\nCheck-in: from 15:00. The key safe is to the left of the green door, code 4417.\n\nWi-Fi network: Kelland-Guest\nWi-Fi password: Savanna2026\n\nThe boulangerie on the corner opens at 06:30, which I gather matters to you on race morning. Bin day is Tuesday.\n\nAny trouble at all, message me.\n\nIris",
+    "sentAt": "2026-09-17T11:05:00Z",
+    "threadId": "t_paris_stay_welcome",
+    "labels": ["INBOX", "Travel"]
+  }
+]

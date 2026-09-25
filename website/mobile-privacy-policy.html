@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Omnesis Mobile App Privacy Policy — Omnesis</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32" />
+    <link rel="icon" type="image/png" href="/favicon-16.png" sizes="16x16" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- Resolve the theme before first paint: the stored choice, else the OS preference. -->
+    <script>
+      (function () {
+        var root = document.documentElement;
+        root.classList.add("js");
+        var t;
+        try {
+          t = localStorage.getItem("omnesis-theme");
+        } catch (e) {}
+        if (t !== "light" && t !== "dark") {
+          t =
+            window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+        }
+        root.setAttribute("data-theme", t);
+      })();
+    </script>
+
+    <meta
+      name="description"
+      content="How the Omnesis mobile apps send permitted phone data to your self-hosted gateway, what stays local, and when optional cloud inference can process selected inputs."
+    />
+    <link rel="canonical" href="https://omnesis.dev/mobile-privacy-policy" />
+    <meta name="theme-color" content="#0d1117" />
+
+    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="/footer-social.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <nav id="nav">
+      <div class="container">
+        <a href="/" class="nav-logo" aria-label="Omnesis"
+          ><span class="nav-logo-mark" aria-hidden="true"></span>MNESIS</a
+        >
+        <div class="nav-right">
+          <ul class="nav-links">
+            <li><a href="/">Context Layer</a></li>
+            <li><a href="/brain">Omnesis Brain</a></li>
+            <li><a href="/vision">Vision</a></li>
+          </ul>
+          <a
+            class="nav-icon-btn"
+            href="#"
+            data-oss-open
+            aria-label="Omnesis on GitHub"
+            title="Omnesis on GitHub"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path
+                d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+              />
+            </svg>
+          </a>
+          <button
+            id="theme-toggle"
+            class="theme-toggle"
+            type="button"
+            aria-label="Switch between dark and light theme"
+            title="Toggle theme"
+          >
+            <svg
+              class="icon-sun"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="4" />
+              <path
+                d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"
+              />
+            </svg>
+            <svg
+              class="icon-moon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <div class="docs-shell docs-shell--single">
+      <main id="main" class="docs-content">
+        <p class="docs-kicker">Legal</p>
+        <h1>Omnesis Mobile App Privacy Policy</h1>
+        <p class="docs-lead"><strong>Last updated:</strong> 2026-08-29</p>
+
+        <h2 id="summary">Summary</h2>
+        <p>
+          Omnesis is a local-first personal data indexer. The Omnesis mobile apps (iOS and Android)
+          read data you explicitly grant on your phone and send it only to the Omnesis gateway you
+          paired with the app. Ordinarily, that gateway runs on
+          <strong>your own hardware — a machine you control</strong>. If another person or
+          organization supplies the gateway, that gateway's operator receives and controls the data
+          you send to it, so pair only with an operator and endpoint you trust. Distributing the app
+          does not itself give Adrien Conrath, the developer of Omnesis, a copy of your data.
+          Platform speech, assistant, geocoding, and notification services may process the limited
+          data described below under Apple or Google's terms. Omnesis operates a small push relay
+          that can wake an official mobile app, but it never receives notification titles, bodies,
+          kinds, queries, indexed content, or an application-level gateway identifier. It receives
+          the carrier token and public app identity described below. There is no Omnesis account,
+          telemetry, analytics or advertising SDK, or advertising identifier.
+        </p>
+        <p>
+          Cloud inference is off by default. If you or the operator of your paired gateway enables a
+          cloud model or cloud AI agent for a configured role, Omnesis sends the inputs needed for
+          that role to the selected provider. That provider's privacy and retention terms then
+          apply.
+        </p>
+        <p>
+          If you are reading this to review a TestFlight, App Store, or Play Store submission: the
+          short version is
+          <strong
+            >local-first, indexed content sent only to the paired gateway, notification content
+            bypassing the relay, and no analytics or advertising SDK calls</strong
+          >.
+        </p>
+
+        <h2 id="who-we-are">Who we are</h2>
+        <p>
+          Omnesis is developed and maintained by Adrien Conrath. There is no shared hosted data
+          backend required for every user: users ordinarily run their own gateway on their own
+          hardware, though a gateway can be supplied by another person or organization. That party
+          is the operator of the gateway and controls the data sent to it. Omnesis operates the
+          limited notification relay described below. In this policy, “we” refers to Adrien Conrath
+          as the developer of Omnesis.
+        </p>
+
+        <h2 id="what-the-apps-access">What the apps access, and how it is used</h2>
+        <p>
+          The apps access only what you grant, through your operating system's permission prompts or
+          settings controls. Access is used to build a searchable index on your paired gateway or to
+          provide a feature you invoke, such as voice input or QR pairing. Each permission or
+          special access grant can be denied or revoked through the controls provided by the
+          operating system.
+        </p>
+        <ul>
+          <li>
+            <strong>Health</strong> (Apple HealthKit on iOS / Health Connect on Android) — body
+            composition, activity, vitals, sleep, nutrition, mindfulness, mood or mental wellbeing,
+            reproductive and cycle data, sexual activity, environmental exposure, and workouts,
+            where supported and in the categories you allow. Read on your device and indexed on your
+            gateway. The apps never write back to Apple Health or Health Connect.
+          </li>
+          <li>
+            <strong>Motion &amp; activity</strong> (iOS Core Motion / Android activity recognition)
+            — your motion-activity history (stationary, walking, running, cycling, driving), indexed
+            on your gateway.
+          </li>
+          <li>
+            <strong>Photos</strong> (iOS Photo Library / Android photos &amp; screenshots) — the
+            apps extract <strong>text, captions, and metadata</strong>, which can include capture
+            time and location coordinates, from your images to make them searchable.
+            <strong
+              >No photo or image itself ever leaves your device — only the extracted text and
+              metadata are sent to your gateway.</strong
+            >
+          </li>
+          <li>
+            <strong>Microphone, speech recognition, and voice assistants</strong> — when you invoke
+            dictation or a Siri, Google Assistant, or Gemini action, the app uses the platform's
+            speech recognizer to turn your voice into text. On iOS 18 and later Omnesis requires
+            on-device recognition; on iOS 17, recognition can fall back to Apple's service. On
+            Android, Omnesis requests offline recognition, but the installed recognition service
+            decides whether processing is local or remote. Siri, Google Assistant, or Gemini may
+            also process the invocation and supplied phrase under Apple or Google's terms. The
+            resulting text is sent to your gateway when you submit the action.
+          </li>
+          <li>
+            <strong>Location</strong> — on iOS, a location can be attached to a note captured in the
+            foreground, and the optional Location Visits source records visited places in the
+            background. On both platforms, photo metadata can include a photo's location. Exact
+            coordinates, accuracy, time, and a resolved place name, when available, can be sent to
+            your gateway. Resolving coordinates into a place name may use the operating system's
+            geocoding service and therefore disclose those coordinates to Apple or Google.
+          </li>
+          <li>
+            <strong>Call log</strong> (self-built Android editions only) — your call history (who,
+            when, and duration — not call audio). Indexing it makes calls searchable and places them
+            alongside other activity in your timeline, helping you recover context around a person
+            or period. The Google Play edition does not contain this source and does not request the
+            call-log permission. Omnesis does not access call audio or conversation content.
+          </li>
+          <li>
+            <strong>App usage</strong> (Android) — app-usage statistics, indexed on your gateway.
+          </li>
+          <li>
+            <strong>Camera</strong> — used only to scan the pairing QR code shown by your gateway on
+            first setup. Never recorded, never stored.
+          </li>
+          <li>
+            <strong>On-device storage</strong> (Keychain / app storage) — the gateway URL, pairing
+            token, device identifier, and your per-category settings.
+          </li>
+        </ul>
+        <p>
+          Beyond what is listed above, the apps do <strong>not</strong> access your contacts,
+          calendar, or reminders.
+        </p>
+
+        <h2 id="where-data-goes">Where your data goes</h2>
+        <p>
+          The mobile apps send permitted data directly from your phone to the gateway paired with
+          the app.
+        </p>
+        <ul>
+          <li>
+            The app sends the data it reads (for photos, only the extracted text and metadata) to
+            the gateway URL you approve at pairing time. If you run the gateway, you control that
+            endpoint. If someone else supplies it, that party controls the endpoint and processes
+            the data sent to it. Mobile apps require HTTPS and reject plain-HTTP gateway addresses.
+          </li>
+          <li>
+            A gateway ordinarily runs on the user's own hardware. A user may instead pair with a
+            gateway supplied by another person or organization; that operator's privacy and
+            retention terms apply to the gateway.
+          </li>
+          <li>
+            To enable notifications for a self-hosted gateway, the app may enrol with an
+            Omnesis-operated push relay. During enrolment the relay receives the platform, carrier
+            token, public app identity, and, on iOS, the sandbox or production environment. It does
+            not receive an Omnesis account, gateway identity, or notification content.
+          </li>
+          <li>
+            After enrolment, the gateway sends the relay an authenticated request with an empty
+            body. The relay asks Apple Push Notification service or Firebase Cloud Messaging to
+            deliver a fixed, content-free wake. The app then retrieves the actual notification
+            directly from its paired gateway. Apple or Google therefore receives the carrier token,
+            public app identity, and fixed wake payload, but not the notification title or body.
+          </li>
+          <li>
+            Speech recognition, Siri, Google Assistant, Gemini, and operating-system geocoding may
+            process voice, action text, or coordinates as described above. These are platform
+            services selected and controlled through your device; their privacy and retention terms
+            apply.
+          </li>
+          <li>
+            As with any internet service, the relay's hosting and network providers necessarily
+            process source IP addresses and basic transport metadata to route and protect requests.
+            The relay application does not put source IP addresses in its notification database.
+          </li>
+          <li>There is no third-party analytics or cross-device data sync through our relay.</li>
+        </ul>
+
+        <h2 id="cloud-is-your-choice">Cloud models are your choice</h2>
+        <p>
+          On a gateway, Omnesis can use AI models for tasks like turning documents into search
+          vectors, transcription, OCR, and answering questions. If you operate the gateway, you
+          choose where inference runs; otherwise its operator chooses:
+        </p>
+        <ul>
+          <li>
+            a <strong>local model</strong> — runs on the gateway, so inputs remain with its
+            operator; or
+          </li>
+          <li>
+            a <strong>cloud model or AI agent</strong> — the inputs needed for the configured role
+            are sent to the selected provider.
+          </li>
+        </ul>
+        <p>
+          Cloud inference is off by default. When you or the gateway operator enables it for a
+          configured model role, Omnesis sends the inputs needed for that role to the selected
+          provider. That provider's privacy and retention terms apply. Gateway operators should
+          choose a provider and account plan that offers suitable retention for the API in use and
+          disclose that choice to users. Omnesis does not verify or enforce a provider's retention
+          policy.
+        </p>
+
+        <h2 id="what-omnesis-does-not-do">What Omnesis does NOT do</h2>
+        <ul>
+          <li>
+            Distributing the app does not send us your indexed content or queries. If you
+            deliberately pair with a gateway operated by us or another party, that operator
+            processes the data sent to the gateway under the terms presented for that service. The
+            notification relay still never receives indexed content, queries, or notification
+            content.
+          </li>
+          <li>We do not include any third-party analytics, advertising, or crash-reporting SDK.</li>
+          <li>We do not use IDFA or any advertising identifier.</li>
+          <li>
+            We do not sell, rent, or lease your data. Indexed content is shared only as directed by
+            the paired gateway's operator, including with a selected inference provider.
+            Notification content is not shared through our relay. Limited carrier metadata is sent
+            only to Apple or Google to deliver a wake as described above.
+          </li>
+          <li>We do not profile you for any purpose.</li>
+        </ul>
+
+        <h2 id="retention">Retention</h2>
+        <p>
+          Indexed content retention is controlled by the operator of the paired gateway. For the
+          ordinary self-hosted setup, that operator is you; if another party supplies the gateway,
+          consult that operator's retention terms. On the phone, the apps can store:
+        </p>
+        <ul>
+          <li>
+            <strong>Pairing credentials</strong>, device identity, feature settings, and continuity
+            state. Pairing credentials remain until you unpair, subject to the iOS Keychain behavior
+            described below.
+          </li>
+          <li>
+            <strong>Pending notes and failed-upload batches</strong>. Pending captured notes can
+            contain their full text and attached location and remain until they upload or you
+            discard them. Failed source-upload batches are capped in size and evicted oldest-first;
+            successfully uploaded batches are deleted.
+          </li>
+          <li>
+            <strong>Source cursors and local indexes</strong>, such as permission state and the
+            photo asset identifiers needed to find new items without rescanning the whole library.
+          </li>
+          <li>
+            <strong>Location and activity state</strong>. On iOS, completed raw visits can remain
+            for up to 14 days, whether or not they have already uploaded. Android keeps a local
+            history of resolved movement segments, including activity type, time, confidence, and
+            date, until app data is cleared or the app is deleted. Pending Android activity
+            transitions remain until processed; qualifying segments are uploaded and non-qualifying
+            transitions are discarded. Permanently refused transitions can be quarantined locally,
+            capped at 5,000, until they are discarded or app data is cleared.
+          </li>
+          <li>
+            Photo pixels are processed transiently and are not retained by Omnesis as a local photo
+            library. Indexed content that has reached your gateway is retained there according to
+            the paired gateway's configuration.
+          </li>
+        </ul>
+        <p>
+          The Android app disables Android's cloud-backup mechanisms. On iOS, corpus-derived app
+          storage such as pending notes, failed-upload batches, and the local photo index is marked
+          to be excluded from device and iCloud backups. Other preferences and Keychain retention
+          follow Apple's platform behavior; in particular, Keychain items can survive deleting and
+          reinstalling an app. Unpair before deleting the iOS app if you want its pairing
+          credentials removed from Keychain.
+        </p>
+        <p>The notification relay retains limited operational metadata:</p>
+        <ul>
+          <li>
+            Enrolment challenges contain carrier addressing and expire after ten minutes. Expired
+            challenges are removed during subsequent relay operations.
+          </li>
+          <li>
+            An active relay credential is stored only as a SHA-256 digest, together with its carrier
+            token, public app identity, platform, environment, and creation time. It has no
+            automatic expiry and remains until rotation, revocation, or operator removal.
+          </li>
+          <li>
+            Successful rotation or individual revocation erases the old carrier token and app
+            identity. Its digest and revocation time may remain as a security record.
+          </li>
+          <li>
+            Per-credential wake timestamps used to enforce abuse limits are retained for a rolling
+            24-hour window and removed during subsequent relay operations.
+          </li>
+        </ul>
+
+        <h2 id="user-control">User control</h2>
+        <ul>
+          <li>
+            <strong>Revoke any permission at any time</strong> in your OS settings (iOS: Settings →
+            Privacy &amp; Security; Android: Settings → Apps / Permissions, Usage Access for
+            app-usage statistics, and the Health Connect app for health data). Revocation stops new
+            access or collection. Data already queued on the phone can still upload unless you
+            discard it or clear the app's data.
+          </li>
+          <li>
+            <strong>Pause individual categories inside the app</strong> — toggle any category off
+            and the sync rotation skips it.
+          </li>
+          <li>
+            <strong>Unpair</strong> — removes the pairing credentials. Some device preferences,
+            local indexes, or queued data can remain; use the app's available queue controls or
+            operating-system app-data controls if you also want to remove those items.
+          </li>
+          <li>
+            <strong>Delete the app</strong> — removes its ordinary local app data. Android cloud
+            backup is disabled, and iOS corpus-derived app storage is excluded from backups. On iOS,
+            Keychain items can survive app deletion, so unpair first if you want the pairing
+            credentials removed.
+          </li>
+        </ul>
+
+        <h2 id="data-on-your-gateway">Data already on your gateway</h2>
+        <p>
+          This policy covers the mobile apps. If you operate the paired gateway, data already pushed
+          to it is under your direct control there — for example, via the Omnesis CLI. If another
+          party supplies the gateway, use the deletion controls and contact process that operator
+          provides; its terms govern data retained on that gateway.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis sql "DELETE FROM health_body WHERE ..."</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis remove apple-health:local</span>
+            </p>
+          </div>
+        </div>
+
+        <h2 id="children">Children</h2>
+        <p>
+          Omnesis is not intended for users under the age of 13 (or the minimum age of digital
+          consent in your jurisdiction, whichever is higher).
+        </p>
+
+        <h2 id="changes-to-this-policy">Changes to this policy</h2>
+        <p>
+          When this policy changes, the <strong>Last updated</strong> date at the top of the page
+          moves. Material changes will be reflected on this page.
+        </p>
+
+        <h2 id="contact">Contact</h2>
+        <p>
+          Questions about this policy can be emailed to
+          <a href="mailto:contact@omnesis.dev">contact@omnesis.dev</a>.
+        </p>
+      </main>
+    </div>
+
+    <footer class="site-footer">
+      <div class="container">
+        <div class="footer-inner">
+          <div class="footer-base">© 2026 Omnesis</div>
+          <nav class="footer-links" aria-label="Footer">
+            <a href="/privacy">Privacy</a>
+            <a class="footer-mail" href="mailto:contact@omnesis.dev">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="2" y="4" width="20" height="16" rx="2" />
+                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+              </svg>
+              contact@omnesis.dev
+            </a>
+            <a class="footer-gh" href="#" data-oss-open>
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path
+                  d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+                />
+              </svg>
+              GitHub
+            </a>
+            <a
+              class="footer-social footer-x"
+              href="https://x.com/Omnesisdev"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Omnesis on X"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>@Omnesisdev
+            </a>
+            <a
+              class="footer-social footer-discord"
+              href="https://discord.gg/4Y8pQHrVv"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Join Omnesis on Discord"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>Discord
+            </a>
+          </nav>
+        </div>
+      </div>
+    </footer>
+
+    <script src="/docs/docs.js"></script>
+  </body>
+</html>

@@ -1,0 +1,87 @@
+name: Docker smoke
+
+# Full validation supplies one immutable source revision to this reusable lane.
+# Manual full requests enter through the guarded admission controller.
+on:
+  workflow_call:
+    inputs:
+      target_sha:
+        description: "Exact 40-character source revision to validate"
+        required: true
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+# Two jobs on the self-hosted Linux runner, single-platform (native arm64).
+# The first drives the real installer and the real updater against images
+# built from this checkout; the second boots the compiled runtime directly and
+# asserts its hardening. docker.yml runs the multi-arch builds via QEMU on
+# dispatch, and release.yml publishes them.
+jobs:
+  # No job here carries a fork guard because no trigger above can be reached
+  # from a fork: `push` fires only on this repository's own `main`, and
+  # `workflow_dispatch` needs write access. A `pull_request` trigger added here
+  # would need one on every job — these run on self-hosted runners, where
+  # fork-authored code would execute on a physical machine.
+  install-and-update:
+    name: install.sh --docker, then an update across two tags
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          # Deliberately no `cache: npm` — see docs/agent-gotchas.md. This
+          # persistent self-hosted runner already retains ~/.npm between jobs.
+
+      # The real installer puts a gateway and a collector on this runner as
+      # containers, and the real updater moves them across two image tags and
+      # back again when the new gateway does not serve. Everything it touches
+      # derives from the run id, so a second job on this runner collides with
+      # nothing — including the live gateway on 7600.
+      - name: lane [docker-install]
+        run: scripts/docker-install-smoke.sh
+        env:
+          OMNESIS_DOCKER_SMOKE_PREFIX: omnesis-docker-smoke-${{ github.run_id }}
+
+  compiled-runtime-smoke:
+    name: Compiled non-root gateway + seeded state
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          # Deliberately no `cache: npm` — see docs/agent-gotchas.md. This
+          # persistent self-hosted runner already retains ~/.npm between jobs.
+
+      - name: Install smoke harness dependencies
+        run: npm ci
+
+      - name: lane [docker-runtime]
+        run: node scripts/docker-runtime-smoke.mjs --build

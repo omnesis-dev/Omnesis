@@ -1,0 +1,138 @@
+name: docker
+
+on:
+  workflow_call:
+    inputs:
+      target_sha:
+        description: "Exact 40-character source revision to validate"
+        required: true
+        type: string
+permissions:
+  contents: read
+
+jobs:
+  build-and-smoke:
+    name: ${{ matrix.platform }} — build + boot + auth
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # linux/amd64 runs natively on the ubuntu-latest runner; linux/arm64
+        # is emulated via QEMU (~3-5x slower but catches arm64-specific
+        # native-module breakage on real Linux, not just our Apple Silicon
+        # devs). Add more here when we have a real ARM Linux deploy target.
+        platform: [linux/amd64, linux/arm64]
+
+    env:
+      DOCKER_DEFAULT_PLATFORM: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Set up QEMU for arm64
+        if: matrix.platform == 'linux/arm64'
+        env:
+          # The binfmt helper must run on the host before arm64 emulation exists.
+          DOCKER_DEFAULT_PLATFORM: linux/amd64
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Build the gateway runtime image
+        run: docker build --target gateway-runtime -t omnesis-gateway-runtime:ci .
+
+      - name: Build the collector runtime image
+        run: docker build --target collector-runtime -t omnesis-collector-runtime:ci .
+
+      # The updater is published like the two daemons, so a break in it must
+      # not wait for a release to surface. It derives from the gateway image
+      # just built, so this is a couple of layers rather than a third build.
+      - name: Build the updater image and check its Docker client
+        run: |
+          docker build --target updater -t omnesis-updater:ci .
+          docker run --rm --entrypoint sh omnesis-updater:ci -c \
+            'command -v docker >/dev/null && docker compose version >/dev/null'
+
+      - name: lane [docker-image-build]
+        run: ":"
+
+      # The published images are the compiled, non-root runtimes; they are run
+      # directly here so the check does not depend on the installer's compose
+      # file, which is generated on the operator's host rather than committed.
+      - name: Start the gateway
+        run: docker run -d --name omnesis-ci-gateway -p 17600:7600 omnesis-gateway-runtime:ci
+
+      - name: Wait for gateway health
+        run: |
+          for i in $(seq 1 60); do
+            state=$(docker inspect -f '{{.State.Health.Status}}' omnesis-ci-gateway 2>/dev/null || echo none)
+            echo "[$i] health=$state"
+            if [ "$state" = "healthy" ]; then exit 0; fi
+            # Docker can exhaust its initial health-check retries while a
+            # gateway is still booting under QEMU. Health is recoverable, so
+            # preserve the advertised 120-second readiness window.
+            sleep 2
+          done
+          echo "Gateway did not become healthy in 120s. Logs:"
+          docker logs omnesis-ci-gateway
+          exit 1
+
+      - name: Confirm search index + workers up
+        run: |
+          docker logs omnesis-ci-gateway 2>&1 | tee /tmp/gw.log
+          grep -q "HNSW read handle opened" /tmp/gw.log || { echo "search index did not open"; exit 1; }
+          grep -q "ready — owning writable handle" /tmp/gw.log || { echo "writer worker did not become ready"; exit 1; }
+          grep -q "Listening on"           /tmp/gw.log || { echo "gateway never reached Listening"; exit 1; }
+
+      # The gateway serves HTTPS with a self-signed certificate it generates on
+      # first boot, so the probe has to skip verification.
+      - name: Check /health endpoint
+        run: curl -sfk https://localhost:17600/health
+
+      - name: Read bootstrap token (gateway writes it on first boot)
+        run: |
+          token=$(docker exec omnesis-ci-gateway cat /var/lib/omnesis/token | tr -d '\n')
+          if [ -z "$token" ]; then
+            echo "Bootstrap token missing under /var/lib/omnesis/token"
+            exit 1
+          fi
+          echo "TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: List tokens via HTTP
+        run: |
+          curl -sfk -H "Authorization: Bearer ${TOKEN}" https://localhost:17600/admin/tokens | tee /tmp/list.json
+          grep -q '"bootstrap"' /tmp/list.json || { echo "list /admin/tokens missing the bootstrap token"; exit 1; }
+
+      - name: Issue + revoke a token via HTTP (smoke test for /admin/tokens)
+        run: |
+          # Find the existing bootstrap device id; tokens always belong to a device.
+          devices=$(curl -sfk -H "Authorization: Bearer ${TOKEN}" https://localhost:17600/admin/devices)
+          device_id=$(printf '%s' "$devices" | python3 -c "import sys,json;print(next(d['id'] for d in json.load(sys.stdin)['items'] if d['name']=='bootstrap'))")
+          new=$(curl -sfk -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
+            -d "{\"deviceId\":\"$device_id\",\"scopes\":[\"read\",\"write:*\"],\"name\":\"ci-test\"}" \
+            https://localhost:17600/admin/tokens)
+          new_id=$(printf '%s' "$new" | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
+          curl -sfk -H "Authorization: Bearer ${TOKEN}" -X DELETE \
+            "https://localhost:17600/admin/tokens/$new_id" > /tmp/revoke.json
+          grep -q '"ok":true' /tmp/revoke.json || { echo "revoke /admin/tokens did not return ok"; cat /tmp/revoke.json; exit 1; }
+
+      - name: lane [docker-image-boot]
+        run: ":"
+
+      - name: Tear down
+        if: always()
+        run: docker rm --force --volumes omnesis-ci-gateway

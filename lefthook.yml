@@ -1,0 +1,106 @@
+# Lefthook configuration. https://lefthook.dev
+#
+# Installed automatically via the npm `prepare` script — `npm install` at
+# the repo root drops the hooks into .git/hooks.
+#
+# Hooks operate on STAGED files only and re-stage what they fix, so the
+# committed snapshot reflects the autofixed state. Slow checks (full
+# typecheck, full test suite) belong in CI, not in commit hooks.
+#
+# Skip a hook on a one-off basis with `LEFTHOOK_EXCLUDE=<name> git commit` —
+# do NOT use `--no-verify`.
+
+assert_lefthook_installed: true
+
+pre-commit:
+  parallel: true
+  commands:
+    license-header:
+      tags: license
+      glob: "*.{ts,mts,cts,tsx,js,mjs,cjs,swift,kt,kts}"
+      # Vendored third-party libraries must not get an Omnesis license header —
+      # see the exclusion in add-license-header.mjs. Excluded here too so the
+      # hook never re-stages a false-stamped vendor file.
+      exclude:
+        - "packages/gateway/portal/vendor/**"
+      run: node scripts/add-license-header.mjs {staged_files}
+      stage_fixed: true
+
+    eslint:
+      tags: typescript lint
+      glob: "*.{ts,mts,cts,tsx,js,mjs,cjs}"
+      # We deliberately do NOT run eslint on the whole repo on every commit —
+      # only on staged files. The required final validation runs the full sweep.
+      run: npx --no-install eslint --fix --no-warn-ignored {staged_files}
+      stage_fixed: true
+
+    prettier:
+      tags: format
+      glob: "*.{ts,mts,cts,tsx,js,mjs,cjs,json,jsonc,md,yml,yaml,css,html}"
+      # The native Android client is a Kotlin/Gradle tree outside the web tooling;
+      # its docs are symlinked (CLAUDE.md -> AGENTS.md), which prettier rejects.
+      exclude:
+        - "android/**"
+      run: npx --no-install prettier --write --ignore-unknown {staged_files}
+      stage_fixed: true
+
+    swiftformat:
+      tags: swift format
+      glob: "*.swift"
+      run: swiftformat {staged_files}
+      stage_fixed: true
+      # Only run if swiftformat is installed — contributors on Linux (or
+      # a fresh macOS dev machine without brew swiftformat) won't have
+      # it, and we don't want to block their TS-only commits. Lefthook
+      # skips the hook when the `skip.run` script exits 0; the `!` here
+      # inverts `command -v`'s status so a missing tool → exit 0 → SKIP.
+      skip:
+        - run: "! command -v swiftformat >/dev/null 2>&1"
+
+    swiftlint:
+      tags: swift lint
+      glob: "*.swift"
+      # --fix applies autofixable rules, then re-runs against the baseline
+      # so only NEW violations fail. SwiftLint takes file paths positionally.
+      run: |
+        swiftlint --fix --quiet {staged_files} || true
+        swiftlint lint --strict --quiet --baseline .swiftlint-baseline.json {staged_files}
+      stage_fixed: true
+      skip:
+        - run: "! command -v swiftlint >/dev/null 2>&1"
+
+    pii-scan:
+      tags: privacy
+      # Scan ADDED lines of the staged diff with file context, so high-risk
+      # fixture/test paths also get full-name checks. The guard's own source +
+      # tests are excluded because they legitimately contain detector patterns.
+      # Set OMNESIS_PII_SKIP=1 to bypass a safe commit.
+      run: node scripts/pii-scan.mjs --staged-diff
+
+# Strip any "Co-Authored-By: …Claude…" trailer added by an AI agent
+# committing on the user's behalf. The committed message should show the
+# human as sole author. Matches case-insensitively; leaves other
+# Co-Authored-By trailers untouched.
+commit-msg:
+  commands:
+    strip-ai-coauthor:
+      run: awk '!/^Co-[Aa]uthored-[Bb]y:.*[Cc]laude/' {1} > {1}.tmp && mv {1}.tmp {1}
+
+    pii-scan:
+      # Scan the commit message itself for personal data / secrets.
+      run: node scripts/pii-scan.mjs {1}
+
+# Keep pre-push bounded and local. Whole-program checks are explicit final
+# validation before a push and run again in CI; repeating them here can block a
+# push behind a shared-host test queue after the required validation has passed.
+pre-push:
+  parallel: false
+  commands:
+    format-check:
+      tags: format
+      run: npm run format:check
+      glob: "**/*.{ts,mts,cts,tsx,js,mjs,cjs,json,jsonc,md,yml,yaml,css,html}"
+
+    pii-scan:
+      tags: privacy
+      run: npm run privacy:scan

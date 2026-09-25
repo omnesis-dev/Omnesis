@@ -1,0 +1,16 @@
+[
+  {
+    "eventId": "evt_5b21c9f4",
+    "title": "Dinner at Riverside Estate",
+    "startsAt": "2026-03-22T19:00:00.000Z",
+    "endsAt": "2026-03-22T22:30:00.000Z",
+    "people": ["b3f2a9d4-0000-4000-8000-000000000002"]
+  },
+  {
+    "eventId": "evt_d907a1e3",
+    "title": "Launch dinner at Studio Northstar",
+    "startsAt": "2026-05-08T18:30:00.000Z",
+    "endsAt": "2026-05-08T21:00:00.000Z",
+    "people": []
+  }
+]

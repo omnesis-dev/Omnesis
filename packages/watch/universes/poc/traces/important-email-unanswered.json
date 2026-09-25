@@ -1,0 +1,923 @@
+{
+  "trace": {
+    "watch": "important-email-unanswered",
+    "records": [
+      {
+        "seq": 18,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 18,
+        "nodeId": "unanswered_3d",
+        "key": "thread_id=T-1001",
+        "transition": "armed"
+      },
+      {
+        "seq": 20,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 20,
+        "nodeId": "unanswered_3d",
+        "key": "thread_id=T-1101",
+        "transition": "armed"
+      },
+      {
+        "seq": 25,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 25,
+        "nodeId": "unanswered_3d",
+        "key": "thread_id=T-1102",
+        "transition": "armed"
+      },
+      {
+        "seq": 33,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 33,
+        "nodeId": "unanswered_3d",
+        "key": "thread_id=T-1103",
+        "transition": "armed"
+      },
+      {
+        "seq": 35,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 35,
+        "nodeId": "unanswered_3d",
+        "key": "thread_id=T-1002",
+        "transition": "armed"
+      },
+      {
+        "seq": 44,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 44,
+        "nodeId": "unanswered_3d",
+        "key": "thread_id=T-1002",
+        "transition": "cancelled"
+      },
+      {
+        "seq": 48,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 60,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": -1,
+        "nodeId": "unanswered_3d",
+        "key": "thread_id=T-1001",
+        "transition": "fired",
+        "detail": "the wait elapsed"
+      },
+      {
+        "seq": -2,
+        "nodeId": "unanswered_3d",
+        "key": "thread_id=T-1101",
+        "transition": "fired",
+        "detail": "the wait elapsed"
+      },
+      {
+        "seq": -3,
+        "nodeId": "unanswered_3d",
+        "key": "thread_id=T-1102",
+        "transition": "fired",
+        "detail": "the wait elapsed"
+      },
+      {
+        "seq": -4,
+        "nodeId": "unanswered_3d",
+        "key": "thread_id=T-1103",
+        "transition": "fired",
+        "detail": "the wait elapsed"
+      },
+      {
+        "seq": 73,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 74,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 86,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 96,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 115,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 123,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 133,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 161,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 178,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 245,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 265,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 299,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 324,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 325,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 336,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 362,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 365,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 375,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 376,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 393,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 406,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 408,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 410,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 422,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 427,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 448,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 449,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 454,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 464,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 466,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 470,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 482,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 488,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 497,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 498,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 508,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 513,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 528,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 536,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 538,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 550,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 551,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 569,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 580,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 582,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 583,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 594,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 597,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 602,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 628,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 630,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 631,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 641,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 645,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 669,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 672,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 683,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 695,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 710,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 712,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 721,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 724,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 726,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 748,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 751,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 763,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 765,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 791,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 794,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 807,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 811,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 834,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 835,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 846,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 863,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 878,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 880,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 883,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 893,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 895,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 896,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 914,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 923,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 926,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 928,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 939,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 950,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 967,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 968,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 972,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 981,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 984,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 986,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1010,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1012,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1023,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1044,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1046,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1061,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1064,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1076,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1088,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1089,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1100,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1131,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1132,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1144,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1147,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1171,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1173,
+        "nodeId": "my_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1186,
+        "nodeId": "inbound_email",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      }
+    ],
+    "firings": [
+      {
+        "seq": -1,
+        "nodeId": "unanswered_3d",
+        "keyHash": "01f0ef4dd372258653ae724a5ce895f4:0",
+        "key": "thread_id=T-1001",
+        "firedAt": "2026-03-05T09:00:00.000Z",
+        "payload": {
+          "doc_id": "d0c00001-0000-4000-8000-000000000007",
+          "sender": "b3f2a9d4-0000-4000-8000-000000000002",
+          "why": "a contract needs signing before Friday"
+        },
+        "documentIds": ["d0c00001-0000-4000-8000-000000000007"]
+      },
+      {
+        "seq": -2,
+        "nodeId": "unanswered_3d",
+        "keyHash": "72616aa5a9225fe98ef99c2ca57be477:0",
+        "key": "thread_id=T-1101",
+        "firedAt": "2026-03-05T10:00:00.000Z",
+        "payload": {
+          "doc_id": "d0c00001-0000-4000-8000-000000000008",
+          "sender": "5e7a1c88-0000-4000-8000-000000000004",
+          "why": "the brief is being re-read before a Thursday meeting"
+        },
+        "documentIds": ["d0c00001-0000-4000-8000-000000000008"]
+      },
+      {
+        "seq": -3,
+        "nodeId": "unanswered_3d",
+        "keyHash": "38958e5306fc01cecd10256f3980b025:0",
+        "key": "thread_id=T-1102",
+        "firedAt": "2026-03-05T16:00:00.000Z",
+        "payload": {
+          "doc_id": "d0c00001-0000-4000-8000-000000000009",
+          "sender": "2f4d6b90-0000-4000-8000-000000000005",
+          "why": "two venue-deposit options are waiting on a decision"
+        },
+        "documentIds": ["d0c00001-0000-4000-8000-000000000009"]
+      },
+      {
+        "seq": -4,
+        "nodeId": "unanswered_3d",
+        "keyHash": "a50ebee21568375918e669dd940fbee6:0",
+        "key": "thread_id=T-1103",
+        "firedAt": "2026-03-06T08:00:00.000Z",
+        "payload": {
+          "doc_id": "d0c00001-0000-4000-8000-000000000010",
+          "sender": "c91d4e02-0000-4000-8000-000000000003",
+          "why": "paperwork was sent and nobody confirmed it arrived"
+        },
+        "documentIds": ["d0c00001-0000-4000-8000-000000000010"]
+      }
+    ]
+  },
+  "backtest": {
+    "events": 1208,
+    "days": 90,
+    "firings": 0,
+    "reachByNode": { "inbound_email": 81 },
+    "totalReaches": 81,
+    "unboundedNodes": []
+  }
+}

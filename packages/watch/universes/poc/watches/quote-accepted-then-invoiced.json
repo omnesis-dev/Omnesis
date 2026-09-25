@@ -1,0 +1,97 @@
+{
+  "watch": {
+    "name": "quote-accepted-then-invoiced",
+    "nl_query": "Tell me when a quote I sent is accepted and the invoice follows within ten days.",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "quote_accepted",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email",
+          "people": [
+            {
+              "role": "sender",
+              "isSelf": false
+            }
+          ]
+        },
+        "output_map": {
+          "thread_id": "$e.metadata.extra.threadId",
+          "doc_id": "$e.docId"
+        },
+        "recall": {
+          "semantic": {
+            "query": "accepting your quote go ahead approved happy to proceed",
+            "threshold": 0.35
+          }
+        },
+        "judge": {
+          "proposition": "This email is an acceptance of a quote the user sent",
+          "output_schema": {}
+        }
+      },
+      {
+        "id": "invoice_issued",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email",
+          "people": [
+            {
+              "role": "sender",
+              "isSelf": false
+            }
+          ]
+        },
+        "output_map": {
+          "thread_id": "$e.metadata.extra.threadId",
+          "doc_id": "$e.docId"
+        },
+        "recall": {
+          "semantic": {
+            "query": "invoice attached amount due payment terms",
+            "threshold": 0.35
+          }
+        },
+        "judge": {
+          "proposition": "This email is an invoice the user has been sent",
+          "output_schema": {}
+        }
+      },
+      {
+        "id": "accepted_then_invoiced",
+        "type": "stateful.sequence",
+        "comment": "Order is the whole point: an invoice arriving before any acceptance is a different situation, so an out-of-order second event is dropped rather than treated as an unordered pair.",
+        "inputs": {
+          "quote_accepted": {
+            "role": "arm",
+            "key": {
+              "thread_id": ".thread_id"
+            }
+          },
+          "invoice_issued": {
+            "role": "arm",
+            "key": {
+              "thread_id": ".thread_id"
+            }
+          }
+        },
+        "order": ["quote_accepted", "invoice_issued"],
+        "on_collision": "ignore",
+        "deadline": "10 days",
+        "output_map": {
+          "acceptance": "$n.quote_accepted.doc_id",
+          "invoice": "$n.invoice_issued.doc_id"
+        }
+      }
+    ],
+    "sink": {
+      "input": "accepted_then_invoiced"
+    }
+  }
+}

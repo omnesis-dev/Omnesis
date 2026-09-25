@@ -1,0 +1,29 @@
+[
+  {
+    "id": 481,
+    "name": "Everyday Current",
+    "institution_name": "Northstar Bank",
+    "institution_logo": "https://example.com/logos/northstar.png",
+    "provider": "gocardless",
+    "currency": "GBP",
+    "status": "ACTIVE"
+  },
+  {
+    "id": 902,
+    "name": "Rainy Day Saver",
+    "institution_name": "Riverside Building Society",
+    "institution_logo": "https://example.com/logos/riverside.png",
+    "provider": "gocardless",
+    "currency": "GBP",
+    "status": "ACTIVE"
+  },
+  {
+    "id": 1203,
+    "name": "Travel",
+    "institution_name": "Northstar Bank",
+    "institution_logo": "https://example.com/logos/northstar.png",
+    "provider": "gocardless",
+    "currency": "EUR",
+    "status": "ACTIVE"
+  }
+]

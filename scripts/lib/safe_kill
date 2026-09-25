@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Adrien Conrath
+
+# safe_kill — kill processes whose full command line matches a pattern, WITHOUT
+# ever killing the caller or its parent, and WITHOUT silently no-op'ing on a
+# wrong pattern.
+#
+# This exists because `pkill -f <pattern>` is a footgun (see
+# docs/agent-gotchas.md, "pkill -f self-match"): a pattern broad enough to catch
+# the target also matches the killing process itself and the shell that launched
+# it, so the kill can take you down with it, or appear to succeed while really
+# matching only yourself.
+#
+# safe_kill addresses both halves:
+#   1. It DROPS $$ (this shell) and $PPID (its parent) from the match set, so it
+#      can never kill self or parent — even if the pattern would match them.
+#   2. It FAILS LOUD when, after dropping self/parent, there is nothing left to
+#      kill: a zero-match or self-only match means the pattern is wrong (it found
+#      nothing real), which must surface as a named non-zero error rather than a
+#      silent success that masks the mistake. (Fail loud, not false-green.)
+#
+# Usage — sourced (preferred, so $$/$PPID are the CALLER's shell):
+#   source "$(dirname "$0")/lib/safe_kill"
+#   safe_kill 'my-throwaway-worker-tag'
+#
+# Usage — executable:
+#   scripts/lib/safe_kill 'my-throwaway-worker-tag'
+#
+# Optional signal as the second arg (default TERM):
+#   safe_kill 'pattern' KILL
+#
+# Exit / return codes:
+#   0  — one or more real (non-self, non-parent) matches were signalled
+#   2  — usage error (no pattern given)
+#   3  — fail-loud: zero matches, or the only matches were self/parent
+#
+# It NEVER kills by a bare PID list it didn't derive from the pattern, and it
+# NEVER touches the live gateway/collector — that protection is the caller's job
+# (pass a pattern specific to your own throwaway processes).
+
+# Define the function. When this file is sourced, $$/$PPID resolve to the
+# sourcing shell; when executed, they resolve to this script's own process —
+# which is exactly the process you must not kill either way.
+safe_kill() {
+  local pattern="${1:-}"
+  local signal="${2:-TERM}"
+
+  if [ -z "$pattern" ]; then
+    echo "safe_kill: no pattern given — refusing to match-and-kill nothing" >&2
+    return 2
+  fi
+
+  local self="$$"
+  local parent="$PPID"
+
+  # Collect PIDs whose FULL command line matches the pattern. `pgrep -f` is the
+  # portable primitive; fall back to a `ps`+grep scan where pgrep is absent.
+  # Both `-f` matchers see the pattern in OUR OWN transient subshells' argv (the
+  # command substitution evaluating this very line), so the raw match set can
+  # include short-lived children of this process — they are excluded below
+  # alongside self/parent.
+  local matched
+  if command -v pgrep >/dev/null 2>&1; then
+    matched="$(pgrep -f -- "$pattern" 2>/dev/null || true)"
+  else
+    # -ww: don't truncate the command line, so -f-style full-line matching works.
+    matched="$(ps -axww -o pid= -o args= 2>/dev/null \
+      | grep -F -- "$pattern" \
+      | grep -v -F -- "safe_kill" \
+      | awk '{print $1}' || true)"
+  fi
+
+  # A PID is a REAL victim only if it is none of: self, parent, a descendant of
+  # self (the transient subshells the match itself spawned — a `pgrep -f`/`ps -f`
+  # self-match masquerading as a real victim), and it is still ALIVE at decision
+  # time (`kill -0`). The liveness check also drops short-lived match scaffolding
+  # that has already exited, so a phantom PID never becomes a victim and never
+  # makes the kill below error out.
+  local victims=""
+  local saw_excluded=0
+  local pid
+  for pid in $matched; do
+    if [ "$pid" = "$self" ] || [ "$pid" = "$parent" ]; then
+      saw_excluded=1
+      continue
+    fi
+    local pid_ppid=""
+    if [ -r "/proc/$pid/stat" ]; then
+      pid_ppid="$(awk '{print $4}' "/proc/$pid/stat" 2>/dev/null || true)"
+    else
+      pid_ppid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
+    fi
+    if [ "$pid_ppid" = "$self" ]; then
+      saw_excluded=1
+      continue
+    fi
+    # Still alive? A dead transient is neither a victim nor evidence of a real
+    # match — skip it without counting it as a self/parent exclusion.
+    kill -0 "$pid" 2>/dev/null || continue
+    victims="$victims $pid"
+  done
+  # Trim leading whitespace.
+  victims="${victims# }"
+
+  if [ -z "$victims" ]; then
+    # Zero real victims. Distinguish "matched only self/parent/own-scaffolding"
+    # from "matched nothing at all" so the message points at the actual mistake —
+    # but both are a hard error: a pattern that finds no real process to kill is
+    # a wrong pattern, and silently succeeding would mask it (fail loud, not
+    # false-green).
+    if [ "$saw_excluded" = "1" ]; then
+      echo "safe_kill: pattern '$pattern' matched only this process and/or its parent — nothing safe to kill" >&2
+    else
+      echo "safe_kill: pattern '$pattern' matched no processes — refusing to report a no-op as success" >&2
+    fi
+    return 3
+  fi
+
+  # Signal each victim; tolerate one racing out from under us (it died between
+  # the liveness check and here) as long as at least one kill lands.
+  local signalled=0
+  for pid in $victims; do
+    if kill -s "$signal" "$pid" 2>/dev/null; then
+      signalled=$((signalled + 1))
+    fi
+  done
+
+  if [ "$signalled" -eq 0 ]; then
+    echo "safe_kill: every match for pattern '$pattern' exited before it could be signalled" >&2
+    return 3
+  fi
+  return 0
+}
+
+# When executed directly (not sourced), run the function with the script's args
+# and propagate its exit code. The `return` in the sourced path leaves the
+# caller's shell untouched.
+if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
+  set -euo pipefail
+  safe_kill "$@"
+  exit $?
+fi

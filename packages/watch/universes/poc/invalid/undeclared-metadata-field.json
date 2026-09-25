@@ -1,0 +1,40 @@
+{
+  "watch": {
+    "name": "undeclared-metadata-field",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "mail",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email",
+          "people": [
+            {
+              "role": "sender",
+              "isSelf": false
+            }
+          ]
+        },
+        "output_map": {
+          "chat": "$e.metadata.extra.chatJid"
+        }
+      },
+      {
+        "id": "gate",
+        "type": "stateless.transform",
+        "inputs": {
+          "mail": {
+            "role": "arm"
+          }
+        },
+        "query": "SELECT true AS fires"
+      }
+    ],
+    "sink": {
+      "input": "gate"
+    }
+  }
+}

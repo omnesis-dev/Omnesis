@@ -1,0 +1,17 @@
+{
+  "name": "@omnesis/agent",
+  "version": "0.5.11",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.122",
+    "@omnesis/core": "*",
+    "@openai/codex": "0.151.0",
+    "zod": "^4.5.4"
+  },
+  "files": [
+    "dist"
+  ]
+}

@@ -1,0 +1,23 @@
+[
+  {
+    "externalId": "synth-chrome-bm-001",
+    "title": "Acme Q3 OKR doc",
+    "url": "https://docs.acme.com/okrs/q3-2025",
+    "folder": "Work / Acme",
+    "addedAt": "2025-08-30T09:00:00Z"
+  },
+  {
+    "externalId": "synth-chrome-bm-002",
+    "title": "Globex integration runbook",
+    "url": "https://docs.globex.io/runbooks/omnesis-integration",
+    "folder": "Work / Globex",
+    "addedAt": "2025-09-01T11:00:00Z"
+  },
+  {
+    "externalId": "synth-chrome-bm-003",
+    "title": "Retry policy — exponential backoff with jitter",
+    "url": "https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/",
+    "folder": "Reading / Infra",
+    "addedAt": "2025-08-22T14:00:00Z"
+  }
+]

@@ -1,0 +1,29 @@
+[
+  {
+    "externalId": "synth-gdrive-001",
+    "name": "Q3 OKRs.gdoc",
+    "mimeType": "application/vnd.google-apps.document",
+    "content": "Q3 OKRs\n\nObjective 1: Ship Globex integration GA.\nObjective 2: Cut writer-worker tail latency.\nObjective 3: Hire one SRE.",
+    "owner": "self",
+    "createdAt": "2025-09-01T08:30:00Z",
+    "modifiedAt": "2025-09-12T11:00:00Z"
+  },
+  {
+    "externalId": "synth-gdrive-002",
+    "name": "Vendor evaluation matrix.gsheet",
+    "mimeType": "application/vnd.google-apps.spreadsheet",
+    "content": "Vendor,Throughput,SOC2,Pricing,Support\nGlobex,High,Pending Nov,$$,Tier 2\nNimbus,Medium,Yes,$$$,Tier 1",
+    "owner": "p_jane",
+    "createdAt": "2025-08-28T15:30:00Z",
+    "modifiedAt": "2025-09-07T10:30:00Z"
+  },
+  {
+    "externalId": "synth-gdrive-003",
+    "name": "Globex integration runbook.gdoc",
+    "mimeType": "application/vnd.google-apps.document",
+    "content": "Runbook for the Globex integration. Includes on-call escalation, common errors, and rollback procedure.",
+    "owner": "self",
+    "createdAt": "2025-08-20T09:00:00Z",
+    "modifiedAt": "2025-09-08T11:30:00Z"
+  }
+]

@@ -1,0 +1,55 @@
+{
+  "watch": {
+    "name": "cancel-and-inputs-on-stateless-nodes",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "first",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email"
+        },
+        "output_map": {
+          "thread_id": "$e.metadata.extra.threadId",
+          "doc_id": "$e.docId"
+        }
+      },
+      {
+        "id": "second",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email"
+        },
+        "output_map": {
+          "doc_id": "$e.docId"
+        }
+      },
+      {
+        "id": "either",
+        "type": "stateless.or",
+        "inputs": {
+          "first": {
+            "role": "arm"
+          },
+          "second": {
+            "role": "cancel"
+          }
+        }
+      },
+      {
+        "id": "empty",
+        "type": "stateless.transform",
+        "inputs": {},
+        "query": "SELECT true AS fires"
+      }
+    ],
+    "sink": {
+      "input": "either"
+    }
+  }
+}

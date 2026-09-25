@@ -1,0 +1,38 @@
+diff --git a/node_modules/@whiskeysockets/baileys/lib/Utils/validate-connection.js b/node_modules/@whiskeysockets/baileys/lib/Utils/validate-connection.js
+index f26782b..8e2f63a 100644
+--- a/node_modules/@whiskeysockets/baileys/lib/Utils/validate-connection.js
++++ b/node_modules/@whiskeysockets/baileys/lib/Utils/validate-connection.js
+@@ -6,6 +6,15 @@ import { getBinaryNodeChild, jidDecode, S_WHATSAPP_NET } from '../WABinary/index
+ import { Curve, hmacSign } from './crypto.js';
+ import { encodeBigEndian } from './generics.js';
+ import { createSignalIdentity } from './signal.js';
++// WA rejects full-history Desktop pairing (428 before QR) unless macOS
++// advertises its native platform instead of WEB. Vendored from upstream
++// PR WhiskeySockets/Baileys#2693 until it ships in a release.
++const getUserAgentPlatform = (config) => {
++    if (config.syncFullHistory && config.browser[1] === 'Desktop' && config.browser[0] === 'Mac OS') {
++        return proto.ClientPayload.UserAgent.Platform.MACOS;
++    }
++    return proto.ClientPayload.UserAgent.Platform.WEB;
++};
+ const getUserAgent = (config) => {
+     return {
+         appVersion: {
+@@ -13,7 +22,7 @@ const getUserAgent = (config) => {
+             secondary: config.version[1],
+             tertiary: config.version[2]
+         },
+-        platform: proto.ClientPayload.UserAgent.Platform.WEB,
++        platform: getUserAgentPlatform(config),
+         releaseChannel: proto.ClientPayload.UserAgent.ReleaseChannel.RELEASE,
+         osVersion: '0.1',
+         device: 'Desktop',
+@@ -26,7 +35,7 @@ const getUserAgent = (config) => {
+ };
+ const PLATFORM_MAP = {
+     'Mac OS': proto.ClientPayload.WebInfo.WebSubPlatform.DARWIN,
+-    Windows: proto.ClientPayload.WebInfo.WebSubPlatform.WIN32
++    Windows: proto.ClientPayload.WebInfo.WebSubPlatform.WIN_HYBRID
+ };
+ const getWebInfo = (config) => {
+     let webSubPlatform = proto.ClientPayload.WebInfo.WebSubPlatform.WEB_BROWSER;

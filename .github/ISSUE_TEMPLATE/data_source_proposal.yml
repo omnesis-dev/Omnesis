@@ -1,0 +1,40 @@
+name: 🔌 Data source proposal
+description: Propose a new data source for Omnesis to index.
+title: "Source: <name>"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Omnesis sources must **authenticate once and then sync automatically in
+        the background**. Sources whose only ingestion path is a manual, per-sync
+        export (Google Takeout, Facebook DYI, Instagram export, …) are out of
+        scope. See [building a source](https://omnesis.dev/docs/building-sources).
+  - type: input
+    id: service
+    attributes:
+      label: Service / app
+      description: What service or app does this source ingest from, and who owns it?
+    validations:
+      required: true
+  - type: checkboxes
+    attributes:
+      label: Viability
+      options:
+        - label: Authentication is a one-time setup (OAuth, API key, or credential) — not a per-sync manual export.
+          required: true
+        - label: The service offers an API (or another automatable pull) that supports incremental background sync.
+          required: true
+  - type: textarea
+    id: data
+    attributes:
+      label: What data would it contribute?
+      description: Documents, messages, events, contacts, attachments, metadata…
+    validations:
+      required: true
+  - type: textarea
+    id: api
+    attributes:
+      label: API / auth details
+      description: Link the API docs; note the auth model, rate limits, and any periodic re-consent cadence.
+    validations:
+      required: false

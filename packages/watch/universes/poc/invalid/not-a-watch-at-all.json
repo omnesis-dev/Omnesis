@@ -1,0 +1,20 @@
+{
+  "watch": {
+    "name": "not-a-watch-at-all",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "Mail",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": []
+        }
+      }
+    ],
+    "sink": {
+      "input": "Mail"
+    }
+  }
+}

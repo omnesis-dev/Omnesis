@@ -1,0 +1,232 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Golden-corpus regression net (e2e-minimal) > Jane Doe — full person card with aliases 1`] = `
+{
+  "aliasesByType": {
+    "email": [
+      "jane.doe@acme.example",
+      "jane.doe@example.org",
+    ],
+    "lid": [
+      "100200301@lid",
+      "github:jane-doe",
+    ],
+    "name": [
+      "Jane Doe",
+    ],
+    "phone": [
+      "+15550101",
+    ],
+  },
+  "isSelf": false,
+}
+`;
+
+exports[`Golden-corpus regression net (e2e-minimal) > people graph — top non-self people by document count + alias signature 1`] = `
+[
+  {
+    "aliasCount": 6,
+    "documentCount": 22,
+    "identifyingName": "Jane Doe",
+  },
+  {
+    "aliasCount": 3,
+    "documentCount": 14,
+    "identifyingName": "Emma Park",
+  },
+  {
+    "aliasCount": 3,
+    "documentCount": 10,
+    "identifyingName": "John Smith",
+  },
+  {
+    "aliasCount": 5,
+    "documentCount": 9,
+    "identifyingName": "Alex Chen",
+  },
+  {
+    "aliasCount": 1,
+    "documentCount": 6,
+    "identifyingName": "john.smith@icloud.example",
+  },
+  {
+    "aliasCount": 4,
+    "documentCount": 5,
+    "identifyingName": "Claire Smith",
+  },
+  {
+    "aliasCount": 3,
+    "documentCount": 3,
+    "identifyingName": "Carol Nakamura",
+  },
+  {
+    "aliasCount": 3,
+    "documentCount": 3,
+    "identifyingName": "Daniel Harper",
+  },
+  {
+    "aliasCount": 2,
+    "documentCount": 3,
+    "identifyingName": "Emma Park",
+  },
+  {
+    "aliasCount": 2,
+    "documentCount": 2,
+    "identifyingName": "Dave Ortiz",
+  },
+]
+`;
+
+exports[`Golden-corpus regression net (e2e-minimal) > per-source document count matches the universe fixtures 1`] = `
+{
+  "bySource": {
+    "android-call-log:android-synth-johnsmith": 3,
+    "apple-calendar:john.smith@icloud.example": 3,
+    "apple-call-log:john.smith@icloud.example": 3,
+    "apple-contacts:john.smith@icloud.example": 3,
+    "apple-imessage:john.smith@icloud.example": 3,
+    "apple-notes:john.smith@icloud.example": 3,
+    "apple-reminders:john.smith@icloud.example": 3,
+    "apple-voicemail:john.smith@icloud.example": 3,
+    "browser-history:chrome": 3,
+    "chrome-bookmarks:john.smith@example.com": 3,
+    "coinbase:cb-portfolio-john": 3,
+    "core-location-visits:ios-synth-johnsmith": 3,
+    "enable-banking-accounts:revolut-de": 3,
+    "github-commits:john-smith": 3,
+    "github:john-smith": 6,
+    "gmail:john.smith@example.com": 3,
+    "google-calendar:john.smith@example.com": 3,
+    "google-contacts:john.smith@example.com": 3,
+    "google-drive:john.smith@example.com": 3,
+    "granola-meetings:john.smith@example.com": 3,
+    "lunchflow-accounts:default": 4,
+    "notion-databases:user_john_smith": 4,
+    "notion-pages:user_john_smith": 3,
+    "obsidian-notes:Personal": 3,
+    "onedrive:john.smith@example.com": 3,
+    "outlook-calendar:john.smith@example.com": 5,
+    "outlook-email:john.smith@example.com": 3,
+    "plaid:plaid-item-johnsmith": 2,
+    "screen-time:john.smith@icloud.example": 3,
+    "strava-activities:7000000": 3,
+    "things:local": 3,
+    "whatsapp-messages:+15550100": 3,
+  },
+  "total": 102,
+}
+`;
+
+exports[`Golden-corpus regression net (e2e-minimal) > search "Globex" surfaces docs across notes, drive, calendar, and chat 1`] = `
+[
+  {
+    "sourceId": "granola-meetings:john.smith@example.com",
+    "title": "Globex partnership intro",
+  },
+  {
+    "sourceId": "granola-meetings:john.smith@example.com",
+    "title": "Acme Q3 Planning",
+  },
+  {
+    "sourceId": "things:local",
+    "title": "Reply to Jane re: vendor evaluation",
+  },
+  {
+    "sourceId": "browser-history:chrome",
+    "title": "chrome browsing — 2025-09-03",
+  },
+  {
+    "sourceId": "google-calendar:john.smith@example.com",
+    "title": "Vendor evaluation sync",
+  },
+  {
+    "sourceId": "outlook-calendar:john.smith@example.com",
+    "title": "Vendor evaluation sync",
+  },
+  {
+    "sourceId": "outlook-email:john.smith@example.com",
+    "title": "Vendor evaluation — first cut",
+  },
+  {
+    "sourceId": "browser-history:chrome",
+    "title": "chrome browsing — 2025-09-02",
+  },
+]
+`;
+
+exports[`Golden-corpus regression net (e2e-minimal) > search "marathon training" finds the single matching gmail 1`] = `
+[
+  {
+    "sourceId": "onedrive:john.smith@example.com",
+    "title": "marathon-training-plan.md",
+  },
+]
+`;
+
+exports[`Golden-corpus regression net (e2e-minimal) > search "vendor evaluation" spans the expected source families 1`] = `
+[
+  {
+    "sourceId": "things:local",
+    "title": "Reply to Jane re: vendor evaluation",
+  },
+  {
+    "sourceId": "google-calendar:john.smith@example.com",
+    "title": "Vendor evaluation sync",
+  },
+  {
+    "sourceId": "outlook-calendar:john.smith@example.com",
+    "title": "Vendor evaluation sync",
+  },
+  {
+    "sourceId": "notion-databases:user_john_smith",
+    "title": "Projects > Vendor evaluation",
+  },
+  {
+    "sourceId": "notion-pages:user_john_smith",
+    "title": "Vendor evaluation — comparison matrix",
+  },
+  {
+    "sourceId": "obsidian-notes:Personal",
+    "title": "Jane Doe",
+  },
+]
+`;
+
+exports[`Golden-corpus regression net (e2e-minimal) > the source list contains every descriptor the universe declares 1`] = `
+[
+  "android-call-log:android-synth-johnsmith",
+  "apple-calendar:john.smith@icloud.example",
+  "apple-call-log:john.smith@icloud.example",
+  "apple-contacts:john.smith@icloud.example",
+  "apple-health:ios-synth-johnsmith",
+  "apple-imessage:john.smith@icloud.example",
+  "apple-notes:john.smith@icloud.example",
+  "apple-reminders:john.smith@icloud.example",
+  "apple-voicemail:john.smith@icloud.example",
+  "browser-history:chrome",
+  "chrome-bookmarks:john.smith@example.com",
+  "coinbase:cb-portfolio-john",
+  "core-location-visits:ios-synth-johnsmith",
+  "enable-banking-accounts:revolut-de",
+  "github-commits:john-smith",
+  "github:john-smith",
+  "gmail:john.smith@example.com",
+  "google-calendar:john.smith@example.com",
+  "google-contacts:john.smith@example.com",
+  "google-drive:john.smith@example.com",
+  "granola-meetings:john.smith@example.com",
+  "health-connect:android-synth-johnsmith",
+  "lunchflow-accounts:default",
+  "notion-databases:user_john_smith",
+  "notion-pages:user_john_smith",
+  "obsidian-notes:Personal",
+  "onedrive:john.smith@example.com",
+  "outlook-calendar:john.smith@example.com",
+  "outlook-email:john.smith@example.com",
+  "plaid:plaid-item-johnsmith",
+  "screen-time:john.smith@icloud.example",
+  "strava-activities:7000000",
+  "things:local",
+  "whatsapp-messages:+15550100",
+]
+`;

@@ -1,0 +1,21 @@
+{
+  "watch": {
+    "name": "weekly-review-tick",
+    "nl_query": "Nudge me every Monday morning.",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "REPLACE-WITH-GET-/admin/watch/ontology",
+    "nodes": [
+      {
+        "id": "monday",
+        "type": "source.time",
+        "comment": "A recurring source is a persisted next-due instant, not a cron daemon: the runtime keeps one boundary at a time and schedules the next when it fires. A boundary missed while the gateway was down therefore fires once on the way back up, at the instant it was due, rather than once per boundary the outage spanned. The cron field is five-field and evaluated in the install's timezone, so 'Monday morning' means the operator's Monday.",
+        "recurring": "0 8 * * 1",
+        "output_map": { "due_at": "$e.dueAt" }
+      }
+    ],
+    "sink": {
+      "input": "monday",
+      "output_map": { "due_at": "$n.monday.due_at" }
+    }
+  }
+}

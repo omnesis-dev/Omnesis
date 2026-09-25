@@ -1,0 +1,73 @@
+{
+  "watch": {
+    "name": "sleep-materially-worse",
+    "nl_query": "Tell me if my sleep has been getting materially worse over the past two weeks.",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "daily_tick",
+        "type": "source.time",
+        "recurring": "0 10 * * *"
+      },
+      {
+        "id": "sleep_trend",
+        "type": "sql",
+        "comment": "Duration is summed from asleep stages and quality proxied by deep+REM minutes \u2014 the table has neither column. Persistence plus rising edge keep the judge asleep until the picture genuinely changes.",
+        "inputs": {
+          "daily_tick": {
+            "role": "arm"
+          }
+        },
+        "on_collision": "accumulate",
+        "fire_on": "rising_edge",
+        "initial_level": "first_observation",
+        "persistence": "2 days",
+        "query": "WITH nightly AS (SELECT date_trunc('day', start_time) AS night, sum(CASE WHEN stage IN ('asleepCore','asleepDeep','asleepREM','asleepUnspecified') THEN date_diff('minute', start_time, end_time) END) AS asleep_min, sum(CASE WHEN stage IN ('asleepDeep','asleepREM') THEN date_diff('minute', start_time, end_time) END) AS deep_rem_min FROM health_sleep GROUP BY 1), recent AS (SELECT avg(asleep_min) AS d, avg(deep_rem_min) AS q FROM nightly WHERE night > $today - INTERVAL 14 DAY), base AS (SELECT avg(asleep_min) AS d, avg(deep_rem_min) AS q FROM nightly WHERE night BETWEEN $today - INTERVAL 74 DAY AND $today - INTERVAL 14 DAY) SELECT (recent.d < base.d * 0.9 OR recent.q < base.q * 0.85) AS fires, recent.d AS recent_duration, base.d AS baseline_duration, recent.q AS recent_deep_rem, base.q AS baseline_deep_rem FROM recent, base",
+        "output_map": {
+          "recent_duration": "recent_duration",
+          "baseline_duration": "baseline_duration",
+          "recent_deep_rem": "recent_deep_rem",
+          "baseline_deep_rem": "baseline_deep_rem"
+        }
+      },
+      {
+        "id": "materiality_judge",
+        "type": "llm",
+        "mode": "judge",
+        "comment": "Numbers in, typed decision out \u2014 no document access.",
+        "inputs": {
+          "sleep_trend": {
+            "role": "arm"
+          }
+        },
+        "on_collision": "spawn",
+        "max_live_instances": 2,
+        "deadline": "1 hour",
+        "proposition": "Given these sleep statistics, the deterioration is material rather than noise or a one-off; sustained causes (travel, illness) still count",
+        "output_schema": {
+          "decision": "bool",
+          "confidence": "enum[clear, probable, ambiguous]",
+          "summary": "string"
+        },
+        "fire_when": "decision AND confidence != 'ambiguous'"
+      },
+      {
+        "id": "fortnight_cap",
+        "type": "stateful.cooldown",
+        "inputs": {
+          "materiality_judge": {
+            "role": "arm"
+          }
+        },
+        "min_interval": "14 days"
+      }
+    ],
+    "sink": {
+      "input": "fortnight_cap",
+      "output_map": {
+        "summary": "$n.materiality_judge.summary"
+      }
+    }
+  }
+}

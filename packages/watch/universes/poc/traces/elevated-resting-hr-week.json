@@ -1,0 +1,1162 @@
+{
+  "trace": {
+    "watch": "elevated-resting-hr-week",
+    "records": [
+      {
+        "seq": -1,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -1,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -2,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -2,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -3,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -3,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -4,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -4,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -5,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -5,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -6,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -6,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -7,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -7,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -8,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -8,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -9,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -9,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -10,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -10,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -11,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -11,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -12,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -12,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -13,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -13,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -14,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -14,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -14,
+        "nodeId": "weekly_cap",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -15,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -15,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "already holding"
+      },
+      {
+        "seq": -16,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -16,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "already holding"
+      },
+      {
+        "seq": -17,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -17,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "already holding"
+      },
+      {
+        "seq": -18,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -18,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "already holding"
+      },
+      {
+        "seq": -19,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -19,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "already holding"
+      },
+      {
+        "seq": -20,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -20,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "already holding"
+      },
+      {
+        "seq": -21,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -21,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "already holding"
+      },
+      {
+        "seq": -22,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -22,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -23,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -23,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -24,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -24,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -25,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -25,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -26,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -26,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -27,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -27,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -28,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -28,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -29,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -29,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -30,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -30,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -31,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -31,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -32,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -32,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -33,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -33,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -34,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -34,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -35,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -35,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -36,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -36,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -37,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -37,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -38,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -38,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -39,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -39,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -40,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -40,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -41,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -41,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -42,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -42,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -43,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -43,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -44,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -44,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -45,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -45,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -46,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -46,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -46,
+        "nodeId": "weekly_cap",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -47,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -47,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "already holding"
+      },
+      {
+        "seq": -48,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -48,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "already holding"
+      },
+      {
+        "seq": -49,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -49,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "already holding"
+      },
+      {
+        "seq": -50,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -50,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "already holding"
+      },
+      {
+        "seq": -51,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -51,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "already holding"
+      },
+      {
+        "seq": -52,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -52,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "already holding"
+      },
+      {
+        "seq": -53,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -53,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -54,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -54,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -55,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -55,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -56,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -56,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -57,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -57,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -58,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -58,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -59,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -59,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -60,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -60,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -61,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -61,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -62,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -62,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -63,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -63,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -64,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -64,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -65,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -65,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -66,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -66,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -67,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -67,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -68,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -68,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -69,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -69,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -69,
+        "nodeId": "weekly_cap",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -70,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -70,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "already holding"
+      },
+      {
+        "seq": -71,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -71,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "already holding"
+      },
+      {
+        "seq": -72,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -72,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "already holding"
+      },
+      {
+        "seq": -73,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -73,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "already holding"
+      },
+      {
+        "seq": -74,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -74,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "already holding"
+      },
+      {
+        "seq": -75,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -75,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "already holding"
+      },
+      {
+        "seq": -76,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -76,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "already holding"
+      },
+      {
+        "seq": -77,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -77,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -78,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -78,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -79,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -79,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -80,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -80,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -81,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -81,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -82,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -82,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -83,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -83,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -84,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -84,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -85,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -85,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -86,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -86,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -87,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -87,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -88,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -88,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -89,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -89,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -90,
+        "nodeId": "daily_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -90,
+        "nodeId": "hr_week_check",
+        "key": "singleton",
+        "transition": "held"
+      }
+    ],
+    "firings": [
+      {
+        "seq": -14,
+        "nodeId": "weekly_cap",
+        "keyHash": "e3b0c44298fc1c149afbf4c8996fb924:0",
+        "key": "singleton",
+        "firedAt": "2026-03-14T09:00:00.000Z",
+        "payload": { "avg_hr": 73 },
+        "documentIds": []
+      },
+      {
+        "seq": -46,
+        "nodeId": "weekly_cap",
+        "keyHash": "e3b0c44298fc1c149afbf4c8996fb924:0",
+        "key": "singleton",
+        "firedAt": "2026-04-15T09:00:00.000Z",
+        "payload": { "avg_hr": 72.7 },
+        "documentIds": []
+      },
+      {
+        "seq": -69,
+        "nodeId": "weekly_cap",
+        "keyHash": "e3b0c44298fc1c149afbf4c8996fb924:0",
+        "key": "singleton",
+        "firedAt": "2026-05-08T09:00:00.000Z",
+        "payload": { "avg_hr": 73 },
+        "documentIds": []
+      }
+    ]
+  },
+  "backtest": {
+    "events": 1208,
+    "days": 90,
+    "firings": 3,
+    "reachByNode": {},
+    "totalReaches": 0,
+    "unboundedNodes": []
+  }
+}

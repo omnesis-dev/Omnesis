@@ -1,0 +1,29 @@
+[
+  {
+    "externalId": "synth-notion-page-001",
+    "title": "Engineering wiki — home",
+    "body": "# Engineering wiki\n\nLanding page for the engineering team's notes.\n\nKey areas: infra, integrations, on-call.",
+    "createdAt": "2025-08-10T09:00:00Z",
+    "modifiedAt": "2025-09-12T15:00:00Z",
+    "author": "self",
+    "tags": ["wiki"]
+  },
+  {
+    "externalId": "synth-notion-page-002",
+    "title": "Globex integration — kickoff",
+    "body": "# Globex integration — kickoff\n\nStakeholders: John Smith (lead), Alex Chen (Globex eng).\n\nGoals: API contract by week 2, beta by week 4, GA by week 8.\n\nKey docs: integration runbook, retry policy.",
+    "createdAt": "2025-08-15T11:00:00Z",
+    "modifiedAt": "2025-09-01T13:00:00Z",
+    "author": "self",
+    "tags": ["project", "globex"]
+  },
+  {
+    "externalId": "synth-notion-page-003",
+    "title": "Vendor evaluation — comparison matrix",
+    "body": "# Vendor evaluation — comparison matrix\n\nOwner: Jane Doe\n\nVendors: Globex, Nimbus. Comparison axes: throughput, SOC2, pricing, support.\n\nCurrent leaning: Globex pending SOC2 attestation.",
+    "createdAt": "2025-08-28T15:30:00Z",
+    "modifiedAt": "2025-09-07T10:30:00Z",
+    "author": "p_jane",
+    "tags": ["acme", "vendor"]
+  }
+]

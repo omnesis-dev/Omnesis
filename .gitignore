@@ -1,0 +1,58 @@
+# Bare (no trailing slash) so it also matches a `node_modules` *symlink*, not
+# just a directory — worktree setup creates symlinks here (see #563).
+node_modules
+# npm is authoritative; extra lockfiles make deploy hosts select the wrong installer.
+pnpm-lock.yaml
+dist/
+dist-tsc/
+dist-scripts/
+extension/artifacts/
+coverage/
+*.tsbuildinfo
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.env
+docker-compose.yml
+google-credentials.json
+google-tokens.json
+.claude/*
+!.claude/commands/
+!.claude/settings.json
+# Operator-specific PII denylist for scripts/pii-scan.mjs — never commit it
+# (its whole purpose is to hold personal identifiers that must stay out of git).
+scripts/pii-denylist.txt
+test-results/
+ios/Local.xcconfig
+# Generated Xcode project (xcodegen produces it from ios/project.yml)
+ios/Omnesis.xcodeproj/
+# iOS build artefacts (xcodebuild output / SwiftPM / DerivedData)
+ios/build/
+ios/.build/
+ios/DerivedData/
+CLAUDE.local.md
+.DS_Store
+demos/*.mp4
+demos/ipad/*.mp4
+demos/light/*.mp4
+demos/light/ipad/*.mp4
+demos/watch/
+/release/
+
+# Python plugin test/build artifacts.
+__pycache__/
+*.py[cod]
+
+# Android (native Kotlin/Compose client). Build artifacts + machine-local SDK path.
+android/.gradle/
+android/build/
+android/**/build/
+android/local.properties
+android/local.push.properties
+android/.kotlin/
+android/**/build/outputs/roborazzi/
+
+# Eval runs are kept for their failure lists, not committed.
+packages/watch/eval-runs/
+.nx/

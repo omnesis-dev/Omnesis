@@ -1,0 +1,76 @@
+[
+  {
+    "externalId": "ltl-gmail-001",
+    "subject": "Invoice INV-0118 from Cedar Grove Supplies",
+    "from": "p_cedar_billing",
+    "fromEmail": "billing@cedargrovesupplies.example",
+    "to": ["self"],
+    "toEmails": ["alex.rivera@example.com"],
+    "body": "Invoice INV-0118 for the spring order, $47.20, was settled on receipt. No action needed — kept for your records.",
+    "sentAt": "2026-04-02T09:15:00Z",
+    "threadId": "t_inv_0118",
+    "labels": ["INBOX", "Receipts"]
+  },
+  {
+    "externalId": "ltl-gmail-002",
+    "subject": "Weekend plans?",
+    "from": "p_maya",
+    "fromEmail": "maya.reeves@example.org",
+    "to": ["self"],
+    "toEmails": ["alex.rivera@example.com"],
+    "body": "Hey Alex — are you around this weekend? Thinking brunch on Sunday if the weather holds. — Maya",
+    "sentAt": "2026-04-10T18:40:00Z",
+    "scheduledAt": "2026-04-12T11:00:00Z",
+    "threadId": "t_weekend",
+    "labels": ["INBOX", "Personal"]
+  },
+  {
+    "externalId": "ltl-gmail-003",
+    "subject": "Re: Weekend plans?",
+    "from": "self",
+    "fromEmail": "alex.rivera@example.com",
+    "to": ["p_maya"],
+    "toEmails": ["maya.reeves@example.org"],
+    "body": "Sunday works. Let's do the place by the park at 11. — Alex",
+    "sentAt": "2026-04-10T20:05:00Z",
+    "scheduledAt": "2026-04-12T11:00:00Z",
+    "threadId": "t_weekend",
+    "labels": ["SENT", "Personal"]
+  },
+  {
+    "externalId": "ltl-gmail-004",
+    "subject": "Gear shop newsletter — spring picks",
+    "from": "p_gearshop_news",
+    "fromEmail": "news@gearshop.example",
+    "to": ["self"],
+    "toEmails": ["alex.rivera@example.com"],
+    "body": "Our spring picks are in: tents, stoves, and trail shoes. Unsubscribe any time from your preferences page.",
+    "sentAt": "2026-04-15T08:00:00Z",
+    "threadId": "t_newsletter_spring",
+    "labels": ["INBOX", "Promotions"]
+  },
+  {
+    "externalId": "ltl-gmail-005",
+    "subject": "Engagement letter signed — next steps",
+    "from": "p_dana",
+    "fromEmail": "dana.whitfield@whitfieldlaw.example",
+    "to": ["self"],
+    "toEmails": ["alex.rivera@example.com"],
+    "body": "Thanks Alex — the engagement letter is signed and filed. We'll reach out when the lease draft is ready for review. Dana Whitfield, Whitfield Law.",
+    "sentAt": "2026-04-22T14:30:00Z",
+    "threadId": "t_engagement",
+    "labels": ["INBOX", "Legal"]
+  },
+  {
+    "externalId": "ltl-gmail-006",
+    "subject": "Campsite shortlist",
+    "from": "p_jamie",
+    "fromEmail": "jamie.lopez@example.com",
+    "to": ["self"],
+    "toEmails": ["alex.rivera@example.com"],
+    "body": "Shortlist for the summer camping trip: Silver Lake, Pinecrest, Eagle Ridge. All three have late-June availability. We can decide once Maya checks dates. — Jamie",
+    "sentAt": "2026-05-01T19:20:00Z",
+    "threadId": "t_campsite",
+    "labels": ["INBOX", "Personal"]
+  }
+]

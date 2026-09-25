@@ -1,0 +1,796 @@
+{
+  "trace": {
+    "watch": "proposal-no-reply-5bd",
+    "records": [
+      {
+        "seq": 17,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 19,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 24,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 32,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 34,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 45,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 49,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 49,
+        "nodeId": "silence_5bd",
+        "key": "thread_id=T-2001",
+        "transition": "armed"
+      },
+      {
+        "seq": 59,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 72,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 76,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 76,
+        "nodeId": "silence_5bd",
+        "key": "thread_id=T-2001",
+        "transition": "ignored",
+        "detail": "an instance is already live"
+      },
+      {
+        "seq": 85,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 95,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 114,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 122,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 132,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -1,
+        "nodeId": "silence_5bd",
+        "key": "thread_id=T-2001",
+        "transition": "fired",
+        "detail": "the wait elapsed"
+      },
+      {
+        "seq": 160,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 177,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 243,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 264,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 298,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 323,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 326,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 335,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 361,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 367,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 374,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 377,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 392,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 402,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 407,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 411,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 421,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 423,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 447,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 450,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 455,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 463,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 465,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 471,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 481,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 489,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 496,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 500,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 507,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 509,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 527,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 535,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 539,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 549,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 553,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 567,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 579,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 581,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 584,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 593,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 596,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 601,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 627,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 629,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 633,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 640,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 646,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 668,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 674,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 682,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 694,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 706,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 713,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 720,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 723,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 727,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 747,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 753,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 762,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 764,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 787,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 795,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 806,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 813,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 833,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 836,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 845,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 862,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 877,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 879,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 885,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 892,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 894,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 897,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 913,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 922,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 925,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 929,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 938,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 949,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 965,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 969,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 973,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 980,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 985,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 987,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1006,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1015,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1022,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1043,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1047,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1060,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1066,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1075,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1087,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1090,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1099,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1130,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1134,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1143,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1148,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1170,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1174,
+        "nodeId": "proposal_sent",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1185,
+        "nodeId": "client_reply",
+        "key": "singleton",
+        "transition": "fired"
+      }
+    ],
+    "firings": [
+      {
+        "seq": -1,
+        "nodeId": "silence_5bd",
+        "keyHash": "bcc0e121da728b50fb6e75f6999df4fe:0",
+        "key": "thread_id=T-2001",
+        "firedAt": "2026-03-11T14:00:00.000Z",
+        "payload": { "recipient": "5e7a1c88-0000-4000-8000-000000000004" },
+        "documentIds": ["d0c00001-0000-4000-8000-000000000016"]
+      }
+    ]
+  },
+  "backtest": {
+    "events": 1208,
+    "days": 90,
+    "firings": 0,
+    "reachByNode": { "proposal_sent": 38 },
+    "totalReaches": 38,
+    "unboundedNodes": []
+  }
+}

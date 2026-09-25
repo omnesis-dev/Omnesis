@@ -1,0 +1,50 @@
+{
+  "watch": {
+    "name": "mum-call-rhythm-stopped",
+    "nl_query": "My mum and I talk roughly every week \u2014 tell me if that rhythm stops.",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "mum_call",
+        "type": "source.document_event",
+        "comment": "The identity path is the call-log document's participant mention; the analytics table's counterparty column is a raw string.",
+        "filter": {
+          "source": "apple-call-log",
+          "event": ["created", "updated"],
+          "documentType": "call-log",
+          "people": [
+            {
+              "role": "participant",
+              "person": "c91d4e02-0000-4000-8000-000000000003"
+            }
+          ]
+        },
+        "output_map": {
+          "call_at": "$e.semanticTime"
+        }
+      },
+      {
+        "id": "rhythm_broken",
+        "type": "stateful.wait",
+        "comment": "Heartbeat: every call restarts the countdown, and the countdown expiring is the fire.",
+        "inputs": {
+          "mum_call": {
+            "role": "arm"
+          }
+        },
+        "on_collision": "reset",
+        "duration": "9 days",
+        "output_map": {
+          "last_call_at": "$n.mum_call.call_at"
+        }
+      }
+    ],
+    "sink": {
+      "input": "rhythm_broken",
+      "output_map": {
+        "last_call": "$n.rhythm_broken.last_call_at"
+      }
+    }
+  }
+}

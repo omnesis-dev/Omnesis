@@ -1,0 +1,36 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "CONSTANT_VALUE_TYPE_MISMATCH",
+      "severity": "error",
+      "path": "/watch/constants/budget_cap/value",
+      "message": "Constant 'budget_cap' is declared number but holds \"five hundred\".",
+      "details": {
+        "name": "budget_cap",
+        "declared": "number",
+        "value": "five hundred"
+      }
+    },
+    {
+      "code": "CONSTANT_VALUE_TYPE_MISMATCH",
+      "severity": "error",
+      "path": "/watch/constants/renewal_due/value",
+      "message": "Constant 'renewal_due' is declared date but holds \"soon\".",
+      "details": {
+        "name": "renewal_due",
+        "declared": "date",
+        "value": "soon"
+      }
+    },
+    {
+      "code": "LINT_DATED_REFERENT_WITHOUT_EXPIRY",
+      "severity": "warning",
+      "path": "/watch/expires_at",
+      "message": "This watch is bound to something dated (renewal_due) but declares no 'expires_at'. A watch whose referent has passed is asking a question that has ended.",
+      "details": {
+        "constants": ["renewal_due"]
+      }
+    }
+  ]
+}

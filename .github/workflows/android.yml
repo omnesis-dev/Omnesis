@@ -1,0 +1,162 @@
+name: android
+
+# Full validation supplies one immutable source revision to this reusable lane.
+# Manual full requests enter through the guarded admission controller.
+on:
+  workflow_call:
+    inputs:
+      target_sha:
+        description: "Exact 40-character source revision to validate"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  build-and-test:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 40
+
+    # The Android SDK + AGP-downloaded aapt2 ship only for linux-x86_64 and
+    # macOS — there is NO linux-aarch64 build — so the Android lane runs on the
+    # arm64 macOS runner, where the SDK + Robolectric native-graphics rendering
+    # work natively. JDK 17 + the Android SDK are provisioned on that runner; we
+    # point JAVA_HOME at the documented Homebrew location and resolve the SDK in
+    # the toolchain-verify step (exported to later steps via $GITHUB_ENV).
+    env:
+      JAVA_HOME: /opt/homebrew/opt/openjdk@17
+
+    defaults:
+      run:
+        working-directory: android
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      # Required-dependency, FAIL LOUD (never skip): the Android toolchain MUST
+      # be reachable on the runner. If JDK 17 or the Android SDK is missing the
+      # job fails here with a named error rather than silently green-passing.
+      - name: Verify Android toolchain is present (fail loud)
+        run: |
+          set -euo pipefail
+          if [ ! -x "$JAVA_HOME/bin/java" ]; then
+            echo "::error::JDK 17 not found at JAVA_HOME=$JAVA_HOME — the Android lane requires it. This is a required dependency; the job fails rather than skipping." >&2
+            exit 1
+          fi
+          # Resolve the Android SDK: prefer the runner's standard ~/Library
+          # location, then $ANDROID_HOME / $ANDROID_SDK_ROOT. Fail loud if none.
+          SDK=""
+          for cand in "$HOME/Library/Android/sdk" "${ANDROID_SDK_ROOT:-}" "${ANDROID_HOME:-}"; do
+            if [ -n "$cand" ] && [ -d "$cand/platform-tools" ]; then SDK="$cand"; break; fi
+          done
+          if [ -z "$SDK" ]; then
+            echo "::error::Android SDK not found (looked in ~/Library/Android/sdk, \$ANDROID_SDK_ROOT, \$ANDROID_HOME) — required dependency, failing loudly." >&2
+            exit 1
+          fi
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME/bin:$SDK/platform-tools" >> "$GITHUB_PATH"
+          echo "Using JDK 17 at $JAVA_HOME and Android SDK at $SDK"
+          "$JAVA_HOME/bin/java" -version
+
+      # Unit tests (JVM / Robolectric): the ported transport / pairing / reducer
+      # / DTO-decode suites. Fast deterministic logic signal.
+      - name: lane [android-jvm]
+        run: |
+          ./gradlew \
+            :app:testPlayDebugUnitTest \
+            :app:testFullDebugUnitTest \
+            testDebugUnitTest \
+            --no-daemon --max-workers=2
+
+      - name: lane [android-policy]
+        run: ./gradlew :app:verifyPlayReleasePolicy --no-daemon --max-workers=2
+
+      - name: lane [android-build]
+        # Each flavor gets a fresh bounded Gradle process so release dexing
+        # cannot overlap or retain the preceding flavor's build heap.
+        run: |
+          ./gradlew :app:bundlePlayRelease --no-daemon --max-workers=2
+          ./gradlew :app:bundleFullRelease --no-daemon --max-workers=2
+
+      # Roborazzi VERIFY (not record): compares a fresh render against the
+      # tracked goldens under each module's src/test/roborazzi/. A drift (or a
+      # render that hangs / writes nothing) fails the job. We do NOT record in
+      # CI — recording would rewrite the baseline and never catch drift.
+      #
+      # Every module that owns goldens is listed. A module left off this line is
+      # a module whose screens can drift with nothing to catch it, so keep the
+      # list in step with `find android -type d -name roborazzi -not -path '*/build/*'`
+      # (and with the default task list in scripts/android-render.sh).
+      - name: lane [android-render]
+        run: |
+          ./gradlew \
+            :app:verifyRoborazziPlayDebug \
+            :feature-health:verifyRoborazziDebug \
+            :feature-call-log:verifyRoborazziDebug \
+            :feature-app-usage:verifyRoborazziDebug \
+            :feature-activity-segments:verifyRoborazziDebug \
+            :feature-photos:verifyRoborazziDebug \
+            --no-daemon --max-workers=2
+
+      # On a verify failure, surface the diff/actual images so a reviewer/agent
+      # can see WHAT drifted. A failed upload (e.g. storage quota) must not mask
+      # the real test result, so it's best-effort.
+      - name: Upload Roborazzi comparison artifacts
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: roborazzi-compare
+          path: android/**/build/outputs/roborazzi-compare/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  live-gateway-e2e:
+    needs: build-and-test
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 45
+    env:
+      JAVA_HOME: /opt/homebrew/opt/openjdk@17
+      OMNESIS_CONFIG_DIR: /tmp/omnesis-android-ci-${{ github.run_id }}
+
+    steps:
+      - name: Clean stale node-llama-cpp xpack toolchain (breaks checkout clean)
+        run: |
+          chmod -R u+w "$GITHUB_WORKSPACE/node_modules/node-llama-cpp" 2>/dev/null || true
+          rm -rf "$GITHUB_WORKSPACE/node_modules/node-llama-cpp/llama/xpack" 2>/dev/null || true
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: lane [android-live-e2e]
+        run: exec scripts/run-android-e2e.sh

@@ -1,0 +1,34 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "EXPRESSION_DATE_TRUNC_UNIT",
+      "severity": "error",
+      "path": "/watch/nodes/0/output_map/unit_is_not_a_literal",
+      "message": "date_trunc's first argument is the unit, written as one of year, month, day, hour, minute.",
+      "details": {
+        "got": "not a quoted unit",
+        "units": ["year", "month", "day", "hour", "minute"]
+      }
+    },
+    {
+      "code": "EXPRESSION_DATE_TRUNC_UNIT",
+      "severity": "error",
+      "path": "/watch/nodes/0/output_map/unknown_unit",
+      "message": "date_trunc's first argument is the unit, written as one of year, month, day, hour, minute.",
+      "details": {
+        "got": "week",
+        "units": ["year", "month", "day", "hour", "minute"]
+      }
+    },
+    {
+      "code": "EXPRESSION_DATE_TRUNC_VALUE",
+      "severity": "error",
+      "path": "/watch/nodes/0/output_map/value_is_not_an_instant",
+      "message": "date_trunc's second argument is the instant to truncate; this one is id.",
+      "details": {
+        "type": "id"
+      }
+    }
+  ]
+}

@@ -1,0 +1,65 @@
+{
+  "watch": {
+    "name": "investigation-leash-and-unbounded-state",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "tick",
+        "type": "source.time",
+        "recurring": "0 20 * * SUN"
+      },
+      {
+        "id": "mail",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email"
+        },
+        "output_map": {
+          "thread_id": "$e.metadata.extra.threadId",
+          "doc_id": "$e.docId"
+        }
+      },
+      {
+        "id": "review",
+        "type": "llm",
+        "mode": "investigation",
+        "inputs": {
+          "tick": {
+            "role": "arm"
+          }
+        },
+        "on_collision": "ignore",
+        "deadline": "2 hours",
+        "proposition": "Something notable happened this week",
+        "scope": {
+          "horizon": "7 days"
+        },
+        "tools": ["context.search"],
+        "output_schema": {
+          "decision": "bool"
+        },
+        "fire_when": "decision"
+      },
+      {
+        "id": "both",
+        "type": "stateful.and",
+        "inputs": {
+          "review": {
+            "role": "arm"
+          },
+          "mail": {
+            "role": "arm"
+          }
+        },
+        "on_collision": "reset",
+        "deadline": "infinite"
+      }
+    ],
+    "sink": {
+      "input": "both"
+    }
+  }
+}

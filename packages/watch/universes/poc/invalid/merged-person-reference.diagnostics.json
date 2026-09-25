@@ -1,0 +1,15 @@
+{
+  "valid": true,
+  "diagnostics": [
+    {
+      "code": "PERSON_NOT_CANONICAL",
+      "severity": "warning",
+      "path": "/watch/nodes/0/filter/people/0/person",
+      "message": "Person '9c3e5a17-0000-4000-8000-000000000006' has been merged into '5e7a1c88-0000-4000-8000-000000000004'. The runtime re-canonicalizes at comparison time, so the watch still works; recompiling makes the DSL say what it means.",
+      "details": {
+        "personId": "9c3e5a17-0000-4000-8000-000000000006",
+        "canonical": "5e7a1c88-0000-4000-8000-000000000004"
+      }
+    }
+  ]
+}

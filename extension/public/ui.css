@@ -1,0 +1,448 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Copyright (c) 2026 Adrien Conrath */
+
+/*
+ * Dark theme mirroring the Omnesis portal (packages/gateway/portal/css/style.css):
+ * the same GitHub-dark palette, Inter type, and blue accent, so the extension
+ * feels like part of the product rather than a bare browser dialog.
+ */
+:root {
+  --bg: #0d1117;
+  --bg-card: #161b22;
+  --bg-inset: #010409;
+  --bg-hover: #30363d;
+  --border: #30363d;
+  --border-light: #21262d;
+  --text: #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted: #6e7681;
+  --accent: #58a6ff;
+  --accent-hover: #79c0ff;
+  --on-accent: #ffffff;
+  --success: #3fb950;
+  --danger: #f85149;
+  --warning: #d29922;
+  --radius: 10px;
+  --font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font);
+  color: var(--text);
+  background: var(--bg);
+  margin: 0;
+  padding: 20px;
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Brand header ─────────────────────────────────────────── */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-logo {
+  width: 36px;
+  height: 36px;
+  flex: none;
+}
+
+.brand-title {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.brand-sub {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+h1 {
+  font-size: 15px;
+  font-weight: 650;
+  margin: 0;
+}
+
+.muted {
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-light);
+  border-radius: 5px;
+  padding: 1px 5px;
+  font-size: 11.5px;
+  color: var(--text);
+}
+
+/* ── Popup ────────────────────────────────────────────────── */
+/*
+ * Chrome sizes an action popup to its document, capped at 600px tall. Once the
+ * document is taller than the popup, Chrome scrolls the document and widens
+ * the popup by a scrollbar's width, but the fixed-width body does not reflow
+ * into it, so a blank strip appears on the right. Capping the body at that
+ * ceiling keeps the document inside the popup, and the body scrolls within its
+ * own 288px instead. The viewport's overflow is set on <html> so the body's
+ * overflow applies to the body itself rather than propagating to the viewport.
+ */
+html:has(> .popup) {
+  overflow-y: auto;
+}
+
+.popup {
+  width: 288px;
+  max-height: 600px;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.popup .brand {
+  margin-bottom: 14px;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 11px;
+  font-size: 12.5px;
+  font-weight: 550;
+  margin-bottom: 12px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex: none;
+}
+
+body[data-paired="true"] .status-dot {
+  background: var(--success);
+  box-shadow: 0 0 0 3px rgba(63, 185, 80, 0.18);
+}
+
+/* Fail-loud banner: hidden unless the popup flags a server-side rejection. */
+.warn-banner {
+  display: none;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--danger);
+  background: rgba(248, 81, 73, 0.1);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+}
+
+body[data-warn="true"] .warn-banner {
+  display: block;
+}
+
+body[data-notice="true"] .warn-banner {
+  color: var(--warning);
+  background: rgba(210, 153, 34, 0.1);
+  border-color: var(--warning);
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 14px;
+  margin: 0 0 14px;
+  font-size: 12.5px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+
+.kv dt {
+  color: var(--text-secondary);
+}
+
+.kv dd {
+  margin: 0;
+  text-align: right;
+  word-break: break-all;
+  font-variant-numeric: tabular-nums;
+}
+
+/* When paused, tint the status dot amber so the pill reads "paused" at a glance. */
+body[data-paused="true"] .status-dot {
+  background: var(--warning, #d29922);
+  box-shadow: 0 0 0 3px rgba(210, 153, 34, 0.18);
+}
+
+/* A warning (bad token/scope, removed/paused source, offline) turns the dot red
+   so the pill can't read as a healthy green "Capturing" next to the error
+   banner. Declared last so it wins over the paired-green and paused-amber
+   rules above. */
+body[data-warn="true"] .status-dot {
+  background: var(--danger, #f85149);
+  box-shadow: 0 0 0 3px rgba(248, 81, 73, 0.18);
+}
+
+/* ── Capture controls (pause) ─────────────────────────────── */
+.controls {
+  margin: 0 0 14px;
+}
+
+.controls-label {
+  font-size: 11.5px;
+  margin-bottom: 6px;
+}
+
+.pause-line {
+  font-weight: 600;
+  color: var(--warning, #d29922);
+  margin-bottom: 8px;
+}
+
+.btn-row {
+  display: flex;
+  gap: 8px;
+}
+
+/* A compact, equal-width button used in the pause row. */
+button.chip {
+  margin-top: 0;
+  flex: 1;
+  padding: 7px 6px;
+  font-size: 12px;
+  font-weight: 550;
+}
+
+/* ── Recent-synced list ───────────────────────────────────── */
+.recent {
+  margin: 0 0 14px;
+  font-size: 12px;
+}
+
+.recent > summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-weight: 550;
+  padding: 4px 0;
+  user-select: none;
+}
+
+.recent-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  max-height: 168px;
+  overflow-y: auto;
+}
+
+.recent-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 0;
+  border-top: 1px solid var(--border-light);
+}
+
+.recent-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-when {
+  flex: none;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Card (options page) ──────────────────────────────────── */
+.card {
+  max-width: 30rem;
+  margin: 8px auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 24px;
+}
+
+.card .brand {
+  margin-bottom: 16px;
+}
+
+label {
+  display: block;
+  font-weight: 600;
+  margin: 16px 0 6px;
+  font-size: 12.5px;
+}
+
+input {
+  width: 100%;
+  padding: 9px 11px;
+  background: var(--bg-inset);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+input::placeholder {
+  color: var(--text-muted);
+}
+
+input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.25);
+}
+
+.capture-disclosure {
+  color: var(--text);
+  padding: 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: rgba(88, 166, 255, 0.08);
+}
+
+.capture-disclosure p {
+  margin: 0;
+}
+
+.capture-disclosure a {
+  color: var(--accent-hover);
+}
+
+.capture-disclosure .consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+
+.capture-disclosure input[type="checkbox"] {
+  flex: none;
+  width: auto;
+  margin-top: 2px;
+}
+
+.hint {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin: 6px 0 0;
+}
+
+/* ── Buttons ──────────────────────────────────────────────── */
+button {
+  margin-top: 18px;
+  width: 100%;
+  background: var(--accent);
+  color: var(--on-accent);
+  border: none;
+  border-radius: 8px;
+  padding: 9px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+button:hover {
+  background: var(--accent-hover);
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+button.secondary:hover {
+  background: var(--bg-hover);
+}
+
+/* ── Paired block ─────────────────────────────────────────── */
+.paired {
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+.paired p {
+  margin: 0 0 8px;
+}
+
+.paired .ok-line {
+  font-weight: 600;
+}
+
+/* ── Shared exclusions (options page) ──────────────────────────────── */
+.exclusions {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+}
+
+.exclusion-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border-light);
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.exclusion-item button.chip {
+  flex: none;
+  width: auto;
+  margin-top: 0;
+  padding: 5px 12px;
+  font-family: var(--font);
+}
+
+/* ── Form-feedback status line ────────────────────────────── */
+.status {
+  margin-top: 14px;
+  font-size: 12.5px;
+  min-height: 1.25rem;
+}
+
+.status-ok {
+  color: var(--success);
+}
+
+.status-error {
+  color: var(--danger);
+}
+
+.status-info {
+  color: var(--text-secondary);
+}
+
+/* Result of excluding a site from the popup: replaces the button in place. */
+.exclude-done {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--success);
+}

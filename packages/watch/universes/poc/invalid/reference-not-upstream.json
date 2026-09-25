@@ -1,0 +1,62 @@
+{
+  "watch": {
+    "name": "reference-not-upstream",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "first",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email",
+          "people": [
+            {
+              "role": "sender",
+              "isSelf": false
+            }
+          ]
+        },
+        "output_map": {
+          "thread_id": "$e.metadata.extra.threadId",
+          "doc_id": "$e.docId"
+        }
+      },
+      {
+        "id": "second",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email",
+          "people": [
+            {
+              "role": "sender",
+              "isSelf": false
+            }
+          ]
+        },
+        "output_map": {
+          "doc_id": "$e.docId"
+        }
+      },
+      {
+        "id": "gate",
+        "type": "stateless.transform",
+        "inputs": {
+          "first": {
+            "role": "arm"
+          }
+        },
+        "query": "SELECT true AS fires",
+        "output_map": {
+          "other": "$n.second.doc_id"
+        }
+      }
+    ],
+    "sink": {
+      "input": "gate"
+    }
+  }
+}

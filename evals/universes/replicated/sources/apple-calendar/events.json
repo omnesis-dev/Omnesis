@@ -1,0 +1,41 @@
+[
+  {
+    "externalId": "synth-acal-001",
+    "title": "Dentist check-up",
+    "description": "Six-month check-up with Dr. Mendez. Bring insurance card.",
+    "location": "Riverside Dental",
+    "calendarName": "Personal",
+    "startTime": "2025-09-03T08:00:00Z",
+    "endTime": "2025-09-03T08:45:00Z",
+    "attendees": ["self"],
+    "attendeeEmails": ["john.smith@icloud.example"],
+    "createdAt": "2025-08-20T10:00:00Z",
+    "updatedAt": "2025-08-20T10:00:00Z"
+  },
+  {
+    "externalId": "synth-acal-002",
+    "title": "Dinner with Claire",
+    "description": "Table for two at 19:00 — booked under Smith.",
+    "location": "Trattoria Lumen",
+    "calendarName": "Home",
+    "startTime": "2025-09-05T18:00:00Z",
+    "endTime": "2025-09-05T20:00:00Z",
+    "attendees": ["self", "p_claire"],
+    "attendeeEmails": ["john.smith@icloud.example", "claire.smith@example.org"],
+    "createdAt": "2025-08-28T19:30:00Z",
+    "updatedAt": "2025-08-28T19:30:00Z"
+  },
+  {
+    "externalId": "synth-acal-003",
+    "title": "Boiler service visit",
+    "description": "Annual service — engineer arriving between 08:30 and 09:00.",
+    "location": "42 Example Street",
+    "calendarName": "Home",
+    "startTime": "2025-09-09T07:30:00Z",
+    "endTime": "2025-09-09T08:30:00Z",
+    "attendees": ["self"],
+    "attendeeEmails": ["john.smith@icloud.example"],
+    "createdAt": "2025-09-01T09:15:00Z",
+    "updatedAt": "2025-09-01T09:15:00Z"
+  }
+]

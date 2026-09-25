@@ -1,0 +1,58 @@
+{
+  "watch": {
+    "name": "threshold-can-never-be-reached",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "first",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email"
+        },
+        "output_map": {
+          "thread_id": "$e.metadata.extra.threadId",
+          "doc_id": "$e.docId"
+        }
+      },
+      {
+        "id": "second",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email"
+        },
+        "output_map": {
+          "thread_id": "$e.metadata.extra.threadId"
+        }
+      },
+      {
+        "id": "three_of_two",
+        "type": "stateful.threshold",
+        "inputs": {
+          "first": {
+            "role": "arm",
+            "key": {
+              "thread_id": ".thread_id"
+            }
+          },
+          "second": {
+            "role": "arm",
+            "key": {
+              "thread_id": ".thread_id"
+            }
+          }
+        },
+        "n": 3,
+        "on_collision": "reset",
+        "deadline": "7 days"
+      }
+    ],
+    "sink": {
+      "input": "three_of_two"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "omnesis",
+  "displayName": "Omnesis",
+  "version": "0.5.11",
+  "description": "OAuth-protected Answer, Direct, and Notes access to the user's Omnesis knowledge base, limited by the connection's access level.",
+  "author": {
+    "name": "Adrien Conrath"
+  },
+  "homepage": "https://omnesis.dev",
+  "repository": "https://github.com/omnesis-dev/Omnesis",
+  "license": "AGPL-3.0-or-later",
+  "mcpServers": "./.mcp.json",
+  "skills": "./skills/",
+  "userConfig": {
+    "omnesis_mcp_url": {
+      "type": "string",
+      "title": "MCP URL",
+      "description": "Full externally reachable HTTPS URL of your Omnesis MCP resource, ending in /mcp.",
+      "required": true
+    }
+  }
+}

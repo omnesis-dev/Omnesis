@@ -1,0 +1,357 @@
+[
+  {
+    "externalId": "synth-whatsapp-001",
+    "chatId": "chat_jane",
+    "chatTitle": "Jane Doe",
+    "date": "2025-09-04",
+    "counterparty": "p_jane",
+    "messages": [
+      {
+        "from": "p_jane",
+        "at": "2025-09-04T08:14:00Z",
+        "text": "Got a sec for the vendor compare?"
+      },
+      { "from": "self", "at": "2025-09-04T08:16:00Z", "text": "In 20 — eating breakfast." },
+      {
+        "from": "p_jane",
+        "at": "2025-09-04T08:42:00Z",
+        "text": "Cool. SOC2 thing is going to bite us."
+      }
+    ]
+  },
+  {
+    "externalId": "synth-whatsapp-002",
+    "chatId": "chat_emma",
+    "chatTitle": "Emma Park",
+    "date": "2025-09-05",
+    "counterparty": "p_emma",
+    "messages": [
+      { "from": "p_emma", "at": "2025-09-05T12:30:00Z", "text": "Lunch?" },
+      { "from": "self", "at": "2025-09-05T12:32:00Z", "text": "Yes. Same place?" },
+      { "from": "p_emma", "at": "2025-09-05T12:33:00Z", "text": "Yes. 1pm." }
+    ]
+  },
+  {
+    "externalId": "synth-whatsapp-003",
+    "chatId": "chat_carol",
+    "chatTitle": "Carol Nakamura",
+    "date": "2025-09-08",
+    "counterparty": "p_carol",
+    "messages": [
+      { "from": "p_carol", "at": "2025-09-08T06:50:00Z", "text": "Meet at the trail head at 7?" },
+      { "from": "self", "at": "2025-09-08T06:51:00Z", "text": "On my way." },
+      {
+        "from": "p_carol",
+        "at": "2025-09-08T07:55:00Z",
+        "text": "Good run. Sticking with you for the next long one."
+      }
+    ]
+  },
+  {
+    "externalId": "synth-whatsapp-004",
+    "chatId": "chat_dave",
+    "chatTitle": "Dave Ortiz",
+    "date": "2025-09-09",
+    "counterparty": "p_dave",
+    "messages": [
+      {
+        "from": "p_dave",
+        "at": "2025-09-09T19:10:00Z",
+        "text": "Hey — your renewal hint reminded me, mine is also up. Cheers."
+      },
+      {
+        "from": "self",
+        "at": "2025-09-09T19:30:00Z",
+        "text": "Glad it caught it. Domain admin is unglamorous."
+      }
+    ]
+  },
+  {
+    "externalId": "synth-whatsapp-005",
+    "chatId": "chat_jane",
+    "chatTitle": "Jane Doe",
+    "date": "2025-09-10",
+    "counterparty": "p_jane",
+    "messages": [
+      {
+        "from": "p_jane",
+        "at": "2025-09-10T11:00:00Z",
+        "text": "Alex confirmed SOC2 in Nov. NDA route for the gap analysis."
+      },
+      {
+        "from": "self",
+        "at": "2025-09-10T11:02:00Z",
+        "text": "Saw the thread. Sending paper your way."
+      }
+    ]
+  },
+  {
+    "externalId": "synth-whatsapp-006",
+    "chatId": "chat_alex",
+    "chatTitle": "Alex Chen",
+    "date": "2025-09-11",
+    "counterparty": "p_alex",
+    "messages": [
+      {
+        "from": "p_alex",
+        "at": "2025-09-11T17:00:00Z",
+        "text": "Pushed the retry-floor fix. Want a re-review?"
+      },
+      { "from": "self", "at": "2025-09-11T17:15:00Z", "text": "Looking now." },
+      {
+        "from": "self",
+        "at": "2025-09-11T17:30:00Z",
+        "text": "Approved. Nice catch on the jitter floor."
+      }
+    ]
+  },
+  {
+    "externalId": "synth-whatsapp-007",
+    "chatId": "chat_emma",
+    "chatTitle": "Emma Park",
+    "date": "2025-09-12",
+    "counterparty": "p_emma",
+    "messages": [
+      {
+        "from": "p_emma",
+        "at": "2025-09-12T16:45:00Z",
+        "text": "Reminder: your demo is at 2:30 PM tomorrow."
+      },
+      { "from": "self", "at": "2025-09-12T16:46:00Z", "text": "Locked in. Mercury room." }
+    ]
+  },
+  {
+    "externalId": "synth-whatsapp-008",
+    "chatId": "chat_carol",
+    "chatTitle": "Carol Nakamura",
+    "date": "2025-09-13",
+    "counterparty": "p_carol",
+    "messages": [
+      { "from": "self", "at": "2025-09-13T08:30:00Z", "text": "25k done. Legs gone but happy." },
+      {
+        "from": "p_carol",
+        "at": "2025-09-13T09:00:00Z",
+        "text": "Now eat. Recovery starts at the table."
+      },
+      {
+        "from": "p_carol",
+        "at": "2025-09-13T09:02:00Z",
+        "text": "Solid week — 75 km, peak at the 25k today. Pacing right on for plan."
+      }
+    ]
+  },
+  {
+    "externalId": "synth-whatsapp-009",
+    "chatId": "chat_jane",
+    "chatTitle": "Jane Doe",
+    "date": "2025-09-13",
+    "counterparty": "p_jane",
+    "messages": [
+      {
+        "from": "p_jane",
+        "at": "2025-09-13T14:30:00Z",
+        "text": "Q3 review — I have the slot for you Monday at 11."
+      },
+      { "from": "self", "at": "2025-09-13T14:31:00Z", "text": "Confirmed." }
+    ]
+  },
+  {
+    "externalId": "synth-whatsapp-010",
+    "chatId": "chat_dave",
+    "chatTitle": "Dave Ortiz",
+    "date": "2025-09-14",
+    "counterparty": "p_dave",
+    "messages": [
+      {
+        "from": "p_dave",
+        "at": "2025-09-14T20:15:00Z",
+        "text": "New keyboard arrives Friday. You jealous?"
+      },
+      { "from": "self", "at": "2025-09-14T20:17:00Z", "text": "Yes. Send video." }
+    ]
+  },
+  {
+    "externalId": "synth-whatsapp-claire-001",
+    "chatId": "chat_claire",
+    "chatTitle": "Claire",
+    "date": "2025-02-08",
+    "counterparty": "p_claire",
+    "messages": [
+      {
+        "from": "p_claire",
+        "at": "2025-02-08T10:32:00Z",
+        "text": "okkk I'm going to fall down a rabbit hole, look at this"
+      },
+      {
+        "from": "p_claire",
+        "at": "2025-02-08T10:33:00Z",
+        "text": "We could do this workshop https://example.com/flourhouse/sourdough I've always wanted to learn sourdough"
+      },
+      {
+        "from": "self",
+        "at": "2025-02-08T10:51:00Z",
+        "text": "ok noted. you'd come home and immediately produce a baguette to make me feel bad"
+      },
+      {
+        "from": "p_claire",
+        "at": "2025-02-08T10:52:00Z",
+        "text": "exactly. that is the dream."
+      }
+    ]
+  },
+  {
+    "externalId": "synth-whatsapp-claire-002",
+    "chatId": "chat_claire",
+    "chatTitle": "Claire",
+    "date": "2025-09-15",
+    "counterparty": "p_claire",
+    "messages": [
+      {
+        "from": "p_claire",
+        "at": "2025-09-15T18:14:00Z",
+        "text": "can you pick up milk on the way home"
+      },
+      { "from": "self", "at": "2025-09-15T18:14:30Z", "text": "yep" },
+      {
+        "from": "p_claire",
+        "at": "2025-09-15T18:15:00Z",
+        "text": "and bread. and probably wine actually"
+      }
+    ]
+  },
+  {
+    "externalId": "synth-whatsapp-claire-003",
+    "chatId": "chat_claire",
+    "chatTitle": "Claire",
+    "date": "2026-03-22",
+    "counterparty": "p_claire",
+    "messages": [
+      {
+        "from": "p_claire",
+        "at": "2026-03-22T09:10:00Z",
+        "text": "Tess just told the entire bus that 'mummy and daddy were dancing in the kitchen last night'"
+      },
+      { "from": "self", "at": "2026-03-22T09:12:00Z", "text": "amazing. she's not wrong" },
+      { "from": "p_claire", "at": "2026-03-22T09:13:00Z", "text": "iconic family" }
+    ]
+  },
+  {
+    "externalId": "synth-whatsapp-daniel-001",
+    "chatId": "chat_daniel_harper",
+    "chatTitle": "Daniel Harper (Acme Property)",
+    "date": "2025-09-08",
+    "counterparty": "p_daniel_harper",
+    "messages": [
+      {
+        "from": "p_daniel_harper",
+        "at": "2025-09-08T08:50:00Z",
+        "text": "Hi John — sent the boiler service date by email. Quicker on here if you prefer."
+      },
+      {
+        "from": "self",
+        "at": "2025-09-08T08:55:00Z",
+        "text": "Saw it. Thursday works, I'll be in."
+      },
+      {
+        "from": "p_daniel_harper",
+        "at": "2025-09-08T08:56:00Z",
+        "text": "Perfect, will let the engineer know."
+      }
+    ]
+  },
+  {
+    "externalId": "synth-whatsapp-015",
+    "chatId": "chat_jane",
+    "chatTitle": "Jane Doe",
+    "date": "2025-10-15",
+    "counterparty": "p_jane",
+    "messages": [
+      {
+        "from": "p_jane",
+        "at": "2025-10-15T14:00:00Z",
+        "text": "Here is the Q4 vendor assessment report we discussed. Take a look when you can."
+      },
+      {
+        "from": "self",
+        "at": "2025-10-15T14:05:00Z",
+        "text": "Got it, will review this afternoon. The Bluestone section is what I care about most."
+      },
+      {
+        "from": "p_jane",
+        "at": "2025-10-15T14:07:00Z",
+        "text": "Yeah — their API is solid but the SOC2 timeline is the risk. It's all in the report."
+      }
+    ],
+    "attachments": [
+      {
+        "filename": "Q4-Vendor-Assessment.pdf",
+        "mimeType": "application/pdf",
+        "sizeBytes": 245760,
+        "extractedText": "Q4 Vendor Assessment Report — Prepared by Jane Doe, October 2025.\n\nExecutive Summary: This report evaluates three enterprise vendors (Bluestone Analytics, Greenfield SaaS, Apex Platform) against Acme Corp's procurement criteria for the upcoming fiscal year. Evaluation dimensions include total cost of ownership, SOC2 compliance readiness, API integration depth, and customer support responsiveness. Bluestone offers the strongest API surface but trails on compliance timelines. Greenfield leads on cost but lacks SSO federation. Apex scores highest overall but at a 22% premium. Recommendation: proceed with Bluestone subject to a November SOC2 gap analysis, with Apex as fallback."
+      }
+    ]
+  },
+  {
+    "externalId": "synth-whatsapp-trip-alex",
+    "chatId": "chat_alex_chen",
+    "chatTitle": "Alex Chen",
+    "date": "2025-05-22",
+    "counterparty": "p_alex",
+    "messages": [
+      {
+        "from": "self",
+        "at": "2025-05-22T19:40:00Z",
+        "text": "Lisbon's all booked 🎉 flights and the apartment are both on my card."
+      },
+      {
+        "from": "p_alex",
+        "at": "2025-05-22T19:44:00Z",
+        "text": "Legend, thank you! What do I owe you for my half?"
+      },
+      {
+        "from": "self",
+        "at": "2025-05-22T19:50:00Z",
+        "text": "Flights were €318.60 for the two of us and the apartment €440. So half of (318.60 + 440) = €379.30. Call it €379."
+      },
+      {
+        "from": "p_alex",
+        "at": "2025-05-22T19:52:00Z",
+        "text": "Perfect. I'll send it once my salary lands, probably the 18th. Don't let me forget!"
+      },
+      {
+        "from": "p_alex",
+        "at": "2025-06-18T09:02:00Z",
+        "text": "Sent you €379 for Lisbon just now 👍 counting down the days"
+      }
+    ]
+  },
+  {
+    "externalId": "synth-whatsapp-claire-late",
+    "chatId": "chat_claire_smith",
+    "chatTitle": "Claire",
+    "date": "2025-09-11",
+    "counterparty": "p_claire",
+    "messages": [
+      {
+        "from": "self",
+        "at": "2025-09-09T07:12:00Z",
+        "text": "Third rough night running — lay there wired for ages again. Shattered."
+      },
+      {
+        "from": "p_claire",
+        "at": "2025-09-09T07:15:00Z",
+        "text": "Might be the marathon block catching up? You're deep in the big-mileage weeks. Or those late work calls."
+      },
+      {
+        "from": "self",
+        "at": "2025-09-11T22:15:00Z",
+        "text": "Another one after the call. Brain won't switch off, been scrolling for an hour."
+      },
+      {
+        "from": "p_claire",
+        "at": "2025-09-11T22:18:00Z",
+        "text": "Put the phone down love, you're up at 6 for the long run."
+      }
+    ]
+  }
+]

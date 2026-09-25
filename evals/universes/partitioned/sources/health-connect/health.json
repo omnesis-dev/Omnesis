@@ -1,0 +1,137 @@
+{
+  "accountId": "android-synth-johnsmith",
+  "dataOrigin": "com.example.fittracker",
+  "deviceType": "watch",
+  "recordingMethod": "automatically_recorded",
+  "body": [
+    { "metric": "Weight", "slug": "weight", "unit": "kg", "values": [74.2, 74.0, 74.3] },
+    { "metric": "Height", "slug": "height", "unit": "m", "values": [1.82] },
+    { "metric": "BodyFat", "slug": "body_fat", "unit": "%", "values": [16.2, 16.1, 16.3] },
+    {
+      "metric": "BasalMetabolicRate",
+      "slug": "basal_metabolic_rate",
+      "unit": "kcal/day",
+      "values": [1720, 1722, 1718]
+    }
+  ],
+  "activity": [
+    { "metric": "Steps", "slug": "steps", "unit": "count", "values": [8420, 11250, 7830] },
+    { "metric": "Distance", "slug": "distance", "unit": "m", "values": [6100, 9200, 5400] },
+    {
+      "metric": "ActiveCaloriesBurned",
+      "slug": "active_calories",
+      "unit": "kcal",
+      "values": [520, 740, 410]
+    },
+    {
+      "metric": "TotalCaloriesBurned",
+      "slug": "total_calories",
+      "unit": "kcal",
+      "values": [2240, 2460, 2130]
+    },
+    { "metric": "FloorsClimbed", "slug": "floors_climbed", "unit": "count", "values": [8, 14, 6] },
+    { "metric": "Vo2Max", "slug": "vo2_max", "unit": "mL/min/kg", "values": [52.1] }
+  ],
+  "vitals": [
+    {
+      "metric": "HeartRate",
+      "slug": "heart_rate",
+      "unit": "bpm",
+      "values": [58, 96, 72, 54, 60, 102, 70, 53]
+    },
+    {
+      "metric": "RestingHeartRate",
+      "slug": "resting_heart_rate",
+      "unit": "bpm",
+      "values": [52, 51, 53]
+    },
+    { "metric": "HeartRateVariabilityRmssd", "slug": "hrv", "unit": "ms", "values": [62, 58, 65] },
+    {
+      "metric": "OxygenSaturation",
+      "slug": "oxygen_saturation",
+      "unit": "%",
+      "values": [98, 97, 98]
+    },
+    {
+      "metric": "RespiratoryRate",
+      "slug": "respiratory_rate",
+      "unit": "rpm",
+      "values": [14, 15, 14]
+    }
+  ],
+  "nutrition": [
+    {
+      "metric": "Nutrition.energy",
+      "slug": "energy",
+      "unit": "kcal",
+      "values": [2180, 2310, 1990]
+    },
+    { "metric": "Nutrition.protein", "slug": "protein", "unit": "g", "values": [128, 140, 119] },
+    {
+      "metric": "Nutrition.totalCarbohydrate",
+      "slug": "total_carbohydrate",
+      "unit": "g",
+      "values": [232, 254, 210]
+    },
+    { "metric": "Nutrition.totalFat", "slug": "total_fat", "unit": "g", "values": [70, 78, 64] },
+    { "metric": "Hydration", "slug": "hydration", "unit": "mL", "values": [2400, 2600, 2200] }
+  ],
+  "sleep": [
+    {
+      "nightOf": "2025-09-01",
+      "stages": [
+        ["awake", 0, 8],
+        ["light", 8, 95],
+        ["deep", 103, 70],
+        ["rem", 173, 55],
+        ["light", 228, 110],
+        ["rem", 338, 40],
+        ["awake", 378, 6]
+      ]
+    },
+    {
+      "nightOf": "2025-09-02",
+      "stages": [
+        ["light", 0, 100],
+        ["deep", 100, 80],
+        ["rem", 180, 60],
+        ["light", 240, 120],
+        ["awake", 360, 10]
+      ]
+    }
+  ],
+  "mindfulness": [
+    {
+      "dateOf": "2025-09-01",
+      "startHour": 7,
+      "durationMin": 10,
+      "sessionType": "meditation",
+      "title": "Morning breath"
+    },
+    {
+      "dateOf": "2025-09-02",
+      "startHour": 21,
+      "durationMin": 15,
+      "sessionType": "breathing",
+      "title": null
+    }
+  ],
+  "exercise": [
+    {
+      "exerciseType": "running",
+      "dateOf": "2025-09-01",
+      "startHour": 6,
+      "durationMin": 45,
+      "title": "Tempo run",
+      "notes": null
+    },
+    {
+      "exerciseType": "strength_training",
+      "dateOf": "2025-09-02",
+      "startHour": 18,
+      "durationMin": 50,
+      "title": "Upper body",
+      "notes": "Felt strong"
+    }
+  ]
+}

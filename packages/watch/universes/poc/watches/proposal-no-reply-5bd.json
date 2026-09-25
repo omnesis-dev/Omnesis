@@ -1,0 +1,84 @@
+{
+  "watch": {
+    "name": "proposal-no-reply-5bd",
+    "nl_query": "If I send a proposal to a client and they don't reply within 5 working days, alert me.",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "proposal_sent",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email",
+          "people": [
+            {
+              "role": "sender",
+              "isSelf": true
+            }
+          ]
+        },
+        "output_map": {
+          "thread_id": "$e.metadata.extra.threadId",
+          "recipient": "$e.people[role=recipient].personId"
+        },
+        "recall": {
+          "semantic": {
+            "query": "proposal quote offer statement of work sent to a client",
+            "threshold": 0.35
+          }
+        },
+        "judge": {
+          "proposition": "This outbound email contains a proposal or quote the user expects a response to",
+          "output_schema": {}
+        }
+      },
+      {
+        "id": "client_reply",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email",
+          "people": [
+            {
+              "role": "sender",
+              "isSelf": false
+            }
+          ]
+        },
+        "output_map": {
+          "thread_id": "$e.metadata.extra.threadId"
+        }
+      },
+      {
+        "id": "silence_5bd",
+        "type": "stateful.wait",
+        "comment": "My own follow-up nudge must not restart the clock, so a second outbound match on the thread is dropped.",
+        "inputs": {
+          "proposal_sent": {
+            "role": "arm",
+            "key": {
+              "thread_id": ".thread_id"
+            }
+          },
+          "client_reply": {
+            "role": "cancel",
+            "key": {
+              "thread_id": ".thread_id"
+            }
+          }
+        },
+        "on_collision": "ignore",
+        "duration": "5 business_days",
+        "output_map": {
+          "recipient": "$n.proposal_sent.recipient"
+        }
+      }
+    ],
+    "sink": {
+      "input": "silence_5bd"
+    }
+  }
+}

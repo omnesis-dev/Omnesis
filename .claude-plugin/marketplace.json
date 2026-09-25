@@ -1,0 +1,17 @@
+{
+  "name": "omnesis",
+  "owner": {
+    "name": "Adrien Conrath"
+  },
+  "description": "Index and search your entire digital life — fully local, fully private.",
+  "plugins": [
+    {
+      "name": "omnesis",
+      "displayName": "Omnesis",
+      "source": "./plugins/omnesis-claude",
+      "description": "Connect Claude Code to one OAuth-protected Omnesis MCP server. The access level chosen at approval exposes Answer, Direct, or both.",
+      "homepage": "https://omnesis.dev",
+      "keywords": ["mcp", "knowledge-base", "personal-data", "local", "privacy"]
+    }
+  ]
+}

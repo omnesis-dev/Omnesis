@@ -1,0 +1,6 @@
+# Second-stage privacy review: the rewritten tenancy answer is read on its own
+# terms and allowed, so the rewrite is released rather than held. Routed on a
+# phrase the rewrite introduced, which the draft it replaced does not contain.
+{"afterMs":30,"event":{"type":"agent.message.start","payload":{"sessionId":"$SESSION","messageId":"$MSG","role":"assistant"}}}
+{"afterMs":120,"event":{"type":"agent.tool.start","payload":{"sessionId":"$SESSION","messageId":"$MSG","toolCallId":"tc_privacy_review_tenancy_recheck","tool":"submit_privacy_review","args":{"decision":"allow","confidence":0.91,"findings":[{"category":"dispute_detail","detailLevel":"existence","subject":"unknown","disposition":"allow","description":"What remains says only that a sum is contested and unsettled. It carries no amount, no date and no name."}],"rationale":"The rewritten answer states the existence of an unresolved dispute and nothing more. No figure, date or person survives from the draft, so it can be released."},"intent":"Submit the privacy review"}}}
+{"afterMs":40,"event":{"type":"agent.message.end","payload":{"sessionId":"$SESSION","messageId":"$MSG","stopReason":"end_turn"}}}

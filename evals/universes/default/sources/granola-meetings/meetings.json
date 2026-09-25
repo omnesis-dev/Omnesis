@@ -1,0 +1,136 @@
+[
+  {
+    "id": "not_synthMeet000001",
+    "object": "note",
+    "title": "Acme Q3 Planning",
+    "created_at": "2026-05-04T15:00:00.000Z",
+    "updated_at": "2026-05-04T16:02:00.000Z",
+    "web_url": "https://granola.ai/notes/not_synthMeet000001",
+    "summary_text": "Aligned on Q3 roadmap. Jane owns the billing migration; Alex to scope the search rewrite. Ship date targeted for end of August.",
+    "summary_markdown": "## Decisions\n- Jane owns the **billing migration**\n- Alex scopes the **search rewrite**\n\n## Next steps\n- Draft the migration plan by Friday",
+    "transcript": [
+      {
+        "speaker": { "source": "microphone", "diarization_label": "John" },
+        "text": "Let's lock the Q3 priorities. Billing migration is the big one.",
+        "start_time": "2026-05-04T15:00:10.000Z",
+        "end_time": "2026-05-04T15:00:18.000Z"
+      },
+      {
+        "speaker": { "source": "speaker", "diarization_label": "Jane" },
+        "text": "I can own the billing migration. I'll have a plan by Friday.",
+        "start_time": "2026-05-04T15:01:02.000Z",
+        "end_time": "2026-05-04T15:01:10.000Z"
+      },
+      {
+        "speaker": { "source": "speaker", "diarization_label": "Alex" },
+        "text": "I'll scope the search rewrite and bring estimates next week.",
+        "start_time": "2026-05-04T15:42:00.000Z",
+        "end_time": "2026-05-04T15:42:08.000Z"
+      }
+    ],
+    "owner": { "name": "John Smith", "email": "john.smith@example.com" },
+    "attendees": [
+      { "name": "John Smith", "email": "john.smith@example.com" },
+      { "name": "Jane Doe", "email": "jane.doe@acme.example" },
+      { "name": "Alex Chen", "email": "alex.chen@globex.example" }
+    ],
+    "calendar_event": {
+      "id": "evt_q3planning",
+      "title": "Acme Q3 Planning",
+      "start_time": "2026-05-04T15:00:00.000Z",
+      "end_time": "2026-05-04T16:00:00.000Z"
+    },
+    "folder_membership": [{ "id": "fol_acmeplanning1", "name": "Acme" }]
+  },
+  {
+    "id": "not_synthMeet000002",
+    "object": "note",
+    "title": "1:1 with Jane",
+    "created_at": "2026-05-11T17:30:00.000Z",
+    "updated_at": "2026-05-11T17:58:00.000Z",
+    "web_url": "https://granola.ai/notes/not_synthMeet000002",
+    "summary_text": "Billing migration on track — Jane waiting on John to confirm the cutover date. Re-raised the parked Q4 vendor assessment; still needs John's decision. Jane asked John to review her conference-talk abstract before the CFP closes.",
+    "summary_markdown": "## Topics\n- Billing migration on track — needs John to confirm cutover date\n- Q4 vendor assessment still open — needs John's decision\n- Personal: review Jane's conference-talk abstract before CFP\n\n## Action items (John)\n- Confirm billing cutover date\n- Decide on Q4 vendor assessment\n- Review Jane's talk abstract",
+    "transcript": [
+      {
+        "speaker": { "source": "microphone", "diarization_label": "John" },
+        "text": "How's the billing migration going?",
+        "start_time": "2026-05-11T17:30:05.000Z",
+        "end_time": "2026-05-11T17:30:09.000Z"
+      },
+      {
+        "speaker": { "source": "speaker", "diarization_label": "Jane" },
+        "text": "On track — I just need you to confirm the cutover date so I can schedule it.",
+        "start_time": "2026-05-11T17:31:00.000Z",
+        "end_time": "2026-05-11T17:31:07.000Z"
+      },
+      {
+        "speaker": { "source": "microphone", "diarization_label": "John" },
+        "text": "Will do. Where did we land on the Q4 vendor assessment?",
+        "start_time": "2026-05-11T17:32:00.000Z",
+        "end_time": "2026-05-11T17:32:05.000Z"
+      },
+      {
+        "speaker": { "source": "speaker", "diarization_label": "Jane" },
+        "text": "Still with you, actually — I sent it back in October. Bluestone's my pick but the SOC2 gap is the risk. Just need your call to kick off procurement.",
+        "start_time": "2026-05-11T17:32:06.000Z",
+        "end_time": "2026-05-11T17:32:16.000Z"
+      },
+      {
+        "speaker": { "source": "speaker", "diarization_label": "Jane" },
+        "text": "One more thing — would you review my conference-talk abstract before the CFP closes?",
+        "start_time": "2026-05-11T17:33:00.000Z",
+        "end_time": "2026-05-11T17:33:06.000Z"
+      },
+      {
+        "speaker": { "source": "microphone", "diarization_label": "John" },
+        "text": "Of course, send it over.",
+        "start_time": "2026-05-11T17:33:07.000Z",
+        "end_time": "2026-05-11T17:33:10.000Z"
+      }
+    ],
+    "owner": { "name": "John Smith", "email": "john.smith@example.com" },
+    "attendees": [
+      { "name": "John Smith", "email": "john.smith@example.com" },
+      { "name": "Jane Doe", "email": "jane.doe@acme.example" }
+    ],
+    "calendar_event": {
+      "id": "evt_1on1jane",
+      "title": "1:1 with Jane",
+      "start_time": "2026-05-11T17:30:00.000Z",
+      "end_time": "2026-05-11T18:00:00.000Z"
+    },
+    "folder_membership": [{ "id": "fol_oneonones01", "name": "1:1s" }]
+  },
+  {
+    "id": "not_synthMeet000003",
+    "object": "note",
+    "title": "Globex partnership intro",
+    "created_at": "2026-05-19T13:00:00.000Z",
+    "updated_at": "2026-05-19T13:35:00.000Z",
+    "web_url": "https://granola.ai/notes/not_synthMeet000003",
+    "summary_text": "Intro call with Globex. Alex walked through their API. Follow-up: send the integration spec and book a technical deep-dive.",
+    "summary_markdown": "## Summary\n- Intro with Globex\n- Alex demoed their API\n\n## Follow-ups\n- Send integration spec\n- Book technical deep-dive",
+    "transcript": [
+      {
+        "speaker": { "source": "speaker", "diarization_label": "Alex" },
+        "text": "Here's how our API handles webhooks and pagination.",
+        "start_time": "2026-05-19T13:05:00.000Z",
+        "end_time": "2026-05-19T13:05:09.000Z"
+      },
+      {
+        "speaker": { "source": "microphone", "diarization_label": "John" },
+        "text": "Great. I'll send over our integration spec this week.",
+        "start_time": "2026-05-19T13:30:00.000Z",
+        "end_time": "2026-05-19T13:30:06.000Z"
+      }
+    ],
+    "owner": { "name": "John Smith", "email": "john.smith@example.com" },
+    "attendees": [
+      { "name": "John Smith", "email": "john.smith@example.com" },
+      { "name": "Alex Chen", "email": "alex.chen@globex.example" }
+    ],
+    "calendar_event": null,
+    "folder_membership": [{ "id": "fol_partnerships1", "name": "Partnerships" }]
+  }
+]

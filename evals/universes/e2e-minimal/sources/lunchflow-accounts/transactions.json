@@ -1,0 +1,49 @@
+[
+  {
+    "account_id": 481,
+    "transactions": [
+      {
+        "id": "lf-txn-001",
+        "accountId": 481,
+        "amount": -42.5,
+        "currency": "GBP",
+        "date": "2025-06-20",
+        "merchant": "Riverbend Market",
+        "description": "Weekly groceries",
+        "isPending": false
+      },
+      {
+        "id": "lf-txn-002",
+        "accountId": 481,
+        "amount": 1800,
+        "currency": "GBP",
+        "date": "2025-06-25",
+        "description": "Monthly salary",
+        "isPending": false
+      }
+    ]
+  },
+  {
+    "account_id": 902,
+    "transactions": [
+      {
+        "id": "lf-txn-101",
+        "accountId": 902,
+        "amount": 300,
+        "currency": "GBP",
+        "date": "2025-05-28",
+        "description": "Monthly savings transfer",
+        "isPending": false
+      },
+      {
+        "id": null,
+        "accountId": 902,
+        "amount": 1.12,
+        "currency": "GBP",
+        "date": "2025-06-19",
+        "description": "Savings interest",
+        "isPending": false
+      }
+    ]
+  }
+]

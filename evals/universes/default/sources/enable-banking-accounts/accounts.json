@@ -1,0 +1,29 @@
+[
+  {
+    "account_key": "synth-eb-acct-main",
+    "uid": "sess-uid-main-001",
+    "iban": "DE89370400440532013000",
+    "currency": "EUR",
+    "name": "Main",
+    "cash_account_type": "CACC",
+    "product": "Revolut Standard"
+  },
+  {
+    "account_key": "synth-eb-acct-usd",
+    "uid": "sess-uid-usd-002",
+    "iban": null,
+    "currency": "USD",
+    "name": "USD",
+    "cash_account_type": "CACC",
+    "product": "Revolut Standard"
+  },
+  {
+    "account_key": "synth-eb-acct-vault",
+    "uid": "sess-uid-vault-003",
+    "iban": null,
+    "currency": "EUR",
+    "name": "Savings Vault",
+    "cash_account_type": "SVGS",
+    "product": "Revolut Savings"
+  }
+]

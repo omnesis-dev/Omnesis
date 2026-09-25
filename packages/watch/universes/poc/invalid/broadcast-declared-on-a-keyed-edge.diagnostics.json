@@ -1,0 +1,14 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "BROADCAST_NOT_ALLOWED",
+      "severity": "error",
+      "path": "/watch/nodes/1/inputs/mail/broadcast",
+      "message": "A broadcast edge has no key of its own; this edge declares one.",
+      "details": {
+        "inputId": "mail"
+      }
+    }
+  ]
+}

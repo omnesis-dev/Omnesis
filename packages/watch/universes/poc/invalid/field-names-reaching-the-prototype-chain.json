@@ -1,0 +1,36 @@
+{
+  "watch": {
+    "name": "field-names-reaching-the-prototype-chain",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "mail",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email"
+        },
+        "output_map": {
+          "who": "$e.people[role=sender].constructor",
+          "what": "$e.constructor",
+          "how": "constructor($e.docId, $e.docId)"
+        }
+      },
+      {
+        "id": "gate",
+        "type": "stateless.transform",
+        "inputs": {
+          "mail": {
+            "role": "arm"
+          }
+        },
+        "query": "SELECT true AS fires"
+      }
+    ],
+    "sink": {
+      "input": "gate"
+    }
+  }
+}

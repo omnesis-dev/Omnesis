@@ -1,0 +1,14 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "NODE_UNREACHABLE_FROM_SINK",
+      "severity": "error",
+      "path": "/watch/nodes/1",
+      "message": "Node 'orphan' feeds nothing — signal flows to exactly one sink, so it can never affect a firing.",
+      "details": {
+        "nodeId": "orphan"
+      }
+    }
+  ]
+}

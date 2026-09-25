@@ -1,0 +1,41 @@
+[
+  {
+    "externalId": "onedrive-file-001",
+    "name": "Q4-budget-review.md",
+    "mimeType": "text/markdown",
+    "size": 196,
+    "eTag": "etag-001-v1",
+    "webUrl": "https://onedrive.live.com/?id=onedrive-file-001&cid=drive-john",
+    "folderPath": "/Documents/Finance",
+    "createdAt": "2025-09-01T08:30:00Z",
+    "modifiedAt": "2025-09-12T11:00:00Z",
+    "content": "Q4 Budget Review\n\nHeadcount frozen until the Northstar launch ships. Marketing spend capped at the Q3 baseline. Open question: should the Riverside contract renew at the higher tier?",
+    "sharedBy": null
+  },
+  {
+    "externalId": "onedrive-file-002",
+    "name": "marathon-training-plan.md",
+    "mimeType": "text/markdown",
+    "size": 184,
+    "eTag": "etag-002-v1",
+    "webUrl": "https://onedrive.live.com/?id=onedrive-file-002&cid=drive-john",
+    "folderPath": "/Documents/Personal",
+    "createdAt": "2025-08-20T09:00:00Z",
+    "modifiedAt": "2025-09-08T11:30:00Z",
+    "content": "Marathon Training Plan\n\nWeek 1: easy 5k Monday, intervals Wednesday, long run 16k Sunday. Goal pace 5:10/km. Taper begins three weeks out. Race day breakfast: oats and a banana.",
+    "sharedBy": null
+  },
+  {
+    "externalId": "onedrive-file-003",
+    "name": "vendor-shortlist.md",
+    "mimeType": "text/markdown",
+    "size": 172,
+    "eTag": "etag-003-v1",
+    "webUrl": "https://onedrive.live.com/?id=onedrive-file-003&cid=drive-john",
+    "folderPath": "/Documents/Finance",
+    "createdAt": "2025-08-28T15:30:00Z",
+    "modifiedAt": "2025-09-07T10:30:00Z",
+    "content": "Vendor Shortlist\n\nStellar Sound: best throughput, pricing unclear. Studio Northstar: SOC2 done, premium tier only. Recommend a pilot with Stellar Sound before committing to an annual contract.",
+    "sharedBy": "p_jane"
+  }
+]

@@ -1,0 +1,16 @@
+diff --git a/node_modules/better-sqlite3-multiple-ciphers/package.json b/node_modules/better-sqlite3-multiple-ciphers/package.json
+index e11c5a1..00c41a6 100644
+--- a/node_modules/better-sqlite3-multiple-ciphers/package.json
++++ b/node_modules/better-sqlite3-multiple-ciphers/package.json
+@@ -12,7 +12,10 @@
+   },
+   "main": "lib/index.js",
+   "exports": {
+-    ".": "./lib/index.js",
++    ".": {
++      "types": "./index.d.ts",
++      "default": "./lib/index.js"
++    },
+     "./linux-x64": "./lib/linux-x64.js",
+     "./linux-arm64": "./lib/linux-arm64.js",
+     "./linuxmusl-x64": "./lib/linuxmusl-x64.js",

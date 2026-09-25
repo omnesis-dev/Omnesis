@@ -1,0 +1,16 @@
+{
+  "name": "@omnesis/provider-things",
+  "version": "0.5.11",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@omnesis/core": "*",
+    "@omnesis/source-sdk": "*",
+    "@omnesis/types": "*",
+    "better-sqlite3": "^13.0.3"
+  },
+  "files": [
+    "dist"
+  ]
+}

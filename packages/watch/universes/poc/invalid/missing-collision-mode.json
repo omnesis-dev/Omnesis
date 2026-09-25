@@ -1,0 +1,28 @@
+{
+  "watch": {
+    "name": "missing-collision-mode",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "tick",
+        "type": "source.time",
+        "recurring": "0 9 * * *"
+      },
+      {
+        "id": "trend",
+        "type": "sql",
+        "inputs": {
+          "tick": {
+            "role": "arm"
+          }
+        },
+        "fire_on": "rising_edge",
+        "query": "SELECT avg(value) > 70 AS fires, avg(value) AS avg_hr FROM health_vitals WHERE metric_slug = 'resting_hr'"
+      }
+    ],
+    "sink": {
+      "input": "trend"
+    }
+  }
+}

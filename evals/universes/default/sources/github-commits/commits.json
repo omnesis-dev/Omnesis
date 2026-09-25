@@ -1,0 +1,264 @@
+{
+  "repo": "northstar-labs/atlas",
+  "commits": [
+    {
+      "sha": "cc24947363923ca2b79eb6e9cd441ed5072e3eaa",
+      "html_url": "https://github.com/northstar-labs/atlas/commit/cc24947363923ca2b79eb6e9cd441ed5072e3eaa",
+      "commit": {
+        "message": "Fix the off-by-one in the results cursor (#3)\n\nApplies the repository filter before the page slice so the tail row survives.",
+        "author": {
+          "name": "John Smith",
+          "email": "john.smith@example.com",
+          "date": "2026-05-15T11:22:00Z"
+        },
+        "committer": { "name": "GitHub", "date": "2026-05-15T11:22:00Z" }
+      },
+      "author": { "login": "john-smith", "type": "User" },
+      "committer": { "login": "web-flow", "type": "User" },
+      "stats": { "additions": 41, "deletions": 12, "total": 53 },
+      "files": [
+        {
+          "filename": "src/search/cursor.ts",
+          "status": "modified",
+          "additions": 18,
+          "deletions": 9
+        },
+        {
+          "filename": "src/search/filters.ts",
+          "status": "modified",
+          "additions": 6,
+          "deletions": 3
+        },
+        {
+          "filename": "test/search/cursor.test.ts",
+          "status": "added",
+          "additions": 17,
+          "deletions": 0
+        }
+      ],
+      "parents": [
+        { "sha": "11cfb0f22abaf907124fd8b24924c8511b314c20" },
+        { "sha": "91d8bd1508d17b417002db6bfd0896862725841c" }
+      ]
+    },
+    {
+      "sha": "11cfb0f22abaf907124fd8b24924c8511b314c20",
+      "html_url": "https://github.com/northstar-labs/atlas/commit/11cfb0f22abaf907124fd8b24924c8511b314c20",
+      "commit": {
+        "message": "Add a regression test for the results cursor boundary",
+        "author": {
+          "name": "Jane Doe",
+          "email": "jane.doe@example.org",
+          "date": "2026-05-14T15:02:00Z"
+        },
+        "committer": {
+          "name": "Jane Doe",
+          "email": "jane.doe@example.org",
+          "date": "2026-05-14T15:02:00Z"
+        }
+      },
+      "author": { "login": "jane-doe", "type": "User" },
+      "committer": { "login": "jane-doe", "type": "User" },
+      "stats": { "additions": 22, "deletions": 0, "total": 22 },
+      "files": [
+        {
+          "filename": "test/search/cursor.test.ts",
+          "status": "added",
+          "additions": 22,
+          "deletions": 0
+        }
+      ],
+      "parents": [{ "sha": "91d8bd1508d17b417002db6bfd0896862725841c" }]
+    },
+    {
+      "sha": "91d8bd1508d17b417002db6bfd0896862725841c",
+      "html_url": "https://github.com/northstar-labs/atlas/commit/91d8bd1508d17b417002db6bfd0896862725841c",
+      "commit": {
+        "message": "Raise the saved-view query timeout to thirty seconds\n\nLarge workspaces were tripping the old limit on the first load.",
+        "author": {
+          "name": "Alex Chen",
+          "email": "alex.chen@globex.example",
+          "date": "2026-05-12T10:41:00Z"
+        },
+        "committer": {
+          "name": "Alex Chen",
+          "email": "alex.chen@globex.example",
+          "date": "2026-05-12T10:41:00Z"
+        }
+      },
+      "author": { "login": "alex-chen", "type": "User" },
+      "committer": { "login": "alex-chen", "type": "User" },
+      "stats": { "additions": 4, "deletions": 2, "total": 6 },
+      "files": [
+        { "filename": "src/search/query.ts", "status": "modified", "additions": 4, "deletions": 2 }
+      ],
+      "parents": [{ "sha": "980e976f98bc56d1fdfa2ab4767e510f62fc9604" }]
+    },
+    {
+      "sha": "980e976f98bc56d1fdfa2ab4767e510f62fc9604",
+      "html_url": "https://github.com/northstar-labs/atlas/commit/980e976f98bc56d1fdfa2ab4767e510f62fc9604",
+      "commit": {
+        "message": "Normalize timeline buckets to UTC before rendering\n\nThe chart binned on the viewer's local offset, so the same workspace split\nacross different days for different viewers. Thanks @jane-doe for the trace\nthat made it obvious.",
+        "author": {
+          "name": "Alex Chen",
+          "email": "alex.chen@globex.example",
+          "date": "2026-05-21T16:12:00Z"
+        },
+        "committer": {
+          "name": "Alex Chen",
+          "email": "alex.chen@globex.example",
+          "date": "2026-05-21T16:12:00Z"
+        }
+      },
+      "author": { "login": "alex-chen", "type": "User" },
+      "committer": { "login": "alex-chen", "type": "User" },
+      "stats": { "additions": 63, "deletions": 27, "total": 90 },
+      "files": [
+        {
+          "filename": "src/charts/timeline.ts",
+          "status": "modified",
+          "additions": 38,
+          "deletions": 27
+        },
+        {
+          "filename": "test/charts/timeline.test.ts",
+          "status": "added",
+          "additions": 25,
+          "deletions": 0
+        }
+      ],
+      "parents": [{ "sha": "cc24947363923ca2b79eb6e9cd441ed5072e3eaa" }]
+    },
+    {
+      "sha": "9ab00d36ed98ff46f25546f4ad0107ff192fe1df",
+      "html_url": "https://github.com/northstar-labs/atlas/commit/9ab00d36ed98ff46f25546f4ad0107ff192fe1df",
+      "commit": {
+        "message": "Stream CSV export rows instead of buffering the workbook",
+        "author": {
+          "name": "John Smith",
+          "email": "john.smith@example.com",
+          "date": "2026-05-18T07:35:00Z"
+        },
+        "committer": {
+          "name": "John Smith",
+          "email": "john.smith@example.com",
+          "date": "2026-05-18T07:35:00Z"
+        }
+      },
+      "author": { "login": "john-smith", "type": "User" },
+      "committer": { "login": "john-smith", "type": "User" },
+      "stats": { "additions": 132, "deletions": 58, "total": 190 },
+      "files": [
+        { "filename": "src/export/csv.ts", "status": "modified", "additions": 74, "deletions": 51 },
+        { "filename": "src/export/stream.ts", "status": "added", "additions": 39, "deletions": 0 },
+        {
+          "filename": "src/http/routes/export.ts",
+          "status": "modified",
+          "additions": 12,
+          "deletions": 7
+        },
+        { "filename": "test/export/csv.test.ts", "status": "added", "additions": 7, "deletions": 0 }
+      ],
+      "parents": [{ "sha": "980e976f98bc56d1fdfa2ab4767e510f62fc9604" }]
+    },
+    {
+      "sha": "273db03ea58f1678ed6d0b23820ca24e784e0718",
+      "html_url": "https://github.com/northstar-labs/atlas/commit/273db03ea58f1678ed6d0b23820ca24e784e0718",
+      "commit": {
+        "message": "Retry webhook dispatch with a capped backoff\n\nA subscriber returning an error was retried in a tight loop. Attempts now\nback off and stop at the cap; the last failure lands in the dead-letter table.",
+        "author": {
+          "name": "Dave Ortiz",
+          "email": "dave.ortiz@example.net",
+          "date": "2026-06-10T08:55:00Z"
+        },
+        "committer": {
+          "name": "Dave Ortiz",
+          "email": "dave.ortiz@example.net",
+          "date": "2026-06-10T08:55:00Z"
+        }
+      },
+      "author": { "login": "dave-ortiz", "type": "User" },
+      "committer": { "login": "dave-ortiz", "type": "User" },
+      "stats": { "additions": 96, "deletions": 14, "total": 110 },
+      "files": [
+        {
+          "filename": "src/webhooks/dispatch.ts",
+          "status": "modified",
+          "additions": 52,
+          "deletions": 14
+        },
+        {
+          "filename": "src/webhooks/dead-letter.ts",
+          "status": "added",
+          "additions": 31,
+          "deletions": 0
+        },
+        {
+          "filename": "test/webhooks/dispatch.test.ts",
+          "status": "modified",
+          "additions": 13,
+          "deletions": 0
+        }
+      ],
+      "parents": [{ "sha": "9ab00d36ed98ff46f25546f4ad0107ff192fe1df" }]
+    },
+    {
+      "sha": "3a37e17138de6008ef047843171cb00f27bc425b",
+      "html_url": "https://github.com/northstar-labs/atlas/commit/3a37e17138de6008ef047843171cb00f27bc425b",
+      "commit": {
+        "message": "Pin the ARM build image for the nightly job (#10)\n\nPins the base image by digest and names the toolchain version it carries.",
+        "author": {
+          "name": "Carol Nakamura",
+          "email": "carol.nakamura@globex.example",
+          "date": "2026-06-03T14:10:00Z"
+        },
+        "committer": { "name": "GitHub", "date": "2026-06-03T14:10:00Z" }
+      },
+      "author": { "login": "carol-nakamura", "type": "User" },
+      "committer": { "login": "web-flow", "type": "User" },
+      "stats": { "additions": 9, "deletions": 3, "total": 12 },
+      "files": [
+        { "filename": ".ci/nightly.yml", "status": "modified", "additions": 9, "deletions": 3 }
+      ],
+      "parents": [
+        { "sha": "273db03ea58f1678ed6d0b23820ca24e784e0718" },
+        { "sha": "dd1f7500f5f4ae339b0bbbf76dd6e49699e8d615" }
+      ]
+    },
+    {
+      "sha": "dd1f7500f5f4ae339b0bbbf76dd6e49699e8d615",
+      "html_url": "https://github.com/northstar-labs/atlas/commit/dd1f7500f5f4ae339b0bbbf76dd6e49699e8d615",
+      "commit": {
+        "message": "Draft the plugin lifecycle reference",
+        "author": {
+          "name": "Emma Park",
+          "email": "emma.park@acme.example",
+          "date": "2026-05-25T09:10:00Z"
+        },
+        "committer": {
+          "name": "John Smith",
+          "email": "john.smith@example.com",
+          "date": "2026-05-25T09:12:00Z"
+        }
+      },
+      "author": { "login": "emma-park", "type": "User" },
+      "committer": { "login": "john-smith", "type": "User" },
+      "stats": { "additions": 218, "deletions": 4, "total": 222 },
+      "files": [
+        {
+          "filename": "docs/plugins/lifecycle.md",
+          "status": "added",
+          "additions": 214,
+          "deletions": 0
+        },
+        {
+          "filename": "docs/plugins/index.md",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 4
+        }
+      ],
+      "parents": [{ "sha": "9ab00d36ed98ff46f25546f4ad0107ff192fe1df" }]
+    }
+  ]
+}

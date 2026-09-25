@@ -1,0 +1,11 @@
+[
+  {
+    "account_key": "synth-eb-acct-main",
+    "uid": "sess-uid-main-001",
+    "iban": "DE89370400440532013000",
+    "currency": "EUR",
+    "name": "Main",
+    "cash_account_type": "CACC",
+    "product": "Revolut Standard"
+  }
+]

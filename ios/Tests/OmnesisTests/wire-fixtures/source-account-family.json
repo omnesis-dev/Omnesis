@@ -1,0 +1,27 @@
+{
+  "cursor": {},
+  "account": {
+    "id": "workspace:demo",
+    "label": "Demo workspace",
+    "subject": {
+      "kind": "opaque",
+      "value": "workspace:demo"
+    },
+    "tenant": {
+      "id": "tenant:demo",
+      "label": "Demo tenant"
+    },
+    "aliases": [
+      {
+        "kind": "email",
+        "value": "owner@example.com"
+      }
+    ]
+  },
+  "family": {
+    "icon": "folder",
+    "label": "Fixture source",
+    "bgColor": "#112233",
+    "accentColor": "#445566"
+  }
+}

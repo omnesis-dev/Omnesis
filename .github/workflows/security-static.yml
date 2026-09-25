@@ -1,0 +1,62 @@
+name: security-static
+
+# Full validation supplies one immutable source revision to this reusable lane.
+# Manual full requests enter through the guarded admission controller.
+on:
+  workflow_call:
+    inputs:
+      target_sha:
+        description: "Exact 40-character source revision to validate"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+
+      - name: Fetch pinned static-analysis rules
+        run: |
+          curl --fail --silent --show-error --location \
+            https://semgrep.dev/c/p/typescript \
+            --output "$RUNNER_TEMP/semgrep-typescript.yml"
+          echo "63fbcca1826e787ca43282bf139ccec16745ad6551c87850b9ccee9ca9f98c0b  $RUNNER_TEMP/semgrep-typescript.yml" \
+            | sha256sum --check --strict
+
+      - name: lane [security-static]
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --env HOME=/tmp \
+            --env SEMGREP_SEND_METRICS=off \
+            --volume "$GITHUB_WORKSPACE:/src:ro" \
+            --volume "$RUNNER_TEMP/semgrep-typescript.yml:/rules.yml:ro" \
+            semgrep/semgrep@sha256:65dcd4408adda7c183a6b4550cb1e9b19f7f627a6fbb7e0559bd466bedc44d7b \
+            semgrep scan \
+              --config /rules.yml \
+              --error \
+              --metrics off \
+              --exclude '**/*.test.ts' \
+              --exclude '**/*.e2e.test.ts' \
+              --exclude node_modules \
+              --exclude .nx \
+              /src

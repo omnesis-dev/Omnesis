@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Omnesis PII fixture allowlist",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["emails", "phones", "privateIps", "tailnetIps", "names", "secretFixtures"],
+  "$defs": {
+    "pathScopedIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "paths", "reason"],
+      "properties": {
+        "value": {
+          "type": "string",
+          "minLength": 1
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  },
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "comment": {
+      "type": "string"
+    },
+    "emails": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/pathScopedIdentity" },
+      "uniqueItems": true
+    },
+    "phones": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/pathScopedIdentity" },
+      "uniqueItems": true
+    },
+    "privateIps": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/pathScopedIdentity" },
+      "uniqueItems": true
+    },
+    "tailnetIps": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/pathScopedIdentity" },
+      "uniqueItems": true
+    },
+    "names": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/pathScopedIdentity" },
+      "uniqueItems": true
+    },
+    "secretFixtures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "kind", "reason"],
+        "properties": {
+          "path": { "type": "string" },
+          "kind": { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      }
+    }
+  }
+}

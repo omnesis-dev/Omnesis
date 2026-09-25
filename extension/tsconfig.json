@@ -1,0 +1,13 @@
+{
+  "//": "The browser-capture MV3 extension. Not a published @omnesis/* package — a browser bundle built by scripts/build.mjs (esbuild). It is a workspace member only so the shared push module can import @omnesis/types (compile-time contract drift catch) and the spawned-gateway E2E can import the exact same push code by package name.",
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "outDir": "dist-tsc",
+    "rootDir": "src",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"],
+  "references": [{ "path": "../packages/types" }, { "path": "../packages/core" }]
+}

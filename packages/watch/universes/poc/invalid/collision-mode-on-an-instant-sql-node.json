@@ -1,0 +1,30 @@
+{
+  "watch": {
+    "name": "collision-mode-on-an-instant-sql-node",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "tick",
+        "type": "source.time",
+        "recurring": "0 9 * * *"
+      },
+      {
+        "id": "check",
+        "type": "sql",
+        "inputs": {
+          "tick": {
+            "role": "arm"
+          }
+        },
+        "fire_on": "every_true",
+        "on_collision": "reset",
+        "max_live_instances": 3,
+        "query": "SELECT count(*) > 0 AS fires, count(*) AS readings FROM health_vitals"
+      }
+    ],
+    "sink": {
+      "input": "check"
+    }
+  }
+}

@@ -1,0 +1,242 @@
+{
+  "accountId": "ios-synth-johnsmith",
+  "device": "Apple Watch Series 9",
+  "sourceApp": "com.apple.Health",
+  "body": [
+    {
+      "metric": "HKQuantityTypeIdentifierBodyMass",
+      "slug": "body_mass",
+      "unit": "kg",
+      "values": [74.2, 74.1, 74.3]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierBodyFatPercentage",
+      "slug": "body_fat_pct",
+      "unit": "%",
+      "values": [16.2, 16.1, 16.3]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierBodyMassIndex",
+      "slug": "bmi",
+      "unit": "",
+      "values": [22.4, 22.4, 22.5]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierHeight",
+      "slug": "height",
+      "unit": "cm",
+      "values": [182]
+    }
+  ],
+  "activity": [
+    {
+      "metric": "HKQuantityTypeIdentifierStepCount",
+      "slug": "steps",
+      "unit": "count",
+      "values": [8420, 11250, 7830]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierDistanceWalkingRunning",
+      "slug": "distance_walk_run",
+      "unit": "m",
+      "values": [6320, 8430, 5870]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierActiveEnergyBurned",
+      "slug": "active_kcal",
+      "unit": "kcal",
+      "values": [420, 580, 390]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierBasalEnergyBurned",
+      "slug": "basal_kcal",
+      "unit": "kcal",
+      "values": [1750, 1730, 1740]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierAppleExerciseTime",
+      "slug": "exercise_minutes",
+      "unit": "min",
+      "values": [38, 62, 31]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierAppleStandTime",
+      "slug": "stand_minutes",
+      "unit": "min",
+      "values": [12, 14, 11]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierFlightsClimbed",
+      "slug": "flights",
+      "unit": "count",
+      "values": [12, 22, 8]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierVO2Max",
+      "slug": "vo2max",
+      "unit": "ml/kg·min",
+      "values": [48.2, 48.5, 48.3]
+    }
+  ],
+  "vitals": [
+    {
+      "metric": "HKQuantityTypeIdentifierHeartRate",
+      "slug": "heart_rate",
+      "unit": "bpm",
+      "values": [68, 142, 165]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierRestingHeartRate",
+      "slug": "resting_hr",
+      "unit": "bpm",
+      "values": [55, 55, 57]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierHeartRateVariabilitySDNN",
+      "slug": "hrv",
+      "unit": "ms",
+      "values": [50, 49, 46]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierBloodPressureSystolic",
+      "slug": "bp_systolic",
+      "unit": "mmHg",
+      "values": [118, 120, 117]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierBloodPressureDiastolic",
+      "slug": "bp_diastolic",
+      "unit": "mmHg",
+      "values": [76, 78, 75]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierOxygenSaturation",
+      "slug": "spo2",
+      "unit": "%",
+      "values": [98, 97, 98]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierRespiratoryRate",
+      "slug": "respiratory_rate",
+      "unit": "breaths/min",
+      "values": [14, 15, 13]
+    }
+  ],
+  "nutrition": [
+    {
+      "metric": "HKQuantityTypeIdentifierDietaryEnergyConsumed",
+      "slug": "energy_kcal",
+      "unit": "kcal",
+      "values": [2210, 2340, 2120]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierDietaryProtein",
+      "slug": "protein_g",
+      "unit": "g",
+      "values": [128, 142, 118]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierDietaryCarbohydrates",
+      "slug": "carbs_g",
+      "unit": "g",
+      "values": [240, 268, 220]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierDietaryFatTotal",
+      "slug": "fat_g",
+      "unit": "g",
+      "values": [82, 88, 78]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierDietaryWater",
+      "slug": "water_ml",
+      "unit": "ml",
+      "values": [2800, 3100, 2600]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierDietaryCaffeine",
+      "slug": "caffeine_mg",
+      "unit": "mg",
+      "values": [185, 195, 175]
+    }
+  ],
+  "environment": [
+    {
+      "metric": "HKQuantityTypeIdentifierEnvironmentalAudioExposure",
+      "slug": "env_audio_db",
+      "unit": "dBASPL",
+      "values": [62, 68, 58]
+    },
+    {
+      "metric": "HKQuantityTypeIdentifierHeadphoneAudioExposure",
+      "slug": "headphone_audio_db",
+      "unit": "dBASPL",
+      "values": [72, 78, 68]
+    }
+  ],
+  "sleep": [
+    {
+      "nightOf": "2025-09-01",
+      "stages": [
+        ["inBed", 0, 5],
+        ["asleepCore", 5, 60],
+        ["asleepDeep", 65, 30],
+        ["asleepREM", 95, 20],
+        ["asleepCore", 115, 90],
+        ["asleepDeep", 205, 25],
+        ["asleepREM", 230, 25],
+        ["asleepCore", 255, 90],
+        ["awake", 345, 5],
+        ["asleepCore", 350, 60],
+        ["asleepREM", 410, 25],
+        ["awake", 435, 10]
+      ]
+    },
+    {
+      "nightOf": "2025-09-02",
+      "stages": [
+        ["inBed", 0, 5],
+        ["asleepCore", 5, 75],
+        ["asleepDeep", 80, 40],
+        ["asleepREM", 120, 25],
+        ["asleepCore", 145, 80],
+        ["asleepDeep", 225, 35],
+        ["asleepREM", 260, 30],
+        ["asleepCore", 290, 100],
+        ["awake", 390, 5],
+        ["asleepCore", 395, 40],
+        ["awake", 435, 5]
+      ]
+    }
+  ],
+  "mindful": [
+    {
+      "dateOf": "2025-09-01",
+      "startHour": 22,
+      "durationMin": 10
+    },
+    {
+      "dateOf": "2025-09-03",
+      "startHour": 7,
+      "durationMin": 15
+    }
+  ],
+  "workouts": [
+    {
+      "type": "running",
+      "dateOf": "2025-09-01",
+      "startHour": 6,
+      "durationMin": 50,
+      "distanceM": 9200,
+      "energyKcal": 620
+    },
+    {
+      "type": "running",
+      "dateOf": "2025-09-04",
+      "startHour": 6,
+      "durationMin": 49,
+      "distanceM": 8230,
+      "energyKcal": 540
+    }
+  ]
+}

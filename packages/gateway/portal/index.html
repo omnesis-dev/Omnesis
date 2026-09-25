@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#0d1117">
+  <title>Omnesis</title>
+  <link rel="icon" type="image/svg+xml" href="/portal/img/favicon.svg">
+  <link rel="icon" type="image/png" href="/portal/img/favicon.png">
+  <link rel="apple-touch-icon" href="/portal/img/apple-touch-icon.png">
+  <!--
+    Apply the saved light/dark theme before the stylesheet paints so there's
+    no flash of the wrong palette. Runs synchronously (plain inline script,
+    not a module) so it executes before <body> renders. Mirrors
+    js/lib/theme.js (key "omnesis.theme", default "dark") and is kept
+    dependency-free on purpose — it must not wait on the import map.
+  -->
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("omnesis.theme");
+        if (t !== "light" && t !== "dark") t = "dark";
+        document.documentElement.dataset.theme = t;
+        var m = document.querySelector('meta[name="theme-color"]');
+        if (m) m.setAttribute("content", t === "light" ? "#ffffff" : "#0d1117");
+      } catch (e) {
+        document.documentElement.dataset.theme = "dark";
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="/portal/css/style.css">
+  <!--
+    Every importmap entry below resolves to a locally vendored bundle under
+    /portal/vendor/, produced by `npm run build:portal-vendor` (see
+    packages/gateway/scripts/build-portal-vendor.mjs). The portal has zero
+    runtime dependency on a third-party CDN — vendoring eliminates the
+    single-point-of-compromise / privacy-leak surface that came with
+    hot-linking ESM modules from https://esm.sh/.
+
+    The map comes FIRST, before the modulepreload links below it. A
+    modulepreload starts a module load, and that load resolves the module's own
+    bare imports — so it races the parser reaching this map. The map only
+    applies to loads that begin after it is parsed; lose the race and every
+    bare specifier fails to resolve and the page renders empty. Cache warmth
+    decides the race, which is why it shows up on a warm navigation (a back
+    that re-parses this document with the modules already cached) and not on a
+    cold load.
+
+    The preloads that follow let the browser fetch the always-on shell deps in
+    parallel rather than serially after `app.js` resolves them. Heavy
+    view-specific deps (codemirror, marked, qrcode, lezer parsers) are NOT
+    preloaded — they're lazy-loaded on first navigation to the view that needs
+    them (see `lazy()` in app.js).
+  -->
+  <script type="importmap">
+    {
+      "imports": {
+        "preact": "/portal/vendor/preact.js",
+        "preact/hooks": "/portal/vendor/preact-hooks.js",
+        "htm/preact": "/portal/vendor/htm-preact.js",
+        "marked": "/portal/vendor/marked.js",
+        "dompurify": "/portal/vendor/dompurify.js",
+        "qrcode": "/portal/vendor/qrcode.js",
+        "@codemirror/state": "/portal/vendor/codemirror-state.js",
+        "@codemirror/view": "/portal/vendor/codemirror-view.js",
+        "@codemirror/language": "/portal/vendor/codemirror-language.js",
+        "@codemirror/commands": "/portal/vendor/codemirror-commands.js",
+        "@codemirror/search": "/portal/vendor/codemirror-search.js",
+        "@codemirror/autocomplete": "/portal/vendor/codemirror-autocomplete.js",
+        "@codemirror/lint": "/portal/vendor/codemirror-lint.js",
+        "@codemirror/lang-json": "/portal/vendor/codemirror-lang-json.js",
+        "@codemirror/lang-sql": "/portal/vendor/codemirror-lang-sql.js",
+        "@lezer/common": "/portal/vendor/lezer-common.js",
+        "@lezer/highlight": "/portal/vendor/lezer-highlight.js",
+        "@lezer/lr": "/portal/vendor/lezer-lr.js",
+        "@lezer/json": "/portal/vendor/lezer-json.js",
+        "style-mod": "/portal/vendor/style-mod.js",
+        "w3c-keyname": "/portal/vendor/w3c-keyname.js",
+        "crelt": "/portal/vendor/crelt.js",
+        "sql-formatter": "/portal/vendor/sql-formatter.js",
+        "@omnesis/core/credentials-tokens": "/portal/vendor/omnesis-credentials-tokens.js"
+      }
+    }
+  </script>
+  <link rel="modulepreload" href="/portal/vendor/preact.js">
+  <link rel="modulepreload" href="/portal/vendor/preact-hooks.js">
+  <link rel="modulepreload" href="/portal/vendor/htm-preact.js">
+  <link rel="modulepreload" href="/portal/js/app.js">
+  <link rel="modulepreload" href="/portal/js/api.js">
+  <link rel="modulepreload" href="/portal/js/lib/router.js">
+  <link rel="modulepreload" href="/portal/js/lib/format.js">
+  <link rel="modulepreload" href="/portal/js/views/search.js">
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module" src="/portal/js/app.js"></script>
+</body>
+</html>

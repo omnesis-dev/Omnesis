@@ -1,0 +1,16 @@
+[
+  {
+    "account_id": 481,
+    "balance": {
+      "amount": 1280.75,
+      "currency": "GBP"
+    }
+  },
+  {
+    "account_id": 902,
+    "balance": {
+      "amount": 5250,
+      "currency": "GBP"
+    }
+  }
+]

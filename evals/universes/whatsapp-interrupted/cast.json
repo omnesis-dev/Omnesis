@@ -1,0 +1,18 @@
+{
+  "self": "p_self",
+  "people": [
+    {
+      "id": "p_self",
+      "name": "Sam Rivera",
+      "phones": ["+15550100120"],
+      "lids": ["900100100@lid"]
+    },
+    {
+      "id": "p_david",
+      "name": "David Lin",
+      "phones": ["+15550100123"],
+      "lids": ["900100103@lid"]
+    }
+  ],
+  "orgs": []
+}

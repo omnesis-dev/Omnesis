@@ -1,0 +1,13 @@
+{
+  "sourceId": "fixture:workspace:demo",
+  "tableName": "fixture_rows",
+  "records": [],
+  "deletedKeys": [
+    {
+      "group_id": "group:one",
+      "sequence": 2,
+      "active": false
+    }
+  ],
+  "presentKeys": []
+}

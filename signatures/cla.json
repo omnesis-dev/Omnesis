@@ -1,0 +1,20 @@
+{
+  "signedContributors": [
+    {
+      "name": "adstastic",
+      "id": 9049273,
+      "comment_id": 5470391702,
+      "created_at": "2026-08-30T18:09:20Z",
+      "repoId": 1176057237,
+      "pullRequestNo": 2137
+    },
+    {
+      "name": "veszig",
+      "id": 6367,
+      "comment_id": 5742042317,
+      "created_at": "2026-09-19T12:55:07Z",
+      "repoId": 1176057237,
+      "pullRequestNo": 2695
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "watch": {
+    "name": "maya-conversation-lapsed",
+    "nl_query": "Maya and I message each other often \u2014 tell me if we go quiet for a fortnight.",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "maya_message",
+        "type": "source.document_event",
+        "comment": "This person was merged part-way through the month, so the same human is named by two ids across these documents. The runtime re-canonicalizes at comparison time; without that, the pre-merge message matches nothing and never reaches the wait.",
+        "filter": {
+          "source": "apple-imessage",
+          "event": ["created", "updated"],
+          "people": [
+            {
+              "role": "participant",
+              "person": "5e7a1c88-0000-4000-8000-000000000004"
+            }
+          ]
+        },
+        "output_map": {
+          "person": "$e.people[role=participant].personId",
+          "last_at": "$e.semanticTime"
+        }
+      },
+      {
+        "id": "lapsed",
+        "type": "stateful.wait",
+        "comment": "Heartbeat keyed on the person. Her second message lands inside the countdown the first one started, so the re-arm resets it rather than opening a second instance \u2014 and it only lands on that instance because the two messages carry different person ids for the same human, re-canonicalized to one key at comparison time.",
+        "inputs": {
+          "maya_message": {
+            "role": "arm",
+            "key": {
+              "person": "'5e7a1c88-0000-4000-8000-000000000004'"
+            }
+          }
+        },
+        "on_collision": "reset",
+        "duration": "14 days",
+        "output_map": {
+          "last_at": "$n.maya_message.last_at"
+        }
+      }
+    ],
+    "sink": {
+      "input": "lapsed",
+      "output_map": {
+        "last_message": "$n.lapsed.last_at",
+        "person": "$n.lapsed.$key.person"
+      }
+    }
+  }
+}

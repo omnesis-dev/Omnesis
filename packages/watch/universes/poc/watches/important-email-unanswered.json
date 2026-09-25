@@ -1,0 +1,91 @@
+{
+  "watch": {
+    "name": "important-email-unanswered",
+    "nl_query": "Tell me when someone sends me an email that looks really important and I haven't replied for 3 days.",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "inbound_email",
+        "type": "source.document_event",
+        "comment": "Inbound is the sender-isSelf idiom: there is no direction field.",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email",
+          "people": [
+            {
+              "role": "sender",
+              "isSelf": false
+            }
+          ]
+        },
+        "output_map": {
+          "doc_id": "$e.docId",
+          "thread_id": "$e.metadata.extra.threadId",
+          "sender": "$e.people[role=sender].personId",
+          "why": "$judge.importance_reason"
+        },
+        "recall": {
+          "semantic": {
+            "query": "important urgent email expecting a reply from me",
+            "threshold": 0.35
+          }
+        },
+        "judge": {
+          "proposition": "This email is genuinely important AND expects a reply from the user",
+          "output_schema": {
+            "importance_reason": "string"
+          }
+        }
+      },
+      {
+        "id": "my_reply",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email",
+          "people": [
+            {
+              "role": "sender",
+              "isSelf": true
+            }
+          ]
+        },
+        "output_map": {
+          "thread_id": "$e.metadata.extra.threadId"
+        }
+      },
+      {
+        "id": "unanswered_3d",
+        "type": "stateful.wait",
+        "comment": "A new important email in the thread restarts the clock.",
+        "inputs": {
+          "inbound_email": {
+            "role": "arm",
+            "key": {
+              "thread_id": ".thread_id"
+            }
+          },
+          "my_reply": {
+            "role": "cancel",
+            "key": {
+              "thread_id": ".thread_id"
+            }
+          }
+        },
+        "on_collision": "reset",
+        "duration": "3 days",
+        "output_map": {
+          "doc_id": "$n.inbound_email.doc_id",
+          "sender": "$n.inbound_email.sender",
+          "why": "$n.inbound_email.why"
+        }
+      }
+    ],
+    "sink": {
+      "input": "unanswered_3d"
+    }
+  }
+}

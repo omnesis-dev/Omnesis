@@ -1,0 +1,12 @@
+{
+  "flowId": "fixture-flow",
+  "type": "challenge",
+  "id": "question-code",
+  "challenge": {
+    "kind": "code",
+    "title": "Enter code",
+    "pattern": "^[0-9]{6}$",
+    "patternHint": "Six digits"
+  },
+  "expectsAnswer": true
+}

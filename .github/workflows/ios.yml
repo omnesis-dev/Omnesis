@@ -1,0 +1,150 @@
+name: ios
+
+# Full validation supplies one immutable source revision to this reusable lane.
+# Manual full requests enter through the guarded admission controller.
+on:
+  workflow_call:
+    inputs:
+      target_sha:
+        description: "Exact 40-character source revision to validate"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  build-and-test:
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 40
+
+    env:
+      # The destination must name a simulator runtime installed on the macOS
+      # runner. OS=latest picks the newest installed runtime; bump the device
+      # name as the runner's Xcode / simulators are upgraded.
+      IOS_DESTINATION: "platform=iOS Simulator,name=iPhone 17,OS=latest"
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Stub Local.xcconfig
+        # Local.xcconfig is gitignored (it carries the developer's signing
+        # team). Simulator builds don't need a real team — write an empty
+        # DEVELOPMENT_TEAM so `#include? "Local.xcconfig"` in Config.xcconfig
+        # resolves and project generation succeeds.
+        run: |
+          if [ ! -f ios/Local.xcconfig ]; then
+            echo "DEVELOPMENT_TEAM = " > ios/Local.xcconfig
+          fi
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: lane [ios-build]
+        working-directory: ios
+        run: |
+          xcodebuild \
+            -project Omnesis.xcodeproj \
+            -scheme Omnesis \
+            -configuration Release \
+            -destination "$IOS_DESTINATION" \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: lane [ios-test]
+        working-directory: ios
+        run: |
+          xcodebuild \
+            -project Omnesis.xcodeproj \
+            -scheme Omnesis \
+            -configuration Debug \
+            -destination "$IOS_DESTINATION" \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            -skip-testing:OmnesisTests/GatewayLiveE2ETests \
+            test
+
+      - name: lane [ios-snapshots]
+        run: ":"
+
+      - name: Upload preview snapshots
+        # PreviewSnapshotTests writes PNGs to /tmp/omnesis-snapshots/. Preserve
+        # them when the job fails so reviewers can diagnose visual drift without
+        # spending artifact quota on identical output from every green run.
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: preview-snapshots
+          path: /tmp/omnesis-snapshots/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  live-gateway-e2e:
+    needs: build-and-test
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 45
+    env:
+      OMNESIS_CONFIG_DIR: /tmp/omnesis-ios-ci-${{ github.run_id }}
+      OMNESIS_E2E_DEST: "platform=iOS Simulator,name=iPhone 17,OS=latest"
+
+    steps:
+      - name: Clean stale node-llama-cpp xpack toolchain (breaks checkout clean)
+        run: |
+          chmod -R u+w "$GITHUB_WORKSPACE/node_modules/node-llama-cpp" 2>/dev/null || true
+          rm -rf "$GITHUB_WORKSPACE/node_modules/node-llama-cpp/llama/xpack" 2>/dev/null || true
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Stub Local.xcconfig
+        run: |
+          if [ ! -f ios/Local.xcconfig ]; then
+            echo "DEVELOPMENT_TEAM = " > ios/Local.xcconfig
+          fi
+
+      - name: lane [ios-live-e2e]
+        run: exec scripts/run-ios-e2e.sh

@@ -1,0 +1,29 @@
+[
+  {
+    "externalId": "synth-obsidian-001",
+    "path": "Q3 planning.md",
+    "title": "Q3 planning",
+    "body": "# Q3 planning\n\nThemes: ship Globex integration, harden infra, hire one more SRE.\n\nKey people: [[Jane Doe]], [[Alex Chen]], [[Emma Park]]\n\n## Goals\n- Land the Globex integration GA in week 4\n- Halve writer-worker tail latency\n- One new SRE hired by end of quarter\n\n#planning #leadership",
+    "tags": ["planning", "leadership"],
+    "createdAt": "2025-09-01T09:00:00Z",
+    "modifiedAt": "2025-09-12T15:00:00Z"
+  },
+  {
+    "externalId": "synth-obsidian-002",
+    "path": "people/Jane Doe.md",
+    "title": "Jane Doe",
+    "body": "# Jane Doe\n\nAcme — product lead on the vendor evaluation track.\n\n- email: jane.doe@acme.example\n- prefers async\n- joined Acme 2023\n\nRelated: [[Q3 planning]], [[Vendor evaluation]]\n\n#person #acme",
+    "tags": ["person", "acme"],
+    "createdAt": "2025-08-12T10:00:00Z",
+    "modifiedAt": "2025-09-06T09:30:00Z"
+  },
+  {
+    "externalId": "synth-obsidian-003",
+    "path": "people/Alex Chen.md",
+    "title": "Alex Chen",
+    "body": "# Alex Chen\n\nGlobex eng counterpart on the retry-logic work.\n\n- email: alex.chen@globex.example\n- timezone: PT\n- code-reviewer for the integration\n\nRelated: [[Globex integration]], [[Retry policy]]\n\n#person #globex",
+    "tags": ["person", "globex"],
+    "createdAt": "2025-08-20T11:00:00Z",
+    "modifiedAt": "2025-09-09T14:00:00Z"
+  }
+]

@@ -1,0 +1,26 @@
+[
+  {
+    "externalId": "ltl-gcal-001",
+    "title": "Brunch with Maya",
+    "description": "Sunday brunch at the place by the park.",
+    "location": "Parkside Cafe",
+    "startTime": "2026-04-12T11:00:00Z",
+    "endTime": "2026-04-12T12:30:00Z",
+    "attendees": ["self", "p_maya"],
+    "attendeeEmails": ["alex.rivera@example.com", "maya.reeves@example.org"],
+    "createdAt": "2026-04-10T20:10:00Z",
+    "updatedAt": "2026-04-10T20:10:00Z"
+  },
+  {
+    "externalId": "ltl-gcal-002",
+    "title": "Call with Whitfield Law",
+    "description": "Kick-off call about the lease engagement.",
+    "location": "Phone",
+    "startTime": "2026-04-21T16:00:00Z",
+    "endTime": "2026-04-21T16:30:00Z",
+    "attendees": ["self", "p_dana"],
+    "attendeeEmails": ["alex.rivera@example.com", "dana.whitfield@whitfieldlaw.example"],
+    "createdAt": "2026-04-18T10:00:00Z",
+    "updatedAt": "2026-04-18T10:00:00Z"
+  }
+]

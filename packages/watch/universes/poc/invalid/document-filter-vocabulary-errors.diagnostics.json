@@ -1,0 +1,49 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "DOCUMENT_TYPE_UNDECLARED",
+      "severity": "error",
+      "path": "/watch/nodes/0/filter/documentType",
+      "message": "None of apple-call-log declares a 'voicemail' document type.",
+      "details": {
+        "documentType": "voicemail",
+        "declared": ["call-log"]
+      }
+    },
+    {
+      "code": "METADATA_VALUE_NOT_ALLOWED",
+      "severity": "error",
+      "path": "/watch/nodes/0/filter/metadata/0/value",
+      "message": "'missed' is not one of the values 'apple-call-log' writes to 'extra.direction'.",
+      "details": {
+        "sourceId": "apple-call-log",
+        "value": "missed",
+        "allowedValues": ["incoming", "outgoing"]
+      }
+    },
+    {
+      "code": "METADATA_PREDICATE_VALUE_INVALID",
+      "severity": "error",
+      "path": "/watch/nodes/0/filter/metadata/1/value",
+      "message": "'apple-call-log' declares 'extra.callCount' as number; this predicate compares it against \"three\".",
+      "details": {
+        "sourceId": "apple-call-log",
+        "path": "extra.callCount",
+        "declaredType": "number",
+        "value": "three"
+      }
+    },
+    {
+      "code": "LINT_METADATA_VALUE_NONCANONICAL",
+      "severity": "warning",
+      "path": "/watch/nodes/1/filter/metadata/0/value",
+      "message": "'ARCHIVED' is not a known value of 'tags' — the field is open, so this may still match, or may be a typo.",
+      "details": {
+        "sourceId": "gmail",
+        "value": "ARCHIVED",
+        "canonicalValues": ["INBOX", "SENT", "DRAFT", "SPAM", "IMPORTANT", "STARRED"]
+      }
+    }
+  ]
+}

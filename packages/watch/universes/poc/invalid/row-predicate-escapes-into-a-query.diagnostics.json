@@ -1,0 +1,15 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "SQL_PREDICATE_NOT_AN_EXPRESSION",
+      "severity": "error",
+      "path": "/watch/nodes/0/predicate",
+      "message": "A row predicate is a single boolean expression over the arriving row's columns — it cannot open a FROM clause or project columns of its own.",
+      "details": {
+        "tables": ["people"],
+        "projected": ["fires", "fires"]
+      }
+    }
+  ]
+}

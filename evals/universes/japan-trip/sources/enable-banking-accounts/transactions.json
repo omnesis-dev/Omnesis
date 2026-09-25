@@ -1,0 +1,107 @@
+[
+  {
+    "account_key": "jp-eb-jpy",
+    "transactions": [
+      {
+        "entry_reference": "jp-eb-hotel",
+        "booking_date": "2026-04-11",
+        "value_date": "2026-04-11",
+        "transaction_amount": { "currency": "JPY", "amount": "168000" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Tokyo Riverside Hotel" },
+        "remittance_information": ["Hotel 6 nights — Japan trip Tokyo"]
+      },
+      {
+        "entry_reference": "jp-eb-rail",
+        "booking_date": "2026-04-11",
+        "value_date": "2026-04-11",
+        "transaction_amount": { "currency": "JPY", "amount": "50000" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "JR Rail Pass Office" },
+        "remittance_information": ["7-day JR rail pass — Japan trip"]
+      },
+      {
+        "entry_reference": "jp-eb-teamlab",
+        "booking_date": "2026-04-12",
+        "value_date": "2026-04-12",
+        "transaction_amount": { "currency": "JPY", "amount": "4800" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "teamLab Planets Tokyo" },
+        "remittance_information": ["Tickets x2 — Japan trip Tokyo"]
+      },
+      {
+        "entry_reference": "jp-eb-omakase",
+        "booking_date": "2026-04-13",
+        "value_date": "2026-04-13",
+        "transaction_amount": { "currency": "JPY", "amount": "28000" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Sushi Aoyama Ginza" },
+        "remittance_information": ["Omakase dinner — Japan trip Tokyo"]
+      },
+      {
+        "entry_reference": "jp-eb-uniqlo",
+        "booking_date": "2026-04-14",
+        "value_date": "2026-04-14",
+        "transaction_amount": { "currency": "JPY", "amount": "9800" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Uniqlo Ginza" },
+        "remittance_information": ["Clothing — Japan trip Tokyo"]
+      },
+      {
+        "entry_reference": "jp-eb-metro",
+        "booking_date": "2026-04-15",
+        "value_date": "2026-04-15",
+        "transaction_amount": { "currency": "JPY", "amount": "6200" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Tokyo Metro & Konbini" },
+        "remittance_information": ["Transport and convenience stores — Japan trip"]
+      },
+      {
+        "entry_reference": "jp-eb-tours",
+        "booking_date": "2026-04-15",
+        "value_date": "2026-04-15",
+        "transaction_amount": { "currency": "JPY", "amount": "38000" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Kyoto Guided Tours" },
+        "remittance_information": ["Two guided day tours — Japan trip Kyoto"]
+      },
+      {
+        "entry_reference": "jp-eb-ryokan",
+        "booking_date": "2026-04-17",
+        "value_date": "2026-04-17",
+        "transaction_amount": { "currency": "JPY", "amount": "96000" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Kyoto Ryokan Sakura" },
+        "remittance_information": ["Ryokan 3 nights — Japan trip Kyoto"]
+      },
+      {
+        "entry_reference": "jp-eb-kaiseki",
+        "booking_date": "2026-04-17",
+        "value_date": "2026-04-17",
+        "transaction_amount": { "currency": "JPY", "amount": "22000" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Hanami Tei Kaiseki" },
+        "remittance_information": ["Kaiseki dinner — Japan trip Kyoto"]
+      },
+      {
+        "entry_reference": "jp-eb-donki",
+        "booking_date": "2026-04-19",
+        "value_date": "2026-04-19",
+        "transaction_amount": { "currency": "JPY", "amount": "7400" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Don Quijote" },
+        "remittance_information": ["Souvenirs — Japan trip"]
+      }
+    ]
+  }
+]

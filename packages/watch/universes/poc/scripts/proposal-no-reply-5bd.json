@@ -1,0 +1,33 @@
+{
+  "note": "The outbound proposal is recalled and judged; the client never replies, so five business days later the silence fires. A follow-up on the same thread two days in arms the node again while it is already live, and on_collision:\"ignore\" means the original countdown is left alone rather than restarted.",
+  "recall": [
+    {
+      "nodeId": "proposal_sent",
+      "documentId": "d0c00001-0000-4000-8000-000000000016",
+      "score": 0.68,
+      "title": "Proposal: Studio Northstar rebrand"
+    },
+    {
+      "nodeId": "proposal_sent",
+      "documentId": "d0c00001-0000-4000-8000-000000000017",
+      "score": 0.8,
+      "title": "Following up on the proposal"
+    }
+  ],
+  "judgements": [
+    {
+      "nodeId": "proposal_sent",
+      "documentId": "d0c00001-0000-4000-8000-000000000016",
+      "fired": true,
+      "output": {},
+      "title": "Proposal: Studio Northstar rebrand"
+    },
+    {
+      "nodeId": "proposal_sent",
+      "documentId": "d0c00001-0000-4000-8000-000000000017",
+      "fired": true,
+      "output": {},
+      "title": "Following up on the proposal"
+    }
+  ]
+}

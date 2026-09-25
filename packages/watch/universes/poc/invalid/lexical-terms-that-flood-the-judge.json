@@ -1,0 +1,39 @@
+{
+  "watch": {
+    "name": "lexical-terms-that-flood-the-judge",
+    "nl_query": "Tell me when someone replies to me about anything at all.",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "any_reply",
+        "type": "source.document_event",
+        "comment": "A lexical arm is for terms rare enough that the judge almost never wakes. Every term here fails that in a different way: one is punctuation that normalizes away and would match everything, one is common enough to be worth a second look, and one is in a third of the corpus.",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email"
+        },
+        "recall": {
+          "lexical": {
+            "terms": ["!!!", "call", "Re", "a message about it"],
+            "match": "token"
+          }
+        },
+        "judge": {
+          "proposition": "This is a reply to the user",
+          "output_schema": {}
+        },
+        "output_map": {
+          "doc_id": "$e.docId"
+        }
+      }
+    ],
+    "sink": {
+      "input": "any_reply",
+      "output_map": {
+        "doc": "$n.any_reply.doc_id"
+      }
+    }
+  }
+}

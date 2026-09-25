@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Activity Segments integration manifest. Merged into :app by the manifest
+  merger, keeping every component/permission declaration encapsulated in this
+  module — the first module to declare a real manifest component (the two
+  receivers below).
+
+  - com.google.android.gms.permission.ACTIVITY_RECOGNITION (capped at
+    maxSdkVersion 28) is the pre-Q install-time GMS permission; on API 29+ it
+    is superseded by the platform's own android.permission.ACTIVITY_RECOGNITION,
+    a real runtime "dangerous" permission with its own system dialog.
+  - RECEIVE_BOOT_COMPLETED lets BootCompletedReceiver re-subscribe after a
+    reboot — a best-effort convenience; the hourly worker's unconditional
+    re-subscribe (see ActivitySegmentsSyncWorker) is what actually guarantees
+    self-healing if a boot broadcast is ever missed.
+  - ActivityTransitionReceiver is not exported: only the PendingIntent this
+    app itself hands to ActivityRecognitionClient can target it.
+  - BootCompletedReceiver IS exported: BOOT_COMPLETED is a system broadcast
+    delivered directly to registered receivers, which requires exported="true"
+    even though no other app is meant to invoke it directly.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="com.google.android.gms.permission.ACTIVITY_RECOGNITION"
+        android:maxSdkVersion="28" />
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <application>
+        <receiver
+            android:name=".ActivityTransitionReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".BootCompletedReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+    </application>
+
+</manifest>

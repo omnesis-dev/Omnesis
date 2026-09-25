@@ -1,0 +1,9 @@
+{
+  "kind": "rate-limit",
+  "scope": "source",
+  "retryAfterMs": 900000,
+  "quota": {
+    "kind": "app"
+  },
+  "message": "daily application quota exhausted"
+}

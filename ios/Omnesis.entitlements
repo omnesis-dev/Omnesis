@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- HealthKit read access. Phase 2+ will enumerate specific types in UI. -->
+    <key>com.apple.developer.healthkit</key>
+    <true/>
+    <key>com.apple.developer.healthkit.access</key>
+    <array/>
+
+    <!-- Keychain group for pairing token + gateway URL storage. -->
+    <key>keychain-access-groups</key>
+    <array>
+        <string>$(AppIdentifierPrefix)$(OMNESIS_BUNDLE_ID)</string>
+        <string>$(AppIdentifierPrefix)$(OMNESIS_BUNDLE_ID).notifications</string>
+    </array>
+
+    <!-- Lets the slow-answer push declare interruption-level
+         "time-sensitive" so an answer the user asked for out loud breaks
+         through a Focus mode instead of being silenced into Notification
+         Center. Without this entitlement iOS downgrades the level back to
+         "active". Requires the Time Sensitive Notifications capability on
+         the App ID (and therefore a re-minted provisioning profile). -->
+    <key>com.apple.developer.usernotifications.time-sensitive</key>
+    <true/>
+
+    <!-- Debug provisioning uses the APNs sandbox; distribution profiles
+         use the production environment. -->
+    <key>aps-environment</key>
+    <string>$(OMNESIS_APNS_ENVIRONMENT)</string>
+</dict>
+</plist>

@@ -1,0 +1,38 @@
+{
+  "watch": {
+    "name": "tax-loop-closed",
+    "nl_query": "Ping me when my tax-return open loop gets closed \u2014 done or dismissed.",
+    "firing_policy": "once_ever",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "tax_loop_update",
+        "type": "source.open_loop",
+        "comment": "Loop ids are resolved at compile time by lexical loop search, the same trade-off as person ids.",
+        "loop_ids": ["loop_8f31c2a7"],
+        "op": ["updated", "resolved"],
+        "output_map": {
+          "old_state": "$e.before.state",
+          "new_state": "$e.after.state",
+          "title": "$e.after.title"
+        }
+      },
+      {
+        "id": "became_closed",
+        "type": "stateless.transform",
+        "inputs": {
+          "tax_loop_update": {
+            "role": "arm"
+          }
+        },
+        "query": "SELECT ($n.tax_loop_update.new_state IN ('done','dismissed') AND $n.tax_loop_update.old_state NOT IN ('done','dismissed')) AS fires"
+      }
+    ],
+    "sink": {
+      "input": "became_closed",
+      "output_map": {
+        "loop": "$n.tax_loop_update.title"
+      }
+    }
+  }
+}

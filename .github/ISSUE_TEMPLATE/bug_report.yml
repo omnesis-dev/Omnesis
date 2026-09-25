@@ -1,0 +1,64 @@
+name: 🐛 Bug report
+description: Report a defect in Omnesis (gateway, collector, CLI, apps, or a source).
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug.
+
+        ⚠️ **Omnesis indexes your private digital life.** Do **not** paste real
+        personal data — emails, messages, contact names, phone numbers, health
+        metrics, file contents, tokens, or config with secrets. Logs and
+        screenshots often contain PII: scrub them, or reproduce with fictional
+        data.
+  - type: checkboxes
+    attributes:
+      label: Privacy
+      options:
+        - label: I have removed all real personal data and secrets from this report (including logs and screenshots).
+          required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps. Include commands, with any secrets/PII redacted.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit and OS
+      description: Output of `omnesis --version` (or the commit SHA), plus your OS/version.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Gateway
+        - Collector
+        - CLI
+        - Web portal
+        - iOS app
+        - Android app
+        - Browser extension
+        - A data source
+        - Other / not sure
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste relevant log output with PII and secrets removed.
+      render: shell
+    validations:
+      required: false

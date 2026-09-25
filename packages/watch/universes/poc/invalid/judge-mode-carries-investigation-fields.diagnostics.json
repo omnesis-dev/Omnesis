@@ -1,0 +1,15 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "JUDGE_MODE_HAS_INVESTIGATION_FIELDS",
+      "severity": "error",
+      "path": "/watch/nodes/1",
+      "message": "Judge mode has no tools and no horizon — it decides from the typed evidence its inputs carry.",
+      "details": {
+        "nodeId": "judge",
+        "declared": ["tools", "scope"]
+      }
+    }
+  ]
+}

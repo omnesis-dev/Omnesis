@@ -1,0 +1,19 @@
+[
+  {
+    "account_key": "jp-eb-jpy",
+    "balances": [
+      {
+        "name": "Closing booked",
+        "balance_type": "CLBD",
+        "balance_amount": { "currency": "JPY", "amount": "169800" },
+        "reference_date": "2026-04-23"
+      },
+      {
+        "name": "Interim available",
+        "balance_type": "ITAV",
+        "balance_amount": { "currency": "JPY", "amount": "169800" },
+        "reference_date": "2026-04-23"
+      }
+    ]
+  }
+]

@@ -1,0 +1,70 @@
+{
+  "watch": {
+    "name": "unanswered-important-email",
+    "nl_query": "Tell me when someone sends me an email that looks genuinely important and I still haven't replied three days later.",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "REPLACE-WITH-GET-/admin/watch/ontology",
+    "nodes": [
+      {
+        "id": "inbound",
+        "type": "source.document_event",
+        "comment": "The two-stage shape a semantic watch is built on. The filter is free and cuts the corpus to inbound mail; recall is cheap and nominates what is topically plausible; the judge is the only expensive stage and sees one document at a time. Raising the threshold spends less and misses more — the shadow period is how you find out which way to move it. There is no direction field on a document: inbound is expressed as a sender who is not you.",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email",
+          "people": [{ "role": "sender", "isSelf": false }]
+        },
+        "recall": {
+          "semantic": {
+            "query": "important email that needs a reply from me",
+            "threshold": 0.35
+          }
+        },
+        "judge": {
+          "proposition": "This email is genuinely important AND is waiting on a reply from the recipient",
+          "output_schema": { "why": "string" }
+        },
+        "output_map": {
+          "doc_id": "$e.docId",
+          "thread_id": "$e.metadata.extra.threadId",
+          "why": "$judge.why"
+        }
+      },
+      {
+        "id": "my_reply",
+        "type": "source.document_event",
+        "comment": "No recall and no judge: this arm exists to cancel, and whether a reply is important is beside the point. A cancel arm that had to be judged would cost a model call for every message you send.",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email",
+          "people": [{ "role": "sender", "isSelf": true }]
+        },
+        "output_map": { "thread_id": "$e.metadata.extra.threadId" }
+      },
+      {
+        "id": "still_waiting",
+        "type": "stateful.wait",
+        "comment": "Keyed on the thread, so an arm and the cancel that answers it can only meet if they are about the same conversation. `reset` means a second important message in the same thread restarts the three days rather than being ignored — the question is whether the thread is waiting on you, not whether one message was.",
+        "inputs": {
+          "inbound": { "role": "arm", "key": { "thread_id": ".thread_id" } },
+          "my_reply": { "role": "cancel", "key": { "thread_id": ".thread_id" } }
+        },
+        "on_collision": "reset",
+        "duration": "3 days",
+        "output_map": {
+          "doc_id": "$n.inbound.doc_id",
+          "why": "$n.inbound.why"
+        }
+      }
+    ],
+    "sink": {
+      "input": "still_waiting",
+      "output_map": {
+        "evidence": "$n.still_waiting.doc_id",
+        "why": "$n.still_waiting.why"
+      }
+    }
+  }
+}

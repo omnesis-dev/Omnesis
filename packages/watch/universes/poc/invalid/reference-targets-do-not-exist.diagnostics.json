@@ -1,0 +1,46 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "REF_CONSTANT_UNKNOWN",
+      "severity": "error",
+      "path": "/watch/nodes/1/output_map/missing_const",
+      "message": "No constant 'passport_expiry' is declared on this watch.",
+      "details": {
+        "name": "passport_expiry",
+        "declared": []
+      }
+    },
+    {
+      "code": "REF_FIELD_UNKNOWN",
+      "severity": "error",
+      "path": "/watch/nodes/1/output_map/missing_field",
+      "message": "'mail' does not project 'subject'.",
+      "details": {
+        "nodeId": "mail",
+        "field": "subject",
+        "available": ["thread_id", "doc_id"]
+      }
+    },
+    {
+      "code": "REF_KEY_COMPONENT_UNKNOWN",
+      "severity": "error",
+      "path": "/watch/nodes/1/output_map/missing_key",
+      "message": "'person' is not a component of this node's key.",
+      "details": {
+        "component": "person",
+        "declared": ["thread_id"]
+      }
+    },
+    {
+      "code": "REF_NODE_UNKNOWN",
+      "severity": "error",
+      "path": "/watch/nodes/1/query",
+      "message": "No node 'ghost' in this watch.",
+      "details": {
+        "nodeId": "ghost",
+        "known": ["mail", "gate"]
+      }
+    }
+  ]
+}

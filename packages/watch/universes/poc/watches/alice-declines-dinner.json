@@ -1,0 +1,103 @@
+{
+  "watch": {
+    "name": "alice-declines-dinner",
+    "nl_query": "Alert me when Alice tells me she’s not coming to the dinner, whether by email or by WhatsApp.",
+    "firing_policy": "once_ever",
+    "expires_at": "2026-03-23T22:30:00.000Z",
+    "ontology_fingerprint": "poc-ontology-1",
+    "constants": {
+      "dinner_event_id": {
+        "type": "string",
+        "value": "evt_5b21c9f4",
+        "provenance_doc": "evt_5b21c9f4",
+        "provenance_note": "'the dinner' resolved against the event directory: 'Dinner at Riverside Estate', 22 March. The directory holds a second dinner in May; this is the one the request can mean."
+      },
+      "dinner_starts_at": {
+        "type": "timestamp",
+        "value": "2026-03-22T19:00:00.000Z",
+        "provenance_doc": "evt_5b21c9f4",
+        "provenance_note": "the resolved event's start, which is what the horizon is derived from"
+      }
+    },
+    "nodes": [
+      {
+        "id": "alice_email_decline",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "people": [
+            {
+              "role": "sender",
+              "person": "b3f2a9d4-0000-4000-8000-000000000002"
+            }
+          ]
+        },
+        "output_map": {
+          "doc_id": "$e.docId"
+        },
+        "recall": {
+          "semantic": {
+            "query": "can't make it not coming declining dinner cancel",
+            "threshold": 0.35
+          }
+        },
+        "judge": {
+          "proposition": "Alice states she will not attend the dinner",
+          "output_schema": {}
+        }
+      },
+      {
+        "id": "alice_whatsapp_decline",
+        "type": "source.document_event",
+        "filter": {
+          "source": "whatsapp-messages",
+          "event": ["created", "updated"],
+          "people": [
+            {
+              "role": "participant",
+              "person": "b3f2a9d4-0000-4000-8000-000000000002"
+            }
+          ]
+        },
+        "output_map": {
+          "doc_id": "$e.docId"
+        },
+        "recall": {
+          "semantic": {
+            "query": "can't make it not coming declining dinner cancel",
+            "threshold": 0.35
+          }
+        },
+        "judge": {
+          "proposition": "Alice (not another participant) states she will not attend the dinner",
+          "output_schema": {}
+        }
+      },
+      {
+        "id": "any_decline",
+        "type": "stateless.or",
+        "comment": "There is no calendar branch: another attendee's RSVP is discarded at normalization, so nothing retains Alice's response.",
+        "inputs": {
+          "alice_email_decline": {
+            "role": "arm"
+          },
+          "alice_whatsapp_decline": {
+            "role": "arm"
+          }
+        },
+        "output_map": {
+          "email_doc": "$n.alice_email_decline.doc_id",
+          "whatsapp_doc": "$n.alice_whatsapp_decline.doc_id"
+        }
+      }
+    ],
+    "sink": {
+      "input": "any_decline",
+      "output_map": {
+        "via": "$n.any_decline.$fired_by",
+        "evidence": "coalesce($n.any_decline.email_doc, $n.any_decline.whatsapp_doc)"
+      }
+    }
+  }
+}

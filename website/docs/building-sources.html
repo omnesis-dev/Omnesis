@@ -1,0 +1,1032 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Building sources — Omnesis Docs</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32" />
+    <link rel="icon" type="image/png" href="/favicon-16.png" sizes="16x16" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- Resolve the theme before first paint: the stored choice, else the OS preference. -->
+    <script>
+      (function () {
+        var root = document.documentElement;
+        root.classList.add("js");
+        var t;
+        try {
+          t = localStorage.getItem("omnesis-theme");
+        } catch (e) {}
+        if (t !== "light" && t !== "dark") {
+          t =
+            window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+        }
+        root.setAttribute("data-theme", t);
+      })();
+    </script>
+
+    <meta
+      name="description"
+      content="Build a new Omnesis source: the defineSource contract, documents and analytics rows, package layout, and the tests every source ships with."
+    />
+    <link rel="canonical" href="https://omnesis.dev/docs/building-sources" />
+    <meta name="theme-color" content="#0d1117" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="/footer-social.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <nav id="nav">
+      <div class="container">
+        <a href="/" class="nav-logo" aria-label="Omnesis"
+          ><span class="nav-logo-mark" aria-hidden="true"></span>MNESIS</a
+        >
+        <div class="nav-right">
+          <ul class="nav-links">
+            <li><a href="/">Context Layer</a></li>
+            <li><a href="/brain">Omnesis Brain</a></li>
+            <li><a href="/vision">Vision</a></li>
+            <li><a href="/docs/" aria-current="page">Docs</a></li>
+          </ul>
+          <a
+            class="nav-icon-btn"
+            href="#"
+            data-oss-open
+            aria-label="Omnesis on GitHub"
+            title="Omnesis on GitHub"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path
+                d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+              />
+            </svg>
+          </a>
+          <button
+            id="theme-toggle"
+            class="theme-toggle"
+            type="button"
+            aria-label="Switch between dark and light theme"
+            title="Toggle theme"
+          >
+            <svg
+              class="icon-sun"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="4" />
+              <path
+                d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"
+              />
+            </svg>
+            <svg
+              class="icon-moon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <div class="docs-shell">
+      <aside class="docs-sidebar">
+        <nav aria-label="Documentation">
+          <ul class="side-pages">
+            <li><a href="/docs/">Overview</a></li>
+            <li><a href="/docs/install">Install</a></li>
+            <li><a href="/docs/setup">Setup</a></li>
+            <li><a href="/docs/search">Search</a></li>
+            <li><a href="/docs/agent">The agent</a></li>
+            <li><a href="/docs/connect">Agents &amp; MCP</a></li>
+            <li><a href="/docs/apps">Mobile apps</a></li>
+            <li><a href="/docs/notifications">Notifications</a></li>
+            <li><a href="/docs/operating">Operating</a></li>
+            <li><a href="/docs/security">Security</a></li>
+            <li><a href="/docs/updating">Backup &amp; updates</a></li>
+            <li><a href="/docs/sources">Available sources</a></li>
+            <li>
+              <a href="/docs/building-sources" aria-current="page">Building sources</a>
+              <ul class="side-sub">
+                <li><a href="#what-qualifies">What qualifies</a></li>
+                <li><a href="#the-contract">The contract</a></li>
+                <li><a href="#documents-rows-people">Documents, rows, people</a></li>
+                <li><a href="#where-code-lives">Where code lives</a></li>
+                <li><a href="#testing">Testing</a></li>
+                <li><a href="#reviewing">Reviewing a source</a></li>
+              </ul>
+            </li>
+            <li><a href="/docs/experimental">Experimental</a></li>
+          </ul>
+        </nav>
+      </aside>
+
+      <main id="main" class="docs-content">
+        <p class="docs-kicker">Reference</p>
+        <h1>Building sources</h1>
+        <p class="docs-lead">
+          A source is a TypeScript package that the collector loads and runs. This page is for
+          developers adding a new source to Omnesis: what qualifies, what a source must do, the data
+          it emits, where its code lives, and how it is tested and reviewed. It links to the SDK
+          types for detail.
+        </p>
+
+        <h2 id="what-qualifies">What qualifies</h2>
+        <p>
+          One rule decides whether a source is worth building: after a single one-time
+          authentication, it must be able to sync automatically in the background from then on. The
+          collector schedules it forever; no user action is ever part of the ingestion path.
+        </p>
+        <p>
+          Platforms whose only way out is a manual, user-triggered export — a "download your data"
+          archive the user has to request each time — do not qualify. A stale snapshot that decays
+          until the user remembers to re-export is not a source. The
+          <a href="/docs/sources">available sources</a> list shows what has cleared this bar.
+        </p>
+
+        <h2 id="the-contract">The contract</h2>
+        <p>
+          The source contract lives in <code>@omnesis/source-sdk</code>; the document shapes you
+          emit (<code>DocumentInput</code>, <code>PersonMention</code>) come from
+          <code>@omnesis/types</code>. At its core a source is a function from a cursor to a page:
+          the collector calls <code>sync(cursor)</code>, the source returns what changed upstream
+          since that cursor plus a new cursor, and the gateway stores both. One scheduled tick looks
+          like this:
+        </p>
+        <figure class="diagram">
+          <ol class="flow">
+            <li class="flow-step">
+              <span class="flow-title">Tick</span
+              ><span class="flow-desc"
+                >the collector's scheduler fires on the source's interval, a watched file change, or
+                <strong>Sync</strong></span
+              >
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Read cursor</span
+              ><span class="flow-desc"
+                >the gateway returns the last saved cursor — none on the first run</span
+              >
+            </li>
+            <li class="flow-step">
+              <span class="flow-title"><code>sync(cursor)</code></span
+              ><span class="flow-desc"
+                >the source returns one page: documents, analytics rows, deletions or a snapshot,
+                the next cursor, and <code>hasMore</code></span
+              >
+            </li>
+            <li class="flow-step flow-gate">
+              <span class="flow-title">Page lands</span
+              ><span class="flow-desc"
+                >the gateway commits the page and the new cursor together; indexing follows</span
+              >
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Loop or stop</span
+              ><span class="flow-desc"
+                ><code>hasMore</code> calls <code>sync</code> again; otherwise the next tick starts
+                incrementally from the saved cursor</span
+              >
+            </li>
+          </ol>
+          <figcaption>
+            One sync tick: the cursor advances only after the page it covers has landed, so an
+            interrupted sync resumes from the last page stored, and the first run (no cursor) is the
+            bootstrap that every later incremental run builds on.
+          </figcaption>
+        </figure>
+        <p>
+          That loop is why every source ships both a bootstrap test and an incremental test (see
+          <a href="#testing">Testing</a>). The sections below cover the rest of the contract in the
+          order you build a source.
+        </p>
+
+        <h3 id="entry-points">Entry points</h3>
+        <p>There are three entry points, and every package default-exports exactly one of them:</p>
+        <ul>
+          <li>
+            <strong><code>defineSource()</code></strong> — a single source (Obsidian, Things).
+          </li>
+          <li>
+            <strong><code>defineProvider()</code></strong> — a platform hosting several sources
+            behind one authentication (Google → Gmail, Calendar, Drive, Contacts). Sources share a
+            context object created once per account. The account model is declared once here and
+            inherited by every source under it: most providers accept several accounts, while one
+            reading a single local artifact declares that a host holds at most one. A child source
+            may narrow the provider's <code>discover()</code> result when its own local store can be
+            absent even though a sibling store exists; child discovery requires the provider hook.
+          </li>
+          <li>
+            <strong><code>defineStructuredSource()</code></strong> — a source whose output is
+            chiefly typed analytics rows, optionally with summary documents bound to them (Browser
+            History, Screen Time).
+          </li>
+        </ul>
+
+        <h3 id="descriptor">The descriptor</h3>
+        <p>
+          The descriptor carries everything consumers need: name, description, icon, unit noun
+          ("notes", "emails"), the auth kind (<code>oauth</code>, <code>qr</code>,
+          <code>api-key</code>, <code>link-widget</code>, or <code>local</code>), and any
+          user-supplied parameters. Push-only and gateway-hosted sources declare <code>local</code>.
+          The portal, CLI, and apps read all of it through the registry — shared code never branches
+          on a source name. If a consumer needs something source-specific, the descriptor grows a
+          field; the name never leaks downstream.
+        </p>
+        <p>
+          Give every source an <code>icon</code>: an SF Symbol name, a brand <code>color</code> and
+          <code>bgColor</code>, and a renderable image as <code>imageDataUri</code> or
+          <code>url</code>. The portal and Android cannot draw an SF Symbol, so a source without the
+          image shows a generic glyph there. Declare <code>urlPatterns</code> whose first capture
+          group is the item's external ID, so a link to one of the source's items anywhere in the
+          corpus resolves to its document; without them, those links are dropped.
+        </p>
+        <p>
+          Declare settings with <code>config.object()</code>: string, path, number, boolean, select,
+          secret, and list fields produce both the form and the typed value passed to
+          <code>create()</code>. Defaults must match their field types. Required whitespace is
+          missing input, not a value. Host path checks run on each list element as well as scalar
+          paths. <code>advanced: true</code> omits a setting from the add form without removing it
+          from validation.
+        </p>
+        <p>
+          Lists accept arrays or text; path lists split text on newlines, other lists on commas or
+          newlines. Set <code>separator: "newline"</code> for values containing commas, such as
+          <code>*.{tmp,bak}</code> glob patterns.
+        </p>
+
+        <h3 id="accounts-and-discovery">Accounts and discovery</h3>
+        <p>
+          Discovery may return account IDs or <code>AccountDescriptor</code> objects with a stable
+          <code>id</code>, a display <code>label</code>, a typed <code>subject</code>, and optional
+          <code>tenant</code> and <code>aliases</code>. Descriptors refresh existing source rows
+          when collectors announce metadata; discovery that returns bare IDs leaves stored
+          descriptors intact. The account key never changes when its label changes. Tenant and alias
+          declarations do not merge accounts, and there is no user-facing account rename API.
+        </p>
+        <p>
+          <code>singleInstance: true</code> means one instance of that source type per collector
+          host, not one account across the gateway. Clients choose the target collector and discover
+          its account before deciding whether to join an exact source already registered elsewhere
+          or create a separate source for a different account.
+        </p>
+        <p>
+          Once the gateway assigns an existing source to a collector, a defined
+          <code>discover()</code> hook is authoritative: the collector will not instantiate that
+          account-qualified configuration unless discovery finds it on the host. A fresh interactive
+          add may still complete its provider setup before the new account becomes discoverable;
+          definitions without discovery derive accounts from their saved configuration.
+        </p>
+
+        <h3 id="syncing">Syncing</h3>
+        <p>
+          At runtime, <code>create()</code> returns the live instance. The sync engine calls
+          <code>sync(cursor)</code> until <code>hasMore</code> is false, and stores the opaque
+          cursor between runs, so an interrupted sync continues from its last cursor.
+          <code>watchPaths</code> starts a sync when local files change. Use
+          <code>watchDirectoryPaths</code> for paths that are directories but can be absent at
+          startup. The optional <code>watchFileExtensions</code> field limits a recursive directory
+          watch to specified filename suffixes. <code>onPushEvent</code> sends new data without a
+          scheduled sync.
+        </p>
+        <p>
+          A minimal source fits in one file. This one reads notes that each machine keeps in its own
+          local folder, so every machine that hosts it contributes different notes:
+        </p>
+        <div class="term">
+          <div class="term-bar">
+            <span></span><span></span><span></span>
+            <span class="term-title">packages/providers/fieldnotes/src/index.ts</span>
+          </div>
+          <div class="term-body">
+            <pre data-lang="ts">
+import { config, defineSource, syncPage } from "@omnesis/source-sdk";
+import type { SourceInstance } from "@omnesis/source-sdk";
+import { FIELDNOTES_ICON } from "./icons.js";
+import { readNotesSince } from "./normalizer.js";
+
+interface Cursor extends Record&lt;string, unknown> {
+  lastModified: number;
+}
+
+export default defineSource({
+  id: "fieldnotes",
+  name: "Field Notes",
+  description: "Notes from the Field Notes desktop app",
+  authType: "local",
+  unitName: "notes",
+  icon: {
+    sfSymbol: "note.text",
+    color: "#2F81F7",
+    bgColor: "#0F1B2E",
+    imageDataUri: FIELDNOTES_ICON,
+  },
+  multiDevice: { mode: "partitioned" },
+  contract: {
+    apiVersion: 2,
+    requires: ["state-envelope", "typed-config"],
+    state: {
+      version: 1,
+      decode: (value) =>
+        value !== null &amp;&amp; typeof value === "object" &amp;&amp;
+        "lastModified" in value &amp;&amp; typeof value.lastModified === "number"
+          ? value as Cursor : null,
+      onUnreadable: "rebootstrap",
+      maxBytes: 4096,
+    },
+  },
+  config: config.object({
+    dataPath: config.path({
+      label: "Data folder",
+      scope: "member",
+      required: true,
+      mustExist: "directory",
+    }),
+  }),
+  create: async ({ config }): Promise&lt;SourceInstance&lt;Cursor>> => ({
+    sync: async (cursor) => {
+      const since = cursor?.lastModified ?? 0;
+      const { documents, newest } = await readNotesSince(config.dataPath, since);
+      return syncPage(documents, { lastModified: newest });
+    },
+  }),
+});</pre
+            >
+          </div>
+        </div>
+        <p>
+          Use the injected <code>SourceHost</code> for logging, <code>now()</code>, attachment
+          extraction, optional audio transcription, and scoped analytics reads. Its
+          <code>analytics.query()</code> is read-only and restricted to the source's declared
+          tables; writes belong on a sync page. <code>stateDir</code> is scoped to the provider
+          account and shared by its sibling sources, so use distinct filenames;
+          <code>host.configDir</code> remains available for credential layouts that already use it.
+        </p>
+        <p>
+          The host interface is not a sandbox for in-process provider code, nor a promise of access
+          to the whole gateway client. Factories and shared provider contexts do not receive a
+          gateway client. A source or provider child declaring <code>execution: "external"</code>
+          needs no factory and is never instantiated by the collector.
+        </p>
+        <p>
+          A throw from <code>create()</code> — or from the provider's <code>discover()</code> or
+          <code>createContext()</code> — means the source is not added, and the message is what the
+          operator reads as the reason, so word it to name the condition and the fix. Nothing is
+          latched: the collector re-attempts the source on its next connection to the gateway, so a
+          condition the operator resolves needs no re-add. Under a provider, one source's failure
+          costs only that source; its siblings on the same account still come up.
+        </p>
+        <p>
+          A failure during <code>sync()</code> is thrown as a <code>SyncError</code> from
+          <code>@omnesis/types</code>, whose kind — <code>auth</code>, <code>network</code>,
+          <code>rate-limit</code>, <code>permission</code>, <code>transient</code> or
+          <code>unknown</code> — tells the collector whether the source needs a new sign-in, should
+          wait, or has failed. It may carry <code>retryAfterMs</code> from the platform's retry
+          hint, and a <code>remediation</code> — a one-line summary, the steps, and whether the
+          collector must restart — for a condition only the operator can clear, such as a missing
+          operating-system permission. Clients show the remediation as a fix instead of the raw
+          message. An untyped throw counts as a failure of the whole source.
+        </p>
+        <p>
+          Some sources read files that another program maintains. If that program stops, the source
+          cannot report an error — it just sees no changes. The <code>freshness</code> field defines
+          a plausible quiet period, so Omnesis can tell a stalled source from a quiet one. When the
+          program can be started unattended, the declaration may also name its macOS bundle
+          identifier; a Mac collector then opens it hidden when it finds it quit, backing off
+          between attempts and never more than a few times a day, and shows the declaration's
+          <code>failedHint</code> once the program has repeatedly failed to stay up.
+        </p>
+        <p>
+          A completed sync may also return a <code>watermark</code>: a small statement of what the
+          source knows it has covered. A watermark covers the whole configured source, not
+          individual folders, tables, or documents. Omit it when the upstream system gives no
+          stronger boundary; Omnesis records an <code>observation</code> instead, meaning only that
+          a successful sync finished at that time. A watermark is valid only on the final page
+          (<code>hasMore: false</code>); a paginated source must return it with its last page.
+        </p>
+        <p>
+          Use the strongest honest guarantee: <code>change-cut</code> for a stable upstream change
+          boundary, <code>snapshot</code> for a completed consistent listing, or
+          <code>best-effort-scan</code> for a completed listing that may race concurrent changes.
+        </p>
+
+        <h3 id="local-sources">Local sources</h3>
+        <p>
+          A local source has no credential to renew. It reports an unavailable database, missing
+          operating-system permission, or broken local dependency as a sync error with the relevant
+          remedy; it never sends the user into a re-authentication flow. A local source whose
+          database can live outside its default search location may mark a member-scoped path
+          parameter with <code>provesLocalAvailabilityForAccount: "local"</code>. The parameter
+          needs a host check (<code>mustExist</code>, <code>mustContain</code> or
+          <code>check</code>) and the source a <code>discover()</code> hook, or the definition is
+          rejected. A non-empty value that passes that validator proves availability for that exact
+          source on that member; it never authorizes a sibling source or a shared account setting.
+        </p>
+        <p>
+          Sources that read local files should implement
+          <code>probeReadAccess({ signal })</code> on the live instance. The collector calls it
+          during device health checks, in the daemon process whose permissions matter. Freshly open
+          the source-owned inputs read-only and close every handle; do not reuse cached handles,
+          read indexed content, copy databases, run sync, or change a cursor. Bounded discovery
+          metadata may be read to select current inputs, but must stay out of reports and logs.
+        </p>
+        <p>
+          Do not let a cached input roster silently omit newly eligible inputs. Bound discovery and
+          honour cancellation between operations, including cleanup after a late open. Return an
+          object whose <code>status</code> is <code>readable</code>, <code>denied</code>,
+          <code>unavailable</code>, or <code>unsupported</code>; missing inputs and incomplete
+          discovery are unavailable. Optional remediation must not include paths, filenames, or raw
+          errors. Watch paths are not a permission contract: they may include optional files such as
+          database journals.
+        </p>
+        <p>
+          The SDK's <code>probeFileReadAccess</code> helper closes its descriptor on the JavaScript
+          thread to avoid releasing process-owned SQLite locks during a synchronous statement. It is
+          suitable for eager, same-thread SQLite readers only. A source that holds a transaction or
+          iterator across an <code>await</code>, or reads that same file on another thread, must
+          coordinate its readers and probes instead of using the helper unguarded.
+        </p>
+        <p>
+          A source maintaining an encrypted local cache or archive also implements
+          <code>probeLocalStores({ signal })</code>. Inspect read-only with the host's storage key;
+          never migrate, repair, or write during a health check. Return the registered
+          <code>keyName</code>, an operator-safe label, and one of <code>encrypted</code>,
+          <code>plaintext</code>, <code>absent</code>, <code>locked</code>, or
+          <code>unverifiable</code>. Missing stores are absent, not evidence of upstream deletion.
+          Reports must contain no local paths, filenames, raw errors, or indexed content.
+        </p>
+
+        <h3 id="deletions">Deletions</h3>
+        <p>
+          Deletions reach Omnesis through two different channels, and the difference matters. A
+          source that knows an item was deleted names it directly (a <em>tombstone</em>), and
+          Omnesis removes it immediately. A source with no deletion signal instead sends a
+          <strong>snapshot</strong> — the complete list of what exists upstream — and Omnesis infers
+          the rest from what the list leaves out.
+        </p>
+        <p>
+          An inference is not an observation. A store that is locked, a permission that lapsed, a
+          database mid-migration: each answers a source short, and the source has no way to tell a
+          short answer from a small one. The snapshot it builds is complete on its own terms and
+          omits items that still exist — a page indistinguishable from a genuine mass deletion, and
+          the two outcomes are not symmetric. So an item a snapshot omits is not deleted at once.
+        </p>
+        <p>
+          Omnesis records the omission with a deadline: several later snapshots must agree, and a
+          minimum span of time must pass, before the item is removed. A snapshot that names it again
+          cancels the record. A source that stops before enough corroborating snapshots cannot spend
+          the deadline merely by remaining offline. After a gateway restart, a startup grace gives
+          collectors time to revoke stale evidence before deletion resumes. The thresholds are
+          <code>gateway.snapshotAbsence</code>, and a legitimate deletion still lands once that
+          configured deadline has passed.
+        </p>
+        <p>
+          The delay buys back a bad read that recovers, not one that persists, so a source should
+          still withhold the snapshot for any enumeration it cannot vouch for. An omitted snapshot
+          has no effect at all; a snapshot built from a doubtful read starts a clock on items that
+          are still there. When enumeration is incomplete, include the enumeration's
+          <code>withheldIssue()</code> result (from the <code>SnapshotEnumeration</code> you built)
+          in the finalized page's <code>issues</code>, or return <code>issues: []</code> after a
+          complete assessment.
+        </p>
+        <p>
+          Omit <code>issues</code> on incremental ticks that do not assess enumeration: success
+          alone must not clear an earlier warning. Reports accumulate across pages and replace that
+          member's durable warnings only when the run completes; they do not turn a successful
+          partial sync into an error. Runtime guards report invalid snapshots separately: a later
+          valid snapshot clears only the matching document or table diagnostic, leaving unassessed
+          warnings intact.
+        </p>
+        <p>
+          Withholding is all-or-nothing, which is costly for a source that reads several stores: one
+          address book that will not open suspends deletion detection for the two that did, for as
+          long as it stays broken. Such a source can instead vouch store by store. It names each
+          store it read in full, with what that store holds, and stamps every document it emits with
+          the store it came from. Omnesis then judges only the documents belonging to a store that
+          was named; anything in a store the source could not read is left exactly alone. The two
+          halves have to agree — a store claimed while its documents carry no store name asks for
+          deletions that then never happen.
+        </p>
+        <p>
+          The wire form is <code>presentClaims: [{ partition: "book-a", ids: ["note-1"] }]</code>,
+          paired with <code>partitionKey: "book-a"</code> on those documents;
+          <code>SnapshotEnumeration.claims()</code> builds it. Partition keys must be stable and at
+          most 256 characters. Emit either claims or a whole-source
+          <code>presentExternalIds</code> snapshot, never both, and only on the final page.
+        </p>
+        <p>
+          Claims are for the cycle that could not read everything. When every store was read in
+          full, send the whole-source snapshot instead: claims never reconcile documents emitted
+          without a partition key or partitions that are no longer listed, so a source that claims
+          on every cycle strands them silently.
+        </p>
+        <p>
+          Every source that emits a snapshot, of documents or of analytics rows, also has an entry
+          in <code>packages/source-sdk/src/snapshot-emitters.json</code> stating how it guarantees
+          the snapshot is complete; a contract test fails the build without one.
+        </p>
+        <p>
+          Repeated I/O failures never become evidence of deletion. Preserve known IDs under an
+          unreadable file while reconciling readable siblings; keep an unknown partition gapped.
+        </p>
+
+        <h3 id="multi-device">Several devices</h3>
+        <p>
+          A descriptor declares how one configured source may be hosted across devices with
+          <code>multiDevice: { mode }</code>. Each hosting device is a <em>member</em>. Users see
+          these modes under plain names, described in
+          <a href="/docs/sources#several-devices">Sources on several devices</a>.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Mode</th>
+                <th>User-facing name</th>
+                <th>Behavior</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>exclusive</code></td>
+                <td>One machine at a time</td>
+                <td>
+                  The default. One member and one authoritative stream; moving the source changes
+                  the member.
+                </td>
+              </tr>
+              <tr>
+                <td><code>replicated</code></td>
+                <td>Shared</td>
+                <td>
+                  Several members read the same upstream, each with its own cursor, while the
+                  gateway keeps one logical dataset.
+                </td>
+              </tr>
+              <tr>
+                <td><code>partitioned</code></td>
+                <td>Per device</td>
+                <td>
+                  Each member has distinct upstream data and its own cursor, snapshots, tombstones,
+                  documents, and analytics rows; gateway search and SQL expose their union.
+                </td>
+              </tr>
+              <tr>
+                <td><code>handoff</code></td>
+                <td>—</td>
+                <td>
+                  Several members take turns syncing the same upstream; one lease holder writes the
+                  shared cursor and snapshot at a time. No source in the catalogue declares it; a
+                  provider must prove its own backfill, lease-loss, and deletion behavior before
+                  opting in.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          The mode applies to the source as a whole, including hybrid sources that emit both
+          documents and analytics rows. For a <code>replicated</code> source, a table write's
+          <code>deletedKeys</code> and <code>presentKeys</code> are read from every member whether
+          or not it holds the lease, and applied under the same rule as documents: one replica leads
+          a deletion nobody has reported, and a row another replica still holds is kept as disputed
+          until that replica agrees. Emit a tombstone once rather than repeating it on every sync,
+          and emit tombstones and snapshots without regard to the lease.
+        </p>
+        <p>
+          For <code>partitioned</code> sources, the gateway derives the stream identity from the
+          authenticated member device and stores it separately from the provider's external ID.
+          Providers therefore keep external IDs stable only within their local upstream and must not
+          embed a device or stream key in them.
+        </p>
+        <p>
+          Source parameters are shared by every member unless the descriptor marks one with
+          <code>scope: "member"</code>. Use member scope only for host-local settings such as a
+          filesystem path: each collector then supplies the value for its own environment. Account
+          identity and other settings that define the logical source remain source-scoped; omitting
+          <code>scope</code> keeps that default.
+        </p>
+        <p>
+          Adding member-local fields does not stop an existing host that explicitly understands
+          every pinned field from receiving its effective configuration and syncing. Configuration
+          scope changes only when all members advertise the same expanded set; existing local
+          overrides are preserved. Member-local configuration and membership mutations require exact
+          agreement, while missing field declarations or incompatible storage modes still refuse
+          execution.
+        </p>
+
+        <h3 id="state-and-compatibility">State and compatibility</h3>
+        <p>
+          Declare <code>contract.apiVersion: 2</code>; a source that omits it is treated as
+          generation 1, which hosts still run. List in <code>contract.requires</code> every host
+          capability the source cannot run without; a host that lacks one refuses that source before
+          creation rather than running it unsafely, and supported siblings may still start. The host
+          supports <code>state-envelope</code>, <code>multi-table-batch</code>,
+          <code>snapshot-sessions</code>, <code>tuple-deletes</code>, <code>scoped-host</code>, and
+          <code>typed-config</code>. Scoped claims require <code>snapshot-sessions</code>. The type
+          also names <code>connection-identity</code>, which no host advertises yet: a source that
+          requires it is refused everywhere.
+        </p>
+        <p>
+          <code>contract.state</code> declares <code>version</code>, a validating
+          <code>decode(value)</code>, and every <code>migrate[n]</code> step from version
+          <code>n</code> to <code>n + 1</code>. The host unwraps state before sync and envelopes
+          each saved cursor. <code>legacyVersion(value)</code> classifies bare cursors saved before
+          the source adopted the envelope; optional <code>minorVersion</code> additions must decode
+          older values. A newer major state version is refused without overwriting it.
+        </p>
+        <p>
+          Choose <code>onUnreadable: "stop"</code> when discarding a bookmark could lose
+          unreplayable history; the default <code>"rebootstrap"</code> restarts from upstream.
+          <code>maxBytes</code> caps the encoded envelope, not just its payload. Migrations,
+          <code>legacyVersion</code>, a stop policy, or a size ceiling require
+          <code>state-envelope</code>. Every returned cursor, including an absent-store seed, must
+          decode. Test both document and structured sync paths.
+        </p>
+        <p>
+          <code>outputRevision</code> describes changed output meaning, not cursor shape. It does
+          not trigger reprocessing or a backfill: implement and test any required re-emission
+          separately. Provider contracts contribute their API generation and required capabilities;
+          each child declares its own state. Never migrate one sibling's bookmark using another's
+          decoder.
+        </p>
+
+        <h3 id="authentication">Authentication sessions</h3>
+        <p>
+          Implement authentication with <code>authenticate(session)</code>.
+          <code>show(challenge)</code> presents information and continues;
+          <code>ask(challenge)</code> waits for a typed answer. Challenges carry their own title and
+          instructions: redirect, QR, pasted code, typed fields, widget, or wait notice. Use
+          <code>canShow(kind)</code> before selecting a client interaction; unsupported questions
+          fail immediately rather than waiting for timeout. Clients that declare no capabilities
+          support only redirect and QR challenges. The generic answer endpoint accepts only pending
+          code or fields questions; redirects and widgets complete through their own callbacks.
+        </p>
+        <p>
+          For API-key providers, where the pasted value is the account's own credential rather than
+          a shared app credential, <code>authenticate(session)</code> receives the fields, verifies
+          them, resolves which account they belong to, and only then stores them under that account,
+          so nothing is persisted until authentication succeeds.
+        </p>
+        <p>
+          Validate credentials before saving them, including values a client supplied up front in
+          <code>session.supplied</code>. A re-authentication is for <code>session.accountId</code>,
+          not an opportunity to connect a different account. Report failure with a typed
+          <code>AuthFailure</code> — <code>credential-rejected</code>, <code>denied</code>,
+          <code>unavailable</code>, <code>identity-mismatch</code> and the rest — with a
+          <code>remedy</code> the operator can act on, and keep secrets out of notices and logs. The
+          older <code>authFlow</code> and boolean auth hooks remain only as compatibility paths.
+        </p>
+        <p>
+          <code>credentialState()</code> describes locally stored credential state without a network
+          request; an unreadable credential is not an absent one. A standalone source may expose the
+          same hook on its live instance. Return <code>unknown</code> for unreadable credential
+          storage, and <code>unlinked</code> only when the platform has removed a paired device. A
+          factory unable to open its credentials fails visibly during setup; it cannot publish a
+          live connection-state hook until setup succeeds.
+        </p>
+
+        <h2 id="documents-rows-people">Documents, rows, people</h2>
+        <p>
+          A source emits documents, analytics rows, or both. Hybrid sources do both: a calendar
+          source emits one document per event for search and a typed events table for queries like
+          "how many meetings last month".
+        </p>
+
+        <h3 id="documents">Documents</h3>
+        <p>
+          A document is markdown content plus metadata. Each document may carry
+          <code>PersonMention</code> entries (emails, phone numbers, names) that feed the people
+          graph, so a sender in one source and a contact in another resolve to the same person.
+          Roles come from <code>PERSON_ROLES</code> (author, sender, recipient, participant,
+          attendee, mentioned, contact, owner). The source normalises identifiers itself: emails
+          lower-cased, phone numbers in E.164, and platform handles namespaced by source, such as
+          <code>github:&lt;login&gt;</code>. A document that is inherently the user's own marks its
+          author <code>isSelf: true</code>; a source whose account ID is itself a platform identity
+          declares <code>selfIdentity</code> instead, so that identity resolves to you rather than
+          to a duplicate person.
+        </p>
+        <p>
+          Set <code>metadata.sourceUrl</code> only for a reliable destination represented by the
+          document: normally the exact source item, or the described resource for a reference
+          source. Set <code>metadata.appUrl</code> only for a working item-specific phone deep link.
+          A phone opens <code>appUrl</code> when an installed app handles it and otherwise falls
+          back to <code>sourceUrl</code>, so a deep link that works on only one phone platform is
+          fine. Both are optional; omit them when no reliable destination exists.
+        </p>
+
+        <h3 id="analytics-rows">Analytics rows</h3>
+        <p>
+          Analytics rows are typed tables in the analytics database (DuckDB), declared in
+          <code>analyticsSchemas</code> and synced through <code>syncStructured()</code>. Beside its
+          name (<code>tableName</code>), <code>displayName</code>, <code>description</code> and
+          typed <code>columns</code>, each table declares:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Field</th>
+                <th>Purpose and rule</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>primaryKey</code></td>
+                <td>The columns that identify a row. Required.</td>
+              </tr>
+              <tr>
+                <td><code>record</code></td>
+                <td>
+                  How one row reads on its own: <code>titleColumns</code> and
+                  <code>keyColumns</code>, with an optional <code>titleTemplate</code>. Required.
+                </td>
+              </tr>
+              <tr>
+                <td><code>semanticTimeColumn</code></td>
+                <td>
+                  The column holding the row's real-world time, or <code>null</code> when it has
+                  none. Required. It must be a <code>DATE</code> or a <code>TIMESTAMPTZ</code>: a
+                  timestamp without a zone has no fixed instant, so the machine reading it would
+                  decide where the row lands in time.
+                </td>
+              </tr>
+              <tr>
+                <td><code>boundDocument</code></td>
+                <td>
+                  Binds rows to a summary document, so a row found by
+                  <a href="/docs/search">SQL</a> cites back to a searchable document.
+                </td>
+              </tr>
+              <tr>
+                <td><code>deleteKey</code></td>
+                <td>
+                  The columns a deletion or snapshot names a row by; defaults to the primary key. A
+                  coarser key addresses rows as a group, and the whole group goes together — what a
+                  source that re-reads a parent and rewrites its children wants. Every page then
+                  names rows by those columns; a page that brings a different column is refused.
+                </td>
+              </tr>
+              <tr>
+                <td><code>dynamicColumns</code></td>
+                <td>
+                  Set to <code>true</code> only when upstream users can add, rename, or remove
+                  columns at runtime; an omitted dynamic column is then archived rather than
+                  preserved. Fixed schemas evolve additively.
+                </td>
+              </tr>
+              <tr>
+                <td><code>sharedDiscriminatorColumn</code></td>
+                <td>
+                  For a table written by several accounts: the column carrying the source account ID
+                  — not the actor who commented on or modified a record.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Columns may be marked <code>volatile</code> when their value changes on every fetch
+          without meaning anything, such as a fetch timestamp. The column name
+          <code>_stream_id</code> is reserved for the host. The full schema type, including the
+          rarely needed <code>sharedDiscriminatorParent</code> for child rows that inherit their
+          owner from a parent table, is in
+          <code>packages/source-sdk/src/structured-source.ts</code>.
+        </p>
+        <p>
+          A structured page carries its rows in <code>analytics</code>: one <code>TableWrite</code>,
+          or an ordered list of them. Each names its <code>tableName</code> and may carry
+          <code>records</code> to insert or update by primary key, <code>deletedKeys</code> to
+          remove, and <code>presentKeys</code> as that table's snapshot; both kinds of key are
+          records over the table's <code>deleteKey</code> columns. The host writes the list in
+          order, and a table may appear twice. One page fills as many tables as the upstream record
+          spans, so a workout that is also its splits, laps, and best efforts writes all four
+          together under the checkpoint that covers them.
+        </p>
+        <p>
+          Group writes on one page only when a checkpoint between them would be a lie. Rows that
+          merely arrive at the same moment — an account list fetched before a long walk of each
+          account's history — belong on pages of their own, so a failure later in the walk leaves
+          the earlier rows stored. The older single-column spellings, <code>deletedIds</code> and
+          <code>presentIds</code>, are deprecated, and a page that mixes them with keys is refused.
+        </p>
+
+        <h2 id="where-code-lives">Where code lives</h2>
+        <p>
+          Each source is its own package under <code>packages/providers/&lt;name>/</code>, with the
+          definition default-exported from <code>src/index.ts</code>:
+        </p>
+        <div class="term">
+          <div class="term-bar">
+            <span></span><span></span><span></span>
+            <span class="term-title">packages/providers/fieldnotes/</span>
+          </div>
+          <div class="term-body">
+            <pre>
+package.json            name: "@omnesis/provider-fieldnotes"
+src/
+├── index.ts            defineSource({ ... }) — the default export
+├── icons.ts            the icon as a data URI
+├── normalizer.ts       raw platform rows → DocumentInput
+├── normalizer.test.ts
+└── fieldnotes.test.ts  bootstrap + incremental sync</pre
+            >
+          </div>
+        </div>
+        <p>
+          Discovery is automatic: the collector reads the <code>dependencies</code> in its own
+          <code>package.json</code> and imports every <code>@omnesis/provider-*</code> package it
+          finds. To ship a source, create the package and add it there, as a runtime dependency;
+          that is the only registration step. The build still has to know about the package (root
+          <code>tsconfig.json</code> references, the lockfile, and the collector's entry in
+          <code>knip.json</code>), and <a href="#reviewing"><code>/source-review</code></a> lists
+          every other touchpoint. A source marked <code>experimental</code> is offered only by a
+          collector running with <code>OMNESIS_EXPERIMENTAL=1</code>, and one that declares
+          <code>supportedPlatforms</code> only on those platforms. On the next collector start the
+          source appears in <a href="/docs/sources#adding-a-source"><strong>+ Add source</strong></a
+          >.
+        </p>
+
+        <h2 id="testing">Testing</h2>
+        <p>Every source ships tests. These cover the baseline:</p>
+        <ul>
+          <li>
+            <strong>Bootstrap</strong> — a first sync against a populated fixture produces the
+            expected documents.
+          </li>
+          <li>
+            <strong>Incremental</strong> — a second sync with the first sync's cursor produces
+            nothing (idempotency); adding one item and syncing again produces only that item.
+          </li>
+          <li>
+            <strong>Normalization</strong> — pure-function tests of the raw-row →
+            <code>DocumentInput</code> mapping against representative fixtures.
+          </li>
+          <li>
+            <strong>Error handling</strong> — auth and platform failures surface with recognisable
+            errors, so the engine can flag the source instead of silently stalling.
+          </li>
+          <li>
+            <strong>A cycle against unchanged upstream is a no-op</strong> — for a source with more
+            than one phase. Each phase can be right on its own while the loop they form is not: two
+            phases that persist the same field from different inputs, or write a value one way and
+            read it back another, disagree forever, and every cycle then redoes work nobody asked
+            for at a cost that never stops. <code>expectUnchangedUpstreamIsNoOp</code> from
+            <code>@omnesis/source-sdk/testing</code> drives your real phases to quiescence and then
+            once more, and fails if the second pass rewrites any meaningful column. Pass its
+            <code>volatileColumns</code> callback the columns your schema declares
+            <code>volatile</code>, derived from the schema rather than restated, so a fetch stamp
+            moving is not a failure.
+          </li>
+        </ul>
+        <p>
+          Tests are vitest files named <code>*.test.ts</code>, placed next to the code they test.
+          The neighbouring providers are the pattern to copy — every sync-based source ships these
+          tests in some form (push-based sources, which have no sync loop, test their push path
+          instead). Tests that need on-disk state use unique temp paths, never a shared fixed path.
+        </p>
+        <p>
+          The same entry point carries the contract checks. <code>runSourceConformance</code> (and
+          <code>runProviderConformance</code> for a provider) checks a definition against the
+          contract — its declared capabilities, its configuration, and its state, given sample saved
+          states to decode — and <code>formatConformanceReport</code> prints the result.
+          <code>fakeSourceHost</code> and <code>fakeProviderHost</code> stand in for the host in
+          unit tests.
+        </p>
+        <p>
+          Also exercise installed cursors through the real state decorator, including pending pages,
+          absent stores, downgrades, and unreadable state. Drive create, update, move, and delete
+          through the real collector and an isolated gateway, with one backing store unavailable
+          across several cycles. Hybrid sources must prove that a failure between documents and
+          table writes does not advance the checkpoint. Typed auth tests should cross the subprocess
+          protocol and client endpoint, not just a fake session.
+        </p>
+
+        <h2 id="reviewing">Reviewing a source</h2>
+        <p>
+          This page covers what a source must do. The full contract is spread across the SDK, the
+          gateway, the portal, the mobile apps, and the synthetic universes, and most of the ways a
+          source can be wrong are silent: it builds, its tests pass, it syncs — and it shows a
+          placeholder icon, never contributes people, drops inbound links, or duplicates itself on a
+          second device.
+        </p>
+        <p>
+          The repository carries the complete checklist as a
+          <a href="https://code.claude.com/docs/en/slash-commands">Claude Code slash command</a>,
+          <code>/source-review</code>, at <code>.claude/commands/source-review.md</code>. Run it
+          from the branch that adds or changes a source, naming the package:
+        </p>
+        <div class="term">
+          <div class="term-bar">
+            <span></span><span></span><span></span>
+            <span class="term-title">claude</span>
+          </div>
+          <div class="term-body">
+            <pre>/source-review packages/providers/fieldnotes</pre>
+          </div>
+        </div>
+        <p>
+          It reads the contract, runs the mechanical checks (typecheck, the source's tests, the
+          repo-wide contract tests, universe validation, lint, the privacy scan), then reviews the
+          source section by section: viability and the platform's terms, encapsulation, auth and
+          credentials, the sync runtime, deletions and snapshots, documents and analytics rows,
+          people, URLs, icons, multiple accounts, the multi-device mode, phone-pushed sources, every
+          registration point outside the package, and the tests.
+        </p>
+        <p>
+          It fixes mechanical omissions on the branch, ranks the rest, and ends with the validation
+          steps only a person can do, such as opening documents on desktop and on a phone, and
+          adding a second account. The file is plain markdown. Without Claude Code, read it as the
+          checklist and walk it by hand before opening the pull request.
+        </p>
+
+        <nav class="docs-pager" aria-label="Pages">
+          <a href="/docs/sources"
+            ><span class="pager-label">Previous</span
+            ><span class="pager-title">Available sources</span></a
+          >
+          <a class="pager-next" href="/docs/experimental"
+            ><span class="pager-label">Next</span><span class="pager-title">Experimental</span></a
+          >
+        </nav>
+      </main>
+    </div>
+
+    <footer class="site-footer">
+      <div class="container">
+        <div class="footer-inner">
+          <div class="footer-base">© 2026 Omnesis</div>
+          <nav class="footer-links" aria-label="Footer">
+            <a href="/docs/">Docs</a>
+            <a href="/privacy">Privacy</a>
+            <a class="footer-mail" href="mailto:contact@omnesis.dev">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="2" y="4" width="20" height="16" rx="2" />
+                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+              </svg>
+              contact@omnesis.dev
+            </a>
+            <a class="footer-gh" href="#" data-oss-open>
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path
+                  d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+                />
+              </svg>
+              GitHub
+            </a>
+            <a
+              class="footer-social footer-x"
+              href="https://x.com/Omnesisdev"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Omnesis on X"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>@Omnesisdev
+            </a>
+            <a
+              class="footer-social footer-discord"
+              href="https://discord.gg/4Y8pQHrVv"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Join Omnesis on Discord"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>Discord
+            </a>
+          </nav>
+        </div>
+      </div>
+    </footer>
+
+    <script src="/docs/docs.js"></script>
+  </body>
+</html>

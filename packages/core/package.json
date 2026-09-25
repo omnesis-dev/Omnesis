@@ -1,0 +1,42 @@
+{
+  "name": "@omnesis/core",
+  "version": "0.5.11",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./protocol": "./src/subpath/protocol.ts",
+    "./config": "./src/subpath/config.ts",
+    "./sources": "./src/subpath/sources.ts",
+    "./people": "./src/subpath/people.ts",
+    "./graph": "./src/subpath/graph.ts",
+    "./models": "./src/subpath/models.ts",
+    "./terminal": "./src/subpath/terminal.ts",
+    "./devices": "./src/subpath/devices.ts",
+    "./doctor": "./src/subpath/doctor.ts",
+    "./url-normalize": "./src/subpath/url-normalize.ts",
+    "./client-version": "./src/subpath/client-version.ts",
+    "./release-check": "./src/subpath/release-check.ts",
+    "./portal-fleet-update": "./src/subpath/portal-fleet-update.ts",
+    "./credentials-tokens": "./src/subpath/credentials-tokens.ts",
+    "./push": "./src/push/index.ts",
+    "./mobile-permission-health": "./src/subpath/mobile-permission-health.ts"
+  },
+  "dependencies": {
+    "@omnesis/config": "*",
+    "@omnesis/source-sdk": "*",
+    "@omnesis/types": "*",
+    "bonjour-service": "^1.4.4",
+    "libphonenumber-js": "^1.13.12",
+    "turndown": "^7",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/turndown": "^5"
+  },
+  "files": [
+    "dist"
+  ]
+}

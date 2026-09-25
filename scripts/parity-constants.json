@@ -1,0 +1,147 @@
+{
+  "$comment": [
+    "Single source of truth for numeric constants that MUST stay identical across",
+    "multiple protocol or UI surfaces. This includes the agent transcript timing",
+    "constants and the device WebSocket protocol version.",
+    "",
+    "Each surface carries the value in its own native unit (the portal + Android in",
+    "milliseconds, iOS in seconds or nanoseconds). The canonical value here is in",
+    "MILLISECONDS; scripts/check-parity.mjs normalises each surface's literal to ms",
+    "by its declared `unit` before comparing.",
+    "",
+    "Marker convention: at each surface's single canonical declaration of a key,",
+    "place a trailing `// PARITY:<key>` comment on the SAME line as the literal,",
+    "e.g. `const EPHEMERAL_REVEAL_MS = 350; // PARITY:ephemeral-reveal-ms`.",
+    "check-parity.mjs extracts the first numeric literal on the marked line, so a",
+    "hand-edit that diverges a value is caught — it does not merely trust this table.",
+    "Fail-loud: a key with no marker in a surface it lists, a marker naming an",
+    "unknown key, or a value mismatch all exit non-zero.",
+    "",
+    "On a protocol/schema/timing change: edit the literal in every listed source file AND the",
+    "canonical value here in the same commit, or the guard reddens."
+  ],
+  "keys": {
+    "ephemeral-reveal-ms": {
+      "description": "Per-item cadence + slot slide duration for the agent ephemeral rolling-slot cards.",
+      "canonicalMs": 350,
+      "surfaces": {
+        "portal": {
+          "file": "packages/gateway/portal/js/components/agent/parts.js",
+          "unit": "ms"
+        },
+        "ios": {
+          "file": "ios/Sources/Omnesis/UI/Agent/AgentEphemeralCards.swift",
+          "unit": "s"
+        },
+        "android": {
+          "file": "android/app/src/main/kotlin/dev/omnesis/android/ui/agent/AgentToolSlots.kt",
+          "unit": "ms"
+        }
+      }
+    },
+    "ephemeral-hold-ms": {
+      "description": "Quiet pause after the last rotated item before the card begins collapsing.",
+      "canonicalMs": 450,
+      "surfaces": {
+        "portal": {
+          "file": "packages/gateway/portal/js/components/agent/parts.js",
+          "unit": "ms"
+        },
+        "ios": {
+          "file": "ios/Sources/Omnesis/UI/Agent/AgentEphemeralCards.swift",
+          "unit": "ns"
+        },
+        "android": {
+          "file": "android/app/src/main/kotlin/dev/omnesis/android/ui/agent/AgentToolSlots.kt",
+          "unit": "ms"
+        }
+      }
+    },
+    "ephemeral-fade-ms": {
+      "description": "Fade-out duration when an ephemeral card dismisses.",
+      "canonicalMs": 300,
+      "surfaces": {
+        "portal": {
+          "file": "packages/gateway/portal/js/components/agent/parts.js",
+          "unit": "ms"
+        },
+        "ios": {
+          "file": "ios/Sources/Omnesis/UI/Agent/AgentEphemeralCards.swift",
+          "unit": "s"
+        },
+        "android": {
+          "file": "android/app/src/main/kotlin/dev/omnesis/android/ui/agent/AgentToolSlots.kt",
+          "unit": "ms"
+        }
+      }
+    },
+    "ephemeral-min-visible-ms": {
+      "description": "Minimum time an ephemeral card stays visible before its fade-out can begin.",
+      "canonicalMs": 500,
+      "surfaces": {
+        "portal": {
+          "file": "packages/gateway/portal/js/components/agent/parts.js",
+          "unit": "ms"
+        },
+        "ios": {
+          "file": "ios/Sources/Omnesis/UI/Agent/AgentEphemeralCards.swift",
+          "unit": "s"
+        },
+        "android": {
+          "file": "android/app/src/main/kotlin/dev/omnesis/android/ui/agent/AgentToolSlots.kt",
+          "unit": "ms"
+        }
+      }
+    },
+    "tell-omnesis-pending-warning-ms": {
+      "description": "Age at which a locally queued Tell Omnesis note surfaces a delivery warning.",
+      "canonicalMs": 300000,
+      "surfaces": {
+        "ios": {
+          "file": "ios/Sources/Omnesis/Notes/PendingNoteStore.swift",
+          "unit": "s"
+        },
+        "android": {
+          "file": "android/app/src/main/kotlin/dev/omnesis/android/notes/PendingNotesStore.kt",
+          "unit": "ms"
+        }
+      }
+    },
+    "agent-return-window-ms": {
+      "description": "Maximum background age for restoring the exact active Ask surface.",
+      "canonicalMs": 3600000,
+      "surfaces": {
+        "portal": {
+          "file": "packages/gateway/portal/js/lib/agent-return-policy.js",
+          "unit": "ms"
+        },
+        "ios": {
+          "file": "ios/Sources/Omnesis/HomeTab.swift",
+          "unit": "s"
+        },
+        "android": {
+          "file": "android/app/src/main/kotlin/dev/omnesis/android/ui/home/AppForegroundPolicy.kt",
+          "unit": "ms"
+        }
+      }
+    },
+    "device-ws-protocol-version": {
+      "description": "Device WebSocket hello protocol version shared by the gateway contract and native clients.",
+      "canonicalMs": 1,
+      "surfaces": {
+        "core": {
+          "file": "packages/core/src/ws-messages.ts",
+          "unit": "ms"
+        },
+        "ios": {
+          "file": "ios/Sources/Omnesis/Transport/DeviceSocket.swift",
+          "unit": "ms"
+        },
+        "android": {
+          "file": "android/core-transport/src/main/kotlin/dev/omnesis/android/transport/ws/DeviceSocket.kt",
+          "unit": "ms"
+        }
+      }
+    }
+  }
+}

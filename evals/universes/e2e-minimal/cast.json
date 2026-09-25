@@ -1,0 +1,135 @@
+{
+  "self": "p_john",
+  "people": [
+    {
+      "id": "p_john",
+      "name": "John Smith",
+      "emails": ["john.smith@example.com", "john.smith@acme.example", "john.smith@icloud.example"],
+      "phones": ["+15550100"],
+      "lids": ["100200300@lid"],
+      "extra": {
+        "notionUserId": "user_john_smith",
+        "appleContactGuid": "AC-JOHN-0001",
+        "stravaAthleteId": "7000000",
+        "enableBankingAccountId": "revolut-de",
+        "lunchflowAccountId": "default",
+        "coinbaseAccountId": "cb-portfolio-john",
+        "plaidItemId": "plaid-item-johnsmith",
+        "githubLogin": "john-smith"
+      }
+    },
+    {
+      "id": "p_jane",
+      "name": "Jane Doe",
+      "emails": ["jane.doe@acme.example", "jane.doe@example.org"],
+      "phones": ["+15550101"],
+      "lids": ["100200301@lid"],
+      "extra": {
+        "notionUserId": "user_jane_doe",
+        "appleContactGuid": "AC-JANE-0002",
+        "githubLogin": "jane-doe"
+      }
+    },
+    {
+      "id": "p_alex",
+      "name": "Alex Chen",
+      "emails": ["alex.chen@globex.example"],
+      "phones": ["+15550102"],
+      "lids": ["100200302@lid"],
+      "extra": {
+        "notionUserId": "user_alex_chen",
+        "appleContactGuid": "AC-ALEX-0003",
+        "githubLogin": "alex-chen"
+      }
+    },
+    {
+      "id": "p_emma",
+      "name": "Emma Park",
+      "emails": ["emma.park@acme.example"],
+      "phones": ["+15550103"],
+      "extra": {
+        "appleContactGuid": "AC-EMMA-0004",
+        "githubLogin": "emma-park"
+      }
+    },
+    {
+      "id": "p_dave",
+      "name": "Dave Ortiz",
+      "emails": ["dave.ortiz@example.net"],
+      "phones": ["+15550104"],
+      "extra": {
+        "appleContactGuid": "AC-DAVE-0005",
+        "githubLogin": "dave-ortiz"
+      }
+    },
+    {
+      "id": "p_carol",
+      "name": "Carol Nakamura",
+      "emails": ["carol.nakamura@globex.example"],
+      "phones": ["+15550105"],
+      "extra": {
+        "appleContactGuid": "AC-CAROL-0006",
+        "stravaAthleteId": "7000001",
+        "githubLogin": "carol-nakamura"
+      }
+    },
+    {
+      "id": "p_claire",
+      "name": "Claire Smith",
+      "emails": ["claire.smith@example.org"],
+      "phones": ["+15550199"],
+      "lids": ["100200399@lid"],
+      "extra": {
+        "appleContactGuid": "AC-CLAIRE-0007",
+        "githubLogin": "claire-smith"
+      }
+    },
+    {
+      "id": "p_maria_smith",
+      "name": "Maria Smith",
+      "emails": ["maria.smith@acme.example"],
+      "phones": ["+15550133"],
+      "extra": {
+        "appleContactGuid": "AC-MARIA-0008",
+        "githubLogin": "maria-smith"
+      }
+    },
+    {
+      "id": "p_amazon",
+      "name": "Amazon.co.uk",
+      "emails": ["auto-confirm@shop.example.com"],
+      "extra": {
+        "githubLogin": "amazon.co.uk"
+      }
+    },
+    {
+      "id": "p_daniel_harper",
+      "name": "Daniel Harper",
+      "emails": ["daniel.harper@property.example.com"],
+      "phones": ["+447700900123"],
+      "extra": {
+        "githubLogin": "daniel-harper"
+      }
+    },
+    {
+      "id": "p_westminster_council",
+      "name": "Westminster Council",
+      "emails": ["billing@city-council.example.com"],
+      "extra": {
+        "githubLogin": "westminster-council"
+      }
+    }
+  ],
+  "orgs": [
+    {
+      "id": "o_acme",
+      "name": "Acme Corp",
+      "domain": "acme.example"
+    },
+    {
+      "id": "o_globex",
+      "name": "Globex",
+      "domain": "globex.example"
+    }
+  ]
+}

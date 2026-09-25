@@ -1,0 +1,16 @@
+# SwiftPM build artifacts
+.build/
+.swiftpm/
+Package.resolved
+
+# Xcode — user-specific only; Omnesis.xcodeproj itself is committed
+# so anyone can open the project without needing XcodeGen installed.
+# (Regenerate via `xcodegen generate` when project.yml changes.)
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+
+# macOS
+.DS_Store

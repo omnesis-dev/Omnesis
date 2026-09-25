@@ -1,0 +1,20 @@
+{
+  "name": "whatsapp-interrupted",
+  "description": "Single-source WhatsApp universe (#586) for the gateway-level wraps-real E2E. The fake-corpus's initial history push STALLS (a `paused` milestone after partial deep history) so the real provider seals INTERRUPTED (#579) — the test asserts the interrupted-sync surfaces coverage: \"partial\" end-to-end while the messages that DID arrive are still indexed and searchable.",
+  "cast": "cast.json",
+  "agentDemos": null,
+  "devices": [
+    {
+      "id": "macbook",
+      "name": "Sams-MacBook-Pro-collector",
+      "kind": "collector"
+    }
+  ],
+  "sources": [
+    {
+      "descriptorId": "whatsapp-messages",
+      "accountIds": ["+15550100120"],
+      "device": "macbook"
+    }
+  ]
+}

@@ -1,0 +1,85 @@
+name: site
+
+# Publishes omnesis.dev: the Worker in wrangler.jsonc (worker.js in front of the
+# static assets under website/). The site has no build step, so neither job
+# installs the monorepo — wrangler reads website/ as it is checked out.
+#
+# A pull request that touches the site gets a dry run, which validates the
+# Worker configuration and the asset set without uploading anything; a push to
+# main that touches it deploys. Commits that leave these paths alone start no
+# run at all.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - "wrangler.jsonc"
+      - "worker.js"
+      - ".github/workflows/site.yml"
+  pull_request:
+    paths:
+      - "website/**"
+      - "wrangler.jsonc"
+      - "worker.js"
+      - ".github/workflows/site.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # Pinned so a deploy never picks up an unreviewed wrangler release.
+  WRANGLER_VERSION: "4.137.0"
+
+jobs:
+  # GitHub-hosted: a pull request from a fork can reach this job, and it must
+  # never run on a self-hosted machine.
+  check:
+    name: Dry-run deploy
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
+      - name: wrangler deploy --dry-run
+        run: npx --yes "wrangler@${WRANGLER_VERSION}" deploy --dry-run --outdir "$RUNNER_TEMP/site"
+
+  deploy:
+    name: Deploy to Cloudflare
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # One deploy at a time; a newer push replaces a deploy still waiting to run,
+    # so the site always ends on the latest commit.
+    concurrency:
+      group: site-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
+      - name: wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::Set the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets to deploy the site."
+            exit 1
+          fi
+          npx --yes "wrangler@${WRANGLER_VERSION}" deploy

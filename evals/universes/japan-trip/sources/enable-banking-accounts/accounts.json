@@ -1,0 +1,11 @@
+[
+  {
+    "account_key": "jp-eb-jpy",
+    "uid": "sess-uid-jp",
+    "iban": null,
+    "currency": "JPY",
+    "name": "Japan Travel (JPY)",
+    "cash_account_type": "CACC",
+    "product": "Multi-currency"
+  }
+]

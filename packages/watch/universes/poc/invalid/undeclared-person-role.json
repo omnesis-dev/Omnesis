@@ -1,0 +1,39 @@
+{
+  "watch": {
+    "name": "undeclared-person-role",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "chat",
+        "type": "source.document_event",
+        "filter": {
+          "source": "whatsapp-messages",
+          "event": ["created"],
+          "people": [
+            {
+              "role": "sender",
+              "person": "b3f2a9d4-0000-4000-8000-000000000002"
+            }
+          ]
+        },
+        "output_map": {
+          "doc_id": "$e.docId"
+        }
+      },
+      {
+        "id": "gate",
+        "type": "stateless.transform",
+        "inputs": {
+          "chat": {
+            "role": "arm"
+          }
+        },
+        "query": "SELECT true AS fires"
+      }
+    ],
+    "sink": {
+      "input": "gate"
+    }
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "watch": {
+    "name": "sequence-order-mismatch",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "first",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email",
+          "people": [
+            {
+              "role": "sender",
+              "isSelf": false
+            }
+          ]
+        },
+        "output_map": {
+          "thread_id": "$e.metadata.extra.threadId",
+          "doc_id": "$e.docId"
+        }
+      },
+      {
+        "id": "second",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email",
+          "people": [
+            {
+              "role": "sender",
+              "isSelf": false
+            }
+          ]
+        },
+        "output_map": {
+          "thread_id": "$e.metadata.extra.threadId"
+        }
+      },
+      {
+        "id": "then",
+        "type": "stateful.sequence",
+        "inputs": {
+          "first": {
+            "role": "arm",
+            "key": {
+              "thread_id": ".thread_id"
+            }
+          },
+          "second": {
+            "role": "arm",
+            "key": {
+              "thread_id": ".thread_id"
+            }
+          }
+        },
+        "order": ["first", "first"],
+        "on_collision": "reset",
+        "deadline": "7 days"
+      }
+    ],
+    "sink": {
+      "input": "then"
+    }
+  }
+}

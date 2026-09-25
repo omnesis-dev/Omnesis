@@ -1,0 +1,33 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "CANCEL_INPUT_NOT_ALLOWED",
+      "severity": "error",
+      "path": "/watch/nodes/2/inputs",
+      "message": "A 'stateless.or' node evaluates instantly and cannot take a cancel input.",
+      "details": {
+        "nodeId": "either",
+        "nodeType": "stateless.or"
+      }
+    },
+    {
+      "code": "NODE_UNREACHABLE_FROM_SINK",
+      "severity": "error",
+      "path": "/watch/nodes/3",
+      "message": "Node 'empty' feeds nothing — signal flows to exactly one sink, so it can never affect a firing.",
+      "details": {
+        "nodeId": "empty"
+      }
+    },
+    {
+      "code": "NODE_MISSING_INPUTS",
+      "severity": "error",
+      "path": "/watch/nodes/3/inputs",
+      "message": "Node 'empty' of type 'stateless.transform' needs at least one input.",
+      "details": {
+        "nodeId": "empty"
+      }
+    }
+  ]
+}

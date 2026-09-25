@@ -1,0 +1,1944 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Experimental — Omnesis Docs</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32" />
+    <link rel="icon" type="image/png" href="/favicon-16.png" sizes="16x16" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!-- Resolve the theme before first paint: the stored choice, else the OS preference. -->
+    <script>
+      (function () {
+        var root = document.documentElement;
+        root.classList.add("js");
+        var t;
+        try {
+          t = localStorage.getItem("omnesis-theme");
+        } catch (e) {}
+        if (t !== "light" && t !== "dark") {
+          t =
+            window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+        }
+        root.setAttribute("data-theme", t);
+      })();
+    </script>
+    <meta
+      name="description"
+      content="Unstable Omnesis features behind OMNESIS_EXPERIMENTAL=1: how Omnesis Brain and Omnesis Watch work, what they spend, and how to observe and stop them."
+    />
+    <link rel="canonical" href="https://omnesis.dev/docs/experimental" />
+    <meta name="theme-color" content="#0d1117" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="/footer-social.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <nav id="nav">
+      <div class="container">
+        <a href="/" class="nav-logo" aria-label="Omnesis"
+          ><span class="nav-logo-mark" aria-hidden="true"></span>MNESIS</a
+        >
+        <div class="nav-right">
+          <ul class="nav-links">
+            <li><a href="/">Context Layer</a></li>
+            <li><a href="/brain">Omnesis Brain</a></li>
+            <li><a href="/vision">Vision</a></li>
+            <li><a href="/docs/" aria-current="page">Docs</a></li>
+          </ul>
+          <a
+            class="nav-icon-btn"
+            href="#"
+            data-oss-open
+            aria-label="Omnesis on GitHub"
+            title="Omnesis on GitHub"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path
+                d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+              />
+            </svg>
+          </a>
+          <button
+            id="theme-toggle"
+            class="theme-toggle"
+            type="button"
+            aria-label="Switch between dark and light theme"
+            title="Toggle theme"
+          >
+            <svg
+              class="icon-sun"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="4" />
+              <path
+                d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"
+              />
+            </svg>
+            <svg
+              class="icon-moon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <div class="docs-shell">
+      <aside class="docs-sidebar">
+        <nav aria-label="Documentation">
+          <ul class="side-pages">
+            <li><a href="/docs/">Overview</a></li>
+            <li><a href="/docs/install">Install</a></li>
+            <li><a href="/docs/setup">Setup</a></li>
+            <li><a href="/docs/search">Search</a></li>
+            <li><a href="/docs/agent">The agent</a></li>
+            <li><a href="/docs/connect">Agents &amp; MCP</a></li>
+            <li><a href="/docs/apps">Mobile apps</a></li>
+            <li><a href="/docs/notifications">Notifications</a></li>
+            <li><a href="/docs/operating">Operating</a></li>
+            <li><a href="/docs/security">Security</a></li>
+            <li><a href="/docs/updating">Backup &amp; updates</a></li>
+            <li><a href="/docs/sources">Available sources</a></li>
+            <li><a href="/docs/building-sources">Building sources</a></li>
+            <li>
+              <a href="/docs/experimental" aria-current="page">Experimental</a>
+              <ul class="side-sub">
+                <li><a href="#brain">Omnesis Brain</a></li>
+                <li><a href="#watch">Omnesis Watch</a></li>
+              </ul>
+            </li>
+          </ul>
+        </nav>
+      </aside>
+
+      <main id="main" class="docs-content">
+        <p class="docs-kicker">Experimental</p>
+        <h1>Experimental</h1>
+        <p class="docs-lead">
+          Omnesis ships two features switched off because they are not yet stable:
+          <strong>Omnesis Brain</strong>, which reads your data in the background and keeps cited
+          notes, loops and briefs about it, and <strong>Omnesis Watch</strong>, which tells you or
+          an agent when a condition you describe becomes true. This page is for operators who want
+          to run them: how each works, what it spends, how to observe it and how to stop it.
+        </p>
+        <div class="callout warn">
+          <strong>These features are experimental</strong> as they are unstable and
+          research/exploration projects within the Omnesis code base.
+        </div>
+        <p>
+          Nothing here is visible unless the process was started with
+          <code>OMNESIS_EXPERIMENTAL=1</code>. Set it on the gateway to reveal Brain, Watch and
+          their controls; with it unset the gateway serves none of their routes, schedules none of
+          their work and creates none of their files. For a gateway you run in the foreground:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">OMNESIS_EXPERIMENTAL=1 omnesis gateway serve</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          For services, add the variable to each unit. Re-running <code>service install</code>
+          rewrites the unit from the flags you pass, so include the ones the service was installed
+          with (such as its keyring flags), then restart it:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis service install gateway --env OMNESIS_EXPERIMENTAL=1</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis service install collector --env OMNESIS_EXPERIMENTAL=1</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis service restart</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          <code>GET /status</code> reports whether the gateway is in experimental mode, and the
+          portal, the mobile apps and the CLI use it to show or hide these controls. The flag on the
+          collector matters only for sources: two experimental sources,
+          <a href="/docs/sources#plaid">Plaid</a> and
+          <a href="/docs/sources#local-files">Local Files</a>, are offered in the source picker only
+          by a collector that runs with the flag itself. They are documented with the other sources.
+        </p>
+
+        <h2 id="brain">Omnesis Brain</h2>
+        <p>
+          Brain is a background agent. It reads your records as they arrive, and on a schedule,
+          without anyone asking a question, and writes down what it learns in a form the rest of
+          Omnesis can use: dated facts, unresolved commitments, cited context on documents and
+          people, and occasional cards worth your attention. It is the one part of Omnesis that
+          spends model tokens with nobody asking, so most of this section is about what it does with
+          them and how to bound it.
+        </p>
+        <figure class="diagram">
+          <ol class="flow">
+            <li class="flow-step">
+              <span class="flow-title">Triggers</span
+              ><span class="flow-desc"
+                >A new or changed record, a daily or scheduled pass, a historical catch-up</span
+              >
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Run queue</span
+              ><span class="flow-desc"
+                >Debounced, deduplicated, one run at a time, inside the daily budget</span
+              >
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Agent run</span
+              ><span class="flow-desc"
+                ><code>background-agent</code> model with read tools over your corpus</span
+              >
+            </li>
+            <li class="flow-step flow-gate">
+              <span class="flow-title">Gates</span
+              ><span class="flow-desc">Cited evidence, entailment verifier, brief judge</span>
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Stores</span
+              ><span class="flow-desc">Time index, open loops, annotations, briefs</span>
+            </li>
+          </ol>
+          <figcaption>
+            Every piece of Brain work is a queued agent run; what it writes passes evidence checks
+            before it is stored.
+          </figcaption>
+        </figure>
+
+        <h3 id="brain-what-it-writes">What it writes</h3>
+        <p>
+          Brain writes four kinds of record, all into the gateway's own database. Each carries the
+          id of the run that wrote it, so any row can be traced back to the transcript that produced
+          it.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Record</th>
+                <th>What it holds</th>
+                <th>Where you see it</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Time index</td>
+                <td>
+                  Temporal annotations: dates and intervals mentioned in text (“the lease renews on
+                  14 March”), each with the document it came from. The agent can query it.
+                </td>
+                <td>Debug → Cognition → Calendar</td>
+              </tr>
+              <tr>
+                <td>Open loops</td>
+                <td>
+                  Unresolved actions, decisions, promises and obligations, with who owes what, the
+                  documents involved, a deadline where there is one, and a ledger of every run that
+                  changed the loop. States: <code>open</code>, <code>snoozed</code>,
+                  <code>done</code>, <code>dismissed</code>.
+                </td>
+                <td>Debug → Cognition → Loops; the mobile apps' Loops view</td>
+              </tr>
+              <tr>
+                <td>Annotations</td>
+                <td>
+                  Durable notes about documents and people, each backed by a quote from a cited
+                  document and a confidence. The agent's <a href="/docs/agent#memory">memory</a>
+                  reads the same notes.
+                </td>
+                <td>Debug → Cognition → Memory</td>
+              </tr>
+              <tr>
+                <td>Briefs</td>
+                <td>
+                  Cited cards for things that merit attention now, including one composed morning
+                  digest a day. Only the digest sends a push notification, at most once a day
+                  (<code>brain.digest.push</code>).
+                </td>
+                <td>Debug → Cognition → Briefs; the mobile apps' Briefs view</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          It also keeps a short agent-notes file, which is injected into every run's prompt as
+          working memory (8 KiB by default, <code>brain.notesMaxBytes</code>), and it can decide
+          pending person-merge proposals that the deterministic matcher left open: merge (a
+          reversible rule that records the model's reason), distinct (the proposal is denied and not
+          proposed again), or unsure (left for you). Proposals that involve you are never decided by
+          Brain.
+        </p>
+
+        <h3 id="brain-turning-on">Turning it on</h3>
+        <p>
+          Brain runs only when two things are true: the gateway runs with
+          <code>OMNESIS_EXPERIMENTAL=1</code>, and a model is assigned to the
+          <code>background-agent</code> role and can actually be reached. Either alone does nothing.
+          The second step is the one that starts spending: assigning the model starts every producer
+          described below at once, from reacting to new records to the scheduled sweeps and the
+          morning digest. Read <a href="#brain-spend">Bounding the spend</a> before you assign it.
+          The one exception is the catch-up over your history, which waits until you start it
+          yourself (see <a href="#brain-how-it-runs">How it runs</a>).
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis model assign background-agent &lt;backend&gt;/&lt;model&gt;</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis model status</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          The value is <code>anthropic/&lt;model&gt;</code>, <code>codex/&lt;model&gt;</code> or
+          <code>&lt;backend&gt;/&lt;model&gt;</code> for an OpenAI-compatible backend you configured
+          (see <a href="/docs/operating#models">Operating → Models</a>). A local GGUF model cannot
+          serve <code>background-agent</code> or <code>brief-judge</code>, which need a chat
+          backend; it can serve <code>entailment-verifier</code>. The portal's
+          <strong>Settings → Models</strong> page lists the same roles under
+          <strong>Cognition</strong>. Two further roles are optional reviewers:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Role</th>
+                <th>What it does</th>
+                <th>When unassigned</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>background-agent</code></td>
+                <td>Runs every Brain agent run, and compiles natural-language watches.</td>
+                <td>Brain does not run. Stored records stay readable.</td>
+              </tr>
+              <tr>
+                <td><code>entailment-verifier</code></td>
+                <td>
+                  Checks that the quoted evidence actually supports a claim before an annotation is
+                  stored. A small, fast model is enough.
+                </td>
+                <td>
+                  Claims are stored after the citation check alone, with no verification stamp.
+                </td>
+              </tr>
+              <tr>
+                <td><code>brief-judge</code></td>
+                <td>Decides whether a candidate brief is worth interrupting you for.</td>
+                <td>Briefs are created without review.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Codex can serve all three through the same ChatGPT login. A reviewer runs as its own model
+          turn even when it uses the same model as the agent waiting on its verdict, and every role
+          shares the account's usage allowance. <code>GET /status</code> reports the gate as
+          <code>brain</code>, with <code>visible</code>, <code>enabled</code>,
+          <code>modelAssigned</code> and <code>active</code>; the portal's Cognition page says which
+          of the two conditions is missing.
+        </p>
+
+        <h3 id="brain-how-it-runs">How it runs</h3>
+        <p>
+          Every piece of Brain work is a <em>run</em>: one agent session with read-only tools over
+          your corpus and write tools for the stores above. Runs wait in a durable queue and a
+          single drainer works through them. Runs that are not daily execute strictly one at a time,
+          so the queue, not the model, sets the pace.
+        </p>
+        <p>
+          What wakes a run depends on the record's own date, not on when it was synced. A document
+          dated within <code>brain.recencyWindow</code> (7 days) of now wakes the
+          <strong>live lane</strong>: a conversation waits for an hour of quiet
+          (<code>brain.conversationDebounce</code>) but never more than six
+          (<code>conversationMaxDefer</code>), an edited document waits 30 minutes
+          (<code>documentUpdateDebounce</code>) but never more than four hours
+          (<code>documentMaxDefer</code>), and each waits up to 30 minutes
+          (<code>derivationBarrier</code>) for people resolution, links and date extraction to
+          finish with it. Older records never wake the live lane, so a large sync of history does
+          not flood it.
+        </p>
+        <p>
+          History is the <strong>catch-up lane</strong> (the portal calls it Bootstrap). It walks
+          older documents that still carry a future date, most recent first, so Brain starts with
+          upcoming dates and open commitments rather than a blank slate. Its cost grows with the
+          size of your history rather than with how much arrives, so it does not start when you
+          assign the model: open <strong>Debug → Cognition → Bootstrap</strong>, which states how
+          many documents are waiting and roughly how many days they take at the configured pace, and
+          press <strong>Start reading history</strong>. Adding your main sources first gives better
+          results, because a message read before the reply that settled it can open a loop that
+          should never exist. Once started, the lane has the lowest queue priority, goes quiet when
+          nothing is left, and reopens on a new local day or when a source is added.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Run kind</th>
+                <th>What starts it</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>data</code></td>
+                <td>A recent record arrived or changed (the live lane).</td>
+              </tr>
+              <tr>
+                <td><code>bootstrap</code></td>
+                <td>The catch-up lane picked a historical document.</td>
+              </tr>
+              <tr>
+                <td><code>daily</code></td>
+                <td>
+                  Once a day at <code>brain.dailyRunHour</code> (05:00 gateway local time): a batch
+                  per high-volume source whose records are reviewed together rather than one by one,
+                  and the morning digest at <code>brain.digest.hour</code> (07:00).
+                </td>
+              </tr>
+              <tr>
+                <td><code>time_based</code></td>
+                <td>
+                  A follow-up Brain scheduled for itself, or a status check on an open loop that has
+                  gone quiet (spaced out further each time, up to 30 days).
+                </td>
+              </tr>
+              <tr>
+                <td><code>synthesis</code></td>
+                <td>
+                  The “Noticing” pass for connections, trends and gaps across the corpus (at most
+                  once a day), and collisions between loops that share a person, document or day.
+                </td>
+              </tr>
+              <tr>
+                <td><code>sweep</code></td>
+                <td>A scheduled sweep came due (see <a href="#brain-sweeps">Sweeps</a>).</td>
+              </tr>
+              <tr>
+                <td><code>verification</code></td>
+                <td>The daily re-check of the stalest annotations against their evidence.</td>
+              </tr>
+              <tr>
+                <td><code>feedback</code></td>
+                <td>
+                  You dismissed or snoozed a brief, or a note that a brief or loop was built on was
+                  withdrawn or superseded.
+                </td>
+              </tr>
+              <tr>
+                <td><code>merge_adjudication</code></td>
+                <td>A person-merge proposal the matcher could not decide.</td>
+              </tr>
+              <tr>
+                <td><code>notes_compaction</code></td>
+                <td>The agent-notes file grew past its size limit.</td>
+              </tr>
+              <tr>
+                <td><code>subscription_compile</code></td>
+                <td>
+                  A natural-language watch was compiled (see <a href="#watch">Watch</a>). Recorded
+                  for its transcript; it never waits in the queue.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          The queue serves your feedback first, then new records, then scheduled work, and the
+          catch-up and re-checks last. A run that fails is retried up to five times, waiting one
+          minute and then doubling the wait up to an hour.
+        </p>
+        <p>
+          When a model call fails, Brain looks at what the failure blames. A malformed or oversized
+          request is the run's fault, and the run is retired after its retries. Anything else (no
+          credit, a rejected key, a rate limit, an unreachable backend) is the environment's fault:
+          the run keeps its place and its attempt is refunded. After three consecutive backend
+          failures the drainer stops claiming work and backs off from one minute to fifteen, and the
+          Bootstrap tab shows a
+          <strong>Model backend — Failing</strong> banner with the provider's own error. Nothing is
+          lost while it lasts.
+        </p>
+
+        <h3 id="brain-gates">What it will not write</h3>
+        <p>
+          A model's output is not trusted because a model wrote it. Every write passes checks that
+          sit outside the model:
+        </p>
+        <ul>
+          <li>
+            <strong>Citation.</strong> An annotation must cite a document and quote it; a quote that
+            is not in the cited document is refused. How far a claim reasons from its quote caps its
+            confidence: 0.9 for a claim the quote states, 0.7 for one deduction from a single
+            source, 0.55 for a claim assembled across sources
+            (<code>brain.annotations.basisCeilings</code>). A claim whose capped confidence falls
+            below 0.25 (<code>confidenceFloor</code>) is refused as too weak to keep.
+          </li>
+          <li>
+            <strong>Entailment verifier.</strong> With the role assigned, a second model must agree
+            that the quote supports the claim; a neutral or contradicting verdict refuses the write
+            and tells the agent to weaken the claim. It checks annotations, dated facts that quote
+            evidence, and the claims inside a brief. If the verifier errors or takes longer than 45
+            seconds, an annotation is stored marked unverified for the daily re-check, but a brief
+            with an unverified claim is held.
+          </li>
+          <li>
+            <strong>Brief judge.</strong> Every candidate brief must pass four questions: does it
+            tell you something new, does it land before it matters, is there a real cost of doing
+            nothing, and does it state a conclusion no single document shows? Cards that look ahead
+            are asked whether they help you prepare instead of whether they are new. A brief that
+            fails is never created, and the run is told not to raise it again. If an assigned judge
+            times out or errors, the brief is held rather than shipped unreviewed. The morning
+            digest is exempt.
+          </li>
+          <li>
+            <strong>Evidence changes.</strong> When a cited document's content changes, each
+            annotation that quotes it is re-checked against the new text; one whose quotes are all
+            gone is withdrawn (kept for audit), and briefs and loops built on a withdrawn note are
+            looked at again. Once a day the stalest notes are re-checked against their evidence and
+            re-affirmed, weakened, superseded or retracted.
+          </li>
+        </ul>
+
+        <h3 id="brain-spend">Bounding the spend</h3>
+        <p>
+          Everything is measured in tokens and runs, never in money: no model API Brain talks to
+          reports a price, so any currency figure would be an estimate. Convert with your provider's
+          own pricing.
+        </p>
+        <p>
+          A catch-up run is a full agent session, several model round-trips rather than one
+          completion, so the catch-up lane is where large bills come from. The Overview tab splits
+          each day's tokens into fresh input, input re-read from the provider's cache (billed at a
+          fraction, and a subset of input, not an addition) and output. On the catch-up lane the
+          cached share is usually high and output is around one percent, so if spend jumps while the
+          token total barely moves, look at the cached share first.
+        </p>
+        <p>
+          All limits are set with <code>omnesis config set &lt;path&gt; &lt;value&gt;</code> (or the
+          portal's Settings → Config) and are read live, so raising one resumes work without a
+          restart.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Key</th>
+                <th>Default</th>
+                <th>What it bounds</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>brain.budget.dailyTokens</code></td>
+                <td>no limit</td>
+                <td>
+                  All background cognition tokens per local day. Reaching it parks the queue until
+                  the next day rather than failing runs.
+                </td>
+              </tr>
+              <tr>
+                <td><code>brain.budget.dailyRuns</code></td>
+                <td>no limit</td>
+                <td>Completed background runs per local day, parked the same way.</td>
+              </tr>
+              <tr>
+                <td><code>brain.bootstrap.maxRunsPerDay</code></td>
+                <td>200</td>
+                <td>
+                  Catch-up runs enqueued per local day: the catch-up pace, and the first knob to
+                  turn down.
+                </td>
+              </tr>
+              <tr>
+                <td><code>brain.bootstrap.maxRuns</code></td>
+                <td>1,000,000</td>
+                <td>
+                  Lifetime catch-up runs for the install, never reset, not even by removing a
+                  source. The lane parks when it is reached.
+                </td>
+              </tr>
+              <tr>
+                <td><code>brain.bootstrap.activeHours</code></td>
+                <td>unset</td>
+                <td>
+                  A local window, <code>{"from": "HH:MM", "to": "HH:MM"}</code>, in which the
+                  catch-up lane may enqueue work. A window whose end is not after its start wraps
+                  midnight.
+                </td>
+              </tr>
+              <tr>
+                <td><code>brain.reverification.maxPerSweep</code></td>
+                <td>12</td>
+                <td>Re-check runs per daily sweep, the second-largest producer.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          The daily ceilings count interactive agent spend as well, because a budget that chat could
+          exhaust alongside would not bound anything. The catch-up window gates when the lane
+          enqueues work, not when an enqueued run executes; a run already bought is finished. To
+          turn spend down, in order: lower <code>maxRunsPerDay</code>, move the catch-up into
+          off-peak <code>activeHours</code>, lower <code>reverification.maxPerSweep</code>, switch
+          individual producers off (<a href="#brain-config">reference</a>), and set
+          <code>budget.dailyTokens</code> as a hard stop under all of it. For example:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis config set /brain/bootstrap/maxRunsPerDay 50</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis config set /brain/bootstrap/activeHours
+                '{"from":"01:00","to":"07:00"}'</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis config set /brain/budget/dailyTokens 2000000</span>
+            </p>
+          </div>
+        </div>
+        <p>The Bootstrap tab reports the catch-up lane as one of seven states:</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>State</th>
+                <th>Meaning</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>unstarted</code></td>
+                <td>Nobody has pressed <strong>Start reading history</strong> yet.</td>
+              </tr>
+              <tr>
+                <td><code>off</code></td>
+                <td><code>brain.bootstrap.enabled</code> is false: the lane is paused.</td>
+              </tr>
+              <tr>
+                <td><code>holding</code></td>
+                <td>Within ten minutes of a gateway start, out of the way of post-restart work.</td>
+              </tr>
+              <tr>
+                <td><code>waiting</code></td>
+                <td>
+                  Outside <code>activeHours</code>, or the day's allowance is spent and nothing is
+                  queued.
+                </td>
+              </tr>
+              <tr>
+                <td><code>running</code></td>
+                <td>Working through history at its configured pace.</td>
+              </tr>
+              <tr>
+                <td><code>drained</code></td>
+                <td>Nothing left; reopens on a new local day or when a source is added.</td>
+              </tr>
+              <tr>
+                <td><code>parked</code></td>
+                <td>
+                  Stopped at <code>maxRuns</code>. The one state to act on: raise the ceiling to
+                  resume.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 id="brain-sweeps">Sweeps</h3>
+        <p>
+          A sweep is a scheduled pass across many records for one kind of pattern that no single
+          arriving record would reveal: people you are waiting on, a trend in your health data,
+          subscriptions worth reviewing. A sweep is a name, a cadence, a local time and a paragraph
+          of prose; the prose is the only per-sweep logic there is, and it is placed inside a fixed
+          set of instructions it cannot override. Sweeps run under the same budget as every other
+          run and stop when <code>brain.sweepsEnabled</code> is <code>false</code>.
+        </p>
+        <p>
+          Eight sweeps ship with the gateway: Day ahead and Missed calls (daily, at the daily run
+          hour), Weekly finances, Waiting on others, Health trends and Upcoming horizon (weekly),
+          Relationships (every two weeks) and Subscriptions (every 30 days). You can add your own,
+          or retime, silence or rewrite a built-in one, as Markdown files in
+          <code>sweeps/</code> under the config directory; the file name is the sweep id, and a file
+          named after a built-in sweep overrides only the keys it sets. Edits take effect without a
+          restart, and the portal's <strong>Settings → Sweeps</strong> tab edits the same files.
+        </p>
+        <div class="term">
+          <div class="term-bar">
+            <span></span><span></span><span></span>
+            <span class="term-title">sweeps/unsent-promises.md</span>
+          </div>
+          <div class="term-body">
+            <pre data-lang="yaml">
+---
+name: Promises I made
+cadence: 7d
+at: "06:30"
+enabled: true
+---
+
+Look for promises the user made to someone else and has not yet kept:
+sending something, booking something, giving an answer. Surface only the
+ones where a reminder would help; skip anything already done or still
+comfortably within the promised time. An empty pass is a good outcome.</pre
+            >
+          </div>
+        </div>
+        <p>
+          Every front-matter key is optional; a new sweep needs <code>cadence</code> (at least
+          <code>24h</code>, counted in whole days) and a body. Without <code>at</code>, a time is
+          derived from the id so sweeps do not all queue at once. An unknown key or a bad value
+          skips that one sweep and is reported on the Sweeps tab and by <code>omnesis doctor</code>.
+          A sweep fires once per boundary: a gateway that was down for a month runs a missed sweep
+          once, not once per missed period. Treat a sweep file from someone else like a script: it
+          is handed to an agent that can read your whole corpus, so read it before enabling it.
+        </p>
+
+        <h3 id="brain-observing">Observing it</h3>
+        <p>
+          The portal's <strong>Debug → Cognition</strong> page is the main view. Its tabs are
+          <strong>Overview</strong> (gate status, today's budget and spend by mechanism),
+          <strong>Loops</strong>, <strong>Runs</strong> (the queue, each run's transcript and
+          decisions), <strong>Briefs</strong>, <strong>Calendar</strong> (the time index),
+          <strong>Memory</strong> (annotations), <strong>Calibration</strong> and
+          <strong>Bootstrap</strong> (catch-up state, limits, pause control and backend health).
+          <strong>Debug → Background jobs</strong> shows when each scheduled task last ran. The same
+          data is available from the CLI:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Command</th>
+                <th>Shows</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>omnesis brain loops [--state open]</code></td>
+                <td>
+                  Tracked open loops; <code>omnesis brain loop &lt;id&gt;</code> for one in full.
+                </td>
+              </tr>
+              <tr>
+                <td><code>omnesis brain runs [--kind bootstrap] [--status failed]</code></td>
+                <td>The run queue, newest first; <code>brain run &lt;id&gt;</code> for one run.</td>
+              </tr>
+              <tr>
+                <td><code>omnesis brain transcript &lt;id&gt;</code></td>
+                <td>
+                  One run's prompt, tool calls and final text; <code>--json</code> for the raw
+                  transcript.
+                </td>
+              </tr>
+              <tr>
+                <td><code>omnesis brain decisions [--doc &lt;id&gt;]</code></td>
+                <td>What Brain decided about a record, and why.</td>
+              </tr>
+              <tr>
+                <td><code>omnesis brain spend [--days 30] [--by-mechanism]</code></td>
+                <td>Tokens by day, or by day, mechanism and model.</td>
+              </tr>
+              <tr>
+                <td><code>omnesis brain calibration</code></td>
+                <td>How stated confidence compares with what later held up.</td>
+              </tr>
+              <tr>
+                <td><code>omnesis brain notes</code></td>
+                <td>The agent-notes file.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Transcripts are kept for the activity retention period unless
+          <code>brain.transcriptRetention</code> sets a different one. A transcript contains corpus
+          text the run read, so treat it with the same care as the corpus.
+        </p>
+
+        <h3 id="brain-stopping">Pausing and turning it off</h3>
+        <p>There are four levels, from narrowest to widest:</p>
+        <ul>
+          <li>
+            <strong>Pause the catch-up.</strong> The Bootstrap tab's pause control sets
+            <code>brain.bootstrap.enabled</code> to <code>false</code>. Nothing already done is
+            repeated when you resume: each document is marked once as reviewed.
+          </li>
+          <li>
+            <strong>Switch a producer off.</strong> Each producer has its own
+            <code>enabled</code> key (<a href="#brain-config">reference</a>).
+          </li>
+          <li>
+            <strong>Unassign the model.</strong>
+            <code>omnesis model assign background-agent disabled</code> stops all new Brain work at
+            once. While experimental mode is on, the portal's Cognition page still shows what was
+            written and the apps still show stored briefs, with a setup notice that opens the model
+            picker; the apps' Loops view needs a running Brain.
+          </li>
+          <li>
+            <strong>Turn experimental mode off.</strong> Restart the gateway without
+            <code>OMNESIS_EXPERIMENTAL=1</code>. Brain stops and its surfaces disappear from every
+            client; the stored records stay in the database, unused.
+          </li>
+        </ul>
+
+        <h3 id="brain-privacy">Privacy and removing its records</h3>
+        <p>
+          Brain reads the same corpus the agent does and sends what a run reads to the backends
+          assigned to its roles, and nowhere else; it has no web access. With a hosted model, the
+          documents a run reads go to that provider. HTTP backends on a non-loopback address are
+          refused unless <code>inference.allowRemoteInference</code> is on. The morning digest's
+          title and text travel through your push setup like any other notification.
+        </p>
+        <p>
+          The agent reads open loops and the time index when it answers a question, so they can
+          inform an answer through <a href="/docs/connect#answer">Answer</a>, which passes your
+          privacy review as usual. A Direct grant exposes them only when it is unrestricted. Briefs
+          are exposed to neither.
+        </p>
+        <p>
+          What Brain writes stays in the gateway's database with the rest of your data and is part
+          of <a href="/docs/updating#backup">backups</a>. To remove it:
+        </p>
+        <ul>
+          <li>
+            Deleting a document for good (see
+            <a href="/docs/search#beyond-search">Search → Beyond search</a>) removes everything
+            Brain derived from it: the loops that involve it and their briefs, the annotations and
+            dated facts that cite it, and the claims that quote it.
+          </li>
+          <li>
+            <code>omnesis brain notes --wipe</code> clears the agent-notes file. It is the one
+            direct write the <code>brain</code> command offers.
+          </li>
+          <li>
+            Briefs can be dismissed in the apps' Briefs view. Nothing deletes a loop, brief or
+            annotation directly; the <code>brain</code> command is read-only for them.
+          </li>
+        </ul>
+
+        <h3 id="brain-config">Configuration reference</h3>
+        <p>
+          All keys sit under <code>brain</code> in the gateway's configuration and are read live.
+          Durations are written like <code>30m</code>, <code>6h</code> or <code>7d</code>. The
+          budget keys are in <a href="#brain-spend">Bounding the spend</a>.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Key</th>
+                <th>Default</th>
+                <th>Meaning</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>recencyWindow</code></td>
+                <td><code>7d</code></td>
+                <td>How recent a record must be to wake the live lane.</td>
+              </tr>
+              <tr>
+                <td><code>conversationDebounce</code> / <code>conversationMaxDefer</code></td>
+                <td><code>1h</code> / <code>6h</code></td>
+                <td>Quiet period before a conversation's run, and the most it can be deferred.</td>
+              </tr>
+              <tr>
+                <td><code>documentUpdateDebounce</code> / <code>documentMaxDefer</code></td>
+                <td><code>30m</code> / <code>4h</code></td>
+                <td>The same for an edited document.</td>
+              </tr>
+              <tr>
+                <td><code>derivationBarrier</code></td>
+                <td><code>30m</code></td>
+                <td>
+                  Longest wait for links, people and dates to be derived before a run proceeds.
+                </td>
+              </tr>
+              <tr>
+                <td><code>workerConcurrency</code></td>
+                <td>1</td>
+                <td>Queue workers. Runs that are not daily stay one at a time regardless.</td>
+              </tr>
+              <tr>
+                <td><code>dailyRunHour</code></td>
+                <td>5</td>
+                <td>Local hour of the daily runs.</td>
+              </tr>
+              <tr>
+                <td>
+                  <code>digest.enabled</code> / <code>hour</code> / <code>graceMinutes</code> /
+                  <code>push</code>
+                </td>
+                <td>true / 7 / 45 / true</td>
+                <td>
+                  The morning digest, the hour it composes, how long it waits for the overnight
+                  queue to drain, and whether it pushes.
+                </td>
+              </tr>
+              <tr>
+                <td><code>notesMaxBytes</code></td>
+                <td>8192</td>
+                <td>
+                  Soft size of the agent-notes file (at most 32768); past it, a compaction run
+                  shrinks it.
+                </td>
+              </tr>
+              <tr>
+                <td><code>awarenessAxis</code></td>
+                <td>true</td>
+                <td>
+                  Also ask the daily pass for connections, trends and gaps, not only obligations.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code>synthesis.enabled</code> / <code>cadenceHours</code> /
+                  <code>maxPerDay</code>
+                </td>
+                <td>true / 24 / 1</td>
+                <td>The “Noticing” pass over the whole corpus.</td>
+              </tr>
+              <tr>
+                <td>
+                  <code>collision.enabled</code> / <code>maxPerSweep</code> /
+                  <code>timeHorizonDays</code>
+                </td>
+                <td>true / 3 / 60</td>
+                <td>
+                  Daily check for loops that share a person, document or day, and for dated notes up
+                  to 60 days ahead that conflict. <code>annotationContradictions</code> (on, 2 per
+                  sweep) looks for notes that contradict each other.
+                </td>
+              </tr>
+              <tr>
+                <td><code>annotations.enabled</code></td>
+                <td>true</td>
+                <td>
+                  Durable notes on documents and people. <code>basisCeilings</code> and
+                  <code>confidenceFloor</code> are described in
+                  <a href="#brain-gates">What it will not write</a>.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code>reverification.enabled</code> / <code>intervalDays</code> /
+                  <code>maxPerSweep</code> / <code>batchSize</code>
+                </td>
+                <td>true / 14 / 12 / 6</td>
+                <td>
+                  Daily re-check of notes last verified more than 14 days ago: runs per day, notes
+                  per run.
+                </td>
+              </tr>
+              <tr>
+                <td><code>provenanceRecheck.enabled</code></td>
+                <td>true</td>
+                <td>Re-examine briefs and loops whose supporting note was withdrawn.</td>
+              </tr>
+              <tr>
+                <td><code>judge.enabled</code></td>
+                <td>true</td>
+                <td>Pass every candidate brief through the <code>brief-judge</code> role.</td>
+              </tr>
+              <tr>
+                <td><code>mergeAdjudication.enabled</code></td>
+                <td>true</td>
+                <td>Let Brain decide undecided person-merge proposals.</td>
+              </tr>
+              <tr>
+                <td><code>bootstrap.enabled</code> / <code>direction</code></td>
+                <td>true / <code>recent-first</code></td>
+                <td>
+                  The catch-up lane, and the order it walks history (<code>oldest-first</code> also
+                  accepted).
+                </td>
+              </tr>
+              <tr>
+                <td><code>bootstrap.backlogTarget</code> / <code>batchSize</code></td>
+                <td>200 / 100</td>
+                <td>Most catch-up runs queued at once, and documents taken per pass.</td>
+              </tr>
+              <tr>
+                <td><code>sweepsEnabled</code></td>
+                <td>true</td>
+                <td>Run scheduled sweeps.</td>
+              </tr>
+              <tr>
+                <td><code>transcriptRetention</code></td>
+                <td>unset</td>
+                <td>
+                  How long run transcripts are kept; unset follows
+                  <code>activityRetention.maxAge</code>.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="watch">Omnesis Watch</h2>
+        <p>
+          Watch tells you, or an agent, when a condition becomes true: “a renewal email has waited
+          five working days for my reply”, “three large card payments in one week”, “every Monday at
+          8”. A watch is a small program in a JSON language, checked against what your gateway
+          actually holds, that follows the stream of new and changed records from the moment it is
+          added. Most of its work is deterministic filtering and counting; a model is asked only
+          when a condition needs judgement, and only about records that got past the cheaper steps.
+        </p>
+        <figure class="diagram">
+          <ol class="flow">
+            <li class="flow-step">
+              <span class="flow-title">Journal</span
+              ><span class="flow-desc"
+                >New and changed documents, analytics rows, loops, clock ticks</span
+              >
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Filter and recall</span
+              ><span class="flow-desc"
+                >Source, type, people, fields; similarity or literal terms</span
+              >
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Judge</span
+              ><span class="flow-desc"
+                >Only when needed: one bounded call on <code>watch-judge</code></span
+              >
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">State</span
+              ><span class="flow-desc">Waits, counts, sequences, cooldowns, kept per key</span>
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Firing</span
+              ><span class="flow-desc">A recorded row and a trace that explains it</span>
+            </li>
+            <li class="flow-step flow-gate">
+              <span class="flow-title">Delivery</span
+              ><span class="flow-desc"
+                >Off by default; a notification or an agent wake, within daily caps</span
+              >
+            </li>
+          </ol>
+          <figcaption>
+            A watch reads the journal from where it last stopped; a firing is always recorded, and
+            is delivered only if the watch asks for delivery.
+          </figcaption>
+        </figure>
+
+        <h3 id="watch-what-a-watch-is">What a watch is</h3>
+        <p>
+          A watch is a graph of nodes. <em>Source</em> nodes listen to the gateway's event journal:
+          a document created or updated, a row landing in an analytics table, an open loop changing
+          state, or a point in time. Other nodes combine what the sources emit: wait for something
+          unless something else cancels it, require two things for the same key, count to a
+          threshold, hold a cooldown. The last node feeds the <em>sink</em>, and each time the sink
+          receives something the watch <em>fires</em>.
+        </p>
+        <p>
+          A firing is always recorded, with a trace of which node did what and why. Whether it goes
+          anywhere is a separate, per-watch decision: a watch with no delivery is a row and a trace
+          and nothing else. That default is deliberate. It lets you run a watch in the background
+          for a week, see what it would have told you, and only then let it interrupt you.
+        </p>
+        <p>
+          A new watch starts at the head of the journal: “tell me when” is a question about what
+          happens next, so a watch never fires on the history that existed before it. Records a
+          source replays on its first sync are likewise ignored unless a node asks for them.
+        </p>
+
+        <h3 id="watch-creating">Creating a watch</h3>
+        <p>
+          There are four ways in, and they differ in who writes the definition and where it
+          delivers:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Way</th>
+                <th>Written by</th>
+                <th>Delivers to</th>
+                <th>Approval</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Ask the built-in agent (portal or app chat)</td>
+                <td>Compiled from your sentence</td>
+                <td>A notification to your devices</td>
+                <td>None; the agent relays how it read your request</td>
+              </tr>
+              <tr>
+                <td>An OpenClaw or Hermes agent</td>
+                <td>Compiled from the agent's sentence</td>
+                <td>Wakes that agent with its instruction</td>
+                <td>Required; see below</td>
+              </tr>
+              <tr>
+                <td><code>omnesis watch add &lt;file&gt;</code></td>
+                <td>You, in the Watch language</td>
+                <td>Nowhere until you run <code>omnesis watch deliver</code></td>
+                <td>None</td>
+              </tr>
+              <tr>
+                <td><code>POST /admin/watch/compile</code></td>
+                <td>Compiled from your sentence</td>
+                <td>Nowhere, or an agent wake if you send an <code>instruction</code></td>
+                <td>None</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          <strong>Compiling a sentence</strong> is an agent run on the
+          <code>background-agent</code> role, so it needs that role assigned even when Brain is not
+          otherwise in use. The compiler reads your sources' declared fields and people and may
+          search the corpus to resolve a name; it writes a definition, the validator checks it, and
+          validation errors go back to the compiler to fix.
+        </p>
+        <p>
+          It then replays the candidate over the last 90 days of the journal and, if the watch would
+          never have fired, would judge more than its budget allows or would speak far more often
+          than the request implies, it gets one revision. A compile can take minutes; a single model
+          call within it is abandoned after
+          <code>gateway.watch.compileTimeoutMs</code> (three minutes). Some conditions cannot be
+          watched, such as a verdict on how things are going overall with no event to hang it on;
+          the compiler refuses those with a reason rather than producing a watch that never fires.
+        </p>
+        <p>
+          Every compile is recorded as a run of kind <code>subscription_compile</code> on
+          <strong>Debug → Cognition → Runs</strong>, with the full transcript: what the compiler
+          looked up, what it wrote and each repair turn. An installed watch links to it from its
+          detail page. The transcript contains corpus text the compiler read.
+        </p>
+        <p>
+          <strong>An agent's request needs approval</strong> before it can wake anyone. Until then
+          it is listed at the top of the portal's <strong>Watches</strong> page as a pending
+          request, and the watch evaluates and wakes nobody. If your
+          <a href="/docs/connect#privacy-policy">privacy policy</a> is set up, its reviewer may
+          approve or deny the request automatically; if the reviewer fails, the request stays
+          pending for you. An operator's own compile or definition approves itself.
+        </p>
+        <p>
+          To <strong>preview</strong> a compile without installing anything, send
+          <code>"compileOnly": true</code>; the answer carries the definition, the compiler's
+          reading of it and the replay's numbers, and nothing is stored:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <pre data-lang="sh">
+curl -s -X POST "$OMNESIS_GATEWAY_URL/admin/watch/compile" \
+  -H "Authorization: Bearer $OMNESIS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"request": "Tell me when a supplier invoice arrives that is more than 30 days overdue", "compileOnly": true}'</pre
+            >
+          </div>
+        </div>
+
+        <h3 id="watch-dsl">The Watch language</h3>
+        <p>
+          A watch definition is a JSON document. The example below fires when someone emails you
+          about a contract renewal and you have not replied in the same thread within five working
+          days. Every value in it is fictional; it validates against a Gmail source.
+        </p>
+        <div class="term">
+          <div class="term-bar">
+            <span></span><span></span><span></span>
+            <span class="term-title">renewal-notice-unanswered.json</span>
+          </div>
+          <div class="term-body">
+            <pre data-lang="json">
+{
+  "watch": {
+    "name": "renewal-notice-unanswered",
+    "nl_query": "Tell me when someone emails me about a contract renewal and I have not replied within five working days.",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "&lt;fingerprint from GET /admin/watch/ontology&gt;",
+    "nodes": [
+      {
+        "id": "renewal_notice",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email",
+          "people": [{ "role": "sender", "isSelf": false }]
+        },
+        "recall": {
+          "semantic": {
+            "query": "contract or subscription renewal notice",
+            "threshold": 0.35
+          }
+        },
+        "judge": {
+          "proposition": "The title of this email refers to renewing a contract or plan",
+          "output_schema": {}
+        },
+        "output_map": {
+          "doc_id": "$e.docId",
+          "thread_id": "$e.metadata.extra.threadId"
+        }
+      },
+      {
+        "id": "my_reply",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email",
+          "people": [{ "role": "sender", "isSelf": true }]
+        },
+        "output_map": { "thread_id": "$e.metadata.extra.threadId" }
+      },
+      {
+        "id": "unanswered",
+        "type": "stateful.wait",
+        "inputs": {
+          "renewal_notice": { "role": "arm", "key": { "thread_id": ".thread_id" } },
+          "my_reply": { "role": "cancel", "key": { "thread_id": ".thread_id" } }
+        },
+        "on_collision": "ignore",
+        "duration": "5 business_days",
+        "output_map": { "doc_id": "$n.renewal_notice.doc_id" }
+      }
+    ],
+    "sink": {
+      "input": "unanswered",
+      "output_map": { "evidence": "$n.unanswered.doc_id" }
+    }
+  }
+}</pre
+            >
+          </div>
+        </div>
+        <p>
+          Read it from the top. <code>renewal_notice</code> is a document source: the filter cuts
+          the stream to new inbound email at no cost (there is no direction field on a document, so
+          “inbound” is a sender who is not you). The <code>recall</code> block nominates the emails
+          whose text is close to the query; only those reach the <code>judge</code>, a single model
+          call that must confirm the proposition before the node emits anything. The proposition is
+          written against the email's title, because the title is the evidence the judge is
+          guaranteed to see. <code>my_reply</code> has no recall and no judge: it exists only to
+          cancel, and judging every message you send would cost a model call each.
+          <code>unanswered</code> is a wait keyed on the thread, so an arm and a cancel meet only if
+          they belong to the same conversation; five business days after the arm, with no cancel, it
+          fires. <code>on_collision: "ignore"</code> means a second renewal email in the same thread
+          does not restart the clock.
+        </p>
+        <p>
+          The <code>ontology_fingerprint</code> identifies the version of your install's sources,
+          fields and tables the watch was checked against; a definition carrying a different one is
+          refused, and the refusal names the current value. Watches written by the compiler get it
+          filled in. The top-level fields are:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Field</th>
+                <th>Meaning</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>name</code></td>
+                <td>Lowercase kebab-case; how the CLI and the portal refer to it.</td>
+              </tr>
+              <tr>
+                <td><code>nl_query</code></td>
+                <td>The request in plain words. Optional, but it is what a reader sees.</td>
+              </tr>
+              <tr>
+                <td><code>firing_policy</code></td>
+                <td>
+                  <code>stays_active</code>, or <code>once_ever</code> to retire the watch after its
+                  first firing.
+                </td>
+              </tr>
+              <tr>
+                <td><code>expires_at</code></td>
+                <td>
+                  An ISO instant after which the question has ended; the watch retires on the clock
+                  even if nothing arrives.
+                </td>
+              </tr>
+              <tr>
+                <td><code>constants</code></td>
+                <td>
+                  Values read once from a document (a passport expiry date, a budget), each with the
+                  <code>provenance_doc</code> it came from. Referenced as
+                  <code>$const.&lt;name&gt;</code>.
+                </td>
+              </tr>
+              <tr>
+                <td><code>nodes</code>, <code>sink</code></td>
+                <td>The graph, and the node whose output is the firing.</td>
+              </tr>
+              <tr>
+                <td><code>delivery</code></td>
+                <td>
+                  Where a firing goes. Not accepted by <code>watch add</code>; set it with
+                  <code>omnesis watch deliver</code> (<a href="#watch-delivery">Delivery</a>).
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>The node types:</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>What it does</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>source.document_event</code></td>
+                <td>
+                  A document <code>created</code> or <code>updated</code>. Filters on
+                  <code>source</code>, <code>documentType</code>, declared
+                  <code>metadata</code> fields and <code>people</code> by role. An optional
+                  <code>recall</code> block (<code>semantic</code> query and threshold,
+                  <code>lexical</code> terms matched against the title, or both) must be paired with
+                  a <code>judge</code>.
+                </td>
+              </tr>
+              <tr>
+                <td><code>source.analytics_row</code></td>
+                <td>
+                  A row in an analytics table, <code>inserted</code> (a key the journal has not seen
+                  before) or <code>updated</code>, with an optional SQL <code>predicate</code>.
+                  <code>backfill</code> is <code>ignore</code> by default; <code>include</code>
+                  also takes rows a source replayed on its first sync, for running totals.
+                </td>
+              </tr>
+              <tr>
+                <td><code>source.open_loop</code></td>
+                <td>
+                  A Brain open loop created, updated or resolved, optionally by id, state or person.
+                </td>
+              </tr>
+              <tr>
+                <td><code>source.time</code></td>
+                <td>
+                  <code>one_off</code> (an ISO instant) or <code>recurring</code> (five-field cron
+                  in the install's time zone). A boundary missed while the gateway was down fires
+                  once when it comes back.
+                </td>
+              </tr>
+              <tr>
+                <td><code>stateless.or</code></td>
+                <td>Fires when any input fires; <code>$fired_by</code> names which.</td>
+              </tr>
+              <tr>
+                <td><code>stateless.transform</code></td>
+                <td>
+                  A DuckDB expression with no <code>FROM</code> that projects a
+                  <code>fires</code> column.
+                </td>
+              </tr>
+              <tr>
+                <td><code>stateful.wait</code></td>
+                <td>
+                  Fires when its <code>duration</code> elapses after an arm, unless a cancel arrives
+                  first.
+                </td>
+              </tr>
+              <tr>
+                <td><code>stateful.and</code></td>
+                <td>
+                  Fires when every input has fired for the same key within its
+                  <code>deadline</code>.
+                </td>
+              </tr>
+              <tr>
+                <td><code>stateful.threshold</code></td>
+                <td>Fires when <code>n</code> of its inputs have fired within the deadline.</td>
+              </tr>
+              <tr>
+                <td><code>stateful.sequence</code></td>
+                <td>
+                  Fires when inputs arrive in the declared <code>order</code> within the deadline.
+                </td>
+              </tr>
+              <tr>
+                <td><code>stateful.cooldown</code></td>
+                <td>Passes a firing on at most once per <code>min_interval</code>.</td>
+              </tr>
+              <tr>
+                <td><code>stateful.persistence</code></td>
+                <td>
+                  Fires when its input fires at least <code>min_events</code> times within
+                  <code>duration</code>.
+                </td>
+              </tr>
+              <tr>
+                <td><code>sql</code></td>
+                <td>
+                  A DuckDB query over the analytics tables that projects <code>fires</code>. It can
+                  re-run on a <code>timer</code>, require the condition to hold for a
+                  <code>persistence</code> period, or fire only on the <code>rising_edge</code>.
+                  Time comes from the <code>$now</code> and <code>$today</code> parameters, never
+                  from <code>now()</code>.
+                </td>
+              </tr>
+              <tr>
+                <td><code>llm</code></td>
+                <td>
+                  A proposition judged over the evidence its inputs carry, on the
+                  <code>watch-judge</code> role, firing when its output satisfies
+                  <code>fire_when</code>.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Stateful nodes keep one instance per <strong>key</strong>, which each input extracts from
+          what arrives (<code>".thread_id"</code> above); inputs into one node must produce the same
+          key. A keyless input such as a clock tick feeding a keyed node declares
+          <code>"broadcast": true</code> and reaches every live instance. What a second arm does to
+          a live instance is <code>on_collision</code>: <code>reset</code> restarts it,
+          <code>ignore</code> keeps the first, <code>spawn</code> starts another beside it (with
+          <code>max_live_instances</code>, and never with a cancel input), and
+          <code>accumulate</code> keeps a cell that survives firing so the node can fire again.
+          Durations are written <code>"&lt;amount&gt; &lt;unit&gt;"</code> with units
+          <code>seconds</code>, <code>minutes</code>, <code>hours</code>, <code>days</code>,
+          <code>weeks</code> and <code>business_days</code> (Monday to Friday, no holidays);
+          deadlines may also be <code>"infinite"</code>, which draws a warning.
+        </p>
+        <p>
+          Expressions read <code>$e.&lt;path&gt;</code> from the arriving event (for example
+          <code>$e.people[role=sender].personId</code>),
+          <code>$n.&lt;node&gt;.&lt;field&gt;</code> from an upstream node,
+          <code>$judge.&lt;field&gt;</code> from a judge's output,
+          <code>$key.&lt;component&gt;</code> and <code>$const.&lt;name&gt;</code>. The only
+          functions in a key are <code>date_trunc</code> and <code>coalesce</code>. The validator
+          checks shape, graph, references, keys, collision rules, your install's sources and fields,
+          SQL and semantic match, and reports each problem with a stable code and a JSON path.
+        </p>
+
+        <h3 id="watch-trying">Trying one before it runs</h3>
+        <p>
+          Because a watch starts at the head of the journal, a condition that can never match looks
+          exactly like a quiet week. Two commands ask the past instead:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis watch try renewal-notice-unanswered.json --days 90</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis watch probe renewal-notice-unanswered --days 180</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          <code>watch try</code> replays a definition file over recent journal events (500 by
+          default, or <code>--days</code> up to 365) with the same engine the runtime uses, and
+          reports, per node, how many events matched out of how many were evaluated, with the
+          runtime's reason for a sample of its decisions. Nothing is stored. Its judge never says
+          yes, so it reports what would have reached a model rather than what the model would have
+          answered, and lexical terms are matched against titles only. It refuses when a semantic
+          recall arm has no embedder to score it, when the journal is empty, and when the definition
+          does not validate.
+        </p>
+        <p>
+          <code>watch probe</code> scores an installed watch's recall arm against past documents (90
+          days and 2,000 documents by default) and reports how many would have been nominated, with
+          the best, 95th-percentile and median scores. When nothing would have been nominated it
+          says by how much the best document missed the threshold. It returns counts and scores,
+          never documents, and applies only the source and document-type filters, so its count is an
+          upper bound.
+        </p>
+
+        <h3 id="watch-runtime">How watches run</h3>
+        <p>
+          The gateway turns its own events into an ordered, durable <strong>journal</strong>: every
+          two seconds while events arrive (every fifteen when idle), it writes up to 500 of them,
+          deduplicated, with the fields watches filter on. Analytics rows enter through a
+          transactional outbox, so a restart delays them instead of losing them. Every five seconds
+          (every thirty when idle) each active watch reads up to 200 events from its own cursor.
+          Timers are checked on the same tick, so a wait can fire up to the idle interval late. The
+          journal, the definitions, per-key state and traces live in <code>watch.db</code> in the
+          config directory, encrypted like the other stores and included in
+          <a href="/docs/updating#backup">backups</a>; a definition exists nowhere else.
+        </p>
+        <p>
+          The <strong>judge</strong> runs on the <code>watch-judge</code> role, which must be
+          assigned explicitly: it does not inherit the Brain's model, and until it is assigned,
+          events that need a judgement wait, with no model call and no spend. It can be Codex, a
+          local GGUF model, an Anthropic model or an OpenAI-compatible backend that speaks Chat
+          Completions. It sees the document's id and title, its kind, time and participant roles; a
+          body excerpt is shown only in a second, veto-only check after the title-based decision
+          says yes, so a body-reviewed nomination can cost two calls.
+        </p>
+        <p>
+          It fails closed: an error, an unparseable reply or a spent budget produces no decision and
+          parks the nomination. A budget-parked nomination retries the next UTC day; a provider
+          failure retries after a one-minute cooldown. Only calls actually sent count against the
+          caps, which are kept on disk, so a restart does not reset the day.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis model assign watch-judge &lt;backend&gt;/&lt;model&gt;</span
+              >
+            </p>
+          </div>
+        </div>
+        <p>
+          A watch was checked against your sources' declared fields and tables when it was added.
+          When those change (a source starts declaring a new field, a new analytics table gets its
+          first row), every watch is checked again. A watch whose own inputs are byte-for-byte
+          unchanged keeps running; one whose inputs moved is paused with a note, even if it still
+          validates, because the same definition could now select different records. After
+          reviewing, <code>omnesis watch restamp</code> re-validates every watch and resumes the
+          ones that still hold. This happens when the new data arrives, which can be hours or days
+          after an update.
+        </p>
+        <p>
+          A gateway that is stopping refuses new compiles with a 503 and gives running ones a short
+          grace period. <code>omnesis watch report --json</code> shows
+          <code>compiles.running</code> if you want to restart at a quiet moment.
+        </p>
+
+        <h3 id="watch-delivery">Delivery</h3>
+        <p>
+          Delivery is off by default for a watch you add or compile yourself, and is set per watch.
+          Turning it off again keeps the watch and its history:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis watch deliver renewal-notice-unanswered</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis watch deliver renewal-notice-unanswered --to agent-wake --integration
+                openclaw --instruction "Draft a polite reply asking for the renewal terms."
+                --binding mailbox=drafts</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis watch deliver renewal-notice-unanswered --to none</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          <strong><code>omnesis-notify</code></strong> (the default) has the built-in agent open a
+          conversation about the firing, and sends a notification to your paired devices that quotes
+          its opening message and opens that conversation when tapped. With no agent, or if the
+          conversation cannot be opened, a plain notification composed from the request goes out
+          instead. A watch with no push transport configured keeps firing and recording, and says so
+          in the log and in <code>omnesis watch firings</code>.
+        </p>
+        <p>
+          <strong><code>agent-wake</code></strong> wakes a paired OpenClaw or Hermes agent. The
+          watch decides <em>when</em>; your instruction (up to 8,000 characters) decides
+          <em>what</em>, and is passed to the agent verbatim. Bindings (<code>key=value</code>, up
+          to 32) name the things the instruction refers to, such as a channel or a mailbox; Omnesis
+          never interprets them. What crosses to the agent is identifiers, the instruction, the
+          bindings and two narrowly scoped credentials, never the firing's content.
+        </p>
+        <p>
+          When the agent asks what caused the firing, the gateway answers through a read-only turn
+          that starts from what the firing recorded, and the reply passes your
+          <a href="/docs/connect#answer">Answer</a>
+          privacy review like any other. The agent can then report what it did, for up to 24 hours;
+          <code>omnesis watch firings --all --since 24h</code> shows firings with their outcomes. A
+          watch naming an integration that no paired device holds keeps firing and logs that nobody
+          was woken.
+        </p>
+        <p>
+          Delivery is capped per day. Over a cap, the firing is recorded as usual and marked
+          <em>suppressed</em>, with the cap named in the trace; nothing is queued for later, because
+          a late notification about a condition is a wrong one. The allowances are kept on disk.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Key (under <code>gateway.watch</code>)</th>
+                <th>Default</th>
+                <th>What it bounds</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>delivery.dailyCap</code></td>
+                <td>20</td>
+                <td>Notifications from all watches per day</td>
+              </tr>
+              <tr>
+                <td><code>delivery.perWatchDailyCap</code></td>
+                <td>5</td>
+                <td>Notifications from one watch per day</td>
+              </tr>
+              <tr>
+                <td><code>wake.dailyCap</code></td>
+                <td>25</td>
+                <td>Agent wakes from all watches per day</td>
+              </tr>
+              <tr>
+                <td><code>wake.perWatchDailyCap</code></td>
+                <td>10</td>
+                <td>Agent wakes from one watch per day</td>
+              </tr>
+              <tr>
+                <td><code>judge.dailyCap</code></td>
+                <td>200</td>
+                <td>Judge calls from all watches per UTC day (0, or at least 2)</td>
+              </tr>
+              <tr>
+                <td><code>judge.perWatchDailyCap</code></td>
+                <td>50</td>
+                <td>Judge calls from one watch per UTC day (0, or at least 2)</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          To prove a delivery path without waiting for the condition,
+          <code>omnesis watch fire &lt;name&gt;</code> runs the delivery for a firing made by hand,
+          optionally carrying <code>--doc &lt;documentId&gt;</code> or a JSON
+          <code>--payload</code>. Nothing is evaluated and no judge is asked. The firing is marked
+          <em>by hand</em> everywhere and never counted as a catch, the daily caps still apply, and
+          when nothing arrives the result says why. It refuses a watch that delivers nowhere, and
+          one that is paused or retired.
+        </p>
+
+        <h3 id="watch-agent-integrations">OpenClaw and Hermes</h3>
+        <p>
+          Experimental mode also covers the Watch half of the OpenClaw and Hermes integrations,
+          which are otherwise generally available (see
+          <a href="/docs/connect#openclaw-hermes">Agents &amp; MCP → OpenClaw and Hermes</a>). The
+          gateway advertises it as <code>capabilities.subscriptions</code> on
+          <code>GET /health</code>, and <code>omnesis connect</code> reads that to install to match:
+          with the gate off, the agent gets the Answer tool and no Watch tools, its skill describes
+          only what it can do, and the subscription routes themselves are not served. With it on,
+          the agent gets a tool to create, list, inspect, update and revoke its own watches, each a
+          sentence plus the instruction it wants to be woken with.
+        </p>
+        <p>
+          Turn the gate on and reconnect (or run
+          <code>omnesis connect &lt;harness&gt; --refresh</code>) to add Watch management and
+          Watch-reaction delivery to an installation that already exists. Each
+          <code>omnesis update</code> refreshes the plugin the same way, so an installation gains or
+          loses its Watch tools to match the gateway. An agent's watches are listed in the portal
+          beside your own, and <code>omnesis watches</code> manages them from an integration's
+          device token.
+        </p>
+
+        <h3 id="watch-observing">Observing and debugging</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Command</th>
+                <th>Answers</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>omnesis watch list</code></td>
+                <td>Every watch, its status, how often it has fired, where it started.</td>
+              </tr>
+              <tr>
+                <td><code>omnesis watch show &lt;id&gt; [--diff &lt;file&gt;]</code></td>
+                <td>The definition a watch is actually running, or its difference from a file.</td>
+              </tr>
+              <tr>
+                <td><code>omnesis watch firings &lt;name&gt;</code></td>
+                <td>
+                  What it said, and what a woken agent did about it.
+                  <code>--all --since 7d</code> across watches.
+                </td>
+              </tr>
+              <tr>
+                <td><code>omnesis watch trace &lt;id&gt;</code></td>
+                <td>Why it fired, or why not: which node armed, on what key, what cancelled it.</td>
+              </tr>
+              <tr>
+                <td><code>omnesis watch judge &lt;id&gt; [--full]</code></td>
+                <td>What the judge was asked, and what it answered.</td>
+              </tr>
+              <tr>
+                <td><code>omnesis watch report</code></td>
+                <td>
+                  The whole install: running and stopped watches, judge calls against the caps,
+                  evaluation timings, parked nominations, delivery tallies and journal health.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Read a trace's transitions with their detail. <code>ignored</code> on a source with the
+          reason naming the arms that declined means no model was asked;
+          <code>held … judge declined</code> means a model was asked and said no;
+          <code>held … judge budget spent; parked</code> means no model was asked and the nomination
+          waits for budget. Traces keep the last 2,000 records per watch
+          (<code>traceRetained</code>), while firings are kept for the life of the watch.
+        </p>
+        <p>
+          In the portal, <strong>Watches</strong> lists every watch with pending agent requests at
+          the top; a watch's page shows its definition, its firings and the compile that produced
+          it. <strong>Debug → Watch</strong> draws one watch as a graph, shows what each stateful
+          node is holding per key and every armed timer, and lights up the path an event took,
+          including the times the watch looked and did not fire. It is read-only; actions stay in
+          the CLI. The iOS and Android apps show watches read-only when experimental mode is on.
+        </p>
+        <p>
+          <code>omnesis watch report</code> puts every stopped watch in one bucket:
+          <code>drifted</code> (your sources changed under it: rewrite it, or
+          <code>restamp</code> after review), <code>failed</code> (a node threw),
+          <code>held</code> (someone paused it) or <code>retired</code> (it finished, by its horizon
+          or a <code>once_ever</code> firing). A failed watch names the failure class:
+          <code>query</code> (its own SQL), <code>provider</code> (the judge or recall backend),
+          <code>budget</code> (one event needed more off-host rounds than allowed) or
+          <code>internal</code> (a defect). The failing event is retried on every pass, so the watch
+          stays stopped until you act; the message itself is in the trace, not in the status note,
+          because it can quote corpus content.
+        </p>
+
+        <h3 id="watch-stopping">Pausing, resuming and removing</h3>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis watch pause renewal-notice-unanswered</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis watch resume renewal-notice-unanswered</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis watch resume renewal-notice-unanswered --skip</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis watch rm renewal-notice-unanswered</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          <code>resume</code> re-validates first and refuses, with the validator's diagnostics, a
+          watch that would be paused again on its next pass. <code>--skip</code> moves a failed
+          watch past the one event or parked nomination it could not get through and records the
+          skip in the trace; everything else is untouched. <code>rm</code> (or
+          <strong>Remove watch</strong> on its portal page) deletes the definition, its state, its
+          traces and its firings, so a new watch with the same name starts fresh. For a watch that
+          woke an agent, the record of what was sent to that agent is kept, marked revoked, because
+          the Answer audit log points at it.
+        </p>
+        <p>
+          An agent's watch has a second record, the approved request behind it. Revoking it from the
+          portal stops it waking the agent; when the agent itself revokes it, the watch is removed
+          too. <code>omnesis watches purge &lt;id&gt;</code> (or <code>--all-revoked</code>) then
+          deletes a revoked or expired request with its revisions, firings and answers for good.
+        </p>
+
+        <h3 id="watch-config">Configuration reference</h3>
+        <p>
+          Runtime keys sit under <code>gateway.watch</code>; the caps are in
+          <a href="#watch-delivery">Delivery</a>.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Key</th>
+                <th>Default</th>
+                <th>Meaning</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>drainIntervalMs</code> / <code>idleIntervalMs</code></td>
+                <td>2000 / 15000</td>
+                <td>How often the journal is written while events arrive, and when idle.</td>
+              </tr>
+              <tr>
+                <td><code>batchSize</code></td>
+                <td>500</td>
+                <td>Journal events written per pass (at most <code>queueCapacity</code>).</td>
+              </tr>
+              <tr>
+                <td><code>queueCapacity</code></td>
+                <td>50000</td>
+                <td>Document events that may wait in memory (at least 1000).</td>
+              </tr>
+              <tr>
+                <td><code>evaluateIntervalMs</code> / <code>idleEvaluateIntervalMs</code></td>
+                <td>5000 / 30000</td>
+                <td>
+                  How often watches are evaluated; the idle value is also how late a timer can fire.
+                </td>
+              </tr>
+              <tr>
+                <td><code>eventsPerWatch</code></td>
+                <td>200</td>
+                <td>Journal events one watch reads per evaluation.</td>
+              </tr>
+              <tr>
+                <td><code>traceRetained</code></td>
+                <td>2000</td>
+                <td>Trace records kept per watch.</td>
+              </tr>
+              <tr>
+                <td><code>compileTimeoutMs</code></td>
+                <td>180000</td>
+                <td>How long one model call may take while compiling.</td>
+              </tr>
+              <tr>
+                <td><code>compileReasoningTokens</code></td>
+                <td>unset</td>
+                <td>
+                  Bound on a compile turn's reasoning tokens, for reasoning models that run out of
+                  time deciding. Not honoured by every backend; the log says when it was not.
+                </td>
+              </tr>
+              <tr>
+                <td><code>promptPeople</code></td>
+                <td>200</td>
+                <td>
+                  People named in the compiler's prompt, most-contacted first; everyone stays
+                  addressable by id.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <nav class="docs-pager" aria-label="Pages">
+          <a href="/docs/building-sources"
+            ><span class="pager-label">Previous</span
+            ><span class="pager-title">Building sources</span></a
+          >
+        </nav>
+      </main>
+    </div>
+
+    <footer class="site-footer">
+      <div class="container">
+        <div class="footer-inner">
+          <div class="footer-base">© 2026 Omnesis</div>
+          <nav class="footer-links" aria-label="Footer">
+            <a href="/docs/">Docs</a>
+            <a href="/privacy">Privacy</a>
+            <a class="footer-mail" href="mailto:contact@omnesis.dev">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="2" y="4" width="20" height="16" rx="2" />
+                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+              </svg>
+              contact@omnesis.dev
+            </a>
+            <a class="footer-gh" href="#" data-oss-open>
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path
+                  d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+                />
+              </svg>
+              GitHub
+            </a>
+            <a
+              class="footer-social footer-x"
+              href="https://x.com/Omnesisdev"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Omnesis on X"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>@Omnesisdev
+            </a>
+            <a
+              class="footer-social footer-discord"
+              href="https://discord.gg/4Y8pQHrVv"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Join Omnesis on Discord"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>Discord
+            </a>
+          </nav>
+        </div>
+      </div>
+    </footer>
+
+    <script src="/docs/docs.js"></script>
+  </body>
+</html>

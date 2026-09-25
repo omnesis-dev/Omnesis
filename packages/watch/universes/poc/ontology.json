@@ -1,0 +1,441 @@
+{
+  "fingerprint": "poc-ontology-1",
+  "sources": [
+    {
+      "sourceId": "gmail",
+      "providerId": "google",
+      "semanticallyIndexed": true,
+      "profile": {
+        "documentTypes": ["email"],
+        "personRoles": ["sender", "recipient", "mentioned"],
+        "metadataFields": [
+          {
+            "path": "tags",
+            "type": "string-array",
+            "description": "Gmail labels on the message.",
+            "canonicalValues": ["INBOX", "SENT", "DRAFT", "SPAM", "IMPORTANT", "STARRED"]
+          },
+          {
+            "path": "extra.threadId",
+            "type": "string",
+            "description": "Gmail thread the message belongs to. Stable across every message in a conversation."
+          }
+        ]
+      }
+    },
+    {
+      "sourceId": "whatsapp-messages",
+      "providerId": "whatsapp",
+      "semanticallyIndexed": true,
+      "profile": {
+        "documentTypes": ["chat"],
+        "personRoles": ["participant", "mentioned"],
+        "metadataFields": [
+          {
+            "path": "extra.chatJid",
+            "type": "string",
+            "description": "The chat this day-aggregate belongs to. A person for a one-to-one chat, a group for a group chat.",
+            "identifiesPeople": true
+          },
+          {
+            "path": "extra.isGroup",
+            "type": "boolean",
+            "description": "Whether the chat has more than two participants."
+          }
+        ]
+      }
+    },
+    {
+      "sourceId": "apple-imessage",
+      "providerId": "apple",
+      "semanticallyIndexed": true,
+      "profile": {
+        "documentTypes": ["chat"],
+        "personRoles": ["participant", "mentioned"],
+        "metadataFields": [
+          {
+            "path": "extra.chatJid",
+            "type": "string",
+            "description": "The conversation this day-aggregate belongs to.",
+            "identifiesPeople": true
+          }
+        ]
+      }
+    },
+    {
+      "sourceId": "apple-call-log",
+      "providerId": "apple",
+      "semanticallyIndexed": false,
+      "profile": {
+        "documentTypes": ["call-log"],
+        "personRoles": ["participant"],
+        "metadataFields": [
+          {
+            "path": "extra.direction",
+            "type": "string",
+            "description": "Whether the call came in or went out.",
+            "allowedValues": ["incoming", "outgoing"],
+            "valueAliases": {
+              "incoming": ["received", "inbound"],
+              "outgoing": ["placed", "outbound"]
+            }
+          },
+          {
+            "path": "extra.callCount",
+            "type": "number",
+            "description": "How many calls the day-aggregate covers."
+          }
+        ]
+      }
+    },
+    {
+      "sourceId": "google-calendar",
+      "providerId": "google",
+      "semanticallyIndexed": true,
+      "profile": {
+        "documentTypes": ["calendar-event"],
+        "personRoles": ["attendee", "owner"],
+        "metadataFields": [
+          {
+            "path": "extra.eventId",
+            "type": "string",
+            "description": "Calendar event this document mirrors."
+          },
+          {
+            "path": "extra.responseStatus",
+            "type": "string",
+            "description": "The user's own RSVP. Other attendees' responses are not retained.",
+            "allowedValues": ["accepted", "declined", "tentative", "needsAction"]
+          }
+        ]
+      }
+    },
+    {
+      "sourceId": "google-drive",
+      "providerId": "google",
+      "semanticallyIndexed": true,
+      "profile": {
+        "documentTypes": ["file", "document", "spreadsheet"],
+        "personRoles": ["owner", "mentioned"],
+        "metadataFields": [
+          {
+            "path": "extra.mimeType",
+            "type": "string",
+            "description": "The file's MIME type as Drive reports it."
+          }
+        ]
+      }
+    }
+  ],
+  "unwatchableSources": ["riverside-archive"],
+  "analyticsTables": [
+    {
+      "tableName": "health_vitals",
+      "displayName": "Health Vitals",
+      "description": "Tall table of vital-sign readings; one row per metric per interval.",
+      "sourceId": "apple-health",
+      "columns": [
+        {
+          "name": "metric_slug",
+          "type": "VARCHAR",
+          "description": "Which vital this row measures.",
+          "canonicalValues": ["resting_hr", "hrv", "respiratory_rate", "vo2_max", "body_mass"]
+        },
+        {
+          "name": "value",
+          "type": "DOUBLE",
+          "description": "The reading."
+        },
+        {
+          "name": "unit",
+          "type": "VARCHAR",
+          "description": "Unit the reading is expressed in."
+        },
+        {
+          "name": "start_time",
+          "type": "TIMESTAMPTZ",
+          "description": "Start of the interval the reading covers."
+        },
+        {
+          "name": "end_time",
+          "type": "TIMESTAMPTZ",
+          "description": "End of the interval the reading covers."
+        }
+      ],
+      "primaryKey": ["metric_slug", "start_time"],
+      "semanticTimeColumn": "start_time"
+    },
+    {
+      "tableName": "health_sleep",
+      "displayName": "Sleep Stages",
+      "description": "One row per sleep stage interval. There is no duration or quality column \u2014 both are derived.",
+      "sourceId": "apple-health",
+      "columns": [
+        {
+          "name": "stage",
+          "type": "VARCHAR",
+          "description": "Which stage the interval was scored as.",
+          "allowedValues": [
+            "inBed",
+            "asleepCore",
+            "asleepDeep",
+            "asleepREM",
+            "asleepUnspecified",
+            "awake"
+          ]
+        },
+        {
+          "name": "start_time",
+          "type": "TIMESTAMPTZ",
+          "description": "Start of the stage interval."
+        },
+        {
+          "name": "end_time",
+          "type": "TIMESTAMPTZ",
+          "description": "End of the stage interval."
+        }
+      ],
+      "primaryKey": ["stage", "start_time"],
+      "semanticTimeColumn": "start_time"
+    },
+    {
+      "tableName": "plaid_transactions",
+      "displayName": "Bank Transactions (Plaid)",
+      "description": "Bank and card transactions. The only transactions table carrying a category.",
+      "sourceId": "plaid",
+      "columns": [
+        {
+          "name": "id",
+          "type": "VARCHAR",
+          "description": "Provider transaction id."
+        },
+        {
+          "name": "account_id",
+          "type": "VARCHAR",
+          "description": "Account the transaction posted to."
+        },
+        {
+          "name": "date",
+          "type": "DATE",
+          "description": "Date the transaction is dated."
+        },
+        {
+          "name": "amount",
+          "type": "DECIMAL(18,4)",
+          "description": "Signed amount; positive is money leaving the account."
+        },
+        {
+          "name": "currency",
+          "type": "VARCHAR",
+          "description": "ISO currency code."
+        },
+        {
+          "name": "merchant_name",
+          "type": "VARCHAR",
+          "description": "Merchant as the provider names it."
+        },
+        {
+          "name": "category",
+          "type": "VARCHAR",
+          "description": "Provider-assigned category path."
+        },
+        {
+          "name": "pending",
+          "type": "BOOLEAN",
+          "description": "Whether the transaction is still pending. A pending row is revised in place when it posts."
+        }
+      ],
+      "primaryKey": ["id"],
+      "semanticTimeColumn": "date"
+    },
+    {
+      "tableName": "google_calendar_events",
+      "displayName": "Calendar Events",
+      "description": "Calendar occurrences. `response_status` is the user's own RSVP only.",
+      "sourceId": "google-calendar",
+      "columns": [
+        {
+          "name": "id",
+          "type": "VARCHAR",
+          "description": "Calendar event id."
+        },
+        {
+          "name": "title",
+          "type": "VARCHAR",
+          "description": "Event title."
+        },
+        {
+          "name": "start_time",
+          "type": "TIMESTAMPTZ",
+          "description": "When the event starts."
+        },
+        {
+          "name": "end_time",
+          "type": "TIMESTAMPTZ",
+          "description": "When the event ends."
+        },
+        {
+          "name": "location",
+          "type": "VARCHAR",
+          "description": "Free-text location."
+        },
+        {
+          "name": "attendee_count",
+          "type": "INTEGER",
+          "description": "How many people were invited."
+        },
+        {
+          "name": "response_status",
+          "type": "VARCHAR",
+          "description": "The user's own RSVP.",
+          "allowedValues": ["accepted", "declined", "tentative", "needsAction"]
+        }
+      ],
+      "primaryKey": ["id"],
+      "semanticTimeColumn": "start_time"
+    },
+    {
+      "tableName": "google_calendar_attendees",
+      "displayName": "Calendar Attendees",
+      "description": "Edge table binding a calendar event to the people invited to it. Dual-pushed by the calendar provider so watch SQL can reach identity without touching the internal document store.",
+      "sourceId": "google-calendar",
+      "columns": [
+        {
+          "name": "event_id",
+          "type": "VARCHAR",
+          "description": "The calendar event."
+        },
+        {
+          "name": "person_id",
+          "type": "VARCHAR",
+          "description": "Canonical person id of the attendee.",
+          "references": "person"
+        }
+      ],
+      "primaryKey": ["event_id", "person_id"],
+      "semanticTimeColumn": null
+    },
+    {
+      "tableName": "people",
+      "displayName": "People",
+      "description": "System-owned dimension projection of the people graph: canonical id, display name, self flag, and recency/interaction signals.",
+      "columns": [
+        {
+          "name": "id",
+          "type": "VARCHAR",
+          "description": "Canonical person id.",
+          "references": "person"
+        },
+        {
+          "name": "canonical_name",
+          "type": "VARCHAR",
+          "description": "Display name."
+        },
+        {
+          "name": "is_self",
+          "type": "BOOLEAN",
+          "description": "Whether this row is the operator."
+        },
+        {
+          "name": "last_seen",
+          "type": "TIMESTAMPTZ",
+          "description": "Semantic time of the most recent document referencing this person \u2014 including calendar invites, so it is a coarse recency signal."
+        },
+        {
+          "name": "interaction_score",
+          "type": "DOUBLE",
+          "description": "Weighted two-way interaction score; a sharper recency signal than last_seen."
+        }
+      ],
+      "primaryKey": ["id"],
+      "semanticTimeColumn": null
+    },
+    {
+      "tableName": "apple_call_log",
+      "displayName": "Call Log",
+      "description": "Phone calls. Counterparty is a raw string, not an identity \u2014 the identity path is the call-log document's participant mention.",
+      "sourceId": "apple-call-log",
+      "columns": [
+        {
+          "name": "id",
+          "type": "VARCHAR",
+          "description": "Call id."
+        },
+        {
+          "name": "counterparty",
+          "type": "VARCHAR",
+          "description": "The other party, as the phone recorded it."
+        },
+        {
+          "name": "direction",
+          "type": "VARCHAR",
+          "description": "Which way the call went.",
+          "allowedValues": ["incoming", "outgoing"]
+        },
+        {
+          "name": "start_time",
+          "type": "TIMESTAMPTZ",
+          "description": "When the call started."
+        },
+        {
+          "name": "duration_seconds",
+          "type": "INTEGER",
+          "description": "How long the call lasted."
+        }
+      ],
+      "primaryKey": ["id"],
+      "semanticTimeColumn": "start_time"
+    }
+  ],
+  "people": [
+    {
+      "id": "0a1b2c3d-0000-4000-8000-000000000001",
+      "canonicalName": "Jordan Avery",
+      "aliases": ["jordan.avery@example.com", "+1 (555) 010-0100"],
+      "isSelf": true,
+      "mergedInto": null
+    },
+    {
+      "id": "b3f2a9d4-0000-4000-8000-000000000002",
+      "canonicalName": "Alice Nakamura",
+      "aliases": ["alice.nakamura@example.com", "+1 (555) 010-0142"],
+      "isSelf": false,
+      "mergedInto": null
+    },
+    {
+      "id": "c91d4e02-0000-4000-8000-000000000003",
+      "canonicalName": "Nadia Rowe",
+      "aliases": ["nadia.rowe@example.org", "+44 7700 900185", "Mum"],
+      "isSelf": false,
+      "mergedInto": null
+    },
+    {
+      "id": "5e7a1c88-0000-4000-8000-000000000004",
+      "canonicalName": "Maya Reeves",
+      "aliases": ["maya.reeves@example.io"],
+      "isSelf": false,
+      "mergedInto": null
+    },
+    {
+      "id": "2f4d6b90-0000-4000-8000-000000000005",
+      "canonicalName": "David Lin",
+      "aliases": ["david.lin@example.com"],
+      "isSelf": false,
+      "mergedInto": null
+    },
+    {
+      "id": "9c3e5a17-0000-4000-8000-000000000006",
+      "canonicalName": "M. Reeves",
+      "aliases": ["m.reeves@example.io"],
+      "isSelf": false,
+      "mergedInto": "5e7a1c88-0000-4000-8000-000000000004"
+    },
+    {
+      "id": "7b2c9f45-0000-4000-8000-000000000007",
+      "canonicalName": "Priya Raman",
+      "aliases": ["priya.raman@example.org"],
+      "isSelf": false,
+      "mergedInto": null
+    }
+  ]
+}

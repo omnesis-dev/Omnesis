@@ -1,0 +1,16 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "METADATA_FIELD_UNDECLARED",
+      "severity": "error",
+      "path": "/watch/nodes/0/output_map/chat",
+      "message": "'gmail' does not declare 'metadata.extra.chatJid'. A field the source does not declare is a field a compiled watch cannot rely on.",
+      "details": {
+        "sourceId": "gmail",
+        "path": "extra.chatJid",
+        "declared": ["tags", "extra.threadId"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "triggers": [
+    "get my deposit back",
+    "getting my deposit back",
+    "my deposit back",
+    "lease is ending",
+    "lease ending",
+    "when does my lease"
+  ],
+  "placeholders": {
+    "docExternalIds": ["synth-gdrive-100", "synth-gmail-property-004", "synth-gmail-property-003"],
+    "personNames": ["Daniel Harper"]
+  }
+}

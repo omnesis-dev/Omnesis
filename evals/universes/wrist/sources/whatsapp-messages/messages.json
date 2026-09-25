@@ -1,0 +1,74 @@
+[
+  {
+    "externalId": "wrist-whatsapp-theo-travel",
+    "chatId": "chat_theo",
+    "chatTitle": "Theo Baptiste",
+    "date": "2026-07-14",
+    "counterparty": "p_theo",
+    "messages": [
+      {
+        "from": "p_theo",
+        "at": "2026-07-14T18:22:00Z",
+        "text": "Did you get your train sorted for Paris? Entries close for the club coach tonight"
+      },
+      {
+        "from": "self",
+        "at": "2026-07-14T18:31:00Z",
+        "text": "Just booked it — going out Sunday morning, back Tuesday evening. Skipping the coach"
+      },
+      {
+        "from": "p_theo",
+        "at": "2026-07-14T18:33:00Z",
+        "text": "Sensible. That coach leaves at 4am and smells of embrocation"
+      },
+      {
+        "from": "self",
+        "at": "2026-07-14T18:35:00Z",
+        "text": "Exactly. I'll be at registration Sunday afternoon, find me there"
+      }
+    ]
+  },
+  {
+    "externalId": "wrist-whatsapp-theo-race-week",
+    "chatId": "chat_theo",
+    "chatTitle": "Theo Baptiste",
+    "date": "2026-09-16",
+    "counterparty": "p_theo",
+    "messages": [
+      {
+        "from": "p_theo",
+        "at": "2026-09-16T20:04:00Z",
+        "text": "Race week! How's the shoulder holding up?"
+      },
+      {
+        "from": "self",
+        "at": "2026-09-16T20:19:00Z",
+        "text": "Fine as long as I don't sprint the swim. Wave 3 for me, what did you get?"
+      },
+      {
+        "from": "p_theo",
+        "at": "2026-09-16T20:21:00Z",
+        "text": "Wave 2, so I'll be watching you come out of the water. Bring a spare tube, the course has form"
+      }
+    ]
+  },
+  {
+    "externalId": "wrist-whatsapp-nora",
+    "chatId": "chat_nora",
+    "chatTitle": "Nora Whitfield",
+    "date": "2026-09-08",
+    "counterparty": "p_nora",
+    "messages": [
+      {
+        "from": "p_nora",
+        "at": "2026-09-08T19:40:00Z",
+        "text": "Are you free to talk tomorrow evening? Nothing urgent, just want to catch up properly"
+      },
+      {
+        "from": "self",
+        "at": "2026-09-08T19:52:00Z",
+        "text": "Yes — call me after 8 and I'll have the kitchen to myself"
+      }
+    ]
+  }
+]

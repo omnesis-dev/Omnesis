@@ -1,0 +1,149 @@
+[
+  {
+    "externalId": "synth-apple-im-001",
+    "chatId": "im_dave",
+    "chatTitle": "Dave Ortiz",
+    "date": "2025-09-06",
+    "counterparty": "p_dave",
+    "messages": [
+      {
+        "from": "p_dave",
+        "at": "2025-09-06T18:30:00Z",
+        "text": "Brought book list. Snow Crash if you haven't."
+      },
+      {
+        "from": "self",
+        "at": "2025-09-06T18:32:00Z",
+        "text": "Read it years ago. What did Carol grab?"
+      },
+      { "from": "p_dave", "at": "2025-09-06T18:35:00Z", "text": "She took Atomic Habits." }
+    ]
+  },
+  {
+    "externalId": "synth-apple-im-002",
+    "chatId": "im_carol",
+    "chatTitle": "Carol Nakamura",
+    "date": "2025-09-07",
+    "counterparty": "p_carol",
+    "messages": [
+      {
+        "from": "self",
+        "at": "2025-09-07T06:45:00Z",
+        "text": "Headed to the track. Confirm we are still on for 800s?"
+      },
+      { "from": "p_carol", "at": "2025-09-07T06:46:00Z", "text": "Yes. See you there." }
+    ]
+  },
+  {
+    "externalId": "synth-apple-im-003",
+    "chatId": "im_emma",
+    "chatTitle": "Emma Park",
+    "date": "2025-09-08",
+    "counterparty": "p_emma",
+    "messages": [
+      { "from": "p_emma", "at": "2025-09-08T15:00:00Z", "text": "1:1 in 30 — I'll come to you." },
+      {
+        "from": "self",
+        "at": "2025-09-08T15:01:00Z",
+        "text": "Cool. Have the Q3 review prep ready."
+      }
+    ]
+  },
+  {
+    "externalId": "synth-apple-im-004",
+    "chatId": "im_family",
+    "chatTitle": "Family",
+    "date": "2025-09-09",
+    "counterparty": "p_emma",
+    "messages": [
+      {
+        "from": "p_emma",
+        "at": "2025-09-09T20:00:00Z",
+        "text": "Mom's birthday is the 22nd, don't forget."
+      },
+      { "from": "self", "at": "2025-09-09T20:01:00Z", "text": "Got it on the calendar." }
+    ]
+  },
+  {
+    "externalId": "synth-apple-im-005",
+    "chatId": "im_dave",
+    "chatTitle": "Dave Ortiz",
+    "date": "2025-09-10",
+    "counterparty": "p_dave",
+    "messages": [
+      { "from": "self", "at": "2025-09-10T19:30:00Z", "text": "Decided on the Moonlander." },
+      {
+        "from": "p_dave",
+        "at": "2025-09-10T19:31:00Z",
+        "text": "Smart choice. Don't blame me for the layout learning curve."
+      }
+    ]
+  },
+  {
+    "externalId": "synth-apple-im-006",
+    "chatId": "im_jane",
+    "chatTitle": "Jane Doe",
+    "date": "2025-09-11",
+    "counterparty": "p_jane",
+    "messages": [
+      {
+        "from": "p_jane",
+        "at": "2025-09-11T08:00:00Z",
+        "text": "Walking in. See you in the kitchen?"
+      },
+      { "from": "self", "at": "2025-09-11T08:01:00Z", "text": "On my way." }
+    ]
+  },
+  {
+    "externalId": "synth-apple-im-007",
+    "chatId": "im_carol",
+    "chatTitle": "Carol Nakamura",
+    "date": "2025-09-12",
+    "counterparty": "p_carol",
+    "messages": [
+      { "from": "p_carol", "at": "2025-09-12T18:00:00Z", "text": "Long run Sat 7am. Same trail." },
+      { "from": "self", "at": "2025-09-12T18:02:00Z", "text": "Locked in." }
+    ]
+  },
+  {
+    "externalId": "synth-apple-im-008",
+    "chatId": "im_emma",
+    "chatTitle": "Emma Park",
+    "date": "2025-09-13",
+    "counterparty": "p_emma",
+    "messages": [
+      {
+        "from": "p_emma",
+        "at": "2025-09-13T16:00:00Z",
+        "text": "Q3 review slides — got eyes on them?"
+      },
+      { "from": "self", "at": "2025-09-13T16:05:00Z", "text": "Reviewing now. One nit on slide 4." }
+    ]
+  },
+  {
+    "externalId": "synth-apple-im-009",
+    "chatId": "im_family",
+    "chatTitle": "Family",
+    "date": "2025-09-14",
+    "counterparty": "p_dave",
+    "messages": [
+      { "from": "p_dave", "at": "2025-09-14T11:00:00Z", "text": "Hike Sunday — Pinnacle trail?" },
+      { "from": "self", "at": "2025-09-14T11:02:00Z", "text": "Sunday is good. 9 AM?" }
+    ]
+  },
+  {
+    "externalId": "synth-apple-im-010",
+    "chatId": "im_jane",
+    "chatTitle": "Jane Doe",
+    "date": "2025-09-14",
+    "counterparty": "p_jane",
+    "messages": [
+      {
+        "from": "p_jane",
+        "at": "2025-09-14T19:00:00Z",
+        "text": "Heads up: vendor pushed the call to Tuesday."
+      },
+      { "from": "self", "at": "2025-09-14T19:02:00Z", "text": "Noted. Calendar updated." }
+    ]
+  }
+]

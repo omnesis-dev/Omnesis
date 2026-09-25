@@ -1,0 +1,34 @@
+{
+  "watch": {
+    "name": "llm-behind-fast-timer",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "tick",
+        "type": "source.time",
+        "recurring": "*/5 * * * *"
+      },
+      {
+        "id": "judge",
+        "type": "llm",
+        "mode": "judge",
+        "inputs": {
+          "tick": {
+            "role": "arm"
+          }
+        },
+        "on_collision": "ignore",
+        "deadline": "10 minutes",
+        "proposition": "Something worth surfacing happened in the last five minutes",
+        "output_schema": {
+          "decision": "bool"
+        },
+        "fire_when": "decision"
+      }
+    ],
+    "sink": {
+      "input": "judge"
+    }
+  }
+}

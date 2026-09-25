@@ -1,0 +1,21 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src/**/*.ts"],
+  // The suites are typechecked by `tsconfig.tests.json`, not by the build:
+  // a package that compiles its own tests emits them into `dist`, and the
+  // published manifest ships that directory.
+  "exclude": ["src/**/*.test.ts"],
+  "references": [
+    { "path": "../core" },
+    { "path": "../cli-shared" },
+    { "path": "../eval" },
+    { "path": "../providers/screen-time" },
+    { "path": "../gateway" },
+    { "path": "../collector" }
+  ]
+}

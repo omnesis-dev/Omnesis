@@ -1,0 +1,48 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "EXPRESSION_FUNCTION_UNKNOWN",
+      "severity": "error",
+      "path": "/watch/nodes/0/output_map/how",
+      "message": "'constructor' is not an extractor function.",
+      "details": {
+        "function": "constructor",
+        "available": ["date_trunc", "coalesce"]
+      }
+    },
+    {
+      "code": "REF_EVENT_FIELD_UNKNOWN",
+      "severity": "error",
+      "path": "/watch/nodes/0/output_map/what",
+      "message": "'constructor' is not a field of this event kind.",
+      "details": {
+        "field": "constructor",
+        "available": [
+          "op",
+          "docId",
+          "sourceId",
+          "providerId",
+          "documentType",
+          "title",
+          "semanticTime",
+          "changedFields",
+          "contentChanged",
+          "degraded",
+          "metadata",
+          "people"
+        ]
+      }
+    },
+    {
+      "code": "REF_EVENT_FIELD_UNKNOWN",
+      "severity": "error",
+      "path": "/watch/nodes/0/output_map/who",
+      "message": "'constructor' is not a field of a person mention.",
+      "details": {
+        "field": "constructor",
+        "available": ["personId", "role", "isSelf"]
+      }
+    }
+  ]
+}

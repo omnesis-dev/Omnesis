@@ -1,0 +1,25 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "ANALYTICS_COLUMN_UNKNOWN",
+      "severity": "error",
+      "path": "/watch/nodes/0/output_map/vendor",
+      "message": "'plaid_transactions' has no column 'merchant'.",
+      "details": {
+        "table": "plaid_transactions",
+        "column": "merchant",
+        "declared": [
+          "id",
+          "account_id",
+          "date",
+          "amount",
+          "currency",
+          "merchant_name",
+          "category",
+          "pending"
+        ]
+      }
+    }
+  ]
+}

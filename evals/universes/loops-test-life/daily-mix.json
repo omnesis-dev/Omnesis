@@ -1,0 +1,11 @@
+{
+  "note": "The documented daily datum mix (epic criterion 13): one full arc-set delivery represents ONE representative day of life, and the scorecard's briefs_per_day / tokens_per_day / $-per-day figures are normalized by it. Derived from the frozen-seed arc set (packages/collector/src/e2e/briefs-arcs.ts, computeDailyMix); the scorecard and the instrument-validation e2e fail loud when this committed copy drifts from the derivation \u2014 update it in the same change as the arc kit.",
+  "mix": {
+    "representsDays": 1,
+    "datumsDelivered": 40,
+    "eligibleWakes": 36,
+    "wakerSkips": 2,
+    "expectedRuns": 37,
+    "feedbackRuns": 5
+  }
+}

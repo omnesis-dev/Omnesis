@@ -1,0 +1,32 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "DSL_SCHEMA_INVALID",
+      "severity": "error",
+      "path": "/watch/nodes/0/filter/event",
+      "message": "Too small: expected array to have >=1 items",
+      "details": {
+        "zodCode": "too_small"
+      }
+    },
+    {
+      "code": "DSL_SCHEMA_INVALID",
+      "severity": "error",
+      "path": "/watch/nodes/0/id",
+      "message": "node ids are lower_snake_case and start with a letter",
+      "details": {
+        "zodCode": "invalid_format"
+      }
+    },
+    {
+      "code": "DSL_SCHEMA_INVALID",
+      "severity": "error",
+      "path": "/watch/sink/input",
+      "message": "node ids are lower_snake_case and start with a letter",
+      "details": {
+        "zodCode": "invalid_format"
+      }
+    }
+  ]
+}

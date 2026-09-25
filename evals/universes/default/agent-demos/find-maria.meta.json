@@ -1,0 +1,13 @@
+{
+  "triggers": [
+    "maria smith",
+    "from maria",
+    "emails from maria",
+    "what did maria",
+    "what emails did i get from maria"
+  ],
+  "placeholders": {
+    "docExternalIds": ["synth-gmail-maria-001", "synth-gmail-maria-002", "synth-gmail-maria-003"],
+    "personNames": ["Maria Smith"]
+  }
+}

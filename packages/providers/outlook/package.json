@@ -1,0 +1,16 @@
+{
+  "name": "@omnesis/provider-outlook",
+  "version": "0.5.11",
+  "license": "AGPL-3.0-or-later",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@azure/msal-node": "^5.3.0",
+    "@omnesis/core": "*",
+    "@omnesis/source-sdk": "*",
+    "@omnesis/types": "*"
+  },
+  "type": "module",
+  "files": [
+    "dist"
+  ]
+}

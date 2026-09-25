@@ -1,0 +1,11 @@
+{
+  "flowId": "fixture-flow",
+  "type": "challenge",
+  "id": "question-wait",
+  "challenge": {
+    "kind": "wait",
+    "title": "Approve connection",
+    "instructions": "Approve in the other application."
+  },
+  "expectsAnswer": false
+}

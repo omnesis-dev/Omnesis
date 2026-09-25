@@ -1,0 +1,108 @@
+{
+  "watch": {
+    "name": "same-topic-across-two-channels",
+    "nl_query": "Tell me when Alice raises her house move with me on two different channels within three days.",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "weekly_horizon",
+        "type": "source.time",
+        "recurring": "0 7 * * MON"
+      },
+      {
+        "id": "email_mention",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "people": [
+            {
+              "role": "sender",
+              "person": "b3f2a9d4-0000-4000-8000-000000000002"
+            }
+          ]
+        },
+        "output_map": {
+          "person": "$e.people[role=sender].personId",
+          "doc_id": "$e.docId"
+        },
+        "recall": {
+          "semantic": {
+            "query": "moving house relocation new address",
+            "threshold": 0.35
+          }
+        },
+        "judge": {
+          "proposition": "This message concerns the sender relocating",
+          "output_schema": {}
+        }
+      },
+      {
+        "id": "chat_mention",
+        "type": "source.document_event",
+        "filter": {
+          "source": "whatsapp-messages",
+          "event": ["created", "updated"],
+          "people": [
+            {
+              "role": "participant",
+              "person": "b3f2a9d4-0000-4000-8000-000000000002"
+            }
+          ]
+        },
+        "output_map": {
+          "person": "'b3f2a9d4-0000-4000-8000-000000000002'",
+          "doc_id": "$e.docId"
+        },
+        "recall": {
+          "semantic": {
+            "query": "moving house relocation new address",
+            "threshold": 0.35
+          }
+        },
+        "judge": {
+          "proposition": "Within this conversation, the named participant discusses relocating",
+          "output_schema": {}
+        }
+      },
+      {
+        "id": "two_of_three",
+        "type": "stateful.threshold",
+        "comment": "One channel is a passing remark; the same thing said on two is a signal. The weekly tick is keyless, so it fans out to every live person key rather than starting one of its own.",
+        "inputs": {
+          "email_mention": {
+            "role": "arm",
+            "key": {
+              "person": ".person"
+            }
+          },
+          "chat_mention": {
+            "role": "arm",
+            "key": {
+              "person": ".person"
+            }
+          },
+          "weekly_horizon": {
+            "role": "arm",
+            "broadcast": true
+          }
+        },
+        "n": 2,
+        "on_collision": "reset",
+        "deadline": "3 days",
+        "output_map": {
+          "email_doc": "$n.email_mention.doc_id",
+          "chat_doc": "$n.chat_mention.doc_id"
+        }
+      }
+    ],
+    "sink": {
+      "input": "two_of_three",
+      "output_map": {
+        "via": "$n.two_of_three.$fired_by",
+        "evidence": "coalesce($n.two_of_three.email_doc, $n.two_of_three.chat_doc)"
+      }
+    }
+  }
+}

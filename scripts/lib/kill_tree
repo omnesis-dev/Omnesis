@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Adrien Conrath
+#
+# kill_pid_tree <pid> — kill a recorded PID and everything under it, escalating
+# TERM → KILL. Returns 0 only once the process is confirmed gone, 1 if it
+# survived both signals. Source this file; do not execute it.
+#
+# Killing just the recorded PID is not enough: an instance is an
+# `npx → tsx → node` tree, so signalling the wrapper alone reaps it while the
+# node gateway/collector underneath lives on as an orphan — the next `start`
+# then stacks a second generation on top of it (two collectors sharing one
+# WhatsApp session mutually evict each other; two gateways race for the port).
+# The KILL escalation covers a process blocked in a long native call (SQLite
+# vacuum, usearch), which never runs its TERM handler.
+#
+# HOW the tree is signalled depends on whose process group the target is in:
+#   - Its own group (the normal daemon case): signal the whole group.
+#   - OUR group (e.g. a test harness spawned both this script and the instance
+#     without `detached`): a group signal would take out the harness and every
+#     sibling — including the caller. Walk the descendant tree instead and
+#     signal each PID individually.
+
+# Echo <pid> plus all its live descendants, one per line. Collected in one ps
+# pass so the snapshot is consistent; called before each signal round because
+# children reparent to init once their parent dies.
+_kill_tree_members() {
+  local root="$1" table
+  table="$(ps -eo pid=,ppid= 2>/dev/null)" || {
+    echo "${root}"
+    return 0
+  }
+  awk -v root="${root}" '
+    { kid[NR] = $1; parent[NR] = $2 }
+    END {
+      want[root] = 1
+      # Child rows are not guaranteed to sort after their parents, so iterate
+      # to a fixed point (tree depth is tiny). NB: membership tests MUST use
+      # the `in` operator — `want[x]` in a boolean silently CREATES key x, and
+      # the final loop would then emit (and the caller would kill) every
+      # parent PID on the system.
+      changed = 1
+      while (changed) {
+        changed = 0
+        for (i = 1; i <= NR; i++) {
+          if ((parent[i] in want) && !(kid[i] in want)) { want[kid[i]] = 1; changed = 1 }
+        }
+      }
+      for (p in want) print p
+    }' <<<"${table}"
+}
+
+kill_pid_tree() {
+  local pid="$1" pgid own_pgid members i
+  kill -0 "${pid}" 2>/dev/null || return 0
+  # PID-reuse guard: only signal something that still looks like our process.
+  ps -o args= -p "${pid}" 2>/dev/null | grep -qE 'node|tsx' || return 0
+  pgid="$(ps -o pgid= -p "${pid}" 2>/dev/null | tr -d ' ')"
+  own_pgid="$(ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ')"
+
+  if [[ -n "${pgid}" && "${pgid}" != "${own_pgid}" ]]; then
+    kill -TERM "-${pgid}" 2>/dev/null || true
+  else
+    members="$(_kill_tree_members "${pid}")"
+    # shellcheck disable=SC2086 — word-splitting the PID list is intended
+    kill -TERM ${members} 2>/dev/null || true
+  fi
+  for ((i = 0; i < 20; i++)); do
+    kill -0 "${pid}" 2>/dev/null || return 0
+    sleep 0.25
+  done
+  if [[ -n "${pgid}" && "${pgid}" != "${own_pgid}" ]]; then
+    kill -KILL "-${pgid}" 2>/dev/null || true
+  else
+    members="$(_kill_tree_members "${pid}")"
+    # shellcheck disable=SC2086
+    kill -KILL ${members} 2>/dev/null || true
+  fi
+  sleep 0.5
+  kill -0 "${pid}" 2>/dev/null && return 1
+  return 0
+}

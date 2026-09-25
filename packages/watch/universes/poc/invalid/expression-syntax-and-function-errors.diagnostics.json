@@ -1,0 +1,35 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "EXPRESSION_PARSE_ERROR",
+      "severity": "error",
+      "path": "/watch/nodes/0/output_map/broken",
+      "message": "expected ')' (at offset 31).",
+      "details": {
+        "expression": "date_trunc('month', $e.row.date",
+        "offset": 31
+      }
+    },
+    {
+      "code": "EXPRESSION_FUNCTION_UNKNOWN",
+      "severity": "error",
+      "path": "/watch/nodes/0/output_map/unknown_fn",
+      "message": "'upper' is not an extractor function.",
+      "details": {
+        "function": "upper",
+        "available": ["date_trunc", "coalesce"]
+      }
+    },
+    {
+      "code": "EXPRESSION_FUNCTION_ARITY",
+      "severity": "error",
+      "path": "/watch/nodes/0/output_map/wrong_arity",
+      "message": "'date_trunc' takes 2..2 arguments, got 1.",
+      "details": {
+        "function": "date_trunc",
+        "got": 1
+      }
+    }
+  ]
+}

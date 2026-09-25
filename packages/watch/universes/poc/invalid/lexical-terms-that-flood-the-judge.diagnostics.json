@@ -1,0 +1,45 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "LEXICAL_TERM_EMPTY",
+      "severity": "error",
+      "path": "/watch/nodes/0/recall/lexical/terms/0",
+      "message": "'!!!' is punctuation only: it normalizes to nothing, so it can never match a document.",
+      "details": {
+        "term": "!!!"
+      }
+    },
+    {
+      "code": "LEXICAL_TERM_COMMON",
+      "severity": "warning",
+      "path": "/watch/nodes/0/recall/lexical/terms/1",
+      "message": "'call' appears in 32 of 190 documents. That is common enough to be worth a second look at the backtest's reach count.",
+      "details": {
+        "term": "call",
+        "documents": 32,
+        "corpus": 190
+      }
+    },
+    {
+      "code": "LEXICAL_TERM_FLOOD_PRONE",
+      "severity": "error",
+      "path": "/watch/nodes/0/recall/lexical/terms/2",
+      "message": "'Re' appears in 58 of 190 documents (31%). A term that common nominates most of the corpus and wakes the judge on all of it; a lexical arm is for terms that are rare enough to be nearly free.",
+      "details": {
+        "term": "Re",
+        "documents": 58,
+        "corpus": 190
+      }
+    },
+    {
+      "code": "LEXICAL_TERM_NOT_A_TOKEN",
+      "severity": "error",
+      "path": "/watch/nodes/0/recall/lexical/terms/3",
+      "message": "'a message about it' is several words but is asked for as a token. Use match 'phrase', or split it into separate terms.",
+      "details": {
+        "term": "a message about it"
+      }
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "triggers": [
+    "how much did i spend during my japan trip",
+    "how much did i spend in japan",
+    "what did i spend in japan",
+    "japan trip",
+    "spend on japan",
+    "japan spend"
+  ],
+  "placeholders": {
+    "docExternalIds": [
+      "jp-gdrive-contract-001",
+      "jp-gdrive-invoice-001",
+      "jp-gdrive-budget-001",
+      "jp-gmail-flight-001",
+      "jp-gmail-hotel-001",
+      "jp-gmail-ryokan-001",
+      "jp-gmail-omakase-001",
+      "jp-gmail-rail-001",
+      "jp-eb-jpy:jp-eb-hotel",
+      "jp-eb-jpy:jp-eb-ryokan",
+      "jp-eb-jpy:jp-eb-rail",
+      "jp-eb-jpy:jp-eb-tours",
+      "jp-eb-jpy:jp-eb-omakase",
+      "7701:jp-lf-flights",
+      "7701:jp-lf-fee"
+    ],
+    "personNames": ["Studio Northstar Travel"]
+  }
+}

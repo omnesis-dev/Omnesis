@@ -1,0 +1,17 @@
+{
+  "name": "@omnesis/provider-enable-banking-synth",
+  "version": "0.5.11",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@omnesis/provider-enable-banking": "*",
+    "@omnesis/providers-synth-common": "*",
+    "@omnesis/source-sdk": "*",
+    "@omnesis/types": "*"
+  },
+  "files": [
+    "dist"
+  ]
+}

@@ -1,0 +1,4 @@
+{
+  "role": "privacy-reviewer",
+  "triggers": ["the window is 09:00 to 11:00"]
+}

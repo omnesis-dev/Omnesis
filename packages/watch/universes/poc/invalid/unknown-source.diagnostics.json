@@ -1,0 +1,22 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "SOURCE_UNKNOWN",
+      "severity": "error",
+      "path": "/watch/nodes/0/filter/source",
+      "message": "No source 'riverside-notes' in the ontology.",
+      "details": {
+        "sourceId": "riverside-notes",
+        "known": [
+          "gmail",
+          "whatsapp-messages",
+          "apple-imessage",
+          "apple-call-log",
+          "google-calendar",
+          "google-drive"
+        ]
+      }
+    }
+  ]
+}

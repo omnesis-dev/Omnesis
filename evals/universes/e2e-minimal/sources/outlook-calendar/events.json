@@ -1,0 +1,46 @@
+[
+  {
+    "externalId": "synth-outlook-cal-001",
+    "iCalUId": "synth-ocal-uid-001",
+    "subject": "Vendor evaluation sync",
+    "body": "Walk through the Globex vs Nimbus first cut. Decide whether to pilot before the SOC2 audit window opens.",
+    "location": "Mercury room",
+    "startTime": "2025-09-03T17:00:00Z",
+    "endTime": "2025-09-03T18:00:00Z",
+    "organizer": "self",
+    "attendees": ["self", "p_jane", "p_emma"],
+    "createdAt": "2025-09-02T12:00:00Z",
+    "updatedAt": "2025-09-02T12:00:00Z",
+    "categories": ["Vendors"]
+  },
+  {
+    "externalId": "synth-outlook-cal-002",
+    "iCalUId": "synth-ocal-uid-002",
+    "subject": "Quarterly review prep — 1:1",
+    "body": "Review the Q3 draft before the wider readout. Section 3 still needs Emma's compliance numbers.",
+    "location": "Coffee bar",
+    "startTime": "2025-09-05T15:30:00Z",
+    "endTime": "2025-09-05T16:00:00Z",
+    "organizer": "p_emma",
+    "attendees": ["self", "p_emma"],
+    "createdAt": "2025-09-04T18:00:00Z",
+    "updatedAt": "2025-09-04T18:00:00Z",
+    "categories": ["Reviews"],
+    "calendar": "Personal"
+  },
+  {
+    "externalId": "synth-outlook-cal-003",
+    "iCalUId": "synth-ocal-uid-003",
+    "subject": "Offsite planning",
+    "body": "Lock the agenda for the September offsite. Confirm hotel block dates and transport from the airport.",
+    "location": "Online",
+    "startTime": "2025-09-08T13:00:00Z",
+    "endTime": "2025-09-08T13:45:00Z",
+    "organizer": "p_emma",
+    "attendees": ["self", "p_jane", "p_emma"],
+    "createdAt": "2025-09-06T09:00:00Z",
+    "updatedAt": "2025-09-06T09:00:00Z",
+    "categories": ["Offsite"],
+    "weeklyOccurrences": 3
+  }
+]

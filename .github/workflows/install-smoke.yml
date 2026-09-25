@@ -1,0 +1,313 @@
+name: Install smoke
+
+# Full validation supplies one immutable source revision to this reusable lane.
+# Manual full requests enter through the guarded admission controller.
+on:
+  workflow_call:
+    inputs:
+      target_sha:
+        description: "Exact 40-character source revision to validate"
+        required: true
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+# The package channel and the source checkout are tested in parallel. Each job
+# uses isolated directories and never touches the runner's live setup.
+jobs:
+  # Fork PRs must not run on self-hosted runners (arbitrary-code-execution risk). See the guard on each job.
+  npm-global:
+    name: package install + package update
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 25
+    env:
+      TEST_HOME: /tmp/omnesis-install-npm-${{ github.run_id }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          # Deliberately no `cache: npm` — see docs/agent-gotchas.md. These
+          # runners are self-hosted, so `~/.npm` is already on the machine; the
+          # action only ships an ever-growing copy of it back and forth.
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build packages
+        run: npm run build
+
+      # Verdaccio serves as a local npm registry so we test the real publish →
+      # install → update cycle without touching npmjs.org. Anonymous publish is
+      # enabled for the product package and @omnesis/* packages; everything
+      # else proxies to npmjs for transitive dependencies.
+      - name: Write Verdaccio config
+        run: |
+          cat > /tmp/verdaccio-ci-${{ github.run_id }}.yml << 'VERDACCIO_CONF'
+          storage: /verdaccio/storage
+          auth:
+            htpasswd:
+              file: /verdaccio/htpasswd
+              max_users: -1
+          uplinks:
+            npmjs:
+              url: https://registry.npmjs.org/
+              timeout: 30s
+          packages:
+            'omnesis':
+              access: $all
+              publish: $all
+            '@omnesis/*':
+              access: $all
+              publish: $all
+            '**':
+              access: $all
+              proxy: npmjs
+          VERDACCIO_CONF
+
+      - name: Start Verdaccio
+        run: |
+          docker run -d \
+            --name verdaccio-${{ github.run_id }} \
+            -p 0:4873 \
+            -v /tmp/verdaccio-ci-${{ github.run_id }}.yml:/verdaccio/conf/config.yaml:ro \
+            verdaccio/verdaccio@sha256:9d622d256378c6e7ae09f384774ee2f0f8ac67a66c066db55921a0b7218abc4c # v5
+
+          # Resolve the host port Docker assigned (avoids port collisions between
+          # concurrent CI jobs).
+          VERDACCIO_PORT=$(docker inspect --format \
+            '{{(index (index .NetworkSettings.Ports "4873/tcp") 0).HostPort}}' \
+            verdaccio-${{ github.run_id }})
+          echo "VERDACCIO_PORT=$VERDACCIO_PORT" >> "$GITHUB_ENV"
+
+          # Poll until Verdaccio responds (max 30 s).
+          for i in $(seq 30); do
+            curl -sf "http://localhost:$VERDACCIO_PORT/-/ping" && break
+            sleep 1
+          done
+          echo "Verdaccio ready on port $VERDACCIO_PORT"
+
+      # npm publish requires an Authorization header even if the registry
+      # accepts anonymous publish — set a dummy token to satisfy the client.
+      - name: Configure npm token for Verdaccio
+        run: |
+          npm set "//localhost:$VERDACCIO_PORT/:_authToken" "verdaccio-ci"
+          # Also write into the isolated test home so install.sh's npm operations
+          # can reach the registry without a 401.
+          mkdir -p "$TEST_HOME"
+          echo "//localhost:$VERDACCIO_PORT/:_authToken=verdaccio-ci" > "$TEST_HOME/.npmrc"
+
+      - name: Publish packages to Verdaccio
+        run: |
+          npm run release:publish -- \
+            --registry "http://localhost:$VERDACCIO_PORT" \
+            --tag latest \
+            --access public
+
+      # install.sh --method package is the user-facing package channel: it must
+      # produce a working CLI from the registry alone, with no source checkout.
+      - name: lane [install-package]
+        run: |
+          mkdir -p "$TEST_HOME/.npm-global"
+          HOME="$TEST_HOME" NPM_CONFIG_PREFIX="$TEST_HOME/.npm-global" \
+            bash scripts/install.sh \
+              --method package \
+              --client-only \
+              --no-keyring \
+              --registry "http://localhost:$VERDACCIO_PORT"
+
+          OMNESIS_BIN="$TEST_HOME/.npm-global/bin/omnesis"
+          [ -x "$OMNESIS_BIN" ] || { echo "omnesis binary not found at $OMNESIS_BIN"; exit 1; }
+          echo "OMNESIS_BIN=$OMNESIS_BIN" >> "$GITHUB_ENV"
+          if [ -e "$TEST_HOME/omnesis/.git" ]; then
+            echo "a package install made a source checkout"
+            exit 1
+          fi
+
+          INSTALLED=$("$OMNESIS_BIN" --version)
+          # Version lives in packages/cli/package.json; the workspace root has none.
+          EXPECTED=$(node -p "require('./packages/cli/package.json').version")
+          echo "Installed: $INSTALLED | Expected: $EXPECTED"
+          [ "$INSTALLED" = "$EXPECTED" ] || { echo "Version mismatch"; exit 1; }
+
+      - name: Verify the package update path reports an up-to-date install
+        run: |
+          output=$(HOME="$TEST_HOME" NPM_CONFIG_PREFIX="$TEST_HOME/.npm-global" \
+            "$OMNESIS_BIN" update --yes --registry "http://localhost:$VERDACCIO_PORT" 2>&1)
+          echo "$output"
+          echo "$output" | grep -q "Already up to date"
+
+      - name: Bump all package versions and republish
+        run: |
+          NEW_VERSION=$(node - << 'BUMP_SCRIPT'
+          const {readFileSync, writeFileSync, readdirSync} = require('fs');
+          const {join} = require('path');
+          // Version is in packages/cli/package.json; the workspace root has none.
+          const cliPkg = JSON.parse(readFileSync('packages/cli/package.json'));
+          const [maj, min, pat] = cliPkg.version.split('.').map(Number);
+          const nv = `${maj}.${min}.${pat + 1}`;
+
+          function bumpFile(p) {
+            try {
+              const pkg = JSON.parse(readFileSync(p));
+              if ('version' in pkg) {
+                pkg.version = nv;
+                writeFileSync(p, JSON.stringify(pkg, null, 2) + '\n');
+              }
+            } catch {}
+          }
+
+          // Bump every package that carries a version field.
+          const root = JSON.parse(readFileSync('package.json'));
+          bumpFile('package.json');
+          for (const pattern of (root.workspaces || [])) {
+            if (pattern.endsWith('/*')) {
+              const dir = pattern.slice(0, -2);
+              try {
+                for (const entry of readdirSync(dir)) {
+                  bumpFile(join(dir, entry, 'package.json'));
+                }
+              } catch {}
+            } else {
+              bumpFile(join(pattern, 'package.json'));
+            }
+          }
+          console.log(nv);
+          BUMP_SCRIPT
+          )
+          echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_ENV"
+
+          npm run release:publish -- \
+            --registry "http://localhost:$VERDACCIO_PORT" \
+            --tag latest \
+            --access public
+
+      - name: lane [install-update]
+        run: |
+          HOME="$TEST_HOME" NPM_CONFIG_PREFIX="$TEST_HOME/.npm-global" \
+            "$OMNESIS_BIN" update --yes --registry "http://localhost:$VERDACCIO_PORT"
+
+          UPDATED=$("$OMNESIS_BIN" --version)
+          echo "Updated: $UPDATED | Expected: $NEW_VERSION"
+          [ "$UPDATED" = "$NEW_VERSION" ] || { echo "Update did not advance to new version"; exit 1; }
+
+      # --method auto is what a first-time installer resolves. It must pick the
+      # package when the registry actually serves it, into a prefix that has
+      # never seen an Omnesis install.
+      - name: Verify --method auto prefers the package when the registry has it
+        run: |
+          AUTO_HOME="$TEST_HOME-auto"
+          mkdir -p "$AUTO_HOME/.npm-global"
+          cp "$TEST_HOME/.npmrc" "$AUTO_HOME/.npmrc"
+          HOME="$AUTO_HOME" NPM_CONFIG_PREFIX="$AUTO_HOME/.npm-global" \
+            bash scripts/install.sh \
+              --method auto \
+              --client-only \
+              --no-keyring \
+              --registry "http://localhost:$VERDACCIO_PORT" \
+            > /tmp/auto-install.out 2>&1 || { cat /tmp/auto-install.out; exit 1; }
+          cat /tmp/auto-install.out
+          grep -q "installing the package" /tmp/auto-install.out
+          if [ -e "$AUTO_HOME/omnesis/.git" ]; then
+            echo "auto resolved to a source checkout"
+            exit 1
+          fi
+          [ "$("$AUTO_HOME/.npm-global/bin/omnesis" --version)" = "$NEW_VERSION" ] \
+            || { echo "auto install did not get the newest published version"; exit 1; }
+          rm -rf "$AUTO_HOME"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          # Each run picks a fresh ephemeral port, so an auth entry left behind
+          # would accumulate a dead line in the runner's npmrc forever.
+          npm config delete "//localhost:$VERDACCIO_PORT/:_authToken" || true
+          docker rm -f verdaccio-${{ github.run_id }} || true
+          rm -f /tmp/verdaccio-ci-${{ github.run_id }}.yml
+          rm -rf "$TEST_HOME" "$TEST_HOME-auto"
+          # Restore bumped package.json files so the self-hosted runner's
+          # working tree stays clean.
+          git checkout -- . 2>/dev/null || true
+
+  source:
+    name: source install
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 20
+    env:
+      TEST_HOME: /tmp/omnesis-install-source-${{ github.run_id }}
+      SOURCE_DIR: /tmp/omnesis-source-dir-${{ github.run_id }}
+      SOURCE_REMOTE: /tmp/omnesis-source-remote-${{ github.run_id }}.git
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          # Deliberately no `cache: npm` — see docs/agent-gotchas.md. These
+          # runners are self-hosted, so `~/.npm` is already on the machine; the
+          # action only ships an ever-growing copy of it back and forth.
+
+      - name: Create exact-revision source remote
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          rm -rf "$SOURCE_REMOTE"
+          git init --bare "$SOURCE_REMOTE"
+          # Populate the fixture from the checked-out object database. A
+          # source-side push would invoke the repository's developer hooks,
+          # which are neither installed nor relevant to this isolated remote.
+          # Actions checks out one commit, so let the new bare repository
+          # inherit that deliberate shallow boundary.
+          git --git-dir="$SOURCE_REMOTE" fetch --update-shallow --no-tags "$GITHUB_WORKSPACE" \
+            "$TARGET_SHA:refs/heads/main"
+
+      # --no-keyring is not incidental: this runner has no controlling terminal
+      # and no unlocked keyring, and the installer refuses to decide about
+      # encryption at rest on the operator's behalf.
+      - name: lane [install-source]
+        run: |
+          mkdir -p "$TEST_HOME"
+          RUNNER_NPM_CACHE="$(npm config get cache)"
+          HOME="$TEST_HOME" NPM_CONFIG_CACHE="$RUNNER_NPM_CACHE" \
+            OMNESIS_REPO_URL="file://$SOURCE_REMOTE" bash scripts/install.sh \
+            --edge \
+            --source-dir "$SOURCE_DIR" \
+            --no-service \
+            --no-model \
+            --no-tls \
+            --no-keyring
+
+      - name: Verify wrapper is executable and reports a version
+        run: |
+          OMNESIS_BIN="$TEST_HOME/.local/bin/omnesis"
+          [ -x "$OMNESIS_BIN" ] \
+            || { echo "wrapper not found at $OMNESIS_BIN"; exit 1; }
+          VERSION=$("$OMNESIS_BIN" --version)
+          echo "Source-installed version: $VERSION"
+          [ -n "$VERSION" ] || { echo "version string was empty"; exit 1; }
+
+      - name: Cleanup
+        if: always()
+        run: rm -rf "$TEST_HOME" "$SOURCE_DIR" "$SOURCE_REMOTE"

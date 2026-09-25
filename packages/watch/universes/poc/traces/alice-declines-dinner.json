@@ -1,0 +1,86 @@
+{
+  "trace": {
+    "watch": "alice-declines-dinner",
+    "records": [
+      {
+        "seq": 18,
+        "nodeId": "alice_email_decline",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 60,
+        "nodeId": "alice_email_decline",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 151,
+        "nodeId": "alice_whatsapp_decline",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 153,
+        "nodeId": "alice_whatsapp_decline",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 178,
+        "nodeId": "alice_email_decline",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 201,
+        "nodeId": "alice_whatsapp_decline",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 245,
+        "nodeId": "alice_email_decline",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 245,
+        "nodeId": "any_decline",
+        "key": "singleton",
+        "transition": "fired",
+        "detail": "via alice_email_decline"
+      }
+    ],
+    "firings": [
+      {
+        "seq": 245,
+        "nodeId": "any_decline",
+        "keyHash": "e3b0c44298fc1c149afbf4c8996fb924:0",
+        "key": "singleton",
+        "firedAt": "2026-03-20T11:00:00.000Z",
+        "payload": {
+          "via": "alice_email_decline",
+          "evidence": "d0c00001-0000-4000-8000-000000000006"
+        },
+        "documentIds": ["d0c00001-0000-4000-8000-000000000006"]
+      }
+    ],
+    "ended": "fired"
+  },
+  "backtest": {
+    "events": 265,
+    "days": 18,
+    "firings": 0,
+    "reachByNode": { "alice_email_decline": 4, "alice_whatsapp_decline": 4 },
+    "totalReaches": 8,
+    "unboundedNodes": [],
+    "endedEarly": "expired"
+  }
+}

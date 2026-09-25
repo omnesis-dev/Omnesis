@@ -1,0 +1,24 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "SQL_MISSING_FIRES_COLUMN",
+      "severity": "error",
+      "path": "/watch/nodes/1/query",
+      "message": "The query must project a boolean 'fires' column — that column is the node's firing signal.",
+      "details": {
+        "projected": ["avg_hr"]
+      }
+    },
+    {
+      "code": "SQL_SELECT_ITEM_UNALIASED",
+      "severity": "error",
+      "path": "/watch/nodes/1/query",
+      "message": "Every projected item needs an explicit alias; a column the validator cannot name is a column downstream references cannot be checked against.",
+      "details": {
+        "unaliased": 1,
+        "named": ["avg_hr"]
+      }
+    }
+  ]
+}

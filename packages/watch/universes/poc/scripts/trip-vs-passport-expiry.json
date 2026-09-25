@@ -1,0 +1,23 @@
+{
+  "note": "The booking confirmation is judged a real trip. Departure is within six months of the passport expiry the compiler resolved, so the transform fires.",
+  "recall": [
+    {
+      "nodeId": "trip_booked",
+      "documentId": "d0c00001-0000-4000-8000-000000000001",
+      "score": 0.74,
+      "title": "Your booking is confirmed — LHR to Lisbon, 14 Sep"
+    }
+  ],
+  "judgements": [
+    {
+      "nodeId": "trip_booked",
+      "documentId": "d0c00001-0000-4000-8000-000000000001",
+      "fired": true,
+      "output": {
+        "depart_date": "2026-09-14",
+        "destination_country": "Portugal"
+      },
+      "title": "Your booking is confirmed — LHR to Lisbon, 14 Sep"
+    }
+  ]
+}

@@ -1,0 +1,111 @@
+[
+  {
+    "externalId": "synth-acal-001",
+    "title": "Dentist check-up",
+    "description": "Six-month check-up with Dr. Mendez. Bring insurance card.",
+    "location": "Riverside Dental",
+    "calendarName": "Personal",
+    "startTime": "2025-09-03T08:00:00Z",
+    "endTime": "2025-09-03T08:45:00Z",
+    "attendees": ["self"],
+    "attendeeEmails": ["john.smith@icloud.example"],
+    "createdAt": "2025-08-20T10:00:00Z",
+    "updatedAt": "2025-08-20T10:00:00Z"
+  },
+  {
+    "externalId": "synth-acal-002",
+    "title": "Dinner with Claire",
+    "description": "Table for two at 19:00 — booked under Smith.",
+    "location": "Trattoria Lumen",
+    "calendarName": "Home",
+    "startTime": "2025-09-05T18:00:00Z",
+    "endTime": "2025-09-05T20:00:00Z",
+    "attendees": ["self", "p_claire"],
+    "attendeeEmails": ["john.smith@icloud.example", "claire.smith@example.org"],
+    "createdAt": "2025-08-28T19:30:00Z",
+    "updatedAt": "2025-08-28T19:30:00Z"
+  },
+  {
+    "externalId": "synth-acal-003",
+    "title": "Boiler service visit",
+    "description": "Annual service — engineer arriving between 08:30 and 09:00.",
+    "location": "42 Example Street",
+    "calendarName": "Home",
+    "startTime": "2025-09-09T07:30:00Z",
+    "endTime": "2025-09-09T08:30:00Z",
+    "attendees": ["self"],
+    "attendeeEmails": ["john.smith@icloud.example"],
+    "createdAt": "2025-09-01T09:15:00Z",
+    "updatedAt": "2025-09-01T09:15:00Z"
+  },
+  {
+    "externalId": "synth-acal-004",
+    "title": "Foxhollow Ridge loop hike",
+    "description": "Full-day hike with Claire and Dave. Pack rain layers; pub lunch at the halfway point.",
+    "location": "Foxhollow trailhead car park",
+    "calendarName": "Personal",
+    "allDay": true,
+    "startTime": "2025-09-13T00:00:00Z",
+    "endTime": "2025-09-14T00:00:00Z",
+    "attendees": ["self", "p_claire", "p_dave"],
+    "attendeeEmails": [
+      "john.smith@icloud.example",
+      "claire.smith@example.org",
+      "dave.ortiz@example.net"
+    ],
+    "createdAt": "2025-09-02T18:00:00Z",
+    "updatedAt": "2025-09-06T08:00:00Z"
+  },
+  {
+    "externalId": "synth-acal-005",
+    "title": "Photography walk with Dave",
+    "description": "Golden-hour walk along the river. Dave is bringing the spare tripod.",
+    "location": "Alder Quay riverside",
+    "calendarName": "Personal",
+    "startTime": "2025-09-17T16:30:00Z",
+    "endTime": "2025-09-17T18:00:00Z",
+    "attendees": ["self", "p_dave"],
+    "attendeeEmails": ["john.smith@icloud.example", "dave.ortiz@example.net"],
+    "createdAt": "2025-09-10T20:00:00Z",
+    "updatedAt": "2025-09-10T20:00:00Z"
+  },
+  {
+    "externalId": "synth-acal-006",
+    "title": "Car MOT drop-off",
+    "description": "Drop the car before 08:30; courtesy call when ready.",
+    "location": "Hilltop Motors",
+    "calendarName": "Home",
+    "startTime": "2025-09-22T07:00:00Z",
+    "endTime": "2025-09-22T07:30:00Z",
+    "attendees": ["self"],
+    "attendeeEmails": ["john.smith@icloud.example"],
+    "createdAt": "2025-09-15T12:00:00Z",
+    "updatedAt": "2025-09-15T12:00:00Z"
+  },
+  {
+    "externalId": "synth-acal-007",
+    "title": "Coffee with Jane",
+    "description": "Catch-up coffee — Jane wants to talk through the allotment plans.",
+    "location": "Corner Roastery",
+    "calendarName": "Personal",
+    "startTime": "2025-09-24T09:00:00Z",
+    "endTime": "2025-09-24T09:30:00Z",
+    "attendees": ["self", "p_jane"],
+    "attendeeEmails": ["john.smith@icloud.example", "jane.doe@example.org"],
+    "createdAt": "2025-09-18T17:45:00Z",
+    "updatedAt": "2025-09-18T17:45:00Z"
+  },
+  {
+    "externalId": "synth-acal-008",
+    "title": "Anniversary dinner",
+    "description": "Anniversary dinner with Claire — tasting menu, 19:30 sitting.",
+    "location": "The Lantern Room",
+    "calendarName": "Home",
+    "startTime": "2025-09-26T18:30:00Z",
+    "endTime": "2025-09-26T21:00:00Z",
+    "attendees": ["self", "p_claire"],
+    "attendeeEmails": ["john.smith@icloud.example", "claire.smith@example.org"],
+    "createdAt": "2025-09-08T21:00:00Z",
+    "updatedAt": "2025-09-08T21:00:00Z"
+  }
+]

@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Omnesis Browser Capture — Pairing</title>
+    <link rel="stylesheet" href="ui.css" />
+  </head>
+  <body>
+    <main class="card">
+      <header class="brand">
+        <img class="brand-logo" src="icons/icon-128.png" alt="" />
+        <div>
+          <div class="brand-title">Omnesis</div>
+          <div class="brand-sub">Browser Capture — pairing</div>
+        </div>
+      </header>
+
+      <p class="muted">
+        Pair this browser with your Omnesis gateway. Generate a pairing code with
+        <code>omnesis devices pair --kind browser</code> or from the portal admin page, then paste
+        it below along with your gateway URL. The extension sends this one-time code to that gateway
+        for redemption and does not retain the code after pairing.
+      </p>
+
+      <label for="profile-label">Chrome profile name</label>
+      <input
+        id="profile-label"
+        type="text"
+        autocomplete="off"
+        maxlength="120"
+        placeholder="Personal"
+        form="pair-form"
+        required
+      />
+      <p class="hint">
+        Chrome does not expose its profile name to extensions. Enter the name shown in Chrome's
+        profile menu so Omnesis can identify this profile's captures.
+      </p>
+      <button id="save-profile-label" class="secondary" type="button" hidden>
+        Save profile name
+      </button>
+      <div id="profile-label-missing" class="status status-error" hidden>
+        Add this Chrome profile's name so new captures include a human-readable profile label.
+      </div>
+
+      <div id="paired" class="paired" style="display: none">
+        <p class="ok-line">✅ Paired with <strong id="paired-gateway"></strong></p>
+        <p class="muted">Token scopes: <span id="paired-scopes"></span></p>
+        <div id="capture-permission-missing" class="status status-error" hidden>
+          <p>Chrome is not allowing Omnesis to watch HTTPS pages.</p>
+          <button id="grant-capture-permission" type="button">Grant HTTPS page access</button>
+        </div>
+        <button id="unpair" class="secondary" type="button">Unpair</button>
+      </div>
+
+      <form id="pair-form">
+        <label for="gateway-url">Gateway URL</label>
+        <input
+          id="gateway-url"
+          type="text"
+          inputmode="url"
+          autocomplete="off"
+          placeholder="https://gateway.example.ts.net:7600"
+          required
+        />
+        <p class="hint">
+          Use the gateway's trusted HTTPS hostname (its Tailscale or mkcert certificate name). IP
+          addresses are not accepted — the certificate covers the name, not the IP.
+        </p>
+
+        <label for="pairing-code">Pairing code</label>
+        <input
+          id="pairing-code"
+          type="text"
+          autocomplete="off"
+          placeholder="10-character code"
+          required
+        />
+
+        <div class="status status-info capture-disclosure">
+          <p>
+            After a page stays focused for at least five seconds, Omnesis captures its URL, domain,
+            title, readable page text, visit time, focused dwell time, stable browser device ID, and
+            the Chrome profile name entered above. This can include content visible only after you
+            sign in. Captures wait in a bounded local retry queue and are sent only to the gateway
+            entered above. The gateway credential, browser device ID, queue, and recent delivery
+            status are stored locally in this Chrome profile; the capture settings (pause, excluded
+            domains) are stored on your gateway and shared by every browser paired to it. Incognito
+            pages, sign-in pages and pages on excluded domains are never captured; you can pause
+            capture, exclude domains, or unpair at any time. See the
+            <a
+              href="https://omnesis.dev/browser-extension-privacy-policy"
+              target="_blank"
+              rel="noreferrer"
+              >privacy policy</a
+            >.
+          </p>
+          <label class="consent" for="capture-consent">
+            <input id="capture-consent" type="checkbox" required />
+            I understand and want to start browser capture.
+          </label>
+        </div>
+
+        <button id="pair-submit" type="submit">Pair and start capturing</button>
+      </form>
+
+      <div id="unpaired-capture-access" class="status status-info" hidden>
+        <p>Chrome page access is still granted, but capture is inactive while unpaired.</p>
+        <button id="revoke-capture-access" class="secondary" type="button">
+          Remove HTTPS page access
+        </button>
+      </div>
+
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+    </main>
+
+    <main class="card">
+      <h1>Capture exclusions</h1>
+      <p class="muted">
+        Pages on these domains are never captured — for sites you never want indexed (a bank, a
+        password manager, private webmail). Subdomains are included, so
+        <code>example.com</code> also covers <code>www.example.com</code>. The list is stored on
+        your gateway and applied by every browser paired to it.
+      </p>
+      <form id="exclusion-form" hidden>
+        <label for="exclusion-input">Add a domain</label>
+        <input
+          id="exclusion-input"
+          type="text"
+          autocomplete="off"
+          inputmode="url"
+          placeholder="example.com"
+        />
+        <label class="consent" for="exclusion-purge">
+          <input id="exclusion-purge" type="checkbox" />
+          Also delete the pages already captured from this domain
+        </label>
+        <button type="submit">Exclude domain</button>
+      </form>
+      <ul id="exclusions" class="exclusions"></ul>
+      <p id="exclusions-empty" class="hint">No domains excluded yet.</p>
+    </main>
+
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

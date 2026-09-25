@@ -1,0 +1,191 @@
+[
+  {
+    "id": "call-0001",
+    "counterparty": "Mum",
+    "direction": "incoming",
+    "start_time": "2026-03-01T18:00:00.000Z",
+    "duration_seconds": 1037
+  },
+  {
+    "id": "call-0002",
+    "counterparty": "Alice Nakamura",
+    "direction": "outgoing",
+    "start_time": "2026-03-04T12:00:00.000Z",
+    "duration_seconds": 1448
+  },
+  {
+    "id": "call-0003",
+    "counterparty": "Mum",
+    "direction": "outgoing",
+    "start_time": "2026-03-08T18:20:00.000Z",
+    "duration_seconds": 1196
+  },
+  {
+    "id": "call-0004",
+    "counterparty": "David Lin",
+    "direction": "incoming",
+    "start_time": "2026-03-11T13:00:00.000Z",
+    "duration_seconds": 1607
+  },
+  {
+    "id": "call-0005",
+    "counterparty": "Mum",
+    "direction": "incoming",
+    "start_time": "2026-03-15T17:45:00.000Z",
+    "duration_seconds": 1355
+  },
+  {
+    "id": "call-0006",
+    "counterparty": "Alice Nakamura",
+    "direction": "outgoing",
+    "start_time": "2026-03-19T14:00:00.000Z",
+    "duration_seconds": 1103
+  },
+  {
+    "id": "call-0007",
+    "counterparty": "Maya Reeves",
+    "direction": "incoming",
+    "start_time": "2026-03-22T15:00:00.000Z",
+    "duration_seconds": 1514
+  },
+  {
+    "id": "call-0008",
+    "counterparty": "David Lin",
+    "direction": "outgoing",
+    "start_time": "2026-03-28T16:00:00.000Z",
+    "duration_seconds": 1536
+  },
+  {
+    "id": "call-0009",
+    "counterparty": "Alice Nakamura",
+    "direction": "incoming",
+    "start_time": "2026-03-31T17:00:00.000Z",
+    "duration_seconds": 1147
+  },
+  {
+    "id": "call-0010",
+    "counterparty": "Mum",
+    "direction": "outgoing",
+    "start_time": "2026-04-02T19:10:00.000Z",
+    "duration_seconds": 1421
+  },
+  {
+    "id": "call-0011",
+    "counterparty": "Maya Reeves",
+    "direction": "outgoing",
+    "start_time": "2026-04-05T12:00:00.000Z",
+    "duration_seconds": 1032
+  },
+  {
+    "id": "call-0012",
+    "counterparty": "Mum",
+    "direction": "incoming",
+    "start_time": "2026-04-09T18:30:00.000Z",
+    "duration_seconds": 1580
+  },
+  {
+    "id": "call-0013",
+    "counterparty": "David Lin",
+    "direction": "incoming",
+    "start_time": "2026-04-12T13:00:00.000Z",
+    "duration_seconds": 1191
+  },
+  {
+    "id": "call-0014",
+    "counterparty": "Mum",
+    "direction": "incoming",
+    "start_time": "2026-04-16T17:55:00.000Z",
+    "duration_seconds": 939
+  },
+  {
+    "id": "call-0015",
+    "counterparty": "Alice Nakamura",
+    "direction": "outgoing",
+    "start_time": "2026-04-20T14:00:00.000Z",
+    "duration_seconds": 1487
+  },
+  {
+    "id": "call-0016",
+    "counterparty": "Maya Reeves",
+    "direction": "incoming",
+    "start_time": "2026-04-25T15:00:00.000Z",
+    "duration_seconds": 1372
+  },
+  {
+    "id": "call-0017",
+    "counterparty": "David Lin",
+    "direction": "outgoing",
+    "start_time": "2026-04-28T16:00:00.000Z",
+    "duration_seconds": 983
+  },
+  {
+    "id": "call-0018",
+    "counterparty": "Mum",
+    "direction": "outgoing",
+    "start_time": "2026-04-29T19:25:00.000Z",
+    "duration_seconds": 1120
+  },
+  {
+    "id": "call-0019",
+    "counterparty": "Alice Nakamura",
+    "direction": "incoming",
+    "start_time": "2026-05-02T17:00:00.000Z",
+    "duration_seconds": 1531
+  },
+  {
+    "id": "call-0020",
+    "counterparty": "Maya Reeves",
+    "direction": "outgoing",
+    "start_time": "2026-05-05T12:00:00.000Z",
+    "duration_seconds": 1142
+  },
+  {
+    "id": "call-0021",
+    "counterparty": "Mum",
+    "direction": "incoming",
+    "start_time": "2026-05-06T18:05:00.000Z",
+    "duration_seconds": 1279
+  },
+  {
+    "id": "call-0022",
+    "counterparty": "David Lin",
+    "direction": "incoming",
+    "start_time": "2026-05-11T13:00:00.000Z",
+    "duration_seconds": 1164
+  },
+  {
+    "id": "call-0023",
+    "counterparty": "Alice Nakamura",
+    "direction": "outgoing",
+    "start_time": "2026-05-14T14:00:00.000Z",
+    "duration_seconds": 1575
+  },
+  {
+    "id": "call-0024",
+    "counterparty": "Maya Reeves",
+    "direction": "incoming",
+    "start_time": "2026-05-17T15:00:00.000Z",
+    "duration_seconds": 1186
+  },
+  {
+    "id": "call-0025",
+    "counterparty": "David Lin",
+    "direction": "outgoing",
+    "start_time": "2026-05-21T16:00:00.000Z",
+    "duration_seconds": 934
+  },
+  {
+    "id": "call-0026",
+    "counterparty": "Alice Nakamura",
+    "direction": "incoming",
+    "start_time": "2026-05-25T17:00:00.000Z",
+    "duration_seconds": 1482
+  },
+  {
+    "id": "call-0027",
+    "counterparty": "Mum",
+    "direction": "outgoing",
+    "start_time": "2026-05-26T18:40:00.000Z",
+    "duration_seconds": 1619
+  }
+]

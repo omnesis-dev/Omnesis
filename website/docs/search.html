@@ -1,0 +1,587 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Search — Omnesis Docs</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32" />
+    <link rel="icon" type="image/png" href="/favicon-16.png" sizes="16x16" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- Resolve the theme before first paint: the stored choice, else the OS preference. -->
+    <script>
+      (function () {
+        var root = document.documentElement;
+        root.classList.add("js");
+        var t;
+        try {
+          t = localStorage.getItem("omnesis-theme");
+        } catch (e) {}
+        if (t !== "light" && t !== "dark") {
+          t =
+            window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+        }
+        root.setAttribute("data-theme", t);
+      })();
+    </script>
+
+    <meta
+      name="description"
+      content="Search your Omnesis corpus: how hybrid keyword and semantic ranking works, inline query filters, document commands and trails, deleting, and read-only SQL over your analytics tables."
+    />
+    <link rel="canonical" href="https://omnesis.dev/docs/search" />
+    <meta name="theme-color" content="#0d1117" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="/footer-social.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <nav id="nav">
+      <div class="container">
+        <a href="/" class="nav-logo" aria-label="Omnesis"
+          ><span class="nav-logo-mark" aria-hidden="true"></span>MNESIS</a
+        >
+        <div class="nav-right">
+          <ul class="nav-links">
+            <li><a href="/">Context Layer</a></li>
+            <li><a href="/brain">Omnesis Brain</a></li>
+            <li><a href="/vision">Vision</a></li>
+            <li><a href="/docs/" aria-current="page">Docs</a></li>
+          </ul>
+          <a
+            class="nav-icon-btn"
+            href="#"
+            data-oss-open
+            aria-label="Omnesis on GitHub"
+            title="Omnesis on GitHub"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path
+                d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+              />
+            </svg>
+          </a>
+          <button
+            id="theme-toggle"
+            class="theme-toggle"
+            type="button"
+            aria-label="Switch between dark and light theme"
+            title="Toggle theme"
+          >
+            <svg
+              class="icon-sun"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="4" />
+              <path
+                d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"
+              />
+            </svg>
+            <svg
+              class="icon-moon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <div class="docs-shell">
+      <aside class="docs-sidebar">
+        <nav aria-label="Documentation">
+          <ul class="side-pages">
+            <li><a href="/docs/">Overview</a></li>
+            <li><a href="/docs/install">Install</a></li>
+            <li><a href="/docs/setup">Setup</a></li>
+            <li>
+              <a href="/docs/search" aria-current="page">Search</a>
+              <ul class="side-sub">
+                <li><a href="#searching">Searching</a></li>
+                <li><a href="#query-syntax">Query syntax</a></li>
+                <li><a href="#beyond-search">Beyond search</a></li>
+                <li><a href="#sql-over-your-analytics">SQL analytics</a></li>
+                <li><a href="#from-your-own-tools">Your own tools</a></li>
+              </ul>
+            </li>
+            <li><a href="/docs/agent">The agent</a></li>
+            <li><a href="/docs/connect">Agents &amp; MCP</a></li>
+            <li><a href="/docs/apps">Mobile apps</a></li>
+            <li><a href="/docs/notifications">Notifications</a></li>
+            <li><a href="/docs/operating">Operating</a></li>
+            <li><a href="/docs/security">Security</a></li>
+            <li><a href="/docs/updating">Backup &amp; updates</a></li>
+            <li><a href="/docs/sources">Available sources</a></li>
+            <li><a href="/docs/building-sources">Building sources</a></li>
+            <li><a href="/docs/experimental">Experimental</a></li>
+          </ul>
+        </nav>
+      </aside>
+
+      <main id="main" class="docs-content">
+        <p class="docs-kicker">Use</p>
+        <h1>Search</h1>
+        <p class="docs-lead">
+          This page is for anyone looking something up in their own corpus: how a search is ranked,
+          the filters you can type into a query, the commands that read, trace and delete what you
+          find, and read-only SQL over structured data. The same search runs in the portal, the CLI
+          and the <a href="/docs/apps">mobile apps</a>; <a href="/docs/agent">the agent</a> uses it
+          too when it answers a question.
+        </p>
+
+        <h2 id="searching">Searching</h2>
+        <p>
+          A search runs your query two ways at once: as BM25 keyword matching over full-text chunks,
+          and as vector similarity against embeddings of the same chunks. The two ranked lists are
+          merged with Reciprocal Rank Fusion (RRF), which rewards a document for ranking high on
+          either list, so a document that matches your exact words or only your meaning still
+          surfaces near the top.
+        </p>
+        <figure class="diagram">
+          <ol class="flow">
+            <li class="flow-step">
+              <span class="flow-title">Query</span
+              ><span class="flow-desc"><code>invoice from:maya after:2026-01-01</code></span>
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Parse</span
+              ><span class="flow-desc"
+                >Inline filters split from the free text; person filters resolved to people</span
+              >
+            </li>
+          </ol>
+          <div class="lanes">
+            <section class="lane">
+              <p class="lane-title">Keyword</p>
+              <ol class="flow">
+                <li class="flow-step">
+                  <span class="flow-title">BM25</span
+                  ><span class="flow-desc">Full-text match over chunks</span>
+                </li>
+              </ol>
+              <p class="lane-note">Always runs.</p>
+            </section>
+            <section class="lane">
+              <p class="lane-title">Semantic</p>
+              <ol class="flow">
+                <li class="flow-step">
+                  <span class="flow-title">Embed</span
+                  ><span class="flow-desc">The free text becomes a vector</span>
+                </li>
+                <li class="flow-step">
+                  <span class="flow-title">Nearest chunks</span
+                  ><span class="flow-desc">Vector index lookup</span>
+                </li>
+              </ol>
+              <p class="lane-note">
+                Skipped until an embedder is assigned and chunks are embedded.
+              </p>
+            </section>
+          </div>
+          <ol class="flow">
+            <li class="flow-step">
+              <span class="flow-title">Fuse</span
+              ><span class="flow-desc">Reciprocal Rank Fusion of both lists</span>
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Rank</span
+              ><span class="flow-desc"
+                >Type boosts from <code>search.boosts</code> and a balance across sources</span
+              >
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Results</span
+              ><span class="flow-desc"
+                >Duplicates dropped, top results kept, each with a short ID</span
+              >
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Read</span
+              ><span class="flow-desc"><code>omnesis show &lt;id&gt;</code></span>
+            </li>
+          </ol>
+          <figcaption>
+            A query is parsed into filters and free text, searched by keyword and by meaning within
+            those filters, fused into one ranking, and returned with short IDs you can open.
+          </figcaption>
+        </figure>
+        <p>
+          Filters restrict both lanes before anything is ranked. The ranking settings, including
+          <code>search.boosts.typeBoosts</code>, are described under
+          <a href="/docs/operating#configuration">Operating → Configuration</a>.
+        </p>
+        <p>
+          The semantic lane needs an embedder assigned (see
+          <a href="/docs/operating#models">Operating → Models</a>) and chunks that have already been
+          embedded. Until both hold, queries still return: keyword matching alone carries them, and
+          meaning-aware ranking joins in for each document as its vectors land. There is nothing to
+          switch on; the pipeline uses whatever signals exist at query time.
+        </p>
+        <p>
+          A query made only of filters, with no free text (<code>from:maya type:email</code>), skips
+          ranking altogether and lists the matching documents newest first.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis search "lease renewal"</span>
+            </p>
+            <pre>
+1. Re: Lease renewal — 12-month extension  (8.3%)
+   a1b2c3d4  gmail  email  05/14/26  Maya Reeves
+   Attached is the signed renewal for the 12-month extension starting July 1...
+   https://mail.google.com/mail/u/0/?authuser=you%40example.com#all/18f2a9c4e7b1d3a0
+
+2. Lease renewal checklist  (6.1%)
+   e5f6a7b8  apple-notes  note  05/02/26
+   Confirm the deposit terms, ask about bike storage, forward the signed copy...</pre
+            >
+            <p class="t-dim">2 results in 41ms, bm25:8ms, vec:23ms</p>
+            <p class="t-dim"># narrow with inline filters and a result cap</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis search "invoice from:maya after:2026-01-01" --limit 5</span
+              >
+            </p>
+          </div>
+        </div>
+        <p>
+          Each result leads with a short document ID you can paste straight into
+          <code>omnesis show</code>, and ends with a link to the original when the source provides
+          one. The portal's search page and the apps run the same pipeline against the same index,
+          with the same query language.
+        </p>
+
+        <h2 id="query-syntax">Query syntax</h2>
+        <p>
+          Filters are typed inline, mixed freely with search text. Whatever is left after the
+          filters are stripped becomes the query.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Filter</th>
+                <th>Matches</th>
+                <th>Example</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>from:</code></td>
+                <td>Person is the sender, author, or owner. Alias: <code>by:</code></td>
+                <td><code>from:maya</code></td>
+              </tr>
+              <tr>
+                <td><code>to:</code></td>
+                <td>Person is a recipient of a message or an attendee of an event</td>
+                <td><code>to:"Jamie Lopez"</code></td>
+              </tr>
+              <tr>
+                <td><code>with:</code></td>
+                <td>Person appears in any role</td>
+                <td><code>with:maya</code></td>
+              </tr>
+              <tr>
+                <td><code>type:</code></td>
+                <td>Document type. Alias: <code>in:</code></td>
+                <td><code>type:email</code></td>
+              </tr>
+              <tr>
+                <td><code>source:</code></td>
+                <td>A source or provider — bare type, full source ID, or provider</td>
+                <td><code>source:gmail</code></td>
+              </tr>
+              <tr>
+                <td><code>after:</code></td>
+                <td>Date lower bound. Alias: <code>since:</code></td>
+                <td><code>since:"last week"</code></td>
+              </tr>
+              <tr>
+                <td><code>before:</code></td>
+                <td>Date upper bound. Alias: <code>until:</code></td>
+                <td><code>before:2026-03-01</code></td>
+              </tr>
+              <tr>
+                <td><code>#tag</code></td>
+                <td>Tagged documents. Alias: <code>tag:</code></td>
+                <td><code>#travel</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Values with spaces take quotes (<code>with:"Maya Reeves"</code>). Dates are ISO
+          <code>YYYY-MM-DD</code> or a relative keyword: <code>today</code>, <code>yesterday</code>,
+          <code>"last week"</code>, <code>"last month"</code>, <code>"last year"</code>. A date that
+          fails to parse is dropped, and the response carries a notice saying so (visible with
+          <code>--json</code>) rather than silently pretending the filter applied. Relative keywords
+          resolve to a UTC calendar date on the gateway's clock, not the device you are searching
+          from; pass an absolute date when a day boundary is what the query turns on.
+        </p>
+        <p>
+          Person filters resolve to people, not strings. A value is matched as an exact email
+          address, then as an exact phone number, then as part of a name, so
+          <code>from:maya</code> matches every person whose name contains "maya" (up to ten). Use a
+          full name to narrow the match or an email address to pin one person, and
+          <code>me</code> (<code>from:me</code>) for yourself.
+        </p>
+        <p>
+          Once resolved, every identity merged into that person counts: Omnesis merges identities
+          across sources into one person (see
+          <a href="/docs/#people-and-reference-graphs">People &amp; graphs</a>), so
+          <code>from:"Maya Reeves"</code> finds her whether a document carries her work email, her
+          personal address, or her phone number. A value that matches no one is reported as a notice
+          (visible with <code>--json</code>). Repeating a person filter widens it (<code
+            >from:maya from:jamie</code
+          >
+          means either); different filters combine with AND.
+        </p>
+
+        <h2 id="beyond-search">Beyond search</h2>
+        <p>
+          Search finds documents; these commands work with what you found. The document commands —
+          <code>show</code>, <code>trail</code>, and <code>delete</code> — accept the short IDs
+          printed in search results; any unambiguous prefix works.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p class="t-dim"># read one document in full</p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis show a1b2c3d4</span></p>
+            <p class="t-dim"># find the indexed document for a page you have open</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis lookup "https://docs.google.com/document/d/1AbC.../edit"</span
+              >
+            </p>
+            <p class="t-dim"># the latest documents from one source (IDs from: omnesis sources)</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis recent gmail:you@example.com</span>
+            </p>
+            <p class="t-dim">
+              # the chronological story around a document — replies, attachments, related events
+            </p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis trail a1b2c3d4</span></p>
+            <p class="t-dim">
+              # the same neighbourhood as a graph: documents, people and the links between them
+            </p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis graph a1b2c3d4</span></p>
+            <p class="t-dim"># fuzzy people lookup by name, email, phone, or handle</p>
+            <p>
+              <span class="t-prompt">❯</span> <span class="t-cmd">omnesis people search maya</span>
+            </p>
+            <p class="t-dim">
+              # delete a document for good (a later sync or capture will not add it back)
+            </p>
+            <p>
+              <span class="t-prompt">❯</span> <span class="t-cmd">omnesis delete a1b2c3d4</span>
+            </p>
+            <p class="t-dim"># delete only this copy; the next sync or capture may add it again</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis delete a1b2c3d4 --copy</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          <code>trail</code> walks the reference graph — thread replies, attachments, links, shared
+          people — outward from a document and lays the connected documents out in time order. One
+          invoice becomes the whole story: the quote before it, the chat where it was discussed, the
+          calendar event it paid for.
+        </p>
+        <p>
+          <code>graph</code> walks the same links but returns the neighbourhood as a graph rather
+          than a timeline: every document and person reachable from the seed, and the edge that
+          connects each pair. <code>--edges</code> and <code>--vertex-types</code> limit what the
+          walk follows, <code>--hops</code> bounds how far it goes (at most 15),
+          <code>--bound-rows</code> adds the analytics rows bound to the documents it reaches, and
+          <code>--json</code> prints the raw result.
+        </p>
+        <p>
+          Deleting has two forms, and the CLI, the portal and the phone apps all offer both.
+          <em>Delete for good</em> removes the document and its extracted attachments, and records
+          that it must stay gone: the source that produced it will not add it back on a later sync
+          or capture, and the analytics rows that were about that page go with it. Removing the
+          whole source clears that record, so a re-added source starts clean.
+          <em>Delete this copy</em> removes the document as well, but the next sync or capture may
+          add it again. Neither touches the original in the provider or on the phone.
+        </p>
+        <p>
+          <code>omnesis delete</code> asks you to confirm, with Cancel preselected unless you passed
+          <code>--copy</code>; in a script, or with <code>--json</code>, pass <code>--yes</code>. A
+          day document built from quick captures cannot be deleted directly: delete or amend its
+          notes on the portal's <strong>Tell Omnesis</strong> page instead.
+        </p>
+
+        <h2 id="sql-over-your-analytics">SQL over your analytics</h2>
+        <p>
+          Structured sources — health metrics, screen time, workouts, browser visits — land as typed
+          rows in an analytics database (DuckDB) alongside the document index.
+          <code>omnesis analytics</code> lists every table with its description and row count (add
+          <code>--json</code> for column schemas); <code>omnesis sql</code> queries them directly,
+          as does the <strong>Debug → SQL</strong> tab in the portal.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p class="t-dim"># which apps ate the last 30 days?</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis sql "SELECT app_name, round(sum(total_seconds)/3600.0, 1) AS hours FROM
+                screen_time_daily WHERE date &gt;= current_date - INTERVAL 30 DAY GROUP BY app_name
+                ORDER BY hours DESC LIMIT 3"</span
+              >
+            </p>
+            <pre>
+app_name  hours
+───────────────
+Safari    31.4
+Mail      18.2
+Messages  12.9</pre
+            >
+            <p class="t-dim">3 rows (12ms)</p>
+            <p class="t-dim"># monthly running volume this year</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis sql "SELECT strftime(start_time_local, '%Y-%m') AS month,
+                round(sum(distance_m)/1000.0, 1) AS km FROM strava_activities WHERE sport_type =
+                'Run' GROUP BY 1 ORDER BY 1"</span
+              >
+            </p>
+          </div>
+        </div>
+        <p>
+          Queries are read-only by construction: each one runs inside a read-only transaction on the
+          gateway's own database instance, whose access to the filesystem is switched off, so SQL
+          can inspect your data but never modify it or reach outside the database. Which tables
+          exist depends on which
+          <a href="/docs/sources">sources</a> you have connected.
+        </p>
+
+        <h2 id="from-your-own-tools">From your own tools</h2>
+        <p>
+          Everything on this page is a thin client over the gateway's authenticated HTTPS API. The
+          portal, the CLI and the apps all call the same endpoints, and so can any script holding a
+          token; <a href="/docs/setup#tokens">Setup → Tokens</a> covers minting one with
+          <code>omnesis tokens create</code> and choosing its scopes. To let an AI tool such as
+          Claude or ChatGPT search your corpus, connect it over MCP instead: see
+          <a href="/docs/connect">Agents &amp; MCP</a>. The full command list is in
+          <code>omnesis --help</code>.
+        </p>
+        <p>
+          The graph walk behind <code>omnesis graph</code> is one endpoint,
+          <code>POST /graph/walk</code>, open to any token with the <code>read</code> scope. It
+          starts from up to 50 documents, named by ID or unambiguous prefix, takes the same limits
+          as the command's flags, and returns the <code>vertices</code> and <code>edges</code> it
+          reached, with <code>truncated</code> set when a limit cut the walk short.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <pre data-lang="sh">
+curl -s -X POST "$OMNESIS_GATEWAY_URL/graph/walk" \
+  -H "Authorization: Bearer $OMNESIS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"start": [{"kind": "document", "id": "a1b2c3d4"}], "maxHops": 2}'</pre
+            >
+          </div>
+        </div>
+
+        <nav class="docs-pager" aria-label="Pages">
+          <a href="/docs/setup"
+            ><span class="pager-label">Previous</span><span class="pager-title">Setup</span></a
+          >
+          <a class="pager-next" href="/docs/agent"
+            ><span class="pager-label">Next</span><span class="pager-title">The agent</span></a
+          >
+        </nav>
+      </main>
+    </div>
+
+    <footer class="site-footer">
+      <div class="container">
+        <div class="footer-inner">
+          <div class="footer-base">© 2026 Omnesis</div>
+          <nav class="footer-links" aria-label="Footer">
+            <a href="/docs/">Docs</a>
+            <a href="/privacy">Privacy</a>
+            <a class="footer-mail" href="mailto:contact@omnesis.dev">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="2" y="4" width="20" height="16" rx="2" />
+                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+              </svg>
+              contact@omnesis.dev
+            </a>
+            <a class="footer-gh" href="#" data-oss-open>
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path
+                  d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+                />
+              </svg>
+              GitHub
+            </a>
+            <a
+              class="footer-social footer-x"
+              href="https://x.com/Omnesisdev"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Omnesis on X"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>@Omnesisdev
+            </a>
+            <a
+              class="footer-social footer-discord"
+              href="https://discord.gg/4Y8pQHrVv"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Join Omnesis on Discord"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>Discord
+            </a>
+          </nav>
+        </div>
+      </div>
+    </footer>
+
+    <script src="/docs/docs.js"></script>
+  </body>
+</html>

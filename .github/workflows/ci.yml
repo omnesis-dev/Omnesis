@@ -1,0 +1,326 @@
+name: ci
+
+# Full validation supplies one immutable source revision to this reusable lane.
+# Manual full requests enter through the guarded admission controller.
+on:
+  workflow_call:
+    inputs:
+      target_sha:
+        description: "Exact 40-character source revision to validate"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  # ------------------------------------------------------------------
+  # privacy — the first, cheap gate for every run. All other jobs depend on it
+  # so a privacy failure releases the admitted request without
+  # spending either physical runner on work that cannot make the run green.
+  # ------------------------------------------------------------------
+  privacy:
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
+      - name: lane [privacy]
+        run: node scripts/pii-scan.mjs --all
+
+  # ------------------------------------------------------------------
+  # node — typecheck + lint + format check + tests.
+  # Single job so the steps share one `npm ci` cache hit.
+  # Runs for every guarded full request and explicit manual target.
+  # ------------------------------------------------------------------
+  node:
+    needs: privacy
+    runs-on: [self-hosted, Linux]
+    # Fast lanes only — typecheck, lint, format, validate, parity, unit.
+    # They finish in a few minutes together, so this budget is generous.
+    # The spawned-gateway E2E suite runs as its own job below.
+    # Includes shared-host admission; execution remains visible in check heartbeats.
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          # Deliberately no `cache: npm` — see docs/agent-gotchas.md. These
+          # runners are self-hosted, so `~/.npm` is already on the machine; the
+          # action only ships an ever-growing copy of it back and forth.
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: lane [production-audit]
+        run: npm run audit:prod
+
+      - name: lane [linux-typecheck]
+        run: exec node scripts/run-check.mjs typecheck
+
+      # The suites, which the package tsconfigs exclude. A test file that is
+      # never typechecked cannot notice a dependency it does not construct;
+      # each config's exclusion list records which of its suites are not
+      # covered yet.
+      - name: lane [suite-typecheck]
+        run: exec node scripts/run-check.mjs types-tests
+
+      - name: lane [linux-lint]
+        # Type-aware ESLint loads the whole TS program (~673 files) into
+        # one process; the default ~2 GB Node heap is not enough. 6 GB
+        # leaves headroom for the rest of the step. Drop this once we
+        # shard lint by package.
+        env:
+          NODE_OPTIONS: "--max-old-space-size=6144"
+        run: exec node scripts/run-check.mjs lint
+
+      - name: lane [format]
+        run: npm run format:check
+
+      - name: lane [universe-validation]
+        # Cheap static check (~1s) — fails CI if a universe manifest is
+        # broken, a fixture file is missing, or a replay-scenario meta is
+        # malformed. Runs before tests because it catches errors faster.
+        run: npm run validate-universes
+
+      - name: lane [parity-validation]
+        # Cheap static check — extracts the actual literal at each
+        # `// PARITY:<key>` marker across the three clients and fails if a
+        # mirrored timing/cap constant diverges or a marker went missing.
+        # Also covered by the vitest lane, but surfaced here so a parity
+        # break reddens fast and obviously.
+        run: npm run parity:check
+
+      - name: lane [extension-package]
+        run: npm --prefix extension run package:store
+
+      - name: lane [linux-unit]
+        # Fast lane: every `*.test.ts` except `*.e2e.test.ts`. Fails the
+        # unit job quickly when a regression lands; the separate E2E job
+        # keeps reporting its own signal after this gate passes.
+        run: exec node scripts/run-check.mjs unit-all
+        env:
+          TZ: UTC
+
+      # Release-staging validation is the first phase of unit-all. This marker
+      # lets the admission manifest retain it as an explicit requirement.
+      - name: lane [release-staging]
+        run: ":"
+
+  # ------------------------------------------------------------------
+  # e2e — the spawned-gateway suites, in their own job.
+  #
+  # Each file boots a real gateway subprocess. The launcher keeps constrained
+  # hosts sequential and permits at most two files on hosts with ample current
+  # memory; test gateways also use small worker pools to bound the RAM peak.
+  # Sharing a budget with the fast lanes meant the whole job died at the cap
+  # once the sequence outgrew what was left of it — reported as `cancelled`,
+  # which reads as a mysterious red rather than "ran out of time". Its own job
+  # gives it a budget that describes only its own work, and keeps the fast
+  # lanes' signal quick and separate.
+  # ------------------------------------------------------------------
+  e2e:
+    # The Linux fast lane is the release gate for the expensive integration
+    # work. On the one-slot runner, allowing E2E to start before it can spend
+    # half an hour ahead of an already-broken node job; allowing it to remain
+    # eligible after node fails keeps that red workflow's concurrency group
+    # occupied and prevents the newest pending main revision from starting.
+    needs: node
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          # Deliberately no `cache: npm` — see docs/agent-gotchas.md. These
+          # runners are self-hosted, so `~/.npm` is already on the machine; the
+          # action only ships an ever-growing copy of it back and forth.
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        # browser-extension.e2e.test.ts loads the built extension into a real
+        # headless Chromium. The browser is a required dependency of that suite:
+        # it fails, not skips, when the binary is missing in CI. Installed
+        # through the package the suite imports (packages/collector's
+        # `playwright`), so the browser revision always matches the library that
+        # asks for it; the runner already carries Chromium's system libraries.
+        run: npm exec --workspace packages/collector -- playwright install chromium
+
+      - name: lane [linux-e2e]
+        # Spawned-gateway suites under packages/*/src/**/*.e2e.test.ts.
+        run: exec node scripts/run-check.mjs e2e
+        env:
+          TZ: UTC
+          # Another lane on this host is waited for, not fought; but a job that
+          # would wait past its own budget should fail naming the holder.
+          OMNESIS_E2E_LOCK_TIMEOUT_MS: "3600000"
+
+      # Both required resource-sensitive suites execute inside the E2E
+      # launcher. These markers remain unreachable if that launcher fails.
+      - name: lane [browser-e2e]
+        run: ":"
+
+      - name: lane [embedder-e2e]
+        run: ":"
+
+  # ------------------------------------------------------------------
+  # node-macos — cross-platform validation on the macOS runner. Installs
+  # dependencies (so the native modules — better-sqlite3, duckdb — are
+  # confirmed to build/resolve on arm64-darwin, the signal a prospective
+  # Mac contributor needs), typechecks, and runs the unit suite so darwin
+  # path/fs behavior and the native modules are exercised on macOS too.
+  #
+  # The platform-agnostic lint/format/validate steps and the heavy E2E lane
+  # stay on Linux only — identical results, no need to double them on the
+  # shared (iOS CI) runner.
+  #
+  # The lanes that boot a gateway stay on Linux too, and that is a decision
+  # rather than an omission. This runner's job is iOS and Swift; it shares its
+  # one-wide queue with those builds, and a suite that spawns a gateway,
+  # indexes a synthetic corpus and drives a headless browser competes with
+  # them for the whole machine. Linux runs those checks for the same target, so
+  # doubling them here buys a second copy of an already-covered lane and costs
+  # the iOS queue.
+  # After node passes, this runs for every target because these tests consume
+  # repo-wide fixtures and contracts that cannot be represented by a narrow
+  # path gate.
+  # ------------------------------------------------------------------
+  node-macos:
+    needs: node
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 120
+
+    steps:
+      # node-llama-cpp downloads an xpack cmake toolchain whose `.content`
+      # dirs are read-only, so actions/checkout's clean step hits EACCES on
+      # rmdir and the whole job fails at checkout. Force-writable + remove it
+      # from the leftover workspace before checkout runs.
+      - name: Clean stale node-llama-cpp xpack toolchain (breaks checkout clean)
+        run: |
+          chmod -R u+w "$GITHUB_WORKSPACE/node_modules/node-llama-cpp" 2>/dev/null || true
+          rm -rf "$GITHUB_WORKSPACE/node_modules/node-llama-cpp/llama/xpack" 2>/dev/null || true
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          # Deliberately no `cache: npm` — see docs/agent-gotchas.md. These
+          # runners are self-hosted, so `~/.npm` is already on the machine; the
+          # action only ships an ever-growing copy of it back and forth.
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: lane [macos-typecheck]
+        run: exec node scripts/run-check.mjs typecheck
+
+      - name: lane [macos-unit]
+        # `test:unit` minus `test:unit:smoke` and `test:openclaw`, the two that
+        # spawn a real gateway. Both run on Linux on the same push.
+        run: exec node scripts/run-check.mjs unit
+        env:
+          TZ: UTC
+
+      - name: lane [hermes]
+        run: python3 -B packages/agent-integration/hermes/test_adapter.py
+
+  # ------------------------------------------------------------------
+  # portal-e2e — Playwright DOM tests against a real gateway booted
+  # under tsx over HTTPS (see playwright.config.ts). Every admitted full request exercises it at the same fixed revision.
+  #
+  # The Chromium browser binary is a REQUIRED dependency: `playwright
+  # install` runs as its own step so a missing/unfetchable browser
+  # FAILS the job loudly here, never silently skips a test lane.
+  # ------------------------------------------------------------------
+  portal-e2e:
+    # Share the same fast-fail ordering as the spawned-gateway E2E lane. A
+    # successful node gate retains this coverage; a failed gate releases the
+    # Linux runner for the newest pending main revision.
+    needs: node
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          # Deliberately no `cache: npm` — see docs/agent-gotchas.md. These
+          # runners are self-hosted, so `~/.npm` is already on the machine; the
+          # action only ships an ever-growing copy of it back and forth.
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium (required dependency — fail loud)
+        run: npx playwright install chromium
+
+      - name: lane [portal]
+        run: exec node scripts/run-check.mjs portal
+        env:
+          TZ: UTC

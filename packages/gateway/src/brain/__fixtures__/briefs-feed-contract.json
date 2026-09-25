@@ -1,0 +1,41 @@
+{
+  "briefs": [
+    {
+      "id": "brf_contract_loop",
+      "kind": "loop",
+      "state": "unread",
+      "title": "Send back the signed studio agreement",
+      "description": "Studio Northstar asked for the signed copy last week.",
+      "body": "The agreement arrived by email. Maya Reeves offered to co-sign; nothing has been sent back yet.",
+      "confidence": 0.9,
+      "urgency": 0.6,
+      "createdAt": "1970-01-01T00:00:01.000Z",
+      "eventAt": "2100-01-01T00:00:00.000Z",
+      "relevantUntil": "2100-01-02T00:00:00.000Z",
+      "citations": [
+        {
+          "docId": "doc_contract_email",
+          "title": "Studio agreement — signature needed",
+          "providerId": "demo-mail",
+          "sourceId": "demo-mail:inbox"
+        }
+      ],
+      "threadConversationId": null
+    },
+    {
+      "id": "brf_contract_info",
+      "kind": "info",
+      "state": "read",
+      "title": "Design review moved to Thursday",
+      "description": "The calendar invite was updated overnight.",
+      "body": null,
+      "confidence": 0.7,
+      "urgency": 0.3,
+      "createdAt": "1970-01-01T00:00:02.000Z",
+      "eventAt": null,
+      "relevantUntil": null,
+      "citations": [],
+      "threadConversationId": null
+    }
+  ]
+}

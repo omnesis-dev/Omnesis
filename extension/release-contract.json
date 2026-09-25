@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "client": "chrome-extension",
+  "productVersion": "0.5.11",
+  "sourceRepository": "https://github.com/omnesis-dev/Omnesis",
+  "sourceAvailability": "on-request",
+  "supportContact": "contact@omnesis.dev",
+  "minimumChromeVersion": "130",
+  "pairingProtocol": 4,
+  "tlsTrust": "system-v4",
+  "deviceKind": "browser",
+  "tokenScopes": ["write:web"],
+  "gatewayRoutes": [
+    {
+      "method": "GET",
+      "path": "/health",
+      "authenticated": false
+    },
+    {
+      "method": "POST",
+      "path": "/devices/pair",
+      "authenticated": false
+    },
+    {
+      "method": "GET",
+      "path": "/web-capture-policy",
+      "authenticated": true
+    },
+    {
+      "method": "POST",
+      "path": "/web-capture-policy/excluded-domains",
+      "authenticated": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/web-capture-policy/excluded-domains/:domain",
+      "authenticated": true
+    },
+    {
+      "method": "PUT",
+      "path": "/web-capture-policy/pause",
+      "authenticated": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/web-capture-policy/pause",
+      "authenticated": true
+    },
+    {
+      "method": "POST",
+      "path": "/documents",
+      "authenticated": true
+    },
+    {
+      "method": "POST",
+      "path": "/analytics/ingest",
+      "authenticated": true
+    }
+  ]
+}

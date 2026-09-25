@@ -1,0 +1,14 @@
+{
+  "id": "omnesis-integration",
+  "name": "Omnesis Integration",
+  "description": "Ingests durable OpenClaw transcripts and delivers privacy-reviewed Omnesis answers and subscription wakes.",
+  "activation": { "onStartup": true },
+  "contracts": {
+    "tools": ["omnesis_answer", "omnesis_subscription_answer", "omnesis_subscriptions"]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

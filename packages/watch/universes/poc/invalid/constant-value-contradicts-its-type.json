@@ -1,0 +1,47 @@
+{
+  "watch": {
+    "name": "constant-value-contradicts-its-type",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "constants": {
+      "renewal_due": {
+        "type": "date",
+        "value": "soon",
+        "provenance_doc": "1f0c8e64-0000-4000-8000-0000000000a1"
+      },
+      "budget_cap": {
+        "type": "number",
+        "value": "five hundred",
+        "provenance_doc": "1f0c8e64-0000-4000-8000-0000000000a2"
+      }
+    },
+    "nodes": [
+      {
+        "id": "mail",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email"
+        },
+        "output_map": {
+          "thread_id": "$e.metadata.extra.threadId",
+          "doc_id": "$e.docId"
+        }
+      },
+      {
+        "id": "gate",
+        "type": "stateless.transform",
+        "inputs": {
+          "mail": {
+            "role": "arm"
+          }
+        },
+        "query": "SELECT ($const.renewal_due > $const.budget_cap) AS fires"
+      }
+    ],
+    "sink": {
+      "input": "gate"
+    }
+  }
+}

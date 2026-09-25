@@ -1,0 +1,11 @@
+[
+  {
+    "id": 7701,
+    "name": "Travel Card",
+    "institution_name": "Northstar Bank",
+    "institution_logo": "https://example.com/logos/northstar.png",
+    "provider": "gocardless",
+    "currency": "EUR",
+    "status": "ACTIVE"
+  }
+]

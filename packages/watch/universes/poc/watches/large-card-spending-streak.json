@@ -1,0 +1,42 @@
+{
+  "watch": {
+    "name": "large-card-spending-streak",
+    "nl_query": "Let me know if I make three payments over \u00a3200 in a week.",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "large_txn",
+        "type": "source.analytics_row",
+        "table": "plaid_transactions",
+        "op": ["inserted"],
+        "predicate": "amount > 200 AND pending = false",
+        "output_map": {
+          "amount": "$e.row.amount",
+          "day": "date_trunc('day', $e.row.date)"
+        }
+      },
+      {
+        "id": "sustained_streak",
+        "type": "stateful.persistence",
+        "comment": "One large purchase is a purchase; three inside a week is a pattern worth naming. The window is rolling, so a payment that falls out of it stops counting and a streak that has fired starts its next count from the payments still inside.",
+        "inputs": {
+          "large_txn": {
+            "role": "arm"
+          }
+        },
+        "duration": "7 days",
+        "min_events": 3,
+        "output_map": {
+          "last_amount": "$n.large_txn.amount"
+        }
+      }
+    ],
+    "sink": {
+      "input": "sustained_streak",
+      "output_map": {
+        "last_amount": "$n.sustained_streak.last_amount"
+      }
+    }
+  }
+}

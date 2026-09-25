@@ -1,0 +1,203 @@
+{
+  "trace": {
+    "watch": "mum-call-rhythm-stopped",
+    "records": [
+      {
+        "seq": 8,
+        "nodeId": "mum_call",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 8,
+        "nodeId": "rhythm_broken",
+        "key": "singleton",
+        "transition": "armed"
+      },
+      {
+        "seq": 100,
+        "nodeId": "mum_call",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 100,
+        "nodeId": "rhythm_broken",
+        "key": "singleton",
+        "transition": "reset"
+      },
+      {
+        "seq": 100,
+        "nodeId": "rhythm_broken",
+        "key": "singleton",
+        "transition": "armed"
+      },
+      {
+        "seq": 188,
+        "nodeId": "mum_call",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 188,
+        "nodeId": "rhythm_broken",
+        "key": "singleton",
+        "transition": "reset"
+      },
+      {
+        "seq": 188,
+        "nodeId": "rhythm_broken",
+        "key": "singleton",
+        "transition": "armed"
+      },
+      {
+        "seq": -1,
+        "nodeId": "rhythm_broken",
+        "key": "singleton",
+        "transition": "fired",
+        "detail": "the wait elapsed"
+      },
+      {
+        "seq": 412,
+        "nodeId": "mum_call",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 412,
+        "nodeId": "rhythm_broken",
+        "key": "singleton",
+        "transition": "armed"
+      },
+      {
+        "seq": 516,
+        "nodeId": "mum_call",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 516,
+        "nodeId": "rhythm_broken",
+        "key": "singleton",
+        "transition": "reset"
+      },
+      {
+        "seq": 516,
+        "nodeId": "rhythm_broken",
+        "key": "singleton",
+        "transition": "armed"
+      },
+      {
+        "seq": 617,
+        "nodeId": "mum_call",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 617,
+        "nodeId": "rhythm_broken",
+        "key": "singleton",
+        "transition": "reset"
+      },
+      {
+        "seq": 617,
+        "nodeId": "rhythm_broken",
+        "key": "singleton",
+        "transition": "armed"
+      },
+      {
+        "seq": -2,
+        "nodeId": "rhythm_broken",
+        "key": "singleton",
+        "transition": "fired",
+        "detail": "the wait elapsed"
+      },
+      {
+        "seq": 796,
+        "nodeId": "mum_call",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 796,
+        "nodeId": "rhythm_broken",
+        "key": "singleton",
+        "transition": "armed"
+      },
+      {
+        "seq": 900,
+        "nodeId": "mum_call",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 900,
+        "nodeId": "rhythm_broken",
+        "key": "singleton",
+        "transition": "reset"
+      },
+      {
+        "seq": 900,
+        "nodeId": "rhythm_broken",
+        "key": "singleton",
+        "transition": "armed"
+      },
+      {
+        "seq": -3,
+        "nodeId": "rhythm_broken",
+        "key": "singleton",
+        "transition": "fired",
+        "detail": "the wait elapsed"
+      },
+      {
+        "seq": 1175,
+        "nodeId": "mum_call",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1175,
+        "nodeId": "rhythm_broken",
+        "key": "singleton",
+        "transition": "armed"
+      }
+    ],
+    "firings": [
+      {
+        "seq": -1,
+        "nodeId": "rhythm_broken",
+        "keyHash": "e3b0c44298fc1c149afbf4c8996fb924:0",
+        "key": "singleton",
+        "firedAt": "2026-03-24T17:45:00.000Z",
+        "payload": { "last_call": "2026-03-15T17:45:00.000Z" },
+        "documentIds": ["d0c00000-0000-4000-8000-000000000007"]
+      },
+      {
+        "seq": -2,
+        "nodeId": "rhythm_broken",
+        "keyHash": "e3b0c44298fc1c149afbf4c8996fb924:0",
+        "key": "singleton",
+        "firedAt": "2026-04-25T17:55:00.000Z",
+        "payload": { "last_call": "2026-04-16T17:55:00.000Z" },
+        "documentIds": ["d0c00000-0000-4000-8000-000000000010"]
+      },
+      {
+        "seq": -3,
+        "nodeId": "rhythm_broken",
+        "keyHash": "e3b0c44298fc1c149afbf4c8996fb924:0",
+        "key": "singleton",
+        "firedAt": "2026-05-15T18:05:00.000Z",
+        "payload": { "last_call": "2026-05-06T18:05:00.000Z" },
+        "documentIds": ["d0c00000-0000-4000-8000-000000000012"]
+      }
+    ]
+  },
+  "backtest": {
+    "events": 1208,
+    "days": 90,
+    "firings": 3,
+    "reachByNode": {},
+    "totalReaches": 0,
+    "unboundedNodes": []
+  }
+}

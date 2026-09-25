@@ -1,0 +1,6 @@
+# Second-stage privacy review: the reduced delivery answer is re-read on its own
+# terms and allowed, which is what turns the reduction into a release rather than
+# something held for the user. Routed on a phrase the reduction introduced.
+{"afterMs":30,"event":{"type":"agent.message.start","payload":{"sessionId":"$SESSION","messageId":"$MSG","role":"assistant"}}}
+{"afterMs":120,"event":{"type":"agent.tool.start","payload":{"sessionId":"$SESSION","messageId":"$MSG","toolCallId":"tc_privacy_review_delivery_recheck","tool":"submit_privacy_review","args":{"decision":"allow","confidence":0.94,"findings":[{"category":"scheduling_detail","detailLevel":"summary","subject":"user","disposition":"allow","description":"What remains is the delivery day and the courier. Both are operational facts the caller needs and neither identifies a person."}],"rationale":"The reduced answer keeps the delivery day and the courier and no longer carries the exact window, the consignment note or the name of the person receiving the pallet. Nothing left in it exceeds the stated purpose."},"intent":"Submit the privacy review"}}}
+{"afterMs":40,"event":{"type":"agent.message.end","payload":{"sessionId":"$SESSION","messageId":"$MSG","stopReason":"end_turn"}}}

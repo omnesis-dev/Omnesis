@@ -1,0 +1,14 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "SPAWN_REQUIRES_MAX_LIVE_INSTANCES",
+      "severity": "error",
+      "path": "/watch/nodes/1/max_live_instances",
+      "message": "'spawn' allows parallel instances per key, so a ceiling is mandatory.",
+      "details": {
+        "nodeId": "waiting"
+      }
+    }
+  ]
+}

@@ -1,0 +1,872 @@
+{
+  "trace": {
+    "watch": "order-problem-by-number",
+    "records": [
+      {
+        "seq": 17,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 19,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 24,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 32,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 34,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 44,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 48,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 59,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 72,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 74,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 85,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 95,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 114,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 122,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 132,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 160,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 177,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 243,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 264,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 298,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 323,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 325,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 335,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 361,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 365,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 374,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 376,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 392,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 402,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 407,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 410,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 421,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 423,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 447,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 449,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 454,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 463,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 465,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "judge declined"
+      },
+      {
+        "seq": 470,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 481,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 488,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 496,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 498,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 507,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 509,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 527,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 535,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 538,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 549,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 551,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 567,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 579,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 581,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 583,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 593,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 596,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 601,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 627,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 629,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 631,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 640,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 645,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 668,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 672,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 682,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 694,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 706,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 712,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 720,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 723,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 726,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 747,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 751,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 762,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 764,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 787,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 794,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 806,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 811,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 833,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 835,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 845,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 862,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 877,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 879,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 883,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 892,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 894,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 896,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 913,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 922,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 925,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "held",
+        "detail": "judge declined"
+      },
+      {
+        "seq": 928,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 938,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 949,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 965,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 968,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 972,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 980,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 984,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 986,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 1006,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 1012,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 1022,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 1043,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 1046,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 1060,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 1064,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 1075,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 1087,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 1089,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 1099,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 1130,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 1132,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 1143,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 1147,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 1170,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 1173,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      },
+      {
+        "seq": 1185,
+        "nodeId": "order_mail",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "no lexical term of 1 matched"
+      }
+    ],
+    "firings": [
+      {
+        "seq": 601,
+        "nodeId": "order_mail",
+        "keyHash": "e3b0c44298fc1c149afbf4c8996fb924:0",
+        "key": "singleton",
+        "firedAt": "2026-04-15T16:10:00.000Z",
+        "payload": {
+          "evidence": "d0c00001-0000-4000-8000-000000000024",
+          "kind": "delay"
+        },
+        "documentIds": ["d0c00001-0000-4000-8000-000000000024"]
+      },
+      {
+        "seq": 723,
+        "nodeId": "order_mail",
+        "keyHash": "e3b0c44298fc1c149afbf4c8996fb924:0",
+        "key": "singleton",
+        "firedAt": "2026-04-24T09:45:00.000Z",
+        "payload": {
+          "evidence": "d0c00001-0000-4000-8000-000000000025",
+          "kind": "delay"
+        },
+        "documentIds": ["d0c00001-0000-4000-8000-000000000025"]
+      }
+    ]
+  },
+  "backtest": {
+    "events": 1208,
+    "days": 90,
+    "firings": 0,
+    "reachByNode": { "order_mail": 4 },
+    "totalReaches": 4,
+    "unboundedNodes": []
+  }
+}

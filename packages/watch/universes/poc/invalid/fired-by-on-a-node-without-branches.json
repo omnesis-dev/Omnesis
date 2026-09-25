@@ -1,0 +1,42 @@
+{
+  "watch": {
+    "name": "fired-by-on-a-node-without-branches",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "mail",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email"
+        },
+        "output_map": {
+          "thread_id": "$e.metadata.extra.threadId",
+          "doc_id": "$e.docId"
+        }
+      },
+      {
+        "id": "waiting",
+        "type": "stateful.wait",
+        "inputs": {
+          "mail": {
+            "role": "arm",
+            "key": {
+              "thread_id": ".thread_id"
+            }
+          }
+        },
+        "on_collision": "reset",
+        "duration": "3 days"
+      }
+    ],
+    "sink": {
+      "input": "waiting",
+      "output_map": {
+        "via": "$n.waiting.$fired_by"
+      }
+    }
+  }
+}

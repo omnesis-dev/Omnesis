@@ -1,0 +1,41 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "NODE_MISSING_INPUTS",
+      "severity": "error",
+      "path": "/watch/nodes/1/inputs",
+      "message": "Node 'gate' has no arm input — nothing can instantiate it.",
+      "details": {
+        "nodeId": "gate"
+      }
+    },
+    {
+      "code": "INPUT_SELF_REFERENCE",
+      "severity": "error",
+      "path": "/watch/nodes/1/inputs/gate",
+      "message": "Node 'gate' cannot be its own input."
+    },
+    {
+      "code": "INPUT_NODE_UNKNOWN",
+      "severity": "error",
+      "path": "/watch/nodes/1/inputs/ghost",
+      "message": "Node 'gate' names an input 'ghost' that does not exist.",
+      "details": {
+        "nodeId": "gate",
+        "missing": "ghost",
+        "known": ["mail", "gate"]
+      }
+    },
+    {
+      "code": "SINK_INPUT_UNKNOWN",
+      "severity": "error",
+      "path": "/watch/sink/input",
+      "message": "The sink reads from 'nowhere', which is not a node.",
+      "details": {
+        "missing": "nowhere",
+        "known": ["mail", "gate"]
+      }
+    }
+  ]
+}

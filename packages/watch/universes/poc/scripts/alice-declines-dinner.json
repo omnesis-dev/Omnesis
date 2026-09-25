@@ -1,0 +1,33 @@
+{
+  "note": "The email decline lands first; once_ever means the WhatsApp one never gets to fire the sink again.",
+  "recall": [
+    {
+      "nodeId": "alice_email_decline",
+      "documentId": "d0c00001-0000-4000-8000-000000000006",
+      "score": 0.79,
+      "title": "So sorry — can't make dinner"
+    },
+    {
+      "nodeId": "alice_whatsapp_decline",
+      "documentId": "d0c00001-0000-4000-8000-000000000005",
+      "score": 0.75,
+      "title": "Alice — 21 March"
+    }
+  ],
+  "judgements": [
+    {
+      "nodeId": "alice_email_decline",
+      "documentId": "d0c00001-0000-4000-8000-000000000006",
+      "fired": true,
+      "output": {},
+      "title": "So sorry — can't make dinner"
+    },
+    {
+      "nodeId": "alice_whatsapp_decline",
+      "documentId": "d0c00001-0000-4000-8000-000000000005",
+      "fired": true,
+      "output": {},
+      "title": "Alice — 21 March"
+    }
+  ]
+}

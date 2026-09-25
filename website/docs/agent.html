@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>The agent — Omnesis Docs</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32" />
+    <link rel="icon" type="image/png" href="/favicon-16.png" sizes="16x16" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- Resolve the theme before first paint: the stored choice, else the OS preference. -->
+    <script>
+      (function () {
+        var root = document.documentElement;
+        root.classList.add("js");
+        var t;
+        try {
+          t = localStorage.getItem("omnesis-theme");
+        } catch (e) {}
+        if (t !== "light" && t !== "dark") {
+          t =
+            window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+        }
+        root.setAttribute("data-theme", t);
+      })();
+    </script>
+
+    <meta
+      name="description"
+      content="The built-in Omnesis chat agent: what it does, memory, sandboxing, conversations, time zones, model choice, and standing instructions."
+    />
+    <link rel="canonical" href="https://omnesis.dev/docs/agent" />
+    <meta name="theme-color" content="#0d1117" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="/footer-social.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <nav id="nav">
+      <div class="container">
+        <a href="/" class="nav-logo" aria-label="Omnesis"
+          ><span class="nav-logo-mark" aria-hidden="true"></span>MNESIS</a
+        >
+        <div class="nav-right">
+          <ul class="nav-links">
+            <li><a href="/">Context Layer</a></li>
+            <li><a href="/brain">Omnesis Brain</a></li>
+            <li><a href="/vision">Vision</a></li>
+            <li><a href="/docs/" aria-current="page">Docs</a></li>
+          </ul>
+          <a
+            class="nav-icon-btn"
+            href="#"
+            data-oss-open
+            aria-label="Omnesis on GitHub"
+            title="Omnesis on GitHub"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path
+                d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+              />
+            </svg>
+          </a>
+          <button
+            id="theme-toggle"
+            class="theme-toggle"
+            type="button"
+            aria-label="Switch between dark and light theme"
+            title="Toggle theme"
+          >
+            <svg
+              class="icon-sun"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="4" />
+              <path
+                d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"
+              />
+            </svg>
+            <svg
+              class="icon-moon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <div class="docs-shell">
+      <aside class="docs-sidebar">
+        <nav aria-label="Documentation">
+          <ul class="side-pages">
+            <li><a href="/docs/">Overview</a></li>
+            <li><a href="/docs/install">Install</a></li>
+            <li><a href="/docs/setup">Setup</a></li>
+            <li><a href="/docs/search">Search</a></li>
+            <li>
+              <a href="/docs/agent" aria-current="page">The agent</a>
+              <ul class="side-sub">
+                <li><a href="#what-it-does">What it does</a></li>
+                <li><a href="#memory">Memory</a></li>
+                <li><a href="#sandboxed-by-design">Sandboxed by design</a></li>
+                <li><a href="#conversations">Conversations</a></li>
+                <li><a href="#times-and-time-zones">Times and time zones</a></li>
+                <li><a href="#pick-the-model">Pick the model</a></li>
+                <li><a href="#standing-instructions">Standing instructions</a></li>
+              </ul>
+            </li>
+            <li><a href="/docs/connect">Agents &amp; MCP</a></li>
+            <li><a href="/docs/apps">Mobile apps</a></li>
+            <li><a href="/docs/notifications">Notifications</a></li>
+            <li><a href="/docs/operating">Operating</a></li>
+            <li><a href="/docs/security">Security</a></li>
+            <li><a href="/docs/updating">Backup &amp; updates</a></li>
+            <li><a href="/docs/sources">Available sources</a></li>
+            <li><a href="/docs/building-sources">Building sources</a></li>
+            <li><a href="/docs/experimental">Experimental</a></li>
+          </ul>
+        </nav>
+      </aside>
+
+      <main id="main" class="docs-content">
+        <p class="docs-kicker">Use</p>
+        <h1>The agent</h1>
+        <p class="docs-lead">
+          Omnesis has a built-in chat agent that runs inside the gateway. Ask it a question about
+          your indexed data and it answers with citations to the source documents. This page is for
+          anyone who chats with it: what it can do, what it remembers, how it is contained, and how
+          to choose the model it runs on. To let an outside AI tool such as Claude, ChatGPT or Codex
+          read your data, see <a href="/docs/connect">Agents &amp; MCP</a>.
+        </p>
+
+        <h2 id="what-it-does">What it does</h2>
+        <p>
+          The agent is part of the gateway process, so there is no extra service to run. Given a
+          question, it works through your data with a small set of tools:
+        </p>
+        <ul>
+          <li>
+            <strong>Search</strong> the index, with the same pipeline as
+            <a href="/docs/search">Search</a>.
+          </li>
+          <li><strong>Read documents</strong> in full, not just search snippets.</li>
+          <li>
+            <strong>Follow event trails</strong>: the chronological story of linked documents around
+            a result.
+          </li>
+          <li><strong>Look up people</strong> by name, email, phone, or handle.</li>
+          <li>
+            <strong>Run SQL</strong> over the analytics database (health, activity, finance, and
+            other structured records).
+          </li>
+        </ul>
+        <p>
+          Every answer cites the documents it drew from, and each citation opens the document
+          itself. When a hard question splits into substantial independent parts, the agent can fan
+          out workers in parallel. Each worker gets a fresh context and the same read-only retrieval
+          tools, and reports its evidence; the agent then compares and merges what they found.
+        </p>
+        <p>
+          For a deliberate, fully orchestrated research pass, type <code>/</code> in the composer
+          and choose <strong>Deep Research</strong>. Omnesis plans the question, runs focused
+          readers in parallel, verifies their cited evidence, and writes one report. Neither needs
+          any setup beyond an assigned model.
+        </p>
+        <p>
+          Open the agent from <strong>Ask</strong> in the portal (<code>/portal/agent</code>) or
+          from <strong>Ask</strong> in the menu of the
+          <a href="/docs/apps">iOS and Android apps</a>.
+        </p>
+
+        <h2 id="memory">Memory</h2>
+        <p>
+          Ask the agent to remember a preference, a fact about you or another person, or useful
+          context for a document. It saves the memory as an annotation that cites its evidence, and
+          the annotation stays available across conversations and gateway restarts. Memory needs no
+          model beyond the one the agent already uses. You can ask the agent to correct or forget a
+          remembered fact.
+        </p>
+        <p>
+          A memory must cite a stored document or a message you wrote. The gateway checks the quoted
+          evidence, and an agent reply never counts as something you said. Person pages show what
+          Omnesis has learned about that person, your own person page shows your profile, and a
+          document's details show its annotations under <strong>Enriched by Omnesis</strong>.
+          Deleting a conversation also removes the annotations that cite it.
+        </p>
+
+        <h2 id="sandboxed-by-design">Sandboxed by design</h2>
+        <p>
+          The agent reads your documents and writes only its own memory. Its retrieval tools
+          (search, documents, trails, people, SQL) read and never change anything:
+        </p>
+        <ul>
+          <li>There is no shell and no filesystem access.</li>
+          <li>It cannot edit the originals in your connected sources.</li>
+          <li>
+            The SQL tool runs each request inside a read-only transaction on the gateway's analytics
+            database, with external access disabled: no writes, no network, no reading files from
+            disk.
+          </li>
+        </ul>
+        <p>
+          The tools run against your own gateway only. Even when the model runs on a remote backend,
+          it never touches your data stores directly; it sees only what the gateway's tools return.
+        </p>
+
+        <h2 id="conversations">Conversations</h2>
+        <p>
+          Conversations persist across gateway restarts. Each one is a plain JSON file under
+          <code>~/.config/omnesis/conversations/</code>, so your history is ordinary files you can
+          inspect and copy. They are kept until you delete them, unless
+          <code>activityRetention.maxAge</code> is set (see
+          <a href="/docs/operating#configuration">Configuration</a>); pinned conversations are
+          always kept. If the assigned model's backend is unreachable, you can still browse saved
+          conversations; sending a message then shows the backend's error.
+        </p>
+        <p>
+          Returning to the portal or either mobile app within an hour reopens the conversation you
+          were using. After an hour away, Omnesis opens a fresh conversation with the composer
+          ready, and the previous one stays in the conversation list.
+        </p>
+        <h3 id="unread-conversations">Unread conversations and notifications</h3>
+        <p>
+          A conversation the agent wrote into while you were not looking, such as a slow answer that
+          finished later, is marked unread in the conversation list. Opening it clears the mark on
+          every client, because the gateway holds the read state rather than each client. Only
+          showing the conversation on screen counts; a client that merely synced it in the
+          background has not read it.
+        </p>
+        <p>
+          When a conversation goes unread while you are away, your phone gets one notification, and
+          tapping it opens that conversation. A turn that writes several messages, or further
+          messages before you look, sends no second notification; the conversation can notify you
+          again only after you have read it. A conversation already open on your screen never
+          notifies. The <a href="/docs/notifications">Notifications</a> page covers delivery.
+        </p>
+        <h3 id="conversation-history">Past conversations and length limits</h3>
+        <p>
+          Conversations are also indexed back into your data as the <code>omnesis-chat</code>
+          source. Past conversations show up in search like any other document, and the agent can
+          recall what you discussed with it before.
+        </p>
+        <p>
+          Omnesis never compacts, summarizes, prunes, or silently truncates a conversation to fit a
+          model's context window. When a conversation reaches the model's limit, Omnesis keeps the
+          failed turn and any partial answer, makes the conversation read-only, and asks you to
+          start a new one. It stays read-only on every device, and changing the assigned model does
+          not reopen it. When only a single answer reaches the model's output limit, Omnesis marks
+          that answer as truncated and you can ask a follow-up.
+        </p>
+
+        <h2 id="times-and-time-zones">Times and time zones</h2>
+        <p>
+          The portal and the iOS and Android apps send their own time zone when they open a
+          conversation, and the agent answers in that zone. Ask when an evening appointment starts
+          from a laptop at home, then ask again from a phone eight time zones away: each answer is
+          in the hour that device's clock shows.
+        </p>
+        <p>
+          This matters because the gateway does not move. It stays on the machine that indexes your
+          data, in whatever zone that machine is set to, while you travel. Relative windows follow
+          the same rule: <code>today</code> and <code>this week</code> mean the day and week where
+          you are, not where the gateway is. Two kinds of entry are left alone: an all-day event
+          stays a date, and an event with its own zone (a flight landing abroad) is given in the
+          local time of that place.
+        </p>
+        <p>
+          <a href="/docs/search">Search filters</a> work differently: <code>after:</code> and
+          <code>before:</code> resolve relative words to a UTC calendar date on the gateway's clock,
+          so pass an absolute <code>YYYY-MM-DD</code> when a day boundary matters. The
+          <a href="/docs/connect#answer">answer API</a> receives no device time zone either, and
+          uses the gateway's.
+        </p>
+
+        <h2 id="pick-the-model">Pick the model</h2>
+        <p>
+          The agent is off until you assign a model to the <code>agent</code> role. You choose where
+          that model runs:
+        </p>
+        <ul>
+          <li>
+            <strong>Anthropic</strong>: assign any model your API key can use. Omnesis lists the
+            models Anthropic makes available to the key.
+          </li>
+          <li>
+            <strong>Any OpenAI-compatible HTTP server</strong>: self-hosted (Ollama, llama-server,
+            vLLM) or a cloud provider preset.
+          </li>
+          <li>
+            <strong>Codex</strong>: the agent runs on your ChatGPT subscription through OpenAI's
+            Codex app-server. There is no API key; you sign in once. The privacy reviewer that
+            checks answers for <a href="/docs/connect#privacy-policy">external agents</a> can use
+            the same sign-in and model. The gateway manages its Codex runtime separately from the
+            model list, so refreshing models does not update the runtime;
+            <a href="/docs/operating#models">Operating → Models</a> covers runtime status and
+            updates.
+          </li>
+        </ul>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p class="t-dim"># Anthropic: store the key, allow cloud inference, pick a model</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis backend key set anthropic</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis config set inference.allowRemoteInference true</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis model list --role agent</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis model assign agent anthropic/MODEL_ID</span>
+            </p>
+            <p class="t-dim"># fully local: declare an OpenAI-compatible server, then assign</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis backend add ollama http://localhost:11434</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis model assign agent ollama/qwen3:8b</span>
+            </p>
+            <p class="t-dim"># ChatGPT subscription: sign in to Codex once, then assign</p>
+            <p>
+              <span class="t-prompt">❯</span> <span class="t-cmd">omnesis codex login --wait</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis codex setup-agent MODEL_ID_FROM_STATUS</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          <code>omnesis backend key set anthropic</code> prompts for the key.
+          <code>omnesis model list --role agent</code> prints the model IDs to assign, including
+          <code>anthropic/…</code> entries once the key is set. Without remote inference enabled,
+          the Anthropic assignment is saved but the agent stays off.
+        </p>
+        <p>
+          <code>codex setup-agent</code> takes a model from the status printed after login. It
+          enables remote inference and assigns that model in one step, but only while the agent role
+          is unassigned; it never replaces an existing assignment. Codex receives the conversation,
+          the relevant Omnesis data, and tool results for these requests. When a
+          <code>codex</code> command is installed and the agent role is unassigned, an interactive
+          install offers to do this for you (see <a href="/docs/install#first-run">First run</a>).
+        </p>
+        <p>
+          After assigning an HTTP or Codex model, open its role card in
+          <strong>Settings → Models</strong> to choose the reasoning settings that model offers,
+          such as a reasoning toggle, an effort level or a token budget; see
+          <a href="/docs/operating#model-settings">Reasoning settings</a>.
+        </p>
+        <p>
+          Nothing leaves your machine by default: cloud backends (Anthropic, Codex) and HTTP
+          backends that do not resolve to loopback stay unused until you enable remote inference.
+          Backends, presets, the remote-inference setting, and the other model roles are covered in
+          <a href="/docs/operating#models">Operating → Models</a>.
+        </p>
+
+        <h2 id="standing-instructions">Standing instructions</h2>
+        <p>
+          <code>OMNESIS.md</code> is an optional Markdown file in the gateway's config directory. If
+          it exists, the agent reads it on every run. Use it for what you would otherwise repeat in
+          every conversation: who you are, how you want to be answered, conventions you expect it to
+          keep.
+        </p>
+        <p>
+          Edit it in the portal under <strong>Settings → OMNESIS.md</strong>, or open the file in
+          any editor. The file on disk is the only copy, so whichever wrote last is what the agent
+          reads. There is no version history; <a href="/docs/updating#backup">backups</a> include
+          it.
+        </p>
+        <div class="term">
+          <div class="term-bar">
+            <span></span><span></span><span></span>
+            <span class="term-title">~/.config/omnesis/OMNESIS.md</span>
+          </div>
+          <div class="term-body">
+            <pre class="wrap">
+# House rules
+
+- I work in engineering; assume technical vocabulary.
+- Dates as YYYY-MM-DD, distances in kilometres.
+- When you cite a message thread, name who sent it.</pre
+            >
+          </div>
+        </div>
+        <p>
+          The file reaches the agent you chat with, the workers it delegates research to, and
+          answers served to a connected external agent. It does not reach the privacy reviewer or
+          the check on memory quotes, so nothing you write in <code>OMNESIS.md</code> can loosen
+          your privacy policy.
+        </p>
+        <p>
+          The file is capped at 16&nbsp;KB. Past that, only the first 16&nbsp;KB reaches the agent,
+          marked so the agent knows it is reading a fragment, and the portal says the file is over
+          the cap. A file over 256&nbsp;KB is not read at all, and the portal shows its size instead
+          of opening an editor. The file is written readable by its owner only.
+        </p>
+        <p>
+          Changes take effect on the next run. A conversation already open keeps the instructions it
+          started with, so start a new conversation to see an edit take hold.
+        </p>
+
+        <nav class="docs-pager" aria-label="Pages">
+          <a href="/docs/search"
+            ><span class="pager-label">Previous</span><span class="pager-title">Search</span></a
+          >
+          <a class="pager-next" href="/docs/connect"
+            ><span class="pager-label">Next</span
+            ><span class="pager-title">Agents &amp; MCP</span></a
+          >
+        </nav>
+      </main>
+    </div>
+
+    <footer class="site-footer">
+      <div class="container">
+        <div class="footer-inner">
+          <div class="footer-base">© 2026 Omnesis</div>
+          <nav class="footer-links" aria-label="Footer">
+            <a href="/docs/">Docs</a>
+            <a href="/privacy">Privacy</a>
+            <a class="footer-mail" href="mailto:contact@omnesis.dev">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="2" y="4" width="20" height="16" rx="2" />
+                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+              </svg>
+              contact@omnesis.dev
+            </a>
+            <a class="footer-gh" href="#" data-oss-open>
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path
+                  d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+                />
+              </svg>
+              GitHub
+            </a>
+            <a
+              class="footer-social footer-x"
+              href="https://x.com/Omnesisdev"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Omnesis on X"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>@Omnesisdev
+            </a>
+            <a
+              class="footer-social footer-discord"
+              href="https://discord.gg/4Y8pQHrVv"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Join Omnesis on Discord"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>Discord
+            </a>
+          </nav>
+        </div>
+      </div>
+    </footer>
+
+    <script src="/docs/docs.js"></script>
+  </body>
+</html>

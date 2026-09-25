@@ -1,0 +1,40 @@
+{
+  "self": "p_self",
+  "people": [
+    {
+      "id": "p_self",
+      "name": "Maya Reeves",
+      "emails": ["maya.reeves@example.com", "maya.reeves@icloud.example"],
+      "phones": ["+15550100100"]
+    },
+    {
+      "id": "p_nora",
+      "name": "Nora Whitfield",
+      "emails": ["nora.whitfield@example.com"],
+      "phones": ["+15550100101"]
+    },
+    {
+      "id": "p_theo",
+      "name": "Theo Baptiste",
+      "emails": ["theo.baptiste@example.org"],
+      "phones": ["+15550100102"]
+    },
+    {
+      "id": "p_iris",
+      "name": "Iris Kelland",
+      "emails": ["iris.kelland@example.org"],
+      "phones": ["+15550100103"]
+    },
+    {
+      "id": "p_rail",
+      "name": "Eurostar Bookings",
+      "emails": ["bookings@eurostar.example"]
+    },
+    {
+      "id": "p_club",
+      "name": "Riverbend Tri Club",
+      "emails": ["entries@riverbend.example"]
+    }
+  ],
+  "orgs": [{ "id": "o_club", "name": "Riverbend Tri Club", "domain": "riverbend.example" }]
+}

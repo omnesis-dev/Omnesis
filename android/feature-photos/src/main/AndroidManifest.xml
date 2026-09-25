@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Photos integration manifest. Merged into :app by the manifest merger,
+  keeping the permission + job declarations encapsulated in this module.
+
+  READ_MEDIA_IMAGES (API 33+) / READ_EXTERNAL_STORAGE (pre-33, capped via
+  maxSdkVersion so it's never requested where the newer permission applies)
+  is the required gate — standard "dangerous" runtime permissions granted
+  via the normal system dialog, same shape as Call Log's READ_CALL_LOG.
+  READ_MEDIA_VISUAL_USER_SELECTED (API 34+) lets a partial "Select
+  photos..." grant still work transparently — the MediaStore query just
+  returns fewer rows. ACCESS_MEDIA_LOCATION is independently optional: its
+  denial only disables the place-name analyzer, not the whole source.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission
+        android:name="android.permission.READ_MEDIA_IMAGES"
+        android:minSdkVersion="33" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+    <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
+
+    <application>
+        <!--
+          The "live" path: a JobScheduler content-trigger job fires (even if
+          the app process is dead) when MediaStore.Images changes, re-arms
+          itself, then kicks a sync. android:exported="false" since only
+          this app's own JobScheduler registration ever targets it — the
+          permission additionally locks it to system-only callers.
+        -->
+        <service
+            android:name="dev.omnesis.android.feature.photos.PhotosMediaObserverJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+    </application>
+
+</manifest>

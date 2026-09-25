@@ -1,0 +1,155 @@
+[
+  {
+    "dbId": "db_projects",
+    "name": "Projects",
+    "description": "Active product / engineering projects.",
+    "schemaProperties": [
+      { "name": "title", "type": "VARCHAR", "description": "Page title" },
+      { "name": "status", "type": "VARCHAR", "description": "Project status" },
+      { "name": "owner", "type": "VARCHAR", "description": "Project owner" },
+      { "name": "due", "type": "DATE", "description": "Target completion date", "nullable": true }
+    ],
+    "rows": [
+      {
+        "id": "row_globex_integ",
+        "title": "Globex integration",
+        "status": "In progress",
+        "owner": "John Smith",
+        "due": "2025-09-25",
+        "createdAt": "2025-08-15T11:00:00Z",
+        "modifiedAt": "2025-09-13T11:00:00Z"
+      },
+      {
+        "id": "row_vendor_eval",
+        "title": "Vendor evaluation",
+        "status": "In progress",
+        "owner": "Jane Doe",
+        "due": "2025-09-30",
+        "createdAt": "2025-08-28T15:30:00Z",
+        "modifiedAt": "2025-09-10T11:00:00Z"
+      },
+      {
+        "id": "row_q3_offsite",
+        "title": "Q3 offsite",
+        "status": "Planning",
+        "owner": "Emma Park",
+        "due": "2025-09-18",
+        "createdAt": "2025-09-02T14:00:00Z",
+        "modifiedAt": "2025-09-09T16:00:00Z"
+      }
+    ]
+  },
+  {
+    "dbId": "db_tasks",
+    "name": "Tasks",
+    "description": "Day-to-day tasks tracked alongside projects.",
+    "schemaProperties": [
+      { "name": "title", "type": "VARCHAR", "description": "Task title" },
+      { "name": "status", "type": "VARCHAR", "description": "Task status" },
+      { "name": "owner", "type": "VARCHAR", "description": "Assignee" },
+      { "name": "due", "type": "DATE", "description": "Due date", "nullable": true },
+      {
+        "name": "project",
+        "type": "VARCHAR",
+        "description": "Linked project name",
+        "nullable": true
+      }
+    ],
+    "rows": [
+      {
+        "id": "row_send_nda",
+        "title": "Send vendor SOC2 NDA",
+        "status": "Done",
+        "owner": "Jane Doe",
+        "due": "2025-09-12",
+        "project": "Vendor evaluation",
+        "createdAt": "2025-09-10T11:30:00Z",
+        "modifiedAt": "2025-09-12T16:00:00Z"
+      },
+      {
+        "id": "row_confirm_hotel",
+        "title": "Confirm offsite hotel block",
+        "status": "Done",
+        "owner": "Emma Park",
+        "due": "2025-09-05",
+        "project": "Q3 offsite",
+        "createdAt": "2025-09-02T14:30:00Z",
+        "modifiedAt": "2025-09-05T11:00:00Z"
+      },
+      {
+        "id": "row_prep_demo",
+        "title": "Prep Friday demo",
+        "status": "In progress",
+        "owner": "John Smith",
+        "due": "2025-09-13",
+        "project": "Demos",
+        "createdAt": "2025-09-11T08:30:00Z",
+        "modifiedAt": "2025-09-12T17:30:00Z"
+      }
+    ]
+  },
+  {
+    "dbId": "db_hiring",
+    "name": "Hiring",
+    "description": "SRE hiring pipeline.",
+    "schemaProperties": [
+      { "name": "title", "type": "VARCHAR", "description": "Candidate name (anonymised)" },
+      { "name": "stage", "type": "VARCHAR", "description": "Pipeline stage" },
+      { "name": "recruiter", "type": "VARCHAR", "description": "Recruiter" },
+      {
+        "name": "scheduled",
+        "type": "DATE",
+        "description": "Next interview date",
+        "nullable": true
+      }
+    ],
+    "rows": [
+      {
+        "id": "row_cand_a",
+        "title": "SRE — onsite — candidate A",
+        "stage": "Onsite",
+        "recruiter": "Emma Park",
+        "scheduled": "2025-09-19",
+        "createdAt": "2025-09-01T10:00:00Z",
+        "modifiedAt": "2025-09-12T14:00:00Z"
+      },
+      {
+        "id": "row_cand_b",
+        "title": "SRE — phone screen — candidate B",
+        "stage": "Phone screen",
+        "recruiter": "Emma Park",
+        "scheduled": "2025-09-16",
+        "createdAt": "2025-09-08T10:00:00Z",
+        "modifiedAt": "2025-09-12T14:00:00Z"
+      }
+    ]
+  },
+  {
+    "dbId": "db_reading_list",
+    "name": "Reading list",
+    "description": "Reading queue, mostly technical.",
+    "schemaProperties": [
+      { "name": "title", "type": "VARCHAR", "description": "Article title" },
+      { "name": "status", "type": "VARCHAR", "description": "Read state" },
+      { "name": "tags", "type": "VARCHAR", "description": "Tags" }
+    ],
+    "rows": [
+      {
+        "id": "row_backoff",
+        "title": "Retries — exponential backoff with jitter",
+        "status": "Read",
+        "tags": "infra",
+        "createdAt": "2025-08-22T14:00:00Z",
+        "modifiedAt": "2025-08-23T07:00:00Z"
+      },
+      {
+        "id": "row_marathon_plan",
+        "title": "Marathon training plan — Pfitzinger 18/55",
+        "status": "Reading",
+        "tags": "training",
+        "createdAt": "2025-09-01T07:30:00Z",
+        "modifiedAt": "2025-09-08T07:30:00Z"
+      }
+    ]
+  }
+]

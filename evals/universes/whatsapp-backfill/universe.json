@@ -1,0 +1,20 @@
+{
+  "name": "whatsapp-backfill",
+  "description": "Single-source WhatsApp universe (#586) for the gateway-level wraps-real E2E. The fake-corpus seals COMPLETE on a shallow recent-window slice; a later backfill streams the older messages so the affected day-docs DEEPEN in place — the test asserts links survive the deepening, deep-history search finds the backfilled messages, and re-embed is O(1) (only the changed day-docs re-embed).",
+  "cast": "cast.json",
+  "agentDemos": null,
+  "devices": [
+    {
+      "id": "macbook",
+      "name": "Sams-MacBook-Pro-collector",
+      "kind": "collector"
+    }
+  ],
+  "sources": [
+    {
+      "descriptorId": "whatsapp-messages",
+      "accountIds": ["+15550100120"],
+      "device": "macbook"
+    }
+  ]
+}

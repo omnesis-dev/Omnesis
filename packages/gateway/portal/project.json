@@ -1,0 +1,17 @@
+{
+  "$schema": "../../../../node_modules/nx/schemas/project-schema.json",
+  "name": "omnesis-portal",
+  "root": "packages/gateway/portal",
+  "implicitDependencies": ["@omnesis/gateway"],
+  "targets": {
+    "nx-unit": {
+      "command": "node scripts/nx/run-project-task.mjs unit packages/gateway/portal",
+      "cache": true
+    },
+    "nx-typecheck": {
+      "command": "node scripts/nx/run-project-task.mjs typecheck packages/gateway",
+      "cache": true,
+      "parallelism": false
+    }
+  }
+}

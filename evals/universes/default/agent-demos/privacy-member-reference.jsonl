@@ -1,0 +1,4 @@
+# Fictional candidate held for explicit approval by the privacy reviewer.
+{"afterMs":30,"event":{"type":"agent.message.start","payload":{"sessionId":"$SESSION","messageId":"$MSG","role":"assistant"}}}
+{"afterMs":120,"event":{"type":"agent.text.delta","payload":{"sessionId":"$SESSION","messageId":"$MSG","delta":"The Northstar Club member reference is NS-4827-ALPHA."}}}
+{"afterMs":40,"event":{"type":"agent.message.end","payload":{"sessionId":"$SESSION","messageId":"$MSG","stopReason":"end_turn"}}}

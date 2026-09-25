@@ -1,0 +1,41 @@
+[
+  {
+    "id": "local-2025-09-02T08:15:00.000Z",
+    "placeName": "Studio Northstar",
+    "subLocality": "North Quarter",
+    "locality": "Example City",
+    "administrativeArea": "Example Region",
+    "country": "Exampleland",
+    "latitude": 12.3456,
+    "longitude": -45.6789,
+    "horizontalAccuracyM": 42,
+    "arrivalTime": "2025-09-02T08:15:00.000Z",
+    "departureTime": "2025-09-02T10:45:00.000Z"
+  },
+  {
+    "id": "local-2025-09-04T12:05:00.000Z",
+    "placeName": "Riverside Observatory",
+    "subLocality": "River Ward",
+    "locality": "Example City",
+    "administrativeArea": "Example Region",
+    "country": "Exampleland",
+    "latitude": 12.3567,
+    "longitude": -45.6678,
+    "horizontalAccuracyM": 31,
+    "arrivalTime": "2025-09-04T12:05:00.000Z",
+    "departureTime": "2025-09-04T13:20:00.000Z"
+  },
+  {
+    "id": "local-2025-09-07T16:30:00.000Z",
+    "placeName": "Juniper Workshop",
+    "subLocality": "South Arcade",
+    "locality": "Example City",
+    "administrativeArea": "Example Region",
+    "country": "Exampleland",
+    "latitude": 12.3678,
+    "longitude": -45.6567,
+    "horizontalAccuracyM": 55,
+    "arrivalTime": "2025-09-07T16:30:00.000Z",
+    "departureTime": "2025-09-07T19:10:00.000Z"
+  }
+]

@@ -1,0 +1,15 @@
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+captures/
+.cxx/
+.kotlin/
+# Roborazzi golden PNGs are committed under each module's tracked
+# `src/test/roborazzi/` dir (the `filePath` each `captureRoboImage` writes to),
+# so `verifyRoborazziDebug` can compare a fresh render against them in CI. The
+# build-dir outputs below are transient verify artifacts (diff / actual /
+# compare images) and stay ignored.
+**/build/outputs/roborazzi/
+**/build/outputs/roborazzi-compare/

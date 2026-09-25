@@ -1,0 +1,44 @@
+[
+  {
+    "id": "0a1b2c3d-0000-4000-8000-000000000001",
+    "canonical_name": "Jordan Avery",
+    "is_self": true,
+    "last_seen": "2026-05-27T08:00:00.000Z",
+    "interaction_score": 1
+  },
+  {
+    "id": "b3f2a9d4-0000-4000-8000-000000000002",
+    "canonical_name": "Alice Nakamura",
+    "is_self": false,
+    "last_seen": "2026-05-27T08:00:00.000Z",
+    "interaction_score": 0.82
+  },
+  {
+    "id": "c91d4e02-0000-4000-8000-000000000003",
+    "canonical_name": "Nadia Rowe",
+    "is_self": false,
+    "last_seen": "2026-05-26T18:40:00.000Z",
+    "interaction_score": 0.64
+  },
+  {
+    "id": "5e7a1c88-0000-4000-8000-000000000004",
+    "canonical_name": "Maya Reeves",
+    "is_self": false,
+    "last_seen": "2026-05-23T20:15:00.000Z",
+    "interaction_score": 0.41
+  },
+  {
+    "id": "2f4d6b90-0000-4000-8000-000000000005",
+    "canonical_name": "David Lin",
+    "is_self": false,
+    "last_seen": "2026-05-24T12:00:00.000Z",
+    "interaction_score": 0.58
+  },
+  {
+    "id": "7b2c9f45-0000-4000-8000-000000000007",
+    "canonical_name": "Priya Raman",
+    "is_self": false,
+    "last_seen": "2025-01-14T11:00:00.000Z",
+    "interaction_score": 0.05
+  }
+]

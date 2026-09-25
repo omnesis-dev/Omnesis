@@ -1,0 +1,33 @@
+# Feature-subtree allowlist for the Briefs / Cognition Steward feature.
+#
+# One path per line; a trailing "/" marks a directory prefix, otherwise the
+# entry matches that exact file (or anything under it as a directory). Lines
+# starting with "#" and blank lines are ignored.
+#
+# The shared-diff footprint script (src/footprint.ts) counts every changed
+# line OUTSIDE these prefixes as shared-code footprint; the scorecard embeds
+# that number in each ledger row so encapsulation erosion stays visible.
+# Append new feature subtrees here in the same PR that creates them.
+evals/briefs/
+evals/universes/loops-test-life/
+packages/gateway/src/brain/
+packages/cli/src/commands/briefs.ts
+packages/collector/src/e2e/briefs-cli.e2e.test.ts
+packages/collector/src/e2e/briefs-arcs.ts
+packages/collector/src/e2e/briefs-reconcile.e2e.test.ts
+packages/collector/src/e2e/briefs-saboteur.ts
+packages/collector/src/e2e/briefs-saboteur.test.ts
+packages/collector/src/e2e/briefs-scorecard.ts
+packages/collector/src/e2e/briefs-scorecard.test.ts
+packages/collector/src/e2e/briefs-scorecard.e2e.test.ts
+packages/collector/src/e2e/briefs-backtest-bridge.ts
+packages/collector/src/e2e/briefs-backtest-bridge.test.ts
+packages/collector/src/e2e/briefs-backtest.e2e.test.ts
+packages/collector/src/e2e/fake-loop-model.ts
+packages/collector/src/e2e/fake-loop-model.test.ts
+ios/Sources/Omnesis/Transport/BriefsClient.swift
+ios/Sources/Omnesis/UI/Briefs/
+ios/Tests/OmnesisTests/BriefsClientTests.swift
+ios/Tests/OmnesisTests/BriefsFeedStateTests.swift
+ios/Tests/OmnesisTests/BriefsFeedContractDecodeTests.swift
+ios/Tests/OmnesisTests/Fixtures/briefs-feed-contract.json

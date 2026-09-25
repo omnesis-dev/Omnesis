@@ -1,0 +1,32 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "SQL_NONDETERMINISTIC_FUNCTION",
+      "severity": "error",
+      "path": "/watch/nodes/1/query",
+      "message": "A watch must decide the same way twice; a random draw makes its firing unreproducible.",
+      "details": {
+        "function": "random"
+      }
+    },
+    {
+      "code": "SQL_NONDETERMINISTIC_FUNCTION",
+      "severity": "error",
+      "path": "/watch/nodes/1/query",
+      "message": "A watch never reads a clock — the evaluation instant is bound as $now, which is what lets a backtest replay time.",
+      "details": {
+        "function": "now"
+      }
+    },
+    {
+      "code": "SQL_NONDETERMINISTIC_FUNCTION",
+      "severity": "error",
+      "path": "/watch/nodes/1/query",
+      "message": "A watch never reads a clock — today's date is bound as $today.",
+      "details": {
+        "function": "current_date"
+      }
+    }
+  ]
+}

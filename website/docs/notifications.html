@@ -1,0 +1,591 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Notifications — Omnesis Docs</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32" />
+    <link rel="icon" type="image/png" href="/favicon-16.png" sizes="16x16" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!-- Resolve the theme before first paint: the stored choice, else the OS preference. -->
+    <script>
+      (function () {
+        var root = document.documentElement;
+        root.classList.add("js");
+        var t;
+        try {
+          t = localStorage.getItem("omnesis-theme");
+        } catch (e) {}
+        if (t !== "light" && t !== "dark") {
+          t =
+            window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+        }
+        root.setAttribute("data-theme", t);
+      })();
+    </script>
+    <meta
+      name="description"
+      content="What sends an Omnesis phone notification, how notification text stays on your gateway, choosing the hosted relay or direct APNs and FCM delivery, and diagnosing delivery."
+    />
+    <link rel="canonical" href="https://omnesis.dev/docs/notifications" />
+    <meta name="theme-color" content="#0d1117" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="/footer-social.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <nav id="nav">
+      <div class="container">
+        <a href="/" class="nav-logo" aria-label="Omnesis"
+          ><span class="nav-logo-mark" aria-hidden="true"></span>MNESIS</a
+        >
+        <div class="nav-right">
+          <ul class="nav-links">
+            <li><a href="/">Context Layer</a></li>
+            <li><a href="/brain">Omnesis Brain</a></li>
+            <li><a href="/vision">Vision</a></li>
+            <li><a href="/docs/" aria-current="page">Docs</a></li>
+          </ul>
+          <a
+            class="nav-icon-btn"
+            href="#"
+            data-oss-open
+            aria-label="Omnesis on GitHub"
+            title="Omnesis on GitHub"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path
+                d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+              />
+            </svg>
+          </a>
+          <button
+            id="theme-toggle"
+            class="theme-toggle"
+            type="button"
+            aria-label="Switch between dark and light theme"
+            title="Toggle theme"
+          >
+            <svg
+              class="icon-sun"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="4" />
+              <path
+                d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"
+              />
+            </svg>
+            <svg
+              class="icon-moon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <div class="docs-shell">
+      <aside class="docs-sidebar">
+        <nav aria-label="Documentation">
+          <ul class="side-pages">
+            <li><a href="/docs/">Overview</a></li>
+            <li><a href="/docs/install">Install</a></li>
+            <li><a href="/docs/setup">Setup</a></li>
+            <li><a href="/docs/search">Search</a></li>
+            <li><a href="/docs/agent">The agent</a></li>
+            <li><a href="/docs/connect">Agents &amp; MCP</a></li>
+            <li><a href="/docs/apps">Mobile apps</a></li>
+            <li>
+              <a href="/docs/notifications" aria-current="page">Notifications</a>
+              <ul class="side-sub">
+                <li><a href="#what-sends-a-notification">What sends one</a></li>
+                <li><a href="#privacy">Privacy boundary</a></li>
+                <li><a href="#delivery">Delivery flow</a></li>
+                <li><a href="#choosing-a-transport">Choose a transport</a></li>
+                <li><a href="#relay">Hosted relay</a></li>
+                <li><a href="#setup">Direct setup</a></li>
+                <li><a href="#status">Status and repair</a></li>
+              </ul>
+            </li>
+            <li><a href="/docs/operating">Operating</a></li>
+            <li><a href="/docs/security">Security</a></li>
+            <li><a href="/docs/updating">Backup &amp; updates</a></li>
+            <li><a href="/docs/sources">Available sources</a></li>
+            <li><a href="/docs/building-sources">Building sources</a></li>
+            <li><a href="/docs/experimental">Experimental</a></li>
+          </ul>
+        </nav>
+      </aside>
+
+      <main id="main" class="docs-content">
+        <p class="docs-kicker">Operate</p>
+        <h1>Notifications</h1>
+        <p class="docs-lead">
+          Omnesis keeps notification text on your gateway. Apple's and Google's push services, and
+          the hosted relay, carry only a content-free wake; the phone then fetches the notification
+          from the gateway itself. This page lists what sends a notification, explains that privacy
+          boundary, and covers delivery setup and repair for operators. With the
+          <a href="/docs/apps#getting-the-apps">official iOS app</a>, installed through TestFlight,
+          there is nothing to set up beyond approving notifications on the phone. If you built and
+          signed the app yourself, see <a href="#setup">Configure direct delivery</a>.
+        </p>
+
+        <h2 id="what-sends-a-notification">What sends a notification</h2>
+        <p>
+          Notifications go to your paired phones. Each one is about something waiting for you on the
+          gateway:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Notification</th>
+                <th>Sent when</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Answer ready</strong> / <strong>Answer failed</strong></td>
+                <td>
+                  A question you asked by voice took longer than its foreground wait and has
+                  finished
+                </td>
+              </tr>
+              <tr>
+                <td>New reply in a conversation</td>
+                <td>The agent wrote into a conversation you were not looking at</td>
+              </tr>
+              <tr>
+                <td><strong>Privacy review needed</strong></td>
+                <td>
+                  An answer for an external agent is held for your approval under its privacy policy
+                  (see <a href="/docs/connect#privacy-policy">Privacy policy</a>)
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Access request waiting</strong></td>
+                <td>An AI agent asked to connect and needs approval with the displayed code</td>
+              </tr>
+              <tr>
+                <td><strong>Re-auth needed</strong></td>
+                <td>
+                  A source's sign-in lapsed on one of your devices and needs you to sign in again
+                </td>
+              </tr>
+              <tr>
+                <td>Permission reminder</td>
+                <td>A phone-only source lost a permission, or its phone stopped reporting</td>
+              </tr>
+              <tr>
+                <td>Test</td>
+                <td>You ran <code>omnesis push test</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          The two kinds of reminder repeat until the problem is fixed.
+          <strong>Re-auth needed</strong> is sent once per account per device when its sign-in
+          lapses, then again after 1 day, 2 days, 4 days and 7 days, and weekly after that, until
+          that device signs in again; tune the schedule with
+          <code>gateway.reauthReminders</code> (<code>initialDelay</code>, <code>multiplier</code>,
+          <code>maxDelay</code>).
+        </p>
+        <p>
+          A <strong>permission reminder</strong> names the source, the affected phone and how to fix
+          it. If the phone simply stops reporting, the reminder says <em>Source check overdue</em>
+          instead, because silence does not prove a permission was revoked; for a source several
+          phones contribute to, that happens only when all of them are quiet.
+        </p>
+        <p>
+          Permission reminders repeat after 1 day and then at doubling intervals capped at a week,
+          until the source recovers; overdue reminders stop after four. The schedule is
+          <code>gateway.mobilePermissionReminders</code>. Turning the source off, removing it, or
+          revoking the phone clears the reminder. Any of your phones can show it, but only the
+          affected phone opens the repair controls; another phone names the device where Omnesis
+          must be opened.
+        </p>
+
+        <h2 id="privacy">The privacy boundary</h2>
+        <p>
+          A carrier wake contains a generic Omnesis placeholder and no notification kind, title,
+          body, document identifier, conversation identifier, or collapse key. All wakes for a
+          platform have the same carrier-visible shape. If the phone cannot reach the gateway, iOS
+          leaves the generic placeholder; Android can show a fixed local connection notice. Neither
+          reveals why the notification was sent.
+        </p>
+        <p>
+          Wakes arrive wherever the phone is, but the notification text still requires the phone to
+          reach its paired gateway. Nothing carries the text off your network. If the phone was
+          paired to a LAN address, set up <a href="/docs/setup#remote-access">remote access</a> and
+          pair it again using an address it can reach away from home.
+        </p>
+
+        <h2 id="delivery">Delivery flow</h2>
+        <figure class="diagram">
+          <ol class="flow">
+            <li class="flow-step">
+              <span class="flow-title">Event</span
+              ><span class="flow-desc">Something on the gateway needs your attention</span>
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Gateway queue</span
+              ><span class="flow-desc">Stores the notification text, one entry per phone</span>
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Content-free wake</span
+              ><span class="flow-desc"
+                >Through APNs, FCM, the hosted relay, or a live connection</span
+              >
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Phone fetches</span
+              ><span class="flow-desc">Over its paired HTTPS connection</span>
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Banner</span
+              ><span class="flow-desc">Shown on the phone, then confirmed to the gateway</span>
+            </li>
+          </ol>
+          <figcaption>
+            The notification text stays in the gateway's queue; only a content-free wake crosses the
+            push service, and the phone fetches the text itself.
+          </figcaption>
+        </figure>
+        <p>
+          Each phone can fetch only its own notifications. A notification is marked delivered only
+          after the phone has shown it, so a dropped connection loses nothing. A newer notification
+          about the same thing replaces an older one that has not been shown yet. When the app has a
+          live connection to the gateway, the wake travels over it instead of the push service.
+        </p>
+        <p>
+          Failed wakes are retried with growing delays — from 5 seconds, doubling up to 5 minutes —
+          for about an hour. Undelivered notifications expire after a week, and the phone fetches
+          any still waiting the next time the app opens or reconnects, wake or no wake.
+          <code>omnesis push status</code> shows attempts and the last outcome.
+        </p>
+
+        <h2 id="choosing-a-transport">Choose a notification transport</h2>
+        <p>
+          The correct transport depends on who signed the app. Every choice keeps notification
+          content on your gateway; only the fixed, content-free wake crosses APNs, FCM, or the
+          hosted relay.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>App build</th>
+                <th>Transport</th>
+                <th>What you configure</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Official iOS build (TestFlight)</td>
+                <td>Hosted <code>push.omnesis.app</code> relay</td>
+                <td>Approve relay notifications on that phone</td>
+              </tr>
+              <tr>
+                <td>Official Android build (Google Play)</td>
+                <td>Hosted <code>push.omnesis.app</code> relay</td>
+                <td>Approve relay notifications on that phone</td>
+              </tr>
+              <tr>
+                <td>Self-built iOS app under your own App ID</td>
+                <td>Direct APNs delivery</td>
+                <td>Your own APNs credentials for your app identity</td>
+              </tr>
+              <tr>
+                <td>Self-built Android app</td>
+                <td>Direct FCM delivery</td>
+                <td>Your own Firebase project and service-account credentials</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          What counts is the app identity, not how the app was installed. An app built from source
+          with the official iOS identity and signed by a team authorized for it can use the relay,
+          provided its APNs environment matches. A contributor using an unrelated Apple team needs
+          their own app identity and uses direct APNs delivery.
+        </p>
+
+        <h2 id="relay">Allow the hosted relay for an official app</h2>
+        <p>
+          Your own APNs or FCM credentials cannot cover an official build, because they belong to a
+          different app identity. When the paired phone needs the hosted relay, it explains the
+          boundary and asks you to allow relay notifications for that phone. Nothing is enabled for
+          another phone, and no push token leaves the phone before its gateway records that
+          approval.
+        </p>
+        <p>
+          During enrollment, the relay receives the phone platform, its device push token, the
+          public Omnesis app identifier and, on iOS, the APNs environment. The phone makes that
+          request itself, so the relay also sees the phone's network address at enrollment.
+          Afterward, the gateway sends the relay an authenticated request with an empty body so APNs
+          or FCM can deliver the fixed wake. The relay never receives notification text, the gateway
+          address, an Omnesis account, or which notification fired.
+        </p>
+        <p>
+          Review each phone's transport under <strong>Settings → Devices</strong> in the portal.
+          Withdrawing relay access there stops relay delivery immediately and leaves every other
+          phone unchanged. The affected phone may ask for approval again later.
+        </p>
+        <p>
+          The default endpoint is <code>https://push.omnesis.app</code>. Operators of a compatible
+          relay can select another HTTPS origin with
+          <code>omnesis config set /gateway/pushRelay/url https://push.example.com</code>. A
+          self-built app whose identity is not supported by that relay should use direct delivery.
+        </p>
+        <h3 id="relay-expectations">What the hosted relay is, and is not</h3>
+        <p>
+          The relay is a dependency of the official apps. A background wake for one of them, while
+          the app holds no live connection to the gateway and no direct credential covers it, goes
+          through the relay. It is run by the Omnesis maintainer. The gateway sends it wakes for
+          exactly the two official app identities, the iOS app and the Android app on Google Play,
+          and never for any other. Pointing the gateway at another relay URL changes where wakes go,
+          never which apps the gateway will wake; phones registered against the previous URL
+          register again the next time the app opens.
+        </p>
+        <p>
+          Beyond the enrollment data above, what the relay learns is what any server learns from a
+          connection. Payload minimization keeps the content, the notification kind and the
+          gateway's address out of every request. It does not hide that a wake happened, when it
+          happened, or the network address the gateway's request came from; the relay's hosting and
+          network providers see those as they see any request. A gateway on a private network
+          reaches the relay through whatever address that network presents to the Internet.
+        </p>
+        <p>
+          No availability, latency or support commitment is published for the relay. If it cannot be
+          reached, the gateway retries the wake for about an hour, then stops trying; the
+          notification itself waits on the gateway for a week and reaches the phone when the app
+          next opens. The independent option is direct delivery with your own APNs or FCM
+          credentials for an app you sign yourself, which depends on Apple's and Google's services
+          instead of the relay.
+        </p>
+
+        <h2 id="setup">Configure direct delivery for self-built apps</h2>
+        <p>
+          A self-built iOS app under your own App ID needs Apple Developer Program membership, an
+          App ID under its signing team, Push Notifications enabled, and a matching provisioning
+          profile. The gateway needs an APNs <code>.p8</code> authentication key, its Key ID and
+          Team ID, and the actual bundle identifier of the installed app. Android direct delivery
+          uses a Firebase service account whose project id matches the build. The gateway selects
+          credentials for the app identity each phone reports; a credential for another build is not
+          used.
+        </p>
+        <p>
+          For iOS, have two distinct Apple keys ready: the APNs auth key used for delivery and an
+          App Store Connect API key allowed to manage Certificates, Identifiers &amp; Profiles. The
+          wizard also asks for the management key's Key ID and issuer ID. It looks up the exact
+          bundle id, verifies that its App ID carries Push Notifications, and enables the capability
+          when missing. The management key is used for setup, not for every push. If the capability
+          changes, refresh the provisioning profile and rebuild the app. Choose
+          <code>sandbox</code> for a normal Xcode development build and <code>production</code> for
+          distribution; the gateway setting must match the signed app's provisioning environment.
+        </p>
+        <p>
+          For Android, have the Firebase service-account file plus the Android package id and the
+          four client values from the Firebase app configuration: application id, API key, project
+          id, and sender id. The wizard writes the client values to
+          <code>local.push.properties</code> in the Android project directory you give it (<code
+            >android/</code
+          >
+          from the repository root), on the machine running the CLI. That owner-only file is
+          gitignored and Gradle reads it automatically, including the chosen package id. Rebuild the
+          app after setup; the installed app's package id and Firebase registration must match the
+          package id entered in the wizard. No shell exports or committed
+          <code>google-services.json</code> are needed.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis push setup</span></p>
+            <p class="t-dim"># choose iOS or Android, then follow the credential prompts</p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis push status</span></p>
+            <p class="t-dim"># send a test through the normal queue and wake path to every phone</p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis push test</span></p>
+            <p class="t-dim"># or to one phone only</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis push test --device &lt;name-or-id&gt;</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          Tapping the test notification opens the app. When an all-phone test reaches some phones
+          but not others, the command reports partial success and exits non-zero so scripts do not
+          mistake it for complete delivery.
+        </p>
+        <p>
+          The APNs <code>.p8</code> or Firebase service-account path you enter in the CLI is sent to
+          the gateway, which reads the file on its own host and imports it into its configuration
+          directory with owner-only permissions. A file on a laptop running the CLI is not uploaded,
+          so for a remote or containerized gateway, first place the key at a path the gateway
+          process can read. The App Store Connect key is read by the CLI itself and never sent to
+          the gateway. Setup updates <code>gateway.apns</code> or <code>gateway.fcm</code> and
+          switches to the new credential without restarting the gateway.
+        </p>
+        <p>
+          Open the app on each phone afterward so it picks up the new delivery path and registers
+          its push token; there is no token to copy by hand. If notifications are off on the phone,
+          turn them on from the app's setup flow or its Settings; the app does not prompt on its
+          own. A notification that arrives while the app is open proves only the live connection,
+          not background APNs or FCM delivery.
+        </p>
+
+        <h2 id="status">Status and repair</h2>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis push status</span></p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis doctor</span></p>
+          </div>
+        </div>
+        <p>
+          Status shows credential metadata without secret contents and counts phones by their
+          transport. A phone without a usable transport is reported with the one thing that is
+          missing; both <code>omnesis push status</code> and <code>omnesis doctor</code> name it.
+          The <code>push status</code> lines read:
+        </p>
+        <ul>
+          <li>
+            <em>relay notifications are not approved on this phone</em>: an official app is waiting
+            for the phone's owner to allow relay notifications. Open the app on that phone and
+            review its disclosure.
+          </li>
+          <li>
+            <em>no push credential covers &lt;app id&gt;</em>: the app is signed with an identity
+            the gateway never sends to the relay. Add your own APNs or FCM credentials with
+            <code>omnesis push setup</code>, confirm that the configured bundle or package id
+            exactly matches the build, or use an official build. Changing the relay URL does not
+            help.
+          </li>
+          <li>
+            <em>relay URL is unavailable</em>: check <code>gateway.pushRelay.url</code> (<code
+              >omnesis config get /gateway/pushRelay/url</code
+            >).
+          </li>
+          <li>
+            <em>push registration is broken</em>: the transport is fine but the phone's registration
+            is not. Opening the app redoes it.
+          </li>
+        </ul>
+        <p>
+          The apps also report whether they can show notifications, without any notification
+          content, so status and doctor tell a missing transport apart from notification permission
+          being undecided or denied, alerts being disabled, or iOS Scheduled Summary batching
+          Omnesis notifications. The gateway queues no notification for a phone whose permission is
+          undecided or denied, or whose alerts are disabled. Scheduled Summary still receives
+          notifications but may delay the banner.
+        </p>
+        <p>
+          A phone that has not reported its state still receives ordinary notifications but not
+          permission reminders; open the app once so it reports. If a pairing belongs to a phone you
+          no longer use, remove it with
+          <code>omnesis devices revoke &lt;device-id&gt;</code>.
+        </p>
+        <p>
+          On the phone, the iOS app shows the gateway's selected delivery path in
+          <strong>Settings → Notifications</strong>. If its app identity has no matching direct
+          credential, it shows that identifier and links to setup; this is a configuration warning,
+          not a background-delivery test. The Android app shows missing Firebase build values or an
+          uncovered package id in its app-wide warning and explains the problem in
+          <strong>Settings → Notifications</strong>. Build values require a rebuild; gateway
+          credentials can be configured with <code>omnesis push setup</code> and rechecked with
+          Retry. A notification-permission warning opens Android notification settings; returning to
+          Omnesis rechecks delivery and shows any notification that was held while alerts were
+          disabled.
+        </p>
+
+        <nav class="docs-pager" aria-label="Pages">
+          <a href="/docs/apps"
+            ><span class="pager-label">Previous</span
+            ><span class="pager-title">Mobile apps</span></a
+          >
+          <a class="pager-next" href="/docs/operating"
+            ><span class="pager-label">Next</span><span class="pager-title">Operating</span></a
+          >
+        </nav>
+      </main>
+    </div>
+
+    <footer class="site-footer">
+      <div class="container">
+        <div class="footer-inner">
+          <div class="footer-base">© 2026 Omnesis</div>
+          <nav class="footer-links" aria-label="Footer">
+            <a href="/docs/">Docs</a>
+            <a href="/privacy">Privacy</a>
+            <a class="footer-mail" href="mailto:contact@omnesis.dev">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="2" y="4" width="20" height="16" rx="2" />
+                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+              </svg>
+              contact@omnesis.dev
+            </a>
+            <a class="footer-gh" href="#" data-oss-open>
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path
+                  d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+                />
+              </svg>
+              GitHub
+            </a>
+            <a
+              class="footer-social footer-x"
+              href="https://x.com/Omnesisdev"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Omnesis on X"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>@Omnesisdev
+            </a>
+            <a
+              class="footer-social footer-discord"
+              href="https://discord.gg/4Y8pQHrVv"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Join Omnesis on Discord"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>Discord
+            </a>
+          </nav>
+        </div>
+      </div>
+    </footer>
+    <script src="/docs/docs.js"></script>
+  </body>
+</html>

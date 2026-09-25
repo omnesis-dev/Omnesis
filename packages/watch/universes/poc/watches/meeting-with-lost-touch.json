@@ -1,0 +1,38 @@
+{
+  "watch": {
+    "name": "meeting-with-lost-touch",
+    "nl_query": "The evening before, remind me if I have a meeting tomorrow with someone I haven't talked to in over a year.",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "evening_tick",
+        "type": "source.time",
+        "recurring": "0 18 * * *"
+      },
+      {
+        "id": "stale_contacts_tomorrow",
+        "type": "sql",
+        "comment": "Entirely procedural. every_true is correct: the tick already caps evaluation at once a day.",
+        "inputs": {
+          "evening_tick": {
+            "role": "arm"
+          }
+        },
+        "fire_on": "every_true",
+        "query": "SELECT count(*) > 0 AS fires, list(DISTINCT p.canonical_name) AS people, list(DISTINCT e.title) AS meetings FROM google_calendar_events e JOIN google_calendar_attendees a ON a.event_id = e.id JOIN people p ON p.id = a.person_id WHERE e.start_time::DATE = $today + INTERVAL 1 DAY AND NOT p.is_self AND (p.last_seen IS NULL OR p.last_seen < $now - INTERVAL 1 YEAR)",
+        "output_map": {
+          "people": "people",
+          "meetings": "meetings"
+        }
+      }
+    ],
+    "sink": {
+      "input": "stale_contacts_tomorrow",
+      "output_map": {
+        "people": "$n.stale_contacts_tomorrow.people",
+        "meetings": "$n.stale_contacts_tomorrow.meetings"
+      }
+    }
+  }
+}

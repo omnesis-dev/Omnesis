@@ -1,0 +1,1762 @@
+/* ==========================================================================
+   Omnesis docs — shared stylesheet.
+
+   The design tokens (both theme blocks), the nav, the footer, and the .term
+   terminal component are lifted verbatim from website/index.html so the docs
+   render as the same site. Everything under "DOCS LAYOUT" is docs-specific.
+   ========================================================================== */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  /* Core palette — dark, sophisticated, depth */
+  --bg-deep: #06090f;
+  --bg-primary: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-tertiary: #21262d;
+  --bg-card: #131921;
+
+  /* Text */
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  /* --text-muted carries small text (table headers, captions, sub-links), so it
+     clears 4.5:1 on every surface it sits on, including the tinted table header.
+     --text-dim is decorative only; readable dimmed text (terminal comments and
+     elided output) uses --text-dim-content, which also clears 4.5:1 on the
+     terminal surface. */
+  --text-muted: #848d97;
+  --text-dim: #484f58;
+  --text-dim-content: #7d8590;
+
+  /* Accent — omnesis blue */
+  --accent: #58a6ff;
+  --accent-hover: #79c0ff;
+  --accent-glow: rgba(88, 166, 255, 0.15);
+  --accent-glow-strong: rgba(88, 166, 255, 0.25);
+
+  --purple: #a78bfa;
+
+  /* Semantic source colors */
+  --color-email: #f78166;
+  --color-note: #7ee787;
+  --color-event: #d2a8ff;
+  --color-chat: #79c0ff;
+  --color-bookmark: #ffa657;
+  /* Small warning/checkpoint labels drawn on a bookmark-tinted fill. */
+  --warn-ink: var(--color-bookmark);
+  --color-task: #ff7b72;
+  --color-file: #8b949e;
+  --color-health: #56d364;
+
+  /* Borders & surfaces */
+  --border: #30363d;
+  --border-subtle: #21262d;
+
+  /* Theme-variant effects — redefined wholesale under [data-theme="light"]. */
+  --nav-bg: rgba(6, 9, 15, 0.85);
+  --surface-raised: rgba(255, 255, 255, 0.04);
+  --surface-border: rgba(255, 255, 255, 0.06);
+  --surface-strong: rgba(255, 255, 255, 0.08);
+  --surface-code: #0b0f16;
+  --surface-code-bar: #11161f;
+  /* Syntax colouring (docs.js): a GitHub-like palette, each tone at least
+     4.5:1 on --surface-code. Comments reuse --text-dim-content. */
+  --code-text: #e6edf3;
+  --code-kw: #ff7b72;
+  --code-str: #a5d6ff;
+  --code-num: #79c0ff;
+  --code-fn: #d2a8ff;
+  --code-type: #ffa657;
+  --code-prop: #7ee787;
+  --shadow-strong: rgba(0, 0, 0, 0.8);
+  --grid-line: rgba(88, 166, 255, 0.06);
+
+  /* Gradients */
+  --gradient-hero: linear-gradient(135deg, #0d1117 0%, #0a1628 50%, #0d1117 100%);
+
+  /* Typography */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-mono:
+    "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Layout */
+  --content-max: 1200px;
+  --content-wide: 1400px;
+
+  color-scheme: dark;
+}
+
+/* The theme is the reader's stored choice, else the OS preference; the head
+   script resolves it before first paint and docs.js follows OS changes. With
+   JavaScript off, the static data-theme="dark" on <html> applies. */
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg-deep: #ffffff;
+  --bg-primary: #ffffff;
+  --bg-secondary: #f6f8fa;
+  --bg-tertiary: #eaeef2;
+  --bg-card: #ffffff;
+
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #5b6b80;
+  --text-dim: #94a3b8;
+  --text-dim-content: #57606a;
+
+  --accent: #0969da;
+  --accent-hover: #0860ca;
+  --accent-glow: rgba(9, 105, 218, 0.1);
+  --accent-glow-strong: rgba(9, 105, 218, 0.18);
+
+  --purple: #8250df;
+
+  --color-email: #cf462d;
+  --color-note: #1a7f37;
+  --color-event: #8250df;
+  --color-chat: #0969da;
+  --color-bookmark: #bc4c00;
+  --warn-ink: #9a3e00;
+  --color-task: #cf222e;
+  --color-file: #59636e;
+  --color-health: #1a7f37;
+
+  --border: #d0d7de;
+  --border-subtle: #d8dee4;
+
+  --nav-bg: rgba(255, 255, 255, 0.82);
+  --surface-raised: rgba(31, 35, 40, 0.04);
+  --surface-border: rgba(31, 35, 40, 0.1);
+  --surface-strong: rgba(31, 35, 40, 0.06);
+  --surface-code: #f6f8fa;
+  --surface-code-bar: #eaeef2;
+  --code-text: #1f2328;
+  --code-kw: #cf222e;
+  --code-str: #0a3069;
+  --code-num: #0550ae;
+  --code-fn: #8250df;
+  --code-type: #953800;
+  --code-prop: #116329;
+  --shadow-strong: rgba(31, 41, 55, 0.2);
+  --grid-line: rgba(9, 105, 218, 0.06);
+
+  --gradient-hero: linear-gradient(135deg, #ffffff 0%, #eef4ff 50%, #ffffff 100%);
+}
+
+/* A white terminal card on a white page needs a lift. */
+:root[data-theme="light"] .term {
+  box-shadow:
+    0 1px 2px rgba(31, 41, 55, 0.05),
+    0 14px 36px -18px rgba(31, 41, 55, 0.28);
+}
+
+/* ==========================================================================
+   BASE
+   ========================================================================== */
+
+/* No overflow-x:hidden on html/body: an overflow ancestor disables
+   position:sticky (the sidebar), and docs pages have no off-screen content —
+   wide blocks (.term-body, .table-wrap) scroll inside their own containers. */
+/* Smooth scrolling is switched on by docs.js once the page has settled: on
+   load, the jump to a URL's #section must be instant, or the web fonts
+   reflowing the page mid-animation leave it short of or past the heading. */
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-deep);
+  color: var(--text-primary);
+  line-height: 1.7;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.skip-link {
+  position: absolute;
+  left: 12px;
+  top: -48px;
+  z-index: 200;
+  padding: 10px 16px;
+  border-radius: 8px;
+  background: #1f6feb;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: top 0.2s ease;
+}
+:root[data-theme="light"] .skip-link {
+  background: var(--accent);
+}
+.skip-link:focus {
+  top: 12px;
+}
+
+/* Fixed page backdrop — the landing's diagonal gradient + radially-masked
+   grid, pinned to the viewport. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+  background: var(--gradient-hero);
+}
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 60px 60px;
+  -webkit-mask-image: radial-gradient(ellipse 100% 50% at 50% 25%, black 20%, transparent 80%);
+  mask-image: radial-gradient(ellipse 100% 50% at 50% 25%, black 20%, transparent 80%);
+}
+
+.container {
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: 0 clamp(20px, 4vw, 48px);
+}
+
+/* ==========================================================================
+   NAVIGATION (mirrors landing)
+   ========================================================================== */
+
+#nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  padding: 16px 0;
+  transition:
+    background 0.3s,
+    backdrop-filter 0.3s,
+    border-color 0.3s;
+  border-bottom: 1px solid transparent;
+}
+
+#nav.scrolled {
+  background: var(--nav-bg);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom-color: var(--border-subtle);
+}
+
+#nav .container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.nav-logo {
+  font-size: 23px;
+  font-weight: 700;
+  color: var(--text-primary);
+  text-decoration: none;
+  letter-spacing: -0.02em;
+  text-transform: uppercase;
+}
+.nav-logo-mark {
+  display: inline-block;
+  width: 0.83em;
+  height: 0.83em;
+  vertical-align: -0.066em;
+  margin-right: 0.026em;
+  background-color: #fff;
+  -webkit-mask: url(/omnesis-mark.svg) no-repeat center / contain;
+  mask: url(/omnesis-mark.svg) no-repeat center / contain;
+}
+:root[data-theme="light"] .nav-logo-mark {
+  background-color: var(--text-primary);
+}
+
+.nav-right {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+}
+
+.nav-links {
+  display: flex;
+  gap: 32px;
+  list-style: none;
+}
+
+.nav-links a {
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
+  transition: color 0.2s;
+}
+
+.nav-links a:hover,
+.nav-links a[aria-current="true"],
+.nav-links a[aria-current="page"] {
+  color: var(--text-primary);
+}
+
+.nav-burger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.nav-burger svg {
+  width: 19px;
+  height: 19px;
+}
+.nav-burger .icon-close {
+  display: none;
+}
+#nav.menu-open .nav-burger .icon-open {
+  display: none;
+}
+#nav.menu-open .nav-burger .icon-close {
+  display: block;
+}
+
+.theme-toggle,
+.nav-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    color 0.2s,
+    border-color 0.2s,
+    background 0.2s;
+}
+
+.theme-toggle:hover,
+.nav-icon-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+  background: var(--surface-raised);
+}
+
+.theme-toggle svg,
+.nav-icon-btn svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.theme-toggle .icon-moon {
+  display: none;
+}
+:root[data-theme="light"] .theme-toggle .icon-sun {
+  display: none;
+}
+:root[data-theme="light"] .theme-toggle .icon-moon {
+  display: block;
+}
+
+@media (max-width: 768px) {
+  #nav .container {
+    position: relative;
+  }
+  .nav-links {
+    display: none;
+  }
+  .nav-burger {
+    display: inline-flex;
+  }
+  #nav.menu-open .nav-links {
+    position: absolute;
+    top: calc(100% + 16px);
+    left: 0;
+    right: 0;
+    display: grid;
+    gap: 0;
+    padding: 8px clamp(20px, 4vw, 48px) 12px;
+    background: var(--nav-bg);
+    border-bottom: 1px solid var(--border-subtle);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+  }
+  #nav.menu-open .nav-links a {
+    display: block;
+    padding: 10px 0;
+  }
+  /* Without JavaScript there is no burger (docs.js injects it), so the primary
+     links stay visible as a second row under the logo and icons. The head
+     script and docs.js both put .js on <html>. */
+  html:not(.js) #nav .container {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  html:not(.js) .nav-right {
+    display: contents;
+  }
+  html:not(.js) .nav-icon-btn {
+    margin-left: auto;
+  }
+  html:not(.js) .theme-toggle {
+    margin-left: 12px;
+  }
+  html:not(.js) .nav-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 18px;
+    flex-basis: 100%;
+    order: 3;
+  }
+}
+
+/* ==========================================================================
+   FOOTER (mirrors landing)
+   ========================================================================== */
+
+.site-footer {
+  border-top: 1px solid var(--border-subtle);
+  padding: 28px 0;
+  margin-top: 64px;
+}
+.footer-inner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+.footer-links {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  flex-wrap: wrap;
+}
+.footer-links a {
+  font-size: 14px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+.footer-links a:hover {
+  color: var(--text-primary);
+}
+.footer-gh,
+.footer-mail {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.footer-gh svg,
+.footer-mail svg {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+.footer-base {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+@media (max-width: 600px) {
+  .footer-inner {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+  }
+}
+
+/* ==========================================================================
+   TERMINAL component (mirrors landing .term)
+   ========================================================================== */
+
+.term {
+  background: var(--surface-code);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 18px 44px -22px var(--shadow-strong);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.65;
+  margin: 20px 0 28px;
+}
+.term-bar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 11px 14px;
+  background: var(--surface-code-bar);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.term-bar span {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--border);
+  flex: none;
+}
+.term-bar span:nth-child(1) {
+  background: #ff5f57;
+}
+.term-bar span:nth-child(2) {
+  background: #febc2e;
+}
+.term-bar span:nth-child(3) {
+  background: #28c840;
+}
+/* Optional filename / context label in the title bar (used for file views). */
+.term-bar span.term-title {
+  width: auto;
+  /* Overrides the traffic-light `flex: none` so a long filename ellipsizes
+     instead of pushing the copy button out of the bar. */
+  flex: 0 1 auto;
+  min-width: 0;
+  height: auto;
+  border-radius: 0;
+  background: none;
+  margin-left: 9px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.term-body {
+  padding: 18px 18px 20px;
+  color: var(--text-secondary);
+  overflow-x: auto;
+}
+.term-body p {
+  margin: 0;
+  font-size: inherit;
+  word-break: break-word;
+}
+.term-body p + p {
+  margin-top: 0.85em;
+}
+.term-body p.tight {
+  margin-top: 0.25em;
+}
+/* Preformatted block inside a terminal — aligned command output, file
+   contents, trees and diagrams. Columns carry meaning, so it never wraps: it
+   scrolls horizontally inside the card, never the page. Prose-like output opts
+   into wrapping with class="wrap". */
+.term-body pre {
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  white-space: pre;
+}
+.term-body pre.wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 600px) {
+  .term-body {
+    padding: 15px 14px 17px;
+  }
+}
+/* A terminal body that scrolls sideways fades at the edge that hides content
+   (docs.js sets data-fade while there is more to scroll to). */
+[data-fade="end"] {
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent);
+}
+[data-fade="start"] {
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 36px);
+  mask-image: linear-gradient(90deg, transparent, #000 36px);
+}
+[data-fade="both"] {
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    transparent,
+    #000 36px,
+    #000 calc(100% - 36px),
+    transparent
+  );
+  mask-image: linear-gradient(90deg, transparent, #000 36px, #000 calc(100% - 36px), transparent);
+}
+/* Literal commands and paths: no ligatures, so "https://", "->" and "==" show
+   the characters the reader types. */
+.term,
+.docs-content code {
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
+}
+.term-body p + pre,
+.term-body pre + p {
+  margin-top: 0.85em;
+}
+.t-prompt {
+  color: var(--color-event);
+}
+.t-cmd {
+  color: var(--text-primary);
+}
+.t-head {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.t-url {
+  color: var(--accent);
+  word-break: break-all;
+}
+.t-q {
+  color: var(--color-bookmark);
+  font-weight: 600;
+}
+.t-ok {
+  color: var(--color-note);
+}
+.t-opt {
+  color: var(--text-secondary);
+}
+.t-dim,
+.t-comment {
+  color: var(--text-dim-content);
+}
+
+/* Syntax colouring, applied by docs.js to code blocks (<pre data-lang>, or a
+   <pre> in a card titled with a file name) and, lightly, to prompted
+   commands. A coloured block reads in the body tone rather than the muted
+   output tone; authored spans inside it (.t-dim, …) keep their own colour. */
+pre[data-highlighted] {
+  color: var(--code-text);
+}
+.tok-com {
+  color: var(--text-dim-content);
+  font-style: italic;
+}
+.tok-kw,
+.tok-op {
+  color: var(--code-kw);
+}
+.tok-str {
+  color: var(--code-str);
+}
+.tok-num,
+.tok-const,
+.tok-flag {
+  color: var(--code-num);
+}
+.tok-fn {
+  color: var(--code-fn);
+}
+.tok-type,
+.tok-var,
+.tok-ph {
+  color: var(--code-type);
+}
+.tok-ph {
+  font-style: italic;
+}
+.tok-prop {
+  color: var(--code-prop);
+}
+
+/* ==========================================================================
+   DOCS LAYOUT
+   ========================================================================== */
+
+/* Copy-to-clipboard button, injected into a terminal's title bar by docs.js
+   whenever the card holds something copyable. It sits in the chrome rather
+   than floating over the body, so it never overlaps a long line, and it stays
+   at full strength at rest: the icon is the control's only identifier, and
+   --text-muted on the bar is the weakest tone that still clears the 3:1 that
+   WCAG 1.4.11 asks of a non-text control. */
+.term-copy {
+  margin-left: auto;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+.term-copy:hover {
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+.term-copy svg {
+  width: 15px;
+  height: 15px;
+}
+.term-copy .icon-check,
+.term-copy.copied .icon-copy {
+  display: none;
+}
+.term-copy.copied .icon-check {
+  display: block;
+}
+.term-copy.copied {
+  color: var(--color-note);
+}
+
+.docs-shell {
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr);
+  gap: clamp(32px, 4vw, 64px);
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: 118px clamp(20px, 4vw, 48px) 40px;
+  align-items: start;
+}
+
+/* Single-column variant (pages without a sidebar, e.g. legal). */
+.docs-shell--single {
+  display: block;
+  max-width: 900px;
+}
+
+/* ── Sidebar ── */
+
+.docs-sidebar {
+  position: sticky;
+  top: 96px;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  padding-bottom: 8px;
+}
+
+.docs-sidebar ul {
+  list-style: none;
+}
+.docs-sidebar li + li {
+  margin-top: 2px;
+}
+.docs-sidebar a {
+  display: block;
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition:
+    color 0.15s,
+    background 0.15s;
+}
+.docs-sidebar a:hover {
+  color: var(--text-primary);
+  background: var(--surface-raised);
+}
+.docs-sidebar a[aria-current="page"] {
+  color: var(--accent);
+  background: var(--accent-glow);
+  font-weight: 600;
+}
+/* Current page's section anchors, nested under its entry. */
+.side-sub {
+  margin: 2px 0 4px;
+  border-left: 1px solid var(--border-subtle);
+  margin-left: 14px;
+}
+.side-sub li + li {
+  margin-top: 0;
+}
+.docs-sidebar .side-sub a {
+  font-size: 13px;
+  padding: 3px 10px;
+  color: var(--text-muted);
+}
+.docs-sidebar .side-sub a:hover {
+  color: var(--text-primary);
+  background: none;
+}
+
+/* On narrow screens the sidebar becomes a horizontally scrollable strip of
+   page links above the content. docs.js scrolls the current page's pill into
+   view and renders the page's section anchors as an "On this page" disclosure
+   under the lead; without JavaScript they stay in the strip as smaller pills. */
+@media (max-width: 900px) {
+  .docs-shell {
+    display: block;
+    padding-top: 0;
+  }
+  /* The strip's own top padding clears the fixed nav; its background is opaque
+     so body text never ghosts through behind the pills once it sticks. */
+  .docs-sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 90;
+    max-height: none;
+    overflow: visible;
+    margin: 0 calc(-1 * clamp(20px, 4vw, 48px)) 28px;
+    padding: 76px clamp(20px, 4vw, 48px) 12px;
+    background: var(--bg-primary);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .docs-sidebar nav {
+    display: flex;
+    gap: 18px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .docs-sidebar nav::-webkit-scrollbar {
+    display: none;
+  }
+  .docs-sidebar ul {
+    display: flex;
+    gap: 6px;
+  }
+  .docs-sidebar li + li {
+    margin-top: 0;
+  }
+  .docs-sidebar a {
+    white-space: nowrap;
+    padding: 5px 12px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    font-size: 13px;
+  }
+  .docs-sidebar a[aria-current="page"] {
+    border-color: transparent;
+  }
+  .docs-sidebar ul.side-sub {
+    display: none;
+  }
+  html:not(.js) .docs-sidebar li:has(> .side-sub) {
+    display: flex;
+    gap: 6px;
+  }
+  html:not(.js) .docs-sidebar ul.side-sub {
+    display: flex;
+    margin: 0;
+    border: 0;
+  }
+  html:not(.js) .docs-sidebar .side-sub a {
+    border-style: dashed;
+  }
+  html:not(.js) .docs-sidebar {
+    padding-top: 108px;
+  }
+}
+
+/* ── Content typography ── */
+
+.docs-content {
+  max-width: 760px;
+  min-width: 0;
+}
+
+.docs-content h1 {
+  font-size: clamp(30px, 4.5vw, 40px);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  text-wrap: balance;
+}
+
+/* The one-line kicker above the h1 (matches the landing .section-label). */
+.docs-kicker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  margin-bottom: 14px;
+}
+.docs-kicker::before {
+  content: "";
+  width: 20px;
+  height: 2px;
+  background: var(--accent);
+}
+
+/* The lead paragraph directly under the h1. */
+.docs-lead {
+  margin-top: 16px;
+  font-size: 17px;
+  color: var(--text-secondary);
+}
+
+.docs-content h2 {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 52px 0 14px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-subtle);
+}
+.docs-content h1 + h2,
+.docs-content .docs-lead + h2,
+.docs-content .toc-mobile + h2 {
+  border-top: none;
+  padding-top: 8px;
+  margin-top: 32px;
+}
+.docs-content h3 {
+  font-size: 17.5px;
+  font-weight: 600;
+  margin: 32px 0 10px;
+}
+.docs-content h4 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 24px 0 8px;
+}
+
+/* Anchored headings clear the fixed nav when targeted — and, on narrow
+   screens, the sticky page strip under it. */
+.docs-content [id] {
+  scroll-margin-top: 96px;
+}
+@media (max-width: 900px) {
+  .docs-content [id] {
+    scroll-margin-top: 140px;
+  }
+}
+
+/* Prose defaults are wrapped in :where() so they carry no class weight: any
+   component rule (.term-body p, .t-dim, .docs-lead, .callout p, …) wins over
+   them without a specificity fight. */
+:where(.docs-content) p {
+  margin: 0 0 16px;
+  font-size: 15.5px;
+  color: var(--text-secondary);
+}
+:where(.docs-content) li {
+  font-size: 15.5px;
+  color: var(--text-secondary);
+}
+:where(.docs-content) ul,
+:where(.docs-content) ol {
+  margin: 0 0 16px;
+  padding-left: 24px;
+}
+:where(.docs-content) li + li {
+  margin-top: 6px;
+}
+/* Prose measure: running text stays near 70–75 characters a line while
+   tables, terminals and figures keep the full column. (Inter's "0" is wide, so
+   60ch holds about 75 average characters.) */
+.docs-content > p,
+.docs-content > ul,
+.docs-content > ol {
+  max-width: 60ch;
+}
+.docs-content strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.docs-content a {
+  color: var(--accent);
+  text-decoration: none;
+}
+/* Links inside running text are underlined, so they are found by more than
+   their colour (the accent is close in lightness to body text). */
+.docs-content :is(p, li, td, .callout, figcaption) a {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+.docs-content a:hover {
+  text-decoration: underline;
+  text-decoration-color: currentColor;
+}
+
+.docs-content code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  background: var(--surface-strong);
+  border: 1px solid var(--surface-border);
+  border-radius: 6px;
+  padding: 0.12em 0.38em;
+  color: var(--text-primary);
+  overflow-wrap: break-word;
+  hyphens: none;
+}
+.docs-content td code {
+  overflow-wrap: anywhere;
+}
+
+/* Section self-links, appended to each h2/h3 that has an id by docs.js. */
+.h-anchor {
+  margin-left: 0.4em;
+  padding: 0 0.15em;
+  color: var(--text-muted);
+  font-weight: 500;
+  text-decoration: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.docs-content .h-anchor:hover {
+  color: var(--accent);
+  text-decoration: none;
+}
+:is(h2, h3):hover > .h-anchor,
+.h-anchor:focus-visible {
+  opacity: 1;
+}
+@media (hover: none) {
+  .h-anchor {
+    opacity: 0.6;
+  }
+}
+
+/* "On this page" disclosure, generated by docs.js from the sidebar's section
+   list and shown only where the sidebar collapses into the page strip. */
+.toc-mobile {
+  display: none;
+}
+@media (max-width: 900px) {
+  .toc-mobile {
+    display: block;
+    margin: 4px 0 24px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-card);
+    font-size: 14.5px;
+  }
+  .toc-mobile summary {
+    padding: 10px 14px;
+    color: var(--text-primary);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .toc-mobile[open] summary {
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .docs-content .toc-mobile ul {
+    margin: 0;
+    padding: 6px 0 8px;
+    list-style: none;
+  }
+  .docs-content .toc-mobile li {
+    margin: 0;
+    font-size: 14.5px;
+  }
+  .docs-content .toc-mobile a {
+    display: block;
+    padding: 6px 14px;
+    color: var(--text-secondary);
+    text-decoration: none;
+  }
+  .docs-content .toc-mobile a:hover {
+    color: var(--accent);
+  }
+}
+/* Disclosure summaries (the "On this page" menu and collapsible asides in
+   the prose) share one chevron that turns when the disclosure opens. */
+.docs-content summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  list-style: none;
+  cursor: pointer;
+}
+.docs-content summary::-webkit-details-marker {
+  display: none;
+}
+.docs-content summary::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin: 0 2px 0 1px;
+  border-right: 2px solid var(--text-muted);
+  border-bottom: 2px solid var(--text-muted);
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+.docs-content details[open] > summary::before {
+  transform: rotate(45deg);
+}
+.docs-content summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .docs-content summary::before {
+    transition: none;
+  }
+}
+
+/* A collapsible aside in the prose: background most readers can skip. */
+.docs-content details:not(.toc-mobile) {
+  margin: 20px 0 28px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card);
+}
+.docs-content details:not(.toc-mobile) > summary {
+  padding: 11px 16px;
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 15px;
+}
+.docs-content details:not(.toc-mobile) > summary:hover {
+  color: var(--accent);
+}
+.docs-content details:not(.toc-mobile)[open] > summary {
+  border-bottom: 1px solid var(--border-subtle);
+}
+.docs-content details:not(.toc-mobile) > :not(summary) {
+  margin-left: 16px;
+  margin-right: 16px;
+}
+.docs-content details:not(.toc-mobile) > summary + * {
+  margin-top: 14px;
+}
+.docs-content details:not(.toc-mobile) > :last-child:not(summary) {
+  margin-bottom: 16px;
+}
+
+.docs-content .term code,
+.docs-content pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+/* ── Tables ── */
+
+.table-wrap {
+  overflow-x: auto;
+  margin: 20px 0 28px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-card);
+}
+.docs-content table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 14px;
+}
+.docs-content th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-raised);
+  white-space: nowrap;
+}
+.docs-content td {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  vertical-align: top;
+}
+.docs-content tr:last-child td {
+  border-bottom: none;
+}
+.docs-content td:first-child {
+  color: var(--text-primary);
+}
+@media (min-width: 601px) {
+  .docs-content td:first-child {
+    white-space: nowrap;
+  }
+}
+/* Under 600px a reference table becomes a stack of cards, one per row: docs.js
+   marks every table that has a header row with .stack and copies each column's
+   header into its cells' data-label, shown above the value. The first cell is
+   the card's title. */
+@media (max-width: 600px) {
+  .table-wrap.stack {
+    overflow-x: visible;
+  }
+  .stack table,
+  .stack tbody,
+  .stack tr,
+  .stack td {
+    display: block;
+    width: 100%;
+  }
+  .stack thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .stack tr {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .stack tr:last-child {
+    border-bottom: none;
+  }
+  .docs-content .stack td {
+    padding: 3px 0;
+    border: 0;
+  }
+  .docs-content .stack td:first-child {
+    font-weight: 600;
+    padding-bottom: 6px;
+  }
+  .stack td:empty {
+    display: none;
+  }
+  .stack td[data-label]:not(:first-child)::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+}
+
+/* ── Callouts ── */
+
+.callout {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  background: var(--surface-raised);
+  padding: 14px 18px;
+  margin: 20px 0 24px;
+  font-size: 14.5px;
+  color: var(--text-secondary);
+}
+.callout p {
+  margin: 0;
+  font-size: inherit;
+}
+.callout p + p {
+  margin-top: 8px;
+}
+/* The label names the kind of callout in words, so a warning never differs
+   from a note by border colour alone. */
+.callout::before {
+  content: "Note";
+  display: block;
+  margin-bottom: 6px;
+  font: 600 12px/1 var(--font-sans);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.callout.warn {
+  border-left-color: var(--color-bookmark);
+  background: rgba(255, 166, 87, 0.07);
+  background: color-mix(in srgb, var(--color-bookmark) 7%, transparent);
+}
+.callout.warn::before {
+  content: "Warning";
+  color: var(--warn-ink);
+}
+
+.docs-ai-notice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: flex-start;
+  margin: 0 0 28px;
+  padding: 11px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.docs-ai-badge {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.docs-ai-notice a {
+  color: var(--text-secondary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ── Concept cards (overview page) ── */
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 14px;
+  margin: 20px 0 28px;
+}
+.card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-card);
+  padding: 18px 20px;
+}
+.card h3 {
+  margin: 0 0 6px;
+  font-size: 15.5px;
+  font-weight: 600;
+}
+.card p {
+  margin: 0;
+  font-size: 13.5px;
+}
+a.card {
+  display: block;
+  text-decoration: none;
+  transition:
+    border-color 0.2s,
+    background 0.2s;
+}
+a.card:hover {
+  border-color: var(--text-muted);
+  background: var(--surface-raised);
+  text-decoration: none;
+}
+a.card h3 {
+  color: var(--accent);
+}
+
+/* ── Pills (platform / auth tags) ── */
+
+.pill {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 1px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* ── Diagrams (figure.diagram) ──
+   A figure holds a .flow (ordered steps), a .lanes group (parallel paths side
+   by side), or a flow that forks into lanes, then a visible figcaption that
+   doubles as the text alternative. A flow runs left to right when its box is
+   wide enough and becomes a vertical stepper when it is not; flows inside a
+   lane are always vertical. A .flow-gate step is a checkpoint and is labelled
+   as one, not only tinted. */
+.diagram {
+  container-type: inline-size;
+  margin: 24px 0 30px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-card);
+}
+.docs-content .flow {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 24px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.docs-content .flow-step {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 12px 13px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--surface-raised);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.flow-step:not(:last-child)::after {
+  content: "→";
+  position: absolute;
+  left: calc(100% + 4px);
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-secondary);
+  font-size: 17px;
+  line-height: 1;
+}
+.flow-title {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+}
+.flow-desc {
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+/* Inline code in a step moves to the next line as a whole where it fits
+   there, and breaks inside only when it is wider than the step. */
+.flow-desc code,
+.flow-title code,
+.lane-note code {
+  display: inline-block;
+  max-width: 100%;
+  font-size: 0.9em;
+  line-height: 1.35;
+  vertical-align: baseline;
+}
+.docs-content .flow-gate {
+  border: 1.5px solid var(--color-bookmark);
+  background: rgba(255, 166, 87, 0.08);
+  background: color-mix(in srgb, var(--color-bookmark) 9%, transparent);
+}
+.flow-gate::before {
+  content: "Check";
+  align-self: flex-start;
+  margin-bottom: 2px;
+  padding: 1px 7px;
+  border: 1px solid var(--color-bookmark);
+  border-radius: 999px;
+  color: var(--warn-ink);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: 1.5;
+}
+.lanes {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+.lane {
+  container-type: inline-size;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-primary);
+}
+:root[data-theme="light"] .lane {
+  background: var(--bg-secondary);
+}
+.docs-content .lane-title {
+  margin: 0 0 10px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.docs-content .lane-note {
+  margin: 10px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+/* A fork or join between a flow and a group of lanes. */
+.diagram > .flow + .lanes,
+.diagram > .lanes + .flow {
+  margin-top: 34px;
+}
+.diagram > .flow + .lanes::before,
+.diagram > .lanes + .flow::before {
+  content: "↓";
+  position: absolute;
+  top: -28px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--text-muted);
+  font-size: 15px;
+  line-height: 1;
+}
+.diagram > .lanes + .flow {
+  position: relative;
+}
+.diagram figcaption {
+  margin-top: 14px;
+  color: var(--text-secondary);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+/* Vertical stepper: in any lane, and wherever the flow's box is narrow. */
+.docs-content .lane .flow {
+  grid-auto-flow: row;
+  grid-auto-columns: auto;
+  gap: 20px;
+}
+.lane .flow-step:not(:last-child)::after {
+  content: "↓";
+  left: 50%;
+  top: calc(100% + 3px);
+  transform: translateX(-50%);
+}
+@container (max-width: 560px) {
+  .docs-content .flow {
+    grid-auto-flow: row;
+    grid-auto-columns: auto;
+    gap: 20px;
+  }
+  .flow-step:not(:last-child)::after {
+    content: "↓";
+    left: 50%;
+    top: calc(100% + 3px);
+    transform: translateX(-50%);
+  }
+}
+/* A flow of five steps or more is too cramped side by side in the text
+   column, so it always runs as a vertical stepper; where the figure is wide
+   enough each step puts its title and description on one row. */
+.docs-content .flow:has(> .flow-step:nth-child(5)) {
+  grid-auto-flow: row;
+  grid-auto-columns: auto;
+  gap: 20px;
+}
+.flow:has(> .flow-step:nth-child(5)) > .flow-step:not(:last-child)::after {
+  content: "↓";
+  left: 50%;
+  top: calc(100% + 3px);
+  transform: translateX(-50%);
+}
+@container (min-width: 520px) {
+  .docs-content .flow:has(> .flow-step:nth-child(5)) > .flow-step {
+    display: grid;
+    grid-template-columns: minmax(10em, 32%) minmax(0, 1fr);
+    align-items: start;
+    column-gap: 18px;
+    row-gap: 3px;
+  }
+  .flow:has(> .flow-step:nth-child(5)) > .flow-step > .flow-desc {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+  .flow:has(> .flow-step:nth-child(5)) > .flow-step > .flow-title,
+  .flow:has(> .flow-step:nth-child(5)) > .flow-gate::before {
+    grid-column: 1;
+    justify-self: start;
+  }
+}
+@media (max-width: 600px) {
+  .diagram {
+    padding: 14px;
+  }
+}
+
+/* ── Prev / next pager ── */
+
+.docs-pager {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 56px;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 22px;
+}
+.docs-pager a {
+  display: block;
+  max-width: 48%;
+  text-decoration: none;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.docs-pager a:hover .pager-title {
+  color: var(--accent-hover);
+}
+.docs-pager .pager-next {
+  margin-left: auto;
+  text-align: right;
+}
+.pager-label {
+  display: block;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 3px;
+}
+.pager-title {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--accent);
+  transition: color 0.15s;
+}
+
+html.smooth-scroll {
+  scroll-behavior: smooth;
+}
+@media (prefers-reduced-motion: reduce) {
+  html.smooth-scroll {
+    scroll-behavior: auto;
+  }
+}
+
+/* "Getting ready for open source" modal — repo not public yet; injected on every
+   docs page by docs.js. GitHub buttons (data-oss-open) open this instead of linking out. */
+.oss-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+.oss-modal[hidden] {
+  display: none;
+}
+.oss-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(1, 4, 9, 0.72);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: ossFade 0.2s ease;
+}
+.oss-modal__card {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 430px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 30px 28px 26px;
+  text-align: center;
+  box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.85);
+  animation: ossPop 0.26s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+}
+.oss-modal__close {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 8px;
+  transition: color 0.15s;
+}
+.oss-modal__close:hover {
+  color: var(--text-primary);
+}
+.oss-modal__title {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  margin: 0 0 10px;
+}
+.oss-modal__body {
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  margin: 0 0 22px;
+}
+.oss-modal__form {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.oss-modal__input {
+  flex: 1 1 180px;
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 15px;
+}
+.oss-modal__input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.oss-modal__btn {
+  flex: 0 0 auto;
+  padding: 12px 20px;
+  border-radius: 10px;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  font-size: 15px;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    transform 0.12s;
+}
+.oss-modal__btn:hover {
+  background: var(--accent-hover);
+}
+.oss-modal__btn:active {
+  transform: scale(0.98);
+}
+.oss-modal__note {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.oss-modal__ok {
+  display: none;
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: rgba(63, 185, 80, 0.1);
+  border: 1px solid rgba(63, 185, 80, 0.3);
+}
+@keyframes ossFade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes ossPop {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+}

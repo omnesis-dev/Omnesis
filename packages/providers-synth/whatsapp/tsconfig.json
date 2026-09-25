@@ -1,0 +1,14 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "composite": true
+  },
+  "include": ["src", "../../providers/whatsapp/src/qrcode-terminal.d.ts"],
+  "references": [
+    { "path": "../../core" },
+    { "path": "../../providers/whatsapp" },
+    { "path": "../_common" }
+  ]
+}

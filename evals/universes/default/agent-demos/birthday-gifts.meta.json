@@ -1,0 +1,14 @@
+{
+  "triggers": ["birthday", "wife", "gift", "claire", "present", "anniversary"],
+  "placeholders": {
+    "docExternalIds": [
+      "synth-gmail-claire-001",
+      "synth-gmail-claire-002",
+      "synth-gmail-claire-003",
+      "synth-gmail-claire-005",
+      "synth-whatsapp-claire-001",
+      "synth-whatsapp-claire-002"
+    ],
+    "personNames": ["Claire Smith"]
+  }
+}

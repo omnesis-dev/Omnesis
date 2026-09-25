@@ -1,0 +1,25 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "TYPE_EXPRESSION_INVALID",
+      "severity": "error",
+      "path": "/watch/nodes/0/judge/output_schema/tone",
+      "message": "'text' is not a DSL type.",
+      "details": {
+        "field": "tone",
+        "value": "text"
+      }
+    },
+    {
+      "code": "REF_JUDGE_FIELD_UNKNOWN",
+      "severity": "error",
+      "path": "/watch/nodes/0/output_map/why",
+      "message": "The judge does not declare an output field 'reason'.",
+      "details": {
+        "field": "reason",
+        "declared": ["tone"]
+      }
+    }
+  ]
+}

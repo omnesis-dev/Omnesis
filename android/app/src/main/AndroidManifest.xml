@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- QR-code pairing scans the gateway's pairing code with the camera. Manual code
+         entry is always available as a fallback, so the camera is optional hardware. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+
+    <!-- "Tell Omnesis" quick capture dictates via SpeechRecognizer. Typing is always
+         available as a fallback, so the microphone is optional hardware. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+
+    <!-- Package visibility (API 30+): SpeechRecognizer.isRecognitionAvailable needs to
+         see the device's recognition service, and a document's "Open in source" action
+         shows only when some installed app opens its link, whatever the link's scheme. -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="*" />
+        </intent>
+    </queries>
+
+    <application
+        android:name=".OmnesisApp"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:usesCleartextTraffic="false"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.OmnesisAndroid">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.OmnesisAndroid">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Code-only OAuth handoff. MainActivity validates the complete URI before
+                 resolving the code against this phone's already-paired gateway. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="omnesis"
+                    android:host="access-authorization" />
+            </intent-filter>
+            <!-- QS tile / app shortcut land here with the surface slug as an extra. -->
+            <intent-filter>
+                <action android:name="dev.omnesis.android.action.TELL_BRAIN" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity>
+
+        <!-- Explicit App Actions fulfillment. It is exported because Assistant/Gemini launches
+             it cross-process; every request remains visibly foregrounded and input-bounded. -->
+        <activity
+            android:name=".assistant.AssistantActionActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.OmnesisAndroid" />
+
+        <!-- FCM carries either the constant content-free wake or a relay enrolment challenge. -->
+        <service
+            android:name=".notifications.OmnesisFirebaseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <!-- "Tell Omnesis" Quick Settings tile: opens the capture screen directly
+             (after a keyguard unlock on a locked device — see TellBrainTileService). -->
+        <service
+            android:name=".tile.TellBrainTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_mic"
+            android:label="@string/tile_tell_brain"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+    </application>
+
+</manifest>

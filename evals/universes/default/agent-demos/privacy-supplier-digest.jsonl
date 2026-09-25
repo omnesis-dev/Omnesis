@@ -1,0 +1,6 @@
+# The draft Omnesis writes for an external caller asking about supplier reviews.
+# Its privacy review (privacy-supplier-digest-review) allows it unchanged, so the
+# released answer is byte-identical to this draft — the `identical` comparison.
+{"afterMs":30,"event":{"type":"agent.message.start","payload":{"sessionId":"$SESSION","messageId":"$MSG","role":"assistant"}}}
+{"afterMs":120,"event":{"type":"agent.text.delta","payload":{"sessionId":"$SESSION","messageId":"$MSG","delta":"Two supplier reviews are still open this week.\nNorthwind Paper is waiting on a signed quality addendum.\nVerity Freight has returned its questionnaire and needs a scoring call."}}}
+{"afterMs":40,"event":{"type":"agent.message.end","payload":{"sessionId":"$SESSION","messageId":"$MSG","stopReason":"end_turn"}}}

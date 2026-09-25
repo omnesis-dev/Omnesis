@@ -1,0 +1,8 @@
+// Top-level build config. Tracked in git.
+//
+// Per-developer overrides live in Local.xcconfig (gitignored) — create it
+// from Local.xcconfig.example and set your team and base bundle ID there. The
+// optional include (#include?) is a no-op when the file is missing, so CI
+// and other developers don't fail on a missing Local.xcconfig.
+OMNESIS_BUNDLE_ID = dev.omnesis.ios
+#include? "Local.xcconfig"

@@ -1,0 +1,112 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Adrien Conrath
+
+/**
+ * `@omnesis/core/models` — bundled model catalog + on-disk manifest +
+ * inference capability types.
+ *
+ * Three layers:
+ *   - `CATALOG` / `catalogForRole` / `defaultForRole` — compile-time
+ *     typed bundle of every model the gateway can resolve.
+ *   - `loadManifest` / `saveManifest` / `*ManifestEntry` — runtime
+ *     manifest read/write under the gateway's models dir.
+ *   - Capability interfaces (`EmbedCapability`, `CompleteCapability`,
+ *     `TranscribeCapability`, …) + backend/assignment types — consumed by
+ *     the InferenceRegistry in the gateway.
+ */
+
+export {
+  MODEL_ROLES,
+  CAPABILITY_ROLES,
+  CODEX_SUPPORTED_ROLES,
+  CATALOG,
+  catalogForRole,
+  defaultForRole,
+  getCatalogEntry,
+  getCatalogEntryByFilename,
+  loadManifest,
+  saveManifest,
+  upsertManifestEntry,
+  removeManifestEntry,
+  findManifestEntry,
+  findManifestEntryByFilename,
+  ANTHROPIC_CREDENTIALS_SPEC,
+  PROVIDER_PRESETS,
+  getPreset,
+  PROVIDER_BRANDS,
+  getProviderBrand,
+  resolveModelDisplay,
+  classifyModelRoles,
+  classifyModels,
+  fuzzyMatchModelId,
+  MAX_RECENT_MODELS_PER_ROLE,
+  siblingRolesForRecentModels,
+  mergeRecentCandidates,
+  recordRecentHistory,
+  InferenceUrlPolicyError,
+  assertInferenceUrlAllowed,
+  classifyInferenceIp,
+  fetchWithInferenceUrlPolicy,
+  BACKGROUND_RATE_LIMIT_PATIENCE,
+  rateLimitRetryDelayMs,
+  retryRateLimitedRequest,
+} from "../models/index.js";
+
+export type {
+  RateLimitPatience,
+  ModelRole,
+  CatalogEntry,
+  GgufCatalogEntry,
+  AnthropicCatalogEntry,
+  Manifest,
+  ManifestEntry,
+  ModelsOverview,
+  ModelControlKey,
+  ModelControlDescriptor,
+  ModelBehaviorValues,
+  ModelControls,
+  ModelSettings,
+  ModelSettingsByRole,
+  LoadResult,
+  EmbedCapability,
+  CompleteCapability,
+  TranscribeCapability,
+  TranscriptionResult,
+  OcrCapability,
+  OcrResult,
+  CapabilityRole,
+  BackendType,
+  ModelTokenLimits,
+  HttpBackendConfig,
+  AssignmentValue,
+  ResolvedAssignment,
+  ResolvedLocal,
+  OcrNativeRuntime,
+  ResolvedHttp,
+  ResolvedAnthropic,
+  ResolvedDisabled,
+  ResolvedUnresolved,
+  ResolvedReplay,
+  ResolvedCodex,
+  BackendStatus,
+  CodexBackendStatus,
+  CodexLoginFlow,
+  CodexModelStatus,
+  CodexRuntimeStatus,
+  CodexRuntimeUpdateOperation,
+  CodexRuntimeUpdateOperationState,
+  CodexRuntimeUpdatePlan,
+  CodexRuntimeUpdateSnapshot,
+  InferenceOverview,
+  InferenceConfig,
+  ProviderPreset,
+  ProviderBrand,
+  ModelDisplay,
+  RecentModelHistory,
+  RecentModelCurrent,
+  RecentModelCandidate,
+  InferenceAddressClass,
+  InferenceFetchPolicy,
+  InferenceUrlPolicy,
+  HttpRateLimitRetryOptions,
+} from "../models/index.js";

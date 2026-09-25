@@ -1,0 +1,122 @@
+{
+  "transactionsSyncPages": [
+    {
+      "added": [
+        {
+          "transaction_id": "ptxn-1",
+          "account_id": "pacct-checking",
+          "amount": 12.34,
+          "iso_currency_code": "USD",
+          "date": "2026-05-10",
+          "name": "Stellar Sound",
+          "merchant_name": "Stellar Sound",
+          "pending": false,
+          "personal_finance_category": {
+            "primary": "ENTERTAINMENT"
+          }
+        },
+        {
+          "transaction_id": "ptxn-2",
+          "account_id": "pacct-checking",
+          "amount": -50.0,
+          "iso_currency_code": "USD",
+          "date": "2026-05-11",
+          "name": "Payroll Deposit",
+          "merchant_name": null,
+          "pending": false,
+          "personal_finance_category": {
+            "primary": "INCOME"
+          }
+        }
+      ],
+      "modified": [],
+      "removed": [],
+      "next_cursor": "txn-cursor-1",
+      "has_more": false
+    }
+  ],
+  "accountsGet": {
+    "accounts": [
+      {
+        "account_id": "pacct-checking",
+        "name": "Everyday Checking",
+        "type": "depository",
+        "subtype": "checking",
+        "balances": {
+          "available": 1500.25,
+          "current": 1620.5,
+          "limit": null,
+          "iso_currency_code": "USD"
+        }
+      },
+      {
+        "account_id": "pacct-savings",
+        "name": "Rainy Day Savings",
+        "type": "depository",
+        "subtype": "savings",
+        "balances": {
+          "available": 8000.0,
+          "current": 8000.0,
+          "limit": null,
+          "iso_currency_code": "USD"
+        }
+      },
+      {
+        "account_id": "pacct-card",
+        "name": "Rewards Card",
+        "type": "credit",
+        "subtype": "credit card",
+        "balances": {
+          "available": 4199.01,
+          "current": 800.99,
+          "limit": 5000.0,
+          "iso_currency_code": "USD"
+        }
+      }
+    ]
+  },
+  "investmentsHoldingsGet": {
+    "holdings": [
+      {
+        "account_id": "pacct-invest",
+        "security_id": "psec-zzzx",
+        "quantity": 10.0,
+        "institution_price": 250.5,
+        "institution_value": 2505.0,
+        "cost_basis": 2000.0,
+        "iso_currency_code": "USD"
+      },
+      {
+        "account_id": "pacct-invest",
+        "security_id": "psec-yyyy",
+        "quantity": 5.0,
+        "institution_price": 200.1,
+        "institution_value": 1000.5,
+        "cost_basis": 900.0,
+        "iso_currency_code": "USD"
+      }
+    ],
+    "securities": [
+      {
+        "security_id": "psec-zzzx",
+        "ticker_symbol": "ZZZX",
+        "name": "Stellar Index Fund",
+        "type": "etf",
+        "iso_currency_code": "USD"
+      },
+      {
+        "security_id": "psec-yyyy",
+        "ticker_symbol": "YYYY",
+        "name": "Northstar Growth Fund",
+        "type": "mutual fund",
+        "iso_currency_code": "USD"
+      }
+    ]
+  },
+  "itemGet": {
+    "item": {
+      "item_id": "synthetic-plaid-item",
+      "consent_expiration_time": "2099-01-01T00:00:00Z"
+    }
+  }
+}

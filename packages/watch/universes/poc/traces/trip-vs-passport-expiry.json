@@ -1,0 +1,938 @@
+{
+  "trace": {
+    "watch": "trip-vs-passport-expiry",
+    "records": [
+      {
+        "seq": 18,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 20,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 25,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 33,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 35,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 45,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 49,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 60,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 73,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 76,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 86,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 96,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 113,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 115,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 123,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 123,
+        "nodeId": "passport_check",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": 133,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 161,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 178,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 209,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 245,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 265,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 281,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 299,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 324,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 326,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 336,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 362,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 364,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 367,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 375,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 377,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 393,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 406,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 408,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 411,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 422,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 427,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 448,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 450,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 455,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 464,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 466,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 471,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 482,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 485,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 489,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 497,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 500,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 508,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 513,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 528,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 536,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 539,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 550,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 553,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 566,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 569,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 580,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 582,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 584,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 594,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 597,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 602,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 628,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 630,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 633,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 641,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 646,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 669,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 674,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 683,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 685,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 695,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 710,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 713,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 721,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 724,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 727,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 748,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 750,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 753,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 763,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 765,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 791,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 795,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 807,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 813,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 834,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 836,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 846,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 863,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 866,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 878,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 880,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 885,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 893,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 895,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 897,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 914,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 923,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 926,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 929,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 939,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 950,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 952,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 967,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 969,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 973,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 981,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 985,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 987,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1010,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1015,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1023,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1044,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1047,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1061,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1063,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1066,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1076,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1088,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1090,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1100,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1131,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1134,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1144,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1146,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1148,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1171,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1174,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1186,
+        "nodeId": "trip_booked",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      }
+    ],
+    "firings": []
+  },
+  "backtest": {
+    "events": 1208,
+    "days": 90,
+    "firings": 0,
+    "reachByNode": { "trip_booked": 131 },
+    "totalReaches": 131,
+    "unboundedNodes": []
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "KEY_COMPONENT_TYPE_MISMATCH",
+      "severity": "error",
+      "path": "/watch/nodes/2/inputs/reply/key/thread_id",
+      "message": "Key component 'thread_id' is string on edge 'inbound' and timestamp here — instances armed on one would never be found by the other.",
+      "details": {
+        "component": "thread_id",
+        "otherInput": "inbound",
+        "expected": "string",
+        "actual": "timestamp"
+      }
+    }
+  ]
+}

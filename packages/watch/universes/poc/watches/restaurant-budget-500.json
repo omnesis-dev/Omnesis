@@ -1,0 +1,49 @@
+{
+  "watch": {
+    "name": "restaurant-budget-500",
+    "nl_query": "Let me know when I've spent more than \u00a3500 on restaurants in the current calendar month.",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "restaurant_txn",
+        "type": "source.analytics_row",
+        "comment": "Plaid is the only transactions table carrying a category. 'updated' matters: a pending row is revised in place when it posts.",
+        "table": "plaid_transactions",
+        "op": ["inserted", "updated"],
+        "predicate": "category LIKE '%Restaurants%' AND amount > 0",
+        "output_map": {
+          "txn_month": "date_trunc('month', $e.row.date)",
+          "amount": "$e.row.amount"
+        }
+      },
+      {
+        "id": "month_over_500",
+        "type": "sql",
+        "comment": "One persistent cell per month; rising edge per month key gives at most one fire per month with no cooldown node.",
+        "inputs": {
+          "restaurant_txn": {
+            "role": "arm",
+            "key": {
+              "month": ".txn_month"
+            }
+          }
+        },
+        "on_collision": "accumulate",
+        "fire_on": "rising_edge",
+        "initial_level": "assume_false",
+        "query": "SELECT sum(amount) > 500 AS fires, sum(amount) AS total FROM plaid_transactions WHERE category LIKE '%Restaurants%' AND date_trunc('month', date) = $key.month",
+        "output_map": {
+          "total": "total"
+        }
+      }
+    ],
+    "sink": {
+      "input": "month_over_500",
+      "output_map": {
+        "month": "$n.month_over_500.$key.month",
+        "total": "$n.month_over_500.total"
+      }
+    }
+  }
+}

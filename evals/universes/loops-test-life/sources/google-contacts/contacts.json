@@ -1,0 +1,32 @@
+[
+  {
+    "externalId": "ltl-gcontact-001",
+    "personRef": "p_maya",
+    "givenName": "Maya",
+    "familyName": "Reeves",
+    "company": "",
+    "title": "",
+    "createdAt": "2025-11-03T10:00:00Z",
+    "modifiedAt": "2026-04-01T09:00:00Z"
+  },
+  {
+    "externalId": "ltl-gcontact-002",
+    "personRef": "p_jamie",
+    "givenName": "Jamie",
+    "familyName": "Lopez",
+    "company": "",
+    "title": "",
+    "createdAt": "2025-12-14T10:00:00Z",
+    "modifiedAt": "2026-04-01T09:00:00Z"
+  },
+  {
+    "externalId": "ltl-gcontact-003",
+    "personRef": "p_dana",
+    "givenName": "Dana",
+    "familyName": "Whitfield",
+    "company": "Whitfield Law",
+    "title": "Attorney",
+    "createdAt": "2026-03-20T10:00:00Z",
+    "modifiedAt": "2026-04-02T09:00:00Z"
+  }
+]

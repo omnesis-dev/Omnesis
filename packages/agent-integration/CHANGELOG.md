@@ -1,0 +1,84 @@
+# @omnesis/agent-integration
+
+## 0.5.11
+
+## 0.5.10
+
+## 0.5.9
+
+## 0.5.8
+
+## 0.5.7
+
+## 0.5.6
+
+## 0.5.5
+
+## 0.5.4
+
+## 0.5.3
+
+## 0.5.2
+
+## 0.5.1
+
+## 0.5.0
+
+## 0.4.23
+
+## 0.4.22
+
+## 0.4.21
+
+## 0.4.20
+
+## 0.4.19
+
+## 0.4.18
+
+## 0.4.17
+
+## 0.4.16
+
+## 0.4.15
+
+## 0.4.14
+
+## 0.4.13
+
+## 0.4.12
+
+## 0.4.11
+
+## 0.4.10
+
+## 0.4.9
+
+## 0.4.8
+
+## 0.4.7
+
+## 0.4.6
+
+## 0.4.5
+
+## 0.4.4
+
+## 0.4.3
+
+### Patch Changes
+
+- Harden MCP OAuth discovery, redirect validation, refresh rotation, audience aliases, and Answer ownership; preserve managed agent integrations while moving corpus access to OAuth grants; and improve authorization review and recovery across the portal and mobile apps.
+- Report the Hermes adapter version to the gateway so fleet version status remains accurate.
+
+## 0.4.2
+
+## 0.4.1
+
+## 0.4.0
+
+### Minor Changes
+
+- 56a13a5: Replace legacy external-agent MCP access with one OAuth-protected HTTP resource backed by principals, revisioned grants, independently revocable credentials, Portal approval, and managed OpenClaw and Hermes enrollment. Grants can independently authorize Direct and Answer over all sources, an explicit source-instance allowlist, or a denylist whose future-source behavior is shown before approval. Answer grants select a reusable named privacy-policy family with immutable edit, fork, template, and restore history, or explicitly opt into unreviewed release. Existing grants remain editable without reauthorizing the client, and code-gated authorization requests can be reviewed from a paired iPhone after a private notification.
+
+## 0.3.0

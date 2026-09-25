@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Privacy — Omnesis</title>
+    <meta
+      name="description"
+      content="How Omnesis handles your data: product updates, the app, and this website. Private by design."
+    />
+    <link rel="canonical" href="https://omnesis.dev/privacy" />
+    <meta name="theme-color" content="#0d1117" />
+    <meta name="robots" content="index,follow" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <!-- Resolve the theme before first paint: the stored choice, else the OS preference. -->
+    <script>
+      (function () {
+        var root = document.documentElement;
+        root.classList.add("js");
+        var t;
+        try {
+          t = localStorage.getItem("omnesis-theme");
+        } catch (e) {}
+        if (t !== "light" && t !== "dark") {
+          t =
+            window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+        }
+        root.setAttribute("data-theme", t);
+      })();
+    </script>
+    <style>
+      :root {
+        --bg: #0d1117;
+        --text: #e6edf3;
+        --muted: #9aa4b2;
+        --dim: #8b949e;
+        --accent: #58a6ff;
+        --border: #232a33;
+        --font:
+          "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      html {
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--font);
+        line-height: 1.7;
+        padding: 0;
+      }
+      .wrap {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 118px 24px 96px;
+      }
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 56px;
+      }
+      .logo {
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        color: var(--text);
+        text-decoration: none;
+      }
+      .logo span {
+        color: var(--accent);
+      }
+      .back {
+        font-size: 14px;
+        color: var(--muted);
+        text-decoration: none;
+      }
+      .back:hover {
+        color: var(--text);
+      }
+      h1 {
+        font-size: clamp(32px, 6vw, 44px);
+        font-weight: 800;
+        letter-spacing: -0.03em;
+        line-height: 1.1;
+        margin-bottom: 10px;
+      }
+      .updated {
+        font-size: 14px;
+        color: var(--dim);
+        margin-bottom: 14px;
+      }
+      .lede {
+        font-size: 17px;
+        color: var(--muted);
+        margin-bottom: 40px;
+      }
+      h2 {
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        margin: 40px 0 12px;
+      }
+      p,
+      li {
+        font-size: 15.5px;
+        color: var(--muted);
+        margin-bottom: 14px;
+      }
+      strong {
+        color: var(--text);
+        font-weight: 600;
+      }
+      ul {
+        padding-left: 22px;
+      }
+      li {
+        margin-bottom: 8px;
+      }
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      .foot {
+        margin-top: 48px;
+        padding-top: 22px;
+        border-top: 1px solid var(--border);
+        font-size: 13px;
+        color: var(--dim);
+      }
+    </style>
+    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="/footer-social.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <nav id="nav">
+      <div class="container">
+        <a href="/" class="nav-logo" aria-label="Omnesis"
+          ><span class="nav-logo-mark" aria-hidden="true"></span>MNESIS</a
+        >
+        <div class="nav-right">
+          <ul class="nav-links">
+            <li><a href="/">Context Layer</a></li>
+            <li><a href="/brain">Omnesis Brain</a></li>
+            <li><a href="/vision">Vision</a></li>
+          </ul>
+        </div>
+      </div>
+    </nav>
+    <div class="wrap">
+      <main id="main">
+        <h1>Privacy Policy</h1>
+        <p class="updated">Last updated: September 2026</p>
+        <p class="lede">
+          Omnesis is built so your data stays under your control. This policy explains, in plain
+          language, what we collect today (very little) and how the Omnesis app handles your data
+          once it's installed.
+        </p>
+
+        <h2>The short version</h2>
+        <ul>
+          <li>
+            The only thing this website collects is the <strong>email address</strong> you choose to
+            give us to receive Omnesis product updates.
+          </li>
+          <li>
+            The Omnesis app indexes your data on <strong>hardware you control</strong>. Whether
+            anything is sent to a third party is a deliberate choice you make.
+          </li>
+          <li>
+            No account is required to use Omnesis, and it sends no usage telemetry by default.
+          </li>
+        </ul>
+
+        <h2>Email updates</h2>
+        <p>
+          If you enter your email address in the sign-up form, we use it for one purpose: to email
+          you about Omnesis product updates. We process and store these emails through
+          <a href="https://kit.com/" rel="noopener" target="_blank">Kit</a> (formerly ConvertKit),
+          our email provider. We do not sell your email address or share it with anyone else. Every
+          email we send includes an unsubscribe link, and you can ask us to delete your address at
+          any time (see <em>Contact</em> below).
+        </p>
+
+        <h2>The Omnesis app</h2>
+        <p>
+          Omnesis connects to the sources you choose (such as email, messages, notes, calendar,
+          files, and health data) and builds a searchable index of them. That index, and the data in
+          it, lives on hardware you control. We don't receive a copy of it.
+        </p>
+        <p>
+          Omnesis supports encryption at rest for its main local databases and supported secrets.
+          Enable it with <code>omnesis secure</code>; we also recommend keeping FileVault or LUKS
+          enabled for full-disk protection.
+        </p>
+        <p>
+          Omnesis uses AI models for tasks like turning documents into search vectors and answering
+          questions. Local models keep processing on your machine. Cloud inference is off by
+          default; if you enable a cloud model or external AI agent, Omnesis sends the inputs needed
+          for the configured role to the provider you choose. That provider's privacy and retention
+          terms apply. We recommend choosing a provider and account plan that offers zero data
+          retention for the API you use, and verifying its terms before sending personal data.
+          Omnesis does not verify or enforce a provider's retention policy.
+        </p>
+        <p>
+          The Omnesis mobile apps have their own detailed privacy policy covering the device
+          permissions they use — see the
+          <a href="/mobile-privacy-policy">Omnesis mobile app privacy policy</a>.
+        </p>
+
+        <h2>This website</h2>
+        <p>
+          This marketing site does not run analytics or set advertising cookies. The only data it
+          collects is the email you choose to submit (see <em>Email updates</em> above). Your theme
+          preference (light or dark) is stored locally in your browser and never leaves your device.
+          The site loads a few third-party assets — web fonts and the brand logos shown in the
+          product illustrations — which means your browser contacts those providers to fetch them;
+          this is standard for loading external images and fonts and is not used to track you.
+        </p>
+
+        <h2>Your choices</h2>
+        <ul>
+          <li>Unsubscribe from emails using the link in any message we send.</li>
+          <li>Request access to, or deletion of, the email address we hold for you.</li>
+          <li>In the app, choose local models to keep processing entirely on your device.</li>
+        </ul>
+
+        <h2>Changes</h2>
+        <p>
+          Omnesis is evolving, so this policy may change. We'll update the date at the top when it
+          does.
+        </p>
+
+        <h2>Contact</h2>
+        <p>
+          Questions about this policy or your data? Email
+          <a href="mailto:contact@omnesis.dev">contact@omnesis.dev</a>.
+        </p>
+      </main>
+    </div>
+    <footer class="site-footer">
+      <div class="container">
+        <div class="footer-inner">
+          <div class="footer-base">© 2026 Omnesis</div>
+          <nav class="footer-links" aria-label="Footer">
+            <a href="/privacy" aria-current="page">Privacy</a>
+            <a class="footer-mail" href="mailto:contact@omnesis.dev">contact@omnesis.dev</a>
+            <a class="footer-gh" href="#" data-oss-open>GitHub</a>
+            <a
+              class="footer-social footer-x"
+              href="https://x.com/Omnesisdev"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Omnesis on X"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>@Omnesisdev
+            </a>
+            <a
+              class="footer-social footer-discord"
+              href="https://discord.gg/4Y8pQHrVv"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Join Omnesis on Discord"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>Discord
+            </a>
+          </nav>
+        </div>
+      </div>
+    </footer>
+    <script src="/docs/docs.js"></script>
+  </body>
+</html>

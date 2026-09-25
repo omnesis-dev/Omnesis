@@ -1,0 +1,177 @@
+# Real third-party plugin boundary: install each deliberately pinned harness,
+# run the real Omnesis enrollment ceremony, then load and start the installed
+# plugin without issuing a prompt or configuring a chat model.
+name: harness-conformance
+
+# Full validation supplies one immutable source revision to this reusable lane.
+# Manual full requests enter through the guarded admission controller.
+on:
+  workflow_call:
+    inputs:
+      target_sha:
+        description: "Exact 40-character source revision to validate"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  HERMES_REPOSITORY: https://github.com/NousResearch/hermes-agent.git
+  HERMES_COMMIT: 29112bef099274229cadff79cdff7bf7b99c4b77 # v0.21.0 / v2026.8.31
+
+jobs:
+  conformance:
+    name: ${{ matrix.harness }}
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        harness: [openclaw, hermes]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          # No Actions npm cache on the persistent self-hosted runner.
+
+      - name: Set up Python
+        if: matrix.harness == 'hermes'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      # Match the uv release Hermes itself uses for this pinned source commit.
+      - name: Set up uv
+        if: matrix.harness == 'hermes'
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          version: "0.9.28"
+          enable-cache: false
+
+      - name: Install Omnesis dependencies
+        run: npm ci
+
+      - name: Prepare isolated harness scratch
+        shell: bash
+        env:
+          HARNESS_NAME: ${{ matrix.harness }}
+        run: |
+          harness_key="${HARNESS_NAME:0:1}"
+          umask 077
+          harness_root="$(mktemp -d "/tmp/oh-${GITHUB_RUN_ID}-${harness_key}.XXXXXX")"
+          harness_root_id="$(stat -c '%d:%i' -- "$harness_root")"
+          echo "HARNESS_ROOT=$harness_root" >> "$GITHUB_ENV"
+          echo "HARNESS_ROOT_ID=$harness_root_id" >> "$GITHUB_ENV"
+          mkdir "$harness_root/tmp"
+
+      - name: Check out pinned Hermes
+        if: matrix.harness == 'hermes'
+        shell: bash
+        run: |
+          mkdir -p "$HARNESS_ROOT/hermes-agent"
+          git -C "$HARNESS_ROOT/hermes-agent" init --quiet
+          git -C "$HARNESS_ROOT/hermes-agent" remote add origin "$HERMES_REPOSITORY"
+          for attempt in 1 2 3; do
+            if git -C "$HARNESS_ROOT/hermes-agent" fetch --quiet --depth 1 origin "$HERMES_COMMIT"; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            sleep "$((attempt * 15))"
+          done
+          git -C "$HARNESS_ROOT/hermes-agent" checkout --quiet --detach FETCH_HEAD
+          test "$(git -C "$HARNESS_ROOT/hermes-agent" rev-parse HEAD)" = "$HERMES_COMMIT"
+
+      - name: Install pinned Hermes environment
+        if: matrix.harness == 'hermes'
+        shell: bash
+        run: |
+          uv sync --directory "$HARNESS_ROOT/hermes-agent" --locked --no-dev --python 3.12
+          test -x "$HARNESS_ROOT/hermes-agent/.venv/bin/hermes"
+          test -x "$HARNESS_ROOT/hermes-agent/.venv/bin/python"
+          echo "$HARNESS_ROOT/hermes-agent/.venv/bin" >> "$GITHUB_PATH"
+          echo "OMNESIS_HERMES_BIN=$HARNESS_ROOT/hermes-agent/.venv/bin/hermes" >> "$GITHUB_ENV"
+          echo "OMNESIS_HERMES_PYTHON=$HARNESS_ROOT/hermes-agent/.venv/bin/python" >> "$GITHUB_ENV"
+
+      - name: lane [harness-${{ matrix.harness }}]
+        env:
+          OMNESIS_HARNESS_CONFORMANCE: ${{ matrix.harness }}
+          OMNESIS_E2E_LOCK_TIMEOUT_MS: "3600000"
+          OMNESIS_E2E_WORKERS: "1"
+          TZ: UTC
+        run: |
+          test -n "$HARNESS_ROOT"
+          export OMNESIS_HARNESS_TMPDIR="$HARNESS_ROOT/tmp"
+          exec node scripts/run-check.mjs e2e packages/collector/src/e2e/harness-plugin-conformance.e2e.test.ts
+
+      - name: Clean up pinned harness
+        if: always()
+        shell: bash
+        env:
+          HARNESS_NAME: ${{ matrix.harness }}
+        run: |
+          harness_key="${HARNESS_NAME:0:1}"
+          if [[ -z "${HARNESS_ROOT:-}" || -z "${HARNESS_ROOT_ID:-}" ]]; then
+            exit 0
+          fi
+          case "$HARNESS_ROOT" in
+            /tmp/oh-${GITHUB_RUN_ID}-${harness_key}.??????) ;;
+            *) echo "Refusing unsafe cleanup path: $HARNESS_ROOT" >&2; exit 64 ;;
+          esac
+          if [[ ! -e "$HARNESS_ROOT" && ! -L "$HARNESS_ROOT" ]]; then
+            exit 0
+          fi
+          quarantine_parent="$(mktemp -d "/tmp/oh-clean-${GITHUB_RUN_ID}-${harness_key}.XXXXXX")"
+          quarantine="$quarantine_parent/root"
+          if ! mv -T -- "$HARNESS_ROOT" "$quarantine"; then
+            rmdir -- "$quarantine_parent"
+            if [[ ! -e "$HARNESS_ROOT" && ! -L "$HARNESS_ROOT" ]]; then
+              exit 0
+            fi
+            echo "Could not quarantine cleanup path: $HARNESS_ROOT" >&2
+            exit 64
+          fi
+          cleanup_status=0
+          (
+            cd -- "$quarantine"
+            current_root_id="$(stat -c '%d:%i' -- .)"
+            if [[ "$current_root_id" != "$HARNESS_ROOT_ID" ]]; then
+              exit 64
+            fi
+            find . -mindepth 1 -depth -delete
+          ) || cleanup_status=$?
+          if [[ "$cleanup_status" -ne 0 ]]; then
+            if [[ ! -e "$HARNESS_ROOT" && ! -L "$HARNESS_ROOT" ]]; then
+              mv -T -- "$quarantine" "$HARNESS_ROOT"
+            fi
+            echo "Refusing replaced cleanup path: $HARNESS_ROOT" >&2
+          elif [[ -e "$quarantine" || -L "$quarantine" ]]; then
+            current_root_id="$(stat -c '%d:%i' -- "$quarantine")"
+            if [[ "$current_root_id" != "$HARNESS_ROOT_ID" ]]; then
+              if [[ ! -e "$HARNESS_ROOT" && ! -L "$HARNESS_ROOT" ]]; then
+                mv -T -- "$quarantine" "$HARNESS_ROOT"
+              fi
+              echo "Refusing post-verification replacement: $quarantine" >&2
+              cleanup_status=64
+            elif ! rmdir -- "$quarantine"; then
+              echo "Could not remove emptied cleanup path: $quarantine" >&2
+              cleanup_status=64
+            fi
+          fi
+          rmdir -- "$quarantine_parent" 2>/dev/null || true
+          exit "$cleanup_status"

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Omnesis</string>
+    <string name="tile_tell_brain">Tell Omnesis</string>
+    <string name="shortcut_tell_brain_short">Tell Omnesis</string>
+    <string name="shortcut_tell_brain_long">Tell Omnesis something</string>
+    <string name="shortcut_ask_omnesis_short">Ask Omnesis</string>
+    <string name="shortcut_ask_omnesis_long">Ask Omnesis a question</string>
+
+    <!-- Custom App Action query patterns are matched after the app invocation phrase. -->
+    <string-array name="assistant_ask_query_patterns">
+        <item>ask $question</item>
+        <item>answer $question</item>
+        <item>question $question</item>
+    </string-array>
+    <string-array name="assistant_capture_query_patterns">
+        <item>note $note</item>
+        <item>save $note</item>
+        <item>capture $note</item>
+        <item>remember $note</item>
+        <item>save a note $note</item>
+    </string-array>
+</resources>

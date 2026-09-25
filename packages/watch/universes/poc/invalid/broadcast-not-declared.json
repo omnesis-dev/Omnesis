@@ -1,0 +1,53 @@
+{
+  "watch": {
+    "name": "broadcast-not-declared",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "mail",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email",
+          "people": [
+            {
+              "role": "sender",
+              "isSelf": false
+            }
+          ]
+        },
+        "output_map": {
+          "thread_id": "$e.metadata.extra.threadId",
+          "doc_id": "$e.docId"
+        }
+      },
+      {
+        "id": "tick",
+        "type": "source.time",
+        "recurring": "0 9 * * *"
+      },
+      {
+        "id": "both",
+        "type": "stateful.and",
+        "inputs": {
+          "mail": {
+            "role": "arm",
+            "key": {
+              "thread_id": ".thread_id"
+            }
+          },
+          "tick": {
+            "role": "arm"
+          }
+        },
+        "on_collision": "reset",
+        "deadline": "7 days"
+      }
+    ],
+    "sink": {
+      "input": "both"
+    }
+  }
+}

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  App-usage integration manifest. Merged into :app by the manifest merger,
+  keeping the permission declaration encapsulated in this module.
+
+  PACKAGE_USAGE_STATS is a "special access" AppOps permission, not a runtime
+  "dangerous" permission — there is no system dialog to request it. Declaring
+  it here only makes the OS list this app under Settings > Apps with usage
+  access; the actual grant happens when the user flips it there themselves
+  (the settings UI's "grant access" CTA sends them straight to that screen).
+  tools:ignore suppresses the lint warning about a protected-system permission
+  an app can't obtain by simply asking for it.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+
+</manifest>

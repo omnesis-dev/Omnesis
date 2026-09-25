@@ -1,0 +1,32 @@
+{
+  "watch": {
+    "name": "row-predicate-escapes-into-a-query",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "txn",
+        "type": "source.analytics_row",
+        "table": "plaid_transactions",
+        "op": ["inserted"],
+        "predicate": "amount > 0) AS fires, (SELECT count(*) FROM people",
+        "output_map": {
+          "amount": "$e.row.amount"
+        }
+      },
+      {
+        "id": "gate",
+        "type": "stateless.transform",
+        "inputs": {
+          "txn": {
+            "role": "arm"
+          }
+        },
+        "query": "SELECT true AS fires"
+      }
+    ],
+    "sink": {
+      "input": "gate"
+    }
+  }
+}

@@ -1,0 +1,42 @@
+[
+  {
+    "externalId": "synth-gmail-001",
+    "subject": "Q3 planning — heads up",
+    "from": "p_emma",
+    "fromEmail": "emma.park@acme.example",
+    "to": ["self"],
+    "toEmails": ["john.smith@example.com"],
+    "body": "Heads up — Q3 planning kickoff Monday 10 AM. Bring the Globex update.",
+    "sentAt": "2025-08-29T17:30:00Z",
+    "scheduledAt": "2025-09-01T17:00:00Z",
+    "threadId": "t_q3_kickoff",
+    "labels": ["INBOX", "Work"]
+  },
+  {
+    "externalId": "synth-gmail-002",
+    "subject": "Marathon training plan — week 6",
+    "from": "p_carol",
+    "fromEmail": "carol.nakamura@globex.example",
+    "to": ["self"],
+    "toEmails": ["john.smith@example.com"],
+    "body": "Hey John,\n\nWeek 6 plan attached. Big mileage week — focus on recovery between hard days.\n\nCarol",
+    "sentAt": "2025-09-01T07:00:00Z",
+    "dueAt": "2025-09-07T23:59:00Z",
+    "threadId": "t_marathon_w6",
+    "labels": ["INBOX", "Personal", "Running"]
+  },
+  {
+    "externalId": "synth-gmail-003",
+    "subject": "Re: Vendor evaluation — first cut",
+    "from": "self",
+    "fromEmail": "john.smith@example.com",
+    "to": ["p_jane"],
+    "toEmails": ["jane.doe@example.org"],
+    "body": "Quick note from my personal email — let me know if you'd prefer continuing on Acme mail. (Easier to track from one place.)\n-J",
+    "sentAt": "2025-09-02T11:30:00Z",
+    "scheduledAt": "2025-09-03T18:00:00Z",
+    "dueAt": "2025-09-05T17:00:00Z",
+    "threadId": "t_vendor_eval_acme_personal",
+    "labels": ["SENT"]
+  }
+]

@@ -1,0 +1,66 @@
+[
+  {
+    "externalId": "call-log:2025-09-05",
+    "date": "2025-09-05",
+    "calls": [
+      {
+        "time": "2025-09-05T18:32:00Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 720,
+        "connected": true,
+        "counterparty": "p_claire"
+      },
+      {
+        "time": "2025-09-05T09:14:00Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_daniel_harper"
+      }
+    ]
+  },
+  {
+    "externalId": "call-log:2025-09-09",
+    "date": "2025-09-09",
+    "calls": [
+      {
+        "time": "2025-09-09T07:05:00Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 480,
+        "connected": true,
+        "counterparty": "p_claire"
+      }
+    ]
+  },
+  {
+    "externalId": "call-log:2025-09-12",
+    "date": "2025-09-12",
+    "calls": [
+      {
+        "time": "2025-09-12T11:20:00Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_daniel_harper"
+      }
+    ]
+  },
+  {
+    "externalId": "call-log:2025-09-20",
+    "date": "2025-09-20",
+    "calls": [
+      {
+        "time": "2025-09-20T20:41:00Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": null
+      }
+    ]
+  }
+]

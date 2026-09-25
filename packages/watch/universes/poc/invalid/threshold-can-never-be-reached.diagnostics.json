@@ -1,0 +1,16 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "THRESHOLD_N_EXCEEDS_INPUTS",
+      "severity": "error",
+      "path": "/watch/nodes/2/n",
+      "message": "Node 'three_of_two' fires when 3 of its inputs have fired, but it only has 2.",
+      "details": {
+        "nodeId": "three_of_two",
+        "n": 3,
+        "armInputs": 2
+      }
+    }
+  ]
+}

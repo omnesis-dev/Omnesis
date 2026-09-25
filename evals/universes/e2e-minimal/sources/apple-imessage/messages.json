@@ -1,0 +1,64 @@
+[
+  {
+    "externalId": "synth-apple-im-001",
+    "chatId": "im_dave",
+    "chatTitle": "Dave Ortiz",
+    "date": "2025-09-06",
+    "counterparty": "p_dave",
+    "messages": [
+      {
+        "from": "p_dave",
+        "at": "2025-09-06T18:30:00Z",
+        "text": "Brought book list. Snow Crash if you haven't."
+      },
+      {
+        "from": "self",
+        "at": "2025-09-06T18:32:00Z",
+        "text": "Read it years ago. What did Carol grab?"
+      },
+      {
+        "from": "p_dave",
+        "at": "2025-09-06T18:35:00Z",
+        "text": "She took Atomic Habits."
+      }
+    ]
+  },
+  {
+    "externalId": "synth-apple-im-002",
+    "chatId": "im_carol",
+    "chatTitle": "Carol Nakamura",
+    "date": "2025-09-07",
+    "counterparty": "p_carol",
+    "messages": [
+      {
+        "from": "self",
+        "at": "2025-09-07T06:45:00Z",
+        "text": "Headed to the track. Confirm we are still on for 800s?"
+      },
+      {
+        "from": "p_carol",
+        "at": "2025-09-07T06:46:00Z",
+        "text": "Yes. See you there."
+      }
+    ]
+  },
+  {
+    "externalId": "synth-apple-im-003",
+    "chatId": "im_emma",
+    "chatTitle": "Emma Park",
+    "date": "2025-09-08",
+    "counterparty": "p_emma",
+    "messages": [
+      {
+        "from": "p_emma",
+        "at": "2025-09-08T15:00:00Z",
+        "text": "1:1 in 30 — I'll come to you."
+      },
+      {
+        "from": "self",
+        "at": "2025-09-08T15:01:00Z",
+        "text": "Cool. Have the Q3 review prep ready."
+      }
+    ]
+  }
+]

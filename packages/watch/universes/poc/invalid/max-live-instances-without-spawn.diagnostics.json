@@ -1,0 +1,15 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "MAX_LIVE_INSTANCES_WITHOUT_SPAWN",
+      "severity": "error",
+      "path": "/watch/nodes/1/max_live_instances",
+      "message": "Only 'spawn' creates parallel instances per key; 'reset' keeps at most one.",
+      "details": {
+        "nodeId": "waiting",
+        "declared": "reset"
+      }
+    }
+  ]
+}

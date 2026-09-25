@@ -1,0 +1,15 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "TYPE_MISMATCH",
+      "severity": "error",
+      "path": "/watch/nodes/1/fire_when",
+      "message": "'certain' is not a member of enum[clear, probable, ambiguous].",
+      "details": {
+        "value": "certain",
+        "members": ["clear", "probable", "ambiguous"]
+      }
+    }
+  ]
+}

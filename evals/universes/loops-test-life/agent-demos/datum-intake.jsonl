@@ -1,0 +1,12 @@
+# Golden cassette: one datum-intake run, replayed verbatim.
+# Every tool.start below omits its result, so the REAL tool layer executes and
+# the writes land for real. `capture` lifts the id the gateway actually minted
+# so the later calls address the loop that now exists, not the recorded one.
+{"afterMs":0,"event":{"type":"agent.message.start","payload":{"sessionId":"$SESSION","messageId":"$MSG","role":"assistant"}}}
+{"afterMs":0,"event":{"type":"agent.text.delta","payload":{"sessionId":"$SESSION","messageId":"$MSG","delta":"A deposit is outstanding; tracking it and raising a card.\n"}}}
+{"afterMs":0,"event":{"type":"agent.tool.start","payload":{"sessionId":"$SESSION","messageId":"$MSG","toolCallId":"tc-search","tool":"open_loop_search","args":{"query":"harvest fair stand deposit"}}}}
+{"afterMs":0,"event":{"type":"agent.tool.start","payload":{"sessionId":"$SESSION","messageId":"$MSG","toolCallId":"tc-loop","tool":"open_loop_create","args":{"title":"Send the deposit for the harvest fair stand","description":"The stand is held until the deposit is sent.","confidence":0.9,"importance":0.75,"docs":["$DOC_bench-cassette-deposit"],"annotationDependencies":[]}}},"capture":{"loop1":"data.loop.id"}}
+{"afterMs":0,"event":{"type":"agent.tool.start","payload":{"sessionId":"$SESSION","messageId":"$MSG","toolCallId":"tc-ledger","tool":"open_loop_ledger_append","args":{"id":"$CAP_loop1","note":"Stand held pending the deposit; no date given yet."}}}}
+{"afterMs":0,"event":{"type":"agent.tool.start","payload":{"sessionId":"$SESSION","messageId":"$MSG","toolCallId":"tc-brief","tool":"brief_create","args":{"kind":"loop","title":"Deposit due for the harvest fair stand","description":"The stand is held until you send the deposit.","citations":["$DOC_bench-cassette-deposit"],"relatedLoopIds":["$CAP_loop1"],"confidence":0.9,"urgency":0.6,"annotationDependencies":[]}}}}
+{"afterMs":0,"event":{"type":"agent.text.delta","payload":{"sessionId":"$SESSION","messageId":"$MSG","delta":"Tracked the obligation and raised one card."}}}
+{"afterMs":0,"event":{"type":"agent.message.end","payload":{"sessionId":"$SESSION","messageId":"$MSG","stopReason":"end_turn"}}}

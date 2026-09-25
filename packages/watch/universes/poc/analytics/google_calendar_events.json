@@ -1,0 +1,155 @@
+[
+  {
+    "id": "evt-20260325-catchup",
+    "title": "Catch-up with Priya Raman",
+    "start_time": "2026-03-25T10:00:00.000Z",
+    "end_time": "2026-03-25T11:00:00.000Z",
+    "location": "42 Example Street",
+    "attendee_count": 2,
+    "response_status": "accepted"
+  },
+  {
+    "id": "evt-20260402-review",
+    "title": "Quarterly review with Alice Nakamura",
+    "start_time": "2026-04-04T10:00:00.000Z",
+    "end_time": "2026-04-04T11:00:00.000Z",
+    "location": "42 Example Street",
+    "attendee_count": 2,
+    "response_status": "accepted"
+  },
+  {
+    "id": "evt-20260419-handover",
+    "title": "Handover call with Priya Raman",
+    "start_time": "2026-04-19T10:00:00.000Z",
+    "end_time": "2026-04-19T11:00:00.000Z",
+    "location": "42 Example Street",
+    "attendee_count": 2,
+    "response_status": "accepted"
+  },
+  {
+    "id": "evt-20260430-planning",
+    "title": "Planning session with Maya Reeves",
+    "start_time": "2026-04-30T10:00:00.000Z",
+    "end_time": "2026-04-30T11:00:00.000Z",
+    "location": "42 Example Street",
+    "attendee_count": 2,
+    "response_status": "accepted"
+  },
+  {
+    "id": "evt-20260515-reconnect",
+    "title": "Reconnect with Priya Raman",
+    "start_time": "2026-05-15T10:00:00.000Z",
+    "end_time": "2026-05-15T11:00:00.000Z",
+    "location": "42 Example Street",
+    "attendee_count": 2,
+    "response_status": "accepted"
+  },
+  {
+    "id": "evt-20260306-standup",
+    "title": "Weekly standup",
+    "start_time": "2026-03-06T10:00:00.000Z",
+    "end_time": "2026-03-06T11:00:00.000Z",
+    "location": "42 Example Street",
+    "attendee_count": 2,
+    "response_status": "accepted"
+  },
+  {
+    "id": "evt-20260313-standup",
+    "title": "Weekly standup",
+    "start_time": "2026-03-13T10:00:00.000Z",
+    "end_time": "2026-03-13T11:00:00.000Z",
+    "location": "42 Example Street",
+    "attendee_count": 2,
+    "response_status": "accepted"
+  },
+  {
+    "id": "evt-20260320-design",
+    "title": "Design review with Maya Reeves",
+    "start_time": "2026-03-20T10:00:00.000Z",
+    "end_time": "2026-03-20T11:00:00.000Z",
+    "location": "42 Example Street",
+    "attendee_count": 2,
+    "response_status": "accepted"
+  },
+  {
+    "id": "evt-20260327-standup",
+    "title": "Weekly standup",
+    "start_time": "2026-03-27T10:00:00.000Z",
+    "end_time": "2026-03-27T11:00:00.000Z",
+    "location": "42 Example Street",
+    "attendee_count": 2,
+    "response_status": "accepted"
+  },
+  {
+    "id": "evt-20260403-budget",
+    "title": "Budget walkthrough with David Lin",
+    "start_time": "2026-04-03T10:00:00.000Z",
+    "end_time": "2026-04-03T11:00:00.000Z",
+    "location": "42 Example Street",
+    "attendee_count": 2,
+    "response_status": "accepted"
+  },
+  {
+    "id": "evt-20260410-standup",
+    "title": "Weekly standup",
+    "start_time": "2026-04-10T10:00:00.000Z",
+    "end_time": "2026-04-10T11:00:00.000Z",
+    "location": "42 Example Street",
+    "attendee_count": 2,
+    "response_status": "accepted"
+  },
+  {
+    "id": "evt-20260417-design",
+    "title": "Design review with Maya Reeves",
+    "start_time": "2026-04-17T10:00:00.000Z",
+    "end_time": "2026-04-17T11:00:00.000Z",
+    "location": "42 Example Street",
+    "attendee_count": 2,
+    "response_status": "accepted"
+  },
+  {
+    "id": "evt-20260424-standup",
+    "title": "Weekly standup",
+    "start_time": "2026-04-24T10:00:00.000Z",
+    "end_time": "2026-04-24T11:00:00.000Z",
+    "location": "42 Example Street",
+    "attendee_count": 2,
+    "response_status": "accepted"
+  },
+  {
+    "id": "evt-20260501-budget",
+    "title": "Budget walkthrough with David Lin",
+    "start_time": "2026-05-01T10:00:00.000Z",
+    "end_time": "2026-05-01T11:00:00.000Z",
+    "location": "42 Example Street",
+    "attendee_count": 2,
+    "response_status": "accepted"
+  },
+  {
+    "id": "evt-20260508-standup",
+    "title": "Weekly standup",
+    "start_time": "2026-05-08T10:00:00.000Z",
+    "end_time": "2026-05-08T11:00:00.000Z",
+    "location": "42 Example Street",
+    "attendee_count": 2,
+    "response_status": "accepted"
+  },
+  {
+    "id": "evt-20260522-design",
+    "title": "Design review with Maya Reeves",
+    "start_time": "2026-05-22T10:00:00.000Z",
+    "end_time": "2026-05-22T11:00:00.000Z",
+    "location": "42 Example Street",
+    "attendee_count": 2,
+    "response_status": "accepted"
+  },
+  {
+    "id": "evt-20260528-standup",
+    "title": "Weekly standup",
+    "start_time": "2026-05-28T10:00:00.000Z",
+    "end_time": "2026-05-28T11:00:00.000Z",
+    "location": "42 Example Street",
+    "attendee_count": 2,
+    "response_status": "accepted"
+  }
+]

@@ -1,0 +1,40 @@
+{
+  "note": "Scorecard gating thresholds for the reconcile-quality metrics, with a per-metric noise band (max minus min over K>=3 frozen-seed runs at one commit). Ratchet-only: a threshold may be raised when cleared with margin, never lowered without an operator directive. Fresh-seed numbers never gate.",
+  "calibration": {
+    "basis": "iter-38 instrument-round-4 re-baseline (the feedback-reaction round, operator option B): K=3 frozen-seed (seed 137) deepseek-v4-flash runs at the final iter-38 code state (ledger rows iter-38-r5/r6b/r7, 2026-07-05/06) on the NEW 26-arc instrument \u2014 five feedback arcs added over iter-37's 21, one per dismiss-modal reaction, each driving a REAL brief dismissal through POST /briefs/:id/dismiss (state flip + feedback-run enqueue in one write) and pricing the resulting feedback run: already_handled (gold: loop done \u2014 the record stays), not_relevant (gold: loop deleted), snoozed (gold: loop stays open; the engine wrote next_show), acknowledged (info brief only; gold: no loop, before or after), wrong (gold: loop deleted \u2014 done would fabricate a fulfilment for a misread). Saboteur feedback policy plants a wrong verb per state (5 duplicate mints, 5 unjustified loops, 2 vanished loops in the manifest); perfect/saboteur validated zero-cost; the 21 pre-existing arcs' frozen-seed surfaces stay byte-identical. Every gated metric hit its ceiling in all three K runs, so all gates re-baseline at unchanged ceiling values (recall family 1, damage family 0, bands 0). Disclosed diagnostics, excluded from calibration: iter-38-r2 (pass at the intermediate 2-reaction state), iter-38-r4 (FAIL, resolution_recall 0.8 \u2014 the new dismissed-wrong arc induced a notes over-generalization: the feedback run's 'lesson about the misread' quarantined the entire source as test data and a later run then refused to resolve the long-horizon contract loop on its own note; fixed by the scoped-lessons rule \u2014 a lesson is about the specific misread, never a sender/source/category quarantine; every user-connected source stays in scope \u2014 added to the notes discipline and the dismissed_wrong guidance, verified clean on r5/r6b/r7), plus three aborted invocations with no ledger row (r1: the original noise arc was too marketing-flavored and the importance gate skipped it \u2014 datum rewritten as a direct personal ask; r3: killed by the mix-drift guard after arc-kit edits landed mid-flight \u2014 arc-kit files must never change while a priced run is in flight; r6: the merchant-flavored renewal went unbriefed and the driver hard-failed \u2014 the dismissal step now SKIPS a missing brief and lets the gold measure the consequence instead of aborting the run set; r7 exercised that path once, on the acknowledged arc, and still scored clean). Informational (never-gating) on the K=3: briefs_per_day 17, tokens_per_day 3965287-4779788 ($0.57-0.68/day worst-case metered on the 42-run mix), scheduled_runs 11-12, malformed_tool_call_rate_raw {0, 0.0215, 0.0093} (every failure corrected in-run; the gated uncorrected rate stayed 0). A future nonzero infra_failure_rate first goes through the retry/invalid-run-set protocol (>~5% invalidates the run set) before it ever reaches this gate."
+  },
+  "metrics": {
+    "duplicate_rate": {
+      "value": 0,
+      "noiseBand": 0
+    },
+    "resolution_recall": {
+      "value": 1,
+      "noiseBand": 0
+    },
+    "loop_precision": {
+      "value": 1,
+      "noiseBand": 0
+    },
+    "loop_recall": {
+      "value": 1,
+      "noiseBand": 0
+    },
+    "update_recall": {
+      "value": 1,
+      "noiseBand": 0
+    },
+    "silent_close_violations": {
+      "value": 0,
+      "noiseBand": 0
+    },
+    "infra_failure_rate": {
+      "value": 0,
+      "noiseBand": 0
+    },
+    "malformed_tool_call_rate": {
+      "value": 0,
+      "noiseBand": 0
+    }
+  }
+}

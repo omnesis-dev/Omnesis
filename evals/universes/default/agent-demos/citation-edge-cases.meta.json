@@ -1,0 +1,6 @@
+{
+  "triggers": ["citation", "cite", "ground", "ground this"],
+  "placeholders": {
+    "docExternalIds": ["synth-notion-page-003", "synth-gcal-003"]
+  }
+}

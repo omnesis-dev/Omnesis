@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Bare platform theme; Compose owns all real theming (incl. dark mode). The
+         window background just avoids a flash before the first frame draws. -->
+    <style name="Theme.OmnesisAndroid" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/omnesis_window_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>

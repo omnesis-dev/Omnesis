@@ -1,0 +1,35 @@
+{
+  "watch": {
+    "name": "fire-when-unknown-enum-member",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "tick",
+        "type": "source.time",
+        "recurring": "0 9 * * *"
+      },
+      {
+        "id": "judge",
+        "type": "llm",
+        "mode": "judge",
+        "inputs": {
+          "tick": {
+            "role": "arm"
+          }
+        },
+        "on_collision": "ignore",
+        "deadline": "1 hours",
+        "proposition": "Today was unusual",
+        "output_schema": {
+          "decision": "bool",
+          "confidence": "enum[clear, probable, ambiguous]"
+        },
+        "fire_when": "decision AND confidence == 'certain'"
+      }
+    ],
+    "sink": {
+      "input": "judge"
+    }
+  }
+}

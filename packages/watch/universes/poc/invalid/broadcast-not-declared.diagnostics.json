@@ -1,0 +1,15 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "BROADCAST_REQUIRED",
+      "severity": "error",
+      "path": "/watch/nodes/2/inputs/tick",
+      "message": "Node 'both' is keyed, so a keyless edge must say what it means: declare 'broadcast: true' to fan this input out to every live key.",
+      "details": {
+        "inputId": "tick",
+        "keyComponents": ["thread_id"]
+      }
+    }
+  ]
+}

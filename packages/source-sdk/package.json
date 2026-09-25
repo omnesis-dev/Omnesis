@@ -1,0 +1,22 @@
+{
+  "name": "@omnesis/source-sdk",
+  "version": "0.5.11",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./gateway-client": "./src/gateway-client.ts",
+    "./local-agent-sessions": "./src/local-agent-sessions.ts",
+    "./testing": "./src/testing/index.ts"
+  },
+  "dependencies": {
+    "@omnesis/types": "*",
+    "@omnesis/config": "*",
+    "@omnesis/core": "*"
+  },
+  "files": [
+    "dist"
+  ]
+}

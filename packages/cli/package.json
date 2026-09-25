@@ -1,0 +1,28 @@
+{
+  "name": "omnesis",
+  "version": "0.5.11",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "bin": {
+    "omnesis": "src/index.ts"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.7.0",
+    "@omnesis/agent-integration": "*",
+    "@omnesis/cli-shared": "*",
+    "@omnesis/collector": "*",
+    "@omnesis/config": "*",
+    "@omnesis/core": "*",
+    "@omnesis/eval": "*",
+    "@omnesis/gateway": "*",
+    "@omnesis/gateway-client": "*",
+    "@omnesis/source-sdk": "*",
+    "@omnesis/types": "*",
+    "citty": "^0.2.2",
+    "qrcode-terminal": "^0.12.0",
+    "yaml": "^2.9.0"
+  },
+  "files": [
+    "dist"
+  ]
+}

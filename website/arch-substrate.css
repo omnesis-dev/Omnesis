@@ -1,0 +1,140 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ * Copyright (c) 2026 Adrien Conrath
+ *
+ * The collector and the substrate it feeds — the opening pair of both the
+ * landing page's pipeline and the Brain page's architecture diagram. The
+ * markup is generated into each page by scripts/render-arch-substrate.mjs;
+ * this file is the styling half of that shared pair.
+ *
+ * Everything here reads design tokens (--surface-raised, --border, --text-*)
+ * that each host page defines, so the pair themes with whatever page it is
+ * dropped into. Deliberately absent: how the pair collapses on a narrow
+ * screen. That is a decision of the surrounding diagram — the landing page
+ * has a nine-column pipeline to stack, the Brain page a four-column one —
+ * so each page owns its own breakpoint.
+ */
+
+/* Tokens the shared markup itself reads. They live here, not on the host
+   pages, because a page that links this stylesheet and forgets one loses part
+   of the drawing with no error anywhere: --graph-edge alone carries the
+   person-to-document edges and both person glyphs in the substrate graph. */
+:root {
+  --graph-edge: #aeb6c2;
+  --graph-shadow: #000000;
+}
+
+:root[data-theme="light"] {
+  --graph-edge: #6b7785;
+  --graph-shadow: #c5cdd6;
+}
+
+/* Uniform stage label sitting above every column */
+.arch-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+/* A host diagram that needs to drop a connector onto the cards' axis clears
+   the label block above them: the 11px label line plus the 10px .arch-col gap,
+   a shade under 29px. */
+.arch-label {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: center;
+}
+
+.arch-card {
+  background: var(--surface-raised);
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  /* Frosted over the page's fixed grid backdrop, so the lines showing
+     through read as glass rather than as sharp rules. */
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+/* Muted caption at the bottom of a box */
+.arch-caption {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: center;
+  margin-top: 14px;
+}
+
+.arch-collector {
+  width: 176px;
+}
+
+.src-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 20px);
+  gap: 5px 4px;
+  justify-content: center;
+  margin-top: 4px;
+}
+
+.src-grid img {
+  width: 20px;
+  height: 20px;
+  display: block;
+}
+
+.src-dots {
+  display: flex;
+  justify-content: center;
+  gap: 5px;
+  margin-top: 14px;
+}
+
+.src-dots span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+}
+
+/* The substrate box — the graph, the moat. Largest box, accent fill + glow
+   so it reads as the differentiator rather than as one more stage. */
+.arch-gateway {
+  width: 240px;
+  border-color: rgba(88, 166, 255, 0.55);
+  background: linear-gradient(160deg, rgba(88, 166, 255, 0.12), rgba(136, 73, 255, 0.05));
+  box-shadow:
+    0 0 0 1px rgba(88, 166, 255, 0.12),
+    0 16px 44px -14px rgba(88, 166, 255, 0.4);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.gw-graph {
+  margin: 14px 0 6px;
+}
+
+.gw-graph svg {
+  width: 90%;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+}
+
+/* Connector between stages. Where it sits on the cross axis is the host
+   diagram's business; each page sets align-self / margin to taste. */
+.arch-arrow {
+  flex-shrink: 0;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.arch-arrow svg {
+  width: 30px;
+  height: 18px;
+  fill: currentColor;
+}

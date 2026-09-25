@@ -1,0 +1,101 @@
+{
+  "browser": "chrome",
+  "profile": "Default",
+  "domains": [
+    { "domain": "docs.acme.com", "weight": 9, "transition": "typed" },
+    { "domain": "docs.globex.io", "weight": 6, "transition": "link" },
+    { "domain": "github.com", "weight": 8, "transition": "link" },
+    { "domain": "stackoverflow.com", "weight": 5, "transition": "link" },
+    { "domain": "developers.notion.com", "weight": 3, "transition": "typed" },
+    { "domain": "www.google.com", "weight": 12, "transition": "typed" },
+    { "domain": "www.zsa.io", "weight": 2, "transition": "link" },
+    { "domain": "www.pfitzingerblog.com", "weight": 2, "transition": "bookmark" },
+    { "domain": "www.strava.com", "weight": 4, "transition": "typed" },
+    { "domain": "www.youtube.com", "weight": 5, "transition": "link" },
+    { "domain": "news.ycombinator.com", "weight": 4, "transition": "typed" },
+    { "domain": "compliance.example.com", "weight": 2, "transition": "link" },
+    { "domain": "calendar.google.com", "weight": 4, "transition": "typed" },
+    { "domain": "mail.google.com", "weight": 6, "transition": "typed" },
+    { "domain": "www.notion.so", "weight": 5, "transition": "typed" }
+  ],
+  "pages": {
+    "docs.acme.com": [
+      { "path": "/okrs/q3-2025", "title": "Acme Q3 OKRs" },
+      { "path": "/process/code-review", "title": "Code review process" },
+      { "path": "/process/incident-response", "title": "Incident response runbook" }
+    ],
+    "docs.globex.io": [
+      { "path": "/runbooks/omnesis-integration", "title": "Globex integration runbook" },
+      { "path": "/api/retry", "title": "Retry policy API" }
+    ],
+    "github.com": [
+      { "path": "/omnesis-dev/Omnesis/issues", "title": "Omnesis · Issues" },
+      { "path": "/omnesis-dev/Omnesis/pulls", "title": "Omnesis · Pull requests" },
+      { "path": "/WiseLibs/better-sqlite3/blob/master/docs/api.md", "title": "better-sqlite3 API" }
+    ],
+    "stackoverflow.com": [
+      {
+        "path": "/questions/1234567/sqlite-fts5-tokenize-porter",
+        "title": "How to use porter tokenizer in fts5?"
+      }
+    ],
+    "developers.notion.com": [{ "path": "/reference/intro", "title": "Notion API reference" }],
+    "www.google.com": [
+      {
+        "path": "/search?q=retry+policy+exponential+backoff",
+        "title": "retry policy exponential backoff — Google Search",
+        "searchTerm": "retry policy exponential backoff"
+      },
+      {
+        "path": "/search?q=zsa+moonlander+review",
+        "title": "zsa moonlander review — Google Search",
+        "searchTerm": "zsa moonlander review"
+      },
+      {
+        "path": "/search?q=marathon+training+plan",
+        "title": "marathon training plan — Google Search",
+        "searchTerm": "marathon training plan"
+      },
+      {
+        "path": "/search?q=apple+notes+sqlite+schema",
+        "title": "apple notes sqlite schema — Google Search",
+        "searchTerm": "apple notes sqlite schema"
+      }
+    ],
+    "www.zsa.io": [{ "path": "/moonlander", "title": "ZSA Moonlander" }],
+    "www.pfitzingerblog.com": [{ "path": "/18-55", "title": "Pfitzinger 18/55 marathon plan" }],
+    "www.strava.com": [
+      { "path": "/athlete/training_log", "title": "Training log · Strava" },
+      { "path": "/segments/explore", "title": "Segment explorer · Strava" }
+    ],
+    "www.youtube.com": [
+      { "path": "/watch?v=marathon-pacing", "title": "Marathon pacing — drills and cadence" }
+    ],
+    "news.ycombinator.com": [
+      { "path": "/news", "title": "Hacker News" },
+      { "path": "/newest", "title": "New | Hacker News" }
+    ],
+    "compliance.example.com": [
+      { "path": "/soc2-vendor-checklist", "title": "SOC2 vendor checklist" }
+    ],
+    "calendar.google.com": [{ "path": "/calendar/u/0/r", "title": "Google Calendar" }],
+    "mail.google.com": [{ "path": "/mail/u/0/#inbox", "title": "Inbox · Gmail" }],
+    "www.notion.so": [{ "path": "/engineering-wiki", "title": "Engineering wiki — home" }]
+  },
+  "days": [
+    "2025-09-01",
+    "2025-09-02",
+    "2025-09-03",
+    "2025-09-04",
+    "2025-09-05",
+    "2025-09-06",
+    "2025-09-07",
+    "2025-09-08",
+    "2025-09-09",
+    "2025-09-10",
+    "2025-09-11",
+    "2025-09-12",
+    "2025-09-13",
+    "2025-09-14"
+  ]
+}

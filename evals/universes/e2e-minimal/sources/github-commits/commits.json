@@ -1,0 +1,98 @@
+{
+  "repo": "northstar-labs/atlas",
+  "commits": [
+    {
+      "sha": "cc24947363923ca2b79eb6e9cd441ed5072e3eaa",
+      "html_url": "https://github.com/northstar-labs/atlas/commit/cc24947363923ca2b79eb6e9cd441ed5072e3eaa",
+      "commit": {
+        "message": "Fix the off-by-one in the results cursor (#3)\n\nApplies the repository filter before the page slice so the tail row survives.",
+        "author": {
+          "name": "John Smith",
+          "email": "john.smith@example.com",
+          "date": "2026-05-15T11:22:00Z"
+        },
+        "committer": { "name": "GitHub", "date": "2026-05-15T11:22:00Z" }
+      },
+      "author": { "login": "john-smith", "type": "User" },
+      "committer": { "login": "web-flow", "type": "User" },
+      "stats": { "additions": 41, "deletions": 12, "total": 53 },
+      "files": [
+        {
+          "filename": "src/search/cursor.ts",
+          "status": "modified",
+          "additions": 18,
+          "deletions": 9
+        },
+        {
+          "filename": "src/search/filters.ts",
+          "status": "modified",
+          "additions": 6,
+          "deletions": 3
+        },
+        {
+          "filename": "test/search/cursor.test.ts",
+          "status": "added",
+          "additions": 17,
+          "deletions": 0
+        }
+      ],
+      "parents": [
+        { "sha": "11cfb0f22abaf907124fd8b24924c8511b314c20" },
+        { "sha": "91d8bd1508d17b417002db6bfd0896862725841c" }
+      ]
+    },
+    {
+      "sha": "11cfb0f22abaf907124fd8b24924c8511b314c20",
+      "html_url": "https://github.com/northstar-labs/atlas/commit/11cfb0f22abaf907124fd8b24924c8511b314c20",
+      "commit": {
+        "message": "Add a regression test for the results cursor boundary",
+        "author": {
+          "name": "Jane Doe",
+          "email": "jane.doe@example.org",
+          "date": "2026-05-14T15:02:00Z"
+        },
+        "committer": {
+          "name": "Jane Doe",
+          "email": "jane.doe@example.org",
+          "date": "2026-05-14T15:02:00Z"
+        }
+      },
+      "author": { "login": "jane-doe", "type": "User" },
+      "committer": { "login": "jane-doe", "type": "User" },
+      "stats": { "additions": 22, "deletions": 0, "total": 22 },
+      "files": [
+        {
+          "filename": "test/search/cursor.test.ts",
+          "status": "added",
+          "additions": 22,
+          "deletions": 0
+        }
+      ],
+      "parents": [{ "sha": "91d8bd1508d17b417002db6bfd0896862725841c" }]
+    },
+    {
+      "sha": "91d8bd1508d17b417002db6bfd0896862725841c",
+      "html_url": "https://github.com/northstar-labs/atlas/commit/91d8bd1508d17b417002db6bfd0896862725841c",
+      "commit": {
+        "message": "Raise the saved-view query timeout to thirty seconds\n\nLarge workspaces were tripping the old limit on the first load.",
+        "author": {
+          "name": "Alex Chen",
+          "email": "alex.chen@globex.example",
+          "date": "2026-05-12T10:41:00Z"
+        },
+        "committer": {
+          "name": "Alex Chen",
+          "email": "alex.chen@globex.example",
+          "date": "2026-05-12T10:41:00Z"
+        }
+      },
+      "author": { "login": "alex-chen", "type": "User" },
+      "committer": { "login": "alex-chen", "type": "User" },
+      "stats": { "additions": 4, "deletions": 2, "total": 6 },
+      "files": [
+        { "filename": "src/search/query.ts", "status": "modified", "additions": 4, "deletions": 2 }
+      ],
+      "parents": [{ "sha": "980e976f98bc56d1fdfa2ab4767e510f62fc9604" }]
+    }
+  ]
+}

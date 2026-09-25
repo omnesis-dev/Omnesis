@@ -1,0 +1,48 @@
+[
+  {
+    "externalId": "voicemail:2025-09-06",
+    "date": "2025-09-06",
+    "voicemails": [
+      {
+        "id": "synth-voicemail-001",
+        "time": "2025-09-06T10:15:00Z",
+        "durationSeconds": 24,
+        "transcript": "Hi, I left the blue folder at the reception desk. You can collect it any time after lunch.",
+        "caller": "p_alex"
+      },
+      {
+        "id": "synth-voicemail-002",
+        "time": "2025-09-06T16:40:00Z",
+        "durationSeconds": 38,
+        "transcript": "The community hall booking is confirmed for Saturday morning. Please bring the printed registration form.",
+        "caller": "p_jane"
+      }
+    ]
+  },
+  {
+    "externalId": "voicemail:2025-09-10",
+    "date": "2025-09-10",
+    "voicemails": [
+      {
+        "id": "synth-voicemail-003",
+        "time": "2025-09-10T08:05:00Z",
+        "durationSeconds": 19,
+        "transcript": "Your bicycle service is complete and ready for collection from the example workshop before six.",
+        "caller": "p_alex"
+      }
+    ]
+  },
+  {
+    "externalId": "voicemail:2025-09-14",
+    "date": "2025-09-14",
+    "voicemails": [
+      {
+        "id": "synth-voicemail-004",
+        "time": "2025-09-14T13:22:00Z",
+        "durationSeconds": 12,
+        "transcript": "This is a reminder that the library closes early today at four o'clock.",
+        "caller": null
+      }
+    ]
+  }
+]

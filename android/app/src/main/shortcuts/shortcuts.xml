@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- Copyright (c) 2026 Adrien Conrath -->
+<!--
+  The template for res/xml/shortcuts.xml. The build writes the resource with
+  __OMNESIS_APPLICATION_ID__ replaced by the variant's package id, because
+  Google Play's App Actions parser accepts only a literal android:targetPackage.
+
+  Launcher shortcuts plus the App Actions contract consumed by Google Assistant.
+  Mutating/answering Assistant fulfillments enter through the dedicated exported trampoline.
+  GET_THING uses the ordinary app shell so it can present Omnesis search results.
+-->
+<shortcuts
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <!-- Locale-aware entry into either hands-free Omnesis feature. -->
+    <capability android:name="actions.intent.OPEN_APP_FEATURE">
+        <intent
+            android:action="dev.omnesis.android.action.OPEN_ASSISTANT_FEATURE"
+            android:targetPackage="__OMNESIS_APPLICATION_ID__"
+            android:targetClass="dev.omnesis.android.assistant.AssistantActionActivity">
+            <parameter
+                android:name="feature"
+                android:key="assistant_feature"
+                android:required="true"
+                app:shortcutMatchRequired="true" />
+        </intent>
+        <intent
+            android:action="android.intent.action.MAIN"
+            android:targetPackage="__OMNESIS_APPLICATION_ID__"
+            android:targetClass="dev.omnesis.android.MainActivity" />
+    </capability>
+
+    <!-- Required for App Actions deployment because Omnesis has in-app search. -->
+    <capability android:name="actions.intent.GET_THING">
+        <intent
+            android:action="dev.omnesis.android.action.SEARCH"
+            android:targetPackage="__OMNESIS_APPLICATION_ID__"
+            android:targetClass="dev.omnesis.android.MainActivity">
+            <parameter
+                android:name="thing.name"
+                android:key="query"
+                android:required="true" />
+        </intent>
+        <intent
+            android:action="dev.omnesis.android.action.SEARCH"
+            android:targetPackage="__OMNESIS_APPLICATION_ID__"
+            android:targetClass="dev.omnesis.android.MainActivity" />
+    </capability>
+
+    <!-- Generic Assistant vocabulary for saving a new note-like entity. -->
+    <capability android:name="actions.intent.CREATE_THING">
+        <intent
+            android:action="dev.omnesis.android.action.CAPTURE_NOTE"
+            android:targetPackage="__OMNESIS_APPLICATION_ID__"
+            android:targetClass="dev.omnesis.android.assistant.AssistantActionActivity">
+            <parameter
+                android:name="thing.name"
+                android:key="note"
+                android:required="true" />
+        </intent>
+        <intent
+            android:action="dev.omnesis.android.action.CAPTURE_NOTE"
+            android:targetPackage="__OMNESIS_APPLICATION_ID__"
+            android:targetClass="dev.omnesis.android.assistant.AssistantActionActivity" />
+    </capability>
+
+    <!-- Free-form one-utterance variants. Custom App Actions are en-US only. -->
+    <capability
+        android:name="custom.actions.intent.ASK_OMNESIS"
+        app:queryPatterns="@array/assistant_ask_query_patterns">
+        <intent
+            android:action="dev.omnesis.android.action.ASK_OMNESIS"
+            android:targetPackage="__OMNESIS_APPLICATION_ID__"
+            android:targetClass="dev.omnesis.android.assistant.AssistantActionActivity">
+            <parameter
+                android:name="question"
+                android:key="question"
+                android:mimeType="https://schema.org/Text"
+                android:required="true" />
+        </intent>
+        <intent
+            android:action="dev.omnesis.android.action.ASK_OMNESIS"
+            android:targetPackage="__OMNESIS_APPLICATION_ID__"
+            android:targetClass="dev.omnesis.android.assistant.AssistantActionActivity" />
+    </capability>
+
+    <capability
+        android:name="custom.actions.intent.CAPTURE_NOTE"
+        app:queryPatterns="@array/assistant_capture_query_patterns">
+        <intent
+            android:action="dev.omnesis.android.action.CAPTURE_NOTE"
+            android:targetPackage="__OMNESIS_APPLICATION_ID__"
+            android:targetClass="dev.omnesis.android.assistant.AssistantActionActivity">
+            <parameter
+                android:name="note"
+                android:key="note"
+                android:mimeType="https://schema.org/Text"
+                android:required="true" />
+        </intent>
+        <intent
+            android:action="dev.omnesis.android.action.CAPTURE_NOTE"
+            android:targetPackage="__OMNESIS_APPLICATION_ID__"
+            android:targetClass="dev.omnesis.android.assistant.AssistantActionActivity" />
+    </capability>
+
+    <shortcut
+        android:shortcutId="tell_brain"
+        android:enabled="true"
+        android:icon="@drawable/ic_mic"
+        android:shortcutShortLabel="@string/shortcut_tell_brain_short"
+        android:shortcutLongLabel="@string/shortcut_tell_brain_long">
+        <intent
+            android:action="dev.omnesis.android.action.TELL_BRAIN"
+            android:targetPackage="__OMNESIS_APPLICATION_ID__"
+            android:targetClass="dev.omnesis.android.MainActivity">
+            <extra
+                android:name="surface"
+                android:value="android-shortcut" />
+        </intent>
+        <capability-binding android:key="actions.intent.OPEN_APP_FEATURE">
+            <parameter-binding
+                android:key="feature"
+                android:value="Tell Omnesis" />
+        </capability-binding>
+    </shortcut>
+
+    <!-- Also serves as the OPEN_APP_FEATURE inline-inventory entity for Ask. -->
+    <shortcut
+        android:shortcutId="ask_omnesis"
+        android:enabled="true"
+        android:icon="@drawable/ic_mic"
+        android:shortcutShortLabel="@string/shortcut_ask_omnesis_short"
+        android:shortcutLongLabel="@string/shortcut_ask_omnesis_long">
+        <intent
+            android:action="dev.omnesis.android.action.ASK_OMNESIS"
+            android:targetPackage="__OMNESIS_APPLICATION_ID__"
+            android:targetClass="dev.omnesis.android.assistant.AssistantActionActivity" />
+        <capability-binding android:key="actions.intent.OPEN_APP_FEATURE">
+            <parameter-binding
+                android:key="feature"
+                android:value="Ask Omnesis" />
+        </capability-binding>
+    </shortcut>
+</shortcuts>

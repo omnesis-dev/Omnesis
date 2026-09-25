@@ -1,0 +1,33 @@
+{
+  "note": "Relocation mentioned by email on the 14th and on WhatsApp on the 16th: two of three within the deadline.",
+  "recall": [
+    {
+      "nodeId": "email_mention",
+      "documentId": "d0c00001-0000-4000-8000-000000000020",
+      "score": 0.69,
+      "title": "We found a place in Lisbon"
+    },
+    {
+      "nodeId": "chat_mention",
+      "documentId": "d0c00001-0000-4000-8000-000000000004",
+      "score": 0.67,
+      "title": "Alice — 16 March"
+    }
+  ],
+  "judgements": [
+    {
+      "nodeId": "email_mention",
+      "documentId": "d0c00001-0000-4000-8000-000000000020",
+      "fired": true,
+      "output": {},
+      "title": "We found a place in Lisbon"
+    },
+    {
+      "nodeId": "chat_mention",
+      "documentId": "d0c00001-0000-4000-8000-000000000004",
+      "fired": true,
+      "output": {},
+      "title": "Alice — 16 March"
+    }
+  ]
+}

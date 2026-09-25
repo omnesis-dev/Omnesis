@@ -1,0 +1,35 @@
+{
+  // Typecheck the SUITES, which the package's own tsconfig excludes.
+  //
+  // The same lane the gateway runs, for the same bug class: a test file that is
+  // never typechecked cannot notice a dependency it does not construct — a
+  // service gains a required member, the suite's hand-built deps object omits
+  // it, and nothing says so until the code path that reads it runs. Nothing
+  // about that is gateway-specific; it is a property of hand-built dependency
+  // objects, which every package's suites have.
+  //
+  // `include` is every suite and `exclude` is the ones that do not pass yet, so
+  // a NEW suite is checked from the day it is written. The exclusion list is a
+  // ratchet: entries come off it as files are cleaned and nothing may be added
+  // without saying why. It is not a permission to leave a suite unchecked — it
+  // is a record of the ones that still are.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true
+  },
+  // The ambient declarations of every package whose sources this pulls in.
+  // Compiled from source rather than read from a build, so the shims those
+  // sources rely on have to be in scope here too — without them the lane
+  // fails on another package's untyped dependency rather than on a suite.
+  "include": [
+    "src/**/*.test.ts",
+    "src/**/*.d.ts",
+    "../gateway/src/**/*.d.ts",
+    "../providers/*/src/**/*.d.ts",
+    "../collector/src/**/*.d.ts"
+  ],
+  "exclude": []
+}

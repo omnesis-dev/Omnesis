@@ -1,0 +1,28 @@
+{
+  "watch": {
+    "name": "malformed-cron-and-duration",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "tick",
+        "type": "source.time",
+        "recurring": "0 9 * *"
+      },
+      {
+        "id": "waiting",
+        "type": "stateful.wait",
+        "inputs": {
+          "tick": {
+            "role": "arm"
+          }
+        },
+        "on_collision": "reset",
+        "duration": "three days"
+      }
+    ],
+    "sink": {
+      "input": "waiting"
+    }
+  }
+}

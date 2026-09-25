@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Omnesis Browser Capture</title>
+    <link rel="stylesheet" href="ui.css" />
+  </head>
+  <body class="popup" data-paired="false" data-warn="false" data-notice="false" data-paused="false">
+    <header class="brand">
+      <img class="brand-logo" src="icons/icon-128.png" alt="" />
+      <div>
+        <div class="brand-title">Omnesis</div>
+        <div class="brand-sub">Browser Capture</div>
+      </div>
+    </header>
+
+    <div class="status-pill">
+      <span class="status-dot"></span>
+      <span id="state">…</span>
+    </div>
+
+    <p id="warn" class="warn-banner" role="alert"></p>
+    <button id="ack-warning" class="secondary" type="button" hidden>
+      Dismiss past-loss notice
+    </button>
+
+    <dl class="kv">
+      <dt>Gateway</dt>
+      <dd id="gateway">—</dd>
+      <dt>Pending uploads</dt>
+      <dd id="queue">—</dd>
+      <dt>Current page</dt>
+      <dd id="current-page">checking…</dd>
+      <dt>Last page synced</dt>
+      <dd id="last-sync">—</dd>
+      <dt>Gateway checked</dt>
+      <dd id="last-checked">—</dd>
+      <dt>Paired</dt>
+      <dd id="paired-since">—</dd>
+      <dt>Can index pages</dt>
+      <dd id="scope">—</dd>
+    </dl>
+
+    <!-- Exclude the active tab's site everywhere; shown for a page being watched. -->
+    <div id="exclude-wrap" class="controls" hidden>
+      <button id="exclude-site" class="secondary chip" type="button"></button>
+      <p id="exclude-done" class="exclude-done" hidden></p>
+      <p class="hint">
+        Excluded domains and pauses are shared by every browser paired to this gateway.
+      </p>
+    </div>
+
+    <!-- Capture controls: pause buttons when active; countdown + resume when paused. -->
+    <div id="controls" class="controls" hidden></div>
+
+    <!-- Recent-synced proof-of-life. Populated from the durable delivery log. -->
+    <details id="recent-wrap" class="recent" hidden>
+      <summary>Recently synced pages <span id="recent-count" class="muted"></span></summary>
+      <ul id="recent-list" class="recent-list"></ul>
+    </details>
+
+    <button id="open-options" class="secondary" type="button">Pairing settings</button>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

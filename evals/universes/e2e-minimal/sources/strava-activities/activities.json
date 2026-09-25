@@ -1,0 +1,43 @@
+[
+  {
+    "externalId": "synth-strava-001",
+    "id": 1,
+    "name": "Morning easy run",
+    "sportType": "Run",
+    "distanceMeters": 8230,
+    "movingTimeSeconds": 2940,
+    "totalElevationGainMeters": 42,
+    "startTime": "2025-09-04T06:30:00Z",
+    "averageHeartRate": 142,
+    "maxHeartRate": 158,
+    "description": "Easy zone-2 effort. Felt smooth."
+  },
+  {
+    "externalId": "synth-strava-102",
+    "id": 102,
+    "name": "Morning Swim",
+    "sportType": "Swim",
+    "distanceMeters": 500,
+    "movingTimeSeconds": 702,
+    "totalElevationGainMeters": 0,
+    "startTime": "2026-04-29T06:00:00Z",
+    "startTimeLocal": "2026-04-29T07:00:00",
+    "averageHeartRate": 113.8,
+    "maxHeartRate": 147,
+    "description": "10×50 freestyle, easy turns. Felt steady."
+  },
+  {
+    "externalId": "synth-strava-103",
+    "id": 103,
+    "name": "Lunch Swim",
+    "sportType": "Swim",
+    "distanceMeters": 500,
+    "movingTimeSeconds": 687,
+    "totalElevationGainMeters": 0,
+    "startTime": "2026-05-06T11:30:00Z",
+    "startTimeLocal": "2026-05-06T12:30:00",
+    "averageHeartRate": 117.1,
+    "maxHeartRate": 138,
+    "description": "Lunch break. Felt smoother on the breathing pattern."
+  }
+]

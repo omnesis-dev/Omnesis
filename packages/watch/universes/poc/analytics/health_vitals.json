@@ -1,0 +1,1353 @@
+[
+  {
+    "metric_slug": "step_count",
+    "value": 4813,
+    "unit": "count",
+    "start_time": "2026-03-01T23:00:00.000Z",
+    "end_time": "2026-03-01T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 5426,
+    "unit": "count",
+    "start_time": "2026-03-02T23:00:00.000Z",
+    "end_time": "2026-03-02T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 6039,
+    "unit": "count",
+    "start_time": "2026-03-03T23:00:00.000Z",
+    "end_time": "2026-03-03T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 6652,
+    "unit": "count",
+    "start_time": "2026-03-04T23:00:00.000Z",
+    "end_time": "2026-03-04T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 7265,
+    "unit": "count",
+    "start_time": "2026-03-05T23:00:00.000Z",
+    "end_time": "2026-03-05T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 7878,
+    "unit": "count",
+    "start_time": "2026-03-06T23:00:00.000Z",
+    "end_time": "2026-03-06T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 8491,
+    "unit": "count",
+    "start_time": "2026-03-07T23:00:00.000Z",
+    "end_time": "2026-03-07T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 9104,
+    "unit": "count",
+    "start_time": "2026-03-08T23:00:00.000Z",
+    "end_time": "2026-03-08T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 9717,
+    "unit": "count",
+    "start_time": "2026-03-09T23:00:00.000Z",
+    "end_time": "2026-03-09T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 10330,
+    "unit": "count",
+    "start_time": "2026-03-10T23:00:00.000Z",
+    "end_time": "2026-03-10T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 10943,
+    "unit": "count",
+    "start_time": "2026-03-11T23:00:00.000Z",
+    "end_time": "2026-03-11T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 11556,
+    "unit": "count",
+    "start_time": "2026-03-12T23:00:00.000Z",
+    "end_time": "2026-03-12T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 4769,
+    "unit": "count",
+    "start_time": "2026-03-13T23:00:00.000Z",
+    "end_time": "2026-03-13T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 5382,
+    "unit": "count",
+    "start_time": "2026-03-14T23:00:00.000Z",
+    "end_time": "2026-03-14T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 5995,
+    "unit": "count",
+    "start_time": "2026-03-15T23:00:00.000Z",
+    "end_time": "2026-03-15T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 6608,
+    "unit": "count",
+    "start_time": "2026-03-16T23:00:00.000Z",
+    "end_time": "2026-03-16T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 7221,
+    "unit": "count",
+    "start_time": "2026-03-17T23:00:00.000Z",
+    "end_time": "2026-03-17T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 7834,
+    "unit": "count",
+    "start_time": "2026-03-18T23:00:00.000Z",
+    "end_time": "2026-03-18T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 8447,
+    "unit": "count",
+    "start_time": "2026-03-19T23:00:00.000Z",
+    "end_time": "2026-03-19T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 9060,
+    "unit": "count",
+    "start_time": "2026-03-20T23:00:00.000Z",
+    "end_time": "2026-03-20T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 9673,
+    "unit": "count",
+    "start_time": "2026-03-21T23:00:00.000Z",
+    "end_time": "2026-03-21T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 10286,
+    "unit": "count",
+    "start_time": "2026-03-22T23:00:00.000Z",
+    "end_time": "2026-03-22T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 10899,
+    "unit": "count",
+    "start_time": "2026-03-23T23:00:00.000Z",
+    "end_time": "2026-03-23T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 11512,
+    "unit": "count",
+    "start_time": "2026-03-24T23:00:00.000Z",
+    "end_time": "2026-03-24T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 4725,
+    "unit": "count",
+    "start_time": "2026-03-25T23:00:00.000Z",
+    "end_time": "2026-03-25T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 5338,
+    "unit": "count",
+    "start_time": "2026-03-26T23:00:00.000Z",
+    "end_time": "2026-03-26T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 5951,
+    "unit": "count",
+    "start_time": "2026-03-27T23:00:00.000Z",
+    "end_time": "2026-03-27T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 6564,
+    "unit": "count",
+    "start_time": "2026-03-28T23:00:00.000Z",
+    "end_time": "2026-03-28T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 7177,
+    "unit": "count",
+    "start_time": "2026-03-29T23:00:00.000Z",
+    "end_time": "2026-03-29T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 7790,
+    "unit": "count",
+    "start_time": "2026-03-30T23:00:00.000Z",
+    "end_time": "2026-03-30T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 8403,
+    "unit": "count",
+    "start_time": "2026-03-31T23:00:00.000Z",
+    "end_time": "2026-03-31T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 9016,
+    "unit": "count",
+    "start_time": "2026-04-01T23:00:00.000Z",
+    "end_time": "2026-04-01T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 9629,
+    "unit": "count",
+    "start_time": "2026-04-02T23:00:00.000Z",
+    "end_time": "2026-04-02T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 10242,
+    "unit": "count",
+    "start_time": "2026-04-03T23:00:00.000Z",
+    "end_time": "2026-04-03T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 10855,
+    "unit": "count",
+    "start_time": "2026-04-04T23:00:00.000Z",
+    "end_time": "2026-04-04T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 11468,
+    "unit": "count",
+    "start_time": "2026-04-05T23:00:00.000Z",
+    "end_time": "2026-04-05T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 4681,
+    "unit": "count",
+    "start_time": "2026-04-06T23:00:00.000Z",
+    "end_time": "2026-04-06T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 5294,
+    "unit": "count",
+    "start_time": "2026-04-07T23:00:00.000Z",
+    "end_time": "2026-04-07T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 5907,
+    "unit": "count",
+    "start_time": "2026-04-08T23:00:00.000Z",
+    "end_time": "2026-04-08T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 6520,
+    "unit": "count",
+    "start_time": "2026-04-09T23:00:00.000Z",
+    "end_time": "2026-04-09T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 7133,
+    "unit": "count",
+    "start_time": "2026-04-10T23:00:00.000Z",
+    "end_time": "2026-04-10T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 7746,
+    "unit": "count",
+    "start_time": "2026-04-11T23:00:00.000Z",
+    "end_time": "2026-04-11T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 8359,
+    "unit": "count",
+    "start_time": "2026-04-12T23:00:00.000Z",
+    "end_time": "2026-04-12T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 8972,
+    "unit": "count",
+    "start_time": "2026-04-13T23:00:00.000Z",
+    "end_time": "2026-04-13T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 9585,
+    "unit": "count",
+    "start_time": "2026-04-14T23:00:00.000Z",
+    "end_time": "2026-04-14T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 10198,
+    "unit": "count",
+    "start_time": "2026-04-15T23:00:00.000Z",
+    "end_time": "2026-04-15T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 10811,
+    "unit": "count",
+    "start_time": "2026-04-16T23:00:00.000Z",
+    "end_time": "2026-04-16T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 11424,
+    "unit": "count",
+    "start_time": "2026-04-17T23:00:00.000Z",
+    "end_time": "2026-04-17T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 4637,
+    "unit": "count",
+    "start_time": "2026-04-18T23:00:00.000Z",
+    "end_time": "2026-04-18T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 5250,
+    "unit": "count",
+    "start_time": "2026-04-19T23:00:00.000Z",
+    "end_time": "2026-04-19T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 5863,
+    "unit": "count",
+    "start_time": "2026-04-20T23:00:00.000Z",
+    "end_time": "2026-04-20T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 6476,
+    "unit": "count",
+    "start_time": "2026-04-21T23:00:00.000Z",
+    "end_time": "2026-04-21T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 7089,
+    "unit": "count",
+    "start_time": "2026-04-22T23:00:00.000Z",
+    "end_time": "2026-04-22T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 7702,
+    "unit": "count",
+    "start_time": "2026-04-23T23:00:00.000Z",
+    "end_time": "2026-04-23T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 8315,
+    "unit": "count",
+    "start_time": "2026-04-24T23:00:00.000Z",
+    "end_time": "2026-04-24T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 8928,
+    "unit": "count",
+    "start_time": "2026-04-25T23:00:00.000Z",
+    "end_time": "2026-04-25T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 9541,
+    "unit": "count",
+    "start_time": "2026-04-26T23:00:00.000Z",
+    "end_time": "2026-04-26T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 10154,
+    "unit": "count",
+    "start_time": "2026-04-27T23:00:00.000Z",
+    "end_time": "2026-04-27T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 10767,
+    "unit": "count",
+    "start_time": "2026-04-28T23:00:00.000Z",
+    "end_time": "2026-04-28T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 11380,
+    "unit": "count",
+    "start_time": "2026-04-29T23:00:00.000Z",
+    "end_time": "2026-04-29T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 4593,
+    "unit": "count",
+    "start_time": "2026-04-30T23:00:00.000Z",
+    "end_time": "2026-04-30T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 5206,
+    "unit": "count",
+    "start_time": "2026-05-01T23:00:00.000Z",
+    "end_time": "2026-05-01T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 5819,
+    "unit": "count",
+    "start_time": "2026-05-02T23:00:00.000Z",
+    "end_time": "2026-05-02T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 6432,
+    "unit": "count",
+    "start_time": "2026-05-03T23:00:00.000Z",
+    "end_time": "2026-05-03T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 7045,
+    "unit": "count",
+    "start_time": "2026-05-04T23:00:00.000Z",
+    "end_time": "2026-05-04T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 7658,
+    "unit": "count",
+    "start_time": "2026-05-05T23:00:00.000Z",
+    "end_time": "2026-05-05T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 8271,
+    "unit": "count",
+    "start_time": "2026-05-06T23:00:00.000Z",
+    "end_time": "2026-05-06T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 8884,
+    "unit": "count",
+    "start_time": "2026-05-07T23:00:00.000Z",
+    "end_time": "2026-05-07T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 9497,
+    "unit": "count",
+    "start_time": "2026-05-08T23:00:00.000Z",
+    "end_time": "2026-05-08T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 10110,
+    "unit": "count",
+    "start_time": "2026-05-09T23:00:00.000Z",
+    "end_time": "2026-05-09T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 10723,
+    "unit": "count",
+    "start_time": "2026-05-10T23:00:00.000Z",
+    "end_time": "2026-05-10T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 11336,
+    "unit": "count",
+    "start_time": "2026-05-11T23:00:00.000Z",
+    "end_time": "2026-05-11T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 4549,
+    "unit": "count",
+    "start_time": "2026-05-12T23:00:00.000Z",
+    "end_time": "2026-05-12T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 5162,
+    "unit": "count",
+    "start_time": "2026-05-13T23:00:00.000Z",
+    "end_time": "2026-05-13T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 5775,
+    "unit": "count",
+    "start_time": "2026-05-14T23:00:00.000Z",
+    "end_time": "2026-05-14T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 6388,
+    "unit": "count",
+    "start_time": "2026-05-15T23:00:00.000Z",
+    "end_time": "2026-05-15T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 7001,
+    "unit": "count",
+    "start_time": "2026-05-16T23:00:00.000Z",
+    "end_time": "2026-05-16T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 7614,
+    "unit": "count",
+    "start_time": "2026-05-17T23:00:00.000Z",
+    "end_time": "2026-05-17T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 8227,
+    "unit": "count",
+    "start_time": "2026-05-18T23:00:00.000Z",
+    "end_time": "2026-05-18T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 8840,
+    "unit": "count",
+    "start_time": "2026-05-19T23:00:00.000Z",
+    "end_time": "2026-05-19T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 9453,
+    "unit": "count",
+    "start_time": "2026-05-20T23:00:00.000Z",
+    "end_time": "2026-05-20T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 10066,
+    "unit": "count",
+    "start_time": "2026-05-21T23:00:00.000Z",
+    "end_time": "2026-05-21T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 10679,
+    "unit": "count",
+    "start_time": "2026-05-22T23:00:00.000Z",
+    "end_time": "2026-05-22T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 11292,
+    "unit": "count",
+    "start_time": "2026-05-23T23:00:00.000Z",
+    "end_time": "2026-05-23T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 4505,
+    "unit": "count",
+    "start_time": "2026-05-24T23:00:00.000Z",
+    "end_time": "2026-05-24T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 5118,
+    "unit": "count",
+    "start_time": "2026-05-25T23:00:00.000Z",
+    "end_time": "2026-05-25T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 5731,
+    "unit": "count",
+    "start_time": "2026-05-26T23:00:00.000Z",
+    "end_time": "2026-05-26T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 6344,
+    "unit": "count",
+    "start_time": "2026-05-27T23:00:00.000Z",
+    "end_time": "2026-05-27T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 6957,
+    "unit": "count",
+    "start_time": "2026-05-28T23:00:00.000Z",
+    "end_time": "2026-05-28T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "step_count",
+    "value": 7570,
+    "unit": "count",
+    "start_time": "2026-05-29T23:00:00.000Z",
+    "end_time": "2026-05-29T23:59:00.000Z"
+  },
+  {
+    "metric_slug": "body_mass",
+    "value": 75.1,
+    "unit": "kg",
+    "start_time": "2026-03-02T07:00:00.000Z",
+    "end_time": "2026-03-02T07:01:00.000Z"
+  },
+  {
+    "metric_slug": "body_mass",
+    "value": 75.5,
+    "unit": "kg",
+    "start_time": "2026-03-09T07:00:00.000Z",
+    "end_time": "2026-03-09T07:01:00.000Z"
+  },
+  {
+    "metric_slug": "body_mass",
+    "value": 75.9,
+    "unit": "kg",
+    "start_time": "2026-03-16T07:00:00.000Z",
+    "end_time": "2026-03-16T07:01:00.000Z"
+  },
+  {
+    "metric_slug": "body_mass",
+    "value": 74.6,
+    "unit": "kg",
+    "start_time": "2026-03-23T07:00:00.000Z",
+    "end_time": "2026-03-23T07:01:00.000Z"
+  },
+  {
+    "metric_slug": "body_mass",
+    "value": 75,
+    "unit": "kg",
+    "start_time": "2026-03-30T07:00:00.000Z",
+    "end_time": "2026-03-30T07:01:00.000Z"
+  },
+  {
+    "metric_slug": "body_mass",
+    "value": 75.4,
+    "unit": "kg",
+    "start_time": "2026-04-06T07:00:00.000Z",
+    "end_time": "2026-04-06T07:01:00.000Z"
+  },
+  {
+    "metric_slug": "body_mass",
+    "value": 75.8,
+    "unit": "kg",
+    "start_time": "2026-04-13T07:00:00.000Z",
+    "end_time": "2026-04-13T07:01:00.000Z"
+  },
+  {
+    "metric_slug": "body_mass",
+    "value": 74.5,
+    "unit": "kg",
+    "start_time": "2026-04-20T07:00:00.000Z",
+    "end_time": "2026-04-20T07:01:00.000Z"
+  },
+  {
+    "metric_slug": "body_mass",
+    "value": 74.9,
+    "unit": "kg",
+    "start_time": "2026-04-27T07:00:00.000Z",
+    "end_time": "2026-04-27T07:01:00.000Z"
+  },
+  {
+    "metric_slug": "body_mass",
+    "value": 75.3,
+    "unit": "kg",
+    "start_time": "2026-05-04T07:00:00.000Z",
+    "end_time": "2026-05-04T07:01:00.000Z"
+  },
+  {
+    "metric_slug": "body_mass",
+    "value": 75.7,
+    "unit": "kg",
+    "start_time": "2026-05-11T07:00:00.000Z",
+    "end_time": "2026-05-11T07:01:00.000Z"
+  },
+  {
+    "metric_slug": "body_mass",
+    "value": 76.1,
+    "unit": "kg",
+    "start_time": "2026-05-18T07:00:00.000Z",
+    "end_time": "2026-05-18T07:01:00.000Z"
+  },
+  {
+    "metric_slug": "body_mass",
+    "value": 74.8,
+    "unit": "kg",
+    "start_time": "2026-05-25T07:00:00.000Z",
+    "end_time": "2026-05-25T07:01:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 59,
+    "unit": "bpm",
+    "start_time": "2026-03-01T04:00:00.000Z",
+    "end_time": "2026-03-01T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 62,
+    "unit": "bpm",
+    "start_time": "2026-03-02T04:00:00.000Z",
+    "end_time": "2026-03-02T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 56,
+    "unit": "bpm",
+    "start_time": "2026-03-03T04:00:00.000Z",
+    "end_time": "2026-03-03T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 59,
+    "unit": "bpm",
+    "start_time": "2026-03-04T04:00:00.000Z",
+    "end_time": "2026-03-04T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 62,
+    "unit": "bpm",
+    "start_time": "2026-03-05T04:00:00.000Z",
+    "end_time": "2026-03-05T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 56,
+    "unit": "bpm",
+    "start_time": "2026-03-06T04:00:00.000Z",
+    "end_time": "2026-03-06T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 59,
+    "unit": "bpm",
+    "start_time": "2026-03-07T04:00:00.000Z",
+    "end_time": "2026-03-07T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 72,
+    "unit": "bpm",
+    "start_time": "2026-03-08T04:00:00.000Z",
+    "end_time": "2026-03-08T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 74,
+    "unit": "bpm",
+    "start_time": "2026-03-09T04:00:00.000Z",
+    "end_time": "2026-03-09T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 71,
+    "unit": "bpm",
+    "start_time": "2026-03-10T04:00:00.000Z",
+    "end_time": "2026-03-10T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 73,
+    "unit": "bpm",
+    "start_time": "2026-03-11T04:00:00.000Z",
+    "end_time": "2026-03-11T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 75,
+    "unit": "bpm",
+    "start_time": "2026-03-12T04:00:00.000Z",
+    "end_time": "2026-03-12T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 72,
+    "unit": "bpm",
+    "start_time": "2026-03-13T04:00:00.000Z",
+    "end_time": "2026-03-13T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 74,
+    "unit": "bpm",
+    "start_time": "2026-03-14T04:00:00.000Z",
+    "end_time": "2026-03-14T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 71,
+    "unit": "bpm",
+    "start_time": "2026-03-15T04:00:00.000Z",
+    "end_time": "2026-03-15T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 73,
+    "unit": "bpm",
+    "start_time": "2026-03-16T04:00:00.000Z",
+    "end_time": "2026-03-16T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 75,
+    "unit": "bpm",
+    "start_time": "2026-03-17T04:00:00.000Z",
+    "end_time": "2026-03-17T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 72,
+    "unit": "bpm",
+    "start_time": "2026-03-18T04:00:00.000Z",
+    "end_time": "2026-03-18T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 74,
+    "unit": "bpm",
+    "start_time": "2026-03-19T04:00:00.000Z",
+    "end_time": "2026-03-19T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 71,
+    "unit": "bpm",
+    "start_time": "2026-03-20T04:00:00.000Z",
+    "end_time": "2026-03-20T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 73,
+    "unit": "bpm",
+    "start_time": "2026-03-21T04:00:00.000Z",
+    "end_time": "2026-03-21T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 59,
+    "unit": "bpm",
+    "start_time": "2026-03-22T04:00:00.000Z",
+    "end_time": "2026-03-22T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 62,
+    "unit": "bpm",
+    "start_time": "2026-03-23T04:00:00.000Z",
+    "end_time": "2026-03-23T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 56,
+    "unit": "bpm",
+    "start_time": "2026-03-24T04:00:00.000Z",
+    "end_time": "2026-03-24T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 59,
+    "unit": "bpm",
+    "start_time": "2026-03-25T04:00:00.000Z",
+    "end_time": "2026-03-25T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 62,
+    "unit": "bpm",
+    "start_time": "2026-03-26T04:00:00.000Z",
+    "end_time": "2026-03-26T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 56,
+    "unit": "bpm",
+    "start_time": "2026-03-27T04:00:00.000Z",
+    "end_time": "2026-03-27T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 59,
+    "unit": "bpm",
+    "start_time": "2026-03-28T04:00:00.000Z",
+    "end_time": "2026-03-28T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 62,
+    "unit": "bpm",
+    "start_time": "2026-03-29T04:00:00.000Z",
+    "end_time": "2026-03-29T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 56,
+    "unit": "bpm",
+    "start_time": "2026-03-30T04:00:00.000Z",
+    "end_time": "2026-03-30T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 59,
+    "unit": "bpm",
+    "start_time": "2026-03-31T04:00:00.000Z",
+    "end_time": "2026-03-31T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 62,
+    "unit": "bpm",
+    "start_time": "2026-04-01T04:00:00.000Z",
+    "end_time": "2026-04-01T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 56,
+    "unit": "bpm",
+    "start_time": "2026-04-02T04:00:00.000Z",
+    "end_time": "2026-04-02T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 59,
+    "unit": "bpm",
+    "start_time": "2026-04-03T04:00:00.000Z",
+    "end_time": "2026-04-03T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 62,
+    "unit": "bpm",
+    "start_time": "2026-04-04T04:00:00.000Z",
+    "end_time": "2026-04-04T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 56,
+    "unit": "bpm",
+    "start_time": "2026-04-05T04:00:00.000Z",
+    "end_time": "2026-04-05T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 59,
+    "unit": "bpm",
+    "start_time": "2026-04-06T04:00:00.000Z",
+    "end_time": "2026-04-06T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 62,
+    "unit": "bpm",
+    "start_time": "2026-04-07T04:00:00.000Z",
+    "end_time": "2026-04-07T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 56,
+    "unit": "bpm",
+    "start_time": "2026-04-08T04:00:00.000Z",
+    "end_time": "2026-04-08T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 71,
+    "unit": "bpm",
+    "start_time": "2026-04-09T04:00:00.000Z",
+    "end_time": "2026-04-09T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 73,
+    "unit": "bpm",
+    "start_time": "2026-04-10T04:00:00.000Z",
+    "end_time": "2026-04-10T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 75,
+    "unit": "bpm",
+    "start_time": "2026-04-11T04:00:00.000Z",
+    "end_time": "2026-04-11T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 72,
+    "unit": "bpm",
+    "start_time": "2026-04-12T04:00:00.000Z",
+    "end_time": "2026-04-12T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 74,
+    "unit": "bpm",
+    "start_time": "2026-04-13T04:00:00.000Z",
+    "end_time": "2026-04-13T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 71,
+    "unit": "bpm",
+    "start_time": "2026-04-14T04:00:00.000Z",
+    "end_time": "2026-04-14T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 73,
+    "unit": "bpm",
+    "start_time": "2026-04-15T04:00:00.000Z",
+    "end_time": "2026-04-15T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 75,
+    "unit": "bpm",
+    "start_time": "2026-04-16T04:00:00.000Z",
+    "end_time": "2026-04-16T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 72,
+    "unit": "bpm",
+    "start_time": "2026-04-17T04:00:00.000Z",
+    "end_time": "2026-04-17T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 74,
+    "unit": "bpm",
+    "start_time": "2026-04-18T04:00:00.000Z",
+    "end_time": "2026-04-18T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 71,
+    "unit": "bpm",
+    "start_time": "2026-04-19T04:00:00.000Z",
+    "end_time": "2026-04-19T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 73,
+    "unit": "bpm",
+    "start_time": "2026-04-20T04:00:00.000Z",
+    "end_time": "2026-04-20T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 75,
+    "unit": "bpm",
+    "start_time": "2026-04-21T04:00:00.000Z",
+    "end_time": "2026-04-21T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 62,
+    "unit": "bpm",
+    "start_time": "2026-04-22T04:00:00.000Z",
+    "end_time": "2026-04-22T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 56,
+    "unit": "bpm",
+    "start_time": "2026-04-23T04:00:00.000Z",
+    "end_time": "2026-04-23T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 59,
+    "unit": "bpm",
+    "start_time": "2026-04-24T04:00:00.000Z",
+    "end_time": "2026-04-24T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 62,
+    "unit": "bpm",
+    "start_time": "2026-04-25T04:00:00.000Z",
+    "end_time": "2026-04-25T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 56,
+    "unit": "bpm",
+    "start_time": "2026-04-26T04:00:00.000Z",
+    "end_time": "2026-04-26T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 59,
+    "unit": "bpm",
+    "start_time": "2026-04-27T04:00:00.000Z",
+    "end_time": "2026-04-27T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 62,
+    "unit": "bpm",
+    "start_time": "2026-04-28T04:00:00.000Z",
+    "end_time": "2026-04-28T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 56,
+    "unit": "bpm",
+    "start_time": "2026-04-29T04:00:00.000Z",
+    "end_time": "2026-04-29T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 59,
+    "unit": "bpm",
+    "start_time": "2026-04-30T04:00:00.000Z",
+    "end_time": "2026-04-30T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 62,
+    "unit": "bpm",
+    "start_time": "2026-05-01T04:00:00.000Z",
+    "end_time": "2026-05-01T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 72,
+    "unit": "bpm",
+    "start_time": "2026-05-02T04:00:00.000Z",
+    "end_time": "2026-05-02T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 74,
+    "unit": "bpm",
+    "start_time": "2026-05-03T04:00:00.000Z",
+    "end_time": "2026-05-03T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 71,
+    "unit": "bpm",
+    "start_time": "2026-05-04T04:00:00.000Z",
+    "end_time": "2026-05-04T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 73,
+    "unit": "bpm",
+    "start_time": "2026-05-05T04:00:00.000Z",
+    "end_time": "2026-05-05T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 75,
+    "unit": "bpm",
+    "start_time": "2026-05-06T04:00:00.000Z",
+    "end_time": "2026-05-06T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 72,
+    "unit": "bpm",
+    "start_time": "2026-05-07T04:00:00.000Z",
+    "end_time": "2026-05-07T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 74,
+    "unit": "bpm",
+    "start_time": "2026-05-08T04:00:00.000Z",
+    "end_time": "2026-05-08T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 71,
+    "unit": "bpm",
+    "start_time": "2026-05-09T04:00:00.000Z",
+    "end_time": "2026-05-09T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 73,
+    "unit": "bpm",
+    "start_time": "2026-05-10T04:00:00.000Z",
+    "end_time": "2026-05-10T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 75,
+    "unit": "bpm",
+    "start_time": "2026-05-11T04:00:00.000Z",
+    "end_time": "2026-05-11T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 72,
+    "unit": "bpm",
+    "start_time": "2026-05-12T04:00:00.000Z",
+    "end_time": "2026-05-12T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 74,
+    "unit": "bpm",
+    "start_time": "2026-05-13T04:00:00.000Z",
+    "end_time": "2026-05-13T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 71,
+    "unit": "bpm",
+    "start_time": "2026-05-14T04:00:00.000Z",
+    "end_time": "2026-05-14T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 73,
+    "unit": "bpm",
+    "start_time": "2026-05-15T04:00:00.000Z",
+    "end_time": "2026-05-15T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 62,
+    "unit": "bpm",
+    "start_time": "2026-05-16T04:00:00.000Z",
+    "end_time": "2026-05-16T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 56,
+    "unit": "bpm",
+    "start_time": "2026-05-17T04:00:00.000Z",
+    "end_time": "2026-05-17T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 59,
+    "unit": "bpm",
+    "start_time": "2026-05-18T04:00:00.000Z",
+    "end_time": "2026-05-18T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 62,
+    "unit": "bpm",
+    "start_time": "2026-05-19T04:00:00.000Z",
+    "end_time": "2026-05-19T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 56,
+    "unit": "bpm",
+    "start_time": "2026-05-20T04:00:00.000Z",
+    "end_time": "2026-05-20T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 59,
+    "unit": "bpm",
+    "start_time": "2026-05-21T04:00:00.000Z",
+    "end_time": "2026-05-21T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 62,
+    "unit": "bpm",
+    "start_time": "2026-05-22T04:00:00.000Z",
+    "end_time": "2026-05-22T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 56,
+    "unit": "bpm",
+    "start_time": "2026-05-23T04:00:00.000Z",
+    "end_time": "2026-05-23T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 59,
+    "unit": "bpm",
+    "start_time": "2026-05-24T04:00:00.000Z",
+    "end_time": "2026-05-24T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 62,
+    "unit": "bpm",
+    "start_time": "2026-05-25T04:00:00.000Z",
+    "end_time": "2026-05-25T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 56,
+    "unit": "bpm",
+    "start_time": "2026-05-26T04:00:00.000Z",
+    "end_time": "2026-05-26T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 59,
+    "unit": "bpm",
+    "start_time": "2026-05-27T04:00:00.000Z",
+    "end_time": "2026-05-27T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 62,
+    "unit": "bpm",
+    "start_time": "2026-05-28T04:00:00.000Z",
+    "end_time": "2026-05-28T05:00:00.000Z"
+  },
+  {
+    "metric_slug": "resting_hr",
+    "value": 56,
+    "unit": "bpm",
+    "start_time": "2026-05-29T04:00:00.000Z",
+    "end_time": "2026-05-29T05:00:00.000Z"
+  }
+]

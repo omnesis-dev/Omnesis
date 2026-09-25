@@ -1,0 +1,11 @@
+{
+  "flowId": "fixture-flow",
+  "type": "challenge",
+  "id": "question-qr",
+  "challenge": {
+    "kind": "qr",
+    "title": "Scan code",
+    "data": "fictional-pairing-payload"
+  },
+  "expectsAnswer": false
+}

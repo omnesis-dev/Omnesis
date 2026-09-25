@@ -1,0 +1,26 @@
+[
+  {
+    "externalId": "wrist-gcal-eurostar",
+    "title": "Eurostar to Paris",
+    "description": "Reservation NX8823U. Coach 12, seat 41. Check-in closes 30 minutes before departure.",
+    "location": "London St Pancras International",
+    "startTime": "2026-09-20T07:01:00Z",
+    "endTime": "2026-09-20T10:17:00Z",
+    "attendees": ["self"],
+    "attendeeEmails": ["maya.reeves@example.com"],
+    "createdAt": "2026-07-14T16:45:00Z",
+    "updatedAt": "2026-07-14T16:45:00Z"
+  },
+  {
+    "externalId": "wrist-gcal-race-day",
+    "title": "Paris Riverside Triathlon — wave 3",
+    "description": "Olympic distance. Transition opens 06:15, wave 3 starts 08:40.",
+    "location": "Riverside Park, Paris",
+    "startTime": "2026-09-21T06:40:00Z",
+    "endTime": "2026-09-21T09:30:00Z",
+    "attendees": ["self", "p_theo"],
+    "attendeeEmails": ["maya.reeves@example.com", "theo.baptiste@example.org"],
+    "createdAt": "2026-06-30T09:20:00Z",
+    "updatedAt": "2026-06-30T09:20:00Z"
+  }
+]

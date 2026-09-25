@@ -1,0 +1,1167 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Operating — Omnesis Docs</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32" />
+    <link rel="icon" type="image/png" href="/favicon-16.png" sizes="16x16" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- Resolve the theme before first paint: the stored choice, else the OS preference. -->
+    <script>
+      (function () {
+        var root = document.documentElement;
+        root.classList.add("js");
+        var t;
+        try {
+          t = localStorage.getItem("omnesis-theme");
+        } catch (e) {}
+        if (t !== "light" && t !== "dark") {
+          t =
+            window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+        }
+        root.setAttribute("data-theme", t);
+      })();
+    </script>
+
+    <meta
+      name="description"
+      content="Run Omnesis once it is installed: background services, status and doctor, configuration, model roles, troubleshooting, and a map of the CLI."
+    />
+    <link rel="canonical" href="https://omnesis.dev/docs/operating" />
+    <meta name="theme-color" content="#0d1117" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="/footer-social.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <nav id="nav">
+      <div class="container">
+        <a href="/" class="nav-logo" aria-label="Omnesis"
+          ><span class="nav-logo-mark" aria-hidden="true"></span>MNESIS</a
+        >
+        <div class="nav-right">
+          <ul class="nav-links">
+            <li><a href="/">Context Layer</a></li>
+            <li><a href="/brain">Omnesis Brain</a></li>
+            <li><a href="/vision">Vision</a></li>
+            <li><a href="/docs/" aria-current="page">Docs</a></li>
+          </ul>
+          <a
+            class="nav-icon-btn"
+            href="#"
+            data-oss-open
+            aria-label="Omnesis on GitHub"
+            title="Omnesis on GitHub"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path
+                d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+              />
+            </svg>
+          </a>
+          <button
+            id="theme-toggle"
+            class="theme-toggle"
+            type="button"
+            aria-label="Switch between dark and light theme"
+            title="Toggle theme"
+          >
+            <svg
+              class="icon-sun"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="4" />
+              <path
+                d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"
+              />
+            </svg>
+            <svg
+              class="icon-moon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <div class="docs-shell">
+      <aside class="docs-sidebar">
+        <nav aria-label="Documentation">
+          <ul class="side-pages">
+            <li><a href="/docs/">Overview</a></li>
+            <li><a href="/docs/install">Install</a></li>
+            <li><a href="/docs/setup">Setup</a></li>
+            <li><a href="/docs/search">Search</a></li>
+            <li><a href="/docs/agent">The agent</a></li>
+            <li><a href="/docs/connect">Agents &amp; MCP</a></li>
+            <li><a href="/docs/apps">Mobile apps</a></li>
+            <li><a href="/docs/notifications">Notifications</a></li>
+            <li>
+              <a href="/docs/operating" aria-current="page">Operating</a>
+              <ul class="side-sub">
+                <li><a href="#services">Services</a></li>
+                <li><a href="#monitoring">Monitoring</a></li>
+                <li><a href="#configuration">Configuration</a></li>
+                <li><a href="#models">Models</a></li>
+                <li><a href="#troubleshooting">Troubleshooting</a></li>
+                <li><a href="#cli">CLI at a glance</a></li>
+              </ul>
+            </li>
+            <li><a href="/docs/security">Security</a></li>
+            <li><a href="/docs/updating">Backup &amp; updates</a></li>
+            <li><a href="/docs/sources">Available sources</a></li>
+            <li><a href="/docs/building-sources">Building sources</a></li>
+            <li><a href="/docs/experimental">Experimental</a></li>
+          </ul>
+        </nav>
+      </aside>
+
+      <main id="main" class="docs-content">
+        <p class="docs-kicker">Operate</p>
+        <h1>Operating</h1>
+        <p class="docs-lead">
+          Running Omnesis once it is installed: the background services, checking health, the
+          configuration file, model assignment, and what to do when something goes wrong. It is
+          written for whoever looks after the gateway machine. Security and encryption live on
+          <a href="/docs/security">Security</a>; backups and updates on
+          <a href="/docs/updating">Backup &amp; updates</a>.
+        </p>
+
+        <h2 id="services">Services</h2>
+        <p>
+          The <a href="/docs/install">installer</a> registers the gateway and collector as user
+          services: launchd LaunchAgents on macOS, systemd user units on Linux. Both start at login
+          and restart on failure. <code>omnesis service install</code> sets them up on a machine
+          where the installer did not. Name a component to install just one, for example
+          <code>omnesis service install collector</code> on a machine that only syncs.
+        </p>
+        <p>
+          The other verbs are <code>start</code>, <code>stop</code>, <code>restart</code>,
+          <code>status</code>, <code>logs</code> (<code>-f</code> to follow, <code>-n</code> for the
+          number of lines) and <code>uninstall</code>; a bare <code>omnesis service</code> shows
+          status. <code>stop</code> returns only once the daemon has exited and released its stores,
+          and the service stays down until <code>start</code> or the next login on macOS, so offline
+          maintenance such as <code>omnesis restore</code> can rely on it.
+        </p>
+        <p>
+          Every verb accepts <code>--config-dir</code>, which points the unit at another
+          configuration directory, and <code>--instance &lt;name&gt;</code>, which manages a
+          <strong>named instance</strong>: a second, parallel gateway or collector whose unit names
+          carry that suffix. <code>install</code> also takes <code>--env KEY=VALUE</code>
+          (repeatable) to add environment variables to the unit. Re-running
+          <code>install</code> rewrites the unit from the flags you pass, so pass the same ones the
+          service was installed with, then <code>omnesis service restart</code> it.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis service status</span></p>
+            <pre>
+COMPONENT    UNIT                                     STATE          PID
+gateway      omnesis-gateway.service                  running        41250
+collector    omnesis-collector.service                running        41283</pre
+            >
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis service restart gateway</span>
+            </p>
+            <p class="tight">Restarted omnesis-gateway.service</p>
+          </div>
+        </div>
+        <p>
+          A configuration directory belongs to one gateway at a time. The gateway records its
+          ownership in <code>gateway.lock</code> before it opens any store. A second gateway pointed
+          at the same directory, such as a manual <code>omnesis gateway serve</code> beside the
+          service, waits about a minute for a predecessor that is still shutting down, then refuses
+          to start and names the process that owns the directory. Run a second gateway only against
+          its own configuration directory.
+        </p>
+        <p>
+          During shutdown the gateway refuses new requests and disconnects WebSocket clients;
+          requests already in flight get a short window to finish. Clients reconnect once it is
+          back.
+        </p>
+        <p>
+          A collector whose event loop stops turning for five minutes (alive, but stuck and syncing
+          nothing) ends itself so its service restarts it. It first writes
+          <code>Event loop stalled</code> and the stack it was stuck in to its error log, which is
+          the line to include when you report the problem.
+        </p>
+        <p>
+          The generated services create files owner-only (<code>umask 077</code>). On Linux the
+          systemd units also get a private temporary directory, a read-only view of the system and
+          home directories apart from Omnesis's own paths, no new privileges and restricted address
+          families, and <code>loginctl</code> lingering is enabled so the daemons survive logout and
+          reboot. On macOS the logs go to <code>~/Library/Logs/Omnesis/</code>. To run the daemons
+          against encryption at rest, or to run the gateway under a dedicated account, see
+          <a href="/docs/security#passphrase">Security</a>.
+        </p>
+
+        <h3 id="full-disk-access">Full Disk Access (macOS)</h3>
+        <p>
+          On macOS the collector reads Apple data (Contacts, Messages, Notes, Calendar, Safari) that
+          the system gates behind Full Disk Access. There is no prompt for it and no installer can
+          grant it. <code>omnesis service install collector</code> prints the procedure with the
+          exact <code>node</code> binary that runs the daemon. From a terminal it also opens System
+          Settings at the Full Disk Access pane and reveals that binary in Finder, so you can drag
+          it into the list (<code>--no-open</code> skips this). Grant it, then restart the
+          collector.
+        </p>
+        <p>
+          Until access is granted, each affected source reports the same procedure as its error
+          instead of syncing nothing: on the portal's Sources page as one card per collector naming
+          the binary and the sources waiting on it, under <code>omnesis status</code> as an “Access
+          Required” section, and in <code>omnesis doctor</code>. A Node upgrade changes the binary's
+          path and signature, so grant access again after one.
+        </p>
+
+        <h2 id="monitoring">Monitoring</h2>
+        <p>
+          Three tools answer “is it working”: <code>omnesis status</code> for sources,
+          <code>omnesis doctor</code> for everything else, and the service logs for detail. On the
+          portal's Sources page and in the mobile apps, anything worth knowing about a source
+          appears as a small icon beside the device it concerns: an information mark for a standing
+          note, a warning mark for something partly broken, an error mark for a source that has
+          stopped. Select the icon to read what it means and what to do.
+        </p>
+
+        <h3 id="status">Status</h3>
+        <p>
+          <code>omnesis status</code> prints one row per source: sync state, document count, index
+          coverage, last sync, and the ingested and indexed date ranges. It ends with the gateway's
+          version and a count of how the paired devices compare to it (see
+          <a href="/docs/updating#compatibility">Version compatibility</a>). Pass <code>-w</code>
+          to keep it open as a live view.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis status</span></p>
+            <pre>
+Omnesis Status <span class="t-dim">(on disk: 2.4 GB)</span>
+
+<span class="t-dim">  Source                    State    Count             Idx      Size  Synced   Int  Ingested Range     Indexed Range</span>
+<span class="t-ok">✓</span> gmail:maya@example.com    <span class="t-ok">synced</span>   48,213 emails     100%  610.2 MB  2m ago   15m  03/04/19-06/07/26  03/04/19-06/07/26
+<span class="t-url">⟳</span> whatsapp:+15550100123     <span class="t-url">syncing</span>  12,940 messages    98%  128.7 MB  30s ago  5m   11/01/21-06/07/26  11/01/21-05/07/26
+<span class="t-ok">✓</span> apple-notes               <span class="t-ok">synced</span>   1,082 notes       100%   14.1 MB  8m ago   30m  02/06/15-04/07/26  02/06/15-04/07/26
+
+Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 current, 1 behind</span></pre>
+          </div>
+        </div>
+        <p>
+          A source can sync successfully while its deletion detection is incomplete, so Omnesis may
+          miss items removed upstream. The portal, <code>omnesis status</code> and
+          <code>omnesis doctor</code> show such a warning with when it was first seen and how to
+          recover. It survives gateway restarts and clears only when the affected collector confirms
+          recovery.
+        </p>
+
+        <h3 id="doctor">Doctor</h3>
+        <p>
+          <code>omnesis doctor</code> is a read-only health check across the gateway, pairing,
+          models, source authentication, the versions of paired devices, the index, disk space,
+          configuration and the running process, with a fix next to each finding. It exits non-zero
+          only when something is actually blocking, so it is safe to script. Once the gateway has
+          checked for releases, it also says whether a newer stable release exists. By default it
+          includes this host's <a href="/docs/security#posture">security checks</a> (<code
+            >--no-security</code
+          >
+          skips them).
+        </p>
+        <p>
+          The same report is in the portal under <strong>Debug → Doctor</strong>. A collector's own
+          report covers its configuration, source access, disk, process, keyring and service; run it
+          from <strong>Settings → Devices</strong> by expanding the collector and choosing
+          <strong>Run</strong> under <strong>Health</strong>, or <strong>Run health checks</strong>
+          for every collector at once.
+        </p>
+        <p>
+          From a terminal, <code>omnesis doctor --device &lt;name&gt;</code> prints one collector's
+          report and <code>omnesis doctor --fleet</code> prints every collector's (<code
+            >--json</code
+          >
+          for the raw entries). A request to an offline collector waits until it reconnects.
+          Gateway-only checks show as N/A in a collector's report, and every fix in it names the
+          collector it runs on.
+        </p>
+        <p>
+          A collector's source-access check opens each local source's inputs read-only, without
+          reading their contents or running a sync. Missing inputs, incomplete scans and timeouts
+          are reported as unverified rather than healthy, and sources with nothing local to check
+          show N/A. On macOS the permission belongs to the collector's executable, so a file your
+          terminal can read may still be refused to the collector. The portal's checks only read;
+          <code>omnesis doctor --fix-permissions</code>, run on the affected host, is what restores
+          owner-only file modes under its configuration directory.
+        </p>
+
+        <h3 id="logs">Logs</h3>
+        <p>
+          <code>omnesis service logs gateway -f</code> follows the gateway's log: the journal on
+          Linux, files under <code>~/Library/Logs/Omnesis/</code> on macOS. Two environment
+          variables control logging: <code>OMNESIS_LOG_LEVEL</code> (<code>debug</code>,
+          <code>info</code>, <code>warn</code> or <code>error</code>; default <code>info</code>) and
+          <code>OMNESIS_LOG_FILE</code>, which also writes a rotated copy to that file. Set them on
+          a service with <code>omnesis service install --env</code>.
+        </p>
+
+        <h2 id="configuration">Configuration</h2>
+        <p>
+          Everything you can edit lives in one file, <code>~/.config/omnesis/omnesis.json</code>,
+          owned by the gateway; collectors fetch their configuration from it. Edit it with
+          <code>omnesis config get</code> / <code>set</code> / <code>edit</code>, in the portal's
+          <strong>Settings → Config</strong> tab, or directly in an editor: the gateway watches the
+          file, and every path goes through the same schema validation. An invalid edit while the
+          gateway runs leaves the last good configuration in effect, and
+          <code>omnesis doctor</code> reports the failed load. An invalid file at boot stops the
+          gateway; it is never silently replaced with defaults.
+        </p>
+        <p>
+          While the gateway on this machine is stopped, including one that fails on start,
+          <code>omnesis config get</code> / <code>set</code> / <code>edit</code> /
+          <code>ls</code> work on the file directly under the same validation, and the changes apply
+          at the next start. <code>OMNESIS.md</code> in the same directory is yours rather than the
+          gateway's: the agent's standing instructions, in plain Markdown (see
+          <a href="/docs/agent#standing-instructions">The agent → Standing instructions</a>).
+        </p>
+        <p>
+          <code
+            >omnesis self set --name &lt;name&gt; --email &lt;address&gt; --phone
+            &lt;number&gt;</code
+          >
+          records who you are (<code>--email</code> and <code>--phone</code> repeat) under
+          <code>self</code> in the file. The gateway uses it at start to build the person that
+          represents you in the people graph; <code>omnesis self</code> shows the current values.
+        </p>
+        <p>
+          In the portal every field says whether it is set in the file or falls back to a default,
+          an inherited value or unset behaviour. Edits in the Structured and Raw JSON views are
+          staged: <strong>Save</strong> shows a diff, and only confirming it writes
+          <code>omnesis.json</code>; leaving the page discards them. Clearing a field or choosing
+          <strong>Reset to default</strong> removes that override. List settings also offer
+          <strong>Set an explicit empty list</strong> where an empty list differs from the default,
+          and <strong>Set in config</strong> filters the view to your own overrides.
+        </p>
+        <div class="term">
+          <div class="term-bar">
+            <span></span><span></span><span></span>
+            <span class="term-title">~/.config/omnesis/omnesis.json</span>
+          </div>
+          <div class="term-body">
+            <pre data-lang="json">
+{
+  "dataRetention": { "maxAge": "2y" },
+  "activityRetention": { "maxAge": "90d" },
+  "sources": {
+    "default": { "syncInterval": "15m" },
+    "gmail:maya@example.com": { "syncInterval": "5m" }
+  },
+  "search": {
+    "params": { "resultLimit": 10 },
+    "boosts": { "typeBoosts": { "note": 1.2 } }
+  }
+}</pre
+            >
+          </div>
+        </div>
+        <p>
+          <code>sources.default</code> holds the settings every source falls back to. A key naming a
+          source type, such as <code>gmail</code>, overrides them for every account of that type,
+          and a key naming one source, such as <code>gmail:maya@example.com</code>, overrides both
+          for that source alone. Resolution is per field, so a type-wide
+          <code>extractAttachments</code> still applies to an account that only sets its own
+          <code>syncInterval</code>.
+          <code>omnesis config set /sources/default/syncInterval 10m</code> takes a JSON Pointer or
+          a dot-path; <code>omnesis config edit</code> opens the file in <code>$EDITOR</code> and
+          validates it on save.
+        </p>
+        <p>
+          <code>search.params</code> holds the ranking settings: how many candidates each search
+          method contributes, how many results come back, and how keyword and semantic matches are
+          weighed against each other. <code>search.boosts.typeBoosts</code> multiplies the score of
+          a whole document type (above <code>1</code> promotes it, below demotes it).
+          <code>search.defaultFilters</code> adds filters to every query; list filters combine with
+          the query's own, and a date range in the query wins. The defaults suit most corpora.
+        </p>
+        <p>
+          <code>dataRetention.maxAge</code> limits how old ingested source data may be;
+          <code>maxAge</code> under a <code>sources</code> entry overrides it for those sources, in
+          the same order as every other source setting. <code>activityRetention.maxAge</code> is
+          separate: it removes expired operational history and unpinned agent conversations in small
+          background batches, never data ingested from sources, and never pinned, running or pending
+          work. Without it, activity is kept forever. Deleted data frees space inside the databases
+          for reuse, but a database file may not shrink on disk.
+        </p>
+        <p>
+          <code>gateway.snapshotAbsence</code> controls how cautiously Omnesis deletes items that a
+          source stops listing. Some sources report what they still have rather than what was
+          deleted, and a failed read (a locked database, a lapsed permission) looks the same as
+          everything having been deleted. So a missing item is removed only after
+          <code>minObservations</code> syncs (default 3) over at least <code>minAge</code> (default
+          24h) agree it is gone. Raise either for a flaky source; the cost is that real deletions
+          take longer to show.
+        </p>
+        <p>
+          The collector reads the operating system's region to interpret phone numbers written
+          without a country code. macOS uses your regional setting; Linux prefers
+          <code>LC_TELEPHONE</code>. A headless or container collector can set
+          <code>OMNESIS_PHONE_REGION</code> to a two-letter country code such as <code>GB</code>;
+          restart the collector after changing it.
+        </p>
+        <p>
+          The portal's <strong>Settings → Config</strong> tab lists every other key with its current
+          value and description. Two worth knowing: <code>gateway.pushWakeRetry</code> tunes how
+          long the gateway keeps retrying a failed phone wake (about an hour by default), and
+          <code>gateway.analyticsStreamRekeyMaxRows</code> (default <code>100000</code>) caps how
+          large an analytics table may be when a source switches to per-device mode while the
+          gateway runs; a larger table waits until you raise the limit and restart the gateway.
+        </p>
+
+        <h2 id="models">Models</h2>
+        <p>
+          Every AI capability in Omnesis is a <strong>role</strong> that you assign a model to.
+          Search and ingestion work with no role assigned: without an embedder, search ranks on
+          keywords alone. A feature that needs a role says so when it is missing.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Role</th>
+                <th>What it does</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>embedder</code></td>
+                <td>
+                  Embeds document chunks and queries: the semantic half of hybrid search. Without
+                  it, search still ranks on keywords.
+                </td>
+              </tr>
+              <tr>
+                <td><code>agent</code></td>
+                <td>
+                  Powers <a href="/docs/agent">the agent</a> in the portal and mobile apps, and the
+                  agent that prepares Answer results for external agents.
+                </td>
+              </tr>
+              <tr>
+                <td><code>privacy-reviewer</code></td>
+                <td>
+                  Reviews every Answer result (<code>/answer</code> and MCP Answer) against your
+                  <a href="/docs/connect#privacy-policy">privacy policy</a> before it leaves
+                  Omnesis. With no reviewer assigned, every Answer result is held for your approval.
+                </td>
+              </tr>
+              <tr>
+                <td><code>transcriber</code></td>
+                <td>Speech-to-text, so voice notes and audio become searchable.</td>
+              </tr>
+              <tr>
+                <td><code>ocr</code></td>
+                <td>Extracts text from images and image-only attachments.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Each role can run its model in one of four places:</p>
+        <ul>
+          <li>
+            <strong>Local GGUF models</strong>, downloaded with
+            <code>omnesis model install</code> into the configuration directory's
+            <code>models/</code> folder and run by the gateway, fully offline.
+          </li>
+          <li>
+            <strong>Any OpenAI-compatible HTTP server</strong>, with presets for OpenAI, Google,
+            Mistral, Groq, Cerebras, Together, Fireworks, DeepSeek, NVIDIA, xAI, Meta, Moonshot AI
+            and OpenRouter.
+          </li>
+          <li>
+            <strong>Anthropic</strong>, assigned as <code>anthropic/&lt;model&gt;</code>. Add the
+            API key in <strong>Settings → Models</strong>; the gateway then lists every model that
+            key can use. The list refreshes at start, when the key changes, hourly, and on
+            <strong>Refresh model list</strong>. Until a refresh succeeds a small built-in list is
+            offered, and a failed refresh keeps the last good one.
+          </li>
+          <li>
+            <strong>Codex</strong>, assigned as <code>codex/&lt;model&gt;</code>, which runs
+            agent-class roles on a ChatGPT subscription through OpenAI's Codex runtime. Sign in with
+            <code>omnesis codex login</code>; <code>omnesis codex status</code> shows the runtime
+            and sign-in state. Codex serves the <code>agent</code>,
+            <code>privacy-reviewer</code> and image-capable <code>ocr</code> roles from one login;
+            it has no embedding or transcription models.
+          </li>
+        </ul>
+        <div class="callout warn">
+          <p>
+            By default inference stays on this machine: an HTTP backend that resolves to a remote
+            address is not used until you set <code>inference.allowRemoteInference: true</code> (or
+            pass <code>--allow-remote</code> to <code>backend add</code>). Enabling it sends
+            document chunks, search queries and agent context to that backend.
+          </p>
+        </div>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis backend add openai --key sk-... --allow-remote</span>
+            </p>
+            <p class="tight t-ok">✔ Backend openai added (https://api.openai.com) with API key</p>
+            <p>
+              <span class="t-prompt">❯</span> <span class="t-cmd">omnesis backend test openai</span>
+            </p>
+            <p class="tight t-ok">✔ openai: reachable</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis model assign agent openai/gpt-4o</span>
+            </p>
+            <p class="tight t-ok">✔ Assigned agent = openai/gpt-4o</p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis model status</span></p>
+            <pre>
+<span class="t-head">Active</span>
+  embedder             Nomic Embed Text v1.5 (Q8_0)  [<span class="t-ok">ready</span>]  <span class="t-dim">(139.8 MB)</span>
+  transcriber          Whisper Small (multilingual)  [<span class="t-ok">ready</span>]
+<span class="t-dim">  …</span>
+
+<span class="t-head">Cognition</span>
+  agent                HTTP: gpt-4o  [<span class="t-ok">ready</span>]
+
+<span class="t-head">System</span>
+<span class="t-dim">  …</span></pre>
+          </div>
+        </div>
+        <p>
+          The local engine depends on the role. The <code>embedder</code> runs a GGUF model in the
+          gateway through node-llama-cpp, on the GPU through Metal on Apple Silicon. The
+          <code>transcriber</code> runs whisper.cpp in a separate process, so a crash in the native
+          code cannot take the gateway down. The <code>ocr</code> role has three local runtimes:
+          <code>apple-vision</code> (macOS, with the Swift toolchain installed),
+          <code>tesseract</code> (with the <code>tesseract</code> binary installed), and
+          <code>gguf</code>, a llama.cpp vision model you supply, run through
+          <code>llama-mtmd-cli</code> with its model and projector paths set under
+          <code>inference.ocr.gguf</code>. The <code>agent</code> role does not run a local GGUF
+          model; to keep it on your machine, point it at a local OpenAI-compatible server such as
+          Ollama, llama-server or vLLM.
+        </p>
+        <p>
+          <code>omnesis model assign</code> covers every role, so the terminal and the portal's
+          <strong>Settings → Models</strong> tab configure the same set. Assigning
+          <code>ocr</code> to a Codex model sends images and rasterised PDF pages to it, which needs
+          remote inference enabled.
+        </p>
+        <p>
+          Changing the <code>embedder</code> re-embeds the corpus in the background while search
+          keeps using the existing vectors. <code>omnesis index rebuild</code> does the same under
+          the current model, for when existing vectors are known to be stale (<code>--hard</code>
+          drops them at once and searches by keyword until it finishes).
+        </p>
+
+        <h3 id="model-settings">Reasoning settings</h3>
+        <p>
+          Reasoning models accept settings that trade answer quality against latency and cost, and
+          every provider spells them differently. Omnesis does not guess them from model names.
+          Instead it looks up the exact provider and model a role is assigned to and offers only the
+          settings that model publishes. There are three kinds:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Setting</th>
+                <th>Choices</th>
+                <th>Config key</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Reasoning</td>
+                <td>On or off</td>
+                <td><code>reasoningEnabled</code></td>
+              </tr>
+              <tr>
+                <td>Reasoning effort</td>
+                <td>
+                  The provider's named levels for that model, for example <code>minimal</code>,
+                  <code>low</code>, <code>medium</code>, <code>high</code>
+                </td>
+                <td><code>reasoningEffort</code></td>
+              </tr>
+              <tr>
+                <td>Reasoning token budget</td>
+                <td>
+                  A number of thinking tokens within the model's published range; some providers
+                  also accept <code>-1</code> for no enforced budget
+                </td>
+                <td><code>reasoningBudgetTokens</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          For HTTP backends the list comes from
+          <a href="https://models.dev" target="_blank" rel="noopener">Models.dev</a>, an open
+          catalog of models and their options per inference provider. The same model can offer
+          different settings on different providers, so the lookup uses the backend's provider: a
+          preset name, or a URL that matches a preset's default address. Omnesis then keeps only the
+          settings it knows how to send to that provider's API. Reasoning settings are offered for
+          OpenAI, Google, Mistral, Groq, Cerebras, Together, DeepSeek, NVIDIA, Moonshot AI and
+          OpenRouter; which of the three kinds appear depends on the provider and the model. For
+          Codex, the effort levels come from the installed Codex runtime's own model list.
+        </p>
+        <p>
+          Anthropic, local GGUF and other OpenAI-compatible servers show no reasoning settings, and
+          neither does a model that is missing from the catalog. Such a model still works; it runs
+          with its own defaults. Only the <code>agent</code> and <code>privacy-reviewer</code> roles
+          take reasoning settings.
+        </p>
+        <p>
+          The gateway ships with a Models.dev snapshot, so the settings are available offline. When
+          <strong>Settings → Models</strong> or a model picker opens, the gateway checks for a newer
+          catalog if the one it has is more than a day old. It keeps the downloaded copy in the
+          <code>models-dev/</code> folder of the configuration directory, and keeps using its last
+          good copy when the check fails or returns an incomplete catalog. Provider logos in the
+          model pickers come from the same catalog, fetched once through the gateway.
+        </p>
+
+        <h4 id="model-settings-portal">Change them in the portal or the apps</h4>
+        <p>
+          Open a role's card in <strong>Settings → Models</strong> in the portal, or in
+          <strong>Configure Models</strong> in the iOS and Android apps. The card shows the settings
+          the assigned model offers, labelled in the provider's terms.
+          <strong>Model default</strong>, the starting choice for every setting, sends nothing, so
+          the provider's own default applies. A change saves on its own a moment after you make it,
+          and the role's card summarises what is saved, for example <em>Effort high</em>.
+        </p>
+        <p>
+          Some settings exclude each other, and the card enforces that as you choose. Turning
+          reasoning off clears any effort or budget. Google accepts only one of the three at a time,
+          and OpenRouter either an effort or a budget. If another device saved the same role while
+          you were choosing, your change is refused and the card reloads the saved values.
+        </p>
+
+        <h4 id="model-settings-cli">Change them from the CLI</h4>
+        <p>
+          There is no dedicated command. The settings live in the configuration under
+          <code>inference.modelSettings</code>, one entry per role, naming the assignment they
+          belong to. Set one with <code>omnesis config set</code>:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis config set /inference/modelSettings/agent
+                '{"assignment":"openai/gpt-5","values":{"reasoningEffort":"high"}}'</span
+              >
+            </p>
+            <p class="t-dim"># back to the model default</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis config set /inference/modelSettings/agent null</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          <code>assignment</code> must be exactly the value the role was given with
+          <code>omnesis model assign</code>, for example <code>openai/gpt-5</code>. Unlike the
+          portal, <code>config set</code> checks only the shape of the entry, not whether the model
+          offers the setting. Check a value against the choices in
+          <strong>Settings → Models</strong> before saving it this way.
+        </p>
+
+        <h4 id="model-settings-scope">Which model a setting applies to</h4>
+        <p>
+          Settings are saved per role and tied to the model that role had when they were saved. Two
+          roles that use the same model keep separate settings. Assigning a different model to a
+          role starts it from the model default; the previous model's settings are ignored, not
+          carried over.
+        </p>
+        <p>
+          A saved setting is never dropped quietly. If a catalog update removes an effort level or
+          narrows a budget range, the role's card says the saved choice is no longer offered: pick
+          another value or <strong>Reset to model default</strong>. Until then, the role's requests
+          to an HTTP backend fail with an error naming the setting, rather than running with
+          different reasoning than you chose. A positive token budget also raises the reply ceiling
+          to the budget plus 4,096 tokens; if the backend's declared
+          <code>maxOutputTokens</code> (below) is lower, requests fail with an error saying how many
+          tokens the budget needs.
+        </p>
+
+        <h3 id="model-limits">Token limits and timeouts</h3>
+        <p>
+          OpenAI-compatible servers do not report token limits. If you know them, declare them under
+          the backend's <code>modelLimits</code>, keyed by the exact model id it serves:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <pre data-lang="json">
+{
+  "inference": {
+    "backends": {
+      "local-agent": {
+        "type": "http",
+        "url": "http://127.0.0.1:8080",
+        "agentTimeoutMs": 600000,
+        "modelLimits": {
+          "example-model": {
+            "maxInputTokens": 28672,
+            "contextWindowTokens": 65536,
+            "maxOutputTokens": 32768
+          }
+        }
+      }
+    }
+  }
+}</pre
+            >
+          </div>
+        </div>
+        <p>
+          <code>maxInputTokens</code> limits the request, <code>contextWindowTokens</code> limits
+          the request plus the reserved output, and <code>maxOutputTokens</code> caps the reply.
+          Omnesis applies only an entry whose key matches the assigned model exactly and never
+          guesses limits from model names. Without a limit it can report the tokens used but cannot
+          reject an oversized request before sending it.
+        </p>
+        <p>
+          Without a declared <code>maxOutputTokens</code>, agent requests ask for a 4,096-token
+          reply, or 16,384 once a model has shown it reasons at length. A reply cut off before any
+          answer is retried once with up to 32,768 tokens when <code>maxOutputTokens</code> allows.
+          Requests time out after two minutes, or ten for a model that reasons at length;
+          <code>agentTimeoutMs</code> overrides both for an HTTP backend.
+        </p>
+        <p>
+          When an OpenAI-compatible backend answers HTTP 429 (rate limited), Omnesis retries up to
+          twice, honouring <code>Retry-After</code> when the wait fits within 15 seconds and the
+          request's deadline. Answer requests run unattended, so their agent and reviewer calls
+          retry up to four times with up to three minutes of waiting, enough for a per-minute quota
+          to reset. A lower <code>maxOutputTokens</code> can also reduce what a provider reserves
+          per request.
+        </p>
+
+        <h3 id="codex">Codex runtime and capacity</h3>
+        <p>
+          Omnesis manages a Codex runtime version tested with the installed release. In
+          <strong>Settings → Models → Backends</strong>, <strong>Refresh model list</strong> asks
+          the installed runtime for its models, and <strong>Update runtime</strong> installs the
+          tested version on the gateway host. Updating keeps the gateway's ChatGPT sign-in and every
+          assignment; new Codex work pauses while running turns finish, and a replacement that fails
+          verification is never activated. Newly available models are listed, but no assignment
+          changes on its own. <code>omnesis update</code> does not touch the Codex runtime.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p class="tight t-dim"># preview the exact action without changing the runtime</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis codex update --dry-run</span>
+            </p>
+            <p class="tight t-dim"># update the Codex runtime on the gateway host</p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis codex update</span></p>
+            <p class="tight t-dim"># non-interactive shells need explicit consent</p>
+            <p>
+              <span class="t-prompt">❯</span> <span class="t-cmd">omnesis codex update --yes</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          When <code>OMNESIS_CODEX_COMMAND</code> points at your own Codex executable, Omnesis
+          treats the runtime as externally managed: update it yourself, restart the gateway, then
+          refresh the model list.
+        </p>
+        <p>
+          Codex runs three interactive turns at once by default and two other inference calls, and
+          queues the rest. Tune this with <code>inference.codex.interactivePoolSize</code> and
+          <code>inference.codex.inferencePoolSize</code> (or the
+          <code>OMNESIS_CODEX_INTERACTIVE_POOL_SIZE</code> and
+          <code>OMNESIS_CODEX_INFERENCE_POOL_SIZE</code> environment variables, which win) and
+          restart the gateway. More slots use more memory, and every process shares the same ChatGPT
+          allowance.
+        </p>
+
+        <h2 id="troubleshooting">Troubleshooting</h2>
+        <p>
+          Start with <code>omnesis doctor</code>: it names most problems and the fix for each. Then
+          check sources, the daemons and their logs.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis doctor</span></p>
+            <p class="t-dim"># source state and indexing progress</p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis status</span></p>
+            <p class="t-dim"># confirm the daemons are running</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis service status</span>
+            </p>
+            <p class="t-dim"># inspect the component that reported the problem</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis service logs gateway -f</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis service logs collector -f</span>
+            </p>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Symptom</th>
+                <th>Likely cause</th>
+                <th>Where to fix it</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>The installer prints log lines and exits instead of the welcome banner</td>
+                <td>The gateway did not become healthy</td>
+                <td>
+                  Fix what the log reports and run the installer again; it keeps what is installed
+                </td>
+              </tr>
+              <tr>
+                <td>The gateway exits at start, naming a store</td>
+                <td>Another process holds the store, or the file is damaged</td>
+                <td><a href="#store-will-not-open">Below</a></td>
+              </tr>
+              <tr>
+                <td>A collector stopped syncing and its unit is stopped, not failed</td>
+                <td>The gateway revoked or no longer accepts its pairing</td>
+                <td><a href="/docs/setup#repairing-a-device">Bringing a revoked device back</a></td>
+              </tr>
+              <tr>
+                <td>Apple sources on a Mac report “Access Required”</td>
+                <td>The collector's <code>node</code> binary lacks Full Disk Access</td>
+                <td><a href="#full-disk-access">Full Disk Access</a></td>
+              </tr>
+              <tr>
+                <td>A source asks you to sign in again, or its sign-in expired</td>
+                <td>Expired credentials, or the sign-in flow timed out</td>
+                <td>
+                  <a href="#reauth">Below</a> and
+                  <a href="/docs/sources#managing-sources">Managing sources</a>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Google sign-in stops with <code>access_denied</code> or says the app has not
+                  completed verification
+                </td>
+                <td>
+                  Your Google OAuth client is still in testing and the account is not one of its
+                  test users
+                </td>
+                <td>
+                  Publish the consent screen in your Google Cloud project, or add the account as a
+                  test user; see
+                  <a href="/docs/sources#google-oauth-client">Google's OAuth client</a>
+                </td>
+              </tr>
+              <tr>
+                <td>“Can't reach this page” after approving Google sign-in</td>
+                <td>The browser is on a different machine from the collector</td>
+                <td><a href="/docs/setup#collector">Collector setup</a></td>
+              </tr>
+              <tr>
+                <td>A Docker collector cannot complete an OAuth sign-in</td>
+                <td>Something else holds a callback port (3000–3003)</td>
+                <td><a href="/docs/install#docker-limits">Docker limits</a></td>
+              </tr>
+              <tr>
+                <td>Search finds exact words but not related meaning</td>
+                <td>No embedder assigned, or documents not yet embedded</td>
+                <td>
+                  <a href="#models">Models</a> and <a href="/docs/search#searching">Search</a>
+                </td>
+              </tr>
+              <tr>
+                <td>The CLI reports <code>Unauthorized</code> on every command</td>
+                <td>
+                  An <code>OMNESIS_TOKEN</code> in the environment overrides the saved token, and it
+                  is revoked or belongs to another gateway
+                </td>
+                <td>Unset it or replace it with a current token</td>
+              </tr>
+              <tr>
+                <td>The phone works at home but not away</td>
+                <td>The gateway is reachable only on the home network</td>
+                <td><a href="/docs/setup#remote-access">Remote access</a></td>
+              </tr>
+              <tr>
+                <td>Phone data (health, location, calls) does not arrive</td>
+                <td>Permissions, background limits, or a stalled upload</td>
+                <td><a href="/docs/apps#delivery">When data doesn't arrive</a></td>
+              </tr>
+              <tr>
+                <td>Notifications never reach the phone</td>
+                <td>Push transport not configured or not registered</td>
+                <td><a href="/docs/notifications#status">Notification status</a></td>
+              </tr>
+              <tr>
+                <td>A phone or remote collector stops connecting after a certificate renewal</td>
+                <td>It pinned the old certificate's fingerprint</td>
+                <td><a href="/docs/security#tls">TLS certificate</a></td>
+              </tr>
+              <tr>
+                <td>A collector reports <code>Gateway upgrade required</code></td>
+                <td>The collector is newer than the gateway</td>
+                <td><a href="/docs/updating#updating">Updating</a></td>
+              </tr>
+              <tr>
+                <td>A device shows <em>unsupported</em></td>
+                <td>Its build is older than the gateway supports</td>
+                <td><a href="/docs/updating#compatibility">Version compatibility</a></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 id="store-will-not-open">A store will not open</h3>
+        <p>
+          A gateway that exits during start names the store it could not open in
+          <code>omnesis service logs gateway</code>, quoting SQLite or DuckDB. For the analytics
+          store the two common messages are a conflicting lock (another process holds it: a gateway
+          still shutting down, a duplicate gateway, or a tool with the file open) and a damaged
+          block, which DuckDB reports as a key mismatch. Neither is a reason to delete the file: the
+          analytics store holds rows no other store can rebuild. Keep it and its <code>.wal</code>,
+          and <a href="/docs/updating#restore">restore from a backup</a> or recover the file.
+        </p>
+        <p>
+          A gateway that finds another process owning its configuration directory says so and exits
+          the same way.
+        </p>
+
+        <h3 id="collector-stopped">A collector has stopped</h3>
+        <p>
+          A collector that notices the gateway refusing a credential that used to work records why
+          and stops, rather than retrying forever. <code>omnesis service status</code> on that host
+          reports it and prints both halves of the recovery: the
+          <code>omnesis devices repair</code> command to run on the gateway host, and the
+          <code>omnesis pair</code> command to run on the collector. On the gateway it shows as
+          <code>needs-pairing</code> in <code>omnesis devices list</code>.
+        </p>
+
+        <h3 id="reauth">Source errors and sign-in</h3>
+        <p>
+          The Sources page and <code>omnesis status</code> show each source's own fix for
+          authentication, permission and collector problems.
+          <code>omnesis sources debug &lt;id&gt;</code> shows a source's sync position and counts,
+          <code>omnesis sources reauth &lt;provider&gt;:&lt;account&gt;</code> signs an account in
+          again, and <code>omnesis sources resync &lt;id&gt;</code> rebuilds a source's data from
+          the start; use resync only when that is needed. Pages captured by the browser extension
+          cannot be resynced, because nothing holds their past copies to fetch again. See
+          <a href="/docs/sources#managing-sources">Managing sources</a> for every source action.
+        </p>
+        <p>
+          Re-authentication must sign in to the same account; add another account as a separate
+          source. A sign-in flow expires after 15 minutes without activity
+          (<code>gateway.timings.authFlowTtl</code>), and an expired or cancelled flow must be
+          started again.
+        </p>
+
+        <h2 id="cli">CLI at a glance</h2>
+        <p>
+          The <code>omnesis</code> command groups below each have a home in these docs.
+          <code>omnesis --help</code> and <code>omnesis &lt;command&gt; --help</code> are the
+          complete, authoritative reference for every command and flag.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Commands</th>
+                <th>What they do</th>
+                <th>Covered in</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <code>search</code>, <code>show</code>, <code>lookup</code>, <code>recent</code>,
+                  <code>trail</code>, <code>people</code>, <code>delete</code>
+                </td>
+                <td>Find and read documents and people</td>
+                <td><a href="/docs/search">Search</a></td>
+              </tr>
+              <tr>
+                <td><code>sql</code>, <code>analytics</code></td>
+                <td>Query analytics tables</td>
+                <td><a href="/docs/search#sql-over-your-analytics">Search → SQL</a></td>
+              </tr>
+              <tr>
+                <td><code>edges</code>, <code>graph</code></td>
+                <td>Inspect links between documents</td>
+                <td>
+                  <a href="/docs/search#beyond-search">Search → Beyond search</a>;
+                  <code>--help</code>
+                </td>
+              </tr>
+              <tr>
+                <td><code>sources</code>, <code>creds</code>, <code>note</code></td>
+                <td>Add and manage sources and provider credentials; capture a note</td>
+                <td><a href="/docs/sources#managing-sources">Available sources</a></td>
+              </tr>
+              <tr>
+                <td>
+                  <code>devices</code>, <code>pair</code>, <code>tokens</code>, <code>whoami</code>
+                </td>
+                <td>Pair, list, revoke and repair devices; manage tokens</td>
+                <td><a href="/docs/setup#tokens">Setup</a></td>
+              </tr>
+              <tr>
+                <td>
+                  <code>connect</code>, <code>access</code>, <code>answer</code>, <code>agent</code>
+                </td>
+                <td>Connect external agents, set access levels, ask through Answer</td>
+                <td><a href="/docs/connect">Agents &amp; MCP</a></td>
+              </tr>
+              <tr>
+                <td><code>push</code></td>
+                <td>Phone notification credentials and tests</td>
+                <td><a href="/docs/notifications">Notifications</a></td>
+              </tr>
+              <tr>
+                <td>
+                  <code>service</code>, <code>status</code>, <code>doctor</code>,
+                  <code>health</code>
+                </td>
+                <td>Run and check the daemons</td>
+                <td><a href="#services">Services</a>, <a href="#monitoring">Monitoring</a></td>
+              </tr>
+              <tr>
+                <td><code>config</code>, <code>self</code></td>
+                <td>Edit configuration; set your own name, emails and phone numbers</td>
+                <td><a href="#configuration">Configuration</a></td>
+              </tr>
+              <tr>
+                <td>
+                  <code>model</code>, <code>backend</code>, <code>codex</code>, <code>index</code>
+                </td>
+                <td>Assign models, add inference backends, rebuild the vector index</td>
+                <td><a href="#models">Models</a></td>
+              </tr>
+              <tr>
+                <td><code>secure</code>, <code>keyring</code>, <code>tls</code></td>
+                <td>Encryption at rest and certificates</td>
+                <td><a href="/docs/security">Security</a></td>
+              </tr>
+              <tr>
+                <td>
+                  <code>backup</code>, <code>restore</code>, <code>export</code>,
+                  <code>update</code>
+                </td>
+                <td>Back up, restore, export and update</td>
+                <td><a href="/docs/updating">Backup &amp; updates</a></td>
+              </tr>
+              <tr>
+                <td><code>gateway</code>, <code>collector</code></td>
+                <td>Run a daemon in the foreground (what the services start)</td>
+                <td><a href="#services">Services</a></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <nav class="docs-pager" aria-label="Pages">
+          <a href="/docs/notifications"
+            ><span class="pager-label">Previous</span
+            ><span class="pager-title">Notifications</span></a
+          >
+          <a class="pager-next" href="/docs/security"
+            ><span class="pager-label">Next</span><span class="pager-title">Security</span></a
+          >
+        </nav>
+      </main>
+    </div>
+
+    <footer class="site-footer">
+      <div class="container">
+        <div class="footer-inner">
+          <div class="footer-base">© 2026 Omnesis</div>
+          <nav class="footer-links" aria-label="Footer">
+            <a href="/docs/">Docs</a>
+            <a href="/privacy">Privacy</a>
+            <a class="footer-mail" href="mailto:contact@omnesis.dev">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="2" y="4" width="20" height="16" rx="2" />
+                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+              </svg>
+              contact@omnesis.dev
+            </a>
+            <a class="footer-gh" href="#" data-oss-open>
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path
+                  d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+                />
+              </svg>
+              GitHub
+            </a>
+            <a
+              class="footer-social footer-x"
+              href="https://x.com/Omnesisdev"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Omnesis on X"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>@Omnesisdev
+            </a>
+            <a
+              class="footer-social footer-discord"
+              href="https://discord.gg/4Y8pQHrVv"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Join Omnesis on Discord"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>Discord
+            </a>
+          </nav>
+        </div>
+      </div>
+    </footer>
+
+    <script src="/docs/docs.js"></script>
+  </body>
+</html>

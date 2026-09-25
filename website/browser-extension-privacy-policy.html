@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Omnesis Browser Extension Privacy Policy — Omnesis</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- Resolve the theme before first paint: the stored choice, else the OS preference. -->
+    <script>
+      (function () {
+        var root = document.documentElement;
+        root.classList.add("js");
+        var t;
+        try {
+          t = localStorage.getItem("omnesis-theme");
+        } catch (e) {}
+        if (t !== "light" && t !== "dark") {
+          t =
+            window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+        }
+        root.setAttribute("data-theme", t);
+      })();
+    </script>
+    <meta
+      name="description"
+      content="How Omnesis Browser Capture handles page content, browsing metadata, pairing credentials, and local extension storage."
+    />
+    <link rel="canonical" href="https://omnesis.dev/browser-extension-privacy-policy" />
+    <meta name="theme-color" content="#0d1117" />
+    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="/footer-social.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <nav id="nav">
+      <div class="container">
+        <a href="/" class="nav-logo" aria-label="Omnesis"
+          ><span class="nav-logo-mark" aria-hidden="true"></span>MNESIS</a
+        >
+        <div class="nav-right">
+          <ul class="nav-links">
+            <li><a href="/">Context Layer</a></li>
+            <li><a href="/brain">Omnesis Brain</a></li>
+            <li><a href="/vision">Vision</a></li>
+          </ul>
+        </div>
+      </div>
+    </nav>
+    <div class="docs-shell docs-shell--single">
+      <main id="main" class="docs-content">
+        <p class="docs-kicker">Legal</p>
+        <h1>Omnesis Browser Extension Privacy Policy</h1>
+        <p class="docs-lead"><strong>Last updated:</strong> 2026-09-05</p>
+
+        <h2>Summary</h2>
+        <p>
+          Omnesis Browser Capture reads supported HTTPS pages only after you explicitly grant Chrome
+          page access. It extracts readable text and visit metadata and sends them directly to the
+          HTTPS Omnesis gateway you pair with the extension. Ordinarily that gateway runs on
+          hardware you control. If you deliberately select a developer-operated gateway, the
+          developer receives the data as that gateway's operator. The extension contains no
+          analytics, advertising, or crash-reporting SDK.
+        </p>
+
+        <h2>What the extension accesses</h2>
+        <ul>
+          <li>
+            <strong>Readable page content</strong> — the page title and readable text converted to
+            Markdown. Raw HTML, scripts, images, and page pixels are not sent. Form controls and
+            editable regions are removed before extraction. Readable page text, titles, and URLs can
+            still contain sensitive information, so review the disclosure and exclusions before
+            enabling capture.
+          </li>
+          <li>
+            <strong>Visit metadata</strong> — the normalized page URL, domain, title, visit time,
+            and focused dwell duration.
+          </li>
+          <li>
+            <strong>Pairing information</strong> — the gateway HTTPS URL, one-time pairing code, a
+            browser device identifier, the Chrome profile name you enter during pairing, and a
+            bearer token limited to writing the browser-capture source. Chrome does not expose its
+            local profile name to extensions; the entered label and stable device identifier are
+            attached to each visit. A page document is one snapshot per URL, so its metadata records
+            the profile whose capture most recently changed that snapshot. The code is sent to the
+            selected gateway for redemption. If that request times out, the same code is sent again
+            with the same request identifier so the gateway can return the credential it already
+            issued; the extension keeps only a hash of the code and that identifier, for at most
+            fifteen minutes, and never the code itself.
+          </li>
+          <li>
+            <strong>Local controls and delivery state</strong> — Chrome profile label, the paired
+            gateway's reported version, recent status, a bounded retry queue, and a copy of the
+            capture settings the paired gateway holds (pause, excluded domains, pages you deleted
+            for good).
+          </li>
+        </ul>
+        <p>
+          The extension does not run in incognito windows. Chrome-internal pages, pages on the
+          domains you exclude, pages you deleted for good, sign-in, registration, checkout and
+          payment pages, and pages carrying a password field are not captured. These capture
+          settings are stored on your paired gateway and apply to every browser paired with it.
+          Domains a dedicated Omnesis source already covers are also skipped, so a page is not
+          collected twice.
+        </p>
+        <p>
+          Because a signed-in page can contain identifying details, communications, financial or
+          health information, authentication-related text, or location information, readable text
+          from those categories may be included when you allow capture on that page. Omnesis does
+          not target or infer these categories in the extension. Exclude sensitive domains, pause
+          capture, or remove page access whenever you do not want a page captured.
+        </p>
+
+        <h2>Where data goes</h2>
+        <p>
+          Captured content and visit metadata are sent over HTTPS directly to the gateway you
+          approve during pairing. Pair only with an endpoint and operator you trust. The extension
+          developer does not receive this data merely because you installed the extension. The
+          developer does receive it if you deliberately pair with a developer-operated gateway.
+        </p>
+        <p>
+          If the gateway operator enables a cloud model for indexing or agent features, the gateway
+          may send the inputs needed for that configured role to the selected model provider. The
+          extension does not choose or contact that provider; the gateway operator controls that
+          processing and the provider's terms apply.
+        </p>
+
+        <h2>Chrome permissions</h2>
+        <ul>
+          <li>
+            <strong>Optional HTTPS page access</strong> lets the extension read rendered pages. It
+            is requested during pairing, not at installation, and removed when unpairing.
+          </li>
+          <li>
+            <strong>Storage</strong> retains pairing, a copy of the gateway's capture settings,
+            bounded queued captures, and status in the extension profile.
+          </li>
+          <li>
+            <strong>Alarms</strong> lets the Manifest V3 worker retry queued delivery and refresh
+            health while Chrome is running.
+          </li>
+          <li>
+            <strong>Scripting</strong> lets the extension register the capture script after page
+            access is granted. The popup uses that same optional page grant to report capture
+            status; the extension does not request the <code>tabs</code> or
+            <code>activeTab</code> permission.
+          </li>
+        </ul>
+
+        <h2>Retention and control</h2>
+        <p>
+          Successfully delivered queue entries are removed from local extension storage. Pending
+          entries — which hold the captured page text itself — survive browser and worker restarts
+          so temporary outages do not lose data, but the queue has fixed item and byte limits and
+          evicts old entries when those limits are reached. Credential-bearing query parameters
+          (tokens, signatures, one-time codes, passwords, session ids) are removed from a page's
+          address before it is recorded, so a password-reset link or a signed download link is
+          stored without its secret. The pairing credential remains until you unpair or clear the
+          extension's data.
+        </p>
+        <ul>
+          <li>
+            Pause capture from the extension popup; the pause applies to every browser paired with
+            the same gateway.
+          </li>
+          <li>
+            Exclude any domain from the options page or the popup. The exclusion is stored on your
+            gateway and applies to every browser paired with it; you can also delete the pages the
+            domain already contributed.
+          </li>
+          <li>
+            Unpair to remove the gateway credential, pending captures, recent delivery state, the
+            copy of the capture settings, and the extension's HTTPS page-access grant. The Chrome
+            profile label and random installation identifier remain so your browser identity
+            survives a later re-pair; removing the extension or clearing its data removes them.
+            Excluded domains stay on the gateway.
+          </li>
+          <li>Remove the extension or clear its data to remove its remaining local storage.</li>
+          <li>Delete data already delivered using the controls provided by the paired gateway.</li>
+        </ul>
+
+        <h2>Data practices</h2>
+        <p>
+          We do not sell, rent, or use extension data for advertising, credit, lending, profiling,
+          or unrelated purposes. We do not transfer extension data to data brokers. Data is handled
+          only to provide pairing, browser capture, delivery, status, and the controls described
+          above. The extension's use and transfer of data complies with the Chrome Web Store User
+          Data Policy, including its Limited Use requirements.
+        </p>
+        <p>
+          The developer does not permit humans to read extension user data. Any exceptional access
+          is limited to cases allowed by the Limited Use requirements: your affirmative consent for
+          specific data, security or abuse investigation, legal compliance, or internal processing
+          of aggregated and anonymized data. For gateways not operated by the developer, the
+          extension does not provide the developer with a channel into your paired gateway.
+        </p>
+
+        <h2>Changes and contact</h2>
+        <p>
+          Material changes will be reflected here and the last-updated date will change. Questions
+          and security reports can be sent to
+          <a href="mailto:contact@omnesis.dev">contact@omnesis.dev</a>.
+        </p>
+      </main>
+    </div>
+    <footer class="site-footer">
+      <div class="container">
+        <div class="footer-inner">
+          <div class="footer-base">© 2026 Omnesis</div>
+          <nav class="footer-links" aria-label="Footer">
+            <a href="/privacy">Privacy</a>
+            <a class="footer-mail" href="mailto:contact@omnesis.dev">contact@omnesis.dev</a>
+            <a class="footer-gh" href="#" data-oss-open>GitHub</a>
+            <a
+              class="footer-social footer-x"
+              href="https://x.com/Omnesisdev"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Omnesis on X"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>@Omnesisdev
+            </a>
+            <a
+              class="footer-social footer-discord"
+              href="https://discord.gg/4Y8pQHrVv"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Join Omnesis on Discord"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>Discord
+            </a>
+          </nav>
+        </div>
+      </div>
+    </footer>
+    <script src="/docs/docs.js"></script>
+  </body>
+</html>

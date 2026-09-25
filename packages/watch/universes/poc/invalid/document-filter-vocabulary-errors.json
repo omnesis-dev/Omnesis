@@ -1,0 +1,66 @@
+{
+  "watch": {
+    "name": "document-filter-vocabulary-errors",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "calls",
+        "type": "source.document_event",
+        "filter": {
+          "source": "apple-call-log",
+          "event": ["created"],
+          "documentType": "voicemail",
+          "metadata": [
+            {
+              "path": "extra.direction",
+              "op": "eq",
+              "value": "missed"
+            },
+            {
+              "path": "extra.callCount",
+              "op": "in",
+              "value": "three"
+            }
+          ]
+        },
+        "output_map": {
+          "doc_id": "$e.docId"
+        }
+      },
+      {
+        "id": "mail",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "metadata": [
+            {
+              "path": "tags",
+              "op": "contains",
+              "value": "ARCHIVED"
+            }
+          ]
+        },
+        "output_map": {
+          "doc_id": "$e.docId"
+        }
+      },
+      {
+        "id": "either",
+        "type": "stateless.or",
+        "inputs": {
+          "calls": {
+            "role": "arm"
+          },
+          "mail": {
+            "role": "arm"
+          }
+        }
+      }
+    ],
+    "sink": {
+      "input": "either"
+    }
+  }
+}

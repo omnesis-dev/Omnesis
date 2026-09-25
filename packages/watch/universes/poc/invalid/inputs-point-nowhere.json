@@ -1,0 +1,39 @@
+{
+  "watch": {
+    "name": "inputs-point-nowhere",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "mail",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email"
+        },
+        "output_map": {
+          "thread_id": "$e.metadata.extra.threadId",
+          "doc_id": "$e.docId"
+        }
+      },
+      {
+        "id": "gate",
+        "type": "stateful.wait",
+        "inputs": {
+          "ghost": {
+            "role": "arm"
+          },
+          "gate": {
+            "role": "arm"
+          }
+        },
+        "on_collision": "reset",
+        "duration": "1 days"
+      }
+    ],
+    "sink": {
+      "input": "nowhere"
+    }
+  }
+}

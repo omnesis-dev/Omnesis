@@ -1,0 +1,38 @@
+[
+  {
+    "externalId": "jp-gdrive-contract-001",
+    "name": "Japan Trip — Studio Northstar Service Agreement.gdoc",
+    "mimeType": "application/vnd.google-apps.document",
+    "content": "STUDIO NORTHSTAR TRAVEL — SERVICE AGREEMENT\n\nClient: Maya Reeves\nTravellers: Maya Reeves, Jamie Lopez (party of 2)\nDestination: Japan — Tokyo (6 nights) and Kyoto (3 nights)\nTrip dates: 11–22 April 2026\n\nITEMIZED PACKAGE\n- Return flights LHR–HND–LHR (economy, 2 travellers): EUR 985.00\n- Agency service fee: EUR 120.00\n- Tokyo Riverside Hotel, 6 nights (11–17 April): JPY 168,000\n- Kyoto Ryokan Sakura, 3 nights (17–20 April): JPY 96,000\n- 7-day Japan Rail Pass (Green, 2 travellers): JPY 50,000\n- Two guided day tours (Tokyo + Kyoto): JPY 38,000\n\nTotal package value approximately EUR 3,150, payable in two instalments (deposit + balance).\nInstalment 1 (deposit): flights EUR 985.00 + service fee EUR 120.00, charged on booking.\nInstalment 2 (balance): JPY accommodation, rail pass and tours, charged before departure.\n\nDiscretionary spending (meals, activities, shopping) is not included in this package and is settled directly by the client.\n\nThis agreement is between Maya Reeves and Studio Northstar Travel. Booking reference NRT8841.",
+    "owner": "self",
+    "createdAt": "2026-02-08T10:00:00Z",
+    "modifiedAt": "2026-02-13T16:30:00Z"
+  },
+  {
+    "externalId": "jp-gdrive-itinerary-001",
+    "name": "Japan Itinerary — April 2026.gdoc",
+    "mimeType": "application/vnd.google-apps.document",
+    "content": "JAPAN ITINERARY — APRIL 2026\nMaya Reeves & Jamie Lopez\n\nDay 1 — Sat 11 April (Tokyo): Fly LHR→HND. Check in to Tokyo Riverside Hotel (reservation R-55120). Evening: settle in, ramen near the hotel.\nDay 2 — Sun 12 April (Tokyo): teamLab Planets Tokyo, afternoon entry (tickets x2). Explore Toyosu.\nDay 3 — Mon 13 April (Tokyo): Daytime sightseeing. Evening: omakase dinner at Sushi Aoyama, Ginza (party of 2).\nDay 4 — Tue 14 April (Tokyo): Shopping in Ginza — Uniqlo. Dinner: Tokyo Bay Ramen.\nDay 5 — Wed 15 April (Tokyo): Guided Tokyo day tour. Convenience-store and metro day.\nDay 6 — Thu 16 April (Tokyo): Free day, last morning in Tokyo.\nDay 7 — Fri 17 April (Tokyo→Kyoto): Train Tokyo→Kyoto on the JR Pass. Check in to Kyoto Ryokan Sakura. Evening: kaiseki dinner at Hanami Tei (party of 2).\nDay 8 — Sat 18 April (Kyoto): Guided Kyoto day tour. Temples and gardens.\nDay 9 — Sun 19 April (Kyoto): Free day. Souvenir shopping at Don Quijote.\nDay 10 — Mon 20 April (Kyoto): Check out of the ryokan, transfer back toward Tokyo area.\nDay 11 — Tue 21 April: Buffer day.\nDay 12 — Wed 22 April: Fly HND→LHR home.",
+    "owner": "self",
+    "createdAt": "2026-02-09T09:15:00Z",
+    "modifiedAt": "2026-04-02T14:00:00Z"
+  },
+  {
+    "externalId": "jp-gdrive-invoice-001",
+    "name": "Studio Northstar Invoice INV-2026-0417.gdoc",
+    "mimeType": "application/vnd.google-apps.document",
+    "content": "STUDIO NORTHSTAR TRAVEL — INVOICE\n\nInvoice no.: INV-2026-0417\nBill to: Maya Reeves\nBooking reference: NRT8841\nTrip: Japan (Tokyo + Kyoto), 11–22 April 2026\n\nLINE ITEMS\n1. Return flights LHR–HND–LHR (2 travellers) ............ EUR 985.00\n2. Agency service fee ................................... EUR 120.00\n3. Tokyo Riverside Hotel — 6 nights ..................... JPY 168,000\n4. Kyoto Ryokan Sakura — 3 nights ...................... JPY 96,000\n5. 7-day Japan Rail Pass ............................... JPY 50,000\n6. Two guided day tours (Tokyo + Kyoto) ................ JPY 38,000\n\nTotal package value: approximately EUR 3,150 (EUR + JPY components).\nPaid in two instalments: deposit (flights + service fee) and balance (accommodation + rail + tours).\nStatus: PAID IN FULL.\n\nDiscretionary spending (meals, activities, shopping) billed separately and not included on this invoice.",
+    "owner": "self",
+    "createdAt": "2026-04-01T11:00:00Z",
+    "modifiedAt": "2026-04-01T11:00:00Z"
+  },
+  {
+    "externalId": "jp-gdrive-budget-001",
+    "name": "Japan trip budget tracker.gsheet",
+    "mimeType": "application/vnd.google-apps.spreadsheet",
+    "content": "Category,Planned,Actual,Currency,Notes\nFlights,985.00,985.00,EUR,LHR-HND-LHR via Studio Northstar\nAgency service fee,120.00,120.00,EUR,Studio Northstar\nTokyo hotel (6 nights),168000,168000,JPY,Tokyo Riverside Hotel\nKyoto ryokan (3 nights),96000,96000,JPY,Kyoto Ryokan Sakura\nJR rail pass (7-day),50000,50000,JPY,JR Pass exchange order\nGuided day tours,38000,38000,JPY,Two tours Tokyo + Kyoto\nOmakase dinner,28000,28000,JPY,Sushi Aoyama Ginza\nKaiseki dinner,22000,22000,JPY,Hanami Tei Kyoto\nteamLab Planets x2,4800,4800,JPY,Tokyo\nUniqlo Ginza,10000,9800,JPY,Clothing\nDon Quijote souvenirs,8000,7400,JPY,Kyoto\nMetro + konbini,6000,6200,JPY,Tokyo Metro and convenience stores\nTokyo Bay Ramen,60.00,64.20,EUR,Dinner in Tokyo (EUR travel card)\nHaneda airport meal,40.00,38.00,EUR,Airport meal (EUR travel card)\nPackage total,,~3150,EUR,Two instalments deposit + balance\nTrip grand total,,~3700,EUR,Package plus food and shopping",
+    "owner": "self",
+    "createdAt": "2026-02-09T09:30:00Z",
+    "modifiedAt": "2026-04-23T19:00:00Z"
+  }
+]

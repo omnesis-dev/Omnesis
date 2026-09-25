@@ -1,0 +1,15 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "KEY_COMPONENTS_MISMATCH",
+      "severity": "error",
+      "path": "/watch/nodes/2/inputs/inbound/key",
+      "message": "Every keyed edge into 'waiting' must compute the same key components; this one computes [thread_id] where the node's key is [doc, thread_id].",
+      "details": {
+        "components": ["thread_id"],
+        "expected": ["doc", "thread_id"]
+      }
+    }
+  ]
+}

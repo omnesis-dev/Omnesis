@@ -1,0 +1,12 @@
+{
+  "note": "Committed price sheet the spend meter uses to price every model-backed run from the API usage object's cache breakdown. Re-fetch from sourceUrl and update retrievedAt whenever prices are refreshed.",
+  "model": "deepseek-v4-flash",
+  "currency": "USD",
+  "per1MTokensUsd": {
+    "inputCacheHit": 0.0028,
+    "inputCacheMiss": 0.14,
+    "output": 0.28
+  },
+  "sourceUrl": "https://api-docs.deepseek.com/quick_start/pricing",
+  "retrievedAt": "2026-07-02"
+}

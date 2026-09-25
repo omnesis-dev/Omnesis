@@ -1,0 +1,98 @@
+{
+  "name": "replicated",
+  "description": "Two collectors share Things and Apple databases with stable cross-host identities, two phones share Apple Health, and two Macs contribute partitioned Screen Time. Replicas must equal one host's corpus; partitioned activity must preserve both host streams.",
+  "cast": "cast.json",
+  "agentDemos": null,
+  "devices": [
+    {
+      "id": "macbook",
+      "name": "Johns-MacBook-Pro-collector",
+      "kind": "collector"
+    },
+    {
+      "id": "imac",
+      "name": "Johns-iMac-collector",
+      "kind": "collector"
+    },
+    {
+      "id": "iphone",
+      "name": "Johns-iPhone",
+      "kind": "ios"
+    },
+    {
+      "id": "ipad",
+      "name": "Johns-iPad",
+      "kind": "ios"
+    }
+  ],
+  "multiDeviceModes": {
+    "things": "replicated",
+    "apple-health": "replicated",
+    "apple-call-log": "replicated",
+    "apple-imessage": "replicated",
+    "apple-notes": "replicated",
+    "apple-reminders": "replicated",
+    "apple-voicemail": "replicated",
+    "screen-time": "partitioned"
+  },
+  "sources": [
+    {
+      "descriptorId": "things",
+      "accountIds": ["local"],
+      "device": "macbook",
+      "members": ["imac"]
+    },
+    {
+      "descriptorId": "apple-health",
+      "accountIds": ["ios-synth-johnsmith"],
+      "device": "iphone",
+      "members": ["ipad"]
+    },
+    {
+      "descriptorId": "apple-calendar",
+      "accountIds": ["john.smith@icloud.example"],
+      "device": "macbook"
+    },
+    {
+      "descriptorId": "apple-call-log",
+      "accountIds": ["john.smith@icloud.example"],
+      "device": "macbook",
+      "members": ["imac"]
+    },
+    {
+      "descriptorId": "apple-contacts",
+      "accountIds": ["john.smith@icloud.example"],
+      "device": "macbook"
+    },
+    {
+      "descriptorId": "apple-imessage",
+      "accountIds": ["john.smith@icloud.example"],
+      "device": "macbook",
+      "members": ["imac"]
+    },
+    {
+      "descriptorId": "apple-notes",
+      "accountIds": ["john.smith@icloud.example"],
+      "device": "macbook",
+      "members": ["imac"]
+    },
+    {
+      "descriptorId": "apple-reminders",
+      "accountIds": ["john.smith@icloud.example"],
+      "device": "macbook",
+      "members": ["imac"]
+    },
+    {
+      "descriptorId": "apple-voicemail",
+      "accountIds": ["john.smith@icloud.example"],
+      "device": "macbook",
+      "members": ["imac"]
+    },
+    {
+      "descriptorId": "screen-time",
+      "accountIds": ["john.smith@icloud.example"],
+      "device": "macbook",
+      "members": ["imac"]
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "watch": {
+    "name": "expression-syntax-and-function-errors",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "txn",
+        "type": "source.analytics_row",
+        "table": "plaid_transactions",
+        "op": ["inserted"],
+        "output_map": {
+          "broken": "date_trunc('month', $e.row.date",
+          "unknown_fn": "upper($e.row.merchant_name)",
+          "wrong_arity": "date_trunc('month')"
+        }
+      },
+      {
+        "id": "gate",
+        "type": "stateless.transform",
+        "inputs": {
+          "txn": {
+            "role": "arm"
+          }
+        },
+        "query": "SELECT true AS fires"
+      }
+    ],
+    "sink": {
+      "input": "gate"
+    }
+  }
+}

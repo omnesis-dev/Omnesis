@@ -1,0 +1,847 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mobile apps — Omnesis Docs</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32" />
+    <link rel="icon" type="image/png" href="/favicon-16.png" sizes="16x16" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- Resolve the theme before first paint: the stored choice, else the OS preference. -->
+    <script>
+      (function () {
+        var root = document.documentElement;
+        root.classList.add("js");
+        var t;
+        try {
+          t = localStorage.getItem("omnesis-theme");
+        } catch (e) {}
+        if (t !== "light" && t !== "dark") {
+          t =
+            window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+        }
+        root.setAttribute("data-theme", t);
+      })();
+    </script>
+
+    <meta
+      name="description"
+      content="The iOS and Android apps: getting the iOS app through TestFlight and the Android app through Google Play closed testing, or building either app yourself, pairing, phone-only sources such as Apple Health and Health Connect, voice and quick capture, and fixing phone data that does not arrive."
+    />
+    <link rel="canonical" href="https://omnesis.dev/docs/apps" />
+    <meta name="theme-color" content="#0d1117" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="/footer-social.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <nav id="nav">
+      <div class="container">
+        <a href="/" class="nav-logo" aria-label="Omnesis"
+          ><span class="nav-logo-mark" aria-hidden="true"></span>MNESIS</a
+        >
+        <div class="nav-right">
+          <ul class="nav-links">
+            <li><a href="/">Context Layer</a></li>
+            <li><a href="/brain">Omnesis Brain</a></li>
+            <li><a href="/vision">Vision</a></li>
+            <li><a href="/docs/" aria-current="page">Docs</a></li>
+          </ul>
+          <a
+            class="nav-icon-btn"
+            href="#"
+            data-oss-open
+            aria-label="Omnesis on GitHub"
+            title="Omnesis on GitHub"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path
+                d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+              />
+            </svg>
+          </a>
+          <button
+            id="theme-toggle"
+            class="theme-toggle"
+            type="button"
+            aria-label="Switch between dark and light theme"
+            title="Toggle theme"
+          >
+            <svg
+              class="icon-sun"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="4" />
+              <path
+                d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"
+              />
+            </svg>
+            <svg
+              class="icon-moon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <div class="docs-shell">
+      <aside class="docs-sidebar">
+        <nav aria-label="Documentation">
+          <ul class="side-pages">
+            <li><a href="/docs/">Overview</a></li>
+            <li><a href="/docs/install">Install</a></li>
+            <li><a href="/docs/setup">Setup</a></li>
+            <li><a href="/docs/search">Search</a></li>
+            <li><a href="/docs/agent">The agent</a></li>
+            <li><a href="/docs/connect">Agents &amp; MCP</a></li>
+            <li>
+              <a href="/docs/apps" aria-current="page">Mobile apps</a>
+              <ul class="side-sub">
+                <li><a href="#getting-the-apps">Getting the apps</a></li>
+                <li><a href="#pairing">Pairing</a></li>
+                <li><a href="#one-design-two-platforms">Finding your way around</a></li>
+                <li><a href="#phone-only-sources">Phone-only sources</a></li>
+                <li><a href="#voice-and-quick-capture">Voice &amp; quick capture</a></li>
+                <li><a href="#privacy-controls">Privacy controls</a></li>
+                <li><a href="#delivery">When data doesn't arrive</a></li>
+                <li><a href="#support">Support</a></li>
+              </ul>
+            </li>
+            <li><a href="/docs/notifications">Notifications</a></li>
+            <li><a href="/docs/operating">Operating</a></li>
+            <li><a href="/docs/security">Security</a></li>
+            <li><a href="/docs/updating">Backup &amp; updates</a></li>
+            <li><a href="/docs/sources">Available sources</a></li>
+            <li><a href="/docs/building-sources">Building sources</a></li>
+            <li><a href="/docs/experimental">Experimental</a></li>
+          </ul>
+        </nav>
+      </aside>
+
+      <main id="main" class="docs-content">
+        <p class="docs-kicker">Use</p>
+        <h1>Mobile apps</h1>
+        <p class="docs-lead">
+          Omnesis has native iOS and Android apps. Each is two things at once: a full client for
+          your gateway — chat, search, people, devices — and the runtime for sources whose data only
+          exists on the phone. This page covers getting an app onto your phone, pairing it, the
+          phone-only sources, voice and quick capture, and what to do when phone data does not
+          arrive. It assumes a running gateway (see <a href="/docs/install">Install</a>).
+        </p>
+
+        <h2 id="getting-the-apps">Getting the apps</h2>
+        <p>
+          An <strong>official build</strong> is signed by the Omnesis maintainer under the published
+          app identities; its notifications work without any setup on your gateway. A
+          <strong>self-built</strong> app is one you build from the
+          <a href="https://github.com/omnesis-dev/Omnesis" target="_blank" rel="noopener"
+            >source repository</a
+          >
+          and sign yourself; it needs your own push credentials for background notifications.
+        </p>
+        <p>
+          The official iOS app is distributed through one external
+          <a href="https://testflight.apple.com/join/KpMV6HTy" target="_blank" rel="noopener"
+            >TestFlight group</a
+          >, which Apple limits to 10,000 testers; App Store publication is in progress. The
+          official Android app is in closed testing on Google Play: join the
+          <a href="https://groups.google.com/g/omnesis-alpha-testers" target="_blank" rel="noopener"
+            >tester group</a
+          >, then
+          <a
+            href="https://play.google.com/apps/testing/dev.omnesis.android"
+            target="_blank"
+            rel="noopener"
+            >opt in</a
+          >
+          with the same Google account and install the app from the Play listing that page links to.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Platform</th>
+                <th>Official build</th>
+                <th>Self-built</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>iPhone</td>
+                <td>
+                  Install through
+                  <a
+                    href="https://testflight.apple.com/join/KpMV6HTy"
+                    target="_blank"
+                    rel="noopener"
+                    >TestFlight</a
+                  >
+                </td>
+                <td><a href="#build-ios">Build with Xcode</a></td>
+              </tr>
+              <tr>
+                <td>Android</td>
+                <td>
+                  Join the
+                  <a
+                    href="https://groups.google.com/g/omnesis-alpha-testers"
+                    target="_blank"
+                    rel="noopener"
+                    >tester group</a
+                  >, then
+                  <a
+                    href="https://play.google.com/apps/testing/dev.omnesis.android"
+                    target="_blank"
+                    rel="noopener"
+                    >opt in on Google Play</a
+                  >; does not include the Call Log source
+                </td>
+                <td><a href="#build-android">Build with Gradle</a>; includes Call Log</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          How each build receives notifications is covered in
+          <a href="/docs/notifications#choosing-a-transport">Notifications → Choose a transport</a>.
+        </p>
+
+        <h3 id="build-ios">Build and install iOS</h3>
+        <p>
+          You need a Mac with Xcode, XcodeGen, and an Apple development team. Copy
+          <code>ios/Local.xcconfig.example</code> to <code>ios/Local.xcconfig</code> and set
+          <code>DEVELOPMENT_TEAM</code>. Unless your team is authorized for the official App ID,
+          also set <code>OMNESIS_BUNDLE_ID</code> to a base identifier registered under your team
+          (for example <code>com.example.myomnesis</code>); the extension and Watch targets derive
+          their identifiers from it. Then generate the project:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p class="t-dim"># one-time dependency</p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">brew install xcodegen</span></p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">cp ios/Local.xcconfig.example ios/Local.xcconfig</span>
+            </p>
+            <p class="t-dim"># set DEVELOPMENT_TEAM and OMNESIS_BUNDLE_ID in ios/Local.xcconfig</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >cd ios &amp;&amp; xcodegen generate &amp;&amp; open Omnesis.xcodeproj</span
+              >
+            </p>
+          </div>
+        </div>
+        <p>
+          In Xcode, select your physical iPhone as the destination and run the app. The simulator
+          works for basic UI testing, but it does not provide your phone's HealthKit data. The App
+          IDs and capabilities each target needs are listed in the
+          <a
+            href="https://github.com/omnesis-dev/Omnesis/blob/main/ios/README.md"
+            target="_blank"
+            rel="noopener"
+            >iOS contributor guide</a
+          >.
+        </p>
+
+        <h3 id="build-android">Build and install Android</h3>
+        <p>
+          You need JDK 17, the Android SDK, and <code>adb</code>. The full edition you build
+          includes the Call Log source, which the Google Play app does not include. Build with the
+          committed Gradle wrapper, connect a phone with USB debugging enabled, and install the APK:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">cd android</span></p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">./gradlew :app:assembleFullDebug</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >adb install -r app/build/outputs/apk/full/debug/app-full-debug.apk</span
+              >
+            </p>
+          </div>
+        </div>
+        <p>
+          Choose your own package id, so your build never collides with the Google Play app. Run
+          <code>omnesis push setup</code> before building if you want background notifications; it
+          writes the package id and Firebase client values to the ignored
+          <code>android/local.push.properties</code>. Without push, you can put only
+          <code>OMNESIS_ANDROID_APPLICATION_ID=dev.example.omnesis</code> in that file. Keep the
+          same id for later updates to your build. See the
+          <a
+            href="https://github.com/omnesis-dev/Omnesis/blob/main/android/README.md"
+            target="_blank"
+            rel="noopener"
+            >Android contributor guide</a
+          >
+          for the full process.
+        </p>
+
+        <h2 id="pairing">Pairing</h2>
+        <p>On the gateway host, mint a pairing QR with the CLI:</p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis devices pair --kind ios</span>
+            </p>
+            <pre class="wrap t-dim">
+Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:activity-segments, write:photos, write:core-location-visits</pre
+            >
+            <p>Scan this QR with the Omnesis app on your iPhone:</p>
+            <p class="t-dim"># … QR code rendered in the terminal …</p>
+            <p class="t-dim">
+              Can't scan the code? In the Omnesis app, choose Paste JSON and paste:
+            </p>
+            <p class="t-dim"># … the same payload as text …</p>
+            <p>● Works at home and away, as long as Tailscale is connected on the phone.</p>
+            <p class="t-dim">Address: Tailscale name · studio.tail-example.ts.net</p>
+          </div>
+        </div>
+        <p>
+          Use <code>--kind android</code> for the Android app. The portal's Devices page and both
+          apps mint the same code with a kind picker. The QR carries the gateway URL, a pairing code
+          that expires after ten minutes, and how the phone should trust the gateway's certificate.
+          If the camera is unavailable, both apps accept the same payload through
+          <strong>Paste JSON</strong>. <strong>Manual entry</strong>, which takes the gateway URL
+          and pairing code typed by hand, carries no fingerprint, so it works only with a
+          certificate the phone trusts; the portal and the CLI print the code for it in that case.
+          The phone names its own device entry, which you can rename later with
+          <code>omnesis devices rename</code>.
+        </p>
+        <p>
+          For a gateway on a public HTTPS address, the phone checks the certificate the normal way,
+          so a routine certificate renewal does not require pairing again. For a private or
+          self-signed address, the QR instead carries the certificate's SHA-256 fingerprint, and the
+          app pins that gateway. If the public address differs from
+          <code>gateway.publicBaseUrl</code> — including a different port — add its exact origin to
+          <code>gateway.pairingSystemTrustOrigins</code>. The address you pair with also decides
+          where the phone works: a LAN or <code>.local</code> address only works at home. To use the
+          phone away from home, follow
+          <a href="/docs/setup#remote-access">Setup → Remote access</a> before pairing.
+        </p>
+        <p>
+          The gateway chooses the address to put in the QR code, and the portal and the CLI show its
+          choice. It offers only addresses the phone being paired can use, puts the one that reaches
+          furthest first, and says where each works. Under the QR code, the portal lists the other
+          usable addresses under <strong>Use a different address</strong>, and the CLI prints each
+          with the <code>--gateway-url</code> that selects it. An address the phone would refuse is
+          named with the reason instead of being offered. An iPhone accepts the gateway's own
+          self-signed certificate only on the local network, at a private LAN address or a
+          <code>.local</code> name. Anywhere else, including at a Tailscale IP, iOS requires a
+          certificate it trusts, such as a Tailscale certificate for the gateway's Tailscale name.
+          An Android phone accepts the pinned certificate at any address it can reach.
+        </p>
+        <p>
+          The <code>.local</code> name offered is the one the gateway advertises itself (<code
+            >omnesis.local</code
+          >
+          unless <code>gateway.mdns.hostname</code> sets another), which it announces with the
+          machine's LAN addresses only. Give each gateway on one network its own name with
+          <code>gateway.mdns.hostname</code>; two that announce the same name answer for each other.
+          The machine's own <code>.local</code> name is not offered: on a host running Docker or
+          virtual machines its announcements can include addresses a phone cannot reach. A phone
+          paired by fingerprint on a gateway whose certificate renews, such as a Tailscale
+          certificate, stops connecting at the next renewal; the pairing screen gives the date, and
+          the Tailscale name avoids it.
+        </p>
+        <p>
+          <code>--gateway-url</code> states the address instead, and the CLI refuses one the phone
+          cannot use, with the reason and the alternatives. On a host with several network
+          interfaces, set <code>OMNESIS_IOS_GATEWAY_URL</code> in the CLI's environment to use one
+          address for every phone QR code, iOS and Android alike, from
+          <code>omnesis devices pair</code> and <code>omnesis devices repair</code>; a
+          <code>--gateway-url</code> flag still takes precedence.
+        </p>
+        <p>
+          On scan, the app exchanges the code for its own device token. The default grant is a
+          full-client token: <code>admin</code> (the app manages sources, devices, and models),
+          <code>read</code> (search and the agent), <code>push:claim</code> (fetching its
+          notification text), and write access for its on-device sources. To withhold management,
+          mint the code from the CLI with an explicit list:
+          <code>omnesis devices pair --kind ios --scopes read,push:claim</code>. The gateway always
+          restores write access for the phone's own on-device sources when it connects. The full
+          scope list is in <a href="/docs/#devices-and-tokens">Devices and connections</a>.
+        </p>
+        <p>
+          iOS stores the credentials in the device-only Keychain; Android in encrypted preferences.
+          Re-pairing and unpairing live in the app's Settings. Pair every iPhone or iPad separately:
+          each receives its own gateway identity and token, and iOS pairing credentials do not sync
+          through iCloud Keychain or a device restore. If iOS says
+          <strong>Pair this device again</strong>, the app found a pairing credential that had
+          reached it through iCloud rather than being issued to this device, and removed it. Your
+          gateway data is untouched; mint a fresh code and pair it.
+        </p>
+        <p>
+          A paired phone reports its app version to the gateway, and
+          <code>omnesis devices list</code> and the portal's Devices page show it beside a reading:
+          current, behind or unsupported. <strong>Behind</strong> is ordinary rather than a fault;
+          the gateway keeps serving the app. Only <strong>unsupported</strong> asks you to update
+          the app, which you do on the phone: a
+          <a href="/docs/updating#fleet-update">fleet update</a> never updates phone apps.
+          <a href="/docs/updating#compatibility">Version compatibility</a> explains each reading.
+          <strong>Settings → About</strong> on the phone shows the version, build and protocol
+          number to quote when asking for help.
+        </p>
+
+        <h2 id="one-design-two-platforms">Finding your way around</h2>
+        <p>
+          Both apps open on <a href="/docs/agent">the agent</a> chat. The menu reaches Search,
+          Sources, People, Tell Omnesis and Audit, lists recent conversations, and carries Settings
+          and a new conversation at its foot. Swipe right, or use the menu button, and the screen
+          you are on slides aside to uncover it; tap the strip still showing to come back. There is
+          no tab bar.
+        </p>
+        <p>
+          <strong>Settings → Gateway</strong> holds Configure Models, Configure Devices, Policies,
+          and Authorize an MCP connection. The first three open as child pages; Authorize opens the
+          code-gated access flow (a sheet on iPhone) described under
+          <a href="#privacy-controls">Privacy controls</a>.
+        </p>
+        <p>
+          If you return within an hour, the app reopens the conversation you were using. After an
+          hour away, it opens the agent on a fresh empty conversation with the composer ready; the
+          earlier conversation remains available from the menu.
+        </p>
+        <p>
+          The apps reach your data only through your gateway, and contain no telemetry or
+          third-party analytics SDK. The phone is one more paired device, so when the gateway is
+          unreachable the app is offline. Notification text also stays on the gateway: Apple's and
+          Google's push services carry a fixed, content-free wake, and the app fetches the text over
+          its paired connection. See <a href="/docs/notifications">Notifications</a>.
+        </p>
+
+        <h2 id="phone-only-sources">Phone-only sources</h2>
+        <p>
+          Some data never leaves the phone by any other route — there is no server to sync from. For
+          these, the app reads the data on-device and pushes extracted text and typed rows to the
+          gateway. For photos, that means OCR text and labels computed on the phone, plus captions
+          on supported iPhones — never the image itself.
+        </p>
+        <p>
+          Every source is off until you turn it on. After the first pairing, the app opens a short
+          setup flow: you choose which of this phone's sources to add, and each chosen source gets a
+          page that lists what is sent to your gateway and what stays on the phone before the
+          platform's own permission prompt appears.
+        </p>
+        <p>
+          Nothing is preselected, and you can skip it:
+          <strong>Settings → Set up this iPhone</strong> (or <strong>Set up this phone</strong>)
+          reopens the same flow, and each source's card in Settings keeps its own toggle and a
+          summary of what it sends. The app asks for notification permission only from the setup
+          flow or from the Turn on notifications action in Settings; it does not prompt on its own.
+          On Android it offers to exempt Omnesis from the system's pause for unused apps, so sources
+          keep syncing on a phone you rarely open.
+        </p>
+        <p>
+          Each enabled source shows this phone's sync state, last successful update, errors, and a
+          Sync now action. Once synced, the data is searchable like everything else and the
+          structured rows are queryable with SQL — see <a href="/docs/search">Search</a>, and the
+          full catalogue in <a href="/docs/sources">Available sources</a>.
+        </p>
+        <p>On iOS:</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>What it adds</th>
+                <th>Permission</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Apple Health</td>
+                <td>
+                  HealthKit samples — activity, workouts, vitals, body composition, sleep,
+                  nutrition, mindfulness, environmental exposure, and mood (mood asks for separate
+                  confirmation)
+                </td>
+                <td>HealthKit read consent, per data type</td>
+              </tr>
+              <tr>
+                <td>Photos &amp; Screenshots</td>
+                <td>
+                  On-device OCR text and scene labels, plus optional captions on supported iPhones;
+                  place names reverse-geocoded from the photo's GPS metadata via the platform's
+                  geocoding service (coordinates only — never pixels)
+                </td>
+                <td>Photo library (full or limited)</td>
+              </tr>
+              <tr>
+                <td>Activity Segments</td>
+                <td>Motion history — walking, running, cycling, driving segments</td>
+                <td>Motion &amp; Fitness</td>
+              </tr>
+              <tr>
+                <td>Location Visits</td>
+                <td>
+                  Places you spend time — arrivals, departures, coordinates, accuracy, and resolved
+                  place details
+                </td>
+                <td>Always-Allow location</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          On iOS, Limited Photos access indexes only the items selected in the system picker. A
+          Limited or Denied library view is never treated as proof that previously indexed photos
+          were deleted. After Full access returns, Omnesis performs a complete library pass and
+          republishes newly visible items without reducing the analysis already stored for them.
+          Each sync also scans one small page of the accessible library, which eventually finds
+          older imports and items newly exposed through Limited access.
+        </p>
+        <p>
+          HealthKit does not reveal after the prompt which data types you allowed, so Omnesis
+          reports that consent as unknown rather than treating an empty result as proof that access
+          is healthy. Background App Refresh is reported separately for every iOS source that
+          depends on it.
+        </p>
+        <p>On Android:</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>What it adds</th>
+                <th>Permission</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Health Connect</td>
+                <td>
+                  Health records — activity and exercise, body measurements, vitals, sleep,
+                  nutrition and hydration, mindfulness, cycle tracking
+                </td>
+                <td>Per-type Health Connect consent</td>
+              </tr>
+              <tr>
+                <td>Call Log (self-built only)</td>
+                <td>A document per day of calls, plus per-call analytics rows</td>
+                <td>
+                  Call log — included only when you build the app yourself; the Google Play app does
+                  not include it
+                </td>
+              </tr>
+              <tr>
+                <td>App Usage</td>
+                <td>
+                  A screen-time document per day (total time, pickups, top apps), plus per-session
+                  and per-app daily analytics rows
+                </td>
+                <td>Usage access (system Settings)</td>
+              </tr>
+              <tr>
+                <td>Photos &amp; Screenshots</td>
+                <td>
+                  On-device OCR text and scene labels; place names reverse-geocoded from the photo's
+                  GPS metadata via the platform's geocoding service (coordinates only — never
+                  pixels)
+                </td>
+                <td>Photos / media; optional media-location access for place names</td>
+              </tr>
+              <tr>
+                <td>Activity Segments</td>
+                <td>Activity-recognition segments</td>
+                <td>Physical activity</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          On Android 14 and later, selected-photo access is usable but incomplete: Omnesis indexes
+          the selected items, labels the source as limited, and never treats hidden items as
+          deletions. Granting full access starts a complete library pass so older newly visible
+          photos are included. Access to embedded photo locations is a separate, optional
+          permission: denying it keeps photo text and labels syncing but omits place names.
+        </p>
+        <p>
+          Health Connect reports record-type consent separately from background-read and history
+          access, so the app can say exactly which part is reduced. If Health Connect fails to read
+          an enabled record type, the sync reports an incomplete result and names the affected
+          types; data already uploaded is kept, and a later sync retries the failed reads. The
+          permissions action opens general Health Connect settings when Android does not allow a
+          direct link to the app's permissions. Re-enabling Activity Segments restores the activity
+          history the phone still holds, both day summaries and analytics rows.
+        </p>
+
+        <h3 id="permission-health">Permission health</h3>
+        <p>
+          Each enabled phone-only source regularly reports its permission state to the gateway. When
+          access is reduced, the app shows the affected capability, its impact and the platform's
+          repair action, and your phones receive a
+          <a href="/docs/notifications#what-sends-a-notification">reminder</a>. If a phone stops
+          reporting, Omnesis says the source check is overdue; it never concludes that a permission
+          was revoked from an empty sync or a quiet period.
+        </p>
+        <p>
+          A source can also show <code>permission-degraded</code>,
+          <code>background-access-missing</code>, or <code>unavailable</code>: the last sync
+          finished, but the phone reported that some collection is incomplete. Repair the source in
+          the app. <code>omnesis sources sync --wait</code> treats these states as completed but
+          unsuccessful, so automation receives a non-zero exit instead of waiting until timeout.
+        </p>
+
+        <h3 id="several-phones">On several phones</h3>
+        <p>
+          Apple Health is <strong>shared</strong> across your Apple devices: they all read the same
+          HealthKit library and Omnesis keeps one copy. If another iPhone already hosts it, setup
+          offers three choices: leave it there, use both iPhones, or move it to this iPhone.
+          Activity Segments, Location Visits, Health Connect, Call Log, App Usage and Photos are
+          <strong>per device</strong>: turning one on for a second phone adds that phone's data
+          alongside the first and keeps the first phone's history. These choices happen in the app
+          before any system permission prompt; phone-only sources cannot be added from the portal or
+          the CLI.
+        </p>
+        <p>
+          Photos from each phone are indexed separately, so an image that several devices can see
+          through iCloud or another cloud service can appear several times, with different extracted
+          text. Only text and metadata are uploaded, never the image bytes.
+        </p>
+        <p>
+          Turning a source off in the app stops this phone's uploads and detaches the phone from the
+          source; the confirmation says what happens to the data, which depends on the source's mode
+          and whether other devices still host it. <strong>Pause</strong> on source details keeps
+          the source and its data. What detach, pause and remove do in each mode is described in
+          <a href="/docs/sources#several-devices">Sources on several devices</a> and
+          <a href="/docs/sources#managing-sources">Managing sources</a>.
+        </p>
+
+        <h2 id="voice-and-quick-capture">Voice and quick capture</h2>
+        <p>
+          Both apps can ask the agent or capture a note without navigating through the app. Asking
+          requires an agent model assigned on the paired gateway. Capturing does not: notes go
+          straight into the built-in Omnesis Notes source, where they join the searchable index. A
+          capture made while the gateway is unreachable stays in the app's private on-device queue
+          and syncs later. The portal offers the same typed capture on its
+          <strong>Tell Omnesis</strong> page, which also lists every captured note newest-first so
+          individual notes can be amended or deleted; see
+          <a href="/docs/sources#omnesis-itself">Sources</a>.
+        </p>
+        <p>
+          On iPhone, say <strong>“Hey Siri, Ask Omnesis”</strong>; Siri then asks what you want to
+          know. Say <strong>“Hey Siri, Omnesis note”</strong> or
+          <strong>“Hey Siri, Omnesis capture”</strong> and Siri asks what to remember. Siri requires
+          that follow-up because App Shortcut phrases cannot insert unrestricted dictated text into
+          the opening phrase. On iOS 18 or later, add the <strong>Tell Omnesis</strong> control from
+          the Control Center controls gallery; tapping it opens the capture screen and starts
+          listening.
+        </p>
+        <p>
+          The same Ask Omnesis and Omnesis note shortcuts are available on the Apple Watch and relay
+          through its paired iPhone. The Watch app also offers <strong>Ask Omnesis</strong> and
+          <strong>Omnesis note</strong> complications: add them to a watch face, and tapping one
+          opens dictation straight away; tap Done to send. When the iPhone app does not pick up a
+          question or note within about twenty seconds, the watch queues it for the next time the
+          iPhone app runs: a queued note is saved with its original time, and a queued question is
+          answered by notification, or dropped if the iPhone receives it more than ten minutes
+          later.
+        </p>
+        <p>
+          On Android, Gemini or Google Assistant can invoke the installed App Actions for
+          <strong>Ask Omnesis</strong> and <strong>Tell Omnesis</strong>. The custom one-utterance
+          phrases are English (United States) only. Long-press the Omnesis launcher icon for
+          matching <strong>Ask Omnesis</strong> and <strong>Tell Omnesis</strong> shortcuts. For
+          one-tap capture from anywhere, open the expanded Quick Settings shade, choose Edit, and
+          add the <strong>Tell Omnesis</strong> tile.
+        </p>
+        <div class="callout warn">
+          <p>
+            The Android App Actions have not been properly tested. Invocation depends on the
+            assistant, device, locale and Android version, and a phrase may not work on yours. We
+            are looking for contributors to help test and harden them; see
+            <a href="/docs/#help">Help and support</a> to report a device and locale combination or
+            to get involved.
+          </p>
+        </div>
+        <p>
+          Voice questions wait a bounded time in the foreground. If the answer takes longer, the
+          assistant tells you it is still working; once the answer is ready, your phone gets an
+          <a href="/docs/notifications#what-sends-a-notification">Answer ready</a> notification and
+          fetches the answer directly from your gateway. Notification services never receive the
+          question or answer text.
+        </p>
+
+        <h2 id="privacy-controls">Privacy controls</h2>
+        <p>
+          The Audit screen lists what external agents asked and what left the gateway, and lets the
+          phone approve or deny each pending answer. While a decision is waiting, the Audit entry in
+          the menu carries a count, and opening the app presents the pending answer without waiting
+          for a notification tap — once per app session, and again on the next launch if it is still
+          waiting.
+        </p>
+        <p>
+          When an AI agent asks to connect, the phone gets a notification with no details in it. Tap
+          it, or scan the QR code on the agent's approval page with the phone's camera, to open the
+          request in the app, choose its access level, and approve or deny it; the same screen is
+          under <strong>Settings → Gateway → Authorize an MCP connection</strong>. Access levels and
+          the approval flow are described in
+          <a href="/docs/connect#bring-your-own-agent">Bring your own agent</a>.
+        </p>
+        <p>
+          Privacy policies are read-only on the phone: <strong>Settings → Policies</strong> lists
+          every policy, marks the default, and opens each one's text, and an exchange reviewed under
+          a named policy says so on its detail screen. Edit policies in the portal under
+          <strong>Settings → Policies</strong>.
+        </p>
+        <p>
+          A document can be deleted from its page or from a source's recent list, and the prompt
+          offers both forms, <em>Delete for good</em> and <em>Delete this copy</em>; see
+          <a href="/docs/search#beyond-search">Search → Beyond search</a> for the difference. A
+          day's quick-capture document cannot be deleted directly: its <em>Manage notes</em>
+          action opens the portal's Tell Omnesis page at that day, where the original notes can be
+          amended or deleted.
+        </p>
+
+        <h2 id="delivery">When data doesn't arrive</h2>
+        <p>
+          A phone sync is two steps: reading from the operating system, and uploading what it read.
+          They fail independently, so a source can report a completed sync while its data sits on
+          the phone. The app watches the upload step separately and warns about it above the source
+          list and in Settings — the only place that state is visible, since every other indicator
+          reads healthy. It warns about three problems:
+        </p>
+        <ul>
+          <li>
+            <strong>Refusing a source.</strong> This phone's token lacks the source's write scope.
+            Grant it on the gateway and the held data is retried.
+          </li>
+          <li>
+            <strong>Backlog aging.</strong> The gateway is unreachable or uploads are failing. Retry
+            drains the backlog now and reports what happened; on iPhone that includes batches that
+            belong to a paused source, which wait until the source is resumed.
+          </li>
+          <li>
+            <strong>Could not be delivered.</strong> Some batches failed repeatedly and were set
+            aside, out of the queue, so they stop counting as pending.
+          </li>
+        </ul>
+        <p>
+          Activity still in progress is not an upload backlog. Android Activity Segments counts
+          completed intervals ready for its next sync, not the raw transitions it keeps while
+          waiting for an activity to end. An interval becomes ready when it ends or reaches the
+          source's safety cutoff, and backlog age starts at that point.
+        </p>
+        <p>
+          Set-aside batches stay on the phone, but only the most recent are kept, and discarding
+          them is final. Whether the data comes back on a re-sync depends on the source. One that
+          re-reads a window of history each time, like Apple Health, can resend retained data. An
+          ordinary Photos sync does not replay its whole library; resyncing that phone's
+          contribution, or turning Photos off and on again, re-reads the photos it can still access.
+          Deleted or no-longer-accessible originals cannot be recovered that way. Treat a set-aside
+          batch as data that did not make it.
+        </p>
+
+        <h2 id="support">Mobile app support</h2>
+        <p>
+          When you <a href="/docs/#help">ask for help</a> with a mobile-app issue, include the
+          platform, the three readings from <strong>Settings → About</strong>, and the screen or
+          permission state where the problem occurred. Never include a gateway token, pairing
+          payload, private indexed content, or other credentials. Data handling and deletion
+          controls are described in the <a href="/mobile-privacy-policy">mobile privacy policy</a>.
+        </p>
+
+        <nav class="docs-pager" aria-label="Pages">
+          <a href="/docs/connect"
+            ><span class="pager-label">Previous</span
+            ><span class="pager-title">Agents &amp; MCP</span></a
+          >
+          <a class="pager-next" href="/docs/notifications"
+            ><span class="pager-label">Next</span><span class="pager-title">Notifications</span></a
+          >
+        </nav>
+      </main>
+    </div>
+
+    <footer class="site-footer">
+      <div class="container">
+        <div class="footer-inner">
+          <div class="footer-base">© 2026 Omnesis</div>
+          <nav class="footer-links" aria-label="Footer">
+            <a href="/docs/">Docs</a>
+            <a href="/privacy">Privacy</a>
+            <a class="footer-mail" href="mailto:contact@omnesis.dev">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="2" y="4" width="20" height="16" rx="2" />
+                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+              </svg>
+              contact@omnesis.dev
+            </a>
+            <a class="footer-gh" href="#" data-oss-open>
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path
+                  d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+                />
+              </svg>
+              GitHub
+            </a>
+            <a
+              class="footer-social footer-x"
+              href="https://x.com/Omnesisdev"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Omnesis on X"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>@Omnesisdev
+            </a>
+            <a
+              class="footer-social footer-discord"
+              href="https://discord.gg/4Y8pQHrVv"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Join Omnesis on Discord"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>Discord
+            </a>
+          </nav>
+        </div>
+      </div>
+    </footer>
+
+    <script src="/docs/docs.js"></script>
+  </body>
+</html>

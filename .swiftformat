@@ -1,0 +1,66 @@
+# SwiftFormat configuration for the Omnesis iOS app.
+# Run: `swiftformat ios` (or via lefthook on staged *.swift files).
+# SwiftFormat (Nick Lockwood) is separate from Apple's swift-format; we use
+# the former for its richer rule set and lint-mode CI integration.
+
+# --- Targets ----------------------------------------------------------------
+--exclude ios/.build,ios/Omnesis.xcodeproj,ios/Resources
+
+# --- Swift version ----------------------------------------------------------
+--swiftversion 5.10
+
+# --- Indentation + line length ---------------------------------------------
+--indent 4
+--maxwidth 140
+--tabwidth 4
+--smarttabs enabled
+
+# --- Style ------------------------------------------------------------------
+--allman false
+--commas always
+--trimwhitespace always
+--semicolons never
+--operatorfunc spaced
+--ranges spaced
+--linebreaks lf
+
+# --- Imports ----------------------------------------------------------------
+--importgrouping alpha
+
+# --- Self / access ---------------------------------------------------------
+# `redundantSelf` is disabled because SwiftFormat's heuristics strip
+# `self.` from escaping closures where the Swift compiler then requires
+# it (capture semantics must be explicit). Leave self decisions to the
+# author rather than risk compile breakage on every format pass.
+--patternlet inline
+
+# --- Wrapping --------------------------------------------------------------
+--wraparguments before-first
+--wrapparameters before-first
+--wrapcollections before-first
+--wrapreturntype if-multiline
+--wrapconditions after-first
+--closingparen balanced
+
+# --- Misc ------------------------------------------------------------------
+--stripunusedargs closure-only
+--header ignore
+--ifdef no-indent
+--marktypes never
+--extensionacl on-declarations
+
+# --- Rules opted-in over defaults ------------------------------------------
+--enable isEmpty
+--enable blockComments
+--enable redundantInternal
+--enable sortImports
+--enable sortDeclarations
+--enable trailingClosures
+
+# --- Rules disabled --------------------------------------------------------
+--disable wrapMultilineStatementBraces
+--disable redundantSelf
+# Enabled by default from SwiftFormat 0.62 (CI brew-installs the latest);
+# the codebase uses single-line if bodies deliberately in tests/guards.
+--disable wrapIfStatementBodies
+--disable wrapIfExpressionBodies

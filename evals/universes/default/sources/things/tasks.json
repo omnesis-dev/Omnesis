@@ -1,0 +1,113 @@
+[
+  {
+    "externalId": "synth-things-001",
+    "title": "Draft Q3 OKRs proposal",
+    "notes": "Cover product, growth, and infra goals. Pull last-quarter retro themes from notes.",
+    "createdAt": "2025-09-04T08:15:00Z",
+    "modifiedAt": "2025-09-04T08:15:00Z",
+    "scheduledAt": "2025-09-08",
+    "deadline": "2025-09-10T17:00:00Z",
+    "project": "Q3 planning",
+    "tags": ["planning", "leadership"],
+    "status": "open"
+  },
+  {
+    "externalId": "synth-things-002",
+    "title": "Reply to Jane re: vendor evaluation",
+    "notes": "Send the comparison spreadsheet, flag the SOC2 gap on Globex.",
+    "createdAt": "2025-09-05T09:30:00Z",
+    "modifiedAt": "2025-09-06T11:00:00Z",
+    "deadline": "2025-09-07T17:00:00Z",
+    "project": "Vendor evaluation",
+    "tags": ["acme", "vendor"],
+    "status": "open"
+  },
+  {
+    "externalId": "synth-things-003",
+    "title": "Renew domain ortiz.studio",
+    "notes": "Dave's site. Annual renewal due mid-September.",
+    "createdAt": "2025-09-06T07:45:00Z",
+    "modifiedAt": "2025-09-08T18:20:00Z",
+    "deadline": "2025-09-15T23:59:00Z",
+    "project": "Personal",
+    "tags": ["personal", "admin"],
+    "status": "done"
+  },
+  {
+    "externalId": "synth-things-004",
+    "title": "Run intervals — 6×800m",
+    "notes": "Strava workout. Easy 10 minutes warmup, intervals at 5k pace, jog recovery.",
+    "createdAt": "2025-09-07T06:00:00Z",
+    "modifiedAt": "2025-09-07T07:35:00Z",
+    "deadline": "2025-09-07T08:00:00Z",
+    "project": "Marathon training",
+    "tags": ["training", "running"],
+    "status": "done"
+  },
+  {
+    "externalId": "synth-things-005",
+    "title": "Book travel for offsite",
+    "notes": "Acme HQ, 18-20 Sep. Confirm with Emma about hotel block.",
+    "createdAt": "2025-09-08T13:20:00Z",
+    "modifiedAt": "2025-09-08T13:20:00Z",
+    "deadline": "2025-09-12T17:00:00Z",
+    "project": "Q3 offsite",
+    "tags": ["travel", "acme"],
+    "status": "open"
+  },
+  {
+    "externalId": "synth-things-006",
+    "title": "Review Alex's pull request on retry logic",
+    "notes": "Globex integration. Watch out for the backoff floor and the metric label.",
+    "createdAt": "2025-09-09T10:00:00Z",
+    "modifiedAt": "2025-09-09T15:00:00Z",
+    "deadline": "2025-09-09T17:00:00Z",
+    "project": "Globex integration",
+    "tags": ["review", "globex"],
+    "status": "done"
+  },
+  {
+    "externalId": "synth-things-007",
+    "title": "Order new keyboard",
+    "notes": "Compare Kinesis Advantage 360 vs ZSA Moonlander. Carol recommends the Moonlander.",
+    "createdAt": "2025-09-10T19:00:00Z",
+    "modifiedAt": "2025-09-10T19:00:00Z",
+    "deadline": null,
+    "project": "Personal",
+    "tags": ["personal", "gear"],
+    "status": "open"
+  },
+  {
+    "externalId": "synth-things-008",
+    "title": "Prep Friday demo",
+    "notes": "Walkthrough of the new dashboard. 10 minutes max, leave room for Q&A.",
+    "createdAt": "2025-09-11T08:00:00Z",
+    "modifiedAt": "2025-09-12T17:10:00Z",
+    "deadline": "2025-09-13T15:00:00Z",
+    "project": "Demos",
+    "tags": ["acme", "demo"],
+    "status": "open"
+  },
+  {
+    "externalId": "synth-things-009",
+    "title": "Schedule dentist",
+    "notes": "Overdue by six months. Call between 9 and 5.",
+    "createdAt": "2025-09-12T20:00:00Z",
+    "modifiedAt": "2025-09-12T20:00:00Z",
+    "deadline": "2025-09-30T17:00:00Z",
+    "project": "Personal",
+    "tags": ["personal", "health"],
+    "status": "open"
+  },
+  {
+    "externalId": "synth-things-010",
+    "title": "Write retro doc for Globex launch",
+    "notes": "What worked: phased rollout. What didn't: telemetry gaps in week one.",
+    "createdAt": "2025-09-13T11:00:00Z",
+    "modifiedAt": "2025-09-13T11:00:00Z",
+    "deadline": "2025-09-20T17:00:00Z",
+    "project": "Globex integration",
+    "tags": ["retro", "globex"],
+    "status": "open"
+  }
+]

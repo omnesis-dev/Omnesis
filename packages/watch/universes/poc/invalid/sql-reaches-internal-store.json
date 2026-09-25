@@ -1,0 +1,28 @@
+{
+  "watch": {
+    "name": "sql-reaches-internal-store",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "tick",
+        "type": "source.time",
+        "recurring": "0 9 * * *"
+      },
+      {
+        "id": "count_docs",
+        "type": "sql",
+        "inputs": {
+          "tick": {
+            "role": "arm"
+          }
+        },
+        "fire_on": "every_true",
+        "query": "SELECT count(*) > 0 AS fires, count(*) AS total FROM documents WHERE source_id = 'gmail'"
+      }
+    ],
+    "sink": {
+      "input": "count_docs"
+    }
+  }
+}

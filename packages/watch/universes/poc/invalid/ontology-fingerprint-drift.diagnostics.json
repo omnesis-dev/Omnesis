@@ -1,0 +1,15 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "ONTOLOGY_FINGERPRINT_MISMATCH",
+      "severity": "error",
+      "path": "/watch/ontology_fingerprint",
+      "message": "Watch was compiled against ontology 'poc-ontology-0' but the snapshot is 'poc-ontology-1'.",
+      "details": {
+        "compiledAgainst": "poc-ontology-0",
+        "snapshot": "poc-ontology-1"
+      }
+    }
+  ]
+}

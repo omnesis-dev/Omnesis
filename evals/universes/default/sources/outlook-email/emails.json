@@ -1,0 +1,122 @@
+[
+  {
+    "externalId": "synth-outlook-001",
+    "subject": "Vendor evaluation — first cut",
+    "from": "p_jane",
+    "fromEmail": "jane.doe@acme.example",
+    "to": ["self"],
+    "toEmails": ["john.smith@acme.example"],
+    "body": "Hi John,\n\nFirst-cut comparison attached (Globex vs Nimbus). Globex is faster but the SOC2 gap is real. Want to sync Wednesday?\n\nJane",
+    "sentAt": "2025-09-02T09:30:00Z",
+    "threadId": "t_vendor_eval_acme",
+    "folder": "Inbox"
+  },
+  {
+    "externalId": "synth-outlook-002",
+    "subject": "Re: Vendor evaluation — first cut",
+    "from": "self",
+    "fromEmail": "john.smith@acme.example",
+    "to": ["p_jane"],
+    "toEmails": ["jane.doe@acme.example"],
+    "body": "Wednesday works. Let's also loop in Emma — she'll have the compliance angle.\n\n-J",
+    "sentAt": "2025-09-02T11:00:00Z",
+    "threadId": "t_vendor_eval_acme",
+    "folder": "Sent Items"
+  },
+  {
+    "externalId": "synth-outlook-003",
+    "subject": "Offsite logistics",
+    "from": "p_emma",
+    "fromEmail": "emma.park@acme.example",
+    "to": ["self", "p_jane"],
+    "toEmails": ["john.smith@acme.example", "jane.doe@acme.example"],
+    "body": "Hotel block confirmed for 18-20 Sep. Please reply with your arrival time so we can arrange transport.\n\nEmma",
+    "sentAt": "2025-09-03T14:20:00Z",
+    "threadId": "t_offsite_logistics",
+    "folder": "Inbox"
+  },
+  {
+    "externalId": "synth-outlook-004",
+    "subject": "Re: Offsite logistics",
+    "from": "self",
+    "fromEmail": "john.smith@acme.example",
+    "to": ["p_emma"],
+    "toEmails": ["emma.park@acme.example"],
+    "body": "Arriving 17 Sep evening, 7:30 PM. Happy to share a ride from the airport.",
+    "sentAt": "2025-09-03T16:00:00Z",
+    "threadId": "t_offsite_logistics",
+    "folder": "Sent Items"
+  },
+  {
+    "externalId": "synth-outlook-005",
+    "subject": "Quarterly review draft",
+    "from": "p_emma",
+    "fromEmail": "emma.park@acme.example",
+    "to": ["self"],
+    "toEmails": ["john.smith@acme.example"],
+    "body": "Draft attached. Section 3 is rough — I'll revise after our 1:1 tomorrow.\n\nEmma",
+    "sentAt": "2025-09-04T17:30:00Z",
+    "threadId": "t_quarterly_review_q3",
+    "folder": "Inbox"
+  },
+  {
+    "externalId": "synth-outlook-006",
+    "subject": "Compliance update — SOC2 audit window",
+    "from": "p_jane",
+    "fromEmail": "jane.doe@acme.example",
+    "to": ["self", "p_emma"],
+    "toEmails": ["john.smith@acme.example", "emma.park@acme.example"],
+    "body": "Heads up: audit window starts 1 Oct. Will need vendor compliance docs by 25 Sep.\n\nJane",
+    "sentAt": "2025-09-05T10:00:00Z",
+    "threadId": "t_compliance_q3",
+    "folder": "Inbox"
+  },
+  {
+    "externalId": "synth-outlook-007",
+    "subject": "Re: Compliance update — SOC2 audit window",
+    "from": "self",
+    "fromEmail": "john.smith@acme.example",
+    "to": ["p_jane", "p_emma"],
+    "toEmails": ["jane.doe@acme.example", "emma.park@acme.example"],
+    "body": "Got it. I'll chase Globex on their SOC2 attestation today.",
+    "sentAt": "2025-09-05T10:20:00Z",
+    "threadId": "t_compliance_q3",
+    "folder": "Sent Items"
+  },
+  {
+    "externalId": "synth-outlook-008",
+    "subject": "Demo Friday — your slot is 2:30 PM",
+    "from": "p_emma",
+    "fromEmail": "emma.park@acme.example",
+    "to": ["self"],
+    "toEmails": ["john.smith@acme.example"],
+    "body": "Friday demos confirmed. Your slot is 2:30 PM, 10 minutes including Q&A. Conference room Mercury.",
+    "sentAt": "2025-09-09T09:00:00Z",
+    "threadId": "t_friday_demos",
+    "folder": "Inbox"
+  },
+  {
+    "externalId": "synth-outlook-009",
+    "subject": "Vendor SOC2 — Globex response",
+    "from": "p_alex",
+    "fromEmail": "alex.chen@globex.example",
+    "to": ["self"],
+    "toEmails": ["john.smith@acme.example"],
+    "body": "John — our SOC2 Type 2 should land in November. Happy to share the gap analysis ahead of time under NDA.\n\nAlex",
+    "sentAt": "2025-09-10T15:00:00Z",
+    "threadId": "t_vendor_soc2_globex",
+    "folder": "Inbox"
+  },
+  {
+    "externalId": "synth-outlook-010",
+    "subject": "Re: Vendor SOC2 — Globex response",
+    "from": "self",
+    "fromEmail": "john.smith@acme.example",
+    "to": ["p_alex"],
+    "toEmails": ["alex.chen@globex.example"],
+    "body": "Thanks Alex. NDA route makes sense — Jane will send the paper.",
+    "sentAt": "2025-09-10T15:45:00Z",
+    "threadId": "t_vendor_soc2_globex",
+    "folder": "Sent Items"
+  }
+]

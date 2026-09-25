@@ -1,0 +1,22 @@
+{
+  "flowId": "fixture-flow",
+  "ok": true,
+  "accountId": "workspace:demo",
+  "accountIds": [
+    "workspace:demo"
+  ],
+  "accountStates": {
+    "workspace:demo": {
+      "status": "connected",
+      "expiresAt": "2030-01-01T00:00:00.000Z"
+    }
+  },
+  "notices": [
+    {
+      "title": "History is partial",
+      "detail": "Earlier history was not supplied."
+    }
+  ],
+  "remedy": "Review the connection permissions.",
+  "retryAfterMs": 60000
+}

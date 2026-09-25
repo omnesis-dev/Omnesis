@@ -1,0 +1,15 @@
+{
+  "name": "@omnesis/provider-apple-health-synth",
+  "version": "0.5.11",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@omnesis/providers-synth-common": "*",
+    "@omnesis/source-sdk": "*"
+  },
+  "files": [
+    "dist"
+  ]
+}

@@ -1,0 +1,123 @@
+{
+  "$schema": "./node_modules/nx/schemas/nx-schema.json",
+  "defaultBase": "main",
+  "namedInputs": {
+    "default": ["{projectRoot}/**/*", "sharedGlobals"],
+    "production": [
+      "default",
+      "!{projectRoot}/**/*.test.ts",
+      "!{projectRoot}/**/*.e2e.test.ts",
+      "!{projectRoot}/**/test/**"
+    ],
+    "sharedGlobals": [
+      "{workspaceRoot}/package-lock.json",
+      "{workspaceRoot}/nx.json",
+      "{workspaceRoot}/tsconfig*.json",
+      "{workspaceRoot}/vitest.config.ts",
+      "{workspaceRoot}/scripts/nx/**/*",
+      "{workspaceRoot}/scripts/run-check.mjs",
+      "{workspaceRoot}/scripts/run-e2e.mjs"
+    ]
+  },
+  "targetDefaults": {
+    "nx-unit": {
+      "cache": true,
+      "inputs": [
+        "default",
+        "^production",
+        {
+          "runtime": "node --version"
+        },
+        {
+          "runtime": "node -p \"process.platform + ':' + process.arch\""
+        },
+        {
+          "env": "CI"
+        },
+        {
+          "env": "TZ"
+        },
+        {
+          "env": "OMNESIS_EXPERIMENTAL"
+        },
+        {
+          "env": "OMNESIS_SYNTHETIC"
+        },
+        {
+          "env": "OMNESIS_DEV_MODE"
+        }
+      ]
+    },
+    "nx-typecheck": {
+      "cache": true,
+      "inputs": [
+        "default",
+        "^production",
+        {
+          "runtime": "node --version"
+        },
+        {
+          "runtime": "node -p \"process.platform + ':' + process.arch\""
+        },
+        {
+          "env": "CI"
+        },
+        {
+          "env": "TZ"
+        }
+      ]
+    },
+    "nx-lint": {
+      "cache": true,
+      "inputs": [
+        "default",
+        "^production",
+        {
+          "runtime": "node --version"
+        },
+        {
+          "runtime": "node -p \"process.platform + ':' + process.arch\""
+        },
+        {
+          "env": "CI"
+        },
+        {
+          "env": "TZ"
+        }
+      ]
+    },
+    "nx-unit-all": {
+      "cache": false,
+      "inputs": [
+        "default",
+        {
+          "runtime": "node --version"
+        },
+        {
+          "runtime": "node -p \"process.platform + ':' + process.arch\""
+        }
+      ]
+    },
+    "nx-typecheck-all": {
+      "cache": true,
+      "inputs": [
+        "default",
+        {
+          "runtime": "node --version"
+        },
+        {
+          "runtime": "node -p \"process.platform + ':' + process.arch\""
+        },
+        {
+          "env": "CI"
+        },
+        {
+          "env": "TZ"
+        }
+      ]
+    }
+  },
+  "plugins": ["./scripts/nx/project-plugin.mjs"],
+  "cacheDirectory": ".nx/cache",
+  "analytics": false
+}

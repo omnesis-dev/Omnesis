@@ -1,0 +1,23 @@
+{
+  "description": "External-agent questions that set the privacy cassettes in this directory going. A demo gateway mints one answer-scoped token per externalAgent and posts each request to /answer, so the exchanges on the Privacy page are produced by the real answer + review pipeline rather than written into the database.",
+  "requests": [
+    {
+      "externalAgent": "Northwind Ops",
+      "workflowName": "Supplier digest",
+      "workflowPurpose": "Assemble the weekly supplier digest.",
+      "question": "Which supplier reviews are still open this week?"
+    },
+    {
+      "externalAgent": "Northwind Ops",
+      "workflowName": "Delivery desk",
+      "workflowPurpose": "Answer courier scheduling questions for open orders.",
+      "question": "When is the Halden Press order due to arrive?"
+    },
+    {
+      "externalAgent": "Alder Bay Lettings",
+      "workflowName": "Tenancy desk",
+      "workflowPurpose": "Answer questions raised against the tenancy file.",
+      "question": "What does the Alder Bay tenancy file say about the deposit?"
+    }
+  ]
+}

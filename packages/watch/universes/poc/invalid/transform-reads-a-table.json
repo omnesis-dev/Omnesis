@@ -1,0 +1,27 @@
+{
+  "watch": {
+    "name": "transform-reads-a-table",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "tick",
+        "type": "source.time",
+        "recurring": "0 9 * * *"
+      },
+      {
+        "id": "gate",
+        "type": "stateless.transform",
+        "inputs": {
+          "tick": {
+            "role": "arm"
+          }
+        },
+        "query": "SELECT count(*) > 0 AS fires FROM health_vitals"
+      }
+    ],
+    "sink": {
+      "input": "gate"
+    }
+  }
+}

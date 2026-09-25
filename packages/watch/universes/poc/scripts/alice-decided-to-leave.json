@@ -1,0 +1,50 @@
+{
+  "note": "Two signals on two channels, then the per-person judge concludes clearly. once_ever, so it fires at most once.",
+  "recall": [
+    {
+      "nodeId": "alice_email",
+      "documentId": "d0c00001-0000-4000-8000-000000000002",
+      "score": 0.66,
+      "title": "Thinking about my options"
+    },
+    {
+      "nodeId": "alice_chats",
+      "documentId": "d0c00001-0000-4000-8000-000000000003",
+      "score": 0.62,
+      "title": "Alice — 12 March"
+    }
+  ],
+  "judgements": [
+    {
+      "nodeId": "alice_email",
+      "documentId": "d0c00001-0000-4000-8000-000000000002",
+      "fired": true,
+      "output": {
+        "stance": "toward_leaving"
+      },
+      "title": "Thinking about my options"
+    },
+    {
+      "nodeId": "alice_chats",
+      "documentId": "d0c00001-0000-4000-8000-000000000003",
+      "fired": true,
+      "output": {
+        "stance": "toward_leaving"
+      },
+      "title": "Alice — 12 March"
+    },
+    {
+      "nodeId": "decided_judge",
+      "fired": true,
+      "output": {
+        "decision": true,
+        "confidence": "clear",
+        "supporting_doc_ids": [
+          "d0c00001-0000-4000-8000-000000000002",
+          "d0c00001-0000-4000-8000-000000000003"
+        ],
+        "contradicting_doc_ids": []
+      }
+    }
+  ]
+}

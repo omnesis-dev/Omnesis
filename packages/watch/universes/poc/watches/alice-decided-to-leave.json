@@ -1,0 +1,120 @@
+{
+  "watch": {
+    "name": "alice-decided-to-leave",
+    "nl_query": "Tell me if it looks like Alice has decided to leave her job — but only based on things she communicated directly.",
+    "firing_policy": "once_ever",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "alice_email",
+        "type": "source.document_event",
+        "comment": "Structural author restriction: only mail Alice actually sent.",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "people": [
+            {
+              "role": "sender",
+              "person": "b3f2a9d4-0000-4000-8000-000000000002"
+            }
+          ]
+        },
+        "output_map": {
+          "doc_id": "$e.docId",
+          "person": "$e.people[role=sender].personId",
+          "stance": "$judge.stance"
+        },
+        "recall": {
+          "semantic": {
+            "query": "leaving job quitting resignation handed in notice new role",
+            "threshold": 0.35
+          }
+        },
+        "judge": {
+          "proposition": "This communication is relevant to Alice leaving (or staying at) her job",
+          "output_schema": {
+            "stance": "enum[toward_leaving, against_leaving, ambiguous]"
+          }
+        }
+      },
+      {
+        "id": "alice_chats",
+        "type": "source.document_event",
+        "comment": "Chat documents aggregate a whole day of a chat and carry no per-message author, so attribution is the judge's job, not the filter's.",
+        "filter": {
+          "source": ["whatsapp-messages", "apple-imessage"],
+          "event": ["created", "updated"],
+          "people": [
+            {
+              "role": "participant",
+              "person": "b3f2a9d4-0000-4000-8000-000000000002"
+            }
+          ]
+        },
+        "output_map": {
+          "doc_id": "$e.docId",
+          "person": "'b3f2a9d4-0000-4000-8000-000000000002'",
+          "stance": "$judge.stance"
+        },
+        "recall": {
+          "semantic": {
+            "query": "leaving job quitting resignation handed in notice new role",
+            "threshold": 0.35
+          }
+        },
+        "judge": {
+          "proposition": "Within this conversation, statements AUTHORED BY Alice are relevant to her leaving (or staying at) her job. Ignore what others say about her.",
+          "output_schema": {
+            "stance": "enum[toward_leaving, against_leaving, ambiguous]"
+          }
+        }
+      },
+      {
+        "id": "any_signal",
+        "type": "stateless.or",
+        "inputs": {
+          "alice_email": {
+            "role": "arm"
+          },
+          "alice_chats": {
+            "role": "arm"
+          }
+        },
+        "output_map": {
+          "doc_id": "coalesce($n.alice_email.doc_id, $n.alice_chats.doc_id)",
+          "person": "coalesce($n.alice_email.person, $n.alice_chats.person)"
+        }
+      },
+      {
+        "id": "decided_judge",
+        "type": "llm",
+        "mode": "judge",
+        "comment": "Per-person evidence cell; it survives evaluations rather than dying on fire.",
+        "inputs": {
+          "any_signal": {
+            "role": "arm",
+            "key": {
+              "person": ".person"
+            }
+          }
+        },
+        "on_collision": "accumulate",
+        "proposition": "Alice has DECIDED to leave her job — not merely considered, discussed hypothetically, or vented",
+        "output_schema": {
+          "decision": "bool",
+          "confidence": "enum[clear, probable, ambiguous]",
+          "supporting_doc_ids": "list<id>",
+          "contradicting_doc_ids": "list<id>"
+        },
+        "fire_when": "decision == true AND confidence == 'clear'"
+      }
+    ],
+    "sink": {
+      "input": "decided_judge",
+      "output_map": {
+        "confidence": "$n.decided_judge.confidence",
+        "evidence": "$n.decided_judge.supporting_doc_ids"
+      }
+    }
+  }
+}

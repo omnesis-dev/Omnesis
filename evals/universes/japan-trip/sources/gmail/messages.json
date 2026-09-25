@@ -1,0 +1,120 @@
+[
+  {
+    "externalId": "jp-gmail-flight-001",
+    "subject": "Flight confirmation — Japan trip (ref NRT8841)",
+    "from": "p_agency",
+    "fromEmail": "bookings@studionorthstar.example.com",
+    "to": ["self"],
+    "toEmails": ["maya@example.com"],
+    "body": "Hi Maya,\n\nYour flights are confirmed.\n\nBooking reference: NRT8841\nOutbound: LHR → HND, Saturday 11 April 2026\nReturn: HND → LHR, Wednesday 22 April 2026\nTravellers: Maya Reeves, Jamie Lopez\n\nTotal fare charged: EUR 985.00\n\nSafe travels,\nStudio Northstar Travel",
+    "sentAt": "2026-02-10T09:30:00Z",
+    "scheduledAt": "2026-04-11T09:00:00Z",
+    "threadId": "t_jp_flights",
+    "labels": ["INBOX", "Travel", "Receipts"]
+  },
+  {
+    "externalId": "jp-gmail-hotel-001",
+    "subject": "Reservation R-55120 confirmed — Tokyo Riverside Hotel",
+    "from": "p_hotel",
+    "fromEmail": "reservations@riverside-tokyo.example.com",
+    "to": ["self"],
+    "toEmails": ["maya@example.com"],
+    "body": "Dear Maya Reeves,\n\nYour reservation is confirmed.\n\nReservation R-55120\nHotel: Tokyo Riverside Hotel, Tokyo\nCheck-in: 11 April 2026\nCheck-out: 17 April 2026 (6 nights)\nGuests: 2\n\nRoom total: JPY 168,000\n\nWe look forward to welcoming you to Tokyo.\nTokyo Riverside Hotel",
+    "sentAt": "2026-02-12T08:00:00Z",
+    "scheduledAt": "2026-04-11T15:00:00Z",
+    "threadId": "t_jp_hotel",
+    "labels": ["INBOX", "Travel", "Receipts"]
+  },
+  {
+    "externalId": "jp-gmail-ryokan-001",
+    "subject": "Booking confirmed — Kyoto Ryokan Sakura",
+    "from": "p_ryokan",
+    "fromEmail": "stay@ryokan-sakura.example.com",
+    "to": ["self"],
+    "toEmails": ["maya@example.com"],
+    "body": "Dear Ms Reeves,\n\nThank you for your booking at Kyoto Ryokan Sakura in Kyoto.\n\nCheck-in: 17 April 2026\nCheck-out: 20 April 2026 (3 nights)\nGuests: 2\n\nTotal: JPY 96,000\n\nWe look forward to your stay in Kyoto.\nKyoto Ryokan Sakura",
+    "sentAt": "2026-02-12T08:30:00Z",
+    "threadId": "t_jp_ryokan",
+    "labels": ["INBOX", "Travel", "Receipts"]
+  },
+  {
+    "externalId": "jp-gmail-agency-001",
+    "subject": "Your Japan itinerary & service agreement",
+    "from": "p_agency",
+    "fromEmail": "bookings@studionorthstar.example.com",
+    "to": ["self"],
+    "toEmails": ["maya@example.com"],
+    "body": "Hi Maya,\n\nPlease find your signed service agreement attached. It covers the full package — flights, the Tokyo and Kyoto accommodation, the rail pass and the two guided day tours.\n\nLet me know if anything looks off.\n\nBest,\nStudio Northstar Travel",
+    "sentAt": "2026-02-13T16:35:00Z",
+    "threadId": "t_jp_agency",
+    "labels": ["INBOX", "Travel"],
+    "attachments": [
+      {
+        "filename": "Studio-Northstar-Service-Agreement.pdf",
+        "mimeType": "application/pdf",
+        "sizeBytes": 184320,
+        "extractedText": "STUDIO NORTHSTAR TRAVEL — SERVICE AGREEMENT\n\nClient: Maya Reeves\nTravellers: Maya Reeves, Jamie Lopez (party of 2)\nDestination: Japan — Tokyo (6 nights) and Kyoto (3 nights)\nTrip dates: 11–22 April 2026\nBooking reference: NRT8841\n\nITEMIZED PACKAGE\n- Return flights LHR–HND–LHR (economy, 2 travellers): EUR 985.00\n- Agency service fee: EUR 120.00\n- Tokyo Riverside Hotel, 6 nights (11–17 April): JPY 168,000\n- Kyoto Ryokan Sakura, 3 nights (17–20 April): JPY 96,000\n- 7-day Japan Rail Pass (2 travellers): JPY 50,000\n- Two guided day tours (Tokyo + Kyoto): JPY 38,000\n\nTotal package value approximately EUR 3,150, payable in two instalments (deposit + balance). Instalment 1 covers the flights and service fee; instalment 2 covers the JPY accommodation, rail pass and tours.\n\nDiscretionary spending (meals, activities, shopping) is not included and is settled directly by the client."
+      }
+    ]
+  },
+  {
+    "externalId": "jp-gmail-balance-001",
+    "subject": "Balance payment received — thank you",
+    "from": "p_agency",
+    "fromEmail": "bookings@studionorthstar.example.com",
+    "to": ["self"],
+    "toEmails": ["maya@example.com"],
+    "body": "Hi Maya,\n\nWe've received your balance payment for the Japan trip — thank you. Both instalments are now settled.\n\nInstalment 1 (deposit): flights EUR 985.00 + agency service fee EUR 120.00.\nInstalment 2 (balance): Tokyo and Kyoto accommodation, the 7-day rail pass and the two guided tours.\n\nTogether the package comes to approximately EUR 3,150. Your account is paid in full.\n\nEnjoy Japan!\nStudio Northstar Travel",
+    "sentAt": "2026-04-01T10:15:00Z",
+    "threadId": "t_jp_agency",
+    "labels": ["INBOX", "Travel", "Receipts"]
+  },
+  {
+    "externalId": "jp-gmail-omakase-001",
+    "subject": "Reservation confirmed — omakase for 2, 13 April",
+    "from": "p_sushi",
+    "fromEmail": "reserve@sushi-aoyama.example.com",
+    "to": ["self"],
+    "toEmails": ["maya@example.com"],
+    "body": "Reservation confirmed.\n\nSushi Aoyama, Ginza, Tokyo\nDate: 13 April 2026, 19:30\nParty: 2\nMenu: omakase\n\nEstimated total: JPY 28,000\n\nWe look forward to serving you.\nSushi Aoyama",
+    "sentAt": "2026-03-05T11:00:00Z",
+    "threadId": "t_jp_omakase",
+    "labels": ["INBOX", "Travel"]
+  },
+  {
+    "externalId": "jp-gmail-kaiseki-001",
+    "subject": "Kaiseki reservation — 17 April, party of 2",
+    "from": "p_kaiseki",
+    "fromEmail": "yoyaku@hanami-tei.example.com",
+    "to": ["self"],
+    "toEmails": ["maya@example.com"],
+    "body": "Dear Ms Reeves,\n\nYour kaiseki reservation is confirmed.\n\nHanami Tei, Kyoto\nDate: 17 April 2026, 19:00\nParty of 2\n\nTotal: JPY 22,000\n\nWe look forward to welcoming you in Kyoto.\nHanami Tei Kaiseki",
+    "sentAt": "2026-03-06T12:00:00Z",
+    "threadId": "t_jp_kaiseki",
+    "labels": ["INBOX", "Travel"]
+  },
+  {
+    "externalId": "jp-gmail-teamlab-001",
+    "subject": "Your teamLab Planets tickets (x2), 12 April",
+    "from": "p_teamlab",
+    "fromEmail": "tickets@teamlab-planets.example.com",
+    "to": ["self"],
+    "toEmails": ["maya@example.com"],
+    "body": "Hello,\n\nYour tickets are confirmed.\n\nteamLab Planets Tokyo\nDate: 12 April 2026\nQuantity: 2\n\nTotal: JPY 4,800\n\nPlease show this confirmation at the entrance.\nteamLab Planets Tokyo",
+    "sentAt": "2026-03-10T09:00:00Z",
+    "threadId": "t_jp_teamlab",
+    "labels": ["INBOX", "Travel", "Receipts"]
+  },
+  {
+    "externalId": "jp-gmail-rail-001",
+    "subject": "JR Pass exchange order — 7-day",
+    "from": "p_agency",
+    "fromEmail": "bookings@studionorthstar.example.com",
+    "to": ["self"],
+    "toEmails": ["maya@example.com"],
+    "body": "Hi Maya,\n\nYour Japan Rail Pass exchange order is ready.\n\nType: 7-day JR Pass\nTravellers: 2\nValid for: nationwide JR network, including the Tokyo→Kyoto route on 17 April\n\nTotal: JPY 50,000\n\nExchange the voucher for the physical pass on arrival.\nStudio Northstar Travel",
+    "sentAt": "2026-03-12T14:30:00Z",
+    "threadId": "t_jp_rail",
+    "labels": ["INBOX", "Travel", "Receipts"]
+  }
+]

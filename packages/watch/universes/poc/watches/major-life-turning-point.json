@@ -1,0 +1,60 @@
+{
+  "watch": {
+    "name": "major-life-turning-point",
+    "nl_query": "Wake my agent when something happens that I'd consider a major turning point in my life.",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "weekly_tick",
+        "type": "source.time",
+        "recurring": "0 20 * * SUN"
+      },
+      {
+        "id": "turning_point_review",
+        "type": "llm",
+        "mode": "investigation",
+        "comment": "The escape hatch: no narrow trip-wire exists, so a weekly cadence feeds a read-only investigation. 'ignore' is the invocation-storm guard.",
+        "inputs": {
+          "weekly_tick": {
+            "role": "arm"
+          }
+        },
+        "on_collision": "ignore",
+        "deadline": "2 hours",
+        "proposition": "Something occurred in the review window that a reasonable person would call a major turning point in the user's life (job change, relationship change, relocation, health event, major financial event, loss)",
+        "scope": {
+          "horizon": "14 days"
+        },
+        "tools": ["context.search", "context.analytics_sql", "cognitive.read"],
+        "budget": {
+          "tool_calls": 25,
+          "tokens": 60000
+        },
+        "output_schema": {
+          "decision": "bool",
+          "confidence": "enum[clear, probable, ambiguous]",
+          "summary": "string",
+          "supporting_doc_ids": "list<id>"
+        },
+        "fire_when": "decision AND confidence == 'clear'"
+      },
+      {
+        "id": "monthly_cap",
+        "type": "stateful.cooldown",
+        "inputs": {
+          "turning_point_review": {
+            "role": "arm"
+          }
+        },
+        "min_interval": "30 days"
+      }
+    ],
+    "sink": {
+      "input": "monthly_cap",
+      "output_map": {
+        "summary": "$n.turning_point_review.summary"
+      }
+    }
+  }
+}

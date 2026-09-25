@@ -1,0 +1,16 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "PERSON_ROLE_UNDECLARED",
+      "severity": "error",
+      "path": "/watch/nodes/0/filter/people/0/role",
+      "message": "'whatsapp-messages' never writes a 'sender' mention, so this condition can never match.",
+      "details": {
+        "sourceId": "whatsapp-messages",
+        "role": "sender",
+        "declared": ["participant", "mentioned"]
+      }
+    }
+  ]
+}

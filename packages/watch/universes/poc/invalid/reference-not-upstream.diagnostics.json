@@ -1,0 +1,25 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "NODE_UNREACHABLE_FROM_SINK",
+      "severity": "error",
+      "path": "/watch/nodes/1",
+      "message": "Node 'second' feeds nothing — signal flows to exactly one sink, so it can never affect a firing.",
+      "details": {
+        "nodeId": "second"
+      }
+    },
+    {
+      "code": "REF_NODE_NOT_UPSTREAM",
+      "severity": "error",
+      "path": "/watch/nodes/2/output_map/other",
+      "message": "'second' is not upstream of 'gate' — signal flows downstream only, so its output is not available here.",
+      "details": {
+        "referenced": "second",
+        "from": "gate",
+        "upstream": ["first"]
+      }
+    }
+  ]
+}

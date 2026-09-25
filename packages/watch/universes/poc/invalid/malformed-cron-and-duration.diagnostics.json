@@ -1,0 +1,24 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "CRON_INVALID",
+      "severity": "error",
+      "path": "/watch/nodes/0/recurring",
+      "message": "'0 9 * *' is not a five-field cron expression.",
+      "details": {
+        "value": "0 9 * *"
+      }
+    },
+    {
+      "code": "DURATION_INVALID",
+      "severity": "error",
+      "path": "/watch/nodes/1/duration",
+      "message": "'three days' is not a duration. Write '<amount> <unit>', e.g. '3 days' or '90 minutes'.",
+      "details": {
+        "value": "three days",
+        "units": ["seconds", "minutes", "hours", "days", "weeks", "business_days"]
+      }
+    }
+  ]
+}

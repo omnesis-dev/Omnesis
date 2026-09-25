@@ -1,0 +1,45 @@
+{
+  "name": "japan-trip",
+  "description": "Dedicated Deep Research demo universe. A believable 'Japan trip' corpus — Studio Northstar travel-agency contract + itinerary on Drive, flight/hotel/ryokan/restaurant/activity booking emails, calendar trip events, a WhatsApp planning thread, and TWO bank statements (Enable Banking JPY + LunchFlow EUR) whose line items corroborate every booking — that drives the scripted 'How much did I spend during my Japan trip?' deep-research agent demo. Token-free (flat replay cassette). All data invented.",
+  "cast": "cast.json",
+  "agentDemos": "agent-demos",
+  "devices": [
+    {
+      "id": "macbook",
+      "name": "Mayas-MacBook-Pro-collector",
+      "kind": "collector"
+    }
+  ],
+  "sources": [
+    {
+      "descriptorId": "gmail",
+      "accountIds": ["maya@example.com"],
+      "device": "macbook"
+    },
+    {
+      "descriptorId": "google-calendar",
+      "accountIds": ["maya@example.com"],
+      "device": "macbook"
+    },
+    {
+      "descriptorId": "google-drive",
+      "accountIds": ["maya@example.com"],
+      "device": "macbook"
+    },
+    {
+      "descriptorId": "whatsapp-messages",
+      "accountIds": ["+15550100100"],
+      "device": "macbook"
+    },
+    {
+      "descriptorId": "enable-banking-accounts",
+      "accountIds": ["jptrip-eb"],
+      "device": "macbook"
+    },
+    {
+      "descriptorId": "lunchflow-accounts",
+      "accountIds": ["jptrip-lf"],
+      "device": "macbook"
+    }
+  ]
+}

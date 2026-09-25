@@ -1,0 +1,450 @@
+{
+  "trace": {
+    "watch": "same-topic-across-two-channels",
+    "records": [
+      {
+        "seq": -1,
+        "nodeId": "weekly_horizon",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 18,
+        "nodeId": "email_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 60,
+        "nodeId": "email_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": -2,
+        "nodeId": "weekly_horizon",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 151,
+        "nodeId": "chat_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 153,
+        "nodeId": "chat_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 178,
+        "nodeId": "email_mention",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 178,
+        "nodeId": "two_of_three",
+        "key": "person=b3f2a9d4-0000-4000-8000-000000000002",
+        "transition": "armed",
+        "detail": "1/2"
+      },
+      {
+        "seq": -3,
+        "nodeId": "weekly_horizon",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -3,
+        "nodeId": "two_of_three",
+        "key": "person=b3f2a9d4-0000-4000-8000-000000000002",
+        "transition": "held",
+        "detail": "broadcast from weekly_horizon; nothing to re-evaluate"
+      },
+      {
+        "seq": 201,
+        "nodeId": "chat_mention",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 201,
+        "nodeId": "two_of_three",
+        "key": "person=b3f2a9d4-0000-4000-8000-000000000002",
+        "transition": "fired"
+      },
+      {
+        "seq": 245,
+        "nodeId": "email_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 256,
+        "nodeId": "chat_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": -4,
+        "nodeId": "weekly_horizon",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 342,
+        "nodeId": "chat_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 353,
+        "nodeId": "chat_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": -5,
+        "nodeId": "weekly_horizon",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 383,
+        "nodeId": "chat_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 393,
+        "nodeId": "email_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 406,
+        "nodeId": "email_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 422,
+        "nodeId": "email_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": -6,
+        "nodeId": "weekly_horizon",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 473,
+        "nodeId": "chat_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 536,
+        "nodeId": "email_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 541,
+        "nodeId": "chat_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 550,
+        "nodeId": "email_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": -7,
+        "nodeId": "weekly_horizon",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 597,
+        "nodeId": "email_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 620,
+        "nodeId": "chat_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 630,
+        "nodeId": "email_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 651,
+        "nodeId": "chat_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": -8,
+        "nodeId": "weekly_horizon",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 669,
+        "nodeId": "email_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 683,
+        "nodeId": "email_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 695,
+        "nodeId": "email_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 729,
+        "nodeId": "chat_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": -9,
+        "nodeId": "weekly_horizon",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 791,
+        "nodeId": "email_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 799,
+        "nodeId": "chat_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 807,
+        "nodeId": "email_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 825,
+        "nodeId": "chat_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 851,
+        "nodeId": "chat_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": -10,
+        "nodeId": "weekly_horizon",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 914,
+        "nodeId": "email_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 923,
+        "nodeId": "email_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 931,
+        "nodeId": "chat_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 939,
+        "nodeId": "email_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": -11,
+        "nodeId": "weekly_horizon",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 999,
+        "nodeId": "chat_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1044,
+        "nodeId": "email_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1051,
+        "nodeId": "chat_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": -12,
+        "nodeId": "weekly_horizon",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1061,
+        "nodeId": "email_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1076,
+        "nodeId": "email_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1092,
+        "nodeId": "chat_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1109,
+        "nodeId": "chat_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1121,
+        "nodeId": "chat_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": -13,
+        "nodeId": "weekly_horizon",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1171,
+        "nodeId": "email_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1178,
+        "nodeId": "chat_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      },
+      {
+        "seq": 1186,
+        "nodeId": "email_mention",
+        "key": "singleton",
+        "transition": "ignored",
+        "detail": "semantic 0.00 below 0.35"
+      }
+    ],
+    "firings": [
+      {
+        "seq": 201,
+        "nodeId": "two_of_three",
+        "keyHash": "34fab429cdec5ce99dec6a30a4d214d3:0",
+        "key": "person=b3f2a9d4-0000-4000-8000-000000000002",
+        "firedAt": "2026-03-16T19:00:00.000Z",
+        "payload": {
+          "via": ["chat_mention", "email_mention"],
+          "evidence": "d0c00001-0000-4000-8000-000000000020"
+        },
+        "documentIds": [
+          "d0c00001-0000-4000-8000-000000000004",
+          "d0c00001-0000-4000-8000-000000000020"
+        ]
+      }
+    ]
+  },
+  "backtest": {
+    "events": 1208,
+    "days": 90,
+    "firings": 0,
+    "reachByNode": { "chat_mention": 22, "email_mention": 24 },
+    "totalReaches": 46,
+    "unboundedNodes": []
+  }
+}

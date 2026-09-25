@@ -1,0 +1,25 @@
+[
+  {
+    "account_key": "synth-eb-acct-main",
+    "balances": [
+      {
+        "name": "Closing booked",
+        "balance_type": "CLBD",
+        "balance_amount": {
+          "currency": "EUR",
+          "amount": "3411.62"
+        },
+        "reference_date": "2025-12-30"
+      },
+      {
+        "name": "Interim available",
+        "balance_type": "ITAV",
+        "balance_amount": {
+          "currency": "EUR",
+          "amount": "3387.12"
+        },
+        "reference_date": "2025-12-31"
+      }
+    ]
+  }
+]

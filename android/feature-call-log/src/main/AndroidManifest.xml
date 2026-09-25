@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Call Log integration manifest. Merged into :app by the manifest merger,
+  keeping the permission declaration encapsulated in this module.
+
+  READ_CALL_LOG is a standard "dangerous" runtime permission (not a Health
+  Connect-style consent sheet) — granted via the normal system permission
+  dialog, same shape as the app's existing CAMERA request. Play Store policy
+  restricts this permission group for Play-distributed apps, but this app is
+  sideloaded, so that restriction does not apply.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+
+</manifest>

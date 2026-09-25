@@ -1,0 +1,16 @@
+{
+  "name": "@omnesis/providers-synth-common",
+  "version": "0.5.11",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@omnesis/core": "*",
+    "@omnesis/source-sdk": "*",
+    "@omnesis/types": "*"
+  },
+  "files": [
+    "dist"
+  ]
+}

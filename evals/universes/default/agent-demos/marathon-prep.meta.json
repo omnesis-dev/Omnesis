@@ -1,0 +1,18 @@
+{
+  "triggers": [
+    "marathon",
+    "long run",
+    "training plan",
+    "am i on track",
+    "ready for the",
+    "peak week"
+  ],
+  "placeholders": {
+    "docExternalIds": [
+      "synth-gdrive-006",
+      "synth-gmail-002",
+      "synth-whatsapp-003",
+      "synth-whatsapp-008"
+    ]
+  }
+}

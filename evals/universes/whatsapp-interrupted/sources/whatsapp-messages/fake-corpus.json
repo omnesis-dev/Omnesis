@@ -1,0 +1,29 @@
+{
+  "corpus": {
+    "meJid": "15550100120:0@s.whatsapp.net",
+    "contacts": [{ "id": "15550100123@s.whatsapp.net", "name": "David Lin", "notify": "David" }],
+    "chats": [
+      {
+        "jid": "15550100123@s.whatsapp.net",
+        "name": "David Lin",
+        "messages": [
+          {
+            "id": "wai-david-1",
+            "ts": 1773129600,
+            "text": "The kestrel telemetry dashboard finally stopped flapping.",
+            "pushName": "David"
+          },
+          {
+            "id": "wai-david-2",
+            "ts": 1773133200,
+            "text": "Pushed the firmware rollback to the staging cluster.",
+            "fromMe": true
+          }
+        ]
+      }
+    ]
+  },
+  "scenario": {
+    "mode": "interrupted"
+  }
+}

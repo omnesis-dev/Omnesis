@@ -1,0 +1,74 @@
+[
+  {
+    "externalId": "synth-whatsapp-001",
+    "chatId": "chat_jane",
+    "chatTitle": "Jane Doe",
+    "date": "2025-09-04",
+    "counterparty": "p_jane",
+    "messages": [
+      {
+        "from": "p_jane",
+        "at": "2025-09-04T08:14:00Z",
+        "text": "Got a sec for the vendor compare?"
+      },
+      {
+        "from": "self",
+        "at": "2025-09-04T08:16:00Z",
+        "text": "In 20 — eating breakfast."
+      },
+      {
+        "from": "p_jane",
+        "at": "2025-09-04T08:42:00Z",
+        "text": "Cool. SOC2 thing is going to bite us."
+      }
+    ]
+  },
+  {
+    "externalId": "synth-whatsapp-002",
+    "chatId": "chat_emma",
+    "chatTitle": "Emma Park",
+    "date": "2025-09-05",
+    "counterparty": "p_emma",
+    "messages": [
+      {
+        "from": "p_emma",
+        "at": "2025-09-05T12:30:00Z",
+        "text": "Lunch?"
+      },
+      {
+        "from": "self",
+        "at": "2025-09-05T12:32:00Z",
+        "text": "Yes. Same place?"
+      },
+      {
+        "from": "p_emma",
+        "at": "2025-09-05T12:33:00Z",
+        "text": "Yes. 1pm."
+      }
+    ]
+  },
+  {
+    "externalId": "synth-whatsapp-003",
+    "chatId": "chat_carol",
+    "chatTitle": "Carol Nakamura",
+    "date": "2025-09-08",
+    "counterparty": "p_carol",
+    "messages": [
+      {
+        "from": "p_carol",
+        "at": "2025-09-08T06:50:00Z",
+        "text": "Meet at the trail head at 7?"
+      },
+      {
+        "from": "self",
+        "at": "2025-09-08T06:51:00Z",
+        "text": "On my way."
+      },
+      {
+        "from": "p_carol",
+        "at": "2025-09-08T07:55:00Z",
+        "text": "Good run. Sticking with you for the next long one."
+      }
+    ]
+  }
+]

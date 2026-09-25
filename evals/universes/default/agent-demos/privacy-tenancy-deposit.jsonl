@@ -1,0 +1,7 @@
+# The draft Omnesis writes for an external caller asking about a tenancy deposit.
+# Its privacy review replaces it wholesale rather than editing it, so the two
+# texts share almost nothing and the release step declines to draw a line diff —
+# the `no_diff` / dissimilar comparison.
+{"afterMs":30,"event":{"type":"agent.message.start","payload":{"sessionId":"$SESSION","messageId":"$MSG","role":"assistant"}}}
+{"afterMs":120,"event":{"type":"agent.text.delta","payload":{"sessionId":"$SESSION","messageId":"$MSG","delta":"The deposit on the Alder Bay flat is 1,850 GBP, lodged with a protection scheme on 3 March.\nThe file records two deductions proposed at check-out: 240 GBP for a replacement worktop and 95 GBP for cleaning.\nJamie Lopez disputed the worktop charge in writing on 11 April and the file is still open."}}}
+{"afterMs":40,"event":{"type":"agent.message.end","payload":{"sessionId":"$SESSION","messageId":"$MSG","stopReason":"end_turn"}}}

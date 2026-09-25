@@ -1,0 +1,13 @@
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+.git
+.env
+.env.*
+!.env.example
+docs
+**/*.test.ts
+**/__tests__
+*.md
+!packages/**/README.md
+.claude

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Questions & help
+    url: https://github.com/omnesis-dev/Omnesis/discussions
+    about: Ask questions, share ideas, and get help from the community.
+  - name: 🔒 Report a security vulnerability
+    url: https://github.com/omnesis-dev/Omnesis/security/advisories/new
+    about: Report a security issue privately — never in a public issue. See SECURITY.md.
+  - name: 📖 Documentation
+    url: https://omnesis.dev/docs
+    about: User and operator documentation.

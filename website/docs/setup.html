@@ -1,0 +1,1197 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Setup — Omnesis Docs</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32" />
+    <link rel="icon" type="image/png" href="/favicon-16.png" sizes="16x16" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- Resolve the theme before first paint: the stored choice, else the OS preference. -->
+    <script>
+      (function () {
+        var root = document.documentElement;
+        root.classList.add("js");
+        var t;
+        try {
+          t = localStorage.getItem("omnesis-theme");
+        } catch (e) {}
+        if (t !== "light" && t !== "dark") {
+          t =
+            window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+        }
+        root.setAttribute("data-theme", t);
+      })();
+    </script>
+
+    <meta
+      name="description"
+      content="Pair the portal, collectors on other machines, phones and the browser extension; set up certificates and remote access; manage devices and tokens."
+    />
+    <link rel="canonical" href="https://omnesis.dev/docs/setup" />
+    <meta name="theme-color" content="#0d1117" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="/footer-social.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <nav id="nav">
+      <div class="container">
+        <a href="/" class="nav-logo" aria-label="Omnesis"
+          ><span class="nav-logo-mark" aria-hidden="true"></span>MNESIS</a
+        >
+        <div class="nav-right">
+          <ul class="nav-links">
+            <li><a href="/">Context Layer</a></li>
+            <li><a href="/brain">Omnesis Brain</a></li>
+            <li><a href="/vision">Vision</a></li>
+            <li><a href="/docs/" aria-current="page">Docs</a></li>
+          </ul>
+          <a
+            class="nav-icon-btn"
+            href="#"
+            data-oss-open
+            aria-label="Omnesis on GitHub"
+            title="Omnesis on GitHub"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path
+                d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+              />
+            </svg>
+          </a>
+          <button
+            id="theme-toggle"
+            class="theme-toggle"
+            type="button"
+            aria-label="Switch between dark and light theme"
+            title="Toggle theme"
+          >
+            <svg
+              class="icon-sun"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="4" />
+              <path
+                d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"
+              />
+            </svg>
+            <svg
+              class="icon-moon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <div class="docs-shell">
+      <aside class="docs-sidebar">
+        <nav aria-label="Documentation">
+          <ul class="side-pages">
+            <li><a href="/docs/">Overview</a></li>
+            <li><a href="/docs/install">Install</a></li>
+            <li>
+              <a href="/docs/setup" aria-current="page">Setup</a>
+              <ul class="side-sub">
+                <li><a href="#pairing">How pairing works</a></li>
+                <li><a href="#portal">Portal</a></li>
+                <li><a href="#certificates">Certificates</a></li>
+                <li><a href="#remote-access">Remote access</a></li>
+                <li><a href="#collector">Collector on another machine</a></li>
+                <li><a href="#phones">Phones</a></li>
+                <li><a href="#browser-extension">Browser extension</a></li>
+                <li><a href="#agent-harness">Agent harness</a></li>
+                <li><a href="#tokens">Devices and tokens</a></li>
+                <li><a href="#repairing-a-device">Repairing a device</a></li>
+              </ul>
+            </li>
+            <li><a href="/docs/search">Search</a></li>
+            <li><a href="/docs/agent">The agent</a></li>
+            <li><a href="/docs/connect">Agents &amp; MCP</a></li>
+            <li><a href="/docs/apps">Mobile apps</a></li>
+            <li><a href="/docs/notifications">Notifications</a></li>
+            <li><a href="/docs/operating">Operating</a></li>
+            <li><a href="/docs/security">Security</a></li>
+            <li><a href="/docs/updating">Backup &amp; updates</a></li>
+            <li><a href="/docs/sources">Available sources</a></li>
+            <li><a href="/docs/building-sources">Building sources</a></li>
+            <li><a href="/docs/experimental">Experimental</a></li>
+          </ul>
+        </nav>
+      </aside>
+
+      <main id="main" class="docs-content">
+        <p class="docs-kicker">Start</p>
+        <h1>Setup</h1>
+        <p class="docs-lead">
+          The <a href="/docs/install">installer</a> leaves you with a gateway and a collector on one
+          machine. This page connects everything else: the portal, a collector on another machine,
+          the phone apps, the browser extension and your own tokens. It also covers the gateway's
+          certificate and reaching the gateway when you are away from home.
+        </p>
+
+        <h2 id="pairing">How pairing works</h2>
+        <p>
+          Every client except an external AI agent joins the gateway the same way: you mint a
+          pairing code on the gateway, and the new device redeems it for a token of its own. The
+          token's scopes depend on the kind of device, as listed in
+          <a href="/docs/#devices-and-tokens">Devices and connections</a>.
+        </p>
+        <figure class="diagram">
+          <ol class="flow">
+            <li class="flow-step">
+              <span class="flow-title">Mint a code</span
+              ><span class="flow-desc"
+                ><code>omnesis devices pair --kind &lt;kind&gt;</code> on the gateway host, or
+                <strong>Settings → Devices → Pair device</strong> in the portal; phones get a QR
+                code</span
+              >
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Redeem it over HTTPS</span
+              ><span class="flow-desc"
+                >the device first checks the gateway's certificate, against a fingerprint it was
+                given or its system's trust</span
+              >
+            </li>
+            <li class="flow-step flow-gate">
+              <span class="flow-title">Gateway checks the code</span
+              ><span class="flow-desc"
+                >single use, valid for 10 minutes, for one kind of device</span
+              >
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Gateway issues a token</span
+              ><span class="flow-desc"
+                >scoped to that kind; the device appears in the device list</span
+              >
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Device uses its token</span
+              ><span class="flow-desc">on every request, until you revoke it</span>
+            </li>
+          </ol>
+          <figcaption>
+            A pairing code minted on the gateway is redeemed once, over a verified HTTPS connection,
+            for a token limited to what that kind of device needs.
+          </figcaption>
+        </figure>
+        <p>
+          The kinds are <code>portal</code>, <code>cli</code>, <code>collector</code>,
+          <code>ios</code>, <code>android</code>, <code>browser</code>, <code>agent</code> (an
+          OpenClaw or Hermes machine) and <code>integration</code>. A code is spent only when it is
+          redeemed, so a command typed on the wrong machine, or refused before pairing, costs
+          nothing.
+        </p>
+
+        <h2 id="portal">Portal</h2>
+        <p>
+          The portal is the gateway's built-in web interface, at
+          <code>https://&lt;gateway-host&gt;:7600/portal/</code>. It always asks you to log in and
+          never reads tokens from disk. Mint a pairing code on the gateway host and paste it into
+          the login card:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p class="t-dim"># mint a pairing code for this browser</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis devices pair --kind portal</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          The portal redeems the code itself, so there is nothing to run on the browser's machine.
+          Each browser becomes its own device and keeps that identity across logins, so you can
+          revoke one browser without affecting the others. With the gateway's default self-signed
+          certificate the browser warns once; the next section explains how to avoid that.
+        </p>
+
+        <h2 id="certificates">Certificates</h2>
+        <p>
+          The gateway serves HTTPS only, on port <code>7600</code> (set
+          <code>OMNESIS_GATEWAY_PORT</code> to change it). The certificate it serves decides which
+          clients trust it without a warning. Omnesis can set up three kinds itself, best first; a
+          certificate of your own is the fourth. Each row says what Omnesis does and what you do
+          first.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Certificate</th>
+                <th>What Omnesis does</th>
+                <th>What you do first</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Tailscale</td>
+                <td>
+                  The installer, or <code>omnesis tls provision</code> later, asks the running
+                  Tailscale daemon for a certificate for this machine's MagicDNS name (the name the
+                  tailnet's DNS gives it). The gateway recognizes that certificate, so phones paired
+                  against the name verify it through their operating system and keep working when
+                  the certificate renews. The gateway renews it before it expires.
+                </td>
+                <td>
+                  Install Tailscale and join your tailnet with <code>tailscale up</code>. In the
+                  tailnet's admin console, enable MagicDNS and HTTPS certificates. On Linux, the
+                  installer may ask to make your account the machine's Tailscale operator (<code
+                    >sudo tailscale set --operator</code
+                  >), because only root or the operator can get certificates and the gateway renews
+                  as your account. Omnesis never joins a network or changes tailnet settings.
+                </td>
+              </tr>
+              <tr>
+                <td>mkcert</td>
+                <td>
+                  Install with <code>--mkcert</code>, or run
+                  <code>omnesis tls provision --mkcert</code> later.
+                  <code>mkcert -install</code> creates a certificate authority private to this
+                  machine and trusts it in this machine's browsers. The gateway's certificate is
+                  issued from it for <code>localhost</code>, the machine's local name (or
+                  <code>omnesis.local</code>) and its current network addresses, and renewed from it
+                  while the gateway runs as the user who installed it.
+                </td>
+                <td>
+                  Install mkcert. To use a browser on another machine, give that machine the
+                  authority's certificate (below).
+                </td>
+              </tr>
+              <tr>
+                <td>Self-signed</td>
+                <td>
+                  Created on first start when nothing better exists, covering the gateway's mDNS
+                  names and the network addresses present at the time, and renewed by the gateway.
+                </td>
+                <td>
+                  Nothing. Phone apps pin its fingerprint when they pair and the CLI trusts it on
+                  first use; browsers warn once.
+                </td>
+              </tr>
+              <tr>
+                <td>Your own</td>
+                <td>Serves a certificate you obtain, or sits behind your reverse proxy.</td>
+                <td>
+                  Obtain the certificate and make the host reachable. See
+                  <a href="#public-domain">From the Internet</a>.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          The self-signed certificate is fine for the CLI and the phone apps. Browsers are the
+          reason to replace it: the portal shows a warning, and the
+          <a href="#browser-extension">browser extension</a> cannot pair through it at all.
+        </p>
+        <p>
+          A certificate controls whether a client trusts the gateway, not whether it can reach it.
+          It must cover the exact name or address the client uses. Reaching the gateway is a network
+          question: the same LAN, the same tailnet, or a port you open (see
+          <a href="#remote-access">Remote access</a>).
+        </p>
+        <p>
+          A Tailscale certificate covers the full MagicDNS name,
+          <code>studio.tail-example.ts.net</code> in the examples on this site, and nothing else:
+          not the machine's tailnet IP, a LAN address or a <code>.local</code> name. That name
+          resolves and connects only for members of your tailnet, so the gateway stays as private as
+          before. The certificate comes from a public certificate authority, which records it in
+          public Certificate Transparency logs: your gateway's host name becomes public, nothing
+          behind it does. If a renewal fails because the operator permission is missing,
+          <code>omnesis tls status</code> and <code>omnesis doctor</code> report it.
+        </p>
+        <p>
+          A browser trusts a mkcert certificate only through the authority that issued it. To use a
+          browser on another machine, copy <code>rootCA.pem</code> from the directory
+          <code>mkcert -CAROOT</code> prints on the gateway host, and import it on that machine as a
+          trusted certificate authority. Running <code>mkcert -install</code> there does not help:
+          it creates a different authority. Never copy <code>rootCA-key.pem</code>, which can issue
+          a certificate for any name.
+        </p>
+        <p>
+          A local certificate covers the network addresses present when it was created. After they
+          change, run <code>omnesis tls refresh --mkcert</code> for a mkcert certificate, or
+          <code>omnesis tls renew --force</code> for the self-signed one. A phone paired by
+          fingerprint, and a CLI or collector on another machine, pinned the certificate it first
+          saw and refuses a new one until you pair it again or trust the new fingerprint; see
+          <a href="/docs/security#pinned-clients">Clients that pinned the old certificate</a>.
+        </p>
+
+        <h2 id="remote-access">Remote access</h2>
+        <p>
+          Each client keeps one gateway address, the one it was paired or configured with, and
+          always dials it. No client switches between a LAN address and a Tailscale name by itself,
+          so give each one an address that works everywhere it goes: a Tailscale name reaches the
+          gateway from home and away, a LAN address from home only. A phone changes address by
+          pairing again; a collector or the CLI by changing its configured gateway URL, and its
+          token stays valid.
+        </p>
+
+        <h3 id="away-from-home">Phones away from home</h3>
+        <p>
+          A phone paired to a LAN or <code>.local</code> address cannot reach the gateway once it
+          leaves that network. A notification can still wake it, but the notification's text, Ask
+          and uploads all need a connection back to the gateway. Tailscale gives the phone that
+          connection without putting the gateway on the Internet:
+        </p>
+        <ol>
+          <li>
+            Install Tailscale on the gateway machine and the phone, sign both into the same tailnet,
+            and keep it connected on the phone. Follow
+            <a href="https://tailscale.com/docs/install">Tailscale's installation guide</a> for each
+            device.
+          </li>
+          <li>
+            Enable MagicDNS and HTTPS certificates for the tailnet, then run
+            <code>omnesis tls provision</code> on the gateway machine (see
+            <a href="#certificates">Certificates</a>).
+          </li>
+          <li>
+            Pair the phone from <strong>Settings → Devices → Pair device</strong> in the portal, or
+            with <code>omnesis devices pair --kind ios</code> (or <code>--kind android</code>). With
+            the certificate in place, the QR code carries the gateway's Tailscale name, and the
+            portal and the CLI say that it works at home and away. An iPhone is never given the
+            Tailscale IP: iOS refuses the gateway's certificate there.
+          </li>
+          <li>
+            Turn off Wi-Fi on the phone and open Omnesis to check that it reaches the gateway over
+            mobile data. <code>omnesis doctor</code> on the gateway cannot test the phone's
+            connection.
+          </li>
+        </ol>
+        <p>
+          A phone already paired with a LAN address pairs again with the Tailscale name. So does a
+          phone paired by the self-signed certificate's fingerprint: the Tailscale certificate
+          replaces it, and <code>omnesis tls provision</code> lists the paired phones when it does.
+        </p>
+
+        <h3 id="public-domain">From the Internet</h3>
+        <p>
+          A gateway on a domain of yours is supported on two routes, and neither weakens how clients
+          check the name. Omnesis obtains no certificates for public names: there is no ACME client
+          (the protocol Let's Encrypt uses) in the gateway or the installer. Both routes assume you
+          have made the host reachable yourself, with a DNS record and a port opened on whatever
+          sits between the Internet and the machine.
+        </p>
+        <p>
+          Both also put the pairing endpoint on the Internet. It is rate-limited per client address,
+          and a pairing code is single-use and expires in ten minutes, but a gateway only you need
+          to reach is better served by <a href="#away-from-home">Tailscale</a>. External agents that
+          run on their provider's servers, such as Claude Desktop, Claude Cowork and ChatGPT, can
+          only use a public address. For them alone, without a domain,
+          <a href="/docs/connect#tailscale-funnel">Tailscale Funnel</a> publishes the gateway's
+          tailnet name; the two routes below are for a domain you own.
+        </p>
+        <p>
+          <strong>Serve a certificate you obtain.</strong> Get a certificate for the name with the
+          tool you already use (certbot, lego, acme.sh or a commercial authority) and name the files
+          in <code>~/.config/omnesis/.env</code>. The gateway serves them and picks up a
+          replacement, but never renews them: renew with the same tool into the same paths, and run
+          <code>omnesis tls reload</code> from its deploy hook or let the gateway's hourly check
+          find the new files.
+        </p>
+        <p>
+          The certificate must cover every name the gateway is dialled by, including by the host's
+          own collector and CLI, so the gateway URL names the domain too, and the domain must
+          resolve to the gateway from the host itself. Phones pair using their system's trust only
+          against an address the gateway knows is trusted. It recognizes its own Tailscale
+          certificate; add any other address to <code>gateway.pairingSystemTrustOrigins</code>,
+          because a later installer run removes other addresses from <code>.env</code>.
+        </p>
+        <div class="term">
+          <div class="term-bar">
+            <span></span><span></span><span></span>
+            <span class="term-title">~/.config/omnesis/.env</span>
+          </div>
+          <div class="term-body">
+            <pre data-lang="ini">
+# the gateway's user must be able to read both files
+OMNESIS_TLS_CERT=/etc/letsencrypt/live/omnesis.example.com/fullchain.pem
+OMNESIS_TLS_KEY=/etc/letsencrypt/live/omnesis.example.com/privkey.pem
+OMNESIS_GATEWAY_URL=https://omnesis.example.com:7600</pre
+            >
+          </div>
+        </div>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p class="t-dim"># then, once</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis config set /gateway/pairingSystemTrustOrigins
+                '["https://omnesis.example.com:7600"]'</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis service restart gateway</span>
+            </p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis tls status</span></p>
+          </div>
+        </div>
+        <p>
+          <strong>Put a reverse proxy in front.</strong> A proxy such as Caddy or nginx holds the
+          public certificate (Caddy obtains and renews one itself) and forwards to the gateway on
+          the same host. The gateway then listens on loopback only, so nothing reaches it except
+          through the proxy. It is also told to trust the proxy's report of each client's address,
+          so its rate limits apply to the real clients rather than to the proxy.
+        </p>
+        <p>
+          On the loopback hop, the proxy verifies the gateway's own self-signed certificate by
+          pinning the file the gateway serves. The proxy must also forward WebSocket upgrades, leave
+          streaming responses unbuffered, and set <code>X-Forwarded-For</code> itself by appending
+          the client's address, never passing a client's own header through. Caddy does all of this
+          by default; nginx needs each one configured.
+        </p>
+        <p>
+          The proxy's address becomes <code>gateway.publicBaseUrl</code>: the address phones pair
+          against with system trust, and the one external agents are given. Agents discover the
+          gateway through documents under <code>/.well-known/</code>, so forward the whole origin,
+          not just a path. The host's own collector and CLI keep dialling the gateway directly, so
+          the gateway URL in <code>.env</code> names <code>localhost</code>, which the self-signed
+          certificate covers.
+        </p>
+        <div class="term">
+          <div class="term-bar">
+            <span></span><span></span><span></span>
+            <span class="term-title">~/.config/omnesis/.env</span>
+          </div>
+          <div class="term-body">
+            <pre data-lang="ini">
+OMNESIS_BIND=127.0.0.1
+OMNESIS_TRUST_PROXY=true
+OMNESIS_GATEWAY_URL=https://localhost:7600</pre
+            >
+          </div>
+        </div>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p class="t-dim"># then, once</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis config set /gateway/publicBaseUrl https://omnesis.example.com</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis service restart gateway</span>
+            </p>
+          </div>
+        </div>
+        <div class="term">
+          <div class="term-bar">
+            <span></span><span></span><span></span>
+            <span class="term-title">Caddyfile</span>
+          </div>
+          <div class="term-body">
+            <pre data-lang="caddy">
+omnesis.example.com {
+    reverse_proxy https://127.0.0.1:7600 {
+        transport http {
+            tls_trusted_ca_certs /home/maya/.config/omnesis/tls/cert.pem
+            tls_server_name localhost
+        }
+    }
+}</pre
+            >
+          </div>
+        </div>
+        <p>
+          The pinned file is the gateway's own certificate, so reload the proxy after
+          <code>omnesis tls renew --force</code> replaces it. For nginx, the equivalents are
+          <code>proxy_ssl_trusted_certificate</code> with <code>proxy_ssl_verify on</code> and
+          <code>proxy_ssl_name localhost</code>; the <code>Upgrade</code> and
+          <code>Connection</code> headers passed through for WebSockets;
+          <code>proxy_buffering off</code> for the event streams; and
+          <code>proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for</code>.
+        </p>
+        <p>
+          <code>omnesis tls status</code> lists the public name as served through the proxy, and
+          <code>omnesis doctor</code> does not expect the gateway's own certificate to cover it.
+          Once the public address is a trusted origin,
+          <code>omnesis devices pair --kind ios</code> and the portal offer it first, and a phone
+          paired with it verifies the proxy's certificate through its operating system. A collector
+          on another machine needs no <code>--trust-fingerprint</code>, since the certificate chains
+          to a public authority.
+        </p>
+
+        <h2 id="collector">Collector on another machine</h2>
+        <p>
+          The installer runs a collector on the gateway machine, and it sets itself up: on first
+          start it pairs using the <a href="/docs/#devices-and-tokens">bootstrap admin token</a> and
+          saves its own token to <code>~/.config/omnesis/collector-token</code>.
+        </p>
+        <p>
+          A collector on a second machine, such as a Mac that has your Apple Notes while the gateway
+          runs on a home server, is one installer command with the
+          <code>--collector</code> role. That machine gets the CLI and a collector service, and no
+          gateway, embedding model or index. The gateway's own install printed the exact command,
+          with its URL and the fingerprint of its certificate. For a self-signed gateway, that URL
+          is the address you chose after the first start, or <code>omnesis.local</code> if the
+          gateway was installed without a terminal.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p class="t-dim"># on the gateway host — mint a pairing code</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis devices pair --kind collector</span>
+            </p>
+            <p class="t-dim"># on the new machine — one command; it asks for the code</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >curl -fsSL https://omnesis.dev/install.sh | sh -s -- --collector --gateway-url
+                https://gateway.example.io:7600 --trust-fingerprint sha256:&lt;fingerprint&gt;</span
+              >
+            </p>
+          </div>
+        </div>
+        <p>
+          The role checks the gateway's certificate against the fingerprint, pairs, registers the
+          collector service with the gateway URL, waits for the gateway to accept the device, and
+          prints its name. The fingerprint is checked before the pairing code is spent, and a
+          mismatch stops the install. Without <code>--trust-fingerprint</code>, a self-signed
+          certificate is shown to you for confirmation and a publicly trusted one is accepted
+          silently, so pass it whenever you have it.
+        </p>
+        <p>
+          Leave out <code>--gateway-url</code> and the role searches the local network instead (the
+          gateway announces itself over mDNS with its fingerprint), then asks before pairing with
+          what it found. If nothing answers, or there is no terminal to confirm with, it stops and
+          asks you to name the gateway. <code>omnesis devices discover</code> runs the same search
+          (<code>--json</code> for a script). <code>--code &lt;code&gt;</code> supplies the pairing
+          code for an unattended install; by default you are asked for it, which keeps the code out
+          of shell history.
+        </p>
+        <p>
+          On macOS, run from a terminal, the install ends by opening the Full Disk Access settings
+          and revealing the Node executable in Finder, ready to drag into the list; the Apple
+          sources need it. See
+          <a href="/docs/operating#full-disk-access">Full Disk Access</a>.
+        </p>
+        <p>The role runs three commands, which you can also run yourself:</p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p class="t-dim"># on the new machine — the CLI alone</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >curl -fsSL https://omnesis.dev/install.sh | sh -s -- --client-only</span
+              >
+            </p>
+            <p class="t-dim"># redeem the code into the file the collector reads</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis pair &lt;code&gt; --gateway-url https://gateway.example.io:7600
+                --trust-fingerprint sha256:&lt;fingerprint&gt; --save
+                ~/.config/omnesis/collector-token</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis service install collector --env
+                OMNESIS_GATEWAY_URL=https://gateway.example.io:7600</span
+              >
+            </p>
+          </div>
+        </div>
+        <p>
+          Instead of redeeming a code, you can set <code>OMNESIS_TOKEN</code> to an admin token: the
+          collector uses it to pair on first start and saves its own <code>collector-token</code>,
+          which it prefers on later runs. If <code>OMNESIS_GATEWAY_URL</code> is unset, the
+          collector searches the local network over mDNS, then falls back to
+          <code>https://localhost:7600</code>.
+        </p>
+        <p>
+          Several collectors can serve one gateway, each hosting the sources on its own machine.
+          With more than one online, <code>omnesis sources add --device &lt;collector&gt;</code>
+          chooses which one hosts a new source; without the flag you get a picker. Some source types
+          can be hosted by several machines at once, others by one at a time;
+          <a href="/docs/sources#several-devices">Sources on several devices</a> covers joining,
+          detaching and moving them.
+        </p>
+        <p>
+          If you sign in to Google in a browser on a different machine from the collector, the
+          browser may show a “can’t reach this page” error after you approve access. Google has sent
+          it to a loopback address on the browser's machine. Copy the full address from the address
+          bar, including everything after <code>?</code>, and paste it into the portal's
+          <strong>Or paste the redirect URL / code</strong> box or the CLI's
+          <strong>Paste the full redirect URL or code</strong> prompt. The collector completes the
+          sign-in and keeps the credentials on its own machine.
+        </p>
+
+        <h2 id="phones">Phones</h2>
+        <p>
+          Pair each phone and tablet separately, by scanning a QR code in the app. The QR code
+          carries everything the app needs, including how to trust the gateway's certificate; see
+          <a href="/docs/apps#pairing">Mobile apps → Pairing</a>. The portal and the CLI offer only
+          addresses that phone can use and say where each works. If you want the phone to work away
+          from home, set up <a href="#away-from-home">Tailscale</a> before pairing. How to install
+          the apps is on <a href="/docs/apps#getting-the-apps">Getting the apps</a>.
+        </p>
+        <p>
+          Each app hosts sources that read data on the phone. Right after pairing, the app's setup
+          lets you pick them, shows what each one sends, and then the phone asks for the matching
+          permission; the same choices are in the app's Settings. Apple Health is shared across your
+          Apple devices, so two iPhones contribute to one library. The other phone sources, Photos
+          included, are kept per device: each phone adds its own data. The app asks about this when
+          you enable a source; see
+          <a href="/docs/sources#several-devices">Sources on several devices</a>.
+        </p>
+
+        <h3 id="ios-app">iOS app</h3>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis devices pair --kind ios</span>
+            </p>
+            <p class="t-dim"># prints a QR code — scan it from the app's pairing screen</p>
+          </div>
+        </div>
+        <p>
+          The app hosts Apple Health, Photos &amp; Screenshots, Activity Segments and Location
+          Visits, each off until you turn it on. To build and sign the app yourself, follow the
+          <a href="https://github.com/omnesis-dev/Omnesis/blob/main/ios/README.md"
+            >iOS contributor guide</a
+          >; an app signed with your own Apple team needs your own push credentials, set up with
+          <code>omnesis push setup</code> (see
+          <a href="/docs/notifications#setup">Notifications → Direct setup</a>).
+        </p>
+
+        <h3 id="android-app">Android app</h3>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis devices pair --kind android</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          The app hosts Health Connect, App Usage, Photos &amp; Screenshots, Activity Segments and
+          Call Log. The <code>play</code> build omits Call Log and its permission; the
+          <code>full</code> build, which you build yourself, keeps it.
+        </p>
+        <p>
+          To build the app yourself, run <code>omnesis push setup</code> first: it configures push
+          delivery through Firebase and writes the ignored
+          <code>android/local.push.properties</code> file that the build reads. The package id you
+          choose there becomes the app's identity, so your build can be installed beside an official
+          one; rebuild after changing it. Build steps are on
+          <a href="/docs/apps#getting-the-apps">Mobile apps</a>, and the Firebase values on
+          <a href="/docs/notifications#setup">Notifications → Direct setup</a>.
+        </p>
+
+        <h2 id="browser-extension">Browser extension</h2>
+        <p>
+          The extension captures the pages you actually read into the Web Pages source (type
+          <code>web</code>): the rendered text, extracted in the browser after a few seconds with
+          the page focused. Sites that a dedicated source already covers (Gmail, Drive, Notion and
+          others) are skipped, so a page is not captured twice. A collector announces those sites
+          when it starts, so until one has connected, none are skipped, and duplicates are removed
+          at search time instead. The extension never captures:
+        </p>
+        <ul>
+          <li>pages in incognito or private windows, and any page that is not HTTPS;</li>
+          <li>Chrome's own pages, the extension's own pages, and the gateway's portal;</li>
+          <li>
+            pages on excluded domains, on sites a dedicated source covers, and pages deleted for
+            good;
+          </li>
+          <li>
+            sign-in, registration, password, single-sign-on, checkout, payment and billing pages,
+            and any page with a password field.
+          </li>
+        </ul>
+        <p>
+          Only the readable text as Markdown, the title, the URL, the visit time and how long the
+          page was focused leave the browser. Form values, drafts in editable fields, raw HTML,
+          scripts, images and screenshots never do. Credentials in the address (tokens, signatures,
+          one-time codes, passwords, session ids, an OAuth callback's code and state) are removed
+          before it is recorded.
+        </p>
+        <p>
+          The extension cannot read anything back: its token can add pages but never search or read.
+          It loads no remote code and has no analytics or crash reporting.
+        </p>
+        <div class="callout warn">
+          <p>
+            The extension needs a certificate the browser trusts: Tailscale or mkcert, from
+            <a href="#certificates">Certificates</a>. Its background worker cannot click through a
+            certificate warning the way a tab can, so against the self-signed certificate, pairing
+            and uploads fail; the popup reports the gateway as unreachable and keeps captures
+            queued. Pair it by the host name the certificate covers, not an IP address.
+          </p>
+        </div>
+        <p>
+          Install it from the
+          <a
+            href="https://chromewebstore.google.com/detail/omnesis-browser-capture/akojepkcdbncipjdonhnnfmjacknplmn"
+            >Chrome Web Store</a
+          >
+          (Chrome 130 or newer). In the portal, the Sources page links to the listing until the Web
+          Pages source exists. Then mint a code under
+          <strong>Settings → Devices → Pair device → Browser extension</strong>, or from the CLI:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis devices pair --kind browser</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          On the extension's Options page, enter the Chrome profile name shown in Chrome's profile
+          menu, the gateway URL and the code. Chrome does not tell extensions its profile name, so
+          this label marks every visit from this browser; you can change it later on the same page.
+          Pairing asks Chrome for access to HTTPS pages, which the capture needs; if you decline,
+          pairing stops and says why. The extension stores a token scoped to
+          <code>write:web</code> only.
+        </p>
+        <p>
+          The extension refuses to pair with a gateway on an older minor release than its own, and
+          names both versions; update the gateway and pair again. If pairing times out, submit the
+          same code again: the gateway recognises the repeated request and returns the token it
+          already issued. If pairing fails after you granted page access, Settings shows a button to
+          remove that access.
+        </p>
+        <p>
+          To develop the extension itself, run <code>npm --prefix extension run build</code> from
+          the repository root, open <code>chrome://extensions</code>, enable Developer mode, click
+          <em>Load unpacked</em> and select <code>extension/dist/</code>. The store version and an
+          unpacked build are separate extensions that pair separately, so both capture if both are
+          installed; unpair the unpacked build before relying on the store one.
+        </p>
+
+        <h3 id="browser-extension-reference">Popup and capture settings</h3>
+        <p>
+          The popup's summary line reads <em>Ready</em>, <em>Syncing</em>, <em>Paused</em>,
+          <em>Not syncing</em> (with a warning that names what to fix) or <em>Not paired</em>.
+          <em>Last page synced</em> moves only when a page has reached Omnesis;
+          <em>Gateway checked</em> is the latest conclusive check of the connection and the token,
+          and an inconclusive check shows as a warning. <em>Current page</em> says whether the open
+          page is being watched:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Current page</th>
+                <th>What it means</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Attached</td>
+                <td>The page is watched and will be captured after five seconds in focus.</td>
+              </tr>
+              <tr>
+                <td>Checking eligibility</td>
+                <td>The extension is still checking the page against the capture settings.</td>
+              </tr>
+              <tr>
+                <td>Excluded — this site is on your list</td>
+                <td>The site is one of your excluded domains.</td>
+              </tr>
+              <tr>
+                <td>Covered by another source</td>
+                <td>A dedicated source already syncs this site.</td>
+              </tr>
+              <tr>
+                <td>Sign-in or payment page</td>
+                <td>The address names a sign-in, password, checkout or payment step.</td>
+              </tr>
+              <tr>
+                <td>Password field on this page</td>
+                <td>The page has a password field, so nothing on it is captured.</td>
+              </tr>
+              <tr>
+                <td>Capture paused</td>
+                <td>Capture is paused for every paired browser.</td>
+              </tr>
+              <tr>
+                <td>Deleted from your index</td>
+                <td>You deleted this page for good, so it is not captured again.</td>
+              </tr>
+              <tr>
+                <td>This is your Omnesis gateway</td>
+                <td>The gateway's own pages are never captured.</td>
+              </tr>
+              <tr>
+                <td>Waiting for capture settings</td>
+                <td>
+                  The browser has not yet read the capture settings from the gateway, which it must
+                  do once after pairing.
+                </td>
+              </tr>
+              <tr>
+                <td>Handoff delayed — retrying</td>
+                <td>
+                  The page was captured but not yet handed to the extension's background worker; it
+                  keeps trying.
+                </td>
+              </tr>
+              <tr>
+                <td>Not watched — reload page</td>
+                <td>
+                  The page was open before the extension was installed, reloaded or updated. Reload
+                  it.
+                </td>
+              </tr>
+              <tr>
+                <td>Excluded by capture settings</td>
+                <td>A capture setting applies, and the browser cannot tell which one.</td>
+              </tr>
+              <tr>
+                <td>Not eligible</td>
+                <td>
+                  The page can never be captured: Chrome's own pages, the new-tab page, a plain
+                  <code>http://</code> site, or one of the extension's pages.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          <strong>Versions and access.</strong> The popup shows the gateway's version beside its
+          address, and warns, without stopping capture, when the gateway is a minor release behind
+          the extension (update the gateway to clear it) or on a different major release (update
+          whichever is older). If Chrome's page access is later revoked, the popup says so: open
+          <em>Pairing settings</em>, choose <em>Grant HTTPS page access</em>, then reload open
+          pages. Unpairing removes both the extension's token and its page access.
+        </p>
+        <p>
+          <strong>When the gateway is unreachable.</strong> Pages waiting to upload survive browser
+          restarts and are retried automatically, within a fixed amount of local storage. If a long
+          outage fills it, the popup says what was discarded. A page the gateway refuses outright is
+          dropped and the popup shows why; only temporary failures are retried.
+        </p>
+        <p>
+          <strong>When the source is paused or removed.</strong> While the Web Pages source is
+          paused, the gateway turns new pages away and the extension retries one queued page every
+          few minutes until the source resumes. If the source was removed, the popup says so and
+          asks you to pair again. The
+          <a href="/browser-extension-privacy-policy">browser extension privacy policy</a>
+          describes what is captured, what is kept locally, and the permissions.
+        </p>
+        <p>
+          <strong>Capture settings.</strong> The capture settings live on the gateway and apply to
+          every browser paired with it. The Options page manages the <em>excluded domains</em>: a
+          page on an excluded domain or any of its subdomains is never captured, and ticking
+          <em>Also delete the pages already captured from this domain</em> deletes what it already
+          contributed, for good. The popup's <em>Exclude</em> button adds the open page's domain the
+          same way and stops watching that page at once. Its pause controls pause capture in every
+          paired browser for one hour, one day, or until someone resumes it.
+        </p>
+        <p>
+          A browser rereads the settings when its copy is older than fifteen minutes, whenever the
+          popup opens, and after each change it makes; if they changed, open pages are judged again
+          without a reload. Deleting a captured page <em>for good</em>, from the portal, the CLI or
+          a phone, adds it to these settings so no browser captures it again; deleting
+          <em>this copy</em> lets it be captured again. See
+          <a href="/docs/search#beyond-search">Deleting documents</a>.
+        </p>
+
+        <h2 id="agent-harness">Agent harness</h2>
+        <p>
+          A machine running OpenClaw or Hermes joins with the installer's <code>--openclaw</code> or
+          <code>--hermes</code> role, which pairs it as an <code>agent</code> device and installs
+          the harness's Omnesis plugin. The commands, the approval step and refreshing the plugin
+          are in <a href="/docs/connect#openclaw-hermes">OpenClaw and Hermes</a>.
+        </p>
+
+        <h2 id="tokens">Devices, integrations and tokens</h2>
+        <p>
+          Every paired device is listed in the portal under <strong>Settings → Devices</strong> and
+          by <code>omnesis devices list</code>. A device names itself when it pairs; the name is
+          only a label, which you change with
+          <code>omnesis devices rename &lt;device&gt; &lt;name&gt;</code>. A device that pairs again
+          keeps its identity, sources and data. The list shows each device's version, as described
+          in <a href="/docs/updating#compatibility">version compatibility</a>. A device shows as
+          live only while its connection is open, and otherwise shows when it was last active; not
+          being live is not a fault by itself.
+        </p>
+        <p>
+          <code>omnesis devices revoke &lt;device&gt;</code> invalidates the device's tokens but
+          keeps its identity, so it can be <a href="#repairing-a-device">brought back</a>. Revoking
+          an OpenClaw or Hermes device also signs its agent out of its connection.
+          <code>omnesis devices revoke &lt;device&gt; --forget</code> deletes the device for good,
+          and is refused while it still hosts sources.
+        </p>
+        <p>
+          One device does not stay revoked: the collector on the gateway host. It registers itself
+          with the bootstrap admin token in the same config directory, so it comes back on its next
+          start with its sources intact, although the token it was using stays revoked. To stop it
+          collecting, stop the service with <code>omnesis service stop collector</code>. The revoke
+          command warns you when you revoke that device.
+        </p>
+
+        <h3 id="creating-tokens">Creating tokens</h3>
+        <p>
+          Pairing gives each device the token it needs. For a script or a tool of your own, create
+          an extra token for an existing device, with only the scopes it needs and, ideally, an
+          expiry. The scopes are listed in
+          <a href="/docs/#devices-and-tokens">Devices and connections</a>.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p class="t-dim"># a read-only token for a script, valid for 30 days</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis tokens create --device laptop-cli --scopes read --name "weekly report"
+                --ttl 30d</span
+              >
+            </p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis tokens list</span></p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis tokens revoke &lt;token-id&gt;</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          Without flags, <code>omnesis tokens create</code> asks for the device, the scopes and a
+          label. It never asks for an expiry: without <code>--ttl</code> the token never expires.
+          The token and its id are printed once; keep the id, since
+          <code>omnesis tokens revoke</code> takes it. <code>omnesis tokens list</code> shows each
+          token's label, device, scopes and when it was last used, and revoking the device revokes
+          all its tokens. An integration's tokens can carry only <code>answer</code>,
+          <code>push:claim</code> and write scopes.
+        </p>
+
+        <h3 id="device-access-level">Integrations</h3>
+        <p>
+          An <strong>integration</strong> is someone else's code that asks Omnesis questions for
+          you: a voice assistant's handler, a home-automation hook, a script. Pair it as its own
+          kind: on the portal's Devices page choose <strong>Pair device</strong> →
+          <strong>Integration</strong>, or run
+          <code>omnesis devices pair --kind integration --name "Kitchen display"</code>, naming it
+          for what it does. It is not trusted with your data: its tokens carry the
+          <code>answer</code> scope, plus <code>push:claim</code> or write scopes if you grant them,
+          and no pairing, token or repair can give it more.
+        </p>
+        <p>
+          What its answers may use is set by the
+          <a href="/docs/connect#access-levels">access level</a> you put it on, the same kind of
+          named permission set an agent connection uses: which sources answers draw on, and which
+          privacy policy reviews them. You choose the level in the portal. A code minted from the
+          CLI carries no level, so the integration waits on its Devices card until you pick one;
+          until then its questions are refused. <code>omnesis devices list</code> and
+          <code>omnesis access levels</code> show which integration uses which level.
+        </p>
+        <p>
+          Changing the level applies to the integration's next question; an answer in progress is
+          discarded and the integration has to ask again. While an integration uses a level, you
+          cannot delete that level or remove Answer from it. A revoked integration keeps its level,
+          so repairing it restores the same access, but it does not stop you editing or deleting
+          that level; if the level can no longer answer, the integration's questions are refused
+          until you choose another. An integration that needs raw search or document reads connects
+          over MCP with <strong>Direct</strong> on an access level instead.
+        </p>
+
+        <h3 id="cli-on-another-machine">The CLI on another machine</h3>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p class="t-dim"># on the gateway host</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis devices pair --kind cli</span>
+            </p>
+            <p class="t-dim"># on the new machine</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis pair &lt;code&gt; --gateway-url https://gateway.example.io:7600 --save
+                ~/.config/omnesis/token</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">export OMNESIS_GATEWAY_URL=https://gateway.example.io:7600</span>
+            </p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis whoami</span></p>
+          </div>
+        </div>
+        <p>
+          If you already have a token, <code>OMNESIS_GATEWAY_URL</code> and
+          <code>OMNESIS_TOKEN</code> in the environment are all the CLI needs. On first contact with
+          a self-signed gateway it records the certificate's fingerprint and trusts it from then on.
+        </p>
+
+        <h3 id="external-agents">External agents</h3>
+        <p>
+          External AI agents such as Claude Code, Codex, Claude Desktop, Claude Cowork and ChatGPT
+          don't pair as devices. They connect over MCP and are approved in the portal as
+          connections; see <a href="/docs/connect#bring-your-own-agent">Bring your own agent</a>,
+          including the <code>gateway.publicBaseUrl</code> setting that agents on other machines
+          need.
+        </p>
+
+        <h2 id="repairing-a-device">Bringing a revoked device back</h2>
+        <p>
+          A revoked device that still hosts sources shows as <code>needs-pairing</code> in
+          <code>omnesis devices list</code> (its portal card reads <em>Needs re-pairing</em>),
+          beside devices that are simply <code>paired</code> or <code>revoked</code>. It means a
+          machine is locked out while its sources, memberships and sync positions wait on the
+          gateway. A revoked device with nothing left to bring back reads as <code>revoked</code>.
+        </p>
+        <p>
+          On the locked-out machine, the collector notices that its token is refused, stops
+          reconnecting and records why. <code>omnesis service status</code> there names the device,
+          the gateway and the commands below. It does not pair again by itself; stopping that is the
+          point of revoking.
+        </p>
+        <p>
+          <code>omnesis devices repair</code> mints a pairing code bound to one existing device, so
+          redeeming it restores that device rather than creating a new one. Its id, sources and sync
+          positions survive, and syncing resumes where it stopped instead of starting over. Name the
+          device by id or name.
+        </p>
+        <p>
+          The command refuses a device that is still connected, because a repair replaces the
+          credentials it is using: stop or revoke it first. The same action is in the
+          <strong>…</strong> menu beside an offline device in the portal and both phone apps. A
+          portal session is not repaired: pair the browser again with
+          <code>omnesis devices pair --kind portal</code>.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p class="t-dim"># on the gateway host — a code bound to this exact device</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis devices repair studio-collector</span>
+            </p>
+            <p class="t-dim"># on the locked-out machine</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis pair &lt;code&gt; --gateway-url https://gateway.example.io:7600 --save
+                ~/.config/omnesis/collector-token</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis service start collector</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          A repair code names its device, so redeeming it on the wrong machine cannot take over a
+          different device. The collector on the gateway host needs no repair code: as described
+          above, it registers itself again on its next start.
+        </p>
+        <p>With everything paired, continue with <a href="/docs/search">Search</a>.</p>
+        <nav class="docs-pager" aria-label="Pages">
+          <a href="/docs/install"
+            ><span class="pager-label">Previous</span><span class="pager-title">Install</span></a
+          >
+          <a class="pager-next" href="/docs/search"
+            ><span class="pager-label">Next</span><span class="pager-title">Search</span></a
+          >
+        </nav>
+      </main>
+    </div>
+
+    <footer class="site-footer">
+      <div class="container">
+        <div class="footer-inner">
+          <div class="footer-base">© 2026 Omnesis</div>
+          <nav class="footer-links" aria-label="Footer">
+            <a href="/docs/">Docs</a>
+            <a href="/privacy">Privacy</a>
+            <a class="footer-mail" href="mailto:contact@omnesis.dev">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="2" y="4" width="20" height="16" rx="2" />
+                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+              </svg>
+              contact@omnesis.dev
+            </a>
+            <a class="footer-gh" href="#" data-oss-open>
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path
+                  d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+                />
+              </svg>
+              GitHub
+            </a>
+            <a
+              class="footer-social footer-x"
+              href="https://x.com/Omnesisdev"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Omnesis on X"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>@Omnesisdev
+            </a>
+            <a
+              class="footer-social footer-discord"
+              href="https://discord.gg/4Y8pQHrVv"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Join Omnesis on Discord"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>Discord
+            </a>
+          </nav>
+        </div>
+      </div>
+    </footer>
+
+    <script src="/docs/docs.js"></script>
+  </body>
+</html>

@@ -1,0 +1,36 @@
+{
+  "watch": {
+    "name": "date-trunc-nonsense-arguments",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "mail",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email"
+        },
+        "output_map": {
+          "unknown_unit": "date_trunc('week', $e.semanticTime)",
+          "unit_is_not_a_literal": "date_trunc($e.title, $e.semanticTime)",
+          "value_is_not_an_instant": "date_trunc('month', $e.docId)"
+        }
+      },
+      {
+        "id": "gate",
+        "type": "stateless.transform",
+        "inputs": {
+          "mail": {
+            "role": "arm"
+          }
+        },
+        "query": "SELECT true AS fires"
+      }
+    ],
+    "sink": {
+      "input": "gate"
+    }
+  }
+}

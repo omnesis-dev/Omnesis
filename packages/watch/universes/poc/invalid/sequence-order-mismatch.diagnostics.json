@@ -1,0 +1,15 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "SEQUENCE_ORDER_MISMATCH",
+      "severity": "error",
+      "path": "/watch/nodes/2/order",
+      "message": "'order' must list every arm input exactly once — otherwise the gate silently degrades into an unordered AND.",
+      "details": {
+        "order": ["first", "first"],
+        "armInputs": ["first", "second"]
+      }
+    }
+  ]
+}

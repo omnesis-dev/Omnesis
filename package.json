@@ -1,0 +1,258 @@
+{
+  "name": "omnesis",
+  "license": "AGPL-3.0-or-later",
+  "private": true,
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "workspaces": [
+    "extension",
+    "packages/types",
+    "packages/config",
+    "packages/source-sdk",
+    "packages/core",
+    "packages/agent",
+    "packages/gateway-client",
+    "packages/gateway",
+    "packages/collector",
+    "packages/cli",
+    "packages/cli-shared",
+    "packages/eval",
+    "packages/near-dupes",
+    "packages/watch",
+    "packages/relay",
+    "packages/agent-integration",
+    "packages/providers/*",
+    "packages/providers-synth/*"
+  ],
+  "scripts": {
+    "test": "npm run test:unit && npm run test:e2e",
+    "test:unit": "node scripts/run-check.mjs unit-all",
+    "test:unit:vitest": "node scripts/run-check.mjs unit",
+    "test:unit:smoke": "node scripts/run-check.mjs smoke",
+    "test:unit:no-gateway": "npm run test:unit:vitest && npm run test:hermes",
+    "test:e2e": "node scripts/run-check.mjs e2e",
+    "test:openclaw": "tsc --build packages/agent-integration && node packages/agent-integration/test/openclaw_gateway_probe.mjs",
+    "test:hermes": "python3 -B packages/agent-integration/hermes/test_adapter.py",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "validate-universes": "tsx scripts/validate-universes.mjs",
+    "briefs:footprint": "tsx evals/briefs/src/footprint.ts",
+    "briefs:scorecard": "tsx evals/briefs/src/scorecard.ts",
+    "parity:check": "node scripts/check-parity.mjs",
+    "generate:omnesis-direct-skill": "tsx scripts/generate-omnesis-direct-skill.ts --write",
+    "generate:android-play-assets": "node android/scripts/generate-play-store-assets.mjs",
+    "typecheck": "node scripts/run-check.mjs typecheck",
+    "typecheck:fast": "sh -c 'set -- ${@:-packages/gateway packages/collector packages/cli}; exec tsc --build \"$@\"' --",
+    "typecheck:watch": "tsc --build --watch",
+    "typecheck:tests": "node scripts/run-check.mjs types-tests",
+    "build": "tsc --build",
+    "release": "node scripts/release/conductor.mjs",
+    "release:stage": "node scripts/release/stage-packages.mjs",
+    "runtime:stage": "node scripts/runtime/stage-runtime.mjs",
+    "seeded-state": "node scripts/seeded-state/artifact.mjs",
+    "release:sync-plugins": "node scripts/release/sync-plugin-versions.mjs",
+    "release:check-version": "node scripts/release/check-product-version.mjs",
+    "release:preflight-tag": "node scripts/release/preflight-tag.mjs",
+    "release:publish": "node scripts/release/publish.mjs",
+    "lint": "node scripts/run-check.mjs lint",
+    "lint:fix": "node scripts/run-check.mjs lint --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "privacy:scan": "node scripts/pii-scan.mjs --all",
+    "audit:prod": "node scripts/audit-prod.mjs",
+    "prepare": "lefthook install || true",
+    "gateway": "tsx packages/gateway/src/index.ts",
+    "gateway:dev": "tsx watch packages/gateway/src/index.ts",
+    "collector": "NODE_EXTRA_CA_CERTS=\"${NODE_EXTRA_CA_CERTS:-${OMNESIS_CONFIG_DIR:-$HOME/.config/omnesis}/tls/cert.pem}\" tsx packages/collector/src/main.ts",
+    "collector:dev": "NODE_EXTRA_CA_CERTS=\"${NODE_EXTRA_CA_CERTS:-${OMNESIS_CONFIG_DIR:-$HOME/.config/omnesis}/tls/cert.pem}\" tsx watch packages/collector/src/main.ts",
+    "db:stats": "NODE_EXTRA_CA_CERTS=\"${NODE_EXTRA_CA_CERTS:-${OMNESIS_CONFIG_DIR:-$HOME/.config/omnesis}/tls/cert.pem}\" tsx scripts/db-stats.ts",
+    "cli": "NODE_EXTRA_CA_CERTS=\"${NODE_EXTRA_CA_CERTS:-${OMNESIS_CONFIG_DIR:-$HOME/.config/omnesis}/tls/cert.pem}\" tsx packages/cli/src/index.ts",
+    "status": "NODE_EXTRA_CA_CERTS=\"${NODE_EXTRA_CA_CERTS:-${OMNESIS_CONFIG_DIR:-$HOME/.config/omnesis}/tls/cert.pem}\" tsx packages/cli/src/index.ts status",
+    "add": "NODE_EXTRA_CA_CERTS=\"${NODE_EXTRA_CA_CERTS:-${OMNESIS_CONFIG_DIR:-$HOME/.config/omnesis}/tls/cert.pem}\" tsx packages/cli/src/index.ts sources add",
+    "search": "NODE_EXTRA_CA_CERTS=\"${NODE_EXTRA_CA_CERTS:-${OMNESIS_CONFIG_DIR:-$HOME/.config/omnesis}/tls/cert.pem}\" tsx packages/cli/src/index.ts search",
+    "test:e2e:portal": "node scripts/run-check.mjs portal",
+    "briefs:backtest": "tsx evals/briefs/src/backtest/run.ts",
+    "preinstall": "node scripts/native-runtime-preflight.mjs",
+    "postinstall": "patch-package",
+    "test:unit:raw": "npm run test:unit:vitest && npm run test:unit:smoke && npm run test:openclaw && npm run test:hermes",
+    "checks:status": "node scripts/run-check.mjs status",
+    "checks:cancel": "node scripts/run-check.mjs cancel",
+    "typecheck:tests:raw": "tsc --build && for c in packages/*/tsconfig.tests.json packages/*/*/tsconfig.tests.json extension/tsconfig.tests.json; do tsc -p \"$c\" || exit 1; done",
+    "checks:deadcode": "node scripts/run-check.mjs deadcode --no-progress --include files --include dependencies --include devDependencies --include unresolved",
+    "checks:plan": "node scripts/nx/checks.mjs plan",
+    "checks:affected": "node scripts/nx/checks.mjs affected",
+    "checks:bundle": "node scripts/nx/checks.mjs bundle",
+    "checks:full": "node scripts/nx/checks.mjs full",
+    "wire-fixtures": "tsx scripts/write-wire-fixtures.mjs",
+    "fixtures:release-upgrade": "tsx scripts/fixtures/generate-release-upgrade.mjs"
+  },
+  "overrides": {
+    "@xmldom/xmldom@^0.8.0": "^0.8.15",
+    "@xmldom/xmldom@^0.9.0": "^0.9.12",
+    "brace-expansion@^2.0.0": "^2.1.4",
+    "nanoid@^5.0.0": "^5.1.16",
+    "qs": "^6.16.0",
+    "tar@^7.0.0": "^7.5.22"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.31.0",
+    "@eslint/js": "^10.0.1",
+    "@modelcontextprotocol/client": "2.0.0",
+    "@playwright/test": "^1.52.0",
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.0.0",
+    "@types/picomatch": "^4.0.3",
+    "eslint": "^10.4.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-import-resolver-typescript": "^3.7.0",
+    "eslint-plugin-import-x": "^4.6.0",
+    "eslint-plugin-unicorn": "^74.0.0",
+    "globals": "^15.13.0",
+    "knip": "^6.14.1",
+    "lefthook": "^2.1.9",
+    "nx": "23.2.0",
+    "patch-package": "^8.0.1",
+    "prettier": "^3.4.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.18.0",
+    "vitest": "^4.1.6"
+  },
+  "nx": {
+    "targets": {
+      "nx-unit": {
+        "command": "node scripts/nx/run-project-task.mjs unit scripts",
+        "cache": true
+      },
+      "nx-typecheck": {
+        "command": "node scripts/nx/run-project-task.mjs typecheck .",
+        "cache": true
+      },
+      "nx-lint": {
+        "command": "node scripts/run-check.mjs lint",
+        "cache": true,
+        "inputs": [
+          "default",
+          "^production",
+          "{workspaceRoot}/**/*",
+          {
+            "runtime": "node --version"
+          },
+          {
+            "runtime": "node -p \"process.platform + ':' + process.arch\""
+          },
+          {
+            "env": "CI"
+          },
+          {
+            "env": "TZ"
+          }
+        ]
+      },
+      "nx-unit-all": {
+        "command": "node scripts/run-check.mjs unit-all",
+        "cache": false
+      },
+      "nx-typecheck-all": {
+        "command": "node scripts/run-check.mjs types-tests",
+        "cache": true,
+        "inputs": [
+          "default",
+          "{workspaceRoot}/**/*",
+          {
+            "runtime": "node --version"
+          },
+          {
+            "runtime": "node -p \"process.platform + ':' + process.arch\""
+          },
+          {
+            "env": "CI"
+          },
+          {
+            "env": "TZ"
+          }
+        ]
+      },
+      "nx-guards": {
+        "command": "node scripts/nx/run-global-guards.mjs",
+        "cache": true,
+        "inputs": [
+          "default",
+          "{workspaceRoot}/**/*",
+          "{workspaceRoot}/.prettierrc.json",
+          "{workspaceRoot}/.prettierignore"
+        ]
+      },
+      "nx-full": {
+        "command": "node scripts/nx/run-full.mjs",
+        "cache": false
+      },
+      "nx-bundle-source-lifecycle": {
+        "command": "node scripts/nx/run-bundle.mjs source-lifecycle",
+        "cache": false
+      },
+      "nx-bundle-search-graph": {
+        "command": "node scripts/nx/run-bundle.mjs search-graph",
+        "cache": false
+      },
+      "nx-bundle-agent-brain-watch": {
+        "command": "node scripts/nx/run-bundle.mjs agent-brain-watch",
+        "cache": false
+      },
+      "nx-bundle-browser-capture": {
+        "command": "node scripts/nx/run-bundle.mjs browser-capture",
+        "cache": false
+      },
+      "nx-bundle-portal": {
+        "command": "node scripts/nx/run-bundle.mjs portal",
+        "cache": false
+      },
+      "nx-bundle-ingestion-providers": {
+        "command": "node scripts/nx/run-bundle.mjs ingestion-providers",
+        "cache": false
+      },
+      "nx-bundle-security-notifications": {
+        "command": "node scripts/nx/run-bundle.mjs security-notifications",
+        "cache": false
+      },
+      "nx-bundle-gateway-core": {
+        "command": "node scripts/nx/run-bundle.mjs gateway-core",
+        "cache": false
+      },
+      "nx-bundle-ios-logic": {
+        "command": "node scripts/nx/run-bundle.mjs ios-logic",
+        "cache": false
+      },
+      "nx-bundle-ios-snapshot": {
+        "command": "node scripts/nx/run-bundle.mjs ios-snapshot",
+        "cache": false
+      },
+      "nx-bundle-android-logic": {
+        "command": "node scripts/nx/run-bundle.mjs android-logic",
+        "cache": false
+      },
+      "nx-bundle-android-render": {
+        "command": "node scripts/nx/run-bundle.mjs android-render",
+        "cache": false
+      },
+      "nx-bundle-ios-build": {
+        "command": "node scripts/nx/run-bundle.mjs ios-build",
+        "cache": false
+      },
+      "nx-bundle-android-build": {
+        "command": "node scripts/nx/run-bundle.mjs android-build",
+        "cache": false
+      },
+      "nx-bundle-ios-e2e": {
+        "command": "node scripts/nx/run-bundle.mjs ios-e2e",
+        "cache": false
+      },
+      "nx-bundle-android-e2e": {
+        "command": "node scripts/nx/run-bundle.mjs android-e2e",
+        "cache": false
+      }
+    },
+    "name": "omnesis-workspace"
+  }
+}

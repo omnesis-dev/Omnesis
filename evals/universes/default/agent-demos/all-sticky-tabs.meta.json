@@ -1,0 +1,23 @@
+{
+  "triggers": ["testing all sticky tabs"],
+  "placeholders": {
+    "docExternalIds": [
+      "synth-gmail-001",
+      "synth-gcal-001",
+      "synth-gdrive-001",
+      "synth-gcontact-001",
+      "synth-apple-note-001",
+      "synth-apple-rem-001",
+      "synth-apple-im-001",
+      "synth-apple-contact-001",
+      "synth-notion-page-001",
+      "db-db_projects",
+      "synth-chrome-bm-001",
+      "synth-obsidian-001",
+      "synth-things-001",
+      "synth-whatsapp-001",
+      "synth-outlook-001",
+      "synth-strava-001"
+    ]
+  }
+}

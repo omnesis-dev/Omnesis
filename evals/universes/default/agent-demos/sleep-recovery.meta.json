@@ -1,0 +1,21 @@
+{
+  "triggers": [
+    "sleep's been rubbish",
+    "sleep has been rubbish",
+    "sleep's felt",
+    "why's my sleep",
+    "why is my sleep",
+    "work out what's going on with my sleep",
+    "bad sleep"
+  ],
+  "placeholders": {
+    "docExternalIds": [
+      "synth-whatsapp-claire-late",
+      "synth-gdrive-006",
+      "synth-strava-009",
+      "synth-gcal-apac-1",
+      "synth-gcal-apac-2"
+    ],
+    "personNames": ["Claire Smith"]
+  }
+}

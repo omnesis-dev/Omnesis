@@ -1,0 +1,14 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "NODE_ID_DUPLICATE",
+      "severity": "error",
+      "path": "/watch/nodes/1/id",
+      "message": "Duplicate node id 'mail'.",
+      "details": {
+        "nodeId": "mail"
+      }
+    }
+  ]
+}

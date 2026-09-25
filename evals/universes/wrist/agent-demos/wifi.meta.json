@@ -1,0 +1,6 @@
+{
+  "triggers": ["wifi", "wi-fi", "wireless password"],
+  "placeholders": {
+    "docExternalIds": ["wrist-gmail-welcome-guide"]
+  }
+}

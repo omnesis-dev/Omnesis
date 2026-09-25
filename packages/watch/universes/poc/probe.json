@@ -1,0 +1,71 @@
+{
+  "note": "What the behaviour probe hands back, so a reference describes its own scenario rather than the corpus's traffic. Verdicts are keyed by document id, not by node id, so both sides of a comparison get the same answers whatever they named their nodes. `watch` scopes a verdict to the reference it was written for — the table is one file for the whole corpus, and without scoping a document named for one watch nominates documents for another. `answers` says which question the document answers and is matched against the judge's proposition, so that a watch asking two questions of one stream does not have both answered by the same document. A watch listed in `selective` gets a judge that declines anything it does not name: a judge agreeing with everything makes a semantic watch fire on all the traffic its filter admits, and its reference then measures the season's volume rather than the scenario. Known limitation: `answers` matches words, so it is sensitive to phrasing. A proposition that asks for the same thing in none of the listed words is declined, and one that mentions both sides — 'a receipt for an invoice' — matches both. The word lists are deliberately broad for that reason, and the separation they buy is worth more than the phrasing they grade: without it the pairing this watch is named for is satisfied by a single document.",
+  "judgedOutputs": {
+    "d0c00001-0000-4000-8000-000000000001": {
+      "for": "The flight booking. Its departure is inside six months of the passport expiry the watch freezes as a constant, so the comparison comes out true here and false for every other document the probe feeds it.",
+      "watch": "trip-vs-passport-expiry",
+      "output": {
+        "depart_date": "2031-02-01",
+        "destination_country": "Portugal"
+      },
+      "title": "Your booking is confirmed — LHR to Lisbon, 14 Sep",
+      "source": "gmail",
+      "seq": 122
+    },
+    "d0c00001-0000-4000-8000-000000000012": {
+      "for": "The March retainer invoice.",
+      "watch": "invoice-and-receipt-both-arrived",
+      "answers": ["invoice", "bill", "due", "payable", "owed"],
+      "output": {},
+      "title": "Invoice 2026-03 for March retainer",
+      "source": "gmail",
+      "seq": 72
+    },
+    "d0c00001-0000-4000-8000-000000000013": {
+      "for": "Its receipt, three days later. With the invoice above this is one of the two genuine pairings in the season.",
+      "watch": "invoice-and-receipt-both-arrived",
+      "answers": ["receipt", "paid", "payment", "settled", "remittance"],
+      "output": {},
+      "title": "Receipt — payment received, thank you",
+      "source": "gmail",
+      "seq": 114
+    },
+    "d0c00001-0000-4000-8000-000000000021": {
+      "for": "The April retainer invoice.",
+      "watch": "invoice-and-receipt-both-arrived",
+      "answers": ["invoice", "bill", "due", "payable", "owed"],
+      "output": {},
+      "title": "Invoice 2026-05 for April retainer",
+      "source": "gmail",
+      "seq": 423
+    },
+    "d0c00001-0000-4000-8000-000000000022": {
+      "for": "Its receipt, ten days later — the second pairing.",
+      "watch": "invoice-and-receipt-both-arrived",
+      "answers": ["receipt", "paid", "payment", "settled", "remittance"],
+      "output": {},
+      "title": "Receipt — April retainer settled",
+      "source": "gmail",
+      "seq": 567
+    },
+    "d0c00001-0000-4000-8000-000000000014": {
+      "for": "An invoice due on receipt whose payment never arrives, so the corpus holds an unmatched arm as well as two matched ones.",
+      "watch": "invoice-and-receipt-both-arrived",
+      "answers": ["invoice", "bill", "due", "payable", "owed"],
+      "output": {},
+      "title": "Invoice 2026-04, due on receipt",
+      "source": "gmail",
+      "seq": 85
+    },
+    "d0c00001-0000-4000-8000-000000000015": {
+      "for": "An invoice on a thread with nothing before it — the out-of-order arrival the sequence gate drops.",
+      "watch": "invoice-and-receipt-both-arrived",
+      "answers": ["invoice", "bill", "due", "payable", "owed"],
+      "output": {},
+      "title": "Invoice attached, 14-day terms",
+      "source": "gmail",
+      "seq": 95
+    }
+  },
+  "selective": ["invoice-and-receipt-both-arrived"]
+}

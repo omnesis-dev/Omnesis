@@ -1,0 +1,35 @@
+{
+  "watch": {
+    "name": "time-source-shape-errors",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "both_forms",
+        "type": "source.time",
+        "one_off": "2026-09-01T09:00:00Z",
+        "recurring": "0 9 * * *"
+      },
+      {
+        "id": "bad_instant",
+        "type": "source.time",
+        "one_off": "next tuesday"
+      },
+      {
+        "id": "either",
+        "type": "stateless.or",
+        "inputs": {
+          "both_forms": {
+            "role": "arm"
+          },
+          "bad_instant": {
+            "role": "arm"
+          }
+        }
+      }
+    ],
+    "sink": {
+      "input": "either"
+    }
+  }
+}

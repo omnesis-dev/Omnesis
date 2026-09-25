@@ -1,0 +1,15 @@
+{
+  "note": "The SQL gate does the statistics; the judge only rules on materiality, and only once the gate has held for two days.",
+  "recall": [],
+  "judgements": [
+    {
+      "nodeId": "materiality_judge",
+      "fired": true,
+      "output": {
+        "decision": true,
+        "confidence": "clear",
+        "summary": "Sleep is down about 20 minutes a night and deep+REM is down sharply over the last fortnight."
+      }
+    }
+  ]
+}

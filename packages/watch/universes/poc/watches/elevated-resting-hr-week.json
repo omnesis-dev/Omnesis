@@ -1,0 +1,48 @@
+{
+  "watch": {
+    "name": "elevated-resting-hr-week",
+    "nl_query": "Warn me if my resting heart rate stays above 70 for a whole week.",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "daily_tick",
+        "type": "source.time",
+        "recurring": "0 9 * * *"
+      },
+      {
+        "id": "hr_week_check",
+        "type": "sql",
+        "comment": "Resting HR is a row of the tall vitals table, not a table of its own.",
+        "inputs": {
+          "daily_tick": {
+            "role": "arm"
+          }
+        },
+        "on_collision": "accumulate",
+        "fire_on": "rising_edge",
+        "initial_level": "first_observation",
+        "query": "WITH daily AS (SELECT date_trunc('day', start_time) AS day, avg(value) AS rhr FROM health_vitals WHERE metric_slug = 'resting_hr' AND start_time >= $today - INTERVAL 6 DAY GROUP BY 1) SELECT count(*) = 7 AND min(rhr) > 70 AS fires, round(avg(rhr), 1) AS avg_hr FROM daily",
+        "output_map": {
+          "avg_hr": "avg_hr"
+        }
+      },
+      {
+        "id": "weekly_cap",
+        "type": "stateful.cooldown",
+        "inputs": {
+          "hr_week_check": {
+            "role": "arm"
+          }
+        },
+        "min_interval": "7 days"
+      }
+    ],
+    "sink": {
+      "input": "weekly_cap",
+      "output_map": {
+        "avg_hr": "$n.hr_week_check.avg_hr"
+      }
+    }
+  }
+}

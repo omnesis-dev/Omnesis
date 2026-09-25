@@ -1,0 +1,38 @@
+{
+  "watch": {
+    "name": "event-references-out-of-scope",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "mail",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email"
+        },
+        "output_map": {
+          "nope": "$e.threadId"
+        }
+      },
+      {
+        "id": "gate",
+        "type": "stateless.transform",
+        "inputs": {
+          "mail": {
+            "role": "arm"
+          }
+        },
+        "query": "SELECT true AS fires",
+        "output_map": {
+          "from_event": "$e.docId",
+          "from_edge": ".thread_id"
+        }
+      }
+    ],
+    "sink": {
+      "input": "gate"
+    }
+  }
+}

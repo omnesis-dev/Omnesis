@@ -1,0 +1,72 @@
+[
+  {
+    "externalId": "synth-chrome-bm-001",
+    "title": "Acme Q3 OKR doc",
+    "url": "https://docs.acme.com/okrs/q3-2025",
+    "folder": "Work / Acme",
+    "addedAt": "2025-08-30T09:00:00Z"
+  },
+  {
+    "externalId": "synth-chrome-bm-002",
+    "title": "Globex integration runbook",
+    "url": "https://docs.globex.io/runbooks/omnesis-integration",
+    "folder": "Work / Globex",
+    "addedAt": "2025-09-01T11:00:00Z"
+  },
+  {
+    "externalId": "synth-chrome-bm-003",
+    "title": "Retry policy — exponential backoff with jitter",
+    "url": "https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/",
+    "folder": "Reading / Infra",
+    "addedAt": "2025-08-22T14:00:00Z"
+  },
+  {
+    "externalId": "synth-chrome-bm-004",
+    "title": "ZSA Moonlander",
+    "url": "https://www.zsa.io/moonlander",
+    "folder": "Personal / Gear",
+    "addedAt": "2025-09-10T19:30:00Z"
+  },
+  {
+    "externalId": "synth-chrome-bm-005",
+    "title": "Marathon training plan — Pfitzinger 18/55",
+    "url": "https://www.pfitzingerblog.com/18-55",
+    "folder": "Personal / Running",
+    "addedAt": "2025-09-01T07:30:00Z"
+  },
+  {
+    "externalId": "synth-chrome-bm-006",
+    "title": "Notion API reference",
+    "url": "https://developers.notion.com/reference/intro",
+    "folder": "Work / Tools",
+    "addedAt": "2025-08-25T13:00:00Z"
+  },
+  {
+    "externalId": "synth-chrome-bm-007",
+    "title": "Apple Notes SQLite schema notes",
+    "url": "https://example.com/notes/apple-notes-schema",
+    "folder": "Reading / Apple",
+    "addedAt": "2025-09-03T15:00:00Z"
+  },
+  {
+    "externalId": "synth-chrome-bm-008",
+    "title": "Vendor SOC2 checklist",
+    "url": "https://compliance.example.com/soc2-vendor-checklist",
+    "folder": "Work / Acme",
+    "addedAt": "2025-09-05T09:00:00Z"
+  },
+  {
+    "externalId": "synth-chrome-bm-009",
+    "title": "Better-sqlite3 docs",
+    "url": "https://github.com/WiseLibs/better-sqlite3/blob/master/docs/api.md",
+    "folder": "Work / Tools",
+    "addedAt": "2025-08-18T10:00:00Z"
+  },
+  {
+    "externalId": "synth-chrome-bm-010",
+    "title": "Strava activity export API",
+    "url": "https://developers.strava.com/docs/reference/",
+    "folder": "Personal / Running",
+    "addedAt": "2025-09-07T20:00:00Z"
+  }
+]

@@ -1,0 +1,223 @@
+{
+  "trace": {
+    "watch": "large-card-spending-streak",
+    "records": [
+      {
+        "seq": 148,
+        "nodeId": "large_txn",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 148,
+        "nodeId": "sustained_streak",
+        "key": "singleton",
+        "transition": "accumulated",
+        "detail": "1 of 3 within 7 days"
+      },
+      {
+        "seq": 179,
+        "nodeId": "large_txn",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 179,
+        "nodeId": "sustained_streak",
+        "key": "singleton",
+        "transition": "accumulated",
+        "detail": "2 of 3 within 7 days"
+      },
+      {
+        "seq": 198,
+        "nodeId": "large_txn",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 198,
+        "nodeId": "sustained_streak",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 220,
+        "nodeId": "large_txn",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 220,
+        "nodeId": "sustained_streak",
+        "key": "singleton",
+        "transition": "accumulated",
+        "detail": "1 of 3 within 7 days"
+      },
+      {
+        "seq": 248,
+        "nodeId": "large_txn",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 248,
+        "nodeId": "sustained_streak",
+        "key": "singleton",
+        "transition": "accumulated",
+        "detail": "2 of 3 within 7 days"
+      },
+      {
+        "seq": 395,
+        "nodeId": "large_txn",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 395,
+        "nodeId": "sustained_streak",
+        "key": "singleton",
+        "transition": "accumulated",
+        "detail": "1 of 3 within 7 days"
+      },
+      {
+        "seq": 429,
+        "nodeId": "large_txn",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 429,
+        "nodeId": "sustained_streak",
+        "key": "singleton",
+        "transition": "accumulated",
+        "detail": "2 of 3 within 7 days"
+      },
+      {
+        "seq": 453,
+        "nodeId": "large_txn",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 453,
+        "nodeId": "sustained_streak",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 542,
+        "nodeId": "large_txn",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 542,
+        "nodeId": "sustained_streak",
+        "key": "singleton",
+        "transition": "accumulated",
+        "detail": "1 of 3 within 7 days"
+      },
+      {
+        "seq": 599,
+        "nodeId": "large_txn",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 599,
+        "nodeId": "sustained_streak",
+        "key": "singleton",
+        "transition": "accumulated",
+        "detail": "2 of 3 within 7 days"
+      },
+      {
+        "seq": 766,
+        "nodeId": "large_txn",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 766,
+        "nodeId": "sustained_streak",
+        "key": "singleton",
+        "transition": "accumulated",
+        "detail": "1 of 3 within 7 days"
+      },
+      {
+        "seq": 996,
+        "nodeId": "large_txn",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 996,
+        "nodeId": "sustained_streak",
+        "key": "singleton",
+        "transition": "accumulated",
+        "detail": "1 of 3 within 7 days"
+      },
+      {
+        "seq": 1024,
+        "nodeId": "large_txn",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1024,
+        "nodeId": "sustained_streak",
+        "key": "singleton",
+        "transition": "accumulated",
+        "detail": "2 of 3 within 7 days"
+      },
+      {
+        "seq": 1067,
+        "nodeId": "large_txn",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1067,
+        "nodeId": "sustained_streak",
+        "key": "singleton",
+        "transition": "fired"
+      }
+    ],
+    "firings": [
+      {
+        "seq": 198,
+        "nodeId": "sustained_streak",
+        "keyHash": "e3b0c44298fc1c149afbf4c8996fb924:0",
+        "key": "singleton",
+        "firedAt": "2026-03-16T13:00:00.000Z",
+        "payload": { "last_amount": 205 },
+        "documentIds": []
+      },
+      {
+        "seq": 453,
+        "nodeId": "sustained_streak",
+        "keyHash": "e3b0c44298fc1c149afbf4c8996fb924:0",
+        "key": "singleton",
+        "firedAt": "2026-04-05T13:00:00.000Z",
+        "payload": { "last_amount": 230 },
+        "documentIds": []
+      },
+      {
+        "seq": 1067,
+        "nodeId": "sustained_streak",
+        "keyHash": "e3b0c44298fc1c149afbf4c8996fb924:0",
+        "key": "singleton",
+        "firedAt": "2026-05-18T13:00:00.000Z",
+        "payload": { "last_amount": 480 },
+        "documentIds": []
+      }
+    ]
+  },
+  "backtest": {
+    "events": 1208,
+    "days": 90,
+    "firings": 3,
+    "reachByNode": {},
+    "totalReaches": 0,
+    "unboundedNodes": []
+  }
+}

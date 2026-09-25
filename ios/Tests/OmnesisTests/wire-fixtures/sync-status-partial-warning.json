@@ -1,0 +1,34 @@
+{
+  "sourceId": "fixture:workspace:demo",
+  "state": "completed",
+  "coverage": "unknown",
+  "progress": {
+    "phase": "incremental",
+    "processed": 40,
+    "coverage": "unknown"
+  },
+  "issueAssessments": [
+    {
+      "code": "snapshot-withheld",
+      "scope": "partition",
+      "subject": "Unreadable folder"
+    }
+  ],
+  "issues": [
+    {
+      "code": "snapshot-withheld",
+      "scope": "partition",
+      "kind": "permission",
+      "count": 1,
+      "subject": "Unreadable folder",
+      "message": "Deletion detection is withheld for an unreadable folder.",
+      "remediation": {
+        "summary": "Restore folder access",
+        "steps": [
+          "Check folder permissions."
+        ],
+        "restartRequired": false
+      }
+    }
+  ]
+}

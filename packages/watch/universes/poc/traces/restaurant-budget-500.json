@@ -1,0 +1,189 @@
+{
+  "trace": {
+    "watch": "restaurant-budget-500",
+    "records": [
+      {
+        "seq": 37,
+        "nodeId": "restaurant_txn",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 37,
+        "nodeId": "month_over_500",
+        "key": "month=2026-03-01",
+        "transition": "held"
+      },
+      {
+        "seq": 102,
+        "nodeId": "restaurant_txn",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 102,
+        "nodeId": "month_over_500",
+        "key": "month=2026-03-01",
+        "transition": "held"
+      },
+      {
+        "seq": 108,
+        "nodeId": "restaurant_txn",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 108,
+        "nodeId": "month_over_500",
+        "key": "month=2026-03-01",
+        "transition": "held"
+      },
+      {
+        "seq": 248,
+        "nodeId": "restaurant_txn",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 248,
+        "nodeId": "month_over_500",
+        "key": "month=2026-03-01",
+        "transition": "fired"
+      },
+      {
+        "seq": 414,
+        "nodeId": "restaurant_txn",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 414,
+        "nodeId": "month_over_500",
+        "key": "month=2026-04-01",
+        "transition": "held"
+      },
+      {
+        "seq": 474,
+        "nodeId": "restaurant_txn",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 474,
+        "nodeId": "month_over_500",
+        "key": "month=2026-04-01",
+        "transition": "held"
+      },
+      {
+        "seq": 542,
+        "nodeId": "restaurant_txn",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 542,
+        "nodeId": "month_over_500",
+        "key": "month=2026-04-01",
+        "transition": "fired"
+      },
+      {
+        "seq": 675,
+        "nodeId": "restaurant_txn",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 675,
+        "nodeId": "month_over_500",
+        "key": "month=2026-04-01",
+        "transition": "held",
+        "detail": "already holding"
+      },
+      {
+        "seq": 852,
+        "nodeId": "restaurant_txn",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 852,
+        "nodeId": "month_over_500",
+        "key": "month=2026-05-01",
+        "transition": "held"
+      },
+      {
+        "seq": 942,
+        "nodeId": "restaurant_txn",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 942,
+        "nodeId": "month_over_500",
+        "key": "month=2026-05-01",
+        "transition": "held"
+      },
+      {
+        "seq": 1052,
+        "nodeId": "restaurant_txn",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1052,
+        "nodeId": "month_over_500",
+        "key": "month=2026-05-01",
+        "transition": "held"
+      },
+      {
+        "seq": 1151,
+        "nodeId": "restaurant_txn",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1151,
+        "nodeId": "month_over_500",
+        "key": "month=2026-05-01",
+        "transition": "fired"
+      }
+    ],
+    "firings": [
+      {
+        "seq": 248,
+        "nodeId": "month_over_500",
+        "keyHash": "5b9adb7979a79b2b5eb1cc9760f764ba:0",
+        "key": "month=2026-03-01",
+        "firedAt": "2026-03-20T21:00:00.000Z",
+        "payload": { "month": "2026-03-01", "total": 556.15 },
+        "documentIds": []
+      },
+      {
+        "seq": 542,
+        "nodeId": "month_over_500",
+        "keyHash": "0de91305c384fb63a829d57394109e75:0",
+        "key": "month=2026-04-01",
+        "firedAt": "2026-04-11T20:00:00.000Z",
+        "payload": { "month": "2026-04-01", "total": 520 },
+        "documentIds": []
+      },
+      {
+        "seq": 1151,
+        "nodeId": "month_over_500",
+        "keyHash": "f2db46b45c58aa694505671cda86489d:0",
+        "key": "month=2026-05-01",
+        "firedAt": "2026-05-24T20:00:00.000Z",
+        "payload": { "month": "2026-05-01", "total": 505 },
+        "documentIds": []
+      }
+    ]
+  },
+  "backtest": {
+    "events": 1208,
+    "days": 90,
+    "firings": 3,
+    "reachByNode": {},
+    "totalReaches": 0,
+    "unboundedNodes": []
+  }
+}

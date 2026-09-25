@@ -1,0 +1,92 @@
+[
+  {
+    "externalId": "synth-notion-page-001",
+    "title": "Engineering wiki — home",
+    "body": "# Engineering wiki\n\nLanding page for the engineering team's notes.\n\nKey areas: infra, integrations, on-call.",
+    "createdAt": "2025-08-10T09:00:00Z",
+    "modifiedAt": "2025-09-12T15:00:00Z",
+    "author": "self",
+    "tags": ["wiki"]
+  },
+  {
+    "externalId": "synth-notion-page-002",
+    "title": "Globex integration — kickoff",
+    "body": "# Globex integration — kickoff\n\nStakeholders: John Smith (lead), Alex Chen (Globex eng).\n\nGoals: API contract by week 2, beta by week 4, GA by week 8.\n\nKey docs: integration runbook, retry policy.",
+    "createdAt": "2025-08-15T11:00:00Z",
+    "modifiedAt": "2025-09-01T13:00:00Z",
+    "author": "self",
+    "tags": ["project", "globex"]
+  },
+  {
+    "externalId": "synth-notion-page-003",
+    "title": "Vendor evaluation — comparison matrix",
+    "body": "# Vendor evaluation — comparison matrix\n\nOwner: Jane Doe\n\nVendors: Globex, Nimbus. Comparison axes: throughput, SOC2, pricing, support.\n\nCurrent leaning: Globex pending SOC2 attestation.",
+    "createdAt": "2025-08-28T15:30:00Z",
+    "modifiedAt": "2025-09-07T10:30:00Z",
+    "author": "p_jane",
+    "tags": ["acme", "vendor"]
+  },
+  {
+    "externalId": "synth-notion-page-004",
+    "title": "Retry policy — design notes",
+    "body": "# Retry policy — design notes\n\nExponential backoff with jitter. Floor 200ms, ceiling 30s.\n\nReviewed by: Alex Chen.",
+    "createdAt": "2025-08-22T13:30:00Z",
+    "modifiedAt": "2025-09-04T16:30:00Z",
+    "author": "self",
+    "tags": ["engineering", "infra"]
+  },
+  {
+    "externalId": "synth-notion-page-005",
+    "title": "Q3 OKRs",
+    "body": "# Q3 OKRs\n\nObjective 1: Ship Globex integration GA. KR: 2025-09-25.\nObjective 2: Cut writer-worker tail latency. KR: p99 < 250ms.\nObjective 3: Hire one SRE. KR: signed by end of quarter.",
+    "createdAt": "2025-09-01T08:30:00Z",
+    "modifiedAt": "2025-09-12T11:00:00Z",
+    "author": "self",
+    "tags": ["planning", "leadership"]
+  },
+  {
+    "externalId": "synth-notion-page-006",
+    "title": "On-call rotation — September",
+    "body": "# On-call rotation — September\n\n- Week 1: Emma Park\n- Week 2: Alex Chen\n- Week 3: Self (John)\n- Week 4: Carol Nakamura\n\nEscalation: ping the channel, then phone.",
+    "createdAt": "2025-08-30T17:00:00Z",
+    "modifiedAt": "2025-09-01T09:00:00Z",
+    "author": "p_emma",
+    "tags": ["on-call"]
+  },
+  {
+    "externalId": "synth-notion-page-007",
+    "title": "Offsite agenda — September 18-20",
+    "body": "# Offsite agenda — September 18-20\n\nOwner: Emma Park.\n\nDay 1: state of the company.\nDay 2: deep-dives (Globex, vendor evaluation, infra).\nDay 3: half-day social.\n\nLogistics in [Offsite logistics](mailto:emma.park@acme.example).",
+    "createdAt": "2025-09-02T14:00:00Z",
+    "modifiedAt": "2025-09-09T16:00:00Z",
+    "author": "p_emma",
+    "tags": ["offsite", "acme"]
+  },
+  {
+    "externalId": "synth-notion-page-008",
+    "title": "Demo prep — Friday",
+    "body": "# Demo prep — Friday\n\nSlot: 2:30 PM, Mercury room. Audience: leadership.\n\nFlow: 1) top-line numbers, 2) the slow-query view, 3) Q&A.",
+    "createdAt": "2025-09-11T08:30:00Z",
+    "modifiedAt": "2025-09-12T17:30:00Z",
+    "author": "self",
+    "tags": ["demo", "acme"]
+  },
+  {
+    "externalId": "synth-notion-page-009",
+    "title": "SOC2 — vendor checklist",
+    "body": "# SOC2 — vendor checklist\n\nFollowing the Acme compliance checklist. Globex pending Nov attestation.\n\nGap analysis under NDA — Jane to send.",
+    "createdAt": "2025-09-05T11:00:00Z",
+    "modifiedAt": "2025-09-10T16:00:00Z",
+    "author": "p_jane",
+    "tags": ["acme", "compliance"]
+  },
+  {
+    "externalId": "synth-notion-page-010",
+    "title": "Marathon training — week 6",
+    "body": "# Marathon training — week 6\n\nMileage target: 75 km. Long run 25 km. Workout: 6×800m intervals.\n\nCoach: Carol Nakamura.",
+    "createdAt": "2025-09-08T07:30:00Z",
+    "modifiedAt": "2025-09-13T07:30:00Z",
+    "author": "self",
+    "tags": ["training", "personal"]
+  }
+]

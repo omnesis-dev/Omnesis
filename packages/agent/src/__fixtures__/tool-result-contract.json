@@ -1,0 +1,273 @@
+{
+  "_comment": [
+    "Canonical cross-surface tool-result contract fixture (epic #804, criterion C19).",
+    "SINGLE SOURCE OF TRUTH for the agent tool-result wire shape. The TS round-trip",
+    "test (packages/agent/src/tool-result-contract.test.ts) drives each real server",
+    "projector and asserts its output equals the `wire` payload here (no advertised",
+    "field is silently dropped). The Swift (ios/Tests/OmnesisTests/Fixtures/) and",
+    "Kotlin (android/core-transport/src/test/resources/) mirror copies are kept",
+    "byte-identical to this file by that same test, and the iOS / Android decode",
+    "tests load their mirror and assert every field a surface models decodes.",
+    "All data is INVENTED (fictional docs / sources / people / values) per the repo",
+    "privacy rules — never sourced from any real corpus.",
+    "Emphasis is on the fields that have been silently dead-wired on clients before:",
+    "DocRef.refCount + DocRef.breadcrumb, cite_record primaryKeyColumns +",
+    "snapshot (#757), and run_sql rowIdentities (#757)."
+  ],
+  "cases": [
+    {
+      "kind": "search.results",
+      "wire": {
+        "kind": "search.results",
+        "query": "quarterly budget review",
+        "durationMs": 18.5,
+        "candidates": 42,
+        "results": [
+          {
+            "documentId": "doc-budget-001",
+            "sourceType": "demo-mail",
+            "sourceId": "demo-mail:work",
+            "documentType": "email",
+            "title": "Q4 budget review agenda",
+            "snippet": "Agenda for the quarterly budget review with Maya Reeves.",
+            "ts": 1717200000000,
+            "url": "https://mail.example.com/m/doc-budget-001",
+            "appUrl": "demomail://message/doc-budget-001",
+            "mimeType": "text/plain",
+            "people": ["Maya Reeves", "Jamie Lopez"],
+            "unitName": "emails",
+            "refCount": 7,
+            "breadcrumb": [
+              {
+                "documentId": "doc-budget-002",
+                "title": "Q4 budget spreadsheet",
+                "edge": "attachment",
+                "appUrl": "demodrive://file/doc-budget-002"
+              },
+              {
+                "documentId": "doc-budget-003",
+                "title": "Re: Q4 budget review agenda",
+                "edge": "email-thread"
+              }
+            ]
+          },
+          {
+            "documentId": "doc-budget-004",
+            "sourceType": "demo-notes",
+            "sourceId": "demo-notes:personal",
+            "title": "Budget prep notes",
+            "snippet": "Numbers to confirm before the review.",
+            "ts": 1717113600000,
+            "unitName": "notes"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "document",
+      "wire": {
+        "kind": "document",
+        "ref": {
+          "documentId": "doc-budget-001",
+          "sourceType": "demo-mail",
+          "sourceId": "demo-mail:work",
+          "documentType": "email",
+          "title": "Q4 budget review agenda",
+          "snippet": "Agenda for the quarterly budget review with Maya Reeves.",
+          "ts": 1717200000000,
+          "url": "https://mail.example.com/m/doc-budget-001",
+          "appUrl": "demomail://message/doc-budget-001",
+          "mimeType": "text/plain",
+          "people": ["Maya Reeves"],
+          "unitName": "emails"
+        },
+        "document": {
+          "id": "doc-budget-001",
+          "sourceId": "demo-mail:work",
+          "title": "Q4 budget review agenda",
+          "content": "Hi Jamie, here is the agenda for the quarterly budget review.",
+          "sourceCreatedAt": "2026-06-01T00:00:00.000Z"
+        },
+        "neighbors": [
+          {
+            "documentId": "doc-budget-002",
+            "sourceType": "demo-drive",
+            "sourceId": "demo-drive:work",
+            "documentType": "file",
+            "title": "Q4 budget spreadsheet",
+            "ts": 1717200000000,
+            "appUrl": "demodrive://file/doc-budget-002",
+            "mimeType": "application/vnd.ms-excel",
+            "unitName": "files"
+          }
+        ],
+        "neighborsTruncated": true
+      }
+    },
+    {
+      "kind": "person.results",
+      "wire": {
+        "kind": "person.results",
+        "query": "maya",
+        "durationMs": 4.25,
+        "results": [
+          {
+            "canonicalId": "person-maya-reeves",
+            "displayName": "Maya Reeves",
+            "aliases": ["maya.reeves@example.com", "Maya Reeves", "+1 (555) 010-0042"],
+            "emailCount": 31,
+            "meetingCount": 8,
+            "chatCount": 12,
+            "lastInteraction": 1717200000000,
+            "avatarHash": "a1b2c3",
+            "interactionScore": 0.84
+          }
+        ]
+      }
+    },
+    {
+      "kind": "annotate.recorded",
+      "wire": {
+        "kind": "annotate.recorded",
+        "documentId": "doc-budget-001",
+        "ref": {
+          "documentId": "doc-budget-001",
+          "sourceType": "demo-mail",
+          "sourceId": "demo-mail:work",
+          "documentType": "email",
+          "title": "Q4 budget review agenda",
+          "unitName": "emails"
+        },
+        "quote": "We agreed to revisit the travel line item.",
+        "quoteAuthor": "You",
+        "quoteIsSelf": true,
+        "note": "Key decision on the travel budget."
+      }
+    },
+    {
+      "kind": "cite_record.recorded",
+      "wire": {
+        "kind": "cite_record.recorded",
+        "table": "demo_transactions",
+        "recordKey": "row:demo_transactions:txn-7781",
+        "primaryKeyColumns": [{ "name": "id", "value": "txn-7781", "castType": "VARCHAR" }],
+        "title": "Stellar Sound — 42.00",
+        "keyFields": [
+          { "label": "Merchant", "value": "Stellar Sound" },
+          { "label": "Amount", "value": "42.00" },
+          { "label": "Reconciled", "value": true },
+          { "label": "Memo", "value": null }
+        ],
+        "semanticTime": "2026-05-23T10:00:00.000Z",
+        "snapshot": {
+          "id": "txn-7781",
+          "merchant": "Stellar Sound",
+          "amount": "42.00",
+          "reconciled": true,
+          "memo": null
+        },
+        "sourceId": "demo-bank:checking",
+        "sourceType": "demo-bank",
+        "tableDisplayName": "Demo Transactions",
+        "boundDocumentId": "doc-receipt-7781"
+      }
+    },
+    {
+      "kind": "event_trail.built",
+      "wire": {
+        "kind": "event_trail.built",
+        "seeds": ["doc-receipt-7781"],
+        "truncated": false,
+        "stats": { "visited": 3, "elapsedMs": 6.5, "maxDepthReached": 2 },
+        "events": [
+          {
+            "eventId": "doc-receipt-7781",
+            "at": "2026-05-23T10:00:00.000Z",
+            "kind": "document",
+            "doc": {
+              "documentId": "doc-receipt-7781",
+              "title": "Receipt — Stellar Sound",
+              "sourceId": "demo-mail:work",
+              "sourceUrl": "https://mail.example.com/m/doc-receipt-7781",
+              "appUrl": "demomail://message/doc-receipt-7781",
+              "documentType": "email",
+              "mimeType": "text/plain"
+            },
+            "record": {
+              "recordKey": "row:demo_transactions:txn-7781",
+              "table": "demo_transactions",
+              "tableDisplayName": "Demo Transactions",
+              "title": "Stellar Sound — 42.00",
+              "keyFields": [
+                { "label": "Merchant", "value": "Stellar Sound" },
+                { "label": "Amount", "value": "42.00" }
+              ],
+              "semanticTime": "2026-05-23T10:00:00.000Z",
+              "sourceId": "demo-bank:checking",
+              "sourceType": "demo-bank",
+              "boundDocumentId": "doc-receipt-7781",
+              "snapshot": {
+                "id": "txn-7781",
+                "merchant": "Stellar Sound",
+                "amount": "42.00"
+              }
+            },
+            "attachments": [],
+            "people": [
+              {
+                "personId": "person-maya-reeves",
+                "name": "Maya Reeves",
+                "role": "sender",
+                "isSelf": false
+              }
+            ],
+            "related": [
+              {
+                "documentId": "doc-budget-001",
+                "title": "Q4 budget review agenda",
+                "sourceId": "demo-mail:work",
+                "linkType": "near-duplicate",
+                "direction": "peer"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kind": "sql.rows",
+      "wire": {
+        "kind": "sql.rows",
+        "sql": "SELECT id, merchant, amount FROM demo_transactions ORDER BY amount DESC LIMIT 2",
+        "columns": ["id", "merchant", "amount"],
+        "rows": [
+          ["txn-7781", "Stellar Sound", "42.00"],
+          ["txn-7782", "Studio Northstar", "18.50"]
+        ],
+        "rowCount": 2,
+        "truncated": false,
+        "durationMs": 2.75,
+        "rowIdentities": [
+          {
+            "table": "demo_transactions",
+            "recordKey": "row:demo_transactions:txn-7781",
+            "primaryKeyColumns": [{ "name": "id", "value": "txn-7781", "castType": "VARCHAR" }]
+          },
+          {
+            "table": "demo_transactions",
+            "recordKey": "row:demo_transactions:txn-7782",
+            "primaryKeyColumns": [{ "name": "id", "value": "txn-7782", "castType": "VARCHAR" }]
+          }
+        ],
+        "sources": [
+          {
+            "sourceId": "demo-bank:checking",
+            "sourceType": "demo-bank",
+            "displayName": "Demo Bank"
+          }
+        ],
+        "subjects": ["Demo Transactions"]
+      }
+    }
+  ]
+}

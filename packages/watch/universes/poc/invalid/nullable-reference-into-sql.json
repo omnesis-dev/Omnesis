@@ -1,0 +1,73 @@
+{
+  "watch": {
+    "name": "nullable-reference-into-sql",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "email_branch",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email",
+          "people": [
+            {
+              "role": "sender",
+              "isSelf": false
+            }
+          ]
+        },
+        "output_map": {
+          "doc_id": "$e.docId"
+        }
+      },
+      {
+        "id": "chat_branch",
+        "type": "source.document_event",
+        "filter": {
+          "source": "whatsapp-messages",
+          "event": ["created"],
+          "people": [
+            {
+              "role": "participant",
+              "person": "b3f2a9d4-0000-4000-8000-000000000002"
+            }
+          ]
+        },
+        "output_map": {
+          "doc_id": "$e.docId"
+        }
+      },
+      {
+        "id": "either",
+        "type": "stateless.or",
+        "inputs": {
+          "email_branch": {
+            "role": "arm"
+          },
+          "chat_branch": {
+            "role": "arm"
+          }
+        },
+        "output_map": {
+          "email_doc": "$n.email_branch.doc_id",
+          "chat_doc": "$n.chat_branch.doc_id"
+        }
+      },
+      {
+        "id": "gate",
+        "type": "stateless.transform",
+        "inputs": {
+          "either": {
+            "role": "arm"
+          }
+        },
+        "query": "SELECT ($n.either.email_doc IS NOT NULL) AS fires"
+      }
+    ],
+    "sink": {
+      "input": "gate"
+    }
+  }
+}

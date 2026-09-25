@@ -1,0 +1,14 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "SQL_FROM_NOT_ALLOWED",
+      "severity": "error",
+      "path": "/watch/nodes/1/query",
+      "message": "A transform is a FROM-less expression. Reading a table makes it a 'sql' node.",
+      "details": {
+        "tables": ["health_vitals"]
+      }
+    }
+  ]
+}

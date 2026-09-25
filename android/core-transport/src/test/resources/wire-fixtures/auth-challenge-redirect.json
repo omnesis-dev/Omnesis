@@ -1,0 +1,12 @@
+{
+  "flowId": "fixture-flow",
+  "type": "challenge",
+  "id": "question-redirect",
+  "challenge": {
+    "kind": "redirect",
+    "title": "Connect account",
+    "url": "https://example.com/connect",
+    "via": "elsewhere"
+  },
+  "expectsAnswer": false
+}

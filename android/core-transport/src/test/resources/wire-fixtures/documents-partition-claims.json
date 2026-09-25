@@ -1,0 +1,34 @@
+{
+  "providerId": "fixture",
+  "sourceId": "fixture:workspace:demo",
+  "documents": [
+    {
+      "providerId": "fixture",
+      "sourceId": "fixture:workspace:demo",
+      "externalId": "note-1",
+      "title": "Fixture note",
+      "content": "Fictional content",
+      "contentHash": "fixture-hash",
+      "metadata": {},
+      "sourceCreatedAt": "2030-01-01T00:00:00.000Z",
+      "sourceUpdatedAt": "2030-01-01T00:00:00.000Z",
+      "partitionKey": "folder:one"
+    }
+  ],
+  "presentClaims": [
+    {
+      "partition": "folder:one",
+      "ids": [
+        "note-1"
+      ]
+    },
+    {
+      "partition": "folder:two",
+      "ids": []
+    }
+  ],
+  "hasMore": false,
+  "cursor": {
+    "offset": 12
+  }
+}

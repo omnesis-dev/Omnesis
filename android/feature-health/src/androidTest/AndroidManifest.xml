@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Tier B test-APK manifest. The library's main manifest merges in (all READ
+  health permissions, the Health Connect <queries> entry, and the
+  permissions-rationale activity + ViewPermissionUsageActivity alias — Health
+  Connect refuses to grant to an app missing those). This manifest adds what
+  only the test needs:
+
+  - WRITE permissions for the record types the test seeds — the test APK is
+    both the writer (insertRecords) and the reader (production
+    HealthConnectSource).
+  - TierBHostActivity, the blank foreground host the test keeps resumed so
+    reads don't require the background-read grant, and the launchpad for the
+    permission-contract intent (fully-qualified name: the test APK's namespace
+    is `<library namespace>.test`, so a relative name would resolve wrong).
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.health.WRITE_WEIGHT" />
+    <uses-permission android:name="android.permission.health.WRITE_STEPS" />
+    <uses-permission android:name="android.permission.health.WRITE_HEART_RATE" />
+    <uses-permission android:name="android.permission.health.WRITE_SLEEP" />
+    <uses-permission android:name="android.permission.health.WRITE_ACTIVE_CALORIES_BURNED" />
+    <uses-permission android:name="android.permission.health.WRITE_TOTAL_CALORIES_BURNED" />
+    <uses-permission android:name="android.permission.health.WRITE_DISTANCE" />
+    <uses-permission android:name="android.permission.health.WRITE_BASAL_BODY_TEMPERATURE" />
+    <uses-permission android:name="android.permission.health.WRITE_POWER" />
+    <uses-permission android:name="android.permission.health.WRITE_MENSTRUATION" />
+
+    <application>
+        <activity
+            android:name="dev.omnesis.android.feature.health.TierBHostActivity"
+            android:exported="false" />
+    </application>
+</manifest>

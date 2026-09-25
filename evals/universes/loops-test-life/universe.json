@@ -1,0 +1,35 @@
+{
+  "name": "loops-test-life",
+  "description": "The Briefs / Cognition Steward 'test life' (epic #137 S13). This universe carries only the AMBIENT corpus — a small, fully invented base of emails and calendar events, every fixture dated far enough in the past that the waker's recency gate treats the initial sync as backfill (zero data runs at boot; asserted by the reconcile e2e). The planted commitment→resolution arcs are NOT fixtures: universes have no timeline mechanism, so the seeded arc kit (packages/collector/src/e2e/briefs-arcs.ts) generates them and the driver delivers them over time through the harness push path. The committed daily datum mix for the scorecard's tokens-per-day reporting (criterion 13) is the arc kit's frozen-seed set plus this ambient corpus.",
+  "cast": "cast.json",
+  "agentDemos": "agent-demos",
+  "devices": [
+    {
+      "id": "macbook",
+      "name": "Alexs-MacBook-Pro-collector",
+      "kind": "collector"
+    }
+  ],
+  "sources": [
+    {
+      "descriptorId": "gmail",
+      "accountIds": ["alex.rivera@example.com"],
+      "device": "macbook"
+    },
+    {
+      "descriptorId": "google-calendar",
+      "accountIds": ["alex.rivera@example.com"],
+      "device": "macbook"
+    },
+    {
+      "descriptorId": "google-drive",
+      "accountIds": ["alex.rivera@example.com"],
+      "device": "macbook"
+    },
+    {
+      "descriptorId": "google-contacts",
+      "accountIds": ["alex.rivera@example.com"],
+      "device": "macbook"
+    }
+  ]
+}

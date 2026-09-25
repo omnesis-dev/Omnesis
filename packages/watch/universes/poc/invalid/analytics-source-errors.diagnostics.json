@@ -1,0 +1,32 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "SQL_UNPARSEABLE",
+      "severity": "error",
+      "path": "/watch/nodes/0/predicate",
+      "message": "Row predicate does not lex as a SQL expression: unterminated string literal.",
+      "details": {
+        "problem": "unterminated string literal"
+      }
+    },
+    {
+      "code": "ANALYTICS_TABLE_UNKNOWN",
+      "severity": "error",
+      "path": "/watch/nodes/0/table",
+      "message": "No analytics table 'northstar_transactions' in the catalog.",
+      "details": {
+        "table": "northstar_transactions",
+        "known": [
+          "health_vitals",
+          "health_sleep",
+          "plaid_transactions",
+          "google_calendar_events",
+          "google_calendar_attendees",
+          "people",
+          "apple_call_log"
+        ]
+      }
+    }
+  ]
+}

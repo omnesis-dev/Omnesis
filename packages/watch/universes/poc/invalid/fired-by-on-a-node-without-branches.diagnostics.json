@@ -1,0 +1,15 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "REF_FIRED_BY_UNSUPPORTED",
+      "severity": "error",
+      "path": "/watch/sink/output_map/via",
+      "message": "'$fired_by' says which branch fired; only OR and N-of-M nodes have branches.",
+      "details": {
+        "nodeId": "waiting",
+        "nodeType": "stateful.wait"
+      }
+    }
+  ]
+}

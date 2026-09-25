@@ -1,0 +1,63 @@
+name: knip
+
+# Full validation supplies one immutable source revision to this reusable lane.
+# Manual full requests enter through the guarded admission controller.
+on:
+  workflow_call:
+    inputs:
+      target_sha:
+        description: "Exact 40-character source revision to validate"
+        required: true
+        type: string
+
+jobs:
+  knip:
+    runs-on: [self-hosted, Linux]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          # Deliberately no `cache: npm` — see docs/agent-gotchas.md. These
+          # runners are self-hosted, so `~/.npm` is already on the machine; the
+          # action only ships an ever-growing copy of it back and forth.
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: lane [knip]
+        # knip exits 1 on ANY issue regardless of `rules.<x>` severity —
+        # the `error` / `warn` config only affects output labels, not
+        # the exit code. To block CI only on high-confidence findings,
+        # restrict the scan to the issue types we treat as fatal:
+        #   - files            : a source file unreachable from any entry
+        #   - dependencies     : a package.json dep never imported
+        #   - devDependencies  : same, for devDeps
+        #   - unresolved       : an import that won't resolve at runtime
+        # Unused exports / types / binaries / namespace members are
+        # excluded — they're useful signal but historically full of
+        # false positives (re-export barrels, public APIs without
+        # consumers yet, dynamically-referenced binaries) and the
+        # cost of getting them all to zero outweighs the benefit
+        # while we're sole-user. Policy: block only on the four fatal
+        # issue types above; everything else is informational (next step).
+        run: exec node scripts/run-check.mjs deadcode --no-progress --include files --include dependencies --include devDependencies --include unresolved
+
+      - name: Run knip (informational — full report; never blocks)
+        # Second pass dumps the long-tail findings (unused exports,
+        # types, binaries, namespace exports, duplicates) so they
+        # show up in the action log. `--no-exit-code` forces 0 so
+        # this step never blocks even when there's a finding.
+        if: always()
+        run: exec node scripts/run-check.mjs deadcode --no-progress --no-exit-code

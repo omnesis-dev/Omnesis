@@ -1,0 +1,14 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "EVENT_OP_UNSUPPORTED",
+      "severity": "error",
+      "path": "/watch/nodes/0/filter/event/1",
+      "message": "Nothing in the substrate emits a document deletion, so a 'deleted' filter can never fire. The spelling is reserved for when it does.",
+      "details": {
+        "op": "deleted"
+      }
+    }
+  ]
+}

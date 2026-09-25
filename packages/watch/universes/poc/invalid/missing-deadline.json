@@ -1,0 +1,33 @@
+{
+  "watch": {
+    "name": "missing-deadline",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "tick",
+        "type": "source.time",
+        "recurring": "0 9 * * *"
+      },
+      {
+        "id": "judge",
+        "type": "llm",
+        "mode": "judge",
+        "inputs": {
+          "tick": {
+            "role": "arm"
+          }
+        },
+        "on_collision": "ignore",
+        "proposition": "Today was unusual",
+        "output_schema": {
+          "decision": "bool"
+        },
+        "fire_when": "decision"
+      }
+    ],
+    "sink": {
+      "input": "judge"
+    }
+  }
+}

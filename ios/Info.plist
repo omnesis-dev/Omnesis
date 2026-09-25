@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).refresh</string>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).photosBackfill</string>
+	</array>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Omnesis</string>
+	<key>CFBundleExecutable</key>
+	<string>Omnesis</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleName</key>
+	<string>Omnesis</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.5.11</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>omnesis</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>294</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>MinimumOSVersion</key>
+	<string>17.0</string>
+	<key>OmnesisKeychainAccessGroup</key>
+	<string>$(AppIdentifierPrefix)$(OMNESIS_BUNDLE_ID).notifications</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Omnesis uses the camera only to scan the gateway pairing QR code during setup.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>Omnesis reads the Health data categories you select and securely sends them to your paired gateway for your private search, analytics, and assistant.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Omnesis does not write to Apple Health. This entry is required by Apple's review tooling whenever the HealthKit framework is linked.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>With Places on, Omnesis records arrivals, departures, coordinates, and resolved place details and securely sends them to your paired gateway. This is off by default and can be turned off any time.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Omnesis uses your location to record the places you spend time when Places is on, and to attach a location to a note you capture. Both are securely sent to your paired gateway.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Omnesis uses the microphone to capture your voice for speech-to-text input in the agent chat.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>Omnesis reads the motion-activity history you enable and securely sends it to your paired gateway for your private search and analytics.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Omnesis reads the photos you allow to extract text, captions, and metadata for your private search and analytics. Photos stay on your devices; extracted text and metadata are securely sent to your paired gateway.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Omnesis uses on-device speech recognition to let you dictate queries to the agent instead of typing.</string>
+	<key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>
+	<true/>
+	<key>UIAppFonts</key>
+	<array>
+		<string>InterVariable.ttf</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>processing</string>
+		<string>fetch</string>
+		<string>remote-notification</string>
+	</array>
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>AccentColor</string>
+	</dict>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+</dict>
+</plist>

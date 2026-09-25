@@ -1,0 +1,103 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Brain Bench — the golden snapshot > one datum-intake arc leaves exactly the state the golden records 1`] = `
+{
+  "briefs": [
+    {
+      "body": null,
+      "citations": [
+        "doc#2",
+      ],
+      "claims": [
+        {
+          "claimBasis": "quoted",
+          "claimText": "The hall booking's final balance falls due fourteen days before the date.",
+          "confidence": 0.9,
+          "evidenceDoc": "doc#2",
+          "evidenceQuote": "The final balance for the hall booking is due fourteen days before the date.",
+          "live": true,
+          "verificationState": null,
+        },
+      ],
+      "confidence": 0.9,
+      "createdByRun": "run#1",
+      "description": "The final balance is due fourteen days before the date.",
+      "eventAtSet": false,
+      "id": "brief#1",
+      "kind": "loop",
+      "nextShowSet": false,
+      "relatedLoops": [
+        "loop#1",
+      ],
+      "state": "unread",
+      "title": "Hall booking balance is coming due",
+      "urgency": 0.5,
+      "userFeedback": null,
+    },
+  ],
+  "consumptionEdges": [],
+  "docAnnotations": [
+    {
+      "claimBasis": "quoted",
+      "claimText": "The hall booking's final balance falls due fourteen days before the date.",
+      "claimType": "payment-due",
+      "confidence": 0.9,
+      "createdByRun": "run#1",
+      "evidence": [
+        {
+          "broken": false,
+          "doc": "doc#2",
+          "quote": "The final balance for the hall booking is due fourteen days before the date.",
+        },
+      ],
+      "id": "anno#1",
+      "live": true,
+      "subject": "doc#2",
+      "supersededBy": null,
+      "verificationState": null,
+    },
+  ],
+  "loops": [
+    {
+      "confidence": 0.9,
+      "createdAt": "T+0",
+      "createdByRun": "run#1",
+      "deadline": null,
+      "decayCheckCount": 0,
+      "description": "Due fourteen days before the date.",
+      "docs": [
+        "doc#2",
+      ],
+      "id": "loop#1",
+      "importance": 0.7,
+      "ledger": [
+        {
+          "note": "Balance falls due fourteen days before the booking.",
+          "runId": "run#1",
+        },
+      ],
+      "people": [],
+      "state": "open",
+      "title": "Pay the hall booking balance",
+    },
+  ],
+  "notes": null,
+  "personAnnotations": [],
+  "retiredLoops": [],
+  "runs": [
+    {
+      "attempts": 1,
+      "dedupeKey": "data:doc:doc#2",
+      "kind": "data",
+      "status": "completed",
+    },
+    {
+      "attempts": 0,
+      "dedupeKey": "decay:loop:loop#1",
+      "kind": "time_based",
+      "status": "pending",
+    },
+  ],
+  "temporalAnnotations": [],
+}
+`;

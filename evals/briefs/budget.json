@@ -1,0 +1,10 @@
+{
+  "note": "Machine-readable mirror of the operator-set hard budget cap for model-in-the-loop scorecard runs (the model under test only; see the epic's operator directives, which are authoritative). The spend meter refuses any run whose worst-case projected cost would take recorded spend past refusalFraction * capUsd.",
+  "capUsd": 50,
+  "refusalFraction": 0.9,
+  "worstCasePerRun": {
+    "note": "Per-run worst-case reservation for the deepseek lane (prompt tokens are cumulative across a run's tool rounds; sized for a deep multi-round research run — the scripted lane's full arc set measured ~100k prompt tokens across ALL its runs, so 250k for ONE run is a wide margin).",
+    "promptTokens": 250000,
+    "completionTokens": 8000
+  }
+}

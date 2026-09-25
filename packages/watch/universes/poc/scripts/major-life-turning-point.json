@@ -1,0 +1,19 @@
+{
+  "note": "The weekly investigation concludes on its first run; the monthly cooldown caps the rest.",
+  "recall": [],
+  "judgements": [
+    {
+      "nodeId": "turning_point_review",
+      "fired": true,
+      "output": {
+        "decision": true,
+        "confidence": "clear",
+        "summary": "A relocation was arranged and confirmed across several channels this fortnight.",
+        "supporting_doc_ids": [
+          "d0c00001-0000-4000-8000-000000000020",
+          "d0c00001-0000-4000-8000-000000000004"
+        ]
+      }
+    }
+  ]
+}

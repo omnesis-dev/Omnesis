@@ -1,0 +1,26 @@
+[
+  {
+    "externalId": "synth-apple-note-001",
+    "title": "Travel — Acme offsite",
+    "body": "Flight LH421, 17 Sep 18:35. Hotel: Westwind, check-in 7:30 PM. Group dinner 8:30 PM.",
+    "folder": "Travel",
+    "createdAt": "2025-09-03T16:00:00Z",
+    "modifiedAt": "2025-09-09T12:00:00Z"
+  },
+  {
+    "externalId": "synth-apple-note-002",
+    "title": "Grocery list",
+    "body": "- Bread\n- Eggs\n- Greek yoghurt\n- Bananas\n- Coffee beans",
+    "folder": "Personal",
+    "createdAt": "2025-09-04T18:00:00Z",
+    "modifiedAt": "2025-09-04T19:30:00Z"
+  },
+  {
+    "externalId": "synth-apple-note-003",
+    "title": "Demo talking points",
+    "body": "Friday demo:\n1. Top-line numbers (last 30 days)\n2. The slow-query view\n3. Q&A — expect questions on the new index\n\nMercury room, 2:30 PM.",
+    "folder": "Work",
+    "createdAt": "2025-09-11T08:30:00Z",
+    "modifiedAt": "2025-09-12T17:30:00Z"
+  }
+]

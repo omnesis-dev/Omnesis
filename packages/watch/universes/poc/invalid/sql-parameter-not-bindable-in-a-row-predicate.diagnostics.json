@@ -1,0 +1,14 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "SQL_PARAMETER_UNKNOWN",
+      "severity": "error",
+      "path": "/watch/nodes/0/predicate",
+      "message": "A row predicate sees only the arriving row's columns; '$key.threshold' has nothing to bind to here.",
+      "details": {
+        "parameter": "$key.threshold"
+      }
+    }
+  ]
+}

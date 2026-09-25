@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Adrien Conrath
+
+# boot_budget — how long to wait for a spawned gateway to serve /health.
+#
+# The number itself lives in scripts/lib/gateway-boot-budget.json, next to the
+# reasoning for it, and every consumer reads it from there. Four independently
+# chosen budgets is what produced four different false reds; see the `why` field
+# in that file.
+#
+# Usage — sourced:
+#   source "$(dirname "$0")/lib/boot_budget"
+#   READY_TIMEOUT="${OMNESIS_DEV_READY_TIMEOUT:-$(gateway_boot_budget_seconds)}"
+#
+# Falls back to the recorded default only if node is unavailable, so a machine
+# without node still gets a sane wait rather than an empty string that turns
+# `$((SECONDS + READY_TIMEOUT))` into a syntax error.
+
+GATEWAY_BOOT_BUDGET_FALLBACK_SECONDS=90
+
+gateway_boot_budget_seconds() {
+  local here budget
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  budget="$(node -p "require('${here}/gateway-boot-budget.json').seconds" 2>/dev/null || true)"
+  case "${budget}" in
+    '' | *[!0-9]*) echo "${GATEWAY_BOOT_BUDGET_FALLBACK_SECONDS}" ;;
+    *) echo "${budget}" ;;
+  esac
+}

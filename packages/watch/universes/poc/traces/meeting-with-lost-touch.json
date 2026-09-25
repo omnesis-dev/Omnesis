@@ -1,0 +1,1133 @@
+{
+  "trace": {
+    "watch": "meeting-with-lost-touch",
+    "records": [
+      {
+        "seq": -1,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -1,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -2,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -2,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -3,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -3,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -4,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -4,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -5,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -5,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -6,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -6,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -7,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -7,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -8,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -8,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -9,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -9,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -10,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -10,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -11,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -11,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -12,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -12,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -13,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -13,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -14,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -14,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -15,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -15,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -16,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -16,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -17,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -17,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -18,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -18,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -19,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -19,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -20,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -20,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -21,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -21,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -22,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -22,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -23,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -23,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -24,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -24,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -25,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -25,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -26,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -26,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -27,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -27,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -28,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -28,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -29,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -29,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -30,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -30,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -31,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -31,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -32,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -32,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -33,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -33,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -34,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -34,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -35,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -35,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -36,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -36,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -37,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -37,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -38,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -38,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -39,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -39,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -40,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -40,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -41,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -41,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -42,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -42,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -43,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -43,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -44,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -44,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -45,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -45,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -46,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -46,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -47,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -47,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -48,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -48,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -49,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -49,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -50,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -50,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -51,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -51,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -52,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -52,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -53,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -53,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -54,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -54,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -55,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -55,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -56,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -56,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -57,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -57,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -58,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -58,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -59,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -59,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -60,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -60,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -61,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -61,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -62,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -62,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -63,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -63,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -64,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -64,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -65,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -65,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -66,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -66,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -67,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -67,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -68,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -68,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -69,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -69,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -70,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -70,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -71,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -71,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -72,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -72,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -73,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -73,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -74,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -74,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -75,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -75,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -76,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -76,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -77,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -77,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -78,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -78,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -79,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -79,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -80,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -80,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -81,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -81,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -82,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -82,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -83,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -83,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -84,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -84,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -85,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -85,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -86,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -86,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -87,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -87,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -88,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -88,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -89,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -89,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      },
+      {
+        "seq": -90,
+        "nodeId": "evening_tick",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": -90,
+        "nodeId": "stale_contacts_tomorrow",
+        "key": "singleton",
+        "transition": "held"
+      }
+    ],
+    "firings": [
+      {
+        "seq": -24,
+        "nodeId": "stale_contacts_tomorrow",
+        "keyHash": "e3b0c44298fc1c149afbf4c8996fb924:0",
+        "key": "singleton",
+        "firedAt": "2026-03-24T18:00:00.000Z",
+        "payload": {
+          "people": ["Priya Raman"],
+          "meetings": ["Catch-up with Priya Raman"]
+        },
+        "documentIds": []
+      },
+      {
+        "seq": -49,
+        "nodeId": "stale_contacts_tomorrow",
+        "keyHash": "e3b0c44298fc1c149afbf4c8996fb924:0",
+        "key": "singleton",
+        "firedAt": "2026-04-18T18:00:00.000Z",
+        "payload": {
+          "people": ["Priya Raman"],
+          "meetings": ["Handover call with Priya Raman"]
+        },
+        "documentIds": []
+      },
+      {
+        "seq": -75,
+        "nodeId": "stale_contacts_tomorrow",
+        "keyHash": "e3b0c44298fc1c149afbf4c8996fb924:0",
+        "key": "singleton",
+        "firedAt": "2026-05-14T18:00:00.000Z",
+        "payload": {
+          "people": ["Priya Raman"],
+          "meetings": ["Reconnect with Priya Raman"]
+        },
+        "documentIds": []
+      }
+    ]
+  },
+  "backtest": {
+    "events": 1208,
+    "days": 90,
+    "firings": 3,
+    "reachByNode": {},
+    "totalReaches": 0,
+    "unboundedNodes": []
+  }
+}

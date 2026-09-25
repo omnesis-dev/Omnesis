@@ -1,0 +1,16 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "COLLISION_MODE_ILLEGAL",
+      "severity": "error",
+      "path": "/watch/nodes/2/on_collision",
+      "message": "'spawn' is not a legal collision mode for a 'stateful.and' node.",
+      "details": {
+        "nodeType": "stateful.and",
+        "declared": "spawn",
+        "legal": ["reset", "ignore"]
+      }
+    }
+  ]
+}

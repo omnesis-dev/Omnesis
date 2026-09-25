@@ -1,0 +1,38 @@
+[
+  {
+    "externalId": "synth-outlook-001",
+    "subject": "Vendor evaluation — first cut",
+    "from": "p_jane",
+    "fromEmail": "jane.doe@acme.example",
+    "to": ["self"],
+    "toEmails": ["john.smith@acme.example"],
+    "body": "Hi John,\n\nFirst-cut comparison attached (Globex vs Nimbus). Globex is faster but the SOC2 gap is real. Want to sync Wednesday?\n\nJane",
+    "sentAt": "2025-09-02T09:30:00Z",
+    "threadId": "t_vendor_eval_acme",
+    "folder": "Inbox"
+  },
+  {
+    "externalId": "synth-outlook-002",
+    "subject": "Re: Vendor evaluation — first cut",
+    "from": "self",
+    "fromEmail": "john.smith@acme.example",
+    "to": ["p_jane"],
+    "toEmails": ["jane.doe@acme.example"],
+    "body": "Wednesday works. Let's also loop in Emma — she'll have the compliance angle.\n\n-J",
+    "sentAt": "2025-09-02T11:00:00Z",
+    "threadId": "t_vendor_eval_acme",
+    "folder": "Sent Items"
+  },
+  {
+    "externalId": "synth-outlook-003",
+    "subject": "Offsite logistics",
+    "from": "p_emma",
+    "fromEmail": "emma.park@acme.example",
+    "to": ["self", "p_jane"],
+    "toEmails": ["john.smith@acme.example", "jane.doe@acme.example"],
+    "body": "Hotel block confirmed for 18-20 Sep. Please reply with your arrival time so we can arrange transport.\n\nEmma",
+    "sentAt": "2025-09-03T14:20:00Z",
+    "threadId": "t_offsite_logistics",
+    "folder": "Inbox"
+  }
+]

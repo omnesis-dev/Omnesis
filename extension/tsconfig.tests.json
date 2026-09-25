@@ -1,0 +1,17 @@
+{
+  // Typecheck the SUITES, which tsconfig.json excludes. The same lane every
+  // package runs (see packages/cli/tsconfig.tests.json for the rationale): a
+  // test file that is never typechecked cannot notice a shape it hand-builds
+  // drifting from the real one — and the extension's suites hand-build the
+  // documents and pairing responses that are its contract with the gateway.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": []
+}

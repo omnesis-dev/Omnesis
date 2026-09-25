@@ -1,0 +1,14 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "SEMANTIC_ARM_IDENTIFIER_QUERY",
+      "severity": "error",
+      "path": "/watch/nodes/0/recall/semantic/query",
+      "message": "Embeddings cannot retrieve on identifiers (XR-4471). Put them in a lexical arm, which matches them literally, and leave the semantic query for the meaning.",
+      "details": {
+        "tokens": ["XR-4471"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "apps": [
+    {
+      "bundleId": "com.apple.Safari",
+      "name": "Safari",
+      "weight": 1.2
+    },
+    {
+      "bundleId": "com.apple.mail",
+      "name": "Mail",
+      "weight": 0.8
+    }
+  ],
+  "days": ["2026-04-20", "2026-04-21"]
+}

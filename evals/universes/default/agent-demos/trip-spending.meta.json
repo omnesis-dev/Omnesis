@@ -1,0 +1,21 @@
+{
+  "triggers": [
+    "lisbon trip",
+    "the lisbon trip",
+    "did alex pay me back",
+    "did alex ever pay me back",
+    "trip end up costing",
+    "how much did the trip"
+  ],
+  "placeholders": {
+    "docExternalIds": [
+      "synth-gcal-lisbon",
+      "synth-gmail-trip-flight",
+      "synth-gmail-trip-stay",
+      "synth-whatsapp-trip-alex",
+      "synth-eb-acct-main:synth-eb-030",
+      "synth-eb-acct-main:synth-eb-034"
+    ],
+    "personNames": ["Alex Chen"]
+  }
+}

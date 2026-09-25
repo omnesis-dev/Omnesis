@@ -1,0 +1,7 @@
+{
+  "triggers": ["kind: data"],
+  "role": "background-agent",
+  "placeholders": {
+    "docExternalIds": ["bench-cassette-deposit"]
+  }
+}

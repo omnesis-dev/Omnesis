@@ -1,0 +1,352 @@
+[
+  {
+    "account_key": "synth-eb-acct-main",
+    "transactions": [
+      {
+        "entry_reference": "synth-eb-001",
+        "booking_date": "2025-06-27",
+        "value_date": "2025-06-27",
+        "transaction_amount": { "currency": "EUR", "amount": "23.40" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Riverside Grocers" },
+        "remittance_information": ["Groceries"]
+      },
+      {
+        "entry_reference": "synth-eb-002",
+        "booking_date": "2025-06-25",
+        "value_date": "2025-06-25",
+        "transaction_amount": { "currency": "EUR", "amount": "2450.00" },
+        "credit_debit_indicator": "CRDT",
+        "status": "BOOK",
+        "debtor": { "name": "Acme Corp" },
+        "debtor_account": { "iban": "DE10844103117167030234" },
+        "remittance_information": ["Salary June 2025"]
+      },
+      {
+        "entry_reference": "synth-eb-003",
+        "booking_date": "2025-06-24",
+        "value_date": "2025-06-24",
+        "transaction_amount": { "currency": "EUR", "amount": "24.50" },
+        "credit_debit_indicator": "CRDT",
+        "status": "BOOK",
+        "debtor": { "name": "Jane Doe" },
+        "debtor_account": { "iban": "DE84813465346925806408" },
+        "remittance_information": ["Dinner split - Cedar Cafe"]
+      },
+      {
+        "entry_reference": "synth-eb-004",
+        "booking_date": "2025-06-22",
+        "value_date": "2025-06-22",
+        "transaction_amount": { "currency": "EUR", "amount": "64.90" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Northstar Hardware" },
+        "remittance_information": ["Shelf brackets and paint"]
+      },
+      {
+        "entry_reference": "synth-eb-005",
+        "booking_date": "2025-06-20",
+        "value_date": "2025-06-20",
+        "transaction_amount": { "currency": "EUR", "amount": "12.80" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Cedar Cafe" },
+        "remittance_information": ["Lunch"]
+      },
+      {
+        "entry_reference": "synth-eb-006",
+        "booking_date": "2025-06-18",
+        "value_date": "2025-06-18",
+        "transaction_amount": { "currency": "EUR", "amount": "9.99" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Vela Streaming" },
+        "remittance_information": ["Monthly subscription"]
+      },
+      {
+        "entry_reference": "synth-eb-007",
+        "booking_date": "2025-06-16",
+        "value_date": "2025-06-16",
+        "transaction_amount": { "currency": "EUR", "amount": "38.25" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Cityline Transit" },
+        "remittance_information": ["Travel card top-up"]
+      },
+      {
+        "entry_reference": "synth-eb-008",
+        "booking_date": "2025-06-24",
+        "value_date": "2025-06-24",
+        "transaction_amount": { "currency": "EUR", "amount": "18.00" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Alex Chen" },
+        "creditor_account": { "iban": "DE78367549737392820379" },
+        "remittance_information": ["Climbing gym day pass"]
+      },
+      {
+        "entry_reference": "synth-eb-009",
+        "booking_date": "2025-06-06",
+        "value_date": "2025-06-06",
+        "transaction_amount": { "currency": "EUR", "amount": "129.99" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Stellar Sound" },
+        "remittance_information": ["Studio headphones"]
+      },
+      {
+        "entry_reference": "synth-eb-010",
+        "booking_date": "2025-06-10",
+        "value_date": "2025-06-10",
+        "transaction_amount": { "currency": "EUR", "amount": "41.30" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Riverside Grocers" },
+        "remittance_information": ["Groceries"]
+      },
+      {
+        "entry_reference": "synth-eb-011",
+        "booking_date": "2025-06-08",
+        "value_date": "2025-06-08",
+        "transaction_amount": { "currency": "EUR", "amount": "26.40" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Pinewood Pharmacy" },
+        "remittance_information": ["First-aid supplies"]
+      },
+      {
+        "entry_reference": "synth-eb-012",
+        "booking_date": "2025-06-06",
+        "value_date": "2025-06-06",
+        "transaction_amount": { "currency": "EUR", "amount": "54.20" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Lumen Energy" },
+        "remittance_information": ["Electricity June 2025"]
+      },
+      {
+        "entry_reference": "synth-eb-013",
+        "booking_date": "2025-06-04",
+        "value_date": "2025-06-04",
+        "transaction_amount": { "currency": "EUR", "amount": "17.45" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Booksmith" },
+        "remittance_information": ["Paperbacks"]
+      },
+      {
+        "entry_reference": "synth-eb-014",
+        "booking_date": "2025-06-02",
+        "value_date": "2025-06-02",
+        "transaction_amount": { "currency": "EUR", "amount": "60.00" },
+        "credit_debit_indicator": "CRDT",
+        "status": "BOOK",
+        "debtor": { "name": "Emma Park" },
+        "debtor_account": { "iban": "DE84235607440104347455" },
+        "remittance_information": ["Concert tickets repaid"]
+      },
+      {
+        "entry_reference": "synth-eb-015",
+        "booking_date": "2025-05-30",
+        "value_date": "2025-05-30",
+        "transaction_amount": { "currency": "EUR", "amount": "22.75" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Cedar Cafe" },
+        "remittance_information": ["Weekend brunch"]
+      },
+      {
+        "entry_reference": "synth-eb-016",
+        "booking_date": "2025-05-28",
+        "value_date": "2025-05-28",
+        "transaction_amount": { "currency": "EUR", "amount": "300.00" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Savings Vault" },
+        "remittance_information": ["Monthly savings transfer"]
+      },
+      {
+        "entry_reference": "synth-eb-017",
+        "booking_date": "2025-05-26",
+        "value_date": "2025-05-26",
+        "transaction_amount": { "currency": "EUR", "amount": "35.60" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Aurora Fitness" },
+        "remittance_information": ["Monthly membership"]
+      },
+      {
+        "entry_reference": "synth-eb-030",
+        "booking_date": "2025-05-20",
+        "value_date": "2025-05-20",
+        "transaction_amount": { "currency": "EUR", "amount": "318.60" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Meridian Air" },
+        "remittance_information": ["Flights LON-LIS return x2 — booking MA7F2K9"]
+      },
+      {
+        "entry_reference": "synth-eb-031",
+        "booking_date": "2025-05-22",
+        "value_date": "2025-05-22",
+        "transaction_amount": { "currency": "EUR", "amount": "440.00" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Casa Alfama Stays" },
+        "remittance_information": ["Apartment 3 nights — reservation CA-58817"]
+      },
+      {
+        "entry_reference": "synth-eb-032",
+        "booking_date": "2025-06-13",
+        "value_date": "2025-06-13",
+        "transaction_amount": { "currency": "EUR", "amount": "58.00" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Tram 28 Tours" },
+        "remittance_information": ["Tickets x2"]
+      },
+      {
+        "entry_reference": "synth-eb-033",
+        "booking_date": "2025-06-14",
+        "value_date": "2025-06-14",
+        "transaction_amount": { "currency": "EUR", "amount": "42.10" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Café Graça" },
+        "remittance_information": ["Lunch in Lisbon"]
+      },
+      {
+        "entry_reference": "synth-eb-035",
+        "booking_date": "2025-06-12",
+        "value_date": "2025-06-12",
+        "transaction_amount": { "currency": "EUR", "amount": "11.20" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Miradouro Coffee" },
+        "remittance_information": ["Coffee"]
+      },
+      {
+        "entry_reference": "synth-eb-036",
+        "booking_date": "2025-06-13",
+        "value_date": "2025-06-13",
+        "transaction_amount": { "currency": "EUR", "amount": "74.50" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Taberna do Fado" },
+        "remittance_information": ["Dinner"]
+      },
+      {
+        "entry_reference": "synth-eb-037",
+        "booking_date": "2025-06-14",
+        "value_date": "2025-06-14",
+        "transaction_amount": { "currency": "EUR", "amount": "38.00" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Oceanário Lisboa" },
+        "remittance_information": ["Tickets x2"]
+      },
+      {
+        "entry_reference": "synth-eb-034",
+        "booking_date": "2025-06-18",
+        "value_date": "2025-06-18",
+        "transaction_amount": { "currency": "EUR", "amount": "379.00" },
+        "credit_debit_indicator": "CRDT",
+        "status": "BOOK",
+        "debtor": { "name": "Alex Chen" },
+        "debtor_account": { "iban": "GB29NWBK60161331926819" },
+        "remittance_information": ["Lisbon trip — my half"]
+      }
+    ]
+  },
+  {
+    "account_key": "synth-eb-acct-usd",
+    "transactions": [
+      {
+        "entry_reference": "synth-eb-018",
+        "booking_date": "2025-06-21",
+        "value_date": "2025-06-21",
+        "transaction_amount": { "currency": "USD", "amount": "15.99" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Vela Streaming" },
+        "remittance_information": ["US plan subscription"]
+      },
+      {
+        "entry_reference": "synth-eb-019",
+        "booking_date": "2025-06-15",
+        "value_date": "2025-06-15",
+        "transaction_amount": { "currency": "USD", "amount": "200.00" },
+        "credit_debit_indicator": "CRDT",
+        "status": "BOOK",
+        "debtor": { "name": "John Smith" },
+        "remittance_information": ["Exchange from EUR Main"]
+      },
+      {
+        "entry_reference": "synth-eb-020",
+        "booking_date": "2025-06-09",
+        "value_date": "2025-06-09",
+        "transaction_amount": { "currency": "USD", "amount": "42.10" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Stellar Sound" },
+        "remittance_information": ["Cable adapters"]
+      },
+      {
+        "entry_reference": "synth-eb-021",
+        "booking_date": "2025-05-29",
+        "value_date": "2025-05-29",
+        "transaction_amount": { "currency": "USD", "amount": "89.00" },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": { "name": "Northstar Hardware" },
+        "remittance_information": ["Tool set"]
+      }
+    ]
+  },
+  {
+    "account_key": "synth-eb-acct-vault",
+    "transactions": [
+      {
+        "entry_reference": "synth-eb-022",
+        "booking_date": "2025-06-26",
+        "value_date": "2025-06-26",
+        "transaction_amount": { "currency": "EUR", "amount": "300.00" },
+        "credit_debit_indicator": "CRDT",
+        "status": "BOOK",
+        "debtor": { "name": "John Smith" },
+        "remittance_information": ["Monthly savings transfer"]
+      },
+      {
+        "transaction_id": "synth-eb-tx-023",
+        "booking_date": "2025-06-19",
+        "value_date": "2025-06-19",
+        "transaction_amount": { "currency": "EUR", "amount": "1.12" },
+        "credit_debit_indicator": "CRDT",
+        "status": "BOOK",
+        "debtor": { "name": "Revolut" },
+        "remittance_information": ["Savings interest"]
+      },
+      {
+        "entry_reference": "synth-eb-024",
+        "booking_date": "2025-05-28",
+        "value_date": "2025-05-28",
+        "transaction_amount": { "currency": "EUR", "amount": "300.00" },
+        "credit_debit_indicator": "CRDT",
+        "status": "BOOK",
+        "debtor": { "name": "John Smith" },
+        "remittance_information": ["Monthly savings transfer"]
+      },
+      {
+        "entry_reference": "synth-eb-025",
+        "booking_date": "2025-05-21",
+        "value_date": "2025-05-21",
+        "transaction_amount": { "currency": "EUR", "amount": "0.98" },
+        "credit_debit_indicator": "CRDT",
+        "status": "BOOK",
+        "debtor": { "name": "Revolut" },
+        "remittance_information": ["Savings interest"]
+      }
+    ]
+  }
+]

@@ -1,0 +1,98 @@
+[
+  {
+    "externalId": "jp-gcal-flight-out-001",
+    "title": "Flight LHR → HND (Japan trip)",
+    "description": "Outbound flight to Tokyo. Booking reference NRT8841. Travellers: Maya & Jamie.",
+    "location": "London Heathrow (LHR)",
+    "startTime": "2026-04-11T08:00:00Z",
+    "endTime": "2026-04-12T06:00:00Z",
+    "attendees": ["self"],
+    "attendeeEmails": ["maya@example.com"],
+    "createdAt": "2026-02-10T09:40:00Z",
+    "updatedAt": "2026-02-10T09:40:00Z"
+  },
+  {
+    "externalId": "jp-gcal-hotel-checkin-001",
+    "title": "Check in — Tokyo Riverside Hotel",
+    "description": "Reservation R-55120. 6 nights, check-out 17 April.",
+    "location": "Tokyo Riverside Hotel, Tokyo",
+    "startTime": "2026-04-11T08:00:00Z",
+    "endTime": "2026-04-11T09:00:00Z",
+    "attendees": ["self"],
+    "attendeeEmails": ["maya@example.com"],
+    "createdAt": "2026-02-12T08:05:00Z",
+    "updatedAt": "2026-02-12T08:05:00Z"
+  },
+  {
+    "externalId": "jp-gcal-teamlab-001",
+    "title": "teamLab Planets Tokyo",
+    "description": "Tickets x2 confirmed. Afternoon entry.",
+    "location": "teamLab Planets Tokyo, Toyosu",
+    "startTime": "2026-04-12T05:00:00Z",
+    "endTime": "2026-04-12T07:30:00Z",
+    "attendees": ["self", "p_jamie"],
+    "attendeeEmails": ["maya@example.com", "jamie.lopez@example.com"],
+    "createdAt": "2026-03-10T09:05:00Z",
+    "updatedAt": "2026-03-10T09:05:00Z"
+  },
+  {
+    "externalId": "jp-gcal-omakase-001",
+    "title": "Omakase dinner — Sushi Aoyama",
+    "description": "Omakase for 2, Ginza. Reservation confirmed.",
+    "location": "Sushi Aoyama, Ginza, Tokyo",
+    "startTime": "2026-04-13T10:30:00Z",
+    "endTime": "2026-04-13T12:30:00Z",
+    "attendees": ["self", "p_jamie"],
+    "attendeeEmails": ["maya@example.com", "jamie.lopez@example.com"],
+    "createdAt": "2026-03-05T11:05:00Z",
+    "updatedAt": "2026-03-05T11:05:00Z"
+  },
+  {
+    "externalId": "jp-gcal-train-kyoto-001",
+    "title": "Train Tokyo → Kyoto (JR Pass)",
+    "description": "Travel to Kyoto on the 7-day JR Pass.",
+    "location": "Tokyo Station → Kyoto Station",
+    "startTime": "2026-04-17T01:00:00Z",
+    "endTime": "2026-04-17T03:30:00Z",
+    "attendees": ["self"],
+    "attendeeEmails": ["maya@example.com"],
+    "createdAt": "2026-03-12T14:35:00Z",
+    "updatedAt": "2026-03-12T14:35:00Z"
+  },
+  {
+    "externalId": "jp-gcal-ryokan-checkin-001",
+    "title": "Check in — Kyoto Ryokan Sakura",
+    "description": "3 nights in Kyoto, check-out 20 April.",
+    "location": "Kyoto Ryokan Sakura, Kyoto",
+    "startTime": "2026-04-17T06:00:00Z",
+    "endTime": "2026-04-17T07:00:00Z",
+    "attendees": ["self"],
+    "attendeeEmails": ["maya@example.com"],
+    "createdAt": "2026-02-12T08:35:00Z",
+    "updatedAt": "2026-02-12T08:35:00Z"
+  },
+  {
+    "externalId": "jp-gcal-kaiseki-001",
+    "title": "Kaiseki dinner — Hanami Tei",
+    "description": "Kaiseki for 2, Kyoto. Reservation confirmed.",
+    "location": "Hanami Tei, Kyoto",
+    "startTime": "2026-04-17T10:00:00Z",
+    "endTime": "2026-04-17T12:00:00Z",
+    "attendees": ["self", "p_jamie"],
+    "attendeeEmails": ["maya@example.com", "jamie.lopez@example.com"],
+    "createdAt": "2026-03-06T12:05:00Z",
+    "updatedAt": "2026-03-06T12:05:00Z"
+  },
+  {
+    "externalId": "jp-gcal-flight-home-001",
+    "title": "Flight HND → LHR (Japan trip home)",
+    "description": "Return flight to London. Booking reference NRT8841.",
+    "location": "Tokyo Haneda (HND)",
+    "startTime": "2026-04-22T02:00:00Z",
+    "endTime": "2026-04-22T16:00:00Z",
+    "attendees": ["self"],
+    "attendeeEmails": ["maya@example.com"],
+    "createdAt": "2026-02-10T09:45:00Z",
+    "updatedAt": "2026-02-10T09:45:00Z"
+  }
+]

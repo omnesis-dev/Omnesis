@@ -1,0 +1,15 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "INITIAL_LEVEL_WITHOUT_EDGE_DETECTION",
+      "severity": "error",
+      "path": "/watch/nodes/1/initial_level",
+      "message": "'initial_level' seeds the level a rising edge is measured against; with fire_on 'every_true' there is no edge and nothing reads it.",
+      "details": {
+        "nodeId": "check",
+        "fireOn": "every_true"
+      }
+    }
+  ]
+}

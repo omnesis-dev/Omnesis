@@ -1,0 +1,14 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "DEADLINE_REQUIRED",
+      "severity": "error",
+      "path": "/watch/nodes/1/deadline",
+      "message": "Node 'judge' can hold a live instance, so it needs an explicit deadline (or \"infinite\").",
+      "details": {
+        "nodeId": "judge"
+      }
+    }
+  ]
+}

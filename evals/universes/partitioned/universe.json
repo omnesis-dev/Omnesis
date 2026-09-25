@@ -1,0 +1,41 @@
+{
+  "name": "partitioned",
+  "description": "A pair of phones each contribute their own call log and Health Connect samples to one partitioned source of each type: every phone's stream is its own, the union is the corpus, and a phone's snapshot only ever reconciles its own stream.",
+  "cast": "cast.json",
+  "agentDemos": null,
+  "devices": [
+    {
+      "id": "macbook",
+      "name": "Johns-MacBook-Pro-collector",
+      "kind": "collector"
+    },
+    {
+      "id": "pixel",
+      "name": "Johns-Android",
+      "kind": "android"
+    },
+    {
+      "id": "pixel-old",
+      "name": "Johns-old-Android",
+      "kind": "android"
+    }
+  ],
+  "multiDeviceModes": {
+    "android-call-log": "partitioned",
+    "health-connect": "partitioned"
+  },
+  "sources": [
+    {
+      "descriptorId": "android-call-log",
+      "accountIds": ["android-synth-johnsmith"],
+      "device": "pixel",
+      "members": ["pixel-old"]
+    },
+    {
+      "descriptorId": "health-connect",
+      "accountIds": ["android-synth-johnsmith"],
+      "device": "pixel",
+      "members": ["pixel-old"]
+    }
+  ]
+}

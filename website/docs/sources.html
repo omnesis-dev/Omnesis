@@ -1,0 +1,1512 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Available sources — Omnesis Docs</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32" />
+    <link rel="icon" type="image/png" href="/favicon-16.png" sizes="16x16" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- Resolve the theme before first paint: the stored choice, else the OS preference. -->
+    <script>
+      (function () {
+        var root = document.documentElement;
+        root.classList.add("js");
+        var t;
+        try {
+          t = localStorage.getItem("omnesis-theme");
+        } catch (e) {}
+        if (t !== "light" && t !== "dark") {
+          t =
+            window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+        }
+        root.setAttribute("data-theme", t);
+      })();
+    </script>
+
+    <meta
+      name="description"
+      content="Every source Omnesis can index — email, messages, notes, coding-agent sessions, calendars, files, web activity, phone and device data, finance — what each one adds to your index, and how to manage the sources you connect."
+    />
+    <link rel="canonical" href="https://omnesis.dev/docs/sources" />
+    <meta name="theme-color" content="#0d1117" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="/footer-social.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <nav id="nav">
+      <div class="container">
+        <a href="/" class="nav-logo" aria-label="Omnesis"
+          ><span class="nav-logo-mark" aria-hidden="true"></span>MNESIS</a
+        >
+        <div class="nav-right">
+          <ul class="nav-links">
+            <li><a href="/">Context Layer</a></li>
+            <li><a href="/brain">Omnesis Brain</a></li>
+            <li><a href="/vision">Vision</a></li>
+            <li><a href="/docs/" aria-current="page">Docs</a></li>
+          </ul>
+          <a
+            class="nav-icon-btn"
+            href="#"
+            data-oss-open
+            aria-label="Omnesis on GitHub"
+            title="Omnesis on GitHub"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path
+                d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+              />
+            </svg>
+          </a>
+          <button
+            id="theme-toggle"
+            class="theme-toggle"
+            type="button"
+            aria-label="Switch between dark and light theme"
+            title="Toggle theme"
+          >
+            <svg
+              class="icon-sun"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="4" />
+              <path
+                d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"
+              />
+            </svg>
+            <svg
+              class="icon-moon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <div class="docs-shell">
+      <aside class="docs-sidebar">
+        <nav aria-label="Documentation">
+          <ul class="side-pages">
+            <li><a href="/docs/">Overview</a></li>
+            <li><a href="/docs/install">Install</a></li>
+            <li><a href="/docs/setup">Setup</a></li>
+            <li><a href="/docs/search">Search</a></li>
+            <li><a href="/docs/agent">The agent</a></li>
+            <li><a href="/docs/connect">Agents &amp; MCP</a></li>
+            <li><a href="/docs/apps">Mobile apps</a></li>
+            <li><a href="/docs/notifications">Notifications</a></li>
+            <li><a href="/docs/operating">Operating</a></li>
+            <li><a href="/docs/security">Security</a></li>
+            <li><a href="/docs/updating">Backup &amp; updates</a></li>
+            <li>
+              <a href="/docs/sources" aria-current="page">Available sources</a>
+              <ul class="side-sub">
+                <li><a href="#email-messaging">Email &amp; messaging</a></li>
+                <li><a href="#notes-tasks-meetings">Notes &amp; tasks</a></li>
+                <li><a href="#coding-agents">Coding agents</a></li>
+                <li><a href="#code-hosting">Code hosting</a></li>
+                <li><a href="#calendar-contacts">Calendar &amp; contacts</a></li>
+                <li><a href="#files">Files</a></li>
+                <li><a href="#web">Web</a></li>
+                <li><a href="#phone-device-activity">Phone &amp; device</a></li>
+                <li><a href="#finance-fitness">Finance &amp; fitness</a></li>
+                <li><a href="#omnesis-itself">Omnesis itself</a></li>
+                <li><a href="#experimental-sources">Experimental sources</a></li>
+                <li><a href="#managing-sources">Managing sources</a></li>
+                <li><a href="#several-devices">Several devices</a></li>
+                <li><a href="#what-a-source-contributes">Contributions</a></li>
+              </ul>
+            </li>
+            <li><a href="/docs/building-sources">Building sources</a></li>
+            <li><a href="/docs/experimental">Experimental</a></li>
+          </ul>
+        </nav>
+      </aside>
+
+      <main id="main" class="docs-content">
+        <p class="docs-kicker">Reference</p>
+        <h1>Available sources</h1>
+        <p class="docs-lead">
+          Every source Omnesis can index, what each one adds to your index, and how to manage the
+          sources you have connected. It is for anyone deciding what to connect, or looking after a
+          running setup.
+        </p>
+
+        <p>
+          A <strong>source</strong> is one account's data from one platform, such as a Gmail mailbox
+          or your Apple Notes. A <strong>provider</strong> is one sign-in that serves several source
+          types: signing in to Google once covers Gmail, Calendar, Drive, and Contacts. Most sources
+          run on a collector — some on any machine, some only on macOS because they read local Apple
+          databases. A few run inside the <a href="/docs/apps">phone apps</a> and push straight to
+          the gateway. A handful live on the gateway itself: Web Pages (type <code>web</code>), fed
+          by the browser extension, and the Omnesis-native sources listed under
+          <a href="#omnesis-itself">Omnesis itself</a>.
+        </p>
+        <p>
+          Every source follows the same deletion rule. An item goes when the platform reports it
+          deleted, or when complete, successful reads stop listing it — and in that second case
+          Omnesis waits for several reads over time to agree before removing it. A failed or partial
+          read never deletes anything.
+          <a href="#managing-sources">Managing sources</a> covers adding, pausing, re-syncing and
+          removing them, and <a href="#several-devices">Sources on several devices</a> covers what
+          happens when two machines or phones host the same source.
+        </p>
+        <p>
+          In the tables below, the tags under each source's name say where it runs and how it
+          connects — <span class="pill">any collector</span> <span class="pill">OAuth</span>, for
+          example. Two sources carry an <span class="pill">experimental</span> tag: Plaid and Local
+          Files need more testing, and a collector offers them only when it runs with
+          <code>OMNESIS_EXPERIMENTAL=1</code>.
+          <a href="#experimental-sources">Experimental sources</a>
+          covers turning them on.
+        </p>
+
+        <h2 id="email-messaging">Email &amp; messaging</h2>
+        <p>
+          Google sources share one sign-in too, through an OAuth client you register in your own
+          Google Cloud project; the first Google source you add walks you through it (see
+          <a href="#google-oauth-client">Google's OAuth client</a>). Microsoft sources share one
+          sign-in, so consenting once covers Outlook Email, Outlook Calendar, and OneDrive. Omnesis
+          supplies a public Azure app, so no Azure setup is needed;
+          <code>omnesis creds set outlook</code> switches to an app registration you control.
+          Microsoft sign-in supports personal Outlook.com, Hotmail, and Live accounts. Work and
+          school accounts are not supported.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>What it adds</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  Gmail<br /><span class="pill">any collector</span> <span class="pill">OAuth</span>
+                </td>
+                <td>
+                  Every email as a document, with attachment text extracted (scans and images are
+                  OCR'd when an OCR model is assigned); senders and recipients feed the people
+                  graph.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Outlook Email<br /><span class="pill">any collector</span>
+                  <span class="pill">OAuth</span>
+                </td>
+                <td>
+                  Emails and their attachments as documents; correspondents feed the people graph.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  IMAP Email<br /><span class="pill">any collector</span>
+                  <span class="pill">IMAP password</span>
+                </td>
+                <td>
+                  Email from any account that offers IMAP over TLS on port 993 — the whole mailbox,
+                  or only mail newer than the source's <code>maxAge</code>
+                  <a href="/docs/operating#configuration">when one is set</a>. Use an app-specific
+                  password when the provider offers one. The hostname is the provider's IMAP server,
+                  such as <code>imap.fastmail.com</code> for Fastmail or
+                  <code>imap.mail.me.com</code> for iCloud Mail. The source skips Drafts, Junk, and
+                  Trash and indexes up to 512 KiB of each message body. Attachment text is extracted
+                  (scans and images are OCR'd when an OCR model is assigned). Senders and recipients
+                  feed the people graph, mailboxes become tags, and reply headers link messages into
+                  threads. Use <code>omnesis sources reauth imap:&lt;email&gt;</code> to replace the
+                  password.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  WhatsApp Messages<br /><span class="pill">any collector</span>
+                  <span class="pill">QR pairing</span>
+                </td>
+                <td>
+                  Messages as conversational documents, live as they arrive, plus an optional
+                  one-time full-history import from an iPhone backup. Media text is extracted, and
+                  voice notes are transcribed
+                  <a href="/docs/operating#models">when a transcriber model is assigned</a>. Message
+                  sync continues when media processing is disabled or unavailable. Pending media
+                  stays in the local archive for later retries, within the source's date range. The
+                  add flow shows a QR code; scan it under WhatsApp
+                  <strong>Settings → Linked Devices → Link a Device</strong>, and the collector
+                  starts syncing without a restart. WhatsApp may unlink a device after roughly two
+                  weeks without activity; run
+                  <code>omnesis sources reauth whatsapp:&lt;account&gt;</code> and scan a new QR
+                  code to reconnect it.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Apple iMessage<br /><span class="pill">macOS collector</span>
+                  <span class="pill">Full Disk Access</span>
+                </td>
+                <td>
+                  Messages as conversational documents, with attachment text inline, and voice-clip
+                  transcripts
+                  <a href="/docs/operating#models">when a transcriber model is assigned</a>;
+                  participants feed the people graph.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="notes-tasks-meetings">Notes, tasks &amp; meetings</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>What it adds</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  Apple Notes<br /><span class="pill">macOS collector</span>
+                  <span class="pill">Full Disk Access</span>
+                </td>
+                <td>Every note as a document.</td>
+              </tr>
+              <tr>
+                <td>
+                  Apple Reminders<br /><span class="pill">macOS collector</span>
+                  <span class="pill">Full Disk Access</span>
+                </td>
+                <td>Reminders and tasks as documents.</td>
+              </tr>
+              <tr>
+                <td>
+                  Notion Pages<br /><span class="pill">any collector</span>
+                  <span class="pill">OAuth</span>
+                </td>
+                <td>Notion pages as documents.</td>
+              </tr>
+              <tr>
+                <td>
+                  Notion Databases<br /><span class="pill">any collector</span>
+                  <span class="pill">OAuth</span>
+                </td>
+                <td>
+                  Each shared Notion database as its own typed analytics table, queryable with SQL.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Obsidian Notes<br /><span class="pill">any collector</span>
+                  <span class="pill">Vault path</span>
+                </td>
+                <td>
+                  Markdown notes as documents, with frontmatter, tags, and wikilinks. Vaults with
+                  the same folder name on one collector remain separate sources.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Things 3<br /><span class="pill">macOS collector</span>
+                  <span class="pill">Full Disk Access</span>
+                </td>
+                <td>
+                  Tasks as documents. Things must be running on the collector's host — the app is
+                  what pulls from Things Cloud, and the local database it maintains is the only
+                  thing Omnesis can read. A collector that finds Things quit opens it again, hidden
+                  and in the background; if it keeps quitting, the collector retries on a slowing
+                  schedule, never more than a few times a day, and the source says so. Several Macs
+                  can host it as one <a href="#several-devices">shared</a> source, each reading its
+                  own local Things database.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Granola Meetings<br /><span class="pill">any collector</span>
+                  <span class="pill">API key</span>
+                </td>
+                <td>
+                  Meeting notes as documents — summaries and transcripts — plus a meetings analytics
+                  table; attendees feed the people graph. Several accounts can be connected, one API
+                  key each. Each sync reads new and edited notes, and a full pass once a day picks
+                  up deleted ones.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="coding-agents">Coding agents</h2>
+        <p>
+          These sources read session files written by coding agents on the collector host. Each
+          session becomes one conversation document per local calendar day. Documents contain human
+          prompts and completed assistant replies. Tool calls, tool results, hidden reasoning,
+          system context, Claude Code sidechains, and Codex subagent sessions are excluded. Project,
+          working-directory, branch, and model metadata remain available when the source records
+          them.
+        </p>
+        <p>
+          The collector accepts at most 10,000 transcript files per source. It rejects a file above
+          1 GiB before or after decompression. It also rejects a daily document above 16 MiB. One
+          session can contain at most 4,000 daily documents, and one source can track at most
+          100,000 daily documents. A rejected file does not delete its last indexed documents.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>What it adds</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  Pi Sessions<br /><span class="pill">any collector</span>
+                  <span class="pill">Local files</span>
+                </td>
+                <td>
+                  Active session-tree branches from <code>~/.pi/agent/sessions</code>; linear
+                  session files are read too. A custom directory can be selected when adding the
+                  source.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Claude Code Sessions<br /><span class="pill">any collector</span>
+                  <span class="pill">Local files</span>
+                </td>
+                <td>
+                  Main conversation branches from <code>~/.claude/projects</code>. Claude Code
+                  removes old local transcripts according to its own retention setting; Omnesis
+                  mirrors the files that remain. On several collectors it is a
+                  <a href="#several-devices">per-device</a> source: each machine contributes its own
+                  transcript directory, which <strong>+ Add source</strong> can set separately for
+                  each collector.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Codex Sessions<br /><span class="pill">any collector</span>
+                  <span class="pill">Local files</span>
+                </td>
+                <td>
+                  Root sessions from <code>~/.codex/sessions</code> and
+                  <code>~/.codex/archived_sessions</code>. Recorded rollbacks are applied before the
+                  conversation document is built. On several collectors it is a
+                  <a href="#several-devices">per-device</a> source: each machine contributes its own
+                  Codex home, which <strong>+ Add source</strong> can set separately for each
+                  collector.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="code-hosting">Code hosting</h2>
+        <p>
+          These sources index the repositories the token can list: the private ones it was granted,
+          plus the public repositories you own or belong to. A token's
+          <em>Only select repositories</em> choice governs its private access only — it does not
+          narrow the public side, because a fine-grained token can read every public repository on
+          GitHub.
+        </p>
+        <p>
+          What Omnesis indexes is therefore decided here, not on GitHub. The
+          <code>repos</code> setting is an allow-list of <code>owner/name</code> entries — name them
+          and exactly those are indexed; <code>excludeRepos</code> drops individual repositories
+          whether that list is set or empty. Entries must be repositories you own, collaborate on,
+          or whose organization you belong to: a public repository you have no connection to cannot
+          be added this way. Both settings take effect on the next sync when changed, without
+          re-issuing the token — set them with <code>omnesis config set</code> or by editing the
+          config file.
+        </p>
+        <p>
+          A read-only token with Metadata, Contents, Issues, Pull requests, and Discussions is
+          enough, and code itself is never indexed — no diffs, no file contents.
+        </p>
+        <p>
+          A fine-grained token belongs to exactly one resource owner, so an organization's private
+          repositories need a token of their own. Connect it as a second account and give it a
+          connection name — the organization's, say — because both tokens authenticate as the same
+          person and would otherwise resolve to one account, the second replacing the first's
+          credential. Give each account its own <code>repos</code> list too: both tokens can see the
+          same public repositories, and without a list each account would index its own copy.
+        </p>
+
+        <p>
+          A thread and its replies are one document, rewritten whenever anything in it changes, so a
+          new comment, an edited comment, or a closed issue updates the document in place rather
+          than adding another one. References between threads become links in the graph: a
+          <code>#123</code> mention or a "Closes #123" line resolves to that issue, pull request, or
+          discussion, and a merged pull request links to the commit it landed as.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>What it adds</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  GitHub<br /><span class="pill">any collector</span>
+                  <span class="pill">Access token</span>
+                </td>
+                <td>
+                  Issues, pull requests, and discussions as documents — each with its comments,
+                  review verdicts, and inline review remarks, plus labels, state, and assignees.
+                  Authors and participants feed the people graph.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  GitHub Commits<br /><span class="pill">any collector</span>
+                  <span class="pill">Access token</span>
+                </td>
+                <td>
+                  Commits on each repository's default branch — message, author, changed-file paths,
+                  and line counts. Commit authorship ties a GitHub account to the email address the
+                  same person uses elsewhere in the corpus.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="calendar-contacts">Calendar &amp; contacts</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>What it adds</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  Google Calendar<br /><span class="pill">any collector</span>
+                  <span class="pill">OAuth</span>
+                </td>
+                <td>Events as documents, plus a typed events table for SQL queries.</td>
+              </tr>
+              <tr>
+                <td>
+                  Apple Calendar<br /><span class="pill">macOS collector</span>
+                  <span class="pill">Full Disk Access</span>
+                </td>
+                <td>Events as documents, plus a typed events table.</td>
+              </tr>
+              <tr>
+                <td>
+                  Outlook Calendar<br /><span class="pill">any collector</span>
+                  <span class="pill">OAuth</span>
+                </td>
+                <td>
+                  Events from every calendar on the account &mdash; your own, shared, and subscribed
+                  &mdash; as documents, plus a typed events table. Recurring series arrive as
+                  individual occurrences, and each event records how it marks your availability, so
+                  a block held as free is distinguishable from a meeting.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Google Contacts<br /><span class="pill">any collector</span>
+                  <span class="pill">OAuth</span>
+                </td>
+                <td>Contacts as documents; each contact seeds an identity in the people graph.</td>
+              </tr>
+              <tr>
+                <td>
+                  Apple Contacts<br /><span class="pill">macOS collector</span>
+                  <span class="pill">Full Disk Access</span>
+                </td>
+                <td>Contacts as documents; each contact seeds an identity in the people graph.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="files">Files</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>What it adds</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  Google Drive<br /><span class="pill">any collector</span>
+                  <span class="pill">OAuth</span>
+                </td>
+                <td>
+                  Files as documents, with text extracted from binary formats (PDF, modern and older
+                  Office formats, ODF, RTF) and images OCR'd
+                  <a href="/docs/operating#models">when an OCR model is assigned</a>.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  OneDrive<br /><span class="pill">any collector</span>
+                  <span class="pill">OAuth</span>
+                </td>
+                <td>
+                  Files from your own drive as documents, with text extracted from PDFs and Office
+                  formats and images OCR'd
+                  <a href="/docs/operating#models">when an OCR model is assigned</a>. Files other
+                  people have shared with you are not included, nor are SharePoint or Teams
+                  libraries.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Local Files <span class="pill">experimental</span><br /><span class="pill"
+                    >macOS or Linux collector</span
+                  >
+                  <span class="pill">Folder paths</span>
+                </td>
+                <td>
+                  Documents in the folders you choose on the collector's own machine — text,
+                  markdown, PDF, Office and OpenDocument files, among others — with text extracted.
+                  <a href="#several-devices">Per device</a>: each machine indexes its own folders.
+                  See <a href="#local-files">Local Files</a>.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="web">Web</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>What it adds</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  Chrome Bookmarks<br /><span class="pill">any collector</span>
+                  <span class="pill">Local files</span>
+                </td>
+                <td>
+                  Bookmarks as documents, linked to the captured web page when one exists. A
+                  bookmark remains a pointer and does not stand in for the page or a structured
+                  source document that has the same URL.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Browser History<br /><span class="pill">any collector</span>
+                  <span class="pill">Local files</span>
+                </td>
+                <td>
+                  Visit, daily-rollup, and search-term analytics tables, plus a daily browsing
+                  summary document. Reads Chrome, Brave, Edge, and Vivaldi on any collector, plus
+                  Safari and Arc on a macOS collector. Omnesis reads private copies of the browser
+                  databases and never modifies the originals.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Web Pages<br /><span class="pill">gateway</span>
+                  <span class="pill">Paired extension</span>
+                </td>
+                <td>
+                  The full text of pages you visit, captured by the paired browser extension as one
+                  document per page, plus a page-visits analytics table. Each visit records the
+                  paired browser and the Chrome profile name you entered during pairing, so visits
+                  from different profiles stay apart; a page document names the profile that last
+                  changed it. Omnesis never fetches URLs it finds in other sources — only pages you
+                  open in the browser are captured. When another source indexes the same item (a
+                  GitHub issue, say), links prefer that source's document and keep the captured page
+                  attached to it.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="phone-device-activity">Phone &amp; device activity</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>What it adds</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  Apple Health<br /><span class="pill">iPhone</span>
+                  <span class="pill">In-app toggle</span>
+                </td>
+                <td>
+                  Typed analytics tables for activity, sleep, vitals, body, nutrition, mindfulness,
+                  and mood, plus summary documents for workouts, mindful sessions, mood logs, and
+                  each night of sleep. <a href="#several-devices">Shared</a> across your Apple
+                  devices: they all read the same HealthKit library.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Health Connect<br /><span class="pill">Android</span>
+                  <span class="pill">In-app toggle</span>
+                </td>
+                <td>
+                  Typed analytics tables for activity, exercise, sleep, vitals, body, nutrition,
+                  cycles, and mindfulness. <a href="#several-devices">Per device</a>: each Android
+                  phone adds its own data.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Photos &amp; Screenshots<br /><span class="pill">iPhone</span>
+                  <span class="pill">Android</span> <span class="pill">In-app toggle</span>
+                </td>
+                <td>
+                  Text found in your photos and screenshots, recognized by on-device OCR, plus place
+                  names and scene labels derived on-device. Only that derived text is indexed — the
+                  image itself never leaves the phone. <a href="#several-devices">Per device</a>:
+                  each phone indexes its own library, so a photo synced to several phones through a
+                  cloud service appears once per phone.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Activity Segments<br /><span class="pill">iPhone</span>
+                  <span class="pill">Android</span> <span class="pill">In-app toggle</span>
+                </td>
+                <td>
+                  Movement segments as analytics rows, plus one movement-summary document per day.
+                  <a href="#several-devices">Per device</a>: each phone or tablet adds its own data.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Location Visits<br /><span class="pill">iPhone</span>
+                  <span class="pill">In-app toggle</span>
+                </td>
+                <td>
+                  Places you spend time — each stay's arrival, departure, coordinates, accuracy, and
+                  resolved place details as an analytics row, plus one document per visit.
+                  <a href="#several-devices">Per device</a>: each iPhone or iPad adds its own data.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  App Usage<br /><span class="pill">Android</span>
+                  <span class="pill">In-app toggle</span>
+                </td>
+                <td>
+                  Per-app usage sessions and daily totals as analytics tables, plus a daily
+                  attention-timeline document. <a href="#several-devices">Per device</a>: each
+                  Android phone adds its own data.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Apple Call Log<br /><span class="pill">macOS collector</span>
+                  <span class="pill">Full Disk Access</span>
+                </td>
+                <td>
+                  Calls as analytics rows plus per-day call-log documents; callers feed the people
+                  graph. It reads the iCloud-synced call history, so iPhone calls land too, and
+                  several Macs on one iCloud account host it as one
+                  <a href="#several-devices">shared</a> source. Calls stay in the analytics table
+                  after they age out of the device's history.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Call Log<br /><span class="pill">Android</span>
+                  <span class="pill">In-app toggle</span>
+                </td>
+                <td>
+                  The same call rows and per-day documents from an Android phone.
+                  <a href="#several-devices">Per device</a>: each phone adds its own calls. Only the
+                  Android app you <a href="/docs/apps#build-android">build yourself</a> includes it;
+                  the Google Play app leaves out both the source and its permission.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Apple Voicemail<br /><span class="pill">macOS 26+ collector</span>
+                  <span class="pill">Full Disk Access</span>
+                </td>
+                <td>
+                  Apple's locally synced voicemail transcripts as searchable documents; callers feed
+                  the people graph. The Phone app must stay running on the collector host to pull
+                  new voicemails from iCloud, so set it to open at login.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Screen Time<br /><span class="pill">macOS collector</span>
+                  <span class="pill">Full Disk Access</span>
+                </td>
+                <td>
+                  App-session and daily screen-time analytics tables, plus a per-day digest
+                  document. Omnesis reads a private copy of the macOS activity database and never
+                  modifies the original. <a href="#several-devices">Per device</a>: each Mac adds
+                  its own activity.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="finance-fitness">Finance &amp; fitness</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>What it adds</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  Strava Activities<br /><span class="pill">any collector</span>
+                  <span class="pill">OAuth</span>
+                </td>
+                <td>
+                  Activities, splits, best efforts, laps, segment efforts, zones, streams, comments,
+                  kudos, gear, and athlete profile, zones, and stats as analytics tables, plus a
+                  summary document per activity. Each installation needs its own Strava API app,
+                  because Strava caps a shared app at one connected athlete; the first add flow
+                  walks you through registering it.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Coinbase<br /><span class="pill">any collector</span>
+                  <span class="pill">API key</span>
+                </td>
+                <td>
+                  Balances, holdings, orders, fills, and transactions as analytics tables, plus
+                  transaction documents. Several portfolios can be connected, one API key each.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Bank account (Enable Banking)<br /><span class="pill">any collector</span>
+                  <span class="pill">PSD2 consent</span>
+                </td>
+                <td>
+                  Accounts, balances, and transactions from European banks as analytics tables, plus
+                  transaction documents; one instance per connected bank.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Bank accounts (Lunch Flow)<br /><span class="pill">any collector</span>
+                  <span class="pill">API key</span>
+                </td>
+                <td>
+                  Bank accounts, balances, and transactions as analytics tables, plus transaction
+                  documents. Several keys can be connected, as long as they cover different bank
+                  accounts — the same account reached twice would have the two connections overwrite
+                  each other.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Bank account (Plaid) <span class="pill">experimental</span><br /><span
+                    class="pill"
+                    >any collector</span
+                  >
+                  <span class="pill">Plaid sign-in</span>
+                </td>
+                <td>
+                  Transactions from the banks Plaid covers — strongest in the United States and
+                  Canada — as documents, plus daily balance and holdings tables; one instance per
+                  connected bank. It needs a Plaid developer app of your own. See
+                  <a href="#plaid">Plaid</a>.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="omnesis-itself">Omnesis itself</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>What it adds</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  Omnesis Notes<br /><span class="pill">gateway</span>
+                  <span class="pill">Paired device</span>
+                </td>
+                <td>
+                  Quick notes captured with <code>omnesis note</code>, the portal's
+                  <strong>Tell Omnesis</strong> page, the mobile apps, Siri or Android voice
+                  assistants, and Apple Watch, indexed as one searchable document per day. No agent
+                  model is needed. The Sources lists show it as a read-only row; to amend or delete
+                  a note, use <strong>Tell Omnesis</strong>, and the day's document rebuilds from
+                  what remains. There is nothing to sync, pause, or remove.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Omnesis Chat<br /><span class="pill">gateway</span>
+                  <span class="pill">Built-in</span>
+                </td>
+                <td>
+                  Your conversations with the <a href="/docs/agent">agent</a>, indexed back into the
+                  corpus as searchable documents with citation links.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Agent conversations<br /><span class="pill">gateway</span>
+                  <span class="pill">Paired device</span>
+                </td>
+                <td>
+                  Conversations from an external agent harness connected with
+                  <code>omnesis connect</code> — see
+                  <a href="/docs/connect#openclaw-hermes">OpenClaw and Hermes</a>. The installed
+                  plugin pushes its transcript to the gateway, which renders a document per
+                  conversation per day.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="experimental-sources">Experimental sources</h2>
+        <div class="callout warn">
+          <p>
+            <strong>Plaid and Local Files are experimental.</strong> They need more testing, and
+            their behaviour, settings and stored data may change between releases.
+          </p>
+        </div>
+        <p>
+          A collector offers experimental sources only when it runs with
+          <code>OMNESIS_EXPERIMENTAL=1</code>. The collector reads the flag from its own
+          environment, so set it on each collector that should offer them; a flag on the gateway
+          alone does not add them to <strong>+ Add source</strong>. With the flag off, the picker
+          leaves them out and a collector skips any it already hosts, saying why in its log.
+        </p>
+        <p>
+          For a collector installed as a service, add the variable to its unit. Re-running
+          <code>service install</code> rewrites the unit from the flags you pass, so repeat the ones
+          it was installed with, such as its keyring flags, then restart it:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis service install collector --env OMNESIS_EXPERIMENTAL=1</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis service restart collector</span>
+            </p>
+          </div>
+        </div>
+
+        <h3 id="plaid">Plaid (experimental)</h3>
+        <p>
+          Plaid connects banks in the countries you choose; its coverage is strongest in the United
+          States and Canada. Plaid has no shared application for third-party tools, so you create
+          your own Plaid developer app and configure it once: its client ID, the secret for the
+          environment you use, that environment (<code>sandbox</code> or <code>production</code>),
+          and the countries whose banks you want offered. Sandbox is free and uses Plaid's test
+          banks. Real banks need Production access, which Plaid grants per team and bills per
+          connected bank. The first add walks you through the app credential, or set it directly:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis creds set plaid</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          Adding a bank opens a sign-in page that Plaid hosts. Omnesis shows you a link, you
+          complete the sign-in there — including any redirect to the bank's own website — and the
+          source appears once Plaid reports the connection. The gateway hosts no callback, so the
+          link works from any browser on any device.
+        </p>
+        <ul>
+          <li>
+            <strong>One bank per add.</strong> A sign-in connects one bank and becomes one source,
+            labelled with that bank's name. Add the source again to connect another bank; a bank
+            that is already connected is refused rather than duplicated.
+          </li>
+          <li>
+            <strong>What it adds.</strong> Transactions as searchable documents, plus daily balance
+            and holdings snapshots in the <code>plaid_transactions</code>,
+            <code>plaid_balances</code> and <code>plaid_holdings</code> tables. Access is read-only:
+            it can never move money. Holdings are requested only where the bank supports them.
+          </li>
+          <li>
+            <strong>History.</strong> The first sync asks for up to two years of transactions. Plaid
+            assembles that history in the background, so a fresh connection can take a few syncs to
+            fill in. The depth is fixed when the bank is connected.
+          </li>
+          <li>
+            <strong>Re-consent.</strong> Banks require a fresh sign-in from time to time. Omnesis
+            warns before the deadline and marks the source <em>needs auth</em> once the bank
+            refuses. Signing in again reopens the same hosted page and keeps the source and its
+            history.
+          </li>
+          <li>
+            <strong>Removal disconnects the bank.</strong> Removing the source asks Plaid to
+            disconnect the bank, which ends its per-bank billing. If Plaid cannot be reached, the
+            source is still removed and the warning tells you to remove the connection from the
+            Plaid dashboard yourself.
+          </li>
+          <li>
+            <strong>An unfinished add is cleaned up later.</strong> If you close the sign-in page
+            before Omnesis records the bank, Omnesis disconnects it at Plaid the next time you add a
+            bank or the collector starts. A sign-in left for more than about half an hour, or a
+            collector stopped between connecting a bank and storing it, can leave a connection
+            behind; the log names it, and you remove it from the Plaid dashboard.
+          </li>
+        </ul>
+
+        <h3 id="local-files">Local Files (experimental)</h3>
+        <p>
+          Local Files indexes documents on the collector's own machine — the folders you name,
+          nothing else. There is no account and nothing to revoke. It runs on macOS and Linux
+          collectors and reads plain text, markdown, CSV, JSON, HTML, PDF, Word, Excel, PowerPoint,
+          OpenDocument, RTF, email (<code>.eml</code>), calendar (<code>.ics</code>) and wallet pass
+          files.
+        </p>
+        <p>
+          The same file in two places is found once: a PDF or office document on disk is matched
+          against mail attachments and cloud files by its extracted text, so a result can show where
+          the file came from. It is a <a href="#several-devices">per-device</a> source, so a result
+          names the computer that holds the file.
+        </p>
+        <ul>
+          <li>
+            <strong>Folders you name.</strong> There are no default folders. Name each one when you
+            add the source; each machine that joins it names its own. An <em>Exclude</em> setting
+            takes glob patterns to skip inside those folders.
+          </li>
+          <li>
+            <strong>What it refuses.</strong> System and configuration folders such as
+            <code>Library</code> and <code>.config</code>, build and dependency folders, and files
+            that look like keys or secrets are never read, even inside a chosen folder. Git working
+            trees and Obsidian vaults are skipped whole — the Obsidian source indexes vaults — and
+            naming one as a folder is refused at setup with the reason.
+          </li>
+          <li>
+            <strong>Ranked low.</strong> A working disk holds far more documents than any other
+            source, so Local Files results rank below other sources' until its ranking is proven.
+          </li>
+          <li>
+            <strong>Deletion, folder by folder.</strong> A file removed from disk leaves the index
+            only once a scan has read its folder from end to end. A folder that could not be read —
+            an unmounted drive, a changed permission — is left alone until it can be, and the other
+            folders are unaffected. Remove the source to purge everything at once.
+          </li>
+        </ul>
+
+        <h2 id="managing-sources">Managing sources</h2>
+        <p>
+          Every source-management task is available both in the portal's
+          <strong>Sources</strong> page and under <code>omnesis sources</code>. Phone-hosted sources
+          are the exception: they are turned on and off in the <a href="/docs/apps">mobile apps</a>,
+          not from the portal or the CLI.
+        </p>
+
+        <h3 id="adding-a-source">Adding a source</h3>
+        <p>
+          In the portal, open <strong>Sources</strong> and choose <strong>+ Add source</strong>. In
+          the CLI, <code>omnesis sources add</code> opens the same picker, or you can name the
+          source type directly. The add flow walks you through the sign-in, API key, QR code or
+          operating-system permission the source needs, then starts the first sync.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p class="t-dim"># interactive picker</p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis sources add</span></p>
+            <p class="t-dim"># or name the source type directly</p>
+            <p>
+              <span class="t-prompt">❯</span> <span class="t-cmd">omnesis sources add gmail</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          With more than one collector paired, the flow asks which one hosts the new source;
+          <code>--device &lt;collector&gt;</code> answers that up front. A source that reads a
+          folder, such as an Obsidian vault, also takes the path:
+          <code>omnesis sources add obsidian-notes ~/Vaults/Work --device &lt;collector&gt;</code>.
+          The path is checked on that collector, so <code>~</code> and relative paths refer to its
+          machine, not the one running the CLI.
+        </p>
+        <p>
+          Most sources take <strong>several accounts</strong>. Run the add flow again and sign in
+          with a different account: two mailboxes, two Notion workspaces, or two phone numbers each
+          become their own source, identified as <code>&lt;type&gt;:&lt;account&gt;</code> (for
+          example <code>gmail:maya@example.com</code>) and synced, paused, and removed
+          independently. Your browser may need to be signed out of the platform, or signed in to the
+          account you want, for its account chooser to offer it. Sources that read one local store —
+          the Apple sources, Things, Screen Time, Local Files, and the coding-agent sources — take
+          one account per machine, and show as already configured once set up on that collector.
+        </p>
+
+        <h3 id="google-oauth-client">Google's OAuth client</h3>
+        <p>
+          Omnesis ships no Google OAuth client. Google requires a security assessment before one
+          shared client may read Gmail, so each installation registers its own client, in a Google
+          Cloud project you own, and signs in through it. The first time you add a Google source,
+          the add flow walks you through the registration, which takes about five minutes: create a
+          project, enable the Gmail, Google Calendar, Google Drive and People APIs, configure the
+          consent screen for External users, publish it, then create an OAuth client of type
+          <strong>Desktop app</strong> and paste its client ID and secret. In the portal the same
+          wizard opens when you choose <strong>+ Add source</strong> for a Google source and no
+          client is configured. Additional Google accounts reuse the client you registered.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p class="t-dim"># which providers have credentials configured</p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis creds list</span></p>
+            <p class="t-dim"># run the Google wizard again, to replace the client</p>
+            <p>
+              <span class="t-prompt">❯</span> <span class="t-cmd">omnesis creds set google</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          Publish the consent screen rather than leaving it in testing. A client in testing signs in
+          only the accounts listed as its test users, and Google expires its sign-ins after seven
+          days, so every Google source would ask you to sign in again each week. Publishing needs no
+          Google verification for your own use: the first sign-in shows a “Google hasn't verified
+          this app” warning, which you pass with <strong>Advanced → Continue</strong>.
+        </p>
+
+        <h3 id="day-to-day">Day-to-day tasks</h3>
+        <p>
+          Each task names the portal action on the <strong>Sources</strong> page first, then the CLI
+          command.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Task</th>
+                <th>How, and what happens</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Sync now</td>
+                <td>
+                  <strong>Sync</strong>, or <code>omnesis sources sync &lt;id&gt;</code>.<br />
+                  Runs an incremental sync without waiting for the next scheduled one.
+                  <code>--wait</code> blocks until it finishes.
+                </td>
+              </tr>
+              <tr>
+                <td>Pause</td>
+                <td>
+                  <strong>Pause sync (keep data)</strong>, or
+                  <code>omnesis sources pause &lt;id&gt;</code>.<br />
+                  Stops syncing on every device that hosts the source. Indexed data and sync
+                  progress stay. <strong>Resume sync</strong> or
+                  <code>omnesis sources resume &lt;id&gt;</code> picks up where it stopped.
+                </td>
+              </tr>
+              <tr>
+                <td>Sign in again</td>
+                <td>
+                  The <strong>Sign in again</strong> banner, or
+                  <code>omnesis sources reauth &lt;provider&gt;:&lt;account&gt;</code>.<br />
+                  Renews the sign-in for every source under that account (for example
+                  <code>google:maya@example.com</code> covers Gmail, Calendar, Drive, and Contacts).
+                  It must resolve to the same account; add a different account as a new source
+                  instead. Sources that read local files have nothing to renew.
+                </td>
+              </tr>
+              <tr>
+                <td>Inspect</td>
+                <td>
+                  <strong>Debug</strong>, or <code>omnesis sources debug &lt;id&gt;</code>.<br />
+                  Shows the source's sync status, cursor, and storage statistics.
+                </td>
+              </tr>
+              <tr>
+                <td>Rebuild</td>
+                <td>
+                  <strong>Resync</strong>, or <code>omnesis sources resync &lt;id&gt;</code>.<br />
+                  Deletes everything the source has indexed and syncs it again from scratch. Use it
+                  only when the indexed data must be rebuilt. The CLI asks first; pass
+                  <code>--yes</code> in scripts. Pages captured by the browser extension cannot be
+                  resynced, because the gateway has nowhere to fetch them again from. A phone source
+                  is resynced from the CLI only; the phone sends its data again.
+                </td>
+              </tr>
+              <tr>
+                <td>Move</td>
+                <td>
+                  <strong>+ Add source</strong> on the other machine, which offers
+                  <strong>Move</strong>, or<br />
+                  <code>omnesis sources move &lt;id&gt; --device &lt;collector&gt;</code>.<br />
+                  Hands a source to another collector. Indexed data stays; the old collector stops
+                  syncing it, and the new one signs in with its own credentials if the source needs
+                  them.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Sources hosted by more than one device have extra tasks — joining a device, detaching one,
+          and re-syncing one device only. They are covered in
+          <a href="#several-devices">Sources on several devices</a>. When a source reports an error
+          instead, start from <a href="/docs/operating#troubleshooting">Troubleshooting</a>.
+        </p>
+
+        <h3 id="removing-a-source">Removing a source</h3>
+        <p>
+          <strong>Remove</strong> in the portal, or <code>omnesis sources remove &lt;id&gt;</code>,
+          removes the whole source for every device that hosts it, including devices that are
+          offline; they learn about it when they reconnect. Syncing stops immediately, and a source
+          pushed from a phone or the browser extension stops being accepted. To keep the data
+          instead, pause the source.
+        </p>
+        <p>
+          Everything the source ingested — documents, analytics rows, search-index entries, and
+          anything derived from them — is then deleted in the background, queued behind indexing so
+          it does not interrupt work in flight. On a large mailbox that takes several minutes. Until
+          it finishes, the source stays in the list marked <strong>removing</strong>, and its
+          document count falls as the purge drains. If the gateway stops partway through, it resumes
+          the purge on the next start. You cannot add the same account again until the
+          <strong>removing</strong> row has gone; the re-added source then syncs from scratch.
+        </p>
+        <p>
+          People survive the removal on the strength of what remains. An email address or phone
+          number is kept while any other connected source still names it, so removing a mailbox does
+          not erase a contact your address book also holds. An identifier no remaining source names
+          goes with the purge, and a person left with none goes with it.
+        </p>
+        <p>
+          Removal deletes data from the gateway only. It does not delete the originals on the
+          provider or the phone, retained backups, or exported copies, and it does not promise
+          physical secure erasure. To delete one document rather than a whole source, see
+          <a href="/docs/search#beyond-search">deleting a document</a>.
+        </p>
+
+        <h2 id="several-devices">Sources on several devices</h2>
+        <p>
+          A source normally lives on one device: the collector or phone that syncs it. Some source
+          types can also be hosted by several devices at once — Apple Notes on two Macs signed in to
+          the same iCloud account, or Health Connect on two Android phones. Each device that hosts a
+          source is a <strong>member</strong> of it, and the source type fixes how its members share
+          the work. There are three ways:
+        </p>
+        <figure class="diagram">
+          <div class="lanes">
+            <section class="lane">
+              <p class="lane-title">One machine at a time</p>
+              <ol class="flow">
+                <li class="flow-step">
+                  <span class="flow-title">One device</span
+                  ><span class="flow-desc">syncs the source</span>
+                </li>
+                <li class="flow-step">
+                  <span class="flow-title">Gateway</span
+                  ><span class="flow-desc">keeps that device's data</span>
+                </li>
+              </ol>
+              <p class="lane-note">Move it to hand it to another machine.</p>
+            </section>
+            <section class="lane">
+              <p class="lane-title">Shared</p>
+              <ol class="flow">
+                <li class="flow-step">
+                  <span class="flow-title">Every member</span
+                  ><span class="flow-desc">reads the same upstream data</span>
+                </li>
+                <li class="flow-step">
+                  <span class="flow-title">Gateway</span
+                  ><span class="flow-desc">keeps one copy of each item</span>
+                </li>
+              </ol>
+              <p class="lane-note">Detaching a member keeps the data.</p>
+            </section>
+            <section class="lane">
+              <p class="lane-title">Per device</p>
+              <ol class="flow">
+                <li class="flow-step">
+                  <span class="flow-title">Each member</span
+                  ><span class="flow-desc">sends its own, different data</span>
+                </li>
+                <li class="flow-step">
+                  <span class="flow-title">Gateway</span
+                  ><span class="flow-desc"
+                    >keeps each member's data apart; search shows it all</span
+                  >
+                </li>
+              </ol>
+              <p class="lane-note">Detaching a member deletes its data.</p>
+            </section>
+          </div>
+          <figcaption>
+            The three ways a source can be hosted: by one machine at a time, shared by members that
+            read the same data, or per device, where each member adds its own.
+          </figcaption>
+        </figure>
+        <p>
+          The portal and <code>omnesis sources</code> name the mode with its code word, shown here
+          under each plain name.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Mode</th>
+                <th>How it works</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>One machine at a time<br /><code>exclusive</code></td>
+                <td>
+                  One device hosts the source. Adding the same account elsewhere is refused and
+                  names the current host; move the source instead. There is no member to detach.<br />
+                  <strong>Sources:</strong> every collector source not listed below, including Apple
+                  Contacts and Apple Calendar, whose local databases have no item identifiers that
+                  are stable across Macs.
+                </td>
+              </tr>
+              <tr>
+                <td>Shared<br /><code>replicated</code></td>
+                <td>
+                  Every member reads the same upstream data with its own sync progress; the gateway
+                  keeps one copy of each item. Detaching a member stops it contributing; the data
+                  stays.<br />
+                  <strong>Sources:</strong> Apple Notes, Reminders, iMessage, Call Log, and
+                  Voicemail on Macs signed in to the same iCloud account; Things; Apple Health on
+                  iPhones.
+                </td>
+              </tr>
+              <tr>
+                <td>Per device<br /><code>partitioned</code></td>
+                <td>
+                  Each member sends data only it has. The gateway keeps each member's data apart,
+                  and search and SQL show all of it together. Detaching a member deletes its data
+                  from the gateway; other members' data stays.<br />
+                  <strong>Sources:</strong> Screen Time; Claude Code, Codex, and Pi sessions; Local
+                  Files; on phones, Photos, Activity Segments, Location Visits, Health Connect,
+                  Android Call Log, and App Usage.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 id="adding-a-device">Adding a device to a source</h3>
+        <p>
+          Start <strong>+ Add source</strong> for the source type and pick the new machine as the
+          destination. The flow first discovers which account that machine has. If the account is
+          already configured on another device and the type allows several members, it offers to
+          <strong>join</strong>; a different account becomes a separate source. On a second Mac, for
+          example, the same iCloud account joins Apple Notes, while a different iCloud account
+          becomes a second Apple Notes source. For a type that allows one machine at a time, the
+          flow names the current host and offers to move the source.
+        </p>
+        <p>
+          From the CLI, <code>omnesis sources join &lt;id&gt; --device &lt;device&gt;</code> adds a
+          member, and the portal's <strong>Join a device…</strong> action does the same. Each member
+          syncs with its own credentials, so if the source needs a sign-in, run
+          <code
+            >omnesis sources reauth &lt;provider&gt;:&lt;account&gt; --device &lt;device&gt;</code
+          >
+          for it. A join is refused when the device cannot host the type or holds a different
+          account. Update a collector before joining it to a shared or per-device source; an
+          out-of-date collector is not offered as a destination.
+        </p>
+        <p>
+          A source that reads a folder on each machine — Claude Code, Codex, and Pi sessions, or a
+          custom Things database — asks for that path once the destination is chosen, and the path
+          belongs to that member only. Where <strong>+ Add source</strong> offers
+          <strong>Configure &lt;device&gt;</strong>, use it to change one member's path without
+          touching the others. The shorter <code>omnesis sources join</code> uses the source's
+          default path.
+        </p>
+        <p>
+          Phones are different: each phone and tablet is paired separately, and phone sources are
+          turned on in the app, before the operating-system permission prompt, rather than joined
+          from the portal or the CLI. When another iPhone already sends Apple Health, the app offers
+          <strong>Keep using the other iPhone</strong>, <strong>Use both iPhones</strong>, or
+          <strong>Use only this iPhone</strong>. Turning on a per-device source on a second phone
+          adds that phone's data and keeps the first phone's history. See
+          <a href="/docs/apps">Mobile apps</a>.
+        </p>
+
+        <h3 id="members-detach-resync">Members, detaching, and re-syncing</h3>
+        <p>
+          <code>omnesis sources members &lt;id&gt;</code> lists a source's mode and each member with
+          its own sync status; the portal's Sources page shows the same under the source.
+        </p>
+        <p>
+          <code>omnesis sources detach &lt;id&gt; --device &lt;device&gt;</code>, or
+          <strong>Detach a device…</strong> in the portal, stops one member hosting the source
+          without removing it. What happens to the data depends on the mode, as in the table above,
+          so the CLI and the portal both say it before you confirm; pass <code>--yes</code> in
+          scripts. The last member cannot be detached — pause the source to keep its data, or remove
+          it. On a phone, turning a source off in the app asks the gateway to detach that phone,
+          with the same outcome.
+        </p>
+        <p>
+          <code>omnesis sources resync &lt;id&gt; --device &lt;device&gt;</code> re-syncs one member
+          of a shared or per-device source and leaves the others alone. On a per-device source, that
+          member's data is deleted and synced again; on a shared source, only that member's sync
+          progress starts over, because the data is shared.
+        </p>
+        <p>
+          If shared members disagree about whether an item was deleted — one reports it gone while
+          another still has it — Omnesis keeps the item until every member that holds it agrees.
+          <code>omnesis sources</code> counts them as deletions in dispute, the member holding them
+          shows <em>Keeping N items that &lt;device&gt; no longer has</em> in the portal and the
+          apps, and <code>omnesis doctor</code> warns. The disagreement clears once the item is
+          deleted on the device that still holds it, or once you
+          <a href="/docs/search#beyond-search">delete the document for good</a>.
+        </p>
+
+        <h2 id="what-a-source-contributes">What a source contributes</h2>
+        <p>
+          <strong>Searchable documents.</strong> Most sources emit documents — emails, notes,
+          messages, pages, per-day summaries — into the document store, where they are indexed for
+          keyword and vector <a href="/docs/search">search</a> and available to the
+          <a href="/docs/agent">agent</a>.
+        </p>
+        <p>
+          <strong>Typed analytics rows.</strong> Structured sources emit typed rows into analytics
+          tables instead of, or alongside, documents: heart-rate samples, bank transactions, browser
+          visits, screen-time sessions. These are queryable with plain SQL — see
+          <a href="/docs/search">Search</a>. Many sources contribute both, binding a readable
+          summary document to the underlying rows.
+        </p>
+        <p>
+          <strong>People-graph identities.</strong> Contacts, email correspondents, message
+          participants, callers, and meeting attendees become identities in the people graph, so one
+          person's activity is connected across every source they appear in.
+        </p>
+
+        <nav class="docs-pager" aria-label="Pages">
+          <a href="/docs/updating"
+            ><span class="pager-label">Previous</span
+            ><span class="pager-title">Backup &amp; updates</span></a
+          >
+          <a class="pager-next" href="/docs/building-sources"
+            ><span class="pager-label">Next</span
+            ><span class="pager-title">Building sources</span></a
+          >
+        </nav>
+      </main>
+    </div>
+
+    <footer class="site-footer">
+      <div class="container">
+        <div class="footer-inner">
+          <div class="footer-base">© 2026 Omnesis</div>
+          <nav class="footer-links" aria-label="Footer">
+            <a href="/docs/">Docs</a>
+            <a href="/privacy">Privacy</a>
+            <a class="footer-mail" href="mailto:contact@omnesis.dev">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="2" y="4" width="20" height="16" rx="2" />
+                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+              </svg>
+              contact@omnesis.dev
+            </a>
+            <a class="footer-gh" href="#" data-oss-open>
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path
+                  d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+                />
+              </svg>
+              GitHub
+            </a>
+            <a
+              class="footer-social footer-x"
+              href="https://x.com/Omnesisdev"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Omnesis on X"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>@Omnesisdev
+            </a>
+            <a
+              class="footer-social footer-discord"
+              href="https://discord.gg/4Y8pQHrVv"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Join Omnesis on Discord"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>Discord
+            </a>
+          </nav>
+        </div>
+      </div>
+    </footer>
+
+    <script src="/docs/docs.js"></script>
+  </body>
+</html>

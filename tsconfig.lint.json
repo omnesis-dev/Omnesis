@@ -1,0 +1,27 @@
+{
+  "//": "Type-checking project for ESLint only. Each per-package tsconfig excludes *.test.ts (Vitest builds those), so the build graph alone does not cover the lint surface. This file widens the graph to every file ESLint touches.",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "lib": ["ESNext", "DOM", "DOM.Iterable"]
+  },
+  "include": [
+    "evals/briefs/src/**/*.ts",
+    "extension/src/**/*.ts",
+    "packages/**/*.ts",
+    "packages/**/*.tsx",
+    "plugins/**/*.ts",
+    "skills/**/*.ts",
+    "scripts/**/*.ts",
+    "bench/**/*.ts",
+    "e2e/**/*.ts",
+    "*.config.ts",
+    "playwright.config.ts",
+    "vitest.config.ts"
+  ],
+  "exclude": ["**/node_modules/**", "**/dist/**", "**/*.d.ts", "packages/gateway/portal/**"]
+}

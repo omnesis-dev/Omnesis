@@ -1,0 +1,230 @@
+{
+  "trace": {
+    "watch": "maya-conversation-lapsed",
+    "records": [
+      {
+        "seq": 77,
+        "nodeId": "maya_message",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 77,
+        "nodeId": "lapsed",
+        "key": "person=5e7a1c88-0000-4000-8000-000000000004",
+        "transition": "armed"
+      },
+      {
+        "seq": 235,
+        "nodeId": "maya_message",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 235,
+        "nodeId": "lapsed",
+        "key": "person=5e7a1c88-0000-4000-8000-000000000004",
+        "transition": "reset"
+      },
+      {
+        "seq": 235,
+        "nodeId": "lapsed",
+        "key": "person=5e7a1c88-0000-4000-8000-000000000004",
+        "transition": "armed"
+      },
+      {
+        "seq": 314,
+        "nodeId": "maya_message",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 314,
+        "nodeId": "lapsed",
+        "key": "person=5e7a1c88-0000-4000-8000-000000000004",
+        "transition": "reset"
+      },
+      {
+        "seq": 314,
+        "nodeId": "lapsed",
+        "key": "person=5e7a1c88-0000-4000-8000-000000000004",
+        "transition": "armed"
+      },
+      {
+        "seq": 327,
+        "nodeId": "maya_message",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 327,
+        "nodeId": "lapsed",
+        "key": "person=5e7a1c88-0000-4000-8000-000000000004",
+        "transition": "reset"
+      },
+      {
+        "seq": 327,
+        "nodeId": "lapsed",
+        "key": "person=5e7a1c88-0000-4000-8000-000000000004",
+        "transition": "armed"
+      },
+      {
+        "seq": -1,
+        "nodeId": "lapsed",
+        "key": "person=5e7a1c88-0000-4000-8000-000000000004",
+        "transition": "fired",
+        "detail": "the wait elapsed"
+      },
+      {
+        "seq": 585,
+        "nodeId": "maya_message",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 585,
+        "nodeId": "lapsed",
+        "key": "person=5e7a1c88-0000-4000-8000-000000000004",
+        "transition": "armed"
+      },
+      {
+        "seq": 603,
+        "nodeId": "maya_message",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 603,
+        "nodeId": "lapsed",
+        "key": "person=5e7a1c88-0000-4000-8000-000000000004",
+        "transition": "reset"
+      },
+      {
+        "seq": 603,
+        "nodeId": "lapsed",
+        "key": "person=5e7a1c88-0000-4000-8000-000000000004",
+        "transition": "armed"
+      },
+      {
+        "seq": -2,
+        "nodeId": "lapsed",
+        "key": "person=5e7a1c88-0000-4000-8000-000000000004",
+        "transition": "fired",
+        "detail": "the wait elapsed"
+      },
+      {
+        "seq": 853,
+        "nodeId": "maya_message",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 853,
+        "nodeId": "lapsed",
+        "key": "person=5e7a1c88-0000-4000-8000-000000000004",
+        "transition": "armed"
+      },
+      {
+        "seq": 869,
+        "nodeId": "maya_message",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 869,
+        "nodeId": "lapsed",
+        "key": "person=5e7a1c88-0000-4000-8000-000000000004",
+        "transition": "reset"
+      },
+      {
+        "seq": 869,
+        "nodeId": "lapsed",
+        "key": "person=5e7a1c88-0000-4000-8000-000000000004",
+        "transition": "armed"
+      },
+      {
+        "seq": -3,
+        "nodeId": "lapsed",
+        "key": "person=5e7a1c88-0000-4000-8000-000000000004",
+        "transition": "fired",
+        "detail": "the wait elapsed"
+      },
+      {
+        "seq": 1122,
+        "nodeId": "maya_message",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1122,
+        "nodeId": "lapsed",
+        "key": "person=5e7a1c88-0000-4000-8000-000000000004",
+        "transition": "armed"
+      },
+      {
+        "seq": 1135,
+        "nodeId": "maya_message",
+        "key": "singleton",
+        "transition": "fired"
+      },
+      {
+        "seq": 1135,
+        "nodeId": "lapsed",
+        "key": "person=5e7a1c88-0000-4000-8000-000000000004",
+        "transition": "reset"
+      },
+      {
+        "seq": 1135,
+        "nodeId": "lapsed",
+        "key": "person=5e7a1c88-0000-4000-8000-000000000004",
+        "transition": "armed"
+      }
+    ],
+    "firings": [
+      {
+        "seq": -1,
+        "nodeId": "lapsed",
+        "keyHash": "e55a82f20b26db0e63142d250bde77c0:0",
+        "key": "person=5e7a1c88-0000-4000-8000-000000000004",
+        "firedAt": "2026-04-10T20:15:00.000Z",
+        "payload": {
+          "last_message": "2026-03-27T20:15:00.000Z",
+          "person": "5e7a1c88-0000-4000-8000-000000000004"
+        },
+        "documentIds": ["d0c00000-0000-4000-8000-000000000056"]
+      },
+      {
+        "seq": -2,
+        "nodeId": "lapsed",
+        "keyHash": "e55a82f20b26db0e63142d250bde77c0:0",
+        "key": "person=5e7a1c88-0000-4000-8000-000000000004",
+        "firedAt": "2026-04-29T20:15:00.000Z",
+        "payload": {
+          "last_message": "2026-04-15T20:15:00.000Z",
+          "person": "5e7a1c88-0000-4000-8000-000000000004"
+        },
+        "documentIds": ["d0c00000-0000-4000-8000-000000000058"]
+      },
+      {
+        "seq": -3,
+        "nodeId": "lapsed",
+        "keyHash": "e55a82f20b26db0e63142d250bde77c0:0",
+        "key": "person=5e7a1c88-0000-4000-8000-000000000004",
+        "firedAt": "2026-05-18T20:15:00.000Z",
+        "payload": {
+          "last_message": "2026-05-04T20:15:00.000Z",
+          "person": "5e7a1c88-0000-4000-8000-000000000004"
+        },
+        "documentIds": ["d0c00000-0000-4000-8000-000000000060"]
+      }
+    ]
+  },
+  "backtest": {
+    "events": 1208,
+    "days": 90,
+    "firings": 3,
+    "reachByNode": {},
+    "totalReaches": 0,
+    "unboundedNodes": []
+  }
+}

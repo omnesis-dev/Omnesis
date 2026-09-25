@@ -1,0 +1,7 @@
+# The draft Omnesis writes for an external caller asking when an order arrives.
+# Its privacy review strikes the exact window, the consignment note and the
+# contact's name but keeps the rest, so the release is a line edit of this draft
+# — the `diff` comparison.
+{"afterMs":30,"event":{"type":"agent.message.start","payload":{"sessionId":"$SESSION","messageId":"$MSG","role":"assistant"}}}
+{"afterMs":120,"event":{"type":"agent.text.delta","payload":{"sessionId":"$SESSION","messageId":"$MSG","delta":"The Halden Press order is booked for delivery on Thursday 14 May. The window is 09:00 to 11:00.\nThe courier is Ridgeway Logistics. The consignment note is RW-40128.\nMaya Reeves at Halden Press is expecting the pallet at the loading bay."}}}
+{"afterMs":40,"event":{"type":"agent.message.end","payload":{"sessionId":"$SESSION","messageId":"$MSG","stopReason":"end_turn"}}}

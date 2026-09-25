@@ -1,0 +1,2042 @@
+[
+  {
+    "id": "txn-0001",
+    "account_id": "acct-current",
+    "date": "2026-03-03",
+    "amount": 120,
+    "currency": "GBP",
+    "merchant_name": "Riverside Kitchen",
+    "category": "Food and Drink > Restaurants",
+    "pending": false
+  },
+  {
+    "id": "txn-0002",
+    "account_id": "acct-current",
+    "date": "2026-03-08",
+    "amount": 185.4,
+    "currency": "GBP",
+    "merchant_name": "Stellar Sound Supper Club",
+    "category": "Food and Drink > Restaurants",
+    "pending": false
+  },
+  {
+    "id": "txn-0003",
+    "account_id": "acct-current",
+    "date": "2026-03-20",
+    "amount": 250.75,
+    "currency": "GBP",
+    "merchant_name": "Harbour House",
+    "category": "Food and Drink > Restaurants",
+    "pending": false
+  },
+  {
+    "id": "txn-0011",
+    "account_id": "acct-current",
+    "date": "2026-04-02",
+    "amount": 130,
+    "currency": "GBP",
+    "merchant_name": "Riverside Kitchen",
+    "category": "Food and Drink > Restaurants",
+    "pending": false
+  },
+  {
+    "id": "txn-0012",
+    "account_id": "acct-current",
+    "date": "2026-04-06",
+    "amount": 155,
+    "currency": "GBP",
+    "merchant_name": "Harbour House",
+    "category": "Food and Drink > Restaurants",
+    "pending": false
+  },
+  {
+    "id": "txn-0013",
+    "account_id": "acct-current",
+    "date": "2026-04-11",
+    "amount": 235,
+    "currency": "GBP",
+    "merchant_name": "Stellar Sound Supper Club",
+    "category": "Food and Drink > Restaurants",
+    "pending": false
+  },
+  {
+    "id": "txn-0014",
+    "account_id": "acct-current",
+    "date": "2026-04-20",
+    "amount": 90,
+    "currency": "GBP",
+    "merchant_name": "Riverside Kitchen",
+    "category": "Food and Drink > Restaurants",
+    "pending": false
+  },
+  {
+    "id": "txn-0015",
+    "account_id": "acct-current",
+    "date": "2026-05-03",
+    "amount": 95,
+    "currency": "GBP",
+    "merchant_name": "Harbour House",
+    "category": "Food and Drink > Restaurants",
+    "pending": false
+  },
+  {
+    "id": "txn-0016",
+    "account_id": "acct-current",
+    "date": "2026-05-09",
+    "amount": 165,
+    "currency": "GBP",
+    "merchant_name": "Riverside Kitchen",
+    "category": "Food and Drink > Restaurants",
+    "pending": false
+  },
+  {
+    "id": "txn-0017",
+    "account_id": "acct-current",
+    "date": "2026-05-17",
+    "amount": 80,
+    "currency": "GBP",
+    "merchant_name": "Stellar Sound Supper Club",
+    "category": "Food and Drink > Restaurants",
+    "pending": false
+  },
+  {
+    "id": "txn-0018",
+    "account_id": "acct-current",
+    "date": "2026-05-24",
+    "amount": 165,
+    "currency": "GBP",
+    "merchant_name": "Harbour House",
+    "category": "Food and Drink > Restaurants",
+    "pending": false
+  },
+  {
+    "id": "txn-0101",
+    "account_id": "acct-current",
+    "date": "2026-03-12",
+    "amount": 240,
+    "currency": "GBP",
+    "merchant_name": "Studio Northstar",
+    "category": "Shops > General",
+    "pending": false
+  },
+  {
+    "id": "txn-0102",
+    "account_id": "acct-current",
+    "date": "2026-03-14",
+    "amount": 310.5,
+    "currency": "GBP",
+    "merchant_name": "Meridian Outfitters",
+    "category": "Shops > General",
+    "pending": false
+  },
+  {
+    "id": "txn-0103",
+    "account_id": "acct-current",
+    "date": "2026-03-16",
+    "amount": 205,
+    "currency": "GBP",
+    "merchant_name": "Harbour House",
+    "category": "Shops > General",
+    "pending": false
+  },
+  {
+    "id": "txn-0104",
+    "account_id": "acct-current",
+    "date": "2026-03-18",
+    "amount": 420,
+    "currency": "GBP",
+    "merchant_name": "Meridian Outfitters",
+    "category": "Shops > General",
+    "pending": false
+  },
+  {
+    "id": "txn-0105",
+    "account_id": "acct-current",
+    "date": "2026-04-01",
+    "amount": 260,
+    "currency": "GBP",
+    "merchant_name": "Studio Northstar",
+    "category": "Shops > General",
+    "pending": false
+  },
+  {
+    "id": "txn-0106",
+    "account_id": "acct-current",
+    "date": "2026-04-03",
+    "amount": 280,
+    "currency": "GBP",
+    "merchant_name": "Meridian Outfitters",
+    "category": "Shops > General",
+    "pending": false
+  },
+  {
+    "id": "txn-0107",
+    "account_id": "acct-current",
+    "date": "2026-04-05",
+    "amount": 230,
+    "currency": "GBP",
+    "merchant_name": "Harbour House",
+    "category": "Shops > General",
+    "pending": false
+  },
+  {
+    "id": "txn-0108",
+    "account_id": "acct-current",
+    "date": "2026-04-15",
+    "amount": 215,
+    "currency": "GBP",
+    "merchant_name": "Studio Northstar",
+    "category": "Shops > General",
+    "pending": false
+  },
+  {
+    "id": "txn-0109",
+    "account_id": "acct-current",
+    "date": "2026-04-18",
+    "amount": 180,
+    "currency": "GBP",
+    "merchant_name": "Meridian Outfitters",
+    "category": "Shops > General",
+    "pending": false
+  },
+  {
+    "id": "txn-0110",
+    "account_id": "acct-current",
+    "date": "2026-04-27",
+    "amount": 225,
+    "currency": "GBP",
+    "merchant_name": "Harbour House",
+    "category": "Shops > General",
+    "pending": false
+  },
+  {
+    "id": "txn-0111",
+    "account_id": "acct-current",
+    "date": "2026-05-13",
+    "amount": 305,
+    "currency": "GBP",
+    "merchant_name": "Meridian Outfitters",
+    "category": "Shops > General",
+    "pending": false
+  },
+  {
+    "id": "txn-0112",
+    "account_id": "acct-current",
+    "date": "2026-05-15",
+    "amount": 210,
+    "currency": "GBP",
+    "merchant_name": "Studio Northstar",
+    "category": "Shops > General",
+    "pending": false
+  },
+  {
+    "id": "txn-0113",
+    "account_id": "acct-current",
+    "date": "2026-05-18",
+    "amount": 480,
+    "currency": "GBP",
+    "merchant_name": "Harbour House",
+    "category": "Shops > General",
+    "pending": false
+  },
+  {
+    "id": "txn-90001",
+    "account_id": "acct-current",
+    "date": "2026-03-01",
+    "amount": 55,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90002",
+    "account_id": "acct-current",
+    "date": "2026-03-01",
+    "amount": 4,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90003",
+    "account_id": "acct-current",
+    "date": "2026-03-02",
+    "amount": 30,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90004",
+    "account_id": "acct-current",
+    "date": "2026-03-02",
+    "amount": 4,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90005",
+    "account_id": "acct-current",
+    "date": "2026-03-02",
+    "amount": 5,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90006",
+    "account_id": "acct-current",
+    "date": "2026-03-03",
+    "amount": 5,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90007",
+    "account_id": "acct-current",
+    "date": "2026-03-04",
+    "amount": 42,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90008",
+    "account_id": "acct-current",
+    "date": "2026-03-04",
+    "amount": 7,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90009",
+    "account_id": "acct-current",
+    "date": "2026-03-05",
+    "amount": 79,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90010",
+    "account_id": "acct-current",
+    "date": "2026-03-05",
+    "amount": 7,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90011",
+    "account_id": "acct-current",
+    "date": "2026-03-05",
+    "amount": 8,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90012",
+    "account_id": "acct-current",
+    "date": "2026-03-06",
+    "amount": 8,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90013",
+    "account_id": "acct-current",
+    "date": "2026-03-07",
+    "amount": 29,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90014",
+    "account_id": "acct-current",
+    "date": "2026-03-07",
+    "amount": 4,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90015",
+    "account_id": "acct-current",
+    "date": "2026-03-08",
+    "amount": 66,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90016",
+    "account_id": "acct-current",
+    "date": "2026-03-08",
+    "amount": 10,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90017",
+    "account_id": "acct-current",
+    "date": "2026-03-08",
+    "amount": 5,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90018",
+    "account_id": "acct-current",
+    "date": "2026-03-09",
+    "amount": 2,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90019",
+    "account_id": "acct-current",
+    "date": "2026-03-10",
+    "amount": 78,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90020",
+    "account_id": "acct-current",
+    "date": "2026-03-10",
+    "amount": 7,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90021",
+    "account_id": "acct-current",
+    "date": "2026-03-11",
+    "amount": 53,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90022",
+    "account_id": "acct-current",
+    "date": "2026-03-11",
+    "amount": 4,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90023",
+    "account_id": "acct-current",
+    "date": "2026-03-11",
+    "amount": 8,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90024",
+    "account_id": "acct-current",
+    "date": "2026-03-12",
+    "amount": 5,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90025",
+    "account_id": "acct-current",
+    "date": "2026-03-13",
+    "amount": 65,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90026",
+    "account_id": "acct-current",
+    "date": "2026-03-13",
+    "amount": 4,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90027",
+    "account_id": "acct-current",
+    "date": "2026-03-14",
+    "amount": 40,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90028",
+    "account_id": "acct-current",
+    "date": "2026-03-14",
+    "amount": 7,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90029",
+    "account_id": "acct-current",
+    "date": "2026-03-14",
+    "amount": 5,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90030",
+    "account_id": "acct-current",
+    "date": "2026-03-15",
+    "amount": 8,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90031",
+    "account_id": "acct-current",
+    "date": "2026-03-16",
+    "amount": 52,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90032",
+    "account_id": "acct-current",
+    "date": "2026-03-16",
+    "amount": 7,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90033",
+    "account_id": "acct-current",
+    "date": "2026-03-17",
+    "amount": 27,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90034",
+    "account_id": "acct-current",
+    "date": "2026-03-17",
+    "amount": 10,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90035",
+    "account_id": "acct-current",
+    "date": "2026-03-17",
+    "amount": 8,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90036",
+    "account_id": "acct-current",
+    "date": "2026-03-18",
+    "amount": 2,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90037",
+    "account_id": "acct-current",
+    "date": "2026-03-19",
+    "amount": 39,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90038",
+    "account_id": "acct-current",
+    "date": "2026-03-19",
+    "amount": 4,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90039",
+    "account_id": "acct-current",
+    "date": "2026-03-20",
+    "amount": 76,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90040",
+    "account_id": "acct-current",
+    "date": "2026-03-20",
+    "amount": 4,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90041",
+    "account_id": "acct-current",
+    "date": "2026-03-20",
+    "amount": 5,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90042",
+    "account_id": "acct-current",
+    "date": "2026-03-21",
+    "amount": 5,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90043",
+    "account_id": "acct-current",
+    "date": "2026-03-22",
+    "amount": 26,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90044",
+    "account_id": "acct-current",
+    "date": "2026-03-22",
+    "amount": 7,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90045",
+    "account_id": "acct-current",
+    "date": "2026-03-23",
+    "amount": 63,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90046",
+    "account_id": "acct-current",
+    "date": "2026-03-23",
+    "amount": 7,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90047",
+    "account_id": "acct-current",
+    "date": "2026-03-23",
+    "amount": 8,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90048",
+    "account_id": "acct-current",
+    "date": "2026-03-24",
+    "amount": 8,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90049",
+    "account_id": "acct-current",
+    "date": "2026-03-25",
+    "amount": 75,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90050",
+    "account_id": "acct-current",
+    "date": "2026-03-25",
+    "amount": 4,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90051",
+    "account_id": "acct-current",
+    "date": "2026-03-26",
+    "amount": 50,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90052",
+    "account_id": "acct-current",
+    "date": "2026-03-26",
+    "amount": 10,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90053",
+    "account_id": "acct-current",
+    "date": "2026-03-26",
+    "amount": 5,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90054",
+    "account_id": "acct-current",
+    "date": "2026-03-27",
+    "amount": 2,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90055",
+    "account_id": "acct-current",
+    "date": "2026-03-28",
+    "amount": 62,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90056",
+    "account_id": "acct-current",
+    "date": "2026-03-28",
+    "amount": 7,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90057",
+    "account_id": "acct-current",
+    "date": "2026-03-29",
+    "amount": 37,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90058",
+    "account_id": "acct-current",
+    "date": "2026-03-29",
+    "amount": 4,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90059",
+    "account_id": "acct-current",
+    "date": "2026-03-29",
+    "amount": 8,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90060",
+    "account_id": "acct-current",
+    "date": "2026-03-30",
+    "amount": 5,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90061",
+    "account_id": "acct-current",
+    "date": "2026-03-31",
+    "amount": 49,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90062",
+    "account_id": "acct-current",
+    "date": "2026-03-31",
+    "amount": 4,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90063",
+    "account_id": "acct-current",
+    "date": "2026-04-01",
+    "amount": 24,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90064",
+    "account_id": "acct-current",
+    "date": "2026-04-01",
+    "amount": 7,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90065",
+    "account_id": "acct-current",
+    "date": "2026-04-01",
+    "amount": 5,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90066",
+    "account_id": "acct-current",
+    "date": "2026-04-02",
+    "amount": 8,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90067",
+    "account_id": "acct-current",
+    "date": "2026-04-03",
+    "amount": 36,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90068",
+    "account_id": "acct-current",
+    "date": "2026-04-03",
+    "amount": 7,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90069",
+    "account_id": "acct-current",
+    "date": "2026-04-04",
+    "amount": 73,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90070",
+    "account_id": "acct-current",
+    "date": "2026-04-04",
+    "amount": 10,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90071",
+    "account_id": "acct-current",
+    "date": "2026-04-04",
+    "amount": 8,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90072",
+    "account_id": "acct-current",
+    "date": "2026-04-05",
+    "amount": 2,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90073",
+    "account_id": "acct-current",
+    "date": "2026-04-06",
+    "amount": 23,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90074",
+    "account_id": "acct-current",
+    "date": "2026-04-06",
+    "amount": 4,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90075",
+    "account_id": "acct-current",
+    "date": "2026-04-07",
+    "amount": 60,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90076",
+    "account_id": "acct-current",
+    "date": "2026-04-07",
+    "amount": 4,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90077",
+    "account_id": "acct-current",
+    "date": "2026-04-07",
+    "amount": 5,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90078",
+    "account_id": "acct-current",
+    "date": "2026-04-08",
+    "amount": 5,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90079",
+    "account_id": "acct-current",
+    "date": "2026-04-09",
+    "amount": 72,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90080",
+    "account_id": "acct-current",
+    "date": "2026-04-09",
+    "amount": 7,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90081",
+    "account_id": "acct-current",
+    "date": "2026-04-10",
+    "amount": 47,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90082",
+    "account_id": "acct-current",
+    "date": "2026-04-10",
+    "amount": 7,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90083",
+    "account_id": "acct-current",
+    "date": "2026-04-10",
+    "amount": 8,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90084",
+    "account_id": "acct-current",
+    "date": "2026-04-11",
+    "amount": 8,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90085",
+    "account_id": "acct-current",
+    "date": "2026-04-12",
+    "amount": 59,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90086",
+    "account_id": "acct-current",
+    "date": "2026-04-12",
+    "amount": 4,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90087",
+    "account_id": "acct-current",
+    "date": "2026-04-13",
+    "amount": 34,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90088",
+    "account_id": "acct-current",
+    "date": "2026-04-13",
+    "amount": 10,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90089",
+    "account_id": "acct-current",
+    "date": "2026-04-13",
+    "amount": 5,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90090",
+    "account_id": "acct-current",
+    "date": "2026-04-14",
+    "amount": 2,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90091",
+    "account_id": "acct-current",
+    "date": "2026-04-15",
+    "amount": 46,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90092",
+    "account_id": "acct-current",
+    "date": "2026-04-15",
+    "amount": 7,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90093",
+    "account_id": "acct-current",
+    "date": "2026-04-16",
+    "amount": 21,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90094",
+    "account_id": "acct-current",
+    "date": "2026-04-16",
+    "amount": 4,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90095",
+    "account_id": "acct-current",
+    "date": "2026-04-16",
+    "amount": 8,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90096",
+    "account_id": "acct-current",
+    "date": "2026-04-17",
+    "amount": 5,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90097",
+    "account_id": "acct-current",
+    "date": "2026-04-18",
+    "amount": 33,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90098",
+    "account_id": "acct-current",
+    "date": "2026-04-18",
+    "amount": 4,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90099",
+    "account_id": "acct-current",
+    "date": "2026-04-19",
+    "amount": 70,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90100",
+    "account_id": "acct-current",
+    "date": "2026-04-19",
+    "amount": 7,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90101",
+    "account_id": "acct-current",
+    "date": "2026-04-19",
+    "amount": 5,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90102",
+    "account_id": "acct-current",
+    "date": "2026-04-20",
+    "amount": 8,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90103",
+    "account_id": "acct-current",
+    "date": "2026-04-21",
+    "amount": 20,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90104",
+    "account_id": "acct-current",
+    "date": "2026-04-21",
+    "amount": 7,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90105",
+    "account_id": "acct-current",
+    "date": "2026-04-22",
+    "amount": 57,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90106",
+    "account_id": "acct-current",
+    "date": "2026-04-22",
+    "amount": 10,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90107",
+    "account_id": "acct-current",
+    "date": "2026-04-22",
+    "amount": 8,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90108",
+    "account_id": "acct-current",
+    "date": "2026-04-23",
+    "amount": 2,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90109",
+    "account_id": "acct-current",
+    "date": "2026-04-24",
+    "amount": 69,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90110",
+    "account_id": "acct-current",
+    "date": "2026-04-24",
+    "amount": 4,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90111",
+    "account_id": "acct-current",
+    "date": "2026-04-25",
+    "amount": 44,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90112",
+    "account_id": "acct-current",
+    "date": "2026-04-25",
+    "amount": 4,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90113",
+    "account_id": "acct-current",
+    "date": "2026-04-25",
+    "amount": 5,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90114",
+    "account_id": "acct-current",
+    "date": "2026-04-26",
+    "amount": 5,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90115",
+    "account_id": "acct-current",
+    "date": "2026-04-27",
+    "amount": 56,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90116",
+    "account_id": "acct-current",
+    "date": "2026-04-27",
+    "amount": 7,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90117",
+    "account_id": "acct-current",
+    "date": "2026-04-28",
+    "amount": 31,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90118",
+    "account_id": "acct-current",
+    "date": "2026-04-28",
+    "amount": 7,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90119",
+    "account_id": "acct-current",
+    "date": "2026-04-28",
+    "amount": 8,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90120",
+    "account_id": "acct-current",
+    "date": "2026-04-29",
+    "amount": 8,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90121",
+    "account_id": "acct-current",
+    "date": "2026-04-30",
+    "amount": 43,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90122",
+    "account_id": "acct-current",
+    "date": "2026-04-30",
+    "amount": 4,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90123",
+    "account_id": "acct-current",
+    "date": "2026-05-01",
+    "amount": 18,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90124",
+    "account_id": "acct-current",
+    "date": "2026-05-01",
+    "amount": 10,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90125",
+    "account_id": "acct-current",
+    "date": "2026-05-01",
+    "amount": 5,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90126",
+    "account_id": "acct-current",
+    "date": "2026-05-02",
+    "amount": 2,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90127",
+    "account_id": "acct-current",
+    "date": "2026-05-03",
+    "amount": 30,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90128",
+    "account_id": "acct-current",
+    "date": "2026-05-03",
+    "amount": 7,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90129",
+    "account_id": "acct-current",
+    "date": "2026-05-04",
+    "amount": 67,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90130",
+    "account_id": "acct-current",
+    "date": "2026-05-04",
+    "amount": 4,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90131",
+    "account_id": "acct-current",
+    "date": "2026-05-04",
+    "amount": 8,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90132",
+    "account_id": "acct-current",
+    "date": "2026-05-05",
+    "amount": 5,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90133",
+    "account_id": "acct-current",
+    "date": "2026-05-06",
+    "amount": 79,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90134",
+    "account_id": "acct-current",
+    "date": "2026-05-06",
+    "amount": 4,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90135",
+    "account_id": "acct-current",
+    "date": "2026-05-07",
+    "amount": 54,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90136",
+    "account_id": "acct-current",
+    "date": "2026-05-07",
+    "amount": 7,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90137",
+    "account_id": "acct-current",
+    "date": "2026-05-07",
+    "amount": 5,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90138",
+    "account_id": "acct-current",
+    "date": "2026-05-08",
+    "amount": 8,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90139",
+    "account_id": "acct-current",
+    "date": "2026-05-09",
+    "amount": 66,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90140",
+    "account_id": "acct-current",
+    "date": "2026-05-09",
+    "amount": 7,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90141",
+    "account_id": "acct-current",
+    "date": "2026-05-10",
+    "amount": 41,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90142",
+    "account_id": "acct-current",
+    "date": "2026-05-10",
+    "amount": 10,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90143",
+    "account_id": "acct-current",
+    "date": "2026-05-10",
+    "amount": 8,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90144",
+    "account_id": "acct-current",
+    "date": "2026-05-11",
+    "amount": 2,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90145",
+    "account_id": "acct-current",
+    "date": "2026-05-12",
+    "amount": 53,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90146",
+    "account_id": "acct-current",
+    "date": "2026-05-12",
+    "amount": 4,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90147",
+    "account_id": "acct-current",
+    "date": "2026-05-13",
+    "amount": 28,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90148",
+    "account_id": "acct-current",
+    "date": "2026-05-13",
+    "amount": 4,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90149",
+    "account_id": "acct-current",
+    "date": "2026-05-13",
+    "amount": 5,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90150",
+    "account_id": "acct-current",
+    "date": "2026-05-14",
+    "amount": 5,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90151",
+    "account_id": "acct-current",
+    "date": "2026-05-15",
+    "amount": 40,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90152",
+    "account_id": "acct-current",
+    "date": "2026-05-15",
+    "amount": 7,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90153",
+    "account_id": "acct-current",
+    "date": "2026-05-16",
+    "amount": 77,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90154",
+    "account_id": "acct-current",
+    "date": "2026-05-16",
+    "amount": 7,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90155",
+    "account_id": "acct-current",
+    "date": "2026-05-16",
+    "amount": 8,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90156",
+    "account_id": "acct-current",
+    "date": "2026-05-17",
+    "amount": 8,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90157",
+    "account_id": "acct-current",
+    "date": "2026-05-18",
+    "amount": 27,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90158",
+    "account_id": "acct-current",
+    "date": "2026-05-18",
+    "amount": 4,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90159",
+    "account_id": "acct-current",
+    "date": "2026-05-19",
+    "amount": 64,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90160",
+    "account_id": "acct-current",
+    "date": "2026-05-19",
+    "amount": 10,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90161",
+    "account_id": "acct-current",
+    "date": "2026-05-19",
+    "amount": 5,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90162",
+    "account_id": "acct-current",
+    "date": "2026-05-20",
+    "amount": 2,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90163",
+    "account_id": "acct-current",
+    "date": "2026-05-21",
+    "amount": 76,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90164",
+    "account_id": "acct-current",
+    "date": "2026-05-21",
+    "amount": 7,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90165",
+    "account_id": "acct-current",
+    "date": "2026-05-22",
+    "amount": 51,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90166",
+    "account_id": "acct-current",
+    "date": "2026-05-22",
+    "amount": 4,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90167",
+    "account_id": "acct-current",
+    "date": "2026-05-22",
+    "amount": 8,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90168",
+    "account_id": "acct-current",
+    "date": "2026-05-23",
+    "amount": 5,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90169",
+    "account_id": "acct-current",
+    "date": "2026-05-24",
+    "amount": 63,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90170",
+    "account_id": "acct-current",
+    "date": "2026-05-24",
+    "amount": 4,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90171",
+    "account_id": "acct-current",
+    "date": "2026-05-25",
+    "amount": 38,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90172",
+    "account_id": "acct-current",
+    "date": "2026-05-25",
+    "amount": 7,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90173",
+    "account_id": "acct-current",
+    "date": "2026-05-25",
+    "amount": 5,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90174",
+    "account_id": "acct-current",
+    "date": "2026-05-26",
+    "amount": 8,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90175",
+    "account_id": "acct-current",
+    "date": "2026-05-27",
+    "amount": 50,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90176",
+    "account_id": "acct-current",
+    "date": "2026-05-27",
+    "amount": 7,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90177",
+    "account_id": "acct-current",
+    "date": "2026-05-28",
+    "amount": 25,
+    "currency": "GBP",
+    "merchant_name": "Groceries Co",
+    "category": "Food and Drink > Groceries",
+    "pending": false
+  },
+  {
+    "id": "txn-90178",
+    "account_id": "acct-current",
+    "date": "2026-05-28",
+    "amount": 10,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  },
+  {
+    "id": "txn-90179",
+    "account_id": "acct-current",
+    "date": "2026-05-28",
+    "amount": 8,
+    "currency": "GBP",
+    "merchant_name": "Coffee Co",
+    "category": "Food and Drink > Coffee Shop",
+    "pending": false
+  },
+  {
+    "id": "txn-90180",
+    "account_id": "acct-current",
+    "date": "2026-05-29",
+    "amount": 2,
+    "currency": "GBP",
+    "merchant_name": "Transport Co",
+    "category": "Travel > Public Transport",
+    "pending": false
+  }
+]

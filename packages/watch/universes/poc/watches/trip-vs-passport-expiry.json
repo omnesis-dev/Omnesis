@@ -1,0 +1,64 @@
+{
+  "watch": {
+    "name": "trip-vs-passport-expiry",
+    "nl_query": "Warn me if I book international travel departing within 6 months of my passport expiring — it runs out on 2031-05-14.",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "constants": {
+      "passport_expiry": {
+        "type": "date",
+        "value": "2031-05-14",
+        "provenance_doc": "1f0c8e64-0000-4000-8000-0000000000a1",
+        "provenance_note": "Expiry date read from a scanned passport page held in Drive."
+      }
+    },
+    "nodes": [
+      {
+        "id": "trip_booked",
+        "type": "source.document_event",
+        "filter": {
+          "source": ["gmail", "google-drive"],
+          "event": ["created"]
+        },
+        "output_map": {
+          "depart_date": "$judge.depart_date",
+          "destination": "$judge.destination_country"
+        },
+        "recall": {
+          "semantic": {
+            "query": "flight booking confirmation international travel itinerary",
+            "threshold": 0.35
+          }
+        },
+        "judge": {
+          "proposition": "This document confirms a booked international trip (not a quote, search result, or marketing)",
+          "output_schema": {
+            "depart_date": "date",
+            "destination_country": "string"
+          }
+        }
+      },
+      {
+        "id": "passport_check",
+        "type": "stateless.transform",
+        "comment": "FROM-less expression; instant per arm event.",
+        "inputs": {
+          "trip_booked": {
+            "role": "arm"
+          }
+        },
+        "query": "SELECT ($const.passport_expiry < ($n.trip_booked.depart_date + INTERVAL 6 MONTH)) AS fires",
+        "output_map": {
+          "departs": "$n.trip_booked.depart_date"
+        }
+      }
+    ],
+    "sink": {
+      "input": "passport_check",
+      "output_map": {
+        "destination": "$n.trip_booked.destination",
+        "departs": "$n.passport_check.departs"
+      }
+    }
+  }
+}

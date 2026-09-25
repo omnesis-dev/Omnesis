@@ -1,0 +1,52 @@
+{
+  "corpus": {
+    "meJid": "15550100120:0@s.whatsapp.net",
+    "contacts": [
+      { "id": "15550100121@s.whatsapp.net", "name": "Maya Reeves", "notify": "Maya" },
+      { "id": "15550100122@s.whatsapp.net", "name": "Jamie Lopez", "notify": "Jamie" }
+    ],
+    "chats": [
+      {
+        "jid": "15550100121@s.whatsapp.net",
+        "name": "Maya Reeves",
+        "messages": [
+          {
+            "id": "wam-maya-1",
+            "ts": 1773129600,
+            "text": "Sharing the Q3 retrospective notes here: https://example.com/q3-retrospective",
+            "pushName": "Maya"
+          },
+          {
+            "id": "wam-maya-2",
+            "ts": 1773131400,
+            "text": "The pelican migration figures looked off in section four.",
+            "pushName": "Maya"
+          },
+          {
+            "id": "wam-maya-3",
+            "ts": 1773162600,
+            "text": "Latest draft of the marathon entry form: https://example.org/marathon-entry",
+            "fromMe": true
+          }
+        ]
+      },
+      {
+        "jid": "15550100122@s.whatsapp.net",
+        "name": "Jamie Lopez",
+        "messages": [
+          {
+            "id": "wam-jamie-1",
+            "ts": 1773360000,
+            "text": "Confirmed the Studio Northstar booking for the launch demo.",
+            "pushName": "Jamie"
+          }
+        ]
+      }
+    ]
+  },
+  "scenario": {
+    "mode": "complete",
+    "initialDepth": 1,
+    "backfill": {}
+  }
+}

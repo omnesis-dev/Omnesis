@@ -1,0 +1,35 @@
+{
+  "name": "wrist",
+  "description": "A deliberately tiny world for the Apple Watch demo clips: one trip to Paris for a triathlon, plus the everyday scraps a glanceable question lands on. Eight documents across four sources — enough for the agent to have somewhere to look, small enough to read in one sitting.",
+  "cast": "cast.json",
+  "agentDemos": "agent-demos",
+  "devices": [
+    {
+      "id": "macbook",
+      "name": "Mayas-MacBook-Pro-collector",
+      "kind": "collector"
+    }
+  ],
+  "sources": [
+    {
+      "descriptorId": "gmail",
+      "accountIds": ["maya.reeves@example.com"],
+      "device": "macbook"
+    },
+    {
+      "descriptorId": "google-calendar",
+      "accountIds": ["maya.reeves@example.com"],
+      "device": "macbook"
+    },
+    {
+      "descriptorId": "whatsapp-messages",
+      "accountIds": ["+15550100100"],
+      "device": "macbook"
+    },
+    {
+      "descriptorId": "apple-call-log",
+      "accountIds": ["maya.reeves@icloud.example"],
+      "device": "macbook"
+    }
+  ]
+}

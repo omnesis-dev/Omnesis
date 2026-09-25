@@ -1,0 +1,40 @@
+{
+  "watch": {
+    "name": "broadcast-declared-on-a-keyed-edge",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "mail",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email"
+        },
+        "output_map": {
+          "thread_id": "$e.metadata.extra.threadId",
+          "doc_id": "$e.docId"
+        }
+      },
+      {
+        "id": "waiting",
+        "type": "stateful.wait",
+        "inputs": {
+          "mail": {
+            "role": "arm",
+            "key": {
+              "thread_id": ".thread_id"
+            },
+            "broadcast": true
+          }
+        },
+        "on_collision": "reset",
+        "duration": "3 days"
+      }
+    ],
+    "sink": {
+      "input": "waiting"
+    }
+  }
+}

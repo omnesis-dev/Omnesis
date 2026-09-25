@@ -1,0 +1,46 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "REF_EVENT_FIELD_UNKNOWN",
+      "severity": "error",
+      "path": "/watch/nodes/0/output_map/nope",
+      "message": "'threadId' is not a field of this event kind.",
+      "details": {
+        "field": "threadId",
+        "available": [
+          "op",
+          "docId",
+          "sourceId",
+          "providerId",
+          "documentType",
+          "title",
+          "semanticTime",
+          "changedFields",
+          "contentChanged",
+          "degraded",
+          "metadata",
+          "people"
+        ]
+      }
+    },
+    {
+      "code": "REF_EDGE_NOT_IN_SCOPE",
+      "severity": "error",
+      "path": "/watch/nodes/1/output_map/from_edge",
+      "message": "A leading '.' names a field of the arriving edge's payload, which only exists inside a key extractor.",
+      "details": {
+        "path": "thread_id"
+      }
+    },
+    {
+      "code": "REF_EVENT_NOT_IN_SCOPE",
+      "severity": "error",
+      "path": "/watch/nodes/1/output_map/from_event",
+      "message": "'$e.*' reads the journal event that armed a source node; this node has no event of its own. Reference the source through '$n.<source>.<field>'.",
+      "details": {
+        "nodeId": "gate"
+      }
+    }
+  ]
+}

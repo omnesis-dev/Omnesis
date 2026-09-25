@@ -1,0 +1,61 @@
+{
+  "nowMs": 1784000000000,
+  "truncated": false,
+  "entries": [
+    {
+      "id": "tix_contract_instant",
+      "intervalStartMs": 1784194200000,
+      "intervalEndMs": 1784194200000,
+      "granularity": "instant",
+      "canonical": "2026-07-16T09:30:00.000Z",
+      "sentence": "Dentist follow-up appointment at the Riverside practice.",
+      "kind": "appointment",
+      "createdAt": "1970-01-01T00:00:01.000Z",
+      "updatedAt": "1970-01-01T00:00:01.000Z",
+      "documents": []
+    },
+    {
+      "id": "tix_contract_range",
+      "intervalStartMs": 1784505600000,
+      "intervalEndMs": 1785715199999,
+      "granularity": "range",
+      "canonical": "2026-07-20 .. 2026-08-02",
+      "sentence": "Lisbon trip — flights and apartment are booked.",
+      "kind": null,
+      "createdAt": "1970-01-01T00:00:01.000Z",
+      "updatedAt": "1970-01-01T00:00:01.000Z",
+      "documents": []
+    },
+    {
+      "id": "tix_contract_month",
+      "intervalStartMs": 1785542400000,
+      "intervalEndMs": 1788220799999,
+      "granularity": "month",
+      "canonical": "2026-08",
+      "sentence": "The landlord expects a renewal decision sometime in August.",
+      "kind": "event",
+      "createdAt": "1970-01-01T00:00:01.000Z",
+      "updatedAt": "1970-01-01T00:00:01.000Z",
+      "documents": []
+    },
+    {
+      "id": "tix_contract_day",
+      "intervalStartMs": 1789344000000,
+      "intervalEndMs": 1789430399999,
+      "granularity": "day",
+      "canonical": "2026-09-14",
+      "sentence": "Travel insurance for the Lisbon trip lapses.",
+      "kind": "expiry",
+      "createdAt": "1970-01-01T00:00:01.000Z",
+      "updatedAt": "1970-01-01T00:00:01.000Z",
+      "documents": [
+        {
+          "docId": "doc_contract_policy",
+          "title": "Travel insurance policy — confirmation",
+          "providerId": "demo-mail",
+          "sourceId": "demo-mail:inbox"
+        }
+      ]
+    }
+  ]
+}

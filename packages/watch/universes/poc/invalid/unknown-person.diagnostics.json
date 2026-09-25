@@ -1,0 +1,14 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "PERSON_UNKNOWN",
+      "severity": "error",
+      "path": "/watch/nodes/0/filter/people/0/person",
+      "message": "No person '00000000-0000-4000-8000-00000000dead' in the directory. A DSL carries stored person ids, never names.",
+      "details": {
+        "personId": "00000000-0000-4000-8000-00000000dead"
+      }
+    }
+  ]
+}

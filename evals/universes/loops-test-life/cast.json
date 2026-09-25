@@ -1,0 +1,50 @@
+{
+  "self": "p_alex",
+  "people": [
+    {
+      "id": "p_alex",
+      "name": "Alex Rivera",
+      "emails": ["alex.rivera@example.com"],
+      "phones": ["+15550100201"]
+    },
+    {
+      "id": "p_maya",
+      "name": "Maya Reeves",
+      "emails": ["maya.reeves@example.org"],
+      "phones": ["+15550100202"]
+    },
+    {
+      "id": "p_jamie",
+      "name": "Jamie Lopez",
+      "emails": ["jamie.lopez@example.com"],
+      "phones": ["+15550100203"]
+    },
+    {
+      "id": "p_dana",
+      "name": "Dana Whitfield",
+      "emails": ["dana.whitfield@whitfieldlaw.example"]
+    },
+    {
+      "id": "p_cedar_billing",
+      "name": "Cedar Grove Billing",
+      "emails": ["billing@cedargrovesupplies.example"]
+    },
+    {
+      "id": "p_gearshop_news",
+      "name": "Gear Shop News",
+      "emails": ["news@gearshop.example"]
+    }
+  ],
+  "orgs": [
+    {
+      "id": "o_cedargrove",
+      "name": "Cedar Grove Supplies",
+      "domain": "cedargrovesupplies.example"
+    },
+    {
+      "id": "o_whitfieldlaw",
+      "name": "Whitfield Law",
+      "domain": "whitfieldlaw.example"
+    }
+  ]
+}

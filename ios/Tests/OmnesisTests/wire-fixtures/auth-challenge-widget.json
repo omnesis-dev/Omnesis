@@ -1,0 +1,14 @@
+{
+  "flowId": "fixture-flow",
+  "type": "challenge",
+  "id": "question-widget",
+  "challenge": {
+    "kind": "widget",
+    "title": "Connect account",
+    "renderer": "fixture-widget",
+    "payload": {
+      "token": "fictional-widget-token"
+    }
+  },
+  "expectsAnswer": true
+}

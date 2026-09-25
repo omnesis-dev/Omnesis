@@ -1,0 +1,70 @@
+{
+  "watch": {
+    "name": "key-type-mismatch",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "inbound",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email",
+          "people": [
+            {
+              "role": "sender",
+              "isSelf": false
+            }
+          ]
+        },
+        "output_map": {
+          "thread_id": "$e.metadata.extra.threadId",
+          "doc_id": "$e.docId"
+        }
+      },
+      {
+        "id": "reply",
+        "type": "source.document_event",
+        "filter": {
+          "source": "gmail",
+          "event": ["created"],
+          "documentType": "email",
+          "people": [
+            {
+              "role": "sender",
+              "isSelf": true
+            }
+          ]
+        },
+        "output_map": {
+          "thread_id": "$e.metadata.extra.threadId",
+          "sent_at": "$e.semanticTime"
+        }
+      },
+      {
+        "id": "waiting",
+        "type": "stateful.wait",
+        "inputs": {
+          "inbound": {
+            "role": "arm",
+            "key": {
+              "thread_id": ".thread_id"
+            }
+          },
+          "reply": {
+            "role": "cancel",
+            "key": {
+              "thread_id": ".sent_at"
+            }
+          }
+        },
+        "on_collision": "reset",
+        "duration": "3 days"
+      }
+    ],
+    "sink": {
+      "input": "waiting"
+    }
+  }
+}

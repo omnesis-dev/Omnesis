@@ -1,0 +1,733 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Security — Omnesis Docs</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32" />
+    <link rel="icon" type="image/png" href="/favicon-16.png" sizes="16x16" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- Resolve the theme before first paint: the stored choice, else the OS preference. -->
+    <script>
+      (function () {
+        var root = document.documentElement;
+        root.classList.add("js");
+        var t;
+        try {
+          t = localStorage.getItem("omnesis-theme");
+        } catch (e) {}
+        if (t !== "light" && t !== "dark") {
+          t =
+            window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+        }
+        root.setAttribute("data-theme", t);
+      })();
+    </script>
+
+    <meta
+      name="description"
+      content="Protect your Omnesis data: encryption at rest and the recovery code, doctor security checks, the hardened gateway, and TLS certificate renewal."
+    />
+    <link rel="canonical" href="https://omnesis.dev/docs/security" />
+    <meta name="theme-color" content="#0d1117" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="/footer-social.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <nav id="nav">
+      <div class="container">
+        <a href="/" class="nav-logo" aria-label="Omnesis"
+          ><span class="nav-logo-mark" aria-hidden="true"></span>MNESIS</a
+        >
+        <div class="nav-right">
+          <ul class="nav-links">
+            <li><a href="/">Context Layer</a></li>
+            <li><a href="/brain">Omnesis Brain</a></li>
+            <li><a href="/vision">Vision</a></li>
+            <li><a href="/docs/" aria-current="page">Docs</a></li>
+          </ul>
+          <a
+            class="nav-icon-btn"
+            href="#"
+            data-oss-open
+            aria-label="Omnesis on GitHub"
+            title="Omnesis on GitHub"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path
+                d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+              />
+            </svg>
+          </a>
+          <button
+            id="theme-toggle"
+            class="theme-toggle"
+            type="button"
+            aria-label="Switch between dark and light theme"
+            title="Toggle theme"
+          >
+            <svg
+              class="icon-sun"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="4" />
+              <path
+                d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"
+              />
+            </svg>
+            <svg
+              class="icon-moon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <div class="docs-shell">
+      <aside class="docs-sidebar">
+        <nav aria-label="Documentation">
+          <ul class="side-pages">
+            <li><a href="/docs/">Overview</a></li>
+            <li><a href="/docs/install">Install</a></li>
+            <li><a href="/docs/setup">Setup</a></li>
+            <li><a href="/docs/search">Search</a></li>
+            <li><a href="/docs/agent">The agent</a></li>
+            <li><a href="/docs/connect">Agents &amp; MCP</a></li>
+            <li><a href="/docs/apps">Mobile apps</a></li>
+            <li><a href="/docs/notifications">Notifications</a></li>
+            <li><a href="/docs/operating">Operating</a></li>
+            <li>
+              <a href="/docs/security" aria-current="page">Security</a>
+              <ul class="side-sub">
+                <li><a href="#encryption">Encryption at rest</a></li>
+                <li><a href="#posture">Security checks</a></li>
+                <li><a href="#hardened-gateway">Hardened gateway</a></li>
+                <li><a href="#tls">TLS certificate</a></li>
+              </ul>
+            </li>
+            <li><a href="/docs/updating">Backup &amp; updates</a></li>
+            <li><a href="/docs/sources">Available sources</a></li>
+            <li><a href="/docs/building-sources">Building sources</a></li>
+            <li><a href="/docs/experimental">Experimental</a></li>
+          </ul>
+        </nav>
+      </aside>
+
+      <main id="main" class="docs-content">
+        <p class="docs-kicker">Operate</p>
+        <h1>Security</h1>
+        <p class="docs-lead">
+          How Omnesis protects the data on your machines: encryption at rest and its recovery code,
+          the security checks <code>omnesis doctor</code> runs, running the gateway under a
+          dedicated account, and what happens to the gateway's TLS certificate after setup. It is
+          for whoever installs and looks after the gateway. Choosing a certificate in the first
+          place is covered in <a href="/docs/setup#certificates">Setup → Certificates</a>.
+        </p>
+
+        <h2 id="encryption">Encryption at rest</h2>
+        <p>
+          With encryption at rest, the databases, stored credentials and backups in the
+          configuration directory are encrypted. Everything hangs off one <strong>root key</strong>
+          per machine, held by the operating system's keyring (macOS Keychain or Linux Secret
+          Service) or sealed with a passphrase you supply. If the root key cannot be read, the
+          gateway and collector refuse to start rather than open data unencrypted. The installer
+          offers encryption on a fresh install; this section covers turning it on later, headless
+          machines, and recovery.
+        </p>
+
+        <h3 id="encryption-setup">Turn it on</h3>
+        <p>
+          <code>omnesis secure</code> is the guided path. It inspects the install, takes a backup
+          (through the running gateway, or an offline copy), creates the root key, prints a recovery
+          code, encrypts the secret files that already exist, prepares the keys each store is opened
+          with, and restarts the gateway or tells you to. On a machine that only runs a collector
+          there are no gateway databases, so it prepares the collector's keys and restarts the
+          collector instead.
+        </p>
+        <p>
+          It works out the machine's role from the configuration directory;
+          <code>--host gateway</code>, <code>--host collector</code> or
+          <code>--host all</code> overrides that, for example when the gateway's database lives
+          elsewhere. <code>--dry-run</code> prints the plan without changing anything. When the
+          gateway was not running, the backup is an offline snapshot of the database files;
+          <code>--rollback --yes</code>, run with the gateway stopped, puts that snapshot back if
+          the database step went wrong. A backup taken through the running gateway is restored with
+          <code>omnesis restore</code> instead (see <a href="/docs/updating#restore">Restore</a>).
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span> <span class="t-cmd">omnesis secure --dry-run</span>
+            </p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis secure</span></p>
+          </div>
+        </div>
+        <p>The steps it runs are also available one by one:</p>
+        <ul>
+          <li>
+            <code>omnesis keyring init</code> creates the root key in the OS keyring. On Linux this
+            needs libsecret's <code>secret-tool</code> and an unlocked, persistent login keyring.
+          </li>
+          <li>
+            <code>omnesis keyring migrate</code> encrypts existing credential, token, sign-in state
+            and config-secret files in place, and moves API keys written inline in
+            <code>omnesis.json</code> into encrypted config-secret files.
+          </li>
+          <li>
+            <code>omnesis keyring storage-status</code> reports which stores are encrypted, and
+            <code>omnesis keyring storage-init</code> prepares their keys before a restart. Both
+            take <code>--host gateway|collector|all</code>. Each process also creates any store key
+            it lacks at start, and each store is encrypted as it next opens.
+          </li>
+        </ul>
+
+        <h3 id="passphrase">Headless machines: the passphrase backend</h3>
+        <p>
+          A server or container with no desktop keyring uses the <code>passphrase</code> backend:
+          set <code>OMNESIS_SECRET_STORE=passphrase</code> and supply a passphrase at every start.
+          Keyring entries are then sealed on disk under a key derived from it, and the passphrase
+          itself is never stored. There are three ways to supply it:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>How</th>
+                <th>Use for</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>systemd credential</td>
+                <td>
+                  <code
+                    >omnesis service install --secret-store passphrase
+                    --keyring-passphrase-credential &lt;abs-path&gt;</code
+                  >
+                  adds a <code>LoadCredential=omnesis-keyring-passphrase</code> line to the unit
+                </td>
+                <td>
+                  Linux services (systemd 247 or newer; older versions ignore the line and the
+                  daemon starts without its passphrase)
+                </td>
+              </tr>
+              <tr>
+                <td>File</td>
+                <td>
+                  <code>OMNESIS_KEYRING_PASSPHRASE_FILE</code>, or
+                  <code>--keyring-passphrase-file &lt;abs-path&gt;</code> on
+                  <code>service install</code> and the installer
+                </td>
+                <td>macOS services, containers, a fresh headless install</td>
+              </tr>
+              <tr>
+                <td>Environment</td>
+                <td><code>OMNESIS_KEYRING_PASSPHRASE</code></td>
+                <td>A process you start by hand</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Keep the passphrase file owner-only: systemd reads a credential whatever its mode, but any
+          local account can read a world-readable file. For a credential tied to this machine's TPM,
+          encrypt the file with <code>systemd-creds encrypt</code> first. When the configuration
+          directory already uses an OS keyring, <code>service install</code> detects it and needs no
+          flag. <code>omnesis doctor</code> warns about a unit that selects the passphrase backend
+          without naming a passphrase, which would otherwise fail later on the first encrypted
+          store.
+        </p>
+
+        <h3 id="recovery">Recovery code</h3>
+        <p>
+          Losing the root key means losing every encrypted store and every encrypted backup made
+          with it. <code>omnesis keyring export-recovery</code> writes a recovery envelope into the
+          configuration directory and prints a one-time recovery code. Keep the code somewhere other
+          than this machine. On a new machine, <code>omnesis keyring import-recovery</code> rebuilds
+          the root key from the envelope and the code. <code>omnesis restore --code</code> does the
+          same while restoring a backup, using the envelope the backup carries (see
+          <a href="/docs/updating#restore">Restore</a>). Backups never contain the root key itself.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis keyring export-recovery</span>
+            </p>
+          </div>
+        </div>
+
+        <h3 id="collector-keys">Collectors on other machines</h3>
+        <p>
+          A collector on another machine has its own root key and its own store keys; pairing gives
+          it a gateway credential, never the gateway's keys. The installer's collector role runs
+          <code>omnesis keyring init</code> and
+          <code>omnesis keyring storage-init --host collector</code>, so a fresh collector opens its
+          encrypted stores (such as the WhatsApp archive and the iMessage transcript cache) without
+          a gateway on its machine.
+        </p>
+        <p>
+          When encryption is on and the root key cannot be read, the collector refuses to start and
+          names the fix. Restore or unlock a missing key rather than deleting files to get past the
+          error: a bank connection's saved session, for example, may hold history the bank will not
+          provide again.
+        </p>
+
+        <h3 id="encryption-coverage">What encryption at rest does not cover</h3>
+        <p>
+          Some imports work on short-lived plaintext copies: browser-history and Screen Time
+          snapshots, and WhatsApp backup imports, use temporary SQLite files in owner-only folders.
+          They are removed when the operation finishes, fails or is cancelled; a killed process can
+          leave them until a later operation cleans up. Deleting a file is not secure erasure.
+        </p>
+        <p>
+          The source originals Omnesis reads, logs, filesystem snapshots and swap are outside
+          Omnesis's control. Full-disk encryption (FileVault on macOS, LUKS on Linux) remains what
+          protects a machine that is stolen while powered off. The vector index file is a
+          rebuildable cache; with encryption on, Omnesis keeps an encrypted copy of it so a restart
+          does not rebuild it.
+        </p>
+
+        <h2 id="posture">Security checks</h2>
+        <p>
+          <code>omnesis doctor</code> checks this host's security posture by default. The checks are
+          local and read-only, so they run even when the gateway is down; <code>--no-security</code>
+          skips them. On a collector the same checks describe the collector's own stores and
+          service.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Check</th>
+                <th>What it looks at</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Permissions</td>
+                <td>
+                  The configuration directory and its files are owner-only. Repair drift with
+                  <code>omnesis doctor --fix-permissions</code>.
+                </td>
+              </tr>
+              <tr>
+                <td>Full-disk encryption</td>
+                <td>Whether FileVault or LUKS is on, or could not be confirmed.</td>
+              </tr>
+              <tr>
+                <td>Service hardening</td>
+                <td>Whether the installed service units carry the expected restrictions.</td>
+              </tr>
+              <tr>
+                <td>Gateway isolation</td>
+                <td>
+                  Whether the gateway runs as your login user or a
+                  <a href="#hardened-gateway">dedicated account</a>.
+                </td>
+              </tr>
+              <tr>
+                <td>Keyring</td>
+                <td>
+                  Whether the root key exists and can be read, and whether each service unit is
+                  wired to the backend it names.
+                </td>
+              </tr>
+              <tr>
+                <td>Recovery code</td>
+                <td>Whether a recovery envelope has been exported, and whether it is intact.</td>
+              </tr>
+              <tr>
+                <td>Store encryption</td>
+                <td>
+                  Whether each database or provider store is encrypted, still plaintext, or locked.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          <code>--fix-permissions</code> keeps directories and managed executables owner-only and
+          restricts other files to owner read and write. The portal's
+          <strong>Debug → Doctor</strong> page shows the same checks but cannot repair anything.
+        </p>
+
+        <h2 id="hardened-gateway">Hardened gateway</h2>
+        <p>
+          By default both daemons run as your login user. Owner-only file modes keep other OS
+          accounts out, but not other programs running as you: any of them can read the gateway's
+          databases. On Linux with systemd, the gateway can instead run as a dedicated account that
+          systemd allocates each time it starts (<code>DynamicUser=</code>), with all of its state
+          (databases, index, certificate, tokens, models) under
+          <code>/var/lib/omnesis-gateway</code>, unreadable by your account.
+        </p>
+        <p>
+          That separation holds only if your account also cannot change the code the gateway runs.
+          So root fetches a release, builds it and installs it under
+          <code>/opt/omnesis-gateway</code>, where only root can write. A program running as you can
+          then neither read the corpus nor alter the code that reads it. Root still can, and anyone
+          who compromises the gateway process holds what the gateway holds. On a single-user machine
+          where nothing untrusted runs under your account, the default services are a reasonable
+          choice.
+        </p>
+        <p>
+          Hardened mode needs Linux with systemd. macOS has no equivalent: run the gateway as your
+          user, or in Docker, which separates it from your other programs in a different way.
+          Collectors never move to the dedicated account and never run as root, because they read
+          your data with your permissions; a Mac collector pairs with a hardened Linux gateway over
+          the network like any other collector.
+        </p>
+
+        <h3 id="hardened-install">Installing</h3>
+        <p>
+          On a Linux host run by systemd, an interactive install of a new gateway asks which account
+          should run it; <code>--hardened</code> and <code>--no-hardened</code> answer that for an
+          unattended install. The dedicated account installs the CLI as you and prints one command
+          to run as root; the installer never runs <code>sudo</code> itself.
+          <code>omnesis service install gateway --hardened</code> prints the same command.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis service install gateway --hardened</span>
+            </p>
+            <pre class="wrap">
+The dedicated gateway runs from a copy of Omnesis that root fetches and owns, so
+installing it takes one command as root:
+
+  curl -fsSL https://omnesis.dev/hardened-gateway.sh | sudo sh -s -- install --version X.Y.Z</pre
+            >
+          </div>
+        </div>
+        <p>Run as root, that command:</p>
+        <ol>
+          <li>
+            fetches the release with git hooks disabled (reading a token from your git credential
+            helper if the repository needs one);
+          </li>
+          <li>
+            hands over to that release's own copy of the script, so the release decides how it is
+            built;
+          </li>
+          <li>
+            builds it as a throwaway account that can reach neither home directories nor the rest of
+            the system;
+          </li>
+          <li>
+            installs the result, root-owned, under <code>/opt/omnesis-gateway/releases</code>;
+          </li>
+          <li>
+            puts the passphrase that seals the gateway's keys in
+            <code>/etc/omnesis-gateway/keyring.pass</code>, readable only by root, then installs and
+            starts <code>omnesis-gateway.service</code>.
+          </li>
+        </ol>
+        <p>
+          It needs git and a Node 24 that only root can change, such as your distribution's under
+          <code>/usr</code>; a Node installed in a home directory (through nvm, for example) is
+          refused. <code>--no-keyring</code> installs without encryption at rest, and
+          <code>--keyring-passphrase-file</code> uses your own passphrase, which root copies into
+          <code>/etc/omnesis-gateway</code>. <code>--port</code> sets the gateway's port.
+        </p>
+        <p>
+          It is a new gateway, never your existing one moved: devices pair with it again and sources
+          sync into it again, and nothing in <code>~/.config/omnesis</code> is copied or removed. So
+          <code>--hardened</code> is refused while a gateway service of yours is registered (remove
+          it first with <code>omnesis service uninstall gateway</code>), and together with
+          <code>--docker</code>, the client and collector roles, an agent-harness install,
+          <code>--no-service</code> and <code>--mkcert</code>, each with its reason. The dedicated
+          gateway serves its own self-signed certificate; for a browser-trusted address put a
+          reverse proxy in front of it (see
+          <a href="/docs/setup#certificates">Setup → Certificates</a>).
+        </p>
+
+        <h3 id="hardened-admin">Administering</h3>
+        <p>
+          Administer it with <code>omnesis-gateway-admin</code>, linked into
+          <code>/usr/local/sbin</code>. Its <code>cli</code> command runs the installed release's
+          <code>omnesis</code> as root against the gateway's state, address and keyring, so nothing
+          from your account runs as root. After installing, export a recovery code, install a model,
+          and pair this machine's collector, which stays under your account and pairs with a code
+          like a collector on another machine:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p class="t-dim"># as root, against the dedicated gateway</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >sudo omnesis-gateway-admin cli keyring export-recovery --backend passphrase</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >sudo omnesis-gateway-admin cli model install &lt;model-id&gt;</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >sudo omnesis-gateway-admin cli devices pair --kind collector</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">sudo omnesis-gateway-admin cli tls status</span>
+            </p>
+            <p class="t-dim"># as you: this machine's collector</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >curl -fsSL https://omnesis.dev/install.sh | sh -s -- --collector --gateway-url
+                https://localhost:7600 --trust-fingerprint sha256:&lt;fingerprint&gt; --code
+                &lt;code&gt;</span
+              >
+            </p>
+          </div>
+        </div>
+        <p>
+          <code>tls status</code> shows the fingerprint the collector's command confirms. Inspect
+          the service with <code>sudo systemctl status omnesis-gateway</code> and
+          <code>journalctl -u omnesis-gateway</code>; <code>omnesis service status</code> covers
+          only your user services. The unit is readable only by root, so run
+          <code>sudo omnesis doctor</code> to include it in the checks.
+        </p>
+        <p>
+          The keys reach the gateway as a systemd credential: the unit names
+          <code>/etc/omnesis-gateway/keyring.pass</code>, which systemd reads as root and hands to
+          this service alone. Before the first start the unit creates the root key, so the stores
+          are encrypted from the beginning; a key the passphrase cannot open stops the start. Keep
+          the passphrase file. Without it, the stores open again only by restoring the key from the
+          recovery code and the recovery envelope in the state directory.
+        </p>
+
+        <h3 id="hardened-update">Updating and removing</h3>
+        <p>
+          <code>omnesis update</code> updates your CLI and collector and prints the root command
+          that moves the dedicated gateway to the same release.
+          <code>sudo omnesis-gateway-admin update --version X.Y.Z</code> builds the new release
+          beside the running one, takes a backup through the gateway, switches to the new release,
+          restarts the service and waits for the new version to answer. If it does not, it switches
+          back and prints the commands that list and restore backups, in case the new release
+          already migrated the data. <code>--no-backup</code> switches without a backup. It refuses
+          a release older than the running one unless you pass <code>--force</code>.
+        </p>
+        <p>
+          <code>sudo omnesis-gateway-admin rollback</code> switches back to the previous release,
+          and <code>sudo omnesis-gateway-admin status</code> shows both.
+          <code>sudo omnesis-gateway-admin uninstall</code> removes the service and the releases but
+          keeps the state directory and the passphrase that opens it. Running the install command on
+          a dedicated gateway whose unit runs code from a login account moves it onto a root-owned
+          release, keeping its port, state and passphrase.
+        </p>
+
+        <h2 id="tls">TLS certificate</h2>
+        <p>
+          The gateway always serves HTTPS, with the certificate chosen at
+          <a href="/docs/setup#certificates">setup</a>: a Tailscale certificate, an mkcert one, one
+          you provide, or the self-signed pair the gateway creates on first start. This section
+          covers what happens afterwards: renewal, how a new certificate goes live, and what clients
+          that pinned the old one need.
+        </p>
+
+        <h3 id="tls-renewal">Renewal and activation</h3>
+        <p>
+          Renewing writes a new certificate to the files the gateway reads; activating starts
+          serving it. The gateway activates on its own: once an hour it re-reads the certificate and
+          key, checks that they parse, match and are within their validity dates, and if they differ
+          from what it serves, switches to them without a restart.
+          <code>omnesis tls reload</code> does this immediately. A replacement that fails the checks
+          is reported and ignored, and the previous certificate stays in use.
+        </p>
+        <p>
+          The gateway renews the certificates it created: the self-signed pair, the Tailscale
+          certificate and the mkcert certificate. From 30 days before expiry it creates a new one of
+          the same kind (through <code>openssl</code>, <code>tailscale cert</code> or
+          <code>mkcert</code>), checks it and activates it.
+        </p>
+        <p>
+          Any other certificate you point the gateway at through <code>OMNESIS_TLS_CERT</code> and
+          <code>OMNESIS_TLS_KEY</code> is checked and reported but never renewed or overwritten:
+          renew it with the tool that issued it, into the same files, and the gateway picks it up. A
+          gateway in Docker renews only its self-signed pair; a Tailscale or mkcert certificate is
+          renewed on the host, by re-running its issuer into the same file.
+          <code>gateway.tls.autoRenew: false</code> turns automatic renewal off and
+          <code>gateway.tls.renewBeforeDays</code> moves the threshold;
+          <code>omnesis tls renew</code> renews on request, and <code>--force</code> renews one that
+          is not yet due. <code>omnesis update</code> never renews certificates.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis tls status</span>
+            </p>
+            <pre>
+Certificate  expiring
+  ownership    Tailscale, minted by Omnesis
+  certificate  /home/maya/.config/omnesis/tls/tailscale.crt
+  fingerprint  sha256:4f1c…9be2
+  valid until  2026-10-02T09:14:00.000Z (18 days remaining)
+  names        studio.tail-example.ts.net
+  renewal      automatic, 30 days before expiry
+  last attempt 2026-09-14T03:00:12.000Z failed: `tailscale cert` failed: HTTPS is not enabled for this tailnet</pre
+            >
+          </div>
+        </div>
+        <p>
+          <code>omnesis doctor</code> reports the same facts: a certificate inside its renewal
+          window is a warning, an expired one a failure, and each names the command to fix it. A
+          certificate that does not cover a name the gateway is reached by (the gateway URL, the
+          public address, a pairing address) is also a warning, because clients using that name will
+          refuse it; the fix is a new certificate, not weaker verification.
+        </p>
+        <p>
+          The self-signed certificate lasts ten years but covers only the network addresses the host
+          had when it was created. After those change,
+          <code>omnesis tls renew --force</code> recreates it with the current ones. A Tailscale or
+          mkcert certificate that no longer covers the address you use is recreated with
+          <code>omnesis tls refresh</code> (add <code>--mkcert</code> for mkcert), which also
+          activates it in the running gateway when it can reach it.
+        </p>
+        <p>
+          Behind a reverse proxy that terminates TLS, clients see the proxy's certificate, renewed
+          by the proxy's own tooling. <code>omnesis tls status</code> then describes the gateway's
+          own certificate on the hop from the proxy, and lists the public name as served by the
+          proxy.
+        </p>
+
+        <h3 id="pinned-clients">Clients that pinned the old certificate</h3>
+        <p>
+          A renewed certificate has a new fingerprint, which matters to clients that pinned the old
+          one. The gateway never drops a pin on a client's behalf.
+        </p>
+        <ul>
+          <li>
+            <strong>Phones paired through a Tailscale certificate</strong> verify the name through
+            the operating system, so they keep working across renewals.
+          </li>
+          <li>
+            <strong>Phones paired by fingerprint</strong>, which includes every pairing against the
+            self-signed certificate, stop connecting when it changes. A phone paired by fingerprint
+            on a local address while the gateway serves a Tailscale certificate stops at each
+            renewal, which the pairing screen dates. Run
+            <code>omnesis devices repair &lt;name&gt;</code> and pair the phone again;
+            <code>omnesis doctor</code> lists phones that have not connected since a renewal.
+          </li>
+          <li>
+            <strong>A collector or CLI on another machine</strong> saved the certificate on first
+            use and refuses a new one, showing both fingerprints. Compare them with
+            <code>omnesis tls status</code> on the gateway machine, then run
+            <code>omnesis tls trust --fingerprint &lt;served&gt;</code> on the other machine, or set
+            <code>OMNESIS_TRUST_FINGERPRINT</code> there before the collector starts.
+          </li>
+          <li>
+            <strong>A collector on the gateway machine</strong> reads the gateway's certificate file
+            and follows a renewal when it next reconnects.
+          </li>
+        </ul>
+
+        <nav class="docs-pager" aria-label="Pages">
+          <a href="/docs/operating"
+            ><span class="pager-label">Previous</span><span class="pager-title">Operating</span></a
+          >
+          <a class="pager-next" href="/docs/updating"
+            ><span class="pager-label">Next</span
+            ><span class="pager-title">Backup &amp; updates</span></a
+          >
+        </nav>
+      </main>
+    </div>
+
+    <footer class="site-footer">
+      <div class="container">
+        <div class="footer-inner">
+          <div class="footer-base">© 2026 Omnesis</div>
+          <nav class="footer-links" aria-label="Footer">
+            <a href="/docs/">Docs</a>
+            <a href="/privacy">Privacy</a>
+            <a class="footer-mail" href="mailto:contact@omnesis.dev">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="2" y="4" width="20" height="16" rx="2" />
+                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+              </svg>
+              contact@omnesis.dev
+            </a>
+            <a class="footer-gh" href="#" data-oss-open>
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path
+                  d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+                />
+              </svg>
+              GitHub
+            </a>
+            <a
+              class="footer-social footer-x"
+              href="https://x.com/Omnesisdev"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Omnesis on X"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>@Omnesisdev
+            </a>
+            <a
+              class="footer-social footer-discord"
+              href="https://discord.gg/4Y8pQHrVv"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Join Omnesis on Discord"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>Discord
+            </a>
+          </nav>
+        </div>
+      </div>
+    </footer>
+
+    <script src="/docs/docs.js"></script>
+  </body>
+</html>

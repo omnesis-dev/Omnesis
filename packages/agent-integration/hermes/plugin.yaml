@@ -1,0 +1,12 @@
+name: omnesis-integration
+label: Omnesis
+kind: platform
+version: 0.5.11
+description: >
+  Ingests durable Hermes transcripts and accepts privacy-reviewed Omnesis
+  subscription wakes in dedicated background sessions.
+author: Omnesis
+provides_tools:
+  - omnesis_answer
+  - omnesis_subscription_answer
+  - omnesis_subscriptions

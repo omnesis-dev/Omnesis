@@ -1,0 +1,44 @@
+{
+  "watch": {
+    "name": "semantic-match-on-unindexed-source",
+    "firing_policy": "stays_active",
+    "ontology_fingerprint": "poc-ontology-1",
+    "nodes": [
+      {
+        "id": "calls",
+        "type": "source.document_event",
+        "filter": {
+          "source": "apple-call-log",
+          "event": ["created"],
+          "documentType": "call-log"
+        },
+        "output_map": {
+          "doc_id": "$e.docId"
+        },
+        "recall": {
+          "semantic": {
+            "query": "a difficult conversation about money",
+            "threshold": 0.35
+          }
+        },
+        "judge": {
+          "proposition": "The call was about money",
+          "output_schema": {}
+        }
+      },
+      {
+        "id": "gate",
+        "type": "stateless.transform",
+        "inputs": {
+          "calls": {
+            "role": "arm"
+          }
+        },
+        "query": "SELECT true AS fires"
+      }
+    ],
+    "sink": {
+      "input": "gate"
+    }
+  }
+}

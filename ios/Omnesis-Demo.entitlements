@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for the OmnesisDemo target. Mirrors Omnesis.entitlements
+  with two differences:
+
+  1. `keychain-access-groups` points at the demo bundle id so the demo
+     app's pairing token / gateway URL land in their own bucket, fully
+     isolated from the production app.
+  2. `aps-environment` resolves from the configuration: development for
+     Debug provisioning, production for distribution profiles.
+-->
+<plist version="1.0">
+<dict>
+    <key>com.apple.developer.healthkit</key>
+    <true/>
+    <key>com.apple.developer.healthkit.access</key>
+    <array/>
+
+    <key>keychain-access-groups</key>
+    <array>
+        <string>$(AppIdentifierPrefix)$(OMNESIS_BUNDLE_ID).demo</string>
+    </array>
+
+    <key>aps-environment</key>
+    <string>$(OMNESIS_APNS_ENVIRONMENT)</string>
+</dict>
+</plist>

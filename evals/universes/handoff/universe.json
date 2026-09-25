@@ -1,0 +1,44 @@
+{
+  "name": "handoff",
+  "description": "Two collectors host one Gmail account as a handoff source: one device syncs it at a time under the gateway's sync lease, the other takes over from the shared cursor when the lease lapses or is given up.",
+  "cast": "cast.json",
+  "agentDemos": null,
+  "devices": [
+    {
+      "id": "macbook",
+      "name": "Johns-MacBook-Pro-collector",
+      "kind": "collector"
+    },
+    {
+      "id": "imac",
+      "name": "Johns-iMac-collector",
+      "kind": "collector"
+    }
+  ],
+  "multiDeviceModes": {
+    "gmail": "handoff"
+  },
+  "sources": [
+    {
+      "descriptorId": "gmail",
+      "accountIds": ["john.smith@example.com"],
+      "device": "macbook",
+      "members": ["imac"]
+    },
+    {
+      "descriptorId": "google-calendar",
+      "accountIds": ["john.smith@example.com"],
+      "device": "macbook"
+    },
+    {
+      "descriptorId": "google-drive",
+      "accountIds": ["john.smith@example.com"],
+      "device": "macbook"
+    },
+    {
+      "descriptorId": "google-contacts",
+      "accountIds": ["john.smith@example.com"],
+      "device": "macbook"
+    }
+  ]
+}

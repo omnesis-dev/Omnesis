@@ -1,0 +1,884 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Backup &amp; updates — Omnesis Docs</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32" />
+    <link rel="icon" type="image/png" href="/favicon-16.png" sizes="16x16" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- Resolve the theme before first paint: the stored choice, else the OS preference. -->
+    <script>
+      (function () {
+        var root = document.documentElement;
+        root.classList.add("js");
+        var t;
+        try {
+          t = localStorage.getItem("omnesis-theme");
+        } catch (e) {}
+        if (t !== "light" && t !== "dark") {
+          t =
+            window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+        }
+        root.setAttribute("data-theme", t);
+      })();
+    </script>
+
+    <meta
+      name="description"
+      content="Back up, restore and export Omnesis data, update one machine or the whole fleet, Docker and source installs, and version compatibility."
+    />
+    <link rel="canonical" href="https://omnesis.dev/docs/updating" />
+    <meta name="theme-color" content="#0d1117" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="/footer-social.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <nav id="nav">
+      <div class="container">
+        <a href="/" class="nav-logo" aria-label="Omnesis"
+          ><span class="nav-logo-mark" aria-hidden="true"></span>MNESIS</a
+        >
+        <div class="nav-right">
+          <ul class="nav-links">
+            <li><a href="/">Context Layer</a></li>
+            <li><a href="/brain">Omnesis Brain</a></li>
+            <li><a href="/vision">Vision</a></li>
+            <li><a href="/docs/" aria-current="page">Docs</a></li>
+          </ul>
+          <a
+            class="nav-icon-btn"
+            href="#"
+            data-oss-open
+            aria-label="Omnesis on GitHub"
+            title="Omnesis on GitHub"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path
+                d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+              />
+            </svg>
+          </a>
+          <button
+            id="theme-toggle"
+            class="theme-toggle"
+            type="button"
+            aria-label="Switch between dark and light theme"
+            title="Toggle theme"
+          >
+            <svg
+              class="icon-sun"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="4" />
+              <path
+                d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"
+              />
+            </svg>
+            <svg
+              class="icon-moon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <div class="docs-shell">
+      <aside class="docs-sidebar">
+        <nav aria-label="Documentation">
+          <ul class="side-pages">
+            <li><a href="/docs/">Overview</a></li>
+            <li><a href="/docs/install">Install</a></li>
+            <li><a href="/docs/setup">Setup</a></li>
+            <li><a href="/docs/search">Search</a></li>
+            <li><a href="/docs/agent">The agent</a></li>
+            <li><a href="/docs/connect">Agents &amp; MCP</a></li>
+            <li><a href="/docs/apps">Mobile apps</a></li>
+            <li><a href="/docs/notifications">Notifications</a></li>
+            <li><a href="/docs/operating">Operating</a></li>
+            <li><a href="/docs/security">Security</a></li>
+            <li>
+              <a href="/docs/updating" aria-current="page">Backup &amp; updates</a>
+              <ul class="side-sub">
+                <li><a href="#backup">Backup</a></li>
+                <li><a href="#restore">Restore and export</a></li>
+                <li><a href="#updating">Updating</a></li>
+                <li><a href="#fleet-update">Updating every machine</a></li>
+                <li><a href="#docker-update">Docker installs</a></li>
+                <li><a href="#adopt-source">Adopting a source install</a></li>
+                <li><a href="#compatibility">Version compatibility</a></li>
+              </ul>
+            </li>
+            <li><a href="/docs/sources">Available sources</a></li>
+            <li><a href="/docs/building-sources">Building sources</a></li>
+            <li><a href="/docs/experimental">Experimental</a></li>
+          </ul>
+        </nav>
+      </aside>
+
+      <main id="main" class="docs-content">
+        <p class="docs-kicker">Operate</p>
+        <h1>Backup &amp; updates</h1>
+        <p class="docs-lead">
+          Keeping a copy of your Omnesis data, getting it back, and moving every machine to a new
+          release: <code>omnesis backup</code>, <code>restore</code> and <code>export</code>,
+          <code>omnesis update</code> on one machine or the whole fleet, Docker and source installs,
+          and how the gateway judges which device versions it still supports. Commands run on the
+          gateway machine unless a section says otherwise.
+        </p>
+
+        <h2 id="backup">Backup</h2>
+        <p>
+          <code>omnesis backup</code> takes a snapshot while the gateway keeps running, into
+          <code>~/.config/omnesis/backups/&lt;timestamp&gt;/</code> on the gateway machine. It holds
+          the databases (documents, index, analytics), <code>omnesis.json</code>,
+          <code>OMNESIS.md</code>, tokens, config secrets, TLS certificates and a manifest.
+          <code>--note</code> labels a backup, <code>--list</code> shows the ones you have, and
+          <code>--no-index</code> leaves out <code>index.db</code>, the largest file, which the
+          gateway can rebuild from the documents.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis backup --note before-cleanup</span>
+            </p>
+            <pre>
+<span class="t-dim">Backup started…</span>
+<span class="t-ok">✔</span> Backup complete: 8 files, 812.4 MB
+    omnesis.db.enc                 611.3 MB
+    index.db.enc                   182.0 MB
+    analytics.db.enc                18.4 MB
+<span class="t-dim">    …</span>
+  <span class="t-dim">Saved on the gateway host at</span> ~/.config/omnesis/backups/2026-03-14T09-12-05</pre>
+          </div>
+        </div>
+        <p>A backup leaves out four things:</p>
+        <ul>
+          <li><strong>Models</strong>, which can be downloaded again.</li>
+          <li>
+            <strong>Agent conversations</strong> (<code>conversations/</code>): copy that directory
+            yourself if you want to keep your chat history.
+          </li>
+          <li>
+            <strong>OAuth sign-ins</strong> (Google, Microsoft and similar): sources that use them
+            ask you to sign in again after a restore. Pasted API keys are kept, because a platform
+            that shows a key once cannot show it again.
+          </li>
+          <li>
+            <strong>The root key</strong> of an encrypted install. With
+            <a href="/docs/security#encryption">encryption at rest</a> on, the backup's files are
+            encrypted with that key, so keep the <a href="/docs/security#recovery">recovery code</a>
+            as well: without the key or the code, an encrypted backup cannot be opened.
+          </li>
+        </ul>
+        <p>
+          <code>omnesis update</code> takes a backup of its own before it changes anything. After
+          each successful one, Omnesis keeps the newest two such pre-update backups and deletes
+          older ones; backups you took yourself are never deleted. Set
+          <code>backupRetention.preUpdateCount</code> to keep a different number, or
+          <code>0</code> to keep them all.
+        </p>
+
+        <h2 id="restore">Restore and export</h2>
+        <p>
+          <code>omnesis restore &lt;backup-dir&gt;</code> rebuilds a configuration directory from a
+          backup. Run it with the gateway stopped. It writes to <code>~/.config/omnesis/</code>, or
+          to <code>--target</code>, and swaps the result in only once every file is in place, so a
+          failed restore leaves nothing half-written. Restoring over an existing corpus needs
+          <code>--force</code>, which replaces the whole directory.
+        </p>
+        <p>
+          An encrypted backup needs its root key. On the same machine, restore uses the key already
+          in the keyring. On a new machine, pass the recovery code with <code>--code</code> (or on
+          standard input) and restore rebuilds the key from it. The databases come back plaintext
+          and the gateway encrypts them again at its next start.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis backup --list</span></p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis service stop collector</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis service stop gateway</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis restore &lt;backup-dir&gt; --force</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis service start gateway</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis service start collector</span>
+            </p>
+          </div>
+        </div>
+
+        <h3 id="export">Export</h3>
+        <p>
+          <code>omnesis export</code> writes your documents to
+          <code>~/.config/omnesis/exports/&lt;timestamp&gt;/</code>, as JSON lines by default or as
+          CSV, which leaves out the full text and adds one file per analytics table. It is for
+          taking your data elsewhere, not for restoring. On an encrypted install the export is
+          encrypted too; decrypt it with
+          <code>omnesis keyring decrypt-artifact &lt;export-dir&gt;</code> on a machine with the
+          same root key before using it outside Omnesis.
+        </p>
+
+        <h2 id="updating">Updating</h2>
+        <p>
+          <code>omnesis update</code> moves a machine to the newest stable release and restarts what
+          runs there. It works the same for a source or Docker install, and Omnesis never starts it
+          on its own. Run it on the gateway machine first, then on each other machine, or add
+          <code>--fleet</code> to have the gateway ask the other machines to run it (see
+          <a href="#fleet-update">Updating every machine</a>).
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis update</span></p>
+            <p class="tight t-dim"># or, for an unattended rollout</p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis update --yes</span></p>
+          </div>
+        </div>
+        <p>On a machine that runs the gateway, it does the following, in order:</p>
+        <figure class="diagram">
+          <ol class="flow">
+            <li class="flow-step">
+              <span class="flow-title">Back up</span
+              ><span class="flow-desc">through the gateway, skipping the index</span>
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Install</span
+              ><span class="flow-desc">build the release, or pull the images</span>
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Restart the gateway</span
+              ><span class="flow-desc">its data migrations run; they only go forward</span>
+            </li>
+            <li class="flow-step flow-gate">
+              <span class="flow-title">Wait for health</span
+              ><span class="flow-desc"><code>/health</code> must report the new version</span>
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Restart the collector</span
+              ><span class="flow-desc">only now, so it never meets a half-migrated gateway</span>
+            </li>
+            <li class="flow-step">
+              <span class="flow-title">Refresh agent harness</span
+              ><span class="flow-desc">update the plugin; ask before restarting it</span>
+            </li>
+          </ol>
+          <div class="lanes">
+            <section class="lane">
+              <p class="lane-title">If it fails before health</p>
+              <ol class="flow">
+                <li class="flow-step">
+                  <span class="flow-title">Automatic</span
+                  ><span class="flow-desc">the previous release is put back and restarted</span>
+                </li>
+              </ol>
+              <p class="lane-note">Code returns; migrations that already ran do not.</p>
+            </section>
+            <section class="lane">
+              <p class="lane-title">To get the exact data back</p>
+              <ol class="flow">
+                <li class="flow-step">
+                  <span class="flow-title">Stop</span
+                  ><span class="flow-desc">collector, then gateway</span>
+                </li>
+                <li class="flow-step">
+                  <span class="flow-title">Restore</span
+                  ><span class="flow-desc">the backup from step one</span>
+                </li>
+                <li class="flow-step">
+                  <span class="flow-title">Start</span
+                  ><span class="flow-desc">gateway, then collector</span>
+                </li>
+              </ol>
+              <p class="lane-note">
+                By hand, with the commands under <a href="#restore">Restore</a>.
+              </p>
+            </section>
+          </div>
+          <figcaption>
+            An update backs up, installs, and restarts the gateway before anything that depends on
+            it; a failure before the gateway is healthy puts the previous release back, and the
+            pre-update backup undoes data changes. A Docker or hardened gateway takes its backup
+            after the install step, as described under How the updater works.
+          </figcaption>
+        </figure>
+        <p>
+          A machine that only collects has nothing to back up: its collector simply restarts on the
+          new release. A machine with a connected agent harness (OpenClaw or Hermes) refreshes the
+          installed plugin, then asks before restarting the harness, since that interrupts whatever
+          the agent is doing; <code>--yes</code> answers that prompt too. If the harness's
+          authorization has lapsed, the update prints the command to renew it and leaves the harness
+          alone. <code>omnesis devices list</code>, <code>omnesis doctor</code> and the portal's
+          Devices page show any plugin refresh or restart still owed, with the command that finishes
+          it.
+        </p>
+
+        <h3 id="update-failures">If it fails</h3>
+        <p>
+          A build that does not compile, or a gateway that does not come back healthy, returns the
+          machine to the release it was running and restarts it there. <kbd>Ctrl</kbd>+<kbd>C</kbd>
+          during the install or the health wait does the same once the running step has stopped.
+          Once the gateway serves the new release nothing is undone; a collector the update did not
+          reach is reported with the command to restart it.
+        </p>
+        <p>
+          Rolling back the code does not roll back the data. If the new gateway got far enough to
+          run its migrations, the previous release clears the sync positions the newer version wrote
+          and those sources sync again from the start. For the exact state before the update,
+          restore the backup from step one with the commands under <a href="#restore">Restore</a>.
+          Skip that backup with <code>--no-backup</code> only when you have taken one yourself.
+        </p>
+        <p>
+          If the update was cut short by a power loss or a forced kill, run
+          <code>omnesis update</code> again: it notices the unfinished run, says what it will do,
+          and completes or repeats it.
+        </p>
+        <p>
+          On a machine with less than about 5 GB of memory in total (or a container limited to
+          less), a source build (which needs at least 3 GB for itself and about 2 GB beside it)
+          stops this account's collector while it builds and starts it again afterwards; the gateway
+          keeps serving. If the build is still killed, the update says the machine most likely ran
+          out of memory and rolls back. Stop the collector and gateway (<code
+            >omnesis service stop collector</code
+          >, <code>omnesis service stop gateway</code>), add swap or free memory, and run
+          <code>omnesis update</code> again.
+        </p>
+
+        <h3 id="update-flags">Options</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Flag</th>
+                <th>Effect</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>--yes</code></td>
+                <td>Answers every prompt, including harness restarts. Needed in scripts.</td>
+              </tr>
+              <tr>
+                <td><code>--dry-run</code></td>
+                <td>Prints the plan without changing anything.</td>
+              </tr>
+              <tr>
+                <td><code>--target-version X.Y.Z</code></td>
+                <td>Moves to one exact release instead of the newest.</td>
+              </tr>
+              <tr>
+                <td><code>--commit &lt;full-sha&gt;</code></td>
+                <td>
+                  Source installs only: fetches that exact 40-character commit from the checkout's
+                  origin, for controlled testing between releases. With <code>--fleet</code> it is
+                  offered only to paired machines verified as source installs; Docker installs and
+                  phone apps are left alone. The portal's update action always targets releases.
+                </td>
+              </tr>
+              <tr>
+                <td><code>--edge</code></td>
+                <td>
+                  Follows the <code>main</code> branch instead of stable releases (source and Docker
+                  installs).
+                </td>
+              </tr>
+              <tr>
+                <td><code>--no-restart</code></td>
+                <td>Installs, then reports which daemons still run the previous release.</td>
+              </tr>
+              <tr>
+                <td><code>--no-backup</code></td>
+                <td>Skips the pre-update backup.</td>
+              </tr>
+              <tr>
+                <td><code>--health-timeout &lt;seconds&gt;</code></td>
+                <td>Allows a long migration more than the default ten minutes.</td>
+              </tr>
+              <tr>
+                <td><code>--wait-for-lock=&lt;minutes&gt;</code></td>
+                <td>
+                  Waits for an update already running on this machine instead of refusing to start.
+                </td>
+              </tr>
+              <tr>
+                <td><code>--allow-rewind</code></td>
+                <td>
+                  Source installs only: allows a target that is not a newer release and does not
+                  contain the build installed now, such as going back from an exact-commit test
+                  build. The commits it drops are listed. With <code>--fleet</code>, it is passed to
+                  each machine commanded at that moment.
+                </td>
+              </tr>
+              <tr>
+                <td><code>--force</code></td>
+                <td>
+                  Allows moving to an older release, and implies <code>--allow-rewind</code>. There
+                  are no down-migrations, and an older release clears the sync positions the newer
+                  one wrote.
+                </td>
+              </tr>
+              <tr>
+                <td><code>--fleet</code></td>
+                <td>Afterwards, asks the gateway to update the other machines.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Unless you pass <code>--edge</code>, the update installs only stable release tags. It
+          refuses a source checkout it did not install or <a href="#adopt-source">adopt</a>, a
+          checkout with local changes, and a tag whose contents do not match its name.
+        </p>
+        <p>
+          A source install that was moved to an exact commit, for example an unmerged test build,
+          updates to the next release normally: a newer release is a forward update even when it was
+          cut without that commit, and the update lists the commits it leaves behind. A target at
+          the same or an older version that does not contain the installed build is refused unless
+          you pass <code>--allow-rewind</code>.
+        </p>
+        <p>
+          The same rule covers a repository whose history was replaced, so that the target shares no
+          commits with the installed build: a newer version is a forward update, and the update says
+          the history was replaced instead of listing commits. This holds for stable and edge
+          installs alike. Re-running the installer on an existing source install applies the same
+          rules, with <code>--force</code> in place of <code>--allow-rewind</code>.
+        </p>
+
+        <h3 id="several-collectors">Several collectors, one source</h3>
+        <p>
+          Update the gateway first, then every collector. A collector newer than its gateway reports
+          <code>Gateway upgrade required</code> and waits. If several collectors host the same
+          source, update all of them: until they are all on the new release, the older ones may be
+          unable to sync that source or change its settings, and the sync status of each collector
+          that needs updating says so. Sources hosted only by older collectors keep working.
+        </p>
+
+        <h3 id="release-check">Release notices</h3>
+        <p>
+          The gateway checks for a newer stable release shortly after it starts and every 24 hours,
+          asking the source checkout's origin or the container registry, according to how it was
+          installed. Clients do not check. A newer release shows as a quiet line in the portal
+          sidebar and in <code>omnesis doctor</code>; failures say nothing. The check never
+          downloads or installs anything.
+        </p>
+        <p>
+          It does tell that Git host or registry the gateway's network address. Omnesis adds no
+          install identifier, corpus data or version information to the request. Turn it off with
+          <code>omnesis config set /releaseCheck false</code>.
+        </p>
+
+        <h3 id="restart-reporting">Daemons the update cannot restart</h3>
+        <p>
+          The update restarts only services that belong to the account running it. A daemon started
+          by hand, a hardened gateway, or a <a href="/docs/operating#services">named instance</a> is
+          reported as still running the previous release, with the command to restart it when the
+          machine knows it. A collector is restarted only once its own gateway is serving the new
+          release; if the gateway could not be restarted, the collector is reported instead. A
+          <a href="/docs/security#hardened-update">hardened gateway</a> is updated with its own root
+          command, which <code>omnesis update</code> prints.
+        </p>
+
+        <details>
+          <summary>How the updater works</summary>
+          <p>
+            The update runs in two halves. The release already installed finds the target and puts
+            it in place. Everything after that (the backup when it can wait, the restarts, the
+            health wait, the harness refresh and any rollback) is run by the newly installed
+            release, so a fix to those steps applies to the update that delivers it. Only one update
+            runs on a machine at a time; a second is refused with the running process and its
+            current step, or waits with <code>--wait-for-lock</code>. The lock of a killed update is
+            recovered automatically after a short interval.
+          </p>
+          <p>
+            Where the gateway runs from the installation being updated, it is backed up before the
+            install. A gateway in a container or on a hardened release keeps serving its current
+            build during the install and is backed up after it, before anything restarts. A gateway
+            that is not running is backed up by copying its closed databases into the same backups
+            folder.
+          </p>
+          <p>
+            Before restarting a daemon, the update rewrites its launchd plist or systemd unit to
+            what the new release's <code>omnesis service install</code> would write, keeping its
+            executable, configuration directory, keyring wiring and environment. A unit it cannot
+            rewrite without losing something (a systemd drop-in, <code>EnvironmentFile=</code>, a
+            comment, or a setting <code>service install</code> does not write) is left alone and
+            reported; a hardened gateway's unit and named instances are never rewritten.
+          </p>
+          <p>
+            A source install writes a completion record once its build succeeds, and a Docker
+            install once the gateway answers with the new image; the next run uses it to decide
+            whether an interrupted update must be repeated. A source build sizes its memory from the
+            machine as the installer does, and never overrides a heap size you set in
+            <code>NODE_OPTIONS</code>.
+          </p>
+        </details>
+
+        <h2 id="fleet-update">Updating every machine</h2>
+        <p>
+          <code>omnesis update --fleet</code> on the gateway machine updates that machine, waits up
+          to 90 seconds for the collectors and agent harnesses that were connected to reconnect, and
+          then asks each one to run <code>omnesis update</code> on itself. You confirm each machine
+          after seeing its current and target version; <code>--yes</code> confirms them all. It then
+          waits, up to 45 minutes, for each commanded machine to report: updated, restart still
+          owed, or failed with its reason. The command exits with an error when any machine failed
+          or never answered, so a machine that refused cannot pass for one that updated.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p class="tight t-dim"># on the gateway machine</p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis update --fleet</span></p>
+          </div>
+        </div>
+        <p>
+          No code travels over the connection. A device receives only a version number, runs its own
+          update against its own release source, and
+          <strong>refuses a version that is not a real release there</strong>, so a tampered gateway
+          cannot make a machine run code of someone else's choosing. A device is only ever sent the
+          version the gateway is serving, so it can never be moved past its gateway; if the gateway
+          could not be restarted, the fleet step stops and says so. A device that is offline keeps
+          the request and runs it when it next connects.
+        </p>
+        <p>
+          A collector restarts on the new release when it finishes, through its service or, when it
+          was started some other way, by exiting for its supervisor to restart. A machine with an
+          agent harness installs the new plugin and restarts the harness.
+          <strong>OpenClaw restarts at once, interrupting any agent run in progress.</strong>
+          Hermes lets running work finish for up to its drain timeout (three minutes by default)
+          first. When the harness cannot be restarted from there, its device row records the restart
+          still owed and the command to run.
+        </p>
+        <p>
+          <code>--dry-run</code> cannot be combined with <code>--fleet</code>, because the fleet
+          step depends on what the gateway serves after this machine moves; preview this machine
+          with <code>omnesis update --dry-run</code>. <code>--edge</code> cannot be combined with it
+          either, since a branch build has no release number to send.
+        </p>
+        <p>The gateway will not command these devices, and says which ones to update yourself:</p>
+        <ul>
+          <li>
+            <strong>Phones and the browser extension</strong>, whose builds are installed outside
+            the gateway (see <a href="/docs/apps#getting-the-apps">Getting the apps</a>).
+          </li>
+          <li>
+            <strong>A device that has never reported its version</strong>, or one below the oldest
+            release the gateway supports (the <em>unknown</em> and <em>unsupported</em> states under
+            <a href="#compatibility">Version compatibility</a>). Run <code>omnesis update</code> on
+            that machine.
+          </li>
+          <li>
+            <strong>A machine with no Omnesis daemon</strong>, such as a paired CLI, a portal
+            browser or an external agent integration.
+          </li>
+          <li><strong>A revoked device</strong>, until it is paired again.</li>
+          <li>
+            <strong>A device whose build cannot take the command.</strong> This is not a failure:
+            <code>omnesis devices list</code>, the portal and <code>omnesis doctor</code> name what
+            to run on that machine, which for an agent harness is <code>omnesis update</code>, then
+            <code>omnesis connect hermes --refresh</code> (or <code>openclaw</code>) and the
+            harness's own restart.
+          </li>
+        </ul>
+
+        <h3 id="portal-fleet-update">From the portal</h3>
+        <p>
+          The portal's Devices page offers the same actions: <strong>Update</strong> on one device
+          and <strong>Update all</strong> for the fleet, with the same version comparison and
+          confirmation. Each device's card shows where its update stands: waiting to be sent,
+          running, failed, installed but still needing a restart, or to be updated on its own
+          machine. A failure or restart notice stays until the device reconnects on the requested
+          release or a newer one.
+        </p>
+        <p>
+          When the gateway's release notice reports a newer version, <strong>Update fleet</strong>
+          updates the gateway itself first, then the devices. The confirmation names the gateway's
+          version change and lists which devices will be updated and which you must handle
+          separately. The portal may be unreachable briefly while the gateway restarts, and picks
+          the progress up again when it is back; no device is sent anything until
+          <code>/health</code> reports the confirmed version.
+        </p>
+        <p>
+          <strong>Update fleet</strong> works for source installs running as the standard user
+          service. For named instances, hand-started or hardened gateways and Docker installs, the
+          button explains why it is disabled; run <code>omnesis update --fleet</code> on the gateway
+          machine instead.
+        </p>
+        <p>
+          External MCP clients keep their own sign-in, which an ordinary update does not affect. If
+          a release's notes say otherwise, reconnect them after the update, and run
+          <code>omnesis connect openclaw --refresh</code> or
+          <code>omnesis connect hermes --refresh</code> for those harnesses.
+        </p>
+
+        <h2 id="docker-update">Docker installs</h2>
+        <p>
+          A machine installed with <code>install.sh --docker</code> updates with the same
+          <code>omnesis update</code> and the same steps. Installing means bumping the image tag
+          recorded beside the Compose file and pulling the new images; the backup runs after the
+          pull, while the gateway still serves the previous image. Rolling back is quick: the
+          previous tag is written back, and its image is still on the machine.
+          <code>--target-version</code> pins a release tag, and <code>--edge</code> follows the
+          images built from the main branch.
+        </p>
+        <p>
+          The update runs in a short-lived updater container that holds the Docker socket for that
+          one run. The socket gives root-equivalent control of the host, which is why the
+          long-running gateway and collector containers never hold it. If a run is interrupted, run
+          <code>omnesis update</code> again; it checks what the gateway actually serves before
+          trusting the recorded tag.
+        </p>
+
+        <h2 id="adopt-source">Adopting a hand-made source install</h2>
+        <p>
+          A source checkout that you cloned and built by hand has no marker saying the installer
+          owns it, so <code>omnesis update</code> refuses to touch it. If that checkout is an
+          installation rather than a development tree, adopt it from the repository root, then run
+          the first update through <code>npm run cli</code>; after that,
+          <code>omnesis update</code> works as usual.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">npm run cli -- update adopt-source</span>
+            </p>
+            <p class="tight t-dim"># then follow stable releases</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">npm run cli -- update</span>
+            </p>
+            <p class="tight t-dim"># or follow the main branch instead</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">npm run cli -- update --edge</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          Adoption requires a standalone clone of the official repository with a single official
+          <code>origin</code>, a detached <code>HEAD</code>, the full history and tree, and no local
+          changes. It then checks with the remote that <code>HEAD</code> is a stable release tag or
+          part of <code>main</code>. A linked worktree, local branch, fork, shallow clone or
+          checkout that changes during the check is refused with the reason. Adoption only records
+          the marker; the first update then rebuilds the checkout.
+        </p>
+        <p>
+          To update a checkout by hand instead, fetch the exact release tag, detach at it, install,
+          build, restart the gateway, confirm it reports the new version, and only then restart the
+          collector:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">git fetch origin refs/tags/vX.Y.Z:refs/tags/vX.Y.Z</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">git checkout --detach vX.Y.Z</span>
+            </p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">npm ci</span></p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">npm run build</span></p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">npm run cli -- service restart gateway</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">npm run cli -- status</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">npm run cli -- service restart collector</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          To follow <code>main</code> by hand, fetch it with
+          <code>git fetch origin refs/heads/main:refs/remotes/origin/main</code> and detach at
+          <code>origin/main</code>, then build and restart in the same order. If a fetch fails,
+          stop: comparing against a stale <code>origin/main</code> can report nothing to update
+          while the remote is unreachable.
+        </p>
+
+        <h2 id="compatibility">Version compatibility</h2>
+        <p>
+          Every Omnesis release and app build shares one product version, and each device reports
+          its own when it connects. The gateway compares it with its own version and with the oldest
+          build it still supports for that kind of device. <code>omnesis devices list</code>, the
+          portal's Devices page and <code>omnesis doctor</code> all show the same verdict:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>State</th>
+                <th>Meaning</th>
+                <th>What to do</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>current</strong></td>
+                <td>On the gateway's version or newer.</td>
+                <td>Nothing.</td>
+              </tr>
+              <tr>
+                <td><strong>behind</strong></td>
+                <td>
+                  Older than the gateway but still supported. Normal: a phone build or a collector
+                  on another machine often lags.
+                </td>
+                <td>Update when convenient; <code>omnesis doctor</code> does not fail.</td>
+              </tr>
+              <tr>
+                <td><strong>unsupported</strong></td>
+                <td>
+                  Older than the oldest build the gateway supports, or speaking a connection
+                  protocol it no longer speaks.
+                </td>
+                <td>
+                  Update the device. The portal flags it and <code>omnesis doctor</code> fails.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>unknown</strong></td>
+                <td>The device reported no version, or one that is not a version number.</td>
+                <td>Nothing; the device keeps working. Update it by hand when you update.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          A fleet update leaves <em>unknown</em> and <em>unsupported</em> devices to you, because
+          the gateway will not tell a build it cannot identify, or one below its floor, to replace
+          itself. Reporting a version is optional, and a device is never refused for leaving it out.
+        </p>
+        <p>
+          What the gateway does refuse is a device speaking a different connection protocol: both
+          sides exchange a protocol number when they connect. The browser extension checks the
+          gateway's version before pairing and refuses a gateway on an older minor release than its
+          own. Within a minor release, what the gateway accepts only grows, which is why the gateway
+          is always updated first.
+        </p>
+        <p>
+          <code>GET /health</code> needs no token and returns the gateway's version and a
+          <code>compat</code> block with the connection and pairing protocol numbers and the
+          database schema version, enough for a client to decide whether it can talk to this
+          gateway. <code>GET /admin/compat</code>, with an admin token, returns the full picture:
+          every store and how it is versioned, every protocol and the versions it accepts, and the
+          oldest supported build per device kind.
+        </p>
+
+        <nav class="docs-pager" aria-label="Pages">
+          <a href="/docs/security"
+            ><span class="pager-label">Previous</span><span class="pager-title">Security</span></a
+          >
+          <a class="pager-next" href="/docs/sources"
+            ><span class="pager-label">Next</span
+            ><span class="pager-title">Available sources</span></a
+          >
+        </nav>
+      </main>
+    </div>
+
+    <footer class="site-footer">
+      <div class="container">
+        <div class="footer-inner">
+          <div class="footer-base">© 2026 Omnesis</div>
+          <nav class="footer-links" aria-label="Footer">
+            <a href="/docs/">Docs</a>
+            <a href="/privacy">Privacy</a>
+            <a class="footer-mail" href="mailto:contact@omnesis.dev">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="2" y="4" width="20" height="16" rx="2" />
+                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+              </svg>
+              contact@omnesis.dev
+            </a>
+            <a class="footer-gh" href="#" data-oss-open>
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path
+                  d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+                />
+              </svg>
+              GitHub
+            </a>
+            <a
+              class="footer-social footer-x"
+              href="https://x.com/Omnesisdev"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Omnesis on X"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>@Omnesisdev
+            </a>
+            <a
+              class="footer-social footer-discord"
+              href="https://discord.gg/4Y8pQHrVv"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Join Omnesis on Discord"
+            >
+              <span class="footer-social-icon" aria-hidden="true"></span>Discord
+            </a>
+          </nav>
+        </div>
+      </div>
+    </footer>
+
+    <script src="/docs/docs.js"></script>
+  </body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "EXPRESSION_PARSE_ERROR",
+      "severity": "error",
+      "path": "/watch/nodes/1/fire_when",
+      "message": "predicate nests deeper than 64 levels (at offset 260).",
+      "details": {
+        "offset": 260
+      }
+    }
+  ]
+}

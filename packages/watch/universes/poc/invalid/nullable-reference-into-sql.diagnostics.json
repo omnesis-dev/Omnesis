@@ -1,0 +1,14 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "REF_NULLABLE_UNSAFE",
+      "severity": "error",
+      "path": "/watch/nodes/3/query",
+      "message": "'$n.either.email_doc' can be null (it reaches through a branch that may not have fired) and this site cannot take a null. Wrap it in coalesce().",
+      "details": {
+        "reference": "$n.either.email_doc"
+      }
+    }
+  ]
+}

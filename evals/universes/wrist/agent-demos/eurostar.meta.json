@@ -1,0 +1,12 @@
+{
+  "triggers": ["eurostar", "booked my train", "train to paris"],
+  "placeholders": {
+    "docExternalIds": [
+      "wrist-gmail-eurostar",
+      "wrist-gmail-race-entry",
+      "wrist-gcal-eurostar",
+      "wrist-whatsapp-theo-travel",
+      "wrist-whatsapp-theo-race-week"
+    ]
+  }
+}

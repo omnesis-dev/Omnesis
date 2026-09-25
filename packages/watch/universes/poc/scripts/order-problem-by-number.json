@@ -1,0 +1,37 @@
+{
+  "note": "The lexical arm nominates both documents carrying the order number; the judge is what separates them. A confirmation is not a problem — scripting it as a decline is what makes the golden show nomination and firing as two different things, which is the whole point of a mandatory judge behind a literal term.",
+  "judgements": [
+    {
+      "nodeId": "order_mail",
+      "documentId": "d0c00001-0000-4000-8000-000000000023",
+      "fired": false,
+      "output": {},
+      "title": "Order XR-4471 confirmed — dispatch within five days"
+    },
+    {
+      "nodeId": "order_mail",
+      "documentId": "d0c00001-0000-4000-8000-000000000024",
+      "fired": true,
+      "output": {
+        "kind": "delay"
+      },
+      "title": "Order XR-4471 delayed — supplier shortage, new date to follow"
+    },
+    {
+      "nodeId": "order_mail",
+      "documentId": "d0c00001-0000-4000-8000-000000000025",
+      "fired": true,
+      "output": {
+        "kind": "delay"
+      },
+      "title": "Order XR-4471 rescheduled — now landing the week of the 25th"
+    },
+    {
+      "nodeId": "order_mail",
+      "documentId": "d0c00001-0000-4000-8000-000000000026",
+      "fired": false,
+      "output": {},
+      "title": "Order XR-4471 shipped — tracking attached"
+    }
+  ]
+}

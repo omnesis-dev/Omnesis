@@ -1,0 +1,20 @@
+{
+  "triggers": [
+    "1:1 with jane",
+    "catch me up",
+    "still open between us",
+    "everything that's still open",
+    "meeting with jane",
+    "seeing jane"
+  ],
+  "placeholders": {
+    "docExternalIds": [
+      "not_synthMeet000002",
+      "not_synthMeet000001",
+      "synth-whatsapp-015",
+      "synth-gmail-023",
+      "synth-gcal-jane-next"
+    ],
+    "personNames": ["Jane Doe"]
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "self": "p_self",
+  "people": [
+    {
+      "id": "p_self",
+      "name": "Sam Rivera",
+      "phones": ["+15550100120"],
+      "lids": ["900100100@lid"]
+    },
+    {
+      "id": "p_maya",
+      "name": "Maya Reeves",
+      "phones": ["+15550100121"],
+      "lids": ["900100101@lid"]
+    },
+    {
+      "id": "p_jamie",
+      "name": "Jamie Lopez",
+      "phones": ["+15550100122"],
+      "lids": ["900100102@lid"]
+    }
+  ],
+  "orgs": []
+}

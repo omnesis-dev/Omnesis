@@ -1,0 +1,23 @@
+{
+  "name": "omnesis-integration",
+  "version": "0.5.11",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@omnesis/agent-integration": "*"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.7.1"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.mjs"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.7.0"
+    },
+    "build": {
+      "openclawVersion": "2026.7.1"
+    }
+  }
+}

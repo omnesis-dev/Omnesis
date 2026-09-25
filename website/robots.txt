@@ -1,0 +1,3 @@
+# https://omnesis.dev
+User-agent: *
+Disallow: /docs

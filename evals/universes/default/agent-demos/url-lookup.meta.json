@@ -1,0 +1,13 @@
+{
+  "triggers": [
+    "drive.google.com",
+    "https://drive.google.com",
+    "shared this with me",
+    "what's in it",
+    "tell me about this doc"
+  ],
+  "placeholders": {
+    "docExternalIds": ["synth-gdrive-002"],
+    "personNames": []
+  }
+}

@@ -1,0 +1,47 @@
+[
+  {
+    "account_id": 7701,
+    "transactions": [
+      {
+        "id": "jp-lf-flights",
+        "accountId": 7701,
+        "amount": -985.0,
+        "currency": "EUR",
+        "date": "2026-02-10",
+        "merchant": "Studio Northstar Travel",
+        "description": "Flights LHR-HND-LHR — Japan trip",
+        "isPending": false
+      },
+      {
+        "id": "jp-lf-fee",
+        "accountId": 7701,
+        "amount": -120.0,
+        "currency": "EUR",
+        "date": "2026-02-13",
+        "merchant": "Studio Northstar Travel",
+        "description": "Agency service fee — Japan trip",
+        "isPending": false
+      },
+      {
+        "id": "jp-lf-ramen",
+        "accountId": 7701,
+        "amount": -64.2,
+        "currency": "EUR",
+        "date": "2026-04-14",
+        "merchant": "Tokyo Bay Ramen",
+        "description": "Dinner in Tokyo — Japan trip",
+        "isPending": false
+      },
+      {
+        "id": "jp-lf-haneda",
+        "accountId": 7701,
+        "amount": -38.0,
+        "currency": "EUR",
+        "date": "2026-04-11",
+        "merchant": "Haneda Airport Dining",
+        "description": "Airport meal — Japan trip",
+        "isPending": false
+      }
+    ]
+  }
+]

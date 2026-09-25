@@ -1,0 +1,58 @@
+[
+  {
+    "account_key": "synth-eb-acct-main",
+    "transactions": [
+      {
+        "entry_reference": "synth-eb-001",
+        "booking_date": "2025-06-27",
+        "value_date": "2025-06-27",
+        "transaction_amount": {
+          "currency": "EUR",
+          "amount": "23.40"
+        },
+        "credit_debit_indicator": "DBIT",
+        "status": "BOOK",
+        "creditor": {
+          "name": "Riverside Grocers"
+        },
+        "remittance_information": ["Groceries"]
+      },
+      {
+        "entry_reference": "synth-eb-002",
+        "booking_date": "2025-06-25",
+        "value_date": "2025-06-25",
+        "transaction_amount": {
+          "currency": "EUR",
+          "amount": "2450.00"
+        },
+        "credit_debit_indicator": "CRDT",
+        "status": "BOOK",
+        "debtor": {
+          "name": "Acme Corp"
+        },
+        "debtor_account": {
+          "iban": "DE10844103117167030234"
+        },
+        "remittance_information": ["Salary June 2025"]
+      },
+      {
+        "entry_reference": "synth-eb-003",
+        "booking_date": "2025-06-24",
+        "value_date": "2025-06-24",
+        "transaction_amount": {
+          "currency": "EUR",
+          "amount": "24.50"
+        },
+        "credit_debit_indicator": "CRDT",
+        "status": "BOOK",
+        "debtor": {
+          "name": "Jane Doe"
+        },
+        "debtor_account": {
+          "iban": "DE84813465346925806408"
+        },
+        "remittance_information": ["Dinner split - Cedar Cafe"]
+      }
+    ]
+  }
+]

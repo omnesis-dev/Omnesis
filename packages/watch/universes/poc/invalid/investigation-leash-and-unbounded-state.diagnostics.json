@@ -1,0 +1,23 @@
+{
+  "valid": true,
+  "diagnostics": [
+    {
+      "code": "LINT_INVESTIGATION_WITHOUT_BUDGET",
+      "severity": "warning",
+      "path": "/watch/nodes/2/budget",
+      "message": "An investigation node holds tools and a token budget of its own; declare 'budget' so the leash is visible in the plan.",
+      "details": {
+        "nodeId": "review"
+      }
+    },
+    {
+      "code": "LINT_INFINITE_DEADLINE",
+      "severity": "warning",
+      "path": "/watch/nodes/3/deadline",
+      "message": "Node 'both' holds state forever. The backtest reports its peak live instance count — check it before shipping.",
+      "details": {
+        "nodeId": "both"
+      }
+    }
+  ]
+}

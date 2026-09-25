@@ -1,0 +1,15 @@
+{
+  "name": "@omnesis/near-dupes",
+  "version": "0.5.11",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "citty": "^0.2.2"
+  },
+  "files": [
+    "dist"
+  ]
+}

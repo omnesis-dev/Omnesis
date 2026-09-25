@@ -1,0 +1,14 @@
+{
+  "valid": false,
+  "diagnostics": [
+    {
+      "code": "PERSON_PREDICATE_UNBOUND",
+      "severity": "error",
+      "path": "/watch/nodes/0/filter/people/0",
+      "message": "A person predicate must name a person or an isSelf stance; a bare role matches every document.",
+      "details": {
+        "role": "sender"
+      }
+    }
+  ]
+}

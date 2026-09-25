@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "minimum_chrome_version": "130",
+  "name": "Omnesis Browser Capture",
+  "version": "0.5.11",
+  "description": "Pairs to your Omnesis gateway and captures the web pages you read into your private index.",
+  "incognito": "not_allowed",
+  "permissions": ["storage", "unlimitedStorage", "alarms", "scripting"],
+  "optional_host_permissions": ["https://*/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Omnesis Browser Capture",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}
