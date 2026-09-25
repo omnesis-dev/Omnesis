@@ -1007,6 +1007,12 @@ describe("repairInstructionLines — per-kind repair guidance", () => {
     expect(out).toContain("omnesis service start collector");
   });
 
+  it("re-registers a collector through the installer when the gateway moved", () => {
+    expect(joined("collector")).toContain(
+      `sh -s -- --collector --gateway-url ${URL} --code ${CODE}`,
+    );
+  });
+
   it("points a phone at the app and an agent host at connect — never a token file", () => {
     expect(joined("ios")).toMatch(/manual-entry sheet|scan the QR/i);
     expect(joined("ios")).not.toMatch(/--save/);
@@ -1589,7 +1595,7 @@ describe("devices list", () => {
     accessLevelId,
   });
 
-  async function runList(responses: Response[]) {
+  async function runList(responses: Response[], args: Record<string, unknown> = {}) {
     const request = vi.fn();
     for (const response of responses) request.mockResolvedValueOnce(response);
     vi.stubGlobal("fetch", request);
@@ -1603,7 +1609,7 @@ describe("devices list", () => {
         string,
         { run: (ctx: unknown) => Promise<void> }
       >;
-      await sub.list.run({ args: {}, rawArgs: [], cmd: sub.list });
+      await sub.list.run({ args, rawArgs: [], cmd: sub.list });
     } finally {
       log.mockRestore();
     }
@@ -1632,6 +1638,14 @@ describe("devices list", () => {
     ]);
     expect(String(request.mock.calls[1]?.[0])).toContain("/admin/access");
     expect(output).toContain("answers under access level “Voice answers”");
+  });
+
+  it("prints the gateway's rows as JSON with --json, and reads nothing else", async () => {
+    const { request, output } = await runList([Response.json({ items: [device("level-voice")] })], {
+      json: true,
+    });
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(output)).toEqual({ items: [device("level-voice")] });
   });
 
   it("still lists every device when the access levels cannot be read", async () => {

@@ -443,10 +443,22 @@ async function readAnswerLevelNames(): Promise<Map<string, string> | null> {
 
 const devicesListCommand = defineCommand({
   meta: { name: "list", description: "List paired devices" },
-  async run() {
+  args: {
+    json: {
+      type: "boolean",
+      description: "Machine-readable JSON: {items: [{id, name, kind, revokedAt, online, …}]}",
+    },
+  },
+  async run(ctx) {
     const { items: devices } = await withSpinner("Loading devices", () =>
       gatewayJson<{ items: DeviceListItem[] }>("/admin/devices"),
     );
+    // The installer reads this to name the machines a gateway port move
+    // leaves behind, so the row is the gateway's own, unshaped.
+    if (ctx.args.json) {
+      console.log(JSON.stringify({ items: devices }));
+      return;
+    }
     if (devices.length === 0) {
       console.log("No devices paired.");
       return;
@@ -1539,6 +1551,11 @@ export function repairInstructionLines(
         `  omnesis pair ${code} --gateway-url ${gatewayUrl} --save ~/.config/omnesis/collector-token`,
         `${c.dim}(replace ${gatewayUrl} with an address that host can reach; the token path follows OMNESIS_CONFIG_DIR when it sets one)${c.reset}`,
         `${c.dim}then start the collector again (\`omnesis service start collector\`).${c.reset}`,
+        // The service unit carries the address the collector dials, and a
+        // saved token does not change it: a gateway that moved host or port
+        // needs the unit registered again, which the installer does.
+        `${c.dim}If the gateway has moved to a new address or port, re-run the installer on that host instead, which also points its service there:${c.reset}`,
+        `  curl -fsSL https://omnesis.dev/install.sh | sh -s -- --collector --gateway-url ${gatewayUrl} --code ${code}`,
       ];
     case "ios":
     case "android":
