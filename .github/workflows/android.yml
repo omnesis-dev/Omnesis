@@ -129,7 +129,10 @@ jobs:
 
   live-gateway-e2e:
     needs: build-and-test
-    runs-on: macos-latest
+    # The transport E2E runs on the host JVM against a synthetic gateway; it
+    # renders nothing, so it takes a Linux runner and leaves the scarce macOS
+    # slots to the lanes that need them.
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       OMNESIS_CONFIG_DIR: /tmp/omnesis-android-ci-${{ github.run_id }}
