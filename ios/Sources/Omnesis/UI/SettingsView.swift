@@ -259,7 +259,7 @@ struct SettingsView: View {
                 .task {
                     guard destinationMode == .live else { return }
                     // Re-read notification settings on open — the user may have
-                    // changed permission / Scheduled Summary in iOS Settings (#1260).
+                    // changed permission / Scheduled Summary in iOS Settings.
                     await store.refreshPushDeliveryHealth()
                     await store.refreshPushGatewayConfiguration()
                     await store.refreshSourcePermissionHealth()
@@ -599,7 +599,7 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Photos hero (when disabled) (#169)
+    // MARK: - Photos hero (when disabled)
 
     private var photosEnableCard: some View {
         Button {
@@ -641,7 +641,7 @@ struct SettingsView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Photos card (enabled) (#169)
+    // MARK: - Photos card (enabled)
 
     private var photosSection: some View {
         Section {

@@ -119,7 +119,7 @@ final class SchemasTests: XCTestCase {
         }
     }
 
-    // MARK: - record-citation contract (#757)
+    // MARK: - record-citation contract
 
     func testEverySchemaDeclaresSemanticTimeAndRecord() throws {
         // The gateway requires a semanticTimeColumn (or explicit null) and a
@@ -150,7 +150,7 @@ final class SchemasTests: XCTestCase {
         XCTAssertNil(record["titleTemplate"])
     }
 
-    // MARK: - boundDocument (#640)
+    // MARK: - boundDocument
 
     func testEpisodicTablesDeclareBoundDocument() {
         for schema in [HealthSchemas.workouts, HealthSchemas.mindful, HealthSchemas.mood] {

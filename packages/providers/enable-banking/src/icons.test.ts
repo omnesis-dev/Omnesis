@@ -66,7 +66,7 @@ describe("bankInstanceIcon", () => {
   });
 
   it("uses logo-bearing domains for banks whose primary domain returns the favicon-service globe", () => {
-    // Regression guard (#732): the favicon service returns its generic globe
+    // Regression guard: the favicon service returns its generic globe
     // placeholder (HTTP 404, identical 16×16 PNG) for `societegenerale.fr`
     // and `sebgroup.com`. The vetted logo-bearing domains are `sg.fr`
     // (Société Générale red/black square) and `seb.ee` (SEB "S|E|B" mark —

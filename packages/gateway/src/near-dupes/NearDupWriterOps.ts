@@ -270,7 +270,7 @@ export function applyNearDupBatch(
   // 100-doc cycle was ~100 fsyncs (seconds) though the writes themselves are
   // ~100ms. The preempt token is still honoured between chunks, so a
   // higher-priority writer op (e.g. collector upsertDocuments) interleaves
-  // without waiting for the whole batch — see #199/#500 and
+  // without waiting for the whole batch — see
   // near-dup.preempt.e2e.
   let i = 0;
   while (i < touchedDocs.length) {

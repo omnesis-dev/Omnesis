@@ -510,7 +510,7 @@ export class SyntheticE2EHarness {
     // Build the source-config map by running each descriptor's discover().
     // Each synth descriptor returns a fixed reserved identity (e.g. john.smith@example.com).
     //
-    // A focused single-source universe (e.g. the #586 whatsapp-only ones) ships
+    // A focused single-source universe (e.g. the whatsapp-only ones) ships
     // fixtures for only its source; the other synth providers' `discover()` may
     // eagerly read a fixture this universe doesn't carry and throw. That's not
     // an error — that source simply has no accounts in this universe — so skip
@@ -801,7 +801,7 @@ export class SyntheticE2EHarness {
     const everySource = this.devices.flatMap((d) => d.engine.registeredSources());
     await this.engine.pushSourcePriorDefaults(everySource);
     await this.engine.pushSelfIdentitySources(everySource);
-    // The known-url-pattern push (#668) sources from the full definition
+    // The known-url-pattern push sources from the full definition
     // set rather than the registry of added sources, so it lives on
     // `SourceManager` in production; mirror it here via the shared helper.
     // Imported lazily (not at module top): `source-manager.js` statically
@@ -826,7 +826,7 @@ export class SyntheticE2EHarness {
     await this.gateway.setOwnedWebDomains(collectOwnedWebDomains(allDefinitions));
     // Under OMNESIS_SYNTHETIC=1 this carries only the profiles of synth twins
     // that spread their real provider's source entries; twins that redeclare
-    // their sources publish none. See #1561.
+    // their sources publish none. See #57.
     await this.gateway.setDocumentEventProfiles(collectDocumentEventProfiles(allDefinitions));
     await this.gateway.setWidgetOrigins(collectWidgetOrigins(allDefinitions));
     await this.gateway.setWidgetRenderers(collectWidgetRenderers(allDefinitions));
@@ -1542,7 +1542,7 @@ export class SyntheticE2EHarness {
         OMNESIS_SYNTH_UNIVERSE: this.universe,
         // Never multicast from a test gateway — parallel E2E gateways would
         // otherwise advertise the same `_omnesis._tcp` service and collide,
-        // and a stray collector could discover the wrong instance (#49).
+        // and a stray collector could discover the wrong instance.
         OMNESIS_MDNS_DISABLE: "1",
         ...(this.extraGatewayEnv ?? {}),
       },

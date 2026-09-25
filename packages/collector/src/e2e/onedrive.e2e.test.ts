@@ -9,7 +9,7 @@ import { SyntheticE2EHarness } from "./synth-harness.js";
 import { getDocumentCount, getJson } from "./helpers.js";
 
 /**
- * End-to-end coverage for the synthetic OneDrive source (#919) — the
+ * End-to-end coverage for the synthetic OneDrive source — the
  * Microsoft-side sibling of Google Drive. The synth twin feeds canned Microsoft
  * Graph `driveItem` delta pages + file content into the REAL `OneDriveSource`,
  * so this exercises the production delta walk → `driveItem`→`DocumentInput`
@@ -143,7 +143,7 @@ describe("Synthetic provider — OneDrive (file source, sibling of Google Drive)
     };
     expect(metadata.documentType).toBe("file");
     // webUrl → sourceUrl: the same URL Outlook referenceAttachment links point
-    // at, so the reference graph can later auto-resolve email→OneDrive (#262).
+    // at, so the reference graph can later auto-resolve email→OneDrive.
     expect(metadata.sourceUrl).toBe(
       "https://onedrive.live.com/?id=onedrive-file-001&cid=drive-john",
     );

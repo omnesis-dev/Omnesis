@@ -6,6 +6,6 @@
 // consumers that haven't migrated to the new package yet.
 //
 // Explicit named re-exports because vite/vitest can't statically follow
-// `export * from "@omnesis/source-sdk"` chains (#414 fallout).
+// `export * from "@omnesis/source-sdk"` chains.
 export { makeCursorValidator } from "@omnesis/source-sdk";
 export type { CursorValidator } from "@omnesis/source-sdk";

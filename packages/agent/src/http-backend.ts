@@ -838,7 +838,7 @@ export class HttpChatBackend implements ChatBackend {
             argsSummary: summarizeToolArgs(handle, args),
             // Carry any opaque provider signature (e.g. Gemini thought_signature)
             // so the session can persist it on the tool_use history part and
-            // replay it on later turns. See #510.
+            // replay it on later turns.
             ...(tc.extra_content !== undefined ? { extraContent: tc.extra_content } : {}),
             // One copy on the first tool call retains this assistant message's
             // exact reasoning blocks in canonical history for resumed turns.
@@ -1372,7 +1372,7 @@ export function convertHistoryToOpenAI(
       // Thinking parts are dropped except for models that require replay.
       // A tool_use part's opaque `extraContent` (e.g. a Gemini thought_signature)
       // is replayed verbatim as the tool call's `extra_content` so a multi-turn
-      // reasoning conversation stays valid across turns. See #510.
+      // reasoning conversation stays valid across turns.
       const textParts: string[] = [];
       const thinkingParts: string[] = [];
       const toolCalls: OpenAIToolCall[] = [];

@@ -107,7 +107,7 @@ async function fetchStatus(): Promise<StatusData> {
     gatewayJson<{ tables: Array<{ sourceId?: string; recordCount?: number }> }>(
       "/analytics/catalog",
     ).catch(() => ({ tables: [] })),
-    // Descriptors carry the per-type headline-count plane (#993) and unit
+    // Descriptors carry the per-type headline-count plane (#40) and unit
     // noun — the latter is the fallback for gateway-internal sources (e.g.
     // `web`) that report no collector sync.status `unitName`.
     gatewayJson<{
@@ -132,7 +132,7 @@ async function fetchStatus(): Promise<StatusData> {
   );
 
   // Union of source IDs from /admin/sources + /admin/sync/status (so even
-  // pre-#166 "discovered" sources show up).
+  // older "discovered" sources show up).
   const ids = new Set<string>();
   for (const s of adminSources.items) ids.add(s.id);
   for (const s of syncStatus.items) ids.add(s.sourceId);

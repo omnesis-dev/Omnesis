@@ -621,7 +621,7 @@ describe("PrivacyReviewer", () => {
 
   it("holds the answer for approval when the review is interrupted mid-flight", async () => {
     // The candidate already exists by review time; a transport drop during the
-    // model call must not destroy the task — it degrades to `ask` (#1407).
+    // model call must not destroy the task — it degrades to `ask`.
     const controller = new AbortController();
     const reviewer = new PrivacyReviewer({
       resolveBackend: () => ({

@@ -116,7 +116,7 @@ sealed interface AgentEvent {
     ) : AgentEvent
 
     /**
-     * Additive end-of-run summary for an explicit Deep Research run (#748), emitted
+     * Additive end-of-run summary for an explicit Deep Research run, emitted
      * ONCE just before the parent turn's [MessageEnd]. Carries the structured facts
      * the verified-report artifact renders — the honest terminal [stoppedReason], the
      * planner's decomposition ([plan]), the whole-tree token total ([treeUsage]), and
@@ -164,7 +164,7 @@ sealed interface AgentEvent {
     ) : AgentEvent
 
     /**
-     * A sub-agent (#748) the parent spawned via `spawn_subagent` just started.
+     * A sub-agent the parent spawned via `spawn_subagent` just started.
      * Opens a collapsible card on the parent's current assistant turn; the
      * child's nested transcript grows from the [SubagentEvent] stream that
      * follows and the run finalises with [SubagentResult]. Mirrors the iOS
@@ -230,7 +230,7 @@ sealed interface AgentEvent {
 
 /**
  * LLM-token spend for a sub-agent run (or, summed, a whole sub-agent tree) —
- * the shape behind `agentUsageSchema` on the wire (#748). Every field is
+ * the shape behind `agentUsageSchema` on the wire. Every field is
  * optional; [total] sums input, output, and cache fields for the card counter.
  */
 @Serializable
@@ -249,7 +249,7 @@ data class AgentUsage(
 }
 
 /**
- * One entry of a Deep Research planner's decomposition (#748) — a [specialist] reader
+ * One entry of a Deep Research planner's decomposition — a [specialist] reader
  * and the [task] it was fanned out on, in plan order. Carried on
  * [AgentEvent.DeepResearchSummary.plan]; mirrors the wire `deepResearchPlanItemSchema`.
  */
@@ -260,7 +260,7 @@ data class DeepResearchPlanItem(
 )
 
 /**
- * Quote-verification tally for a Deep Research run (#748). The citation-verify pass
+ * Quote-verification tally for a Deep Research run. The citation-verify pass
  * re-fetches each cited document and string-matches the verbatim quotes a reader
  * embedded against the fetched body. [quotesChecked] is how many quotes were tested;
  * [quotesVerified] how many matched. The verified-report badge is driven by these REAL

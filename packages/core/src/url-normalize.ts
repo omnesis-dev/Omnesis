@@ -13,7 +13,7 @@
  * implementation in the tree; the extension is no longer a hand-maintained
  * mirror that can drift.
  *
- * Identity for the Web Pages dataset (epic #895) is
+ * Identity for the Web Pages dataset is
  * `external_id = SHA256(normalizeUrl(url, canonicalizers))`. The SHA-256 step
  * lives in `url-utils.ts` (`urlToExternalId`) because it needs crypto; the
  * normalization that feeds it lives here so every producer uses the identical
@@ -63,7 +63,7 @@ export interface UrlCanonicalizerRule {
 /**
  * Well-known tracking / attribution query params, always stripped because they
  * never select page content. This is the UNION of the two lists that used to
- * live separately in core and the extension (#895 canonicalizer audit §1.5):
+ * live separately in core and the extension:
  * core's original 10 — crucially including the bare `ref` — plus the extension's
  * extra click-id / share params. Keeping the bare `ref` matters: dropping it
  * would split a page reached via `?ref=…` from the same page reached without it.

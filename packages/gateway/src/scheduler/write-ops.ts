@@ -47,7 +47,7 @@ const DEFAULT_BUDGET_MS = 200;
 
 /**
  * Heavy writes that legitimately take longer than the default — the
- * "split me" candidates from issue #199. The hottest (`upsertDocuments`,
+ * "split me" candidates. The hottest (`upsertDocuments`,
  * `upsertWithCursor`, the people rebuild + strong-id dedup, link/near-dup
  * batches) have yieldable variants in `writerYieldableHandlers` that commit
  * in bounded sub-transactions and poll the preempt token; the rest stay
@@ -59,7 +59,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   // ── db.ts — bulk writes ────────────────────────────────────────────
   { name: "db.upsertDocuments", priority: "realtime", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "db.deleteDocuments", priority: "realtime" },
-  // User-initiated single-document privacy delete (#1065) — interactive,
+  // User-initiated single-document privacy delete — interactive,
   // so "user" priority like the other user-driven deletes below.
   { name: "db.deleteDocumentForUser", priority: "user" },
   { name: "db.deleteDocumentForRetention", priority: "background" },
@@ -103,13 +103,13 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "db.setSourceMeta", priority: "realtime" },
   // Atomic per-page sync write — bundles up to upsertDocuments +
   // deleteDocuments + snapshot absence marks + setSyncState into one
-  // transaction (issue #322). Heavy budget mirrors the
+  // transaction. Heavy budget mirrors the
   // upsertDocuments component which dominates the cost.
   { name: "db.upsertWithCursor", priority: "realtime", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "db.setSyncError", priority: "realtime" },
   { name: "db.replaceSourceSyncIssues", priority: "realtime" },
   { name: "db.clearSyncError", priority: "realtime" },
-  // Re-auth reminder backoff (#683). Publication is reserve/commit based so
+  // Re-auth reminder backoff. Publication is reserve/commit based so
   // failed or concurrent delivery attempts never consume the backoff.
   { name: "db.recoverReauthReminder", priority: "realtime" },
   { name: "db.reserveReauthReminder", priority: "realtime" },
@@ -190,7 +190,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   // mark affected documents for re-resolution. Single transaction,
   // idempotent — subsequent boots are no-ops.
   { name: "people.pruneNoreplyAliases", priority: "background", latencyBudgetMs: 5_000 },
-  // One-shot boot data fix (#583): promote a trusted name alias onto any
+  // One-shot boot data fix: promote a trusted name alias onto any
   // person whose canonical_name is still a phone/email placeholder. Single
   // transaction, idempotent — subsequent boots are no-ops.
   {
@@ -552,7 +552,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   // from a request handler. Running outside any request ALS scope means
   // this background priority is actually honored: a dispatch from inside
   // the collector's realtime request scope would inherit realtime and park
-  // the writer under bulk ingest (the failure mode in #555). The flush
+  // the writer under bulk ingest. The flush
   // coalesces per-doc ids into chunked batches, so this is a handful of
   // background ops per second rather than one realtime op per ingested doc.
   { name: "nearDup.enqueueInbox", priority: "background" },

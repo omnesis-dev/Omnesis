@@ -392,7 +392,7 @@ export class UsearchWriteHandle {
  * `maybeRefresh()` before a search to pick up the writer's latest save,
  * then `search()`. Both {@link UsearchReadHandle} (a single file) and
  * {@link import("./usearch-read-registry.js").UsearchReadRegistry} (which
- * follows the active index generation, epic #1011) satisfy it, so the
+ * follows the active index generation) satisfy it, so the
  * pipeline is agnostic to whether reads route through a fixed file or the
  * versioned registry.
  */

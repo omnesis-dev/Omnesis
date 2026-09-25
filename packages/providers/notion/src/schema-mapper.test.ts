@@ -90,7 +90,7 @@ describe("mapDatabaseToSchema", () => {
     expect(schema.primaryKey).toEqual(["id"]);
   });
 
-  test("declares the row→document binding (#450): row.id under a 'row-' prefix", () => {
+  test("declares the row→document binding: row.id under a 'row-' prefix", () => {
     const schema = mapDatabaseToSchema(mockDb);
     expect(schema.boundDocument).toEqual({ externalIdColumns: ["id"], externalIdPrefix: "row-" });
     // The reconstructed key must equal the primary key (validator invariant).

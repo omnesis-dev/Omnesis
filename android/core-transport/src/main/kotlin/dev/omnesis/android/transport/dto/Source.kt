@@ -111,7 +111,7 @@ data class SourceSyncStatus(
     val lastUpdated: Long? = null,
     /**
      * Forward-looking consent / authorization deadline (ISO 8601) the source last
-     * reported, when known (#927). Mirrors `DisplaySyncStatus.consentExpiresAt` in
+     * reported, when known. Mirrors `DisplaySyncStatus.consentExpiresAt` in
      * packages/gateway/src/sync-status.ts and the iOS `SourceSyncStatus`. Present
      * whenever a deadline is stored — independent of `state`, so a healthy `synced`
      * source can still carry one. When `state == "auth-expiring"` it is the deadline

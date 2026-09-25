@@ -319,8 +319,8 @@ describe("AnalyticsDb", () => {
     expect(catalog).toHaveLength(1);
   });
 
-  test("ensureTable tolerates a pre-#757 schema with no record-citation contract", async () => {
-    // A device client built before #757 omits semanticTimeColumn + record. Its
+  test("ensureTable tolerates an older schema with no record-citation contract", async () => {
+    // An older device client omits semanticTimeColumn + record. Its
     // rows must still ingest — the table is simply not citation-eligible.
     const legacySchema = {
       tableName: testSchema.tableName,
@@ -1118,8 +1118,8 @@ describe("AnalyticsDb", () => {
     await expect(db.executeQuery("DETACH sqlite")).rejects.toThrow();
   });
 
-  test("cross-store ATTACH of omnesis.db is rejected — the #200 torn-page race is structurally impossible", async () => {
-    // Regression pin for Issue #200. The original bug was that the
+  test("cross-store ATTACH of omnesis.db is rejected — the torn-page race is structurally impossible", async () => {
+    // Regression pin. The original bug was that the
     // analytics surface read omnesis.db via DuckDB's `sqlite_scanner`
     // (ATTACH '<omnesis.db>' TYPE SQLITE READ_ONLY). That scanner does
     // not participate in SQLite's file-locking protocol, so a writer
@@ -1153,8 +1153,8 @@ describe("AnalyticsDb", () => {
         db.executeQuery(`CALL sqlite_attach('${omnesisDbPath}', overwrite = false)`),
       ).rejects.toThrow();
 
-      // And the alias never materialized, so the torn-page surface that
-      // #200 described simply does not exist.
+      // And the alias never materialized, so the torn-page surface the
+      // original bug relied on simply does not exist.
       const probe = await db.executeQuery(
         "SELECT COUNT(*) AS n FROM information_schema.schemata WHERE catalog_name = 'sqlite'",
       );
@@ -2010,7 +2010,7 @@ describe("AnalyticsDb", () => {
 
   // ── rename detection via sourceColumnId ───────
 
-  test("ensureTable renames columns when sourceColumnId stays but name changes (#318)", async () => {
+  test("ensureTable renames columns when sourceColumnId stays but name changes", async () => {
     const initial: AnalyticsTableSchema = {
       tableName: "notion_rename",
       displayName: "Notion rename test",
@@ -2075,7 +2075,7 @@ describe("AnalyticsDb", () => {
     expect(cols).toEqual(["id", "state"]);
   });
 
-  // ── type-change reconciliation (#233) ───────
+  // ── type-change reconciliation ───────
 
   test("ensureTable archives a column whose type changed and re-adds it with the new type", async () => {
     const initial: AnalyticsTableSchema = {
@@ -2347,7 +2347,7 @@ describe("AnalyticsDb", () => {
   });
 
   test("connection pool: concurrent ingest + reads succeed without serializing", async () => {
-    // Single-conn before #192 cleanup serialized every analytics op,
+    // A single connection serialized every analytics op,
     // so a 22 s screen-time ingest blocked /analytics/catalog polls
     // for the full duration. Pool with N>1 conns must let concurrent
     // calls run in parallel — assert that all results land correctly.

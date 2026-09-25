@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Needs-auth re-auth reminder E2E coverage (#689).
+ * Needs-auth re-auth reminder E2E coverage.
  *
  * Boots a real gateway with fake APNs, pairs a fake iOS device, then drives
  * the same collector -> gateway `sync.status` events the production collector

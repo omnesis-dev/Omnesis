@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// Modal that drives a source's one-time history import (#588) from the portal.
+// Modal that drives a source's one-time history import from the portal.
 // The portal is just another execution engine for the generic `historyImport`
 // descriptor capability — the same one the CLI's `sources import-history`
 // command consumes. This component knows nothing source-specific: it renders a

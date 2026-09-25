@@ -87,7 +87,7 @@ export interface GatewaySearchResponse {
  * `/documents/list` HTTP endpoint AND the in-process indexer pipeline
  * (`gateway/src/indexer/types.ts:IndexableDocument` re-exports this).
  *
- * Per #386, the indexer's local `IndexableDocument`,
+ * The indexer's local `IndexableDocument`,
  * the HTTP DTO, and this type were three near-identical shapes that
  * drifted when fields were added to one without the others. They now
  * share this single declaration; field additions land in one place.
@@ -184,7 +184,7 @@ export interface SyncState {
   /**
    * The source's wipe epoch when this state was read. The collector echoes
    * it back on each cursor write so the gateway can reject a write from a
-   * sync that began before a later wipe (#551). Absent on older gateways.
+   * sync that began before a later wipe. Absent on older gateways.
    */
   wipeEpoch?: number;
 }
@@ -486,7 +486,7 @@ export interface GatewayClient {
    * `getSyncState` returns null once a resync or removal has cleared the
    * cursor — which is exactly when the epoch matters, because the next sync
    * bootstraps from scratch and its writes must still be rejected if another
-   * wipe lands underneath it. Reading it separately is what keeps #551's guard
+   * wipe lands underneath it. Reading it separately is what keeps the epoch guard
    * armed across the wipe it was built for.
    */
   getWipeEpoch(sourceId: SourceId): Promise<number | undefined>;
@@ -605,7 +605,7 @@ export interface GatewayClient {
    * and uses it as the link-extraction keep-gate so an unresolved `url`
    * link whose target matches a known source type survives — and resolves
    * once that source is added and ingested, instead of being dropped
-   * permanently (#668). Replaces the collector-declared layer.
+   * permanently. Replaces the collector-declared layer.
    */
   setKnownUrlPatterns(patterns: Array<{ regex: string }>): Promise<void>;
 
@@ -614,7 +614,7 @@ export interface GatewayClient {
    * loaded source definition's declared web hosts), not just the added ones.
    * Called once on collector startup. The gateway holds the set in memory and
    * serves it on the public `GET /owned-web-domains` route; the
-   * browser-capture source (#791) fetches the union and skips any visited
+   * browser-capture source fetches the union and skips any visited
    * host already owned by another source. Replaces whatever was previously
    * registered.
    */
@@ -667,7 +667,7 @@ export interface GatewayClient {
   recomputeSourceUrls(): Promise<void>;
 
   /**
-   * Atomic per-page sync write (issue #322). Bundles upserts +
+   * Atomic per-page sync write. Bundles upserts +
    * tombstones + snapshot reconcile + cursor advance into one
    * gateway-side SQLite transaction. Replaces the prior four-step
    * `upsertDocuments → deleteDocuments → reconcileSnapshot →
@@ -697,17 +697,17 @@ export interface GatewayClient {
     presentClaims?: SnapshotClaim[];
     /** Stable identity of this completed attempt for replay-safe snapshot evidence. */
     observationId?: string;
-    /** Source-declared structural edges for this page (#430). */
+    /** Source-declared structural edges for this page. */
     edges?: EdgeDeclaration[];
     hasMore: boolean;
     cursor: SyncCursor;
-    /** Wipe epoch read at sync start; lets the gateway reject stale writes (#551). */
+    /** Wipe epoch read at sync start; lets the gateway reject stale writes. */
     wipeEpoch?: number;
     pendingPageId?: string;
     /**
      * Forward-looking consent / authorization deadline (ISO 8601) the source
      * reported on this page; persisted on the sync state so the gateway can
-     * derive a non-terminal `auth-expiring` warning ahead of the deadline (#927).
+     * derive a non-terminal `auth-expiring` warning ahead of the deadline.
      * `null` clears a previously-stored deadline; omitted leaves it unchanged.
      */
     consentExpiresAt?: string | null;
@@ -838,7 +838,7 @@ export interface IndexStats {
   totalDroppedChunks?: number;
   watermark: string | null;
   /**
-   * The double-buffered index generations (epic #1011), computed entirely in
+   * The double-buffered index generations, computed entirely in
    * the gateway so clients render this neutral payload with no inference. The
    * `active` generation is the one currently serving every vector search,
    * complete on its model; `building` is a next-generation rebuild in flight

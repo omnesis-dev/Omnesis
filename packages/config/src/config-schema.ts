@@ -254,7 +254,7 @@ const searchSnapshot = z
  *     indexer worker, and search reader. Phase-0 measurement showed
  *     this is the single highest-impact knob — p99 dropped from 10.7 s
  *     to 1.9 s on a 475k-chunk corpus under live ingest. Safe only on
- *     read-only handles (writer-side mmap is the #192 SIGBUS class).
+ *     read-only handles (writer-side mmap risks SIGBUS).
  *     Set to 0 to disable mmap and fall back to private pcache.
  *   - `cacheSizeBytes`: positive bytes value applied as
  *     `PRAGMA cache_size = -<KiB>`. With mmap on, the pcache is mostly
@@ -448,7 +448,7 @@ const indexer = z
   .object({
     /**
      * How often the indexer wakes up to scan for new/updated docs.
-     * Default "5m" — see gateway tuning rationale (#192 follow-up).
+     * Default "5m" — see gateway tuning rationale.
      */
     cycleInterval: duration
       .describe("How often the indexer wakes to scan for new/updated docs. Default 5m.")
@@ -863,8 +863,8 @@ const pushWakeRetry = z
   });
 
 /**
- * Exponential-backoff schedule for the built-in re-auth reminder push
- * (#683). The first reminder for a connection that needs re-auth fires
+ * Exponential-backoff schedule for the built-in re-auth reminder push.
+ *The first reminder for a connection that needs re-auth fires
  * immediately; the Nth subsequent reminder waits
  * `initialDelay * multiplier^(N-1)` since the previous one, clamped to
  * `maxDelay`. Defaults (`1d`, ×2, cap `7d`) give the ladder
@@ -1515,8 +1515,8 @@ const gateway = z
   .object({
     /**
      * SQLite journal mode for omnesis.db. "TRUNCATE" (default)
-     * eliminates the `-shm` file and the macOS mmap-race crash class
-     * from #192; "WAL" restores concurrent reads during commits at
+     * eliminates the `-shm` file and the macOS mmap-race crash class;
+     * "WAL" restores concurrent reads during commits at
      * the cost of that stability.
      */
     journalMode: z
@@ -1561,7 +1561,7 @@ const gateway = z
       })
       .strict()
       .describe(
-        "omnesis.db read-handle page-cache budgets. Larger caches keep hot pages resident so they don't re-decrypt under storage encryption. mmap is deliberately NOT exposed here — it stays off on the encrypted omnesis.db read handles (#192 SIGBUS guard).",
+        "omnesis.db read-handle page-cache budgets. Larger caches keep hot pages resident so they don't re-decrypt under storage encryption. mmap is deliberately NOT exposed here — it stays off on the encrypted omnesis.db read handles (a SIGBUS guard).",
       )
       .optional(),
     /**
@@ -1684,7 +1684,7 @@ const gateway = z
      * which the gateway pauses writes: document ingestion is rejected with
      * 507 and indexing cycles are skipped, so it never writes under low
      * disk (corruption / partial-write risk). Both resume automatically
-     * once free space recovers. Default 500. See #15.
+     * once free space recovers. Default 500.
      */
     minFreeDiskMb: z
       .number()
@@ -1734,7 +1734,7 @@ const gateway = z
       .describe("Durable content-free push wake retry policy.")
       .optional(),
     /**
-     * Backoff schedule for the built-in re-auth reminder push (#683).
+     * Backoff schedule for the built-in re-auth reminder push.
      * When a provider connection's credentials lapse, the first reminder
      * fires immediately, then on an exponentially growing interval
      * (`initialDelay`, ×`multiplier` per reminder, capped at `maxDelay`)
@@ -2179,7 +2179,7 @@ const agent = z
           "client that stops refreshing stops suppressing the unread marker after it.",
       )
       .optional(),
-    // Sub-agent tunables (#748). The depth/concurrency caps and the tree-wide
+    // Sub-agent tunables. The depth/concurrency caps and the tree-wide
     // token budget are config knobs rather than constants in the orchestration
     // code, so an operator can dial sub-agent fan-out up or down per machine.
     subagentDepthCap: z
@@ -2787,7 +2787,7 @@ const inferenceAssignments = z
     // model assignment, and an omitted reviewer fails closed at the gate.
     "privacy-reviewer": assignmentValue.optional(),
     transcriber: assignmentValue.optional(),
-    // OCR (#427). Besides `"<httpBackend>/<model>"` (a vLLM / llama-server
+    // OCR. Besides `"<httpBackend>/<model>"` (a vLLM / llama-server
     // vision model) and `"replay"`, accepts the built-in runtimes
     // "apple-vision", "tesseract", and "gguf" — see `ocr` below for the GGUF
     // model paths.

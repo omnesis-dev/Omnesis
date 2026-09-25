@@ -346,7 +346,7 @@ describe("drainPendingEdges", () => {
   });
 });
 
-describe("web-page declared edges — bookmarks / visited (#895)", () => {
+describe("web-page declared edges — bookmarks / visited", () => {
   const BOOKMARK_URL = "https://example.com/article";
 
   /** Seed the canonical `web` page document the URL resolves to. */

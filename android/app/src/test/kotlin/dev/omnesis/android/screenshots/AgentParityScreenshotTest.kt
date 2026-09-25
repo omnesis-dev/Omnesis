@@ -756,7 +756,7 @@ class AgentParityScreenshotTest {
         }()
     }
 
-    // --- Record citations (#757): doc-only, record-only, deduped doc+record ---
+    // --- Record citations: doc-only, record-only, deduped doc+record ---
     // The fictional `demo-fitness` Morning-run workout (5.2 km) the portal + iOS renderers use.
 
     private fun workoutRecord(boundDoc: String?) = AgentTrailRecord(
@@ -863,7 +863,7 @@ class AgentParityScreenshotTest {
         ),
     )
 
-    // --- Sub-agent card (#748): running, done, and both terminal failure shapes ---
+    // --- Sub-agent card: running, done, and both terminal failure shapes ---
     //
     // The live researcher row the parent's fan-out opens: who is working, the sources it
     // has reached, its reported usage, and — on a bad ending — what killed it. All fixture
@@ -1011,7 +1011,7 @@ class AgentParityScreenshotTest {
         }()
     }
 
-    // --- Research working-set surface (#748): live multi-researcher + finishing/collapse ---
+    // --- Research working-set surface: live multi-researcher + finishing/collapse ---
     //
     // The bespoke multi-panel band that appears during a live Deep Research run — "N
     // researchers side by side", each panel accumulating its source-tinted documents live.
@@ -1099,7 +1099,7 @@ class AgentParityScreenshotTest {
 
     // One researcher with MANY docs: the per-panel doc list must scroll WITHIN the
     // panel and the band must stay a fixed bottom rail — never grow into a
-    // full-screen overlay that buries the conversation (#890). The host is full
+    // full-screen overlay that buries the conversation. The host is full
     // height so a regression (an unbounded panel) would visibly eat the screen.
     private fun manyDocsPanels(): List<AgentResearchPanel> = listOf(
         AgentResearchPanel(
@@ -1127,7 +1127,7 @@ class AgentParityScreenshotTest {
         workspaceHost(manyDocsPanels())()
     }
 
-    // --- Verified-report artifact (#748): verified / partial / absent-degrades-to-prose ---
+    // --- Verified-report artifact: verified / partial / absent-degrades-to-prose ---
     //
     // The polished end-of-run enrichment below a Deep Research report bubble — the Android
     // twin of the portal `ReportArtifact` and the iOS `ReportArtifactView`. Parity bar: a
@@ -1282,7 +1282,7 @@ class AgentParityScreenshotTest {
         }
     }
 
-    // --- `/`→Deep Research pill (#748): slash typeahead open + armed pill ---
+    // --- `/`→Deep Research pill: slash typeahead open + armed pill ---
     //
     // Parity with portal iter-7 / iOS iter-11. Two states: (1) the typeahead menu
     // open (the `/` query lists the seeded "Deep Research (beta)" command), and (2) the

@@ -215,7 +215,7 @@ export interface ColumnDefinition {
    * and only falls back to name-based matching when it's absent —
    * a name-only diff against a renamed property would archive the
    * old name and add a new one, severing the historical column from
-   * its post-rename data (#318).
+   * its post-rename data.
    *
    * Sources that don't have a stable column identifier (every
    * static-schema source) leave this unset; the diff falls back to
@@ -226,7 +226,7 @@ export interface ColumnDefinition {
 
 /**
  * Declares that each row of an analytics table co-describes one unstructured
- * `document` — the "physical" doc↔row edge of the cross-store graph (#450).
+ * `document` — the "physical" doc↔row edge of the cross-store graph.
  *
  * When a structured source emits BOTH a document and a row for the same
  * logical entity (Strava activity → `strava_activities` row + an activity
@@ -279,7 +279,7 @@ export interface BoundDocumentSpec {
 }
 
 /**
- * How to present a single analytics row as a self-contained record (#757).
+ * How to present a single analytics row as a self-contained record.
  *
  * A record citation surfaces one DuckDB row as a point-in-time artifact in a
  * client timeline. The gateway derives the row's human title and key-field
@@ -525,7 +525,7 @@ export interface AnalyticsTableSchema {
   deleteKey?: string[];
   /**
    * The real-world, semantic-time column for a row in this table — the
-   * single instant a record citation is placed at on a timeline (#757).
+   * single instant a record citation is placed at on a timeline.
    * The source DECLARES this; it is never guessed. Set it to the name of a
    * DATE or TIMESTAMPTZ column on this table, or to explicit `null` for a
    * genuinely timeless table (a profile snapshot, a per-entity blob, a
@@ -550,7 +550,7 @@ export interface AnalyticsTableSchema {
   semanticTimeColumn: string | null;
   /**
    * How to title a single row and which columns to surface as its key
-   * fields when it is cited as a record (#757). See `RecordDisplaySpec`.
+   * fields when it is cited as a record. See `RecordDisplaySpec`.
    * Required so clients can render a record without any column-name or
    * source knowledge. A timeless table (`semanticTimeColumn: null`) still
    * declares this — a `null`-time row is not timeline-eligible, but the
@@ -594,7 +594,7 @@ export interface AnalyticsTableSchema {
     parentColumn: string;
   };
   /**
-   * Declares the 1:1 doc↔row physical edge for this table (#450). When set,
+   * Declares the 1:1 doc↔row physical edge for this table. When set,
    * the gateway records the binding in the analytics catalog and the graph
    * walker synthesizes a `same-entity` edge from each row's co-described
    * document at walk time — no edge rows persisted. See `BoundDocumentSpec`.
@@ -1040,7 +1040,7 @@ export function validateAnalyticsDeleteKeys(
 }
 
 /**
- * Validate every `boundDocument` declaration against its table schema (#450).
+ * Validate every `boundDocument` declaration against its table schema.
  *
  * Enforces the 1:1 invariant that makes walk-time edge synthesis correct:
  * `externalIdColumns ∪ sourceKeyColumns` must equal `primaryKey` as a set, so
@@ -1505,7 +1505,7 @@ function recordTemplatePlaceholders(template: string): string[] {
 }
 
 /**
- * Validate the record-citation contract (#757): every table must declare a
+ * Validate the record-citation contract: every table must declare a
  * `semanticTimeColumn` (a real DATE/TIMESTAMP column or explicit `null`) and a
  * `record` display spec whose columns all exist on the table.
  *
@@ -1518,7 +1518,7 @@ function recordTemplatePlaceholders(template: string): string[] {
  * `requireRecord` (default `true`) governs how a schema that omits the contract
  * fields is treated. In-tree sources are validated at definition time with the
  * default, so they must declare the contract in full. The gateway `ensureTable`
- * boundary passes `false`: a device client built before #757 omits these fields
+ * boundary passes `false`: a device client built before the record contract omits these fields
  * entirely, and the gateway must keep ingesting its rows — a missing `record`
  * just makes the table non-citation-eligible, and a missing `semanticTimeColumn`
  * is treated as the timeless `null`. A field that IS present is still shape-
@@ -1534,7 +1534,7 @@ export function validateRecordCitationContract(
     const where = `${contextLabel}: analytics schema '${schema.tableName}'`;
     const columnNames = new Set(schema.columns.map((c) => c.name));
 
-    // semanticTimeColumn: explicit null (or an omitted field, from a pre-#757
+    // semanticTimeColumn: explicit null (or an omitted field, from a pre
     // client) means timeless; a string must name a column.
     if (schema.semanticTimeColumn != null) {
       if (typeof schema.semanticTimeColumn !== "string" || schema.semanticTimeColumn.length === 0) {
@@ -1592,7 +1592,7 @@ export function validateRecordCitationContract(
 }
 
 /**
- * Derive a single row's human title from its `RecordDisplaySpec` (#757). With
+ * Derive a single row's human title from its `RecordDisplaySpec`. With
  * a `titleTemplate`, substitute each `{column}` placeholder with the row's
  * value (empty string for null/missing); otherwise join the non-empty
  * `titleColumns` values with a separator. Pure, client-agnostic: the gateway
@@ -1621,7 +1621,7 @@ export function deriveRecordTitle(
 
 /**
  * Marker substituted for a `sensitive: true` column's value before a row
- * snapshot leaves the gateway (#757). Identical to the catalog preview's
+ * snapshot leaves the gateway. Identical to the catalog preview's
  * redaction so a record citation never leaks credential material into a
  * persisted `metadata_json` snapshot or onto a client. The column still
  * appears (so the reader sees it exists), only the value is masked.
@@ -1638,7 +1638,7 @@ export interface RecordKeyField {
 
 /**
  * A fully derived, client-ready projection of a single analytics row as a
- * point-in-time record (#757). The gateway computes this from the table's
+ * point-in-time record. The gateway computes this from the table's
  * `AnalyticsTableSchema` + the immutable row snapshot the agent saw and ships
  * only these derived strings; clients never learn the column names or the
  * source identity, so the source-encapsulation rule holds.
@@ -1671,7 +1671,7 @@ function renderCell(value: RecordCell): string | number | boolean | null {
 }
 
 /**
- * Derive the client-ready record-citation fields for one analytics row (#757).
+ * Derive the client-ready record-citation fields for one analytics row.
  *
  * Pure and contract-driven: given the table's schema and the immutable row
  * snapshot the agent cited, it derives the title (via {@link deriveRecordTitle},
@@ -1682,7 +1682,7 @@ function renderCell(value: RecordCell): string | number | boolean | null {
  * result — no column names or source identity reach a client.
  */
 /**
- * Concise label for a record key field (#757). A column's `description` is
+ * Concise label for a record key field. A column's `description` is
  * authored for the SQL/agent reader and often ends in a parenthetical example
  * or clarification ("Strava sport type (Run, Ride, Swim, …)") — fine in schema
  * docs, far too long for a compact key-field label. Drop a single trailing
@@ -1696,7 +1696,7 @@ function recordFieldLabel(description: string | undefined, col: string): string 
 }
 
 /**
- * Render a row's semantic time as one canonical ISO-8601 instant (#757).
+ * Render a row's semantic time as one canonical ISO-8601 instant.
  *
  * Two things have to happen to the value the database hands back. DuckDB
  * renders a TIMESTAMPTZ as `"2026-06-03 15:59:37+01"` — space separator,
@@ -1810,7 +1810,7 @@ export interface StructuredSyncResult<TCursor extends SyncCursor = SyncCursor> {
   documents?: DocumentInput[];
 
   /**
-   * Structural edges declared between the co-emitted documents (#430), matching
+   * Structural edges declared between the co-emitted documents, matching
    * the shape on `SyncResult.edges`. Forwarded to the gateway writer alongside
    * `documents` in the same atomic write.
    */
@@ -1851,7 +1851,7 @@ export interface StructuredSyncResult<TCursor extends SyncCursor = SyncCursor> {
    * shape on `SyncResult.consentExpiresAt`. The source reports its current
    * deadline on each successful page; the gateway persists it and derives a
    * non-terminal `auth-expiring` display state inside the lead window. Omitted /
-   * `null` means no known deadline. See #927.
+   * `null` means no known deadline.
    */
   consentExpiresAt?: string | null;
 

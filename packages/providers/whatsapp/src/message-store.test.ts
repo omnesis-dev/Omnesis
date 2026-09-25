@@ -443,7 +443,7 @@ describe("MessageStore (durable SQLite)", () => {
       const migrated = new MessageStore(d);
       try {
         expect(migrated.totalMessages).toBe(1);
-        // false → interrupted (never silently complete — #579).
+        // false → interrupted (never silently complete).
         expect(migrated.historySyncState).toBe("interrupted");
         // residue is marked dirty so it re-emits.
         expect(migrated.drain().messagesByKey.size).toBe(1);
@@ -500,7 +500,7 @@ describe("MessageStore (durable SQLite)", () => {
       expect(store.drain().messagesByKey.size).toBe(1);
     });
 
-    it("tolerates a torn JSON cell on reopen instead of crashing startup (#147)", async () => {
+    it("tolerates a torn JSON cell on reopen instead of crashing startup", async () => {
       store.addChats([{ jid: "g@g.us", name: "Team", isGroup: true, participants: ["x@lid"] }]);
       store.addMessages([msg({ id: "a", timestamp: ts("2026-01-02") })]);
       store.close();

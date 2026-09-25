@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Quote-verification helper for the `citation-verifier` specialist (#748).
+ * Quote-verification helper for the `citation-verifier` specialist.
  *
  * The trust feature, first cut: given a cited document's text and the quotes a
  * prior agent attributed to it, re-check by **string match** that each quoted

@@ -8,7 +8,7 @@
  * and dispatches to one of several backends (Apple Vision, a llama.cpp vision
  * GGUF, an OpenAI-compatible vision server, Tesseract, or a synthetic replay
  * backend for tests). Images are held only for the duration of a request —
- * nothing is persisted (#260, #265). Gated behind the `ocr` experimental
+ * nothing is persisted. Gated behind the `ocr` experimental
  * feature.
  */
 

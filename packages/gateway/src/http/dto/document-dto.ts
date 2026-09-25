@@ -10,7 +10,7 @@
  * routes that surface the same shape can reuse the helpers instead
  * of copy-pasting.
  *
- * Per #386, the `/documents/list` wire shape is now
+ * The `/documents/list` wire shape is
  * the canonical `ListedDocument` from `@omnesis/core` — the same
  * shape the in-process indexer pipeline operates on. The previous
  * `ListedDocumentDto` was a near-identical local declaration whose

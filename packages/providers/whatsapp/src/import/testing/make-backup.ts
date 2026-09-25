@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Test-only builder for a synthetic ENCRYPTED iOS backup (#588). It mirrors the
+ * Test-only builder for a synthetic ENCRYPTED iOS backup. It mirrors the
  * exact crypto the production decryptor inverts — keybag TLV, double-PBKDF2 KEK,
  * RFC-3394 wrap, AES-CBC, NSKeyedArchiver file BLOB — so a round-trip test
  * (build → decrypt → assert bytes identical) validates the algorithm with zero

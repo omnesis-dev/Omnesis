@@ -116,7 +116,7 @@ export function createRunSqlTool(deps: RunSqlToolDeps): ToolHandle {
       } catch (err) {
         // Over-cap is a clean, actionable outcome — not a failure. Surface a
         // distinct code so the agent narrows the query rather than retrying
-        // the same one (#757). Never a silently-truncated result.
+        // the same one. Never a silently-truncated result.
         if (err instanceof SqlPortOverCapError) {
           return { kind: "error", code: "sql_over_cap", message: err.message };
         }

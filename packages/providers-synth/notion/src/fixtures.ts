@@ -123,7 +123,7 @@ export function schemaForDatabase(db: DatabaseFixture): AnalyticsTableSchema {
     // ship the property name as a stable id for symmetry.
     sourceColumnId: p.name,
   }));
-  // Mirror the real mapper's record-citation declarations (#757): the page's
+  // Mirror the real mapper's record-citation declarations: the page's
   // last-edited instant is the semantic time, and the first property column is
   // the de-facto title (the synth fixtures lead with the Name property), with a
   // fallback to the always-present `id`.

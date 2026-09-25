@@ -11,7 +11,7 @@ import type { RouteApp } from "../types.js";
 const log = adminLog.child("owned-web-domains");
 
 /**
- * Mount the owned-web-domains endpoints (#791).
+ * Mount the owned-web-domains endpoints.
  *
  * The collector POSTs the web hosts owned by *every known source type* (the
  * union of every loaded source definition's `ownedWebDomains`), derived at

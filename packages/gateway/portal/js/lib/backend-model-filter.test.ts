@@ -74,7 +74,7 @@ describe("filterBackendModels", () => {
     const out = filterBackendModels(map, "embedder");
     expect(out.totalCandidates).toBe(300);
     // Without searching/toggling, the Embedder picker shows ONLY the one
-    // embedder — not all 300 ids. This is the core of the #693 fix.
+    // embedder — not all 300 ids. This is the core of the fix.
     expect(out.suggested).toEqual(["text-embedding-3-small"]);
     expect(out.others).toEqual([]);
   });

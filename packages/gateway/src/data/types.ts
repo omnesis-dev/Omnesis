@@ -53,8 +53,8 @@ export interface StoredSyncState {
   content_retention: string | null;
   /**
    * Forward-looking consent / authorization deadline (ISO 8601) reported by the
-   * source on its last successful sync, or NULL when it has no known deadline
-   * (#927). `deriveDisplayStatus` derives a non-terminal `auth-expiring` warning
+   * source on its last successful sync, or NULL when it has no known deadline.
+   *`deriveDisplayStatus` derives a non-terminal `auth-expiring` warning
    * when `now` is inside the lead window before this; a re-consent that no longer
    * expires reports a later value or NULL, clearing the warning.
    */
@@ -77,7 +77,7 @@ export interface StoredSyncState {
    * last written. 0 means "written before version tracking was introduced"
    * (compatible with any binary). Used by `runDowngradeCompatCheck` on startup
    * to detect and reset sources whose data was written by a newer binary than
-   * the one currently running. See #1078.
+   * the one currently running.
    */
   minimum_gateway_version: number;
 }

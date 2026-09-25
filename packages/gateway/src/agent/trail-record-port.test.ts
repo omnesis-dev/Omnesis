@@ -3,7 +3,7 @@
 
 /**
  * Coverage for `createGatewayTrailPort` surfacing `same-entity` bound rows as
- * point-in-time record citations (#757, sub-issue d). Proves the end-to-end
+ * point-in-time record citations (sub-issue d). Proves the end-to-end
  * wiring against a real AnalyticsDb + SQLite store:
  *   - a record reachable from a seed document appears in the trail with its
  *     identity (recordKey) + redacted snapshot + derived fields, derived the
@@ -130,7 +130,7 @@ function eventsOf(trail: { events: TrailEvent[] }): TrailEvent[] {
   return trail.events;
 }
 
-describe("createGatewayTrailPort — bound-row record surfacing (#757)", () => {
+describe("createGatewayTrailPort — bound-row record surfacing", () => {
   test("a record reachable from a seed surfaces with identity + snapshot + derived fields", async () => {
     const docId = await insertDoc("act-1", "Morning ride", "2026-05-01T08:30:00.000Z");
     await analytics.insertRecords(

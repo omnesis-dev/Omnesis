@@ -120,7 +120,7 @@ describe("Link-extraction background jobs (e2e-minimal universe)", () => {
     expect(Number.isFinite(stats.unresolvedLinks)).toBe(true);
   });
 
-  test("chrome-bookmarks declares `bookmarks → webpage` edges that park in pending_edges (#895)", () => {
+  test("chrome-bookmarks declares `bookmarks → webpage` edges that park in pending_edges", () => {
     // e2e-minimal has chrome-bookmarks fixtures but no captured `web` page, so
     // each bookmark's declared edge to the canonical webpage entity has nowhere
     // to resolve yet and must wait in `pending_edges` — proving the full

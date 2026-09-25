@@ -1089,7 +1089,7 @@ describe("DeviceWsServer socket liveness", () => {
   });
 });
 
-describe("DeviceWsServer connection cap (#58)", () => {
+describe("DeviceWsServer connection cap", () => {
   test("refuses new connections past maxConnections, keeps existing ones", () => {
     const capPath = `/tmp/omnesis-ws-cap-${randomUUID()}.db`;
     const capDb = createDatabase(capPath);

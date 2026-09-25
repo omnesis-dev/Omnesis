@@ -3,7 +3,7 @@
 
 /**
  * `npm run briefs:scorecard` — run the Briefs reconcile-quality scorecard
- * end-to-end (epic #137, criteria 4, 13, 16).
+ * end-to-end.
  *
  * Boots an isolated spawned gateway on the `loops-test-life` universe,
  * delivers the seeded arc set through the real waker → queue → run driver

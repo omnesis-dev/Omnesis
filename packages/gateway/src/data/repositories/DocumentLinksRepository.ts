@@ -227,7 +227,7 @@ export interface DocumentEdge {
   metadataJson: string | null;
 }
 
-/** A source-declared forward-reference edge still awaiting its target (#430). */
+/** A source-declared forward-reference edge still awaiting its target. */
 export interface PendingEdgeView {
   linkType: string;
   targetSourceId: string;
@@ -245,7 +245,7 @@ export interface DocumentEdgesView {
 /**
  * Every edge incident to a document, annotated with provenance, plus the
  * source-declared forward references still parked in `pending_edges`. Backs the
- * `omnesis edges show <doc-id>` inspection command (#430).
+ * `omnesis edges show <doc-id>` inspection command.
  */
 export function getDocumentEdges(db: Db, docId: string): DocumentEdgesView {
   const outbound = db

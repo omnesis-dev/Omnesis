@@ -61,9 +61,9 @@ export interface NormalizerDeps {
 /**
  * Fetch the file + reference attachments for a Graph message. Drops
  * `itemAttachment` (forwarded Outlook items) — those are tracked
- * separately in #261. File attachments carry bytes and feed the
+ * separately in #22. File attachments carry bytes and feed the
  * extraction pipeline; reference attachments are OneDrive/SharePoint
- * links and surface as link-only metadata in the parent (#262).
+ * links and surface as link-only metadata in the parent.
  */
 export async function fetchAttachments(
   graph: GraphClient,
@@ -75,7 +75,7 @@ export async function fetchAttachments(
   for (const a of res.value) {
     if (isFileAttachment(a)) files.push(a);
     else if (isReferenceAttachment(a)) references.push(a);
-    // itemAttachment intentionally dropped here — see #261.
+    // itemAttachment intentionally dropped here — see #22.
   }
   return { files, references };
 }
@@ -167,7 +167,7 @@ export async function normalizeMessage(
   const attachmentInfos: AttachmentInfo[] = [];
   // Note: no attachmentId field — child externalId derives from
   // (filename, size, mimeType, seq) via deriveAttachmentStableId, which is
-  // stable across re-syncs (#268). Outlook's Graph attachment id is only
+  // stable across re-syncs. Outlook's Graph attachment id is only
   // used inside fetchAttachments above for the GET call.
   const attachmentDocs: {
     filename: string;
@@ -185,7 +185,7 @@ export async function normalizeMessage(
 
       // referenceAttachments — OneDrive / SharePoint links. No bytes to
       // extract; surface as link metadata so the user sees them and so the
-      // link graph can resolve them once the OneDrive source ships (#263).
+      // link graph can resolve them once the OneDrive source ships.
       for (const ref of referenceAttachments) {
         attachmentInfos.push({
           filename: ref.name,
@@ -254,7 +254,7 @@ export async function normalizeMessage(
         } catch (err) {
           // Transient extraction-backend blip → fail the page so it retries,
           // rather than recording a permanent extraction failure and advancing
-          // the cursor past a file that would extract cleanly later (#680).
+          // the cursor past a file that would extract cleanly later.
           if (isTransientSyncError(err)) throw err;
           log.warn(
             `Failed to extract attachment ${att.name} from ${msg.id}: ${err instanceof Error ? err.message : String(err)}`,
@@ -270,7 +270,7 @@ export async function normalizeMessage(
       }
     } catch (err) {
       // Don't let the outer attachment-fetch guard swallow a transient
-      // extraction blip re-thrown from the inner loop above (#680).
+      // extraction blip re-thrown from the inner loop above.
       if (isTransientSyncError(err)) throw err;
       log.warn(
         `Failed to fetch attachments for ${msg.id}: ${err instanceof Error ? err.message : String(err)}`,

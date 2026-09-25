@@ -4,7 +4,7 @@
 /**
  * The OCR seam inside the shared attachment extractor: when an `OcrFn` is
  * wired, image attachments and scanned (text-layer-less) PDFs are recognized;
- * with no `ocr` fn the extractor behaves exactly as before. See #427.
+ * with no `ocr` fn the extractor behaves exactly as before.
  */
 
 import { describe, test, expect, vi } from "vitest";

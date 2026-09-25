@@ -444,7 +444,7 @@ export class OutlookEmailSource {
     // Conversations + Sync Issues special folders are the historical
     // offenders). Without this set, an unbounded recursion eats the
     // whole sync tick and pins the source on `syncing` until the
-    // newly-added wall-clock timeout (#324) kicks in.
+    // newly-added wall-clock timeout kicks in.
     const visited = new Set<string>();
     let nextUrl: string | undefined = "/me/mailFolders?$top=100";
 

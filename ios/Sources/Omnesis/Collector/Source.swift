@@ -147,7 +147,7 @@ public struct SyncResult: Equatable, Sendable {
 
     /// DuckDB table name the records live in. Same source can produce
     /// multiple tables across pages. `nil` for a documents-only source
-    /// (one that never publishes analytics rows, e.g. Photos, #169) —
+    /// (one that never publishes analytics rows, e.g. Photos) —
     /// there is no analytics table to name. When `nil`, `deletedIds` is
     /// interpreted as document external ids (see below) instead of
     /// analytics row keys.
@@ -177,7 +177,7 @@ public struct SyncResult: Equatable, Sendable {
     /// Searchable summary documents minted alongside `records` for the
     /// episodic, nameable tables (workouts / mindful). Each is bound 1:1
     /// to its analytics row via `externalId == row.id` + the table's
-    /// `boundDocument` spec (#640). Empty for the tall sample tables.
+    /// `boundDocument` spec. Empty for the tall sample tables.
     /// For a documents-only source (`tableName == nil`), these are the
     /// entirety of what the page produces.
     public let documents: [DocumentInput]
@@ -271,7 +271,7 @@ public struct Batch: Codable, Equatable, Sendable {
     public let deletedIds: [String]
     /// Summary documents carried alongside `records` so they survive
     /// offline buffering + retry. The uploader pushes them to
-    /// `POST /documents` after the analytics records land (#640).
+    /// `POST /documents` after the analytics records land.
     public let documents: [DocumentInput]
     public let createdAt: Date
 
@@ -310,7 +310,7 @@ public struct Batch: Codable, Equatable, Sendable {
         records = try c.decode([[String: JSONValue]].self, forKey: .records)
         schema = try c.decodeIfPresent(AnalyticsTableSchema.self, forKey: .schema)
         deletedIds = try c.decode([String].self, forKey: .deletedIds)
-        // Back-compat: batches written before #640 have no `documents` key.
+        // Back-compat: batches from older builds have no `documents` key.
         documents = try c.decodeIfPresent([DocumentInput].self, forKey: .documents) ?? []
         createdAt = try c.decode(Date.self, forKey: .createdAt)
     }

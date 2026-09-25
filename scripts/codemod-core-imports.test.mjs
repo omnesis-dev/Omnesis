@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Fixture test for the #384 import-sweep codemod. Run with:
+ * Fixture test for the import-sweep codemod. Run with:
  *   node --test scripts/codemod-core-imports.test.mjs
  *
  * Uses node:test (the tool is a scripts/ node script, not package code that

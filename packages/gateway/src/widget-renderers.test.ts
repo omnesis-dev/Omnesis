@@ -14,7 +14,7 @@ import {
   widgetRendererUrl,
 } from "./widget-renderers.js";
 
-describe("widget-renderers registry (#984)", () => {
+describe("widget-renderers registry", () => {
   let tmp: string | null = null;
 
   function writeProviderRenderer(rel = "src/portal/renderer.js"): string {
@@ -78,7 +78,7 @@ describe("widget-renderers registry (#984)", () => {
   });
 });
 
-describe("widgetRenderersBody schema (#984)", () => {
+describe("widgetRenderersBody schema", () => {
   test("accepts opaque kinds and absolute module paths", () => {
     expect(
       widgetRenderersBody.parse({

@@ -367,8 +367,7 @@ export function createCleanupTasks(opts: CleanupTaskOpts, scheduler: Scheduler):
     periodicJob(importFlowsTask, {
       scheduler,
       displayName: "Import flow registry cleanup",
-      description:
-        "Sweeps in-memory ImportFlowRegistry (#588) for history-import flows past their TTL.",
+      description: "Sweeps in-memory ImportFlowRegistry for history-import flows past their TTL.",
       category: "auth",
       tracker: new StatelessTracker(),
     }),

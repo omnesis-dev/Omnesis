@@ -123,8 +123,8 @@ export class HttpVlmOcr implements OcrCapability {
       // rate-limited, unavailable, or timed out — genuinely transient. Throw
       // so the route surfaces a 5xx
       // and the collector retries the page with its cursor un-advanced, rather
-      // than dropping a file that would OCR cleanly once the backend recovers
-      // (#680). A transport-level failure (connection refused/reset, timeout)
+      // than dropping a file that would OCR cleanly once the backend recovers.
+      //A transport-level failure (connection refused/reset, timeout)
       // rejects `fetch` above and propagates the same way.
       if (res.status === 429 || res.status === 502 || res.status === 503 || res.status === 504) {
         throw new Error(`vision backend ${this.model} unavailable (HTTP ${res.status})`);

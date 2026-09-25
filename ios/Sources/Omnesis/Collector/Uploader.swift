@@ -505,13 +505,13 @@ public actor Uploader {
         }
         // Push the bound documents AFTER the analytics rows land so the
         // row a document binds to (via `boundDocument`) already exists
-        // when the gateway synthesizes the same-entity edge (#640).
+        // when the gateway synthesizes the same-entity edge.
         // Idempotent upsert, so a retry can't double-write.
         if rejectedReason == nil, !batch.documents.isEmpty {
             let resp = try await gateway.ingestDocuments(batch.documents)
             rejectedReason = resp.rejected.first { $0.sourceId == batch.sourceId }?.reason
         }
-        // A documents-only source (`tableName == nil`, e.g. Photos, #169)
+        // A documents-only source (`tableName == nil`, e.g. Photos)
         // has no analytics rows to delete-by-id, so its `deletedIds` mean
         // document external ids instead — route them to the
         // document-delete endpoint. A deletion-only batch (no documents

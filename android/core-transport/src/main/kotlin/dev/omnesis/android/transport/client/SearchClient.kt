@@ -155,7 +155,7 @@ class SearchClient(private val http: GatewayHttp) {
 
     /**
      * `DELETE /documents/:id` — remove a single document from the corpus for
-     * privacy (#1065). The gateway also deletes its extracted-attachment
+     * privacy. The gateway also deletes its extracted-attachment
      * children. By default it writes a durable tombstone so a re-sync /
      * re-capture can't bring the page back; with [keepCopy] only this copy goes
      * and the source may bring it back. Requires a write scope for the

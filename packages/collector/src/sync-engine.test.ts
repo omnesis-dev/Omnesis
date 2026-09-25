@@ -115,7 +115,7 @@ class MockGateway implements GatewayClient {
   }
 
   /**
-   * Mock implementation of the atomic per-page write (issue #322).
+   * Mock implementation of the atomic per-page write.
    * Mirrors the production path: documents/tombstones → snapshot
    * reconcile → cursor advance, with the snapshot-on-final-page
    * defence-in-depth check the gateway enforces.
@@ -1107,7 +1107,7 @@ describe("SyncEngine", () => {
   });
 
   test("does not write documents when documents array is empty (cursor still advances)", async () => {
-    // Post-#322 the runner calls `upsertWithCursor` on every page (the
+    // The runner calls `upsertWithCursor` on every page (the
     // cursor MUST advance), but the documents body field is empty when
     // there are no docs. Assert: the call happens, the documents field
     // is empty, the cursor lands in syncStates.
@@ -1827,7 +1827,7 @@ describe("SyncEngine stopSyncLoopAndDrain", () => {
     await sp;
   });
 
-  test("a sync that hits the wall-clock timeout resolves syncSource, never rejects (#554)", async () => {
+  test("a sync that hits the wall-clock timeout resolves syncSource, never rejects", async () => {
     // Short sync timeout + a sync that never settles → runOne's timeout wins
     // and re-throws. syncSource must swallow it: a rejection here would reach
     // the dispatcher's fire-and-forget call and crash the whole collector via
@@ -1943,7 +1943,7 @@ describe("SyncEngine forwards metadata.sourceUrl verbatim", () => {
   });
 });
 
-describe("SyncEngine rate-limit scheduler deferral (#616)", () => {
+describe("SyncEngine rate-limit scheduler deferral", () => {
   let gateway: MockGateway;
   let engine: SyncEngine;
   let randomSpy: ReturnType<typeof vi.spyOn>;
@@ -2087,7 +2087,7 @@ describe("SyncEngine.pushAnalyticsSchemas", () => {
     expect(gateway.analyticsPushes).toHaveLength(2);
     for (const push of gateway.analyticsPushes) {
       // Schema-only registration: no rows, but the schema + sourceId travel so
-      // the gateway refreshes its catalog row (incl. the #757 record contract).
+      // the gateway refreshes its catalog row (incl. the record contract).
       expect(push.records).toEqual([]);
       expect(push.sourceId).toBe("coinbase:portfolio-1");
       expect(push.schema?.semanticTimeColumn).toBe("occurred_at");

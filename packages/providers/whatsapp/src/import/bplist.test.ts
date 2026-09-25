@@ -5,7 +5,7 @@ import { describe, it, expect } from "vitest";
 import { parseBplist, parseFileBlob } from "./bplist.js";
 import { writeBplist } from "./testing/make-backup.js";
 
-describe("bplist reader (#588)", () => {
+describe("bplist reader", () => {
   it("round-trips dicts, arrays, strings, ints, data, and UIDs", () => {
     const tree = {
       $top: { root: { __uid: 1 } },

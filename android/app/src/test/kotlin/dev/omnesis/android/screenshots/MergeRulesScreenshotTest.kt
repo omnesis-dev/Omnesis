@@ -25,8 +25,8 @@ import java.time.Instant
 import java.time.temporal.ChronoUnit
 
 /**
- * Pixel-parity screenshots for the read-only merge-rules viewer (epic #719,
- * sub-issue #724), the Android analogue of the iOS `29-merge-rules-list` /
+ * Pixel-parity screenshots for the read-only merge-rules viewer, the Android
+ * analogue of the iOS `29-merge-rules-list` /
  * `29b-merge-rules-empty` snapshots. Robolectric + Roborazzi. All sample data
  * is invented (privacy rule), never sourced from the corpus.
  *

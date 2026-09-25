@@ -27,7 +27,7 @@ export const ONEDRIVE_MAX_CONTENT_SIZE = 10 * 1024 * 1024;
  * MIME types we never try to index — archives and opaque binary blobs the
  * shared attachment pipeline can't decode. Mirrors Drive's skip list. Note
  * `image/*` is *not* hard-skipped here: it is gated by the attachment
- * allow-list so OCR (#427) can opt images in.
+ * allow-list so OCR can opt images in.
  */
 export const ONEDRIVE_SKIP_MIME_TYPES = new Set([
   "application/zip",
@@ -123,7 +123,7 @@ export interface OneDriveCursor extends SyncCursor {
    * Maintained as items are seen so a **bounded re-walk** on delta-token expiry
    * (410) can re-enumerate *metadata* cheaply yet re-download+extract *content*
    * only for items whose fingerprint changed — never a from-zero re-bootstrap
-   * (the #111/#593 cursor-recovery rule). Bounded by the drive's file count
+   * (the cursor-recovery rule). Bounded by the drive's file count
    * (a few bytes per file); absent on a first bootstrap.
    */
   seen?: Record<string, string>;

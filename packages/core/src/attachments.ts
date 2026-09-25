@@ -14,7 +14,7 @@ import type { DocumentInput, PersonMention } from "./document.js";
  * `size-unknown`) rather than guessing — see `shouldExtractAttachment`.
  *
  * `url` is set for reference-style attachments (Outlook's OneDrive /
- * SharePoint link attachments — see #262). The bytes never travel over
+ * SharePoint link attachments). The bytes never travel over
  * the wire; we surface the link target as metadata so the user can see
  * the attachment exists, and so the link graph can resolve it to an
  * indexed doc once the corresponding source is added.
@@ -372,7 +372,7 @@ function baseMimeType(mimeType: string): string {
  * change across re-syncs of the same parent message. This is intentional:
  * Gmail's `payload.parts[].body.attachmentId` is **not** stable (the server
  * mints a fresh one on each `messages.get`), and using it in the externalId
- * scheme caused #268 — every parent re-fetch created a new attachment doc
+ * scheme meant every parent re-fetch created a new attachment doc
  * with the same content_hash, leaking duplicates over time.
  *
  * Ties — two attachments with identical (filename, size, mimeType) in the
@@ -511,7 +511,7 @@ export function isTrivialExtraction(text: string): boolean {
  * The externalId is derived from `(filename, sizeBytes, mimeType, seq)` via
  * `deriveAttachmentStableId` — see that helper for the rationale on why we
  * intentionally do **not** use Gmail/Outlook/iMessage/WhatsApp's own
- * attachment identifiers (they aren't all stable across sync runs; #268).
+ * attachment identifiers (they aren't all stable across sync runs).
  *
  * An attachment whose extraction is trivial (see {@link isTrivialExtraction})
  * carries the generic `lowSignal` marker, so shared consumers can skip it

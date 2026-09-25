@@ -227,7 +227,7 @@ describe("GenerationBuilder + atomic flip (headline: graceful swap keeps vector 
     expect(row?.embedding.byteLength).toBe(DIM_B * 4);
   });
 
-  test("docs_built reaches docs_total exactly at completion — honest 100%, no clamp (epic #1011)", async () => {
+  test("docs_built reaches docs_total exactly at completion — honest 100%, no clamp", async () => {
     seedGeneration1();
 
     // Seed the building row with the SAME denominator the builder uses

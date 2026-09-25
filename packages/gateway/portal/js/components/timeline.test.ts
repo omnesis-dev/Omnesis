@@ -8,7 +8,7 @@ import { eventSourceId, isDuplicateLikeLinkType } from "./timeline.js";
 // `eventSourceId` is the source-agnostic resolver that tells the timeline
 // renderer which source to icon/colour a row by — `doc.sourceId` for a
 // document (or deduped doc+record) event, `record.sourceId` for a
-// record-only event (#757). It never branches on a specific source; the
+// record-only event. It never branches on a specific source; the
 // registry helpers do the per-source lookup downstream.
 describe("eventSourceId", () => {
   test("a document event resolves its doc.sourceId", () => {

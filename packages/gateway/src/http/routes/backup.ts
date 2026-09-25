@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Backup routes (#57). Mounted from server.ts only when a `BackupService`
+ * Backup routes. Mounted from server.ts only when a `BackupService`
  * is wired (production; tests that don't exercise backups skip them).
  *
  * Surface (admin scope):

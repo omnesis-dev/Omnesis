@@ -618,7 +618,7 @@ export class WatchTraceStore {
     // it: between the delete and the insert the subject has been decided about
     // and this store says nothing of it.
     this.db.transaction(() => {
-      // Known bug: #1933 — a node with one keyed edge and one unkeyed edge writes
+      // Known bug: #68 — a node with one keyed edge and one unkeyed edge writes
       // both key shapes from two live instances, and this reads the singleton one
       // as a leftover. No watch has that shape today.
       const carried =

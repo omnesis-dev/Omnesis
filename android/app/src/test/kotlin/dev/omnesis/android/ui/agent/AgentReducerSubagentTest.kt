@@ -16,7 +16,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Spec for the sub-agent card reduction (#748), the Android twin of the iOS
+ * Spec for the sub-agent card reduction, the Android twin of the iOS
  * AgentCoordinatorSubagentTests + the portal agent-reducer subagent tests. The three
  * `agent.subagent.*` events fold into an [AgentPart.Subagent] card on the parent's
  * assistant turn: `spawned` seeds the card, each wrapped `event` advances the card's

@@ -372,7 +372,7 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       const totalIndexed = seg("idx.totalIndexed", () => getIndexedDocumentCount(indexDb));
       const totalChunks = seg("idx.totalChunks", () => getChunkCount(indexDb));
       const watermark = seg("idx.watermark", () => getWatermark(indexDb, "last_updated_at"));
-      // Active + building generations (epic #1011) as first-class fields, so a
+      // Active + building generations as first-class fields, so a
       // graceful embedder swap surfaces as an upgrade-in-flight rather than the
       // existing index regressing. Computed in the gateway; clients render the
       // neutral payload with no inference.

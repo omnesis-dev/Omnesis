@@ -4,8 +4,8 @@
 // @ts-nocheck — exercises the plain-JS portal renderer module from vitest;
 // the module is untyped browser code, so type-checking is off here.
 //
-// Structural render test for the bespoke research working-set surface
-// (#748). There is no jsdom env / preact-render-to-string in this package,
+// Structural render test for the bespoke research working-set surface.
+//There is no jsdom env / preact-render-to-string in this package,
 // so we render the surface to its preact VNode tree and recursively expand
 // the function-component VNodes (calling `type(props)` — every component
 // here is a pure function of props) into a flat host-element tree. We then
@@ -67,7 +67,7 @@ function classesWith(nodes, fragment) {
   return nodes.filter((n) => typeof n.class === "string" && n.class.includes(fragment));
 }
 
-describe("ResearchWorkspace — structural render (#748)", () => {
+describe("ResearchWorkspace — structural render", () => {
   const twoPanels = [
     {
       subagentId: "r1",

@@ -850,7 +850,7 @@ describe("NotionDatabasesSource — snapshot reconciliation", () => {
     expect((result.cursor as NotionDatabasesCursor).lastSnapshotAt).not.toBe(stale);
   });
 
-  // ── Analytics-row deletion detection (#156) ─────────────────────────
+  // ── Analytics-row deletion detection ─────────────────────────
   //
   // Two consecutive snapshot rewalks of one database; the second sees a
   // row vanish. The completion page must name the gone row by its analytics
@@ -873,7 +873,7 @@ describe("NotionDatabasesSource — snapshot reconciliation", () => {
     return source.syncStructured(cursor);
   }
 
-  test("a deleted analytics row is named on the next rewalk (#156)", async () => {
+  test("a deleted analytics row is named on the next rewalk", async () => {
     // Page ids without dashes so the analytics PK == the id verbatim.
     let rows = ["alpha", "beta", "gamma"];
     const client = {
@@ -910,7 +910,7 @@ describe("NotionDatabasesSource — snapshot reconciliation", () => {
     expect(c2.lastSnapshotRowIdsByTable?.["notion_a"]?.sort()).toEqual(["alpha", "gamma"]);
   });
 
-  test("a row aged out of a ROLLING retention cutoff is NOT tombstoned as deleted (#156)", async () => {
+  test("a row aged out of a ROLLING retention cutoff is NOT tombstoned as deleted", async () => {
     // The data-retention cutoff is a rolling window recomputed at every source
     // instantiation. A row created before the (now-advanced) cutoff is skipped
     // for INGEST but is STILL returned by Notion's query (the cutoff is a local
@@ -956,7 +956,7 @@ describe("NotionDatabasesSource — snapshot reconciliation", () => {
     expect(c.lastSnapshotRowIdsByTable?.["notion_a"]?.sort()).toEqual(["alpha", "beta"]);
   });
 
-  test("present row PKs accumulate across paginated rewalk pages (#156)", async () => {
+  test("present row PKs accumulate across paginated rewalk pages", async () => {
     // A database whose rows span two query pages. The present-PK set must
     // accumulate both pages before the completion diff runs, so a row that's
     // only on page 2 is NOT falsely reported as deleted.
@@ -1039,7 +1039,7 @@ describe("NotionDatabasesSource — snapshot reconciliation", () => {
     expect(c.lastSnapshotRowIdsByTable?.["notion_a"]).toEqual(["alpha"]);
   });
 
-  test("an incremental (non-snapshot) cycle never names a deletion (#156)", async () => {
+  test("an incremental (non-snapshot) cycle never names a deletion", async () => {
     // Incremental only returns CHANGED rows; an absent row means "unchanged",
     // not "deleted". Deletes must come only from a complete snapshot rewalk.
     const client = {
@@ -1074,7 +1074,7 @@ describe("NotionDatabasesSource — snapshot reconciliation", () => {
     ).toEqual(["alpha", "beta", "gamma"]);
   });
 
-  test("a database skipped mid-rewalk names no deletion for its table (#156)", async () => {
+  test("a database skipped mid-rewalk names no deletion for its table", async () => {
     // The skipped DB never reaches its completion branch, so its baseline is
     // not rolled and no row deletes are emitted — even though its rows are
     // absent from this cycle's enumeration. Mirrors the presentExternalIds

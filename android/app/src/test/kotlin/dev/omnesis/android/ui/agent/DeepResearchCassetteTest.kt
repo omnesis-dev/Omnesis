@@ -15,7 +15,7 @@ import org.junit.Test
 import java.io.File
 
 /**
- * The Android arm of the cross-client Deep Research cassette test (#748).
+ * The Android arm of the cross-client Deep Research cassette test.
  *
  * Drives the CANONICAL synthetic conversation — the exact
  * `evals/universes/japan-trip/agent-demos/japan-trip-spend.jsonl` the demo gateway

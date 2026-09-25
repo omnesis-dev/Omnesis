@@ -28,7 +28,7 @@ data class SyncStatusBroadcast(
     val errorMessage: String? = null,
     val progress: BroadcastProgress? = null,
     /**
-     * Forward-looking consent deadline (#927) — carried verbatim when the gateway
+     * Forward-looking consent deadline — carried verbatim when the gateway
      * includes it on a `sync.status` broadcast. Mirrors the iOS `SyncStatusBroadcast`.
      */
     val consentExpiresAt: String? = null,
@@ -138,7 +138,7 @@ fun mergeSyncStatus(
         lastUpdated = broadcast.lastUpdated ?: existing?.lastUpdated,
         // Carry the consent deadline forward when a broadcast omits it so a plain
         // "syncing"/"progress" event doesn't blank out a known forward-looking
-        // expiry (#927) — mirrors lastSyncAt/progress carry-forward and the iOS merge.
+        // expiry — mirrors lastSyncAt/progress carry-forward and the iOS merge.
         consentExpiresAt = broadcast.consentExpiresAt ?: existing?.consentExpiresAt,
         // Same reasoning as consentExpiresAt: the remediation sentence belongs to a
         // derived state the broadcast cannot carry, so a sparse event must not blank it.

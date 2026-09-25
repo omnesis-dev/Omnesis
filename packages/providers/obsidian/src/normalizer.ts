@@ -284,7 +284,7 @@ export function normalizeNote(
   // Obsidian vaults have no per-note authorship — single user per vault. Mark
   // every doc self-authored via isSelf primitive. Frontmatter mentions
   // (author:, people:, attendees:, etc.) and [[wikilinks]] are extracted
-  // separately as additional people. See #122.
+  // separately as additional people.
   const frontmatterPeople = extractPeople(note.frontmatter, note.links);
   const people: PersonMention[] = [{ role: "author", isSelf: true }, ...frontmatterPeople];
 

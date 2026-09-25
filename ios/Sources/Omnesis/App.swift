@@ -478,8 +478,7 @@ extension View {
 /// views observing `AppStore` keep working without traversing into
 /// the coordinator graph manually.
 ///
-/// Per #320, the former 1267-line god class is split
-/// into:
+/// The former 1267-line god class is split into:
 ///   - `PairingCoordinator` — `service`, `pairing`, pair / unpair / repair.
 ///   - `SyncCoordinator` — `core`, `buffer`, `bgCoordinator`, syncAll /
 ///     drainPending / lifecycle forwarding.
@@ -579,7 +578,7 @@ public final class AppStore {
     /// most sensitive signal the app captures.
     public internal(set) var coreLocationVisitsEnabled: Bool = false
 
-    /// User has opted in to the Photos source (#169) from the Settings
+    /// User has opted in to the Photos source from the Settings
     /// tab. Drives whether the collector instantiates `PhotosSource`,
     /// installs the `PhotoLibraryObserver`, and whether the gateway
     /// carries a `photos:local` row. Mirror of `PhotosSettings.enabled`.
@@ -631,7 +630,7 @@ public final class AppStore {
     /// How push notifications will actually reach the user, captured after the
     /// permission request. `.ok` unless permission is denied, iOS Scheduled
     /// Summary is batching, or alerts are off — surfaced in Settings so the
-    /// user isn't left wondering why pushes never arrive (#1260).
+    /// user isn't left wondering why pushes never arrive.
     public private(set) var pushDeliveryHealth: PushDeliveryHealth = .ok
     /// Gateway push selection for this pairing and app identity. A selected
     /// path does not prove end-to-end APNs delivery.
@@ -982,7 +981,7 @@ public final class AppStore {
     private var categoryRebuildTask: Task<Void, Never>?
     #endif
 
-    // MARK: - Photos internals (#169)
+    // MARK: - Photos internals
 
     @ObservationIgnored
     var photosSettings = PhotosSettings()
@@ -1125,7 +1124,7 @@ public final class AppStore {
         // (HKError.errorDatabaseInaccessible). AppleHealthSource bails
         // out gracefully in that case — we use this notification to
         // retry the moment the phone unlocks and keys become available.
-        // See #2131 — this only re-syncs; a pairing read that failed while
+        // See #75 — this only re-syncs; a pairing read that failed while
         // the phone was locked is not re-read here.
         NotificationCenter.default.addObserver(
             forName: UIApplication.protectedDataDidBecomeAvailableNotification,
@@ -1211,7 +1210,7 @@ public final class AppStore {
         }
         #if canImport(UserNotifications)
         // Each successful Apple Health sync re-arms the stale-sync
-        // reminder N hours out — see issue #196.
+        // reminder N hours out.
         if case .completed(let sourceId, _, _, _, _) = event,
            sourceId.hasPrefix("apple-health:") {
             await staleSyncReminder.scheduleReminder()
@@ -1350,7 +1349,7 @@ public final class AppStore {
         #if canImport(UserNotifications) && canImport(UIKit)
         // Capture how delivery will actually behave (denied / Scheduled Summary
         // batching / alerts off) so Settings can warn the user instead of
-        // silently registering a token that never visibly delivers (#1260).
+        // silently registering a token that never visibly delivers.
         await refreshPushDeliveryHealth()
         guard pushDeliveryHealth.registersPushTokenAutomatically else { return }
         beginPushCallbackRequest()
@@ -2112,7 +2111,7 @@ public final class AppStore {
         #endif
     }
 
-    // MARK: - Photos opt-in / opt-out (#169)
+    // MARK: - Photos opt-in / opt-out
 
     /// Enable the Photos source from Settings or phone setup. A limited
     /// library is a grant: it syncs the photos the user selected.
@@ -2546,7 +2545,7 @@ public final class AppStore {
             // earlier pairing of this gateway left behind has to settle (or
             // be dropped as stale) before this pairing states which sources
             // it hosts, or it would undo the registration that just ran.
-            // See #2124 — a re-pair that adopts the same device id can still
+            // A re-pair that adopts the same device id can still
             // replay a queued detach, which pauses the source.
             await self?.reconcileLocalSourceMembership()
             await self?.registerLocalSources(admin: admin, pairing: p)
@@ -3401,7 +3400,7 @@ extension AppStore {
         /// Citations drawer's Timeline tab without driving a live SSE stream.
         /// Empty by default so the Timeline renders empty.
         var trailAnnotations: AgentTrailAnnotations = .empty
-        /// Directly-cited analytics rows (#757) so previews can exercise
+        /// Directly-cited analytics rows so previews can exercise
         /// the record-only Timeline row without a live SSE stream.
         var recordCitations: [AgentTrailRecord] = []
     }

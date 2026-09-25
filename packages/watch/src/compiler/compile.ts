@@ -109,7 +109,7 @@ export interface ReachPolicy {
    * about a condition that never occurred; one that covered a tenth does not,
    * and the gap between those is where a correct watch gets told to change.
    */
-  readonly minWindowFraction: number; // See #1991 — why a replay falls short at all.
+  readonly minWindowFraction: number; // See #71 — why a replay falls short at all.
 }
 
 /**

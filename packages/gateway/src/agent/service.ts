@@ -177,14 +177,14 @@ export interface AgentServiceDeps {
    * Builds a fresh backend for a capability role — replay backends carry
    * state, so a new one is built per session. Returns `null` when the role
    * has no model assigned; the caller then inherits the parent agent's
-   * backend (graceful degrade, never a hard refusal — see #748). The main
+   * backend (graceful degrade, never a hard refusal). The main
    * agent session always resolves the `agent` role, which must be non-null
    * for the harness to be enabled at all.
    */
   backendFactory: (role: CapabilityRole) => ChatBackend | null;
   ports: ToolPorts;
   /**
-   * Sub-agent orchestration config (#748). When omitted, the `spawn_subagent`
+   * Sub-agent orchestration config. When omitted, the `spawn_subagent`
    * tool is not wired — a plain agent with no nesting. When present, the
    * service builds a {@link SubagentService} and exposes the subagent port to
    * the parent agent's tool set.
@@ -204,7 +204,7 @@ export interface AgentServiceDeps {
      */
     treeTokenBudget?: number;
     /**
-     * Optional Deep Research loop tuning (#748). Overrides the orchestrator's
+     * Optional Deep Research loop tuning. Overrides the orchestrator's
      * fan-out / avoidable-spawn defaults. Omit for the built-in defaults.
      */
     deepResearch?: Partial<import("./deep-research.js").DeepResearchCaps>;
@@ -867,23 +867,23 @@ export class AgentService {
    * `forgetSession` on it when a session is evicted.
    */
   private readonly planStore: PlanStore;
-  /** Sub-agent orchestrator (#748). Undefined when sub-agents aren't wired. */
+  /** Sub-agent orchestrator. Undefined when sub-agents aren't wired. */
   private readonly subagentService: SubagentService | undefined;
   /**
-   * Deep Research orchestrator (#748). Drives the explicit
+   * Deep Research orchestrator. Drives the explicit
    * plan→fan-out→verify→synthesis loop on top of the sub-agent port. Undefined
    * when sub-agents aren't wired (the loop has nothing to fan out onto).
    */
   private readonly deepResearchService: DeepResearchService | undefined;
   /**
-   * Live child sessions keyed by parent session id (#748). Used for recursive
+   * Live child sessions keyed by parent session id. Used for recursive
    * eviction: when a parent is evicted, every child registered here is
    * cancelled and dropped. Children never enter the main `sessions` map (they
    * have no caller, no idle timer, no transcript persistence).
    */
   private readonly childSessions = new Map<string, Map<string, () => void>>();
   /**
-   * Nesting depth per session id (#748). Parent sessions are depth 0; a child
+   * Nesting depth per session id. Parent sessions are depth 0; a child
    * is its parent's depth + 1. Drives the depth-cap check.
    */
   private readonly sessionDepth = new Map<string, number>();
@@ -958,7 +958,7 @@ export class AgentService {
     // `spawn_subagent` tool can be wired into the parent agent's tool set.
     // The port's closures call back into `this` at runtime (well after
     // construction), so capturing `this` here is safe. Children inherit the
-    // depth check via `sessionDepth`. (#748)
+    // depth check via `sessionDepth`.
     let subagentPort: SubagentPort | undefined;
     if (deps.subagents) {
       const host = this.buildSubagentHost(deps);
@@ -984,7 +984,7 @@ export class AgentService {
               throw new SubagentPortError("subagent_tree_token_budget_exhausted", err.message);
             }
             // An unknown specialist name must fail cleanly so the parent model
-            // adapts — never a silent generic run (#748).
+            // adapts — never a silent generic run.
             if (err instanceof UnknownSpecialistError) {
               throw new SubagentPortError("subagent_unknown_specialist", err.message);
             }
@@ -993,7 +993,7 @@ export class AgentService {
         },
         join: async (input) => this.subagentService!.join(input),
       };
-      // The Deep Research loop (#748) drives the same sub-agent port, plus the
+      // The Deep Research loop drives the same sub-agent port, plus the
       // document port for its deterministic citation-verify pass. The orchestration
       // is explicit code — entered only via the per-message `deepResearch` flag.
       this.deepResearchService = new DeepResearchService({
@@ -1080,7 +1080,7 @@ export class AgentService {
   }
 
   /**
-   * Recursively evict every child session registered under a parent (#748):
+   * Recursively evict every child session registered under a parent:
    * cancel each child's in-flight turn and drop its depth + child-map entries.
    * Children are in-memory only — no transcript persistence, no idle timers —
    * so this is just cancel + forget. Called when the parent is evicted.
@@ -2114,7 +2114,7 @@ export class AgentService {
       const swap = entry.pendingProfileSwap;
       this.applyProfileSwap(sessionId, entry, swap.profile, swap.systemPrompt);
     }
-    // Explicit-only Deep Research entry (#748). The loop runs ONLY when the
+    // Explicit-only Deep Research entry. The loop runs ONLY when the
     // caller set the per-message flag (no implicit auto-gating). When the
     // sub-agent stack isn't wired we fall through to a normal turn rather than
     // refuse — the loop has nothing to fan out onto.
@@ -2614,7 +2614,7 @@ export class AgentService {
   }
 
   /**
-   * Run the explicit Deep Research loop (#748) as this session's turn:
+   * Run the explicit Deep Research loop as this session's turn:
    * plan → parallel fan-out → citation-verify → cited synthesis. The loop's
    * sub-agent transcripts surface live on the `agent.subagent.*` stream
    * (emitted by the SubagentService); here we frame the parent turn —
@@ -2636,7 +2636,7 @@ export class AgentService {
   }
 
   /**
-   * Run the Deep Research loop and resolve to its STRUCTURED result (#748).
+   * Run the Deep Research loop and resolve to its STRUCTURED result.
    * Exposed for tests that assert on the honest `stoppedReason`, the merged
    * final answer citation set, and the avoidable-spawns metric directly — the streamed turn
    * surfaces only the rendered report. Not on the wire path.
@@ -3257,7 +3257,7 @@ export class AgentService {
       return;
     }
     if (entry.timer) clearTimeout(entry.timer);
-    // Recursive eviction (#748): a parent's child sub-agent sessions die with
+    // Recursive eviction: a parent's child sub-agent sessions die with
     // it — cancel each child's in-flight turn and forget its state.
     this.evictChildren(sessionId);
     this.subagentService?.forgetTree(sessionId);
@@ -3283,7 +3283,7 @@ export class AgentService {
    */
   async dispose(): Promise<void> {
     this.disposing = true;
-    // Cancel every live child sub-agent first (#748) so a long child turn
+    // Cancel every live child sub-agent first so a long child turn
     // doesn't keep the loop alive past SIGTERM.
     for (const [, set] of this.childSessions) {
       for (const [, cancel] of set) {

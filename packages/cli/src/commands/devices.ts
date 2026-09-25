@@ -1790,8 +1790,8 @@ function expandHomePath(p: string): string {
 }
 
 /**
- * Parse + validate one comma-separated self-info field for `devices pair`
- * (#284). Splits on commas, trims, drops blanks, then runs each survivor
+ * Parse + validate one comma-separated self-info field for `devices pair`.
+ *Splits on commas, trims, drops blanks, then runs each survivor
  * through `validate` (`normalizeEmail` / `normalizePhone`). Returns the
  * normalized list, or a `{ error }` describing the first entry that failed
  * — the caller turns that into a re-prompt (interactive) or a `CliError`

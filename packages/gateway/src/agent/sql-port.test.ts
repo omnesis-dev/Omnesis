@@ -3,7 +3,7 @@
 
 /**
  * Coverage for `createGatewaySqlPort` — the `run_sql` tool's gateway adapter
- * (#757, sub-issue b):
+ * (sub-issue b):
  *   - per-row record identity, surfaced ONLY when the projection exposes
  *     exactly one known table's full primary key, and round-tripping through
  *     `analyticsRowKey` / `parseAnalyticsRowKey`;

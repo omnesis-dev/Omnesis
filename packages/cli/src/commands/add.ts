@@ -915,7 +915,7 @@ async function recoverFromMissingCredentials(
 
   const ok = await runCredentialsWizard(entry, { deviceId: ctx.deviceId, sameHost });
   if (!ok) {
-    // Known bug: #2705 — declining the wizard still exits 0.
+    // Known bug: #100 — declining the wizard still exits 0.
     console.error(`${c.red}Aborting — credentials not set up.${c.reset}`);
     return false;
   }
@@ -1171,7 +1171,7 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
       }
       // No `link-widget` branch: a hosted client-rendered widget (Plaid Link,
       // …) has no terminal-renderable step, so those sources are added from the
-      // portal / iOS, which render the `widget` auth event. See #926.
+      // portal / iOS, which render the `widget` auth event.
 
       // Try the auth flow. If the auth subprocess refuses for missing creds
       // (e.g. they were cleared between the pre-flight wizard and now, or
@@ -1297,7 +1297,7 @@ async function addSingleSource(sourceArg: string, ctx: AddContext, deps: AddDeps
   // backup) advertise it via the generic `historyImport` descriptor capability.
   // Point the user at the one-time import so they don't assume live sync is all
   // there is. Wording comes from the source's own descriptor — no per-source
-  // knowledge here. See #588.
+  // knowledge here.
   if (descriptor.historyImport) {
     const hi = descriptor.historyImport;
     console.log(`\n${c.cyan}💡 ${hi.label}${c.reset} — ${c.dim}${hi.description}${c.reset}`);

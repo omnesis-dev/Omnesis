@@ -247,7 +247,7 @@ export function createServer(
     /** Receives the started status cache so the composition root can stop it before closing DBs. */
     onStatusCache?: (cache: StatusCache) => void;
     /**
-     * Low-disk write guard (#15). Free MB on the gateway DB volume below
+     * Low-disk write guard. Free MB on the gateway DB volume below
      * which `DocumentService` rejects ingestion with 507. Resolved by
      * `index.ts` from `runtime-settings.ts` (env > config > default 500).
      * Omitted in tests → guard inert.
@@ -349,7 +349,7 @@ export function createServer(
      * task's idle backoff. `fastApplyMergeRules` goes further: it
      * recomputes + applies the equivalences at the calling request's
      * priority, so a human-issued merge lands before the response even
-     * when the background lanes are congested (#1377).
+     * when the background lanes are congested.
      */
     peopleControl?: {
       wakeMergeEval?: () => void;
@@ -403,7 +403,7 @@ export function createServer(
     probeBackend?: (
       key: string,
     ) => Promise<{ status: "ok" | "reachable" | "unreachable"; models: string[]; reason?: string }>;
-    /** Behaviorally verify one (backend, model, role) — used by the verify route (#508). */
+    /** Behaviorally verify one (backend, model, role) — used by the verify route. */
     verifyModel?: (
       key: string,
       model: string,
@@ -455,12 +455,12 @@ export function createServer(
      */
     ocrService?: import("./ocr/index.js").OcrService;
     /**
-     * Online-backup service (#57). When provided, mounts the
+     * Online-backup service. When provided, mounts the
      * `/admin/backup*` routes.
      */
     backupService?: import("./http/services/BackupService.js").BackupService;
     /**
-     * Portable data-export service (#57). When provided, mounts the
+     * Portable data-export service. When provided, mounts the
      * `/admin/export*` routes.
      */
     exportService?: import("./http/services/ExportService.js").ExportService;
@@ -578,7 +578,7 @@ export function createServer(
   // CORS — mounted before onError so it answers preflight even for
   // unauthenticated requests AND so CORS headers are present on error
   // responses. Reads live config through a thunk (off when unset, so a
-  // createServer without a configStore is simply inert). See #61.
+  // createServer without a configStore is simply inert).
   app.use(
     "*",
     corsMiddleware(() => opts?.configStore?.get().gateway?.cors),
@@ -728,7 +728,7 @@ export function createServer(
     sourceDataRemoval,
     indexerWake: opts?.indexerControl?.wake,
     onDocumentsUpserted: opts?.onDocumentsUpserted,
-    // Low-disk ingestion guard (#15). Inert unless both the DB path and a
+    // Low-disk ingestion guard. Inert unless both the DB path and a
     // threshold are wired (production always wires both; most tests omit).
     gatewayDbPath: dbPath,
     minFreeDiskBytes:
@@ -983,7 +983,7 @@ export function createServer(
 
   // Per-token / per-endpoint access logging — runs after auth +
   // request-context so `c.get("auth")` is populated. Off by default;
-  // bails cheaply when unset. See #61.
+  // bails cheaply when unset.
   app.use(
     "*",
     auditMiddleware(() => opts?.configStore?.get().gateway?.audit),
@@ -1282,13 +1282,13 @@ export function createServer(
   // /db-size — registered between portal and admin in the original.
   mountDbSizeRoute(app, { dbPath });
 
-  // Online backup (#57). Mounted only when the gateway wired a service
+  // Online backup. Mounted only when the gateway wired a service
   // (production); route tests inject their own.
   if (opts?.backupService) {
     mountBackupRoutes(app, { backupService: opts.backupService });
   }
 
-  // Portable data export (#57). Same wiring contract as backup.
+  // Portable data export. Same wiring contract as backup.
   if (opts?.exportService) {
     mountExportRoutes(app, { exportService: opts.exportService });
   }

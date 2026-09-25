@@ -55,7 +55,7 @@ async function handleInit(init: CpuInit): Promise<void> {
     state = { heartbeatInterval, shuttingDown: false };
 
     // Yield CPU to real-time work (main-loop reads, writer, embedder) under
-    // contention — this pool is background compute only. See #199 (Lever 3).
+    // contention — this pool is background compute only.
     const nice = deprioritizeBackgroundWorker(init.backgroundWorkerNice, "cpu", (m) =>
       log("warn", "cpu-worker", m),
     );

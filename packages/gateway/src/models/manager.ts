@@ -17,7 +17,7 @@
  *     in ConfigChangeOrchestrator detects the change and orchestrates
  *     the wipe-and-reindex (embedder) or hot-reload (agent).
  *   - Browse HuggingFace. Only bundled catalog ids are installable
- *     today; sideloading and HF browse are planned (see #241).
+ *     today; sideloading and HF browse are planned (see #21).
  *
  * This split keeps the manager small and lets it be tested without a
  * running indexer or search pipeline.

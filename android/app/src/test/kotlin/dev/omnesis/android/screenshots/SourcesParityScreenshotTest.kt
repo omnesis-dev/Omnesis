@@ -163,7 +163,7 @@ class SourcesParityScreenshotTest {
             paused = false, count = 17_421, unit = "messages", activityAgo = null,
             noticeGroups = listOf(NoticeGroup("studio-desktop", listOf(failedNotice))),
         ),
-        // Forward-looking consent expiry (#927): amber "expiring" pill, and a warning
+        // Forward-looking consent expiry: amber "expiring" pill, and a warning
         // notice beside the host instead of a line of text.
         SourceRowUi(
             sourceId = "bank:acct-0042", label = "Bank", accountId = "acct-0042",
@@ -317,7 +317,7 @@ class SourcesParityScreenshotTest {
         percentIndexed = null, progressPercent = null, progressMessage = null,
     )
 
-    // Forward-looking consent expiry (#927): amber pill, and the gateway's warning
+    // Forward-looking consent expiry: amber pill, and the gateway's warning
     // notice beside the host device.
     private fun detailExpiring() = SourceDetailUi(
         sourceId = "bank:acct-0042", label = "Bank", accountId = "acct-0042",

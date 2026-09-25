@@ -338,7 +338,7 @@ export async function runBootstrapEnqueuePass(
   // Mark-at-enqueue so the next pass never re-selects these docs, then bump the
   // day's spend counter. Marker/counter LAST — a crash before them replays the
   // pass and the per-doc dedupe keys fold the re-enqueued rows.
-  // Known gap: #2060 — a terminally FAILED run leaves the marker set, so the
+  // Known gap: a terminally FAILED run leaves the marker set, so the
   // document is never re-admitted (permanent backfill hole on provider outages).
   await deps.writeGate.markDocsBootstrapProcessed(
     batch.map((r) => r.docId),

@@ -75,7 +75,7 @@ export function GraphTimelinePanel(props) {
   const { documentId, inboundPage, outboundPage, nearDupPage } = props;
   const [tab, setTab] = useState("graph");
   const rows = computeGraphRows(props);
-  // Cross-store `same-entity` edges (#450) come from the graph walker, not the
+  // Cross-store `same-entity` edges come from the graph walker, not the
   // document-detail props, so fetch them separately. An activity / event /
   // transaction document may have ONLY this edge, so it counts toward the
   // panel's visible-when-non-empty decision.
@@ -131,7 +131,7 @@ export function GraphTimelinePanel(props) {
 }
 
 /**
- * Fetch this document's cross-store `same-entity` rows (#450) from the graph
+ * Fetch this document's cross-store `same-entity` rows from the graph
  * walker (`GET /documents/:id/graph`). One shallow hop is enough — the bound
  * analytics row is a direct neighbour. Returns [] on error / while loading so
  * the panel degrades to its document-only edges.
@@ -428,7 +428,7 @@ function OutboundDocRow({ link }) {
   `;
 }
 
-// ─── Same-entity rows (cross-store doc ↔ DuckDB analytics row, #450) ──
+// ─── Same-entity rows (cross-store doc ↔ DuckDB analytics row) ──
 
 function BoundRowRow({ vertex }) {
   const table = vertex.tableDisplayName || vertex.tableName || "analytics row";

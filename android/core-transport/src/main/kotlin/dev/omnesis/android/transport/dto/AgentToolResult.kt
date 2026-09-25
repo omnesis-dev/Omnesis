@@ -81,7 +81,7 @@ sealed interface AgentToolResult {
     ) : AgentToolResult
 
     /**
-     * Result of a successful `cite_record` tool call (#757) — the structured twin of
+     * Result of a successful `cite_record` tool call — the structured twin of
      * [AnnotateRecorded]: the agent recorded that a single DuckDB analytics row materially
      * informed its answer. The gateway has already derived every display string from the
      * table's declared record-display contract, so a client renders these verbatim and never

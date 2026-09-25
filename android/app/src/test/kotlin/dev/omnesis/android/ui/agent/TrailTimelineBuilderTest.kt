@@ -17,7 +17,7 @@ import org.junit.Test
 /**
  * Unit cover for [AgentTimelineBuilder]. The timeline is built PURELY from what the agent
  * explicitly referenced — `annotate` citations (→ document rows) and `cite_record` records
- * (#757, → record-only rows); a graph walk's raw output never populates it. All fixtures are
+ * (→ record-only rows); a graph walk's raw output never populates it. All fixtures are
  * invented (privacy rule): the `demo-fitness` Morning-run workout the portal and iOS renderers
  * use, never corpus data.
  */
@@ -85,7 +85,7 @@ class TrailTimelineBuilderTest {
 
     @Test
     fun directly_cited_record_synthesises_a_record_only_event() {
-        // A record reached via `cite_record` (#757) appears as a record-only event keyed on its
+        // A record reached via `cite_record` appears as a record-only event keyed on its
         // recordKey, carrying no doc, at its semanticTime.
         val out = AgentTimelineBuilder.buildUnifiedTimeline(
             citations = emptyList(),

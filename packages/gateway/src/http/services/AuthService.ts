@@ -144,7 +144,7 @@ export class AuthService {
       const result = await createOrReplaceDeviceForPair(pending.name, "portal", portalCaps);
       if ("error" in result) return { ok: false, error: result.error, status: result.status };
       const device = result.device;
-      // #284 — apply any self annotation staged on the pairing code.
+      // Apply any self annotation staged on the pairing code.
       await applyPendingSelfInfo(w, device.id, pending);
       const minted = await w.createToken(device.id, pending.scopes, "paired");
       tokenId = minted.id;

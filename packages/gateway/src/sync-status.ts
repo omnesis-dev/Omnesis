@@ -71,7 +71,7 @@ export type DisplaySyncState =
   | "background-access-missing"
   | "unavailable"
   /**
-   * Forward-looking consent-expiry warning (#927). A purely DERIVED state — it
+   * Forward-looking consent-expiry warning. A purely DERIVED state — it
    * is never a persisted `SourceSyncState`, only computed by
    * `deriveDisplayStatus` from the persisted `consent_expires_at` when `now`
    * enters the lead window before the deadline AND the source is otherwise
@@ -176,7 +176,7 @@ export interface DisplaySyncStatus {
   lastSyncAt: string | null;
   /**
    * Forward-looking consent / authorization deadline (ISO 8601) the source last
-   * reported, when known (#927). Present whenever a deadline is stored —
+   * reported, when known. Present whenever a deadline is stored —
    * independent of `state`, so a healthy `synced` source can still surface "your
    * connection expires on <date>". When `state === "auth-expiring"` it is the
    * deadline driving the warning. `undefined` means no known deadline.
@@ -442,7 +442,7 @@ export function isRateLimitedMessage(message: string | undefined): boolean {
 
 /**
  * Lead window before a consent deadline in which a healthy source flips to the
- * forward-looking `auth-expiring` warning (#927). 14 days gives the operator
+ * forward-looking `auth-expiring` warning. 14 days gives the operator
  * comfortable time to re-consent through the Link widget before the connection
  * actually lapses into the terminal `needs-auth` state. Generic across every
  * open-banking aggregator — the deadline itself is source-reported; only the
@@ -595,7 +595,7 @@ export function deriveDisplayStatus(
     state = "idle";
   }
 
-  // Forward-looking consent-expiry (#927). Layered AFTER the reactive chain so it
+  // Forward-looking consent-expiry. Layered AFTER the reactive chain so it
   // only ever upgrades an otherwise-healthy source (`synced` / `idle`) — it never
   // masks `syncing`, `paused`, the terminal `needs-auth`/`error`, or a
   // self-healing `rate-limited`. A purely derived, non-persisted display state:

@@ -9,7 +9,7 @@ import {
   diskUsageReadout,
 } from "./index-hero.js";
 
-// Status two-readout (epic #1011): the portal must render the gateway's neutral
+// Status two-readout: the portal must render the gateway's neutral
 // `indexVersions` payload so that a graceful embedder swap shows as a separate
 // upgrade-in-flight while the active index keeps reading complete. These assert
 // the rendering helper picks the right framing and never produces NaN/broken %.

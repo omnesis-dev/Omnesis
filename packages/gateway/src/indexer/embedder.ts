@@ -74,7 +74,7 @@ export class LlamaCppEmbedder implements Embedder {
   private maxInputChars: number;
   /**
    * Task-specific text prefixes prepended at embed-time. Resolved at boot
-   * from the embedder's encoding (#718): a `text-prefix` encoding maps to
+   * from the embedder's encoding: a `text-prefix` encoding maps to
    * its query/document strings; `none` and `api-param` map to the no-op
    * (local GGUF has no HTTP body, so api-param can't apply here). See
    * `embedder-prefixes.ts`. The default is the empty-prefix no-op so callers
@@ -96,7 +96,7 @@ export class LlamaCppEmbedder implements Embedder {
       /** Hard truncation bound on input length, chars. */
       maxInputChars?: number;
       /**
-       * Per-model retrieval encoding (#718). Only the `text-prefix` branch
+       * Per-model retrieval encoding. Only the `text-prefix` branch
        * has any effect locally; `none`/`api-param` are no-ops (local GGUF
        * has no request body to carry an API param). Takes precedence over
        * `prefixes`.
@@ -256,7 +256,7 @@ export class LlamaCppEmbedder implements Embedder {
 }
 
 /**
- * Reduce a per-model encoding (#718) to the text prefixes a local GGUF can
+ * Reduce a per-model encoding to the text prefixes a local GGUF can
  * apply. Only the `text-prefix` branch maps to actual prefixes; `none` and
  * `api-param` (which local embedders can't carry) become the no-op. An
  * explicit `encoding` wins over the legacy `prefixes` option.

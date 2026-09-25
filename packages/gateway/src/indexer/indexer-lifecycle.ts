@@ -35,7 +35,7 @@ import type { BackgroundJobsRegistry } from "../background-jobs/index.js";
 import type { ResolvedRuntimeSettings } from "../runtime-settings.js";
 
 /**
- * How an embedder swap transitions from the old model to the new one (#1011):
+ * How an embedder swap transitions from the old model to the new one:
  *
  *   - `graceful` (default): the active index keeps serving every query under the
  *     old model while a second index is rebuilt under the new model in the
@@ -161,7 +161,7 @@ export interface IndexerLifecycleDeps {
    * The shared writable `index.db` handle (the same one the read registry
    * reads from). Used on the main thread — never while the indexer worker is
    * the active writer — to resolve the active index generation's usearch path
-   * at boot and to drive the graceful double-buffered embedder swap (#1011).
+   * at boot and to drive the graceful double-buffered embedder swap.
    */
   indexDb: import("better-sqlite3").Database;
   /** Config dir → `usearchPathForVersion(configDir, …)`. */
@@ -225,7 +225,7 @@ export class IndexerLifecycle {
   // (ConfigChangeOrchestrator's embed-swap detection and POST
   // /admin/index/rebuild) funnel through applyEmbedSwap; a swap arriving while
   // one runs abandons the in-flight build and starts a fresh one for the newest
-  // model rather than racing or being rejected (epic #1011, bounded-to-two).
+  // model rather than racing or being rejected (bounded-to-two).
   private embedSwapInFlight: Promise<void> | null = null;
 
   // Abort handle for the in-flight graceful build, or null when no build is
@@ -247,7 +247,7 @@ export class IndexerLifecycle {
   // decide its pre-flip quiesce: when the old query embedder lives in the worker,
   // the worker is PAUSED (kept alive, still answering embedQuery) instead of
   // disposed, so search stays live under the old model through the quiesce +
-  // catch-up + flip (epic #1011, graceful-for-local). When the old query
+  // catch-up + flip (graceful-for-local). When the old query
   // embedder is an independent HTTP client, the worker is simply disposed — query
   // embedding is unaffected by the worker's lifecycle.
   private _queryEmbedderIsWorker = false;
@@ -339,7 +339,7 @@ export class IndexerLifecycle {
   }
 
   /**
-   * Resolve the per-model retrieval encoding (#718) for an embedder. Single
+   * Resolve the per-model retrieval encoding for an embedder. Single
    * producer used by both the boot path (`startIndexer`) and the graceful
    * swap's generation builder so the new generation is embedded with the same
    * document-side encoding the steady-state worker will use after the flip.
@@ -543,7 +543,7 @@ export class IndexerLifecycle {
     // SINGLE shared producer (`canonicalEmbedIdentity`) so the stamp the
     // worker writes here matches, byte-for-byte, the one the swap path
     // (`runEmbedSwap`) writes — no backend-prefixed-vs-bare or
-    // native-vs-effective drift that would trigger a spurious re-wipe (#698).
+    // native-vs-effective drift that would trigger a spurious re-wipe.
     const { name: modelName, dim: embedDim } = canonicalEmbedIdentity(embedResolved, {
       httpServedModel: httpProbeResult?.model,
       httpNativeDim: httpProbeResult?.dim,
@@ -555,7 +555,7 @@ export class IndexerLifecycle {
     this._modelInfo.path = modelPath;
     this._modelInfo.present = embedResolved.kind === "http" || existsSync(modelPath);
 
-    // Crash-safe resume (epic #1011). A `building` generation present at boot
+    // Crash-safe resume. A `building` generation present at boot
     // means a graceful rebuild was in flight when the gateway last stopped. The
     // active generation is untouched and the read registry is already serving it
     // (search is live), so instead of abandoning the half-built generation and
@@ -616,7 +616,7 @@ export class IndexerLifecycle {
         ? embedResolved.catalogId
         : "";
 
-    // Resolve the per-model retrieval encoding (#718). Gated on
+    // Resolve the per-model retrieval encoding. Gated on
     // `search.embedderPrefixes.enabled`:
     //   - ON  → resolve per-model (family text-prefix, provider api-param, or
     //           symmetric `none`) via `resolveEmbedderEncoding`.
@@ -631,7 +631,7 @@ export class IndexerLifecycle {
       );
     } else {
       this.log.info(
-        `Embedder encoding RESOLVED (#718): model=${embedId || modelName} kind=${encoding.kind} ${describeEncoding(encoding)}`,
+        `Embedder encoding RESOLVED: model=${embedId || modelName} kind=${encoding.kind} ${describeEncoding(encoding)}`,
       );
     }
 
@@ -666,7 +666,7 @@ export class IndexerLifecycle {
       // Version-aware: the worker writes the ACTIVE generation's own file. For
       // version 1 (and the pre-versioning fallback) that is the legacy
       // `index.usearch`; after a double-buffered swap flips to generation N it
-      // is `index-N.usearch` (epic #1011). The read registry serves the same
+      // is `index-N.usearch`. The read registry serves the same
       // active generation, so writer and reader always agree on the file.
       usearchIndexPath: usearchPathForVersion(
         this.deps.configDir,
@@ -808,7 +808,7 @@ export class IndexerLifecycle {
    *   - POST /admin/index/rebuild via indexerControl.rebuild (manual
    *     bug-recovery rebuild under the current model).
    *
-   * Two modes, graceful by default (epic #1011). `graceful` keeps the active
+   * Two modes, graceful by default. `graceful` keeps the active
    * generation serving every query under the old model while a new generation
    * is built under the new model and atomically flipped (zero downtime).
    * `hard` is a deliberate immediate cutover: stop using the old model for both
@@ -818,7 +818,7 @@ export class IndexerLifecycle {
    * `hard` arrives only through `POST /admin/index/rebuild { mode: "hard" }`,
    * driven by the portal/CLI swap-confirm flow.
    *
-   * Newest-wins, bounded to two (epic #1011): a swap arriving while one is
+   * Newest-wins, bounded to two: a swap arriving while one is
    * already in flight ABANDONS the in-flight build (the active generation keeps
    * serving throughout) and starts a fresh build for the newest model AND its
    * newest mode. A burst of overlapping swaps coalesces onto a single follow-up
@@ -882,7 +882,7 @@ export class IndexerLifecycle {
   }
 
   /**
-   * Launch a crash-safe resume of an interrupted graceful build (epic #1011) as
+   * Launch a crash-safe resume of an interrupted graceful build as
    * the in-flight swap, with a fresh abort handle — mirroring {@link launchSwap}
    * so a newer embedder swap arriving mid-resume aborts it and coalesces a
    * follow-up through the SAME bounded-to-two / newest-wins path as any other
@@ -984,7 +984,7 @@ export class IndexerLifecycle {
     // Canonical identity + dimension — the SAME producer the fresh worker
     // uses in startIndexer. Stamping with these values means the worker's
     // boot-time mismatch check sees an exact match and does NOT trigger a
-    // spurious second wipe (#698 B1/B2).
+    // spurious second wipe.
     const { name: modelLabel, dim: newDim } = canonicalEmbedIdentity(resolved, {
       httpServedModel: httpProbe?.model,
       httpNativeDim: httpProbe?.dim,
@@ -996,7 +996,7 @@ export class IndexerLifecycle {
     await this.retireStaleBootAfterSwapValidation();
     if (signal.aborted) return;
 
-    // Graceful (double-buffered) swap (epic #1011): build a new generation
+    // Graceful (double-buffered) swap: build a new generation
     // while the active one keeps serving, then atomically flip. Eligible when
     // this is a graceful-mode swap, there IS a complete active generation to keep
     // serving, the corpus is non-empty, and the NEW (target) embedder is HTTP or
@@ -1053,7 +1053,7 @@ export class IndexerLifecycle {
     // fall-through (first build / empty corpus, where there is no live index to
     // protect) clearing it is still correct, since leaving the old-dimension
     // embedder pointed at a wiped/new-dimension index would return 0/mismatched
-    // results (#698-class). Search degrades to BM25-only for the documented
+    // results (class). Search degrades to BM25-only for the documented
     // downtime; the fresh worker re-attaches the new-model query embedder at the
     // new dimension.
     this.deps.searchPipeline.setEmbedder(undefined);
@@ -1078,8 +1078,8 @@ export class IndexerLifecycle {
     // Delete the stale on-disk usearch file. It was built at the OLD model's
     // dimension; leaving it in place lets the fresh worker `load()` an
     // old-dim index and lets the main-thread read handle `view()` a
-    // stale-dimension file, returning zero/mismatched results until a restart
-    // (#698 B3). Removing it forces the worker to start an empty index at the
+    // stale-dimension file, returning zero/mismatched results until a restart.
+    // Removing it forces the worker to start an empty index at the
     // new dimension and the reader to re-view only once a new-dim file exists.
     const usearchPath = usearchPathForVersion(
       this.deps.configDir,
@@ -1107,7 +1107,7 @@ export class IndexerLifecycle {
   }
 
   /**
-   * Graceful double-buffered embedder swap (epic #1011) — the headline
+   * Graceful double-buffered embedder swap — the headline
    * capability. The currently-active generation keeps serving every vector
    * search unchanged while a second generation is rebuilt under the new model;
    * a single atomic flip then makes the new generation serve, with no gateway
@@ -1148,7 +1148,7 @@ export class IndexerLifecycle {
    * worker takes over — and is disposed only after that handover.
    *
    * On a build failure — or an abandon, when a newer embedder swap arrives mid-
-   * build and aborts `signal` (epic #1011, bounded-to-two) — the building
+   * build and aborts `signal` (bounded-to-two) — the building
    * generation is dropped (no flip), the untouched active generation keeps
    * serving, and the steady-state worker is restarted on it (or simply left
    * running if the failure preceded the quiesce). The abort is checked only in
@@ -1158,7 +1158,7 @@ export class IndexerLifecycle {
    * or the flip commits and the newer swap then rebuilds on top of it. There is
    * never a half-flip.
    *
-   * Doubles as the crash-safe RESUME path (epic #1011): with `opts.resumeVersion`
+   * Doubles as the crash-safe RESUME path: with `opts.resumeVersion`
    * set the method continues an existing `building` generation found at boot
    * instead of allocating a fresh one — it skips the row creation and, instead of
    * the build → quiesce → catch-up dance, runs a single {@link
@@ -1190,7 +1190,7 @@ export class IndexerLifecycle {
     // that we took the pause branch so the abandon/failure path can resume it.
     const oldQueryViaWorker = this._queryEmbedderIsWorker;
     let pausedForQuiesce = false;
-    // Crash-safe resume (epic #1011): when `resumeVersion` is set we continue an
+    // Crash-safe resume: when `resumeVersion` is set we continue an
     // existing `building` generation that was in flight at the last shutdown,
     // re-using its row + its durably-staged vectors — never creating a fresh
     // generation and never re-embedding the chunks already done. Otherwise this
@@ -1251,7 +1251,7 @@ export class IndexerLifecycle {
         await builder.resume();
       } else {
         await builder.build();
-        // 2. Quiesce ingest, then fan-out catch-up (#1025). Freezing the
+        // 2. Quiesce ingest, then fan-out catch-up. Freezing the
         //    `chunks` corpus lets the single catch-up pass fully converge so the
         //    flip is gap-free. This MUST happen before the pointer move (atomic
         //    flip / no blending) — never after.
@@ -1260,7 +1260,7 @@ export class IndexerLifecycle {
         //    we PAUSE it rather than dispose it: pause stops the indexing cycle
         //    (corpus frozen) but keeps the model loaded and embedQuery answering,
         //    so search stays live under the old model through the catch-up + flip
-        //    (epic #1011, graceful-for-local). The paused worker is disposed only
+        //    (graceful-for-local). The paused worker is disposed only
         //    AFTER the flip repoints query embedding to the new model. For an HTTP
         //    old model query embedding is an independent main-thread client, so
         //    the worker can just be disposed here.
@@ -1368,7 +1368,7 @@ export class IndexerLifecycle {
 
   /**
    * Construct the embedder that re-embeds the corpus into the new generation,
-   * chosen by the TARGET model's kind (epic #1011, mechanism 1):
+   * chosen by the TARGET model's kind (mechanism 1):
    *
    *   - HTTP target → a throttled main-thread {@link HttpEmbedder} (non-blocking
    *     network I/O; bounded so the bulk re-embed can't starve interactive search

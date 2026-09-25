@@ -997,7 +997,7 @@ export class AppleIMessageSource {
         } catch (err) {
           // A transient transcription-backend blip (gateway unreachable / 5xx)
           // fails the page so it retries — don't leave it unset as if the note
-          // were permanently untranscribable and advance the cursor (#680).
+          // were permanently untranscribable and advance the cursor.
           if (isTransientSyncError(err)) throw err;
           log.debug(
             `Failed to transcribe audio ${att.filename}: ${err instanceof Error ? err.message : String(err)}`,
@@ -1172,7 +1172,7 @@ export class AppleIMessageSource {
         } catch (err) {
           // Transient extraction-backend blip → fail the page so it retries,
           // rather than recording a permanent extraction failure and advancing
-          // the cursor past a file that would extract cleanly later (#680).
+          // the cursor past a file that would extract cleanly later.
           if (isTransientSyncError(err)) throw err;
           log.debug(
             `Failed to extract attachment ${filename}: ${err instanceof Error ? err.message : String(err)}`,

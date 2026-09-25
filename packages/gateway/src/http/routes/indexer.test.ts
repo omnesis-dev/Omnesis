@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * HTTP-level coverage for POST /admin/index/rebuild — the swap-mode contract
- * (#1011). The route carries the operator's graceful/hard choice from the
+ * HTTP-level coverage for POST /admin/index/rebuild — the swap-mode contract.
+ *The route carries the operator's graceful/hard choice from the
  * portal/CLI swap-confirm flow through to `indexerControl.rebuild(mode)`;
  * `applyEmbedSwap` itself is unit-tested in indexer-lifecycle.test.ts. Uses a
  * stub indexerControl that records the mode it was called with.

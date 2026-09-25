@@ -56,7 +56,7 @@ function edge(from: string, to: string, type: string, directed = true): Edge {
   return { from, to, type, directed };
 }
 /**
- * An `analytics-row` vertex with a derived record citation (#757), as the
+ * An `analytics-row` vertex with a derived record citation, as the
  * gateway trail port stamps onto it before building the timeline. `withRecord`
  * false simulates a row the gateway declined to resolve (timeless table / empty
  * semantic time) — it should never become a timeline entity.
@@ -729,7 +729,7 @@ describe("phraseForLinkType", () => {
   });
 });
 
-describe("buildTimeline — record citations (#757)", () => {
+describe("buildTimeline — record citations", () => {
   it("surfaces a record reachable from a seed with its identity + snapshot", () => {
     // A seed doc bound to its same-entity analytics row. The row resolved to a
     // record (it carries `.record`), so it surfaces on the trail.

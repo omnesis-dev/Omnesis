@@ -270,7 +270,7 @@ public enum HealthSchemas {
         ),
         // Each mindful session also mints a searchable summary document
         // whose externalId == this row's id — declare the 1:1 doc↔row
-        // same-entity edge (#640).
+        // same-entity edge.
         boundDocument: BoundDocumentSpec(externalIdColumns: ["id"])
     )
 
@@ -308,7 +308,7 @@ public enum HealthSchemas {
         ),
         // Each workout also mints a searchable summary document whose
         // externalId == this row's id — declare the 1:1 doc↔row
-        // same-entity edge (#640).
+        // same-entity edge.
         boundDocument: BoundDocumentSpec(externalIdColumns: ["id"])
     )
 
@@ -357,7 +357,7 @@ public enum HealthSchemas {
         record: RecordDisplaySpec(titleColumns: ["kind"], keyColumns: ["kind", "valence", "start_time"]),
         // Each mood log also mints a searchable summary document whose
         // externalId == this row's id — declare the 1:1 doc↔row
-        // same-entity edge (#640), same as workouts / mindful sessions.
+        // same-entity edge, same as workouts / mindful sessions.
         boundDocument: BoundDocumentSpec(externalIdColumns: ["id"])
     )
 

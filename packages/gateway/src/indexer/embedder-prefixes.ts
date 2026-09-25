@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Per-model retrieval encoding for embedding models (#718).
+ * Per-model retrieval encoding for embedding models.
  *
  * Embedding models express query/document asymmetry in one of three ways,
  * captured by the `EmbedderEncoding` union:
@@ -37,7 +37,7 @@
  * Some providers (native Gemini's `taskType`, Cohere's `input_type`) are
  * asymmetric but do NOT ride the OpenAI-compatible `{ model, input, …param }`
  * body shape, so they need a separate non-OpenAI client and are out of scope
- * here; see #718.
+ * here.
  *
  * Changing the document-side encoding for an already-indexed corpus puts the
  * corpus and future queries into different embedding spaces and silently tanks
@@ -50,7 +50,7 @@
 export type EmbedderFamily = "nomic" | "bge" | "mxbai" | "e5" | "qwen" | "unknown";
 
 /**
- * How a single embedder encodes the query/document distinction (#718).
+ * How a single embedder encodes the query/document distinction.
  *
  *   - `none` — symmetric; embed both sides identically.
  *   - `text-prefix` — prepend `query`/`document` to the text before embedding.
@@ -137,7 +137,7 @@ export function getEmbedderPrefixes(family: EmbedderFamily): EmbedderPrefixes {
 }
 
 /**
- * Resolve the retrieval encoding for an embedder (#718). Family-first: a
+ * Resolve the retrieval encoding for an embedder. Family-first: a
  * recognised open-model family carries its text-prefix regardless of which
  * provider serves it (an aggregator serving nomic still needs nomic's
  * prefixes, applied caller-side). Provider only matters as the api-param
@@ -153,7 +153,7 @@ export function getEmbedderPrefixes(family: EmbedderFamily): EmbedderPrefixes {
  * Gemini through the OpenAI-compat shim (`…/v1beta/openai/embeddings`) is
  * intentionally `none`: empirically the shim rejects `task_type` / `taskType`
  * / `extra_body` with HTTP 400. True query/document asymmetry on Gemini needs
- * the native `embedContent` API via a separate non-OpenAI client (#718).
+ * the native `embedContent` API via a separate non-OpenAI client.
  */
 export function resolveEmbedderEncoding(args: {
   /** Served model name (HTTP probe) or local catalogId. */

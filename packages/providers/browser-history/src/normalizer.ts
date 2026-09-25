@@ -105,7 +105,7 @@ export function buildDailyDocument(
 }
 
 /**
- * The `browsing-history → webpage` declared edges for one day document (#895).
+ * The `browsing-history → webpage` declared edges for one day document.
  * The day stays its own first-class `browsing-history` document; this emits one
  * `visited` edge per DISTINCT URL visited that day toward the canonical `webpage`
  * entity (source `web`), so the graph joins "I visited this page on this day" to

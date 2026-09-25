@@ -9,7 +9,7 @@ import Foundation
 public let photosHostedSourceContract = HostedSourceContract(sourceType: "photos", multiDeviceMode: .partitioned)
 
 /// `OmnesisSource` implementation for the on-device Photos & Screenshots
-/// source (#169). Push-only, documents-only (`tableName: nil` on every
+/// source. Push-only, documents-only (`tableName: nil` on every
 /// `SyncResult` — no analytics table): OCR + on-device analysis, never
 /// image bytes, ever leave the device.
 ///

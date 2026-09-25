@@ -24,7 +24,7 @@ export const sourcesCommand = defineCommand({
     description: "Manage data sources (admin scope)",
   },
   // Default to the listing when no subcommand is given.
-  // See #2704 — planned: a command to change a connected source's settings.
+  // See #99 — planned: a command to change a connected source's settings.
   subCommands: {
     list: sourcesListCommand,
     add: addCommand,

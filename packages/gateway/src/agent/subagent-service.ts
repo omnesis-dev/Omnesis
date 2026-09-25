@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * `SubagentService` — orchestrates nested {@link AgentSession}s (#748).
+ * `SubagentService` — orchestrates nested {@link AgentSession}s.
  *
  * It sits **beside** {@link AgentService}, not inside `AgentSession`: the
  * session stays a single-turn primitive ignorant of nesting, and all the

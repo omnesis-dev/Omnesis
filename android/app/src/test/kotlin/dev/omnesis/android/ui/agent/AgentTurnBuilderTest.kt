@@ -263,7 +263,7 @@ class AgentTurnBuilderTest {
         a.parts.forEach { assertNotNull((it as AgentPart.Tool).call.result) }
     }
 
-    // --- directly-cited records (#757) ---
+    // --- directly-cited records ---
 
     @Test
     fun state_from_rebuilds_records_from_cite_record_results() {

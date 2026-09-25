@@ -63,7 +63,7 @@ type KnownUrlPattern = { regex: string; idGroup?: number };
  * Collect the url-id pattern regexes declared by *every* source definition —
  * added or not. The gateway's link-extraction keep-gate keys on this full
  * known set so a link to a not-yet-added source is kept and resolves once
- * that source is added (#668), instead of being dropped permanently.
+ * that source is added, instead of being dropped permanently.
  *
  * Exported so both the production push (`SourceManager.pushKnownUrlPatterns`)
  * and the synthetic E2E harness derive the set the same way.
@@ -88,7 +88,7 @@ export function collectKnownUrlPatterns(
 /**
  * Collect the union of web hosts declared `ownedWebDomains` by *every* source
  * definition — added or not. The gateway serves this union so the
- * browser-capture source (#791) can skip any visited host already owned by a
+ * browser-capture source can skip any visited host already owned by a
  * dedicated source, instead of double-ingesting it.
  *
  * Entries are trimmed, lowercased, and de-duplicated. Exported so both the
@@ -320,7 +320,7 @@ export class SourceManager {
    * the link-extraction keep-gate so a link to a first-class source the
    * user hasn't added yet (e.g. a Notion URL before Notion is a source)
    * survives and resolves once that source is added and ingested, instead
-   * of being dropped permanently (#668).
+   * of being dropped permanently.
    *
    * Idempotent; safe to call repeatedly. Fire-and-forget at the call site —
    * the gateway falls back to the registered-pattern set if this fails.
@@ -340,7 +340,7 @@ export class SourceManager {
 
   /**
    * Push the union of every known source type's `ownedWebDomains` to the
-   * gateway, which serves it so the browser-capture source (#791) skips any
+   * gateway, which serves it so the browser-capture source skips any
    * visited host already owned by a dedicated source.
    *
    * Idempotent; safe to call repeatedly. Fire-and-forget at the call site —
@@ -460,7 +460,7 @@ export class SourceManager {
   }
 
   // ---------------------------------------------------------------------------
-  // Gateway-driven snapshot reconciliation (#166)
+  // Gateway-driven snapshot reconciliation
   // ---------------------------------------------------------------------------
 
   /**
@@ -742,7 +742,7 @@ export class SourceManager {
     }
     // The HTTP call succeeds with per-entry results; a rejected entry
     // (e.g. the account is already hosted by another collector — the
-    // gateway refuses the silent adoption, #1513) failed for good and must
+    // gateway refuses the silent adoption) failed for good and must
     // not become a local instance syncing a source this host doesn't own.
     // Entries that DID land have live gateway rows, so they are committed
     // locally like any successful add; only the rejected keys roll back,
@@ -857,7 +857,7 @@ export class SourceManager {
           // gateway-global (it names every source on every device), so an
           // unregistered same-provider key here is usually another
           // device's source — instantiating it would sync a source this
-          // host doesn't own (#1513), and the reconciler could never
+          // host doesn't own, and the reconciler could never
           // clean it up (it only sweeps registered keys).
           if (!this.registeredSourceKeys.has(key)) continue;
           const { sourceType, accountId: siblingAccount } = parseSourceKey(key);
@@ -977,7 +977,7 @@ export class SourceManager {
   }
 
   /**
-   * Run a source's one-time history import (#588) against its live instance —
+   * Run a source's one-time history import against its live instance —
    * single writer to that source's store. Throws if the source isn't running or
    * doesn't support importing.
    */
@@ -1273,7 +1273,7 @@ export class SourceManager {
     // Note: no mirror to `/admin/sources/:id` DELETE from here. The gateway
     // is authoritative — if `removeSources` runs, the deletion was either
     // initiated by the gateway (via `source.removed` WS command) or by the
-    // snapshot reconciler (#166). In both cases the gateway already knows.
+    // snapshot reconciler. In both cases the gateway already knows.
     // The collector's token is `read + write:*` on purpose; calling an admin
     // endpoint would only surface a 403.
 

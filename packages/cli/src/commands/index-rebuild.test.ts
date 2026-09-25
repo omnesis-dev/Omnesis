@@ -3,7 +3,7 @@
 
 /**
  * Contract guard for `omnesis index rebuild` — the swap-mode the command sends
- * to POST /admin/index/rebuild (#1011). Default is the graceful, zero-downtime
+ * to POST /admin/index/rebuild. Default is the graceful, zero-downtime
  * rebuild; `--hard` opts into the immediate cutover. Only the gateway
  * round-trip + spinner are mocked; the command body (arg parsing, JSON body) is
  * the real implementation.

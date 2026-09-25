@@ -4,7 +4,7 @@
 /**
  * Unit tests for `withDocIdRestriction` — the helper that keeps a possibly-huge
  * `document_id IN (…)` restriction under SQLite's 32766 bound-variable cap by
- * staging large sets into a TEMP table instead of an inline list (#581).
+ * staging large sets into a TEMP table instead of an inline list.
  */
 
 import { randomUUID } from "node:crypto";

@@ -550,7 +550,7 @@ struct AgentPartView: View {
                 || call.tool == "triggers_list"
                 || call.tool == "trigger_get"
                 || call.tool == "trigger_firings" {
-                // `cite_record` (#757) is silent inline like the panel-only
+                // `cite_record` is silent inline like the panel-only
                 // tools — the directly-cited row surfaces in the Citations
                 // drawer's Timeline and bumps the bubble's citation chip,
                 // never as an inline card. Reading a watch is silent for the
@@ -606,7 +606,7 @@ struct AgentPartView: View {
                 AgentToolCallView(call: call)
             }
         case .subagent(let card):
-            // A sub-agent (#748) the parent spawned — a compact live row with
+            // A sub-agent the parent spawned — a compact live row with
             // the researcher's title, status, usage, and reached sources.
             //
             // The card is a live in-flight marker. Once the parent turn ends,

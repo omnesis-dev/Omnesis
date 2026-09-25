@@ -16,7 +16,7 @@ extension URLSession: URLSessionLike {}
 /// Endpoints used:
 ///   - GET  `/health`                            health probe (no auth, no body)
 ///   - POST `/analytics/ingest`                  ingest structured records
-///   - POST `/documents`                         ingest summary documents (#640)
+///   - POST `/documents`                         ingest summary documents
 ///   - POST `/documents/delete`                  delete documents by natural key
 ///   - POST `/documents/reconcile`                whole-library snapshot deletion
 ///   - GET  `/sync-state/<sourceId>`             fetch a source's cursor
@@ -126,7 +126,7 @@ public final class GatewayClient: Sendable {
     }
 
     /// POST `/documents`. Upserts searchable summary documents bound 1:1
-    /// to analytics rows (#640). The plain (cursor-free) ingest endpoint —
+    /// to analytics rows. The plain (cursor-free) ingest endpoint —
     /// idempotent by `(providerId, sourceId, externalId)` upsert, and it
     /// neither advances a sync cursor nor reconcile-deletes, which matches
     /// the iOS buffered/out-of-order drain model (cursors are managed

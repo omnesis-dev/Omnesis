@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Worker thread for the WhatsApp history import (#588). Runs the CPU/IO-heavy
+ * Worker thread for the WhatsApp history import. Runs the CPU/IO-heavy
  * decrypt + parse off the collector's main loop so a large import never blocks
  * live sync; the parent merges the streamed batches into the store (keeping the
  * single-writer invariant). Cancellation is the parent calling `worker.terminate()`.

@@ -143,7 +143,7 @@ export interface OpenAIResponsesBackendOptions {
 }
 
 /**
- * A reasoning bound (`TurnInput.reasoning`) is not expressed here — see #1973.
+ * A reasoning bound (`TurnInput.reasoning`) is not expressed here — see #70.
  * This API takes an effort level rather than a token budget, so honouring the
  * bound means giving it a form both can carry.
  */

@@ -6,8 +6,7 @@
 // subpath exports (`@omnesis/core/protocol`, `/triggers`, `/config`,
 // `/sources`, `/people`, `/models`, `/terminal`, `/devices`); they
 // expose the same symbols with narrower per-domain surfaces. The
-// subpaths land via `package.json#exports`. See #384 for the
-// roadmap; the multi-package split (real `@omnesis/protocol`,
+// subpaths land via `package.json#exports`. The multi-package split (real `@omnesis/protocol`,
 // `@omnesis/config`, …) is the next increment after consumers
 // migrate.
 export {

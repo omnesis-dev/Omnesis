@@ -256,7 +256,7 @@ let state: {
   lastCycleHadWork: boolean;
   shuttingDown: boolean;
   /**
-   * Quiesced for a graceful embedder swap (epic #1011). While true the three
+   * Quiesced for a graceful embedder swap. While true the three
    * indexing jobs (cycle / reconcile / reindex-missing) no-op so the `chunks`
    * corpus stays frozen for the swap's catch-up + flip, but the embedder stays
    * loaded and `embedQuery` keeps answering — search remains live under the old
@@ -265,7 +265,7 @@ let state: {
    */
   paused: boolean;
   usearchHandle: import("../indexer/usearch-index.js").UsearchWriteHandle;
-  /** index.db path + low-disk floor (MB) for the per-cycle write guard (#15). */
+  /** index.db path + low-disk floor (MB) for the per-cycle write guard. */
   indexDbPath: string;
   minFreeDiskMb: number;
   /** Last wall-clock we logged a low-disk skip, to throttle the warning. */
@@ -276,7 +276,7 @@ let state: {
 const DISK_SKIP_LOG_THROTTLE_MS = 60_000;
 
 /**
- * Per-cycle low-disk gate (#15). Returns true when the cycle may proceed;
+ * Per-cycle low-disk gate. Returns true when the cycle may proceed;
  * false (and logs, throttled) when free disk on the index.db volume is below
  * the configured floor so the cycle should be skipped. Skipped docs stay
  * pending and the next wake retries once disk frees.
@@ -292,7 +292,7 @@ function diskOkForCycle(): boolean {
       log(
         "warn",
         "indexer-worker",
-        `indexing paused: ${freeMb}MB free < ${state.minFreeDiskMb}MB minimum on the index.db volume — skipping cycle (#15)`,
+        `indexing paused: ${freeMb}MB free < ${state.minFreeDiskMb}MB minimum on the index.db volume — skipping cycle`,
       );
     }
   }
@@ -778,7 +778,7 @@ async function handleInit(init: IndexerInit): Promise<void> {
       }
 
       // Initial indexing cycle, then schedule periodic work. Skipped under
-      // low disk (#15) — the periodic timers below still arm, so it retries
+      // low disk — the periodic timers below still arm, so it retries
       // once disk frees and `lastCycleHadWork` stays false (idle cadence).
       if (diskOkForCycle()) {
         const startMs = Date.now();
@@ -832,9 +832,9 @@ async function handleInit(init: IndexerInit): Promise<void> {
       // Config-gated (`indexer.reindexMissingAtBoot` in omnesis.json).
       // The at-boot reindexMissing is a heavy double-scan that fires
       // while the writer worker is still absorbing the collector
-      // reconnect flood — exactly the peak race-window for the #192
+      // reconnect flood — exactly the peak race-window for the SIGBUS
       // crash. Off by default; the hourly interval still catches gaps.
-      // Gated on free disk (#15): reindexMissing embeds + writes chunks, so a
+      // Gated on free disk: reindexMissing embeds + writes chunks, so a
       // low-disk boot skips it (the periodic cycle retries once disk frees).
       if (init.reindexMissingAtBoot && diskOkForCycle()) {
         const rmStart = Date.now();
@@ -1031,14 +1031,14 @@ async function handleInit(init: IndexerInit): Promise<void> {
  */
 async function runIndexCycle(trigger: "timer" | "wake"): Promise<void> {
   if (!state || state.shuttingDown) return;
-  // Quiesced for a graceful swap (epic #1011): skip so the corpus stays frozen
+  // Quiesced for a graceful swap: skip so the corpus stays frozen
   // for the swap's catch-up. embedQuery keeps working, so search stays live.
   if (state.paused) return;
   if (state.inFlightWork) {
     if (trigger === "wake") state.pendingWake = true;
     return;
   }
-  // Low-disk gate (#15): skip the cycle when free disk on the index.db
+  // Low-disk gate: skip the cycle when free disk on the index.db
   // volume is below the floor. Treat it like an idle (no-work) cycle so
   // the adaptive timer backs off to the long interval; the next wake/tick
   // retries once disk frees.
@@ -1113,7 +1113,7 @@ async function runIndexCycle(trigger: "timer" | "wake"): Promise<void> {
 
 async function runReconcileCycle(trigger: "timer" | "operator"): Promise<void> {
   if (!state || state.shuttingDown) return;
-  if (state.paused) return; // quiesced for a graceful swap (epic #1011)
+  if (state.paused) return; // quiesced for a graceful swap
   if (state.inFlightWork) return;
   const t = Date.now();
   postJobUpdate("indexer.reconcile-deleted", "started", { trigger });
@@ -1148,9 +1148,9 @@ async function runReindexMissingCycle(
   trigger: "timer" | "boot" | "operator",
 ): Promise<ReindexMissingCycleOutcome> {
   if (!state || state.shuttingDown) return { status: "busy" };
-  if (state.paused) return { status: "busy" }; // quiesced for a graceful swap (epic #1011)
+  if (state.paused) return { status: "busy" }; // quiesced for a graceful swap
   if (state.inFlightWork) return { status: "busy" };
-  // Gated on free disk (#15): reindexMissing writes chunks; skip under low
+  // Gated on free disk: reindexMissing writes chunks; skip under low
   // disk and let a later cycle retry once space frees.
   if (!diskOkForCycle()) return { status: "busy" };
   const t = Date.now();
@@ -1465,7 +1465,7 @@ async function handleShutdown(): Promise<void> {
 }
 
 /**
- * Quiesce indexing for a graceful embedder swap (epic #1011) and ack once the
+ * Quiesce indexing for a graceful embedder swap and ack once the
  * corpus is frozen. Sets `paused` so no NEW cycle starts, then awaits any cycle
  * already in flight so the `chunks` corpus is settled before the ack — the
  * caller (the swap's pre-flip quiesce) relies on the ack meaning "safe to run
@@ -1537,7 +1537,7 @@ async function handleFlushSave(id: number): Promise<void> {
   post({ type: "flushSaveComplete", id, ok });
 }
 
-/** Un-pause indexing (epic #1011) — used when a newer swap abandons the build,
+/** Un-pause indexing — used when a newer swap abandons the build,
  *  so the still-active generation keeps ingesting. Kicks one cycle to catch up
  *  on anything that landed while paused. */
 function handleResumeIndexing(): void {

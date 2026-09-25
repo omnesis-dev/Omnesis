@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * ExportService (#57) — portable, non-SQLite export of the user's indexed
+ * ExportService — portable, non-SQLite export of the user's indexed
  * data, so the corpus can leave Omnesis in an open format (JSONL/CSV)
  * regardless of the storage engine.
  *

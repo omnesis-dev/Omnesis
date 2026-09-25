@@ -31,7 +31,7 @@
  * what an atomic write promises in the first place. A write that fails
  * removes its own scratch file so a transient error doesn't litter the
  * directory; a write killed outright (SIGKILL, power loss) cannot, and
- * leaves an orphan behind — see #1496 for the boot-time sweep.
+ * leaves an orphan behind — see #53 for the boot-time sweep.
  *
  * Used by every credential, secret, certificate and config-file writer
  * in the tree — all of them want "if the user re-auths and pulls the

@@ -103,7 +103,7 @@ export interface PrivacyAdminServiceDeps {
  * as expired at read time (`effectiveApprovalStatus`), and the periodic sweep
  * installed by the agent lifecycle materializes the flip and its audit trail.
  * Routing a read through the writer queue would park it behind whatever bulk
- * write is in flight (see #199).
+ * write is in flight.
  */
 export class PrivacyAdminService {
   private readonly now: () => number;

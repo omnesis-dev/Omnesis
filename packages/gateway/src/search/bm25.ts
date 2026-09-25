@@ -62,7 +62,7 @@ export function toFts5Query(query: string): string {
   // Replace every FTS5-significant / punctuation character with a space
   // before splitting into terms. Arbitrary user text ("c++", "example.com",
   // a stray quote) otherwise reaches FTS5 as invalid MATCH syntax and throws
-  // `fts5: syntax error`, 500ing the search (#552). Spaces rather than
+  // `fts5: syntax error`, 500ing the search. Spaces rather than
   // deletion keep the tokenizer splitting "example.com" into example/com
   // instead of concatenating to "examplecom". `\p{L}\p{N}_` keeps letters
   // (incl. non-Latin scripts), digits, and underscores; the `u` flag makes
@@ -85,7 +85,7 @@ export function toFts5Query(query: string): string {
  */
 function sanitizeFts5Term(term: string): string {
   // Strip FTS5 syntax punctuation. `toFts5Query` already replaces all
-  // non-word characters with spaces (#552), so by the time terms reach here
+  // non-word characters with spaces, so by the time terms reach here
   // they're word-only; this strip stays as defence-in-depth for the other
   // caller (`filterCommonTokens`), which sanitizes terms without that pass.
   const stripped = term.replace(/[*"():^\-]/g, "");
@@ -212,7 +212,7 @@ export function bm25Search(
   const { clause: filterClause, params: filterParams } = buildMetadataFilter(filters, "c");
 
   // The `docIds` set is unbounded; a large set is staged into a temp table so
-  // it never overflows SQLite's bound-variable limit (#581).
+  // it never overflows SQLite's bound-variable limit.
   const rows = withDocIdRestriction<Bm25Row[]>(
     db,
     "c.document_id",
@@ -246,7 +246,7 @@ export function bm25Search(
         // `toFts5Query` should prevent malformed MATCH input, but the
         // phrase-passthrough path (or an unforeseen edge) could still produce
         // `fts5: syntax error`. Degrade to no BM25 results rather than 500 the
-        // whole search — vector search still answers (#552).
+        // whole search — vector search still answers.
         if (err instanceof Error && /fts5: syntax error/i.test(err.message)) {
           return [];
         }

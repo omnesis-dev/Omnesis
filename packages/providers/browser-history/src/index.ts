@@ -89,7 +89,7 @@ export default defineStructuredSource<BrowserHistoryCursor>({
   // profile identity plus cross-device presentation/deletion semantics.
 
   async discover() {
-    // TODO: Add Firefox detection when Firefox support is implemented (#158)
+    // TODO: Add Firefox detection when Firefox support is implemented (#17)
     return detectInstalledBrowsers().map((b) => b.id);
   },
 
@@ -436,7 +436,7 @@ export default defineStructuredSource<BrowserHistoryCursor>({
               ),
             );
             // One `browsing-history → webpage` edge per distinct URL visited that
-            // day (#895): the day stays its own document and joins the canonical
+            // day: the day stays its own document and joins the canonical
             // `web` pages it touched, resolving now or via `pending_edges`.
             edges.push(...buildDailyEdges(browserId, date, filtered));
           }

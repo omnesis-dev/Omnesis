@@ -161,7 +161,7 @@ function rowToMemberSource(
  * another device is an explicit act (`updateSource` with a `deviceId`,
  * driven by `PATCH /admin/sources/:id`), which notifies the losing device.
  * Callers that must not adopt a foreign-hosted source check first and
- * reject (see SourceService.createSource's 409). See #1513.
+ * reject (see SourceService.createSource's 409).
  */
 export function createSource(
   db: Db,

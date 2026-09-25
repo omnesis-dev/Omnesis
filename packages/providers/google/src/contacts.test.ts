@@ -88,8 +88,8 @@ describe("GoogleContactsSource", () => {
     expect(requested).toContain("events");
   });
 
-  test('phones with the "00" international gateway prefix normalize to E.164 in mentions and survive raw in the body (#280)', async () => {
-    // Reproduces the GH #280 bug: real Google contacts often store phones
+  test('phones with the "00" international gateway prefix normalize to E.164 in mentions and survive raw in the body', async () => {
+    // Reproduces the bug: real Google contacts often store phones
     // with a "00" prefix instead of "+", which pre-fix dropped to null
     // (or got mis-attributed). Verify both ends of the body↔mention
     // invariant: the markdown body keeps the user-typed string, the
@@ -125,8 +125,8 @@ describe("GoogleContactsSource", () => {
     expect(doc.content).toContain(rawPhone);
   });
 
-  test("region inference from address.countryCode: bare-national French phone normalizes to E.164 (#280 follow-up)", async () => {
-    // Closes the #280 region-inference follow-up for Google Contacts: a
+  test("region inference from address.countryCode: bare-national French phone normalizes to E.164", async () => {
+    // Covers region inference for Google Contacts: a
     // contact with `addresses[0].countryCode: "FR"` and a bare-national
     // phone like "06 39 98 00 33" used to drop because Google's
     // canonicalForm wasn't populated and the value path had no region

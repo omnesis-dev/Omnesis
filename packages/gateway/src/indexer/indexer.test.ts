@@ -889,7 +889,7 @@ describe("Indexer", () => {
     });
   });
 
-  describe("source-url-only change propagation (#462)", () => {
+  describe("source-url-only change propagation", () => {
     test("a metadata.sourceUrl-only change updates chunks.source_url in place without re-embedding", async () => {
       const doc = makeDoc("d1", "stable content");
       doc.metadata.sourceUrl = "https://example.com/items/123?utm_source=newsletter";
@@ -1069,7 +1069,7 @@ describe("Indexer", () => {
     });
   });
 
-  describe("recanonicalizeSourceUrls bumps updated_at only on changed rows (#462)", () => {
+  describe("recanonicalizeSourceUrls bumps updated_at only on changed rows", () => {
     async function recanonicalize(
       gw: ReturnType<typeof createDatabase>,
       specs: readonly UrlCanonicalizerSpec[],
@@ -1171,7 +1171,7 @@ describe("Indexer", () => {
       }
     });
 
-    test("skips the full scan when specs are empty or unchanged since the last run (#199)", async () => {
+    test("skips the full scan when specs are empty or unchanged since the last run", async () => {
       const path = gwDbPath();
       const gw = createDatabase(path);
       try {

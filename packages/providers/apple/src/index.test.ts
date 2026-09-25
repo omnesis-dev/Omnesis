@@ -21,7 +21,7 @@ describe("apple source descriptors", () => {
     }
   });
 
-  // #550 regression: the source instance classes used to declare a partial
+  // Regression: the source instance classes used to declare a partial
   // `icon` that the collector resolved via `instance.icon ?? def.icon`,
   // shadowing the descriptor icon and silently dropping its `bgColor`. The
   // descriptor is now the single source of truth, so every apple source's

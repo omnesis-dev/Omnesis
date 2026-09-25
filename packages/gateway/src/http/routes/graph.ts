@@ -23,7 +23,7 @@ type Db = Database.Database;
 
 export interface GraphWalkRouteDeps {
   db: Db;
-  /** Analytics store as a bound-row resolver — enables `includeBoundRows` (#450). */
+  /** Analytics store as a bound-row resolver — enables `includeBoundRows`. */
   analyticsDb?: BoundRowResolver;
 }
 

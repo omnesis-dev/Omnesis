@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * `omnesis backup` — gateway-side online backup (#57).
+ * `omnesis backup` — gateway-side online backup.
  *
  * Wraps the gateway's `/admin/backup*` routes: POSTs to start a backup,
  * then polls `/admin/backup/status` at 2 Hz rendering per-file progress

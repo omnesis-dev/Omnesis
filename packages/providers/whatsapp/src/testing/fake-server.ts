@@ -8,7 +8,7 @@ import type { SocketFactory, SocketFactoryResult } from "../types.js";
 
 /**
  * High-fidelity, stateful fake of the WhatsApp companion-device protocol at the
- * Baileys-socket-API boundary (issue #25). Holds a synthetic server-side corpus
+ * Baileys-socket-API boundary. Holds a synthetic server-side corpus
  * and models the *phone + WhatsApp server*: the one-shot chunked history push,
  * `messaging-history.status` milestones, group and community enumeration, the
  * LID reverse store, reconnect/conflict and the 14-day de-link.
@@ -20,7 +20,7 @@ import type { SocketFactory, SocketFactoryResult } from "../types.js";
  * with `vi.useFakeTimers()` advance them precisely.
  *
  * Used today at the provider-integration level; wiring it through the
- * spawned-gateway SyntheticE2EHarness is tracked in #586.
+ * spawned-gateway SyntheticE2EHarness is tracked separately.
  */
 
 // Baileys proto.HistorySync.HistorySyncType numeric values.
@@ -84,7 +84,7 @@ export interface PushHistoryOptions {
   /** Most-recent N messages per chat delivered in the push. Default: all. */
   initialDepth?: number;
   /**
-   * How the push terminates — drives the #579 seal state machine.
+   * How the push terminates — drives the history-seal state machine.
    * - `isLatest` / `status`: a genuine completion → `complete`.
    * - `bootstrap-only`: the whole account fits the initial recent slice →
    *   `complete` once the quiet period resolves.
@@ -297,7 +297,7 @@ export class FakeWhatsAppServer {
       // companion sees this as a `paused` milestone. The provider resolves it
       // to `interrupted` (not `complete`) immediately, with no timer to wait
       // out. Pair with deep RECENT/FULL batches above so the resolution lands
-      // on the truncated-corpus branch (#579), not the small-account branch.
+      // on the truncated-corpus branch, not the small-account branch.
       this.emitter.emit("messaging-history.status", {
         syncType: SYNC_RECENT,
         status: "paused",

@@ -213,7 +213,7 @@ describe("renderPart — subagent controls", () => {
   });
 });
 
-// ─── Inline researcher cards hide once the report is written (#748, issue D) ──
+// ─── Inline researcher cards hide once the report is written (issue D) ──
 //
 // A subagent (researcher) part renders as a compact live card while the parent
 // turn is live, then disappears once the turn is done. Timeline annotations

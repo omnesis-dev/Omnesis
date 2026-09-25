@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * HTTP-level behavior of the activity reads (#753): orders/fills parse + cursor
+ * HTTP-level behavior of the activity reads: orders/fills parse + cursor
  * params, 429 → non-terminal rate-limit, brokerage 401/403 → terminal auth, and
  * the v2 ledger's scope-aware error mapping (a v2 401/403 is a missing grant →
  * CoinbaseScopeError, NOT a source-wide auth failure). All keys are minted at

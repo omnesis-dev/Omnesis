@@ -326,7 +326,7 @@ export const revokeSyncAttemptBody = z
     message: "writeEpoch or attemptId is required",
   });
 
-// Source-declared edge contract (#430). `from`/`to` name documents by
+// Source-declared edge contract. `from`/`to` name documents by
 // source-native id; `type` is the closed `SourceEdgeType` vocabulary (kept in
 // sync with `@omnesis/core` `SOURCE_EDGE_TYPES`). Re-validated here because the
 // collector is outside the gateway's compile unit.
@@ -355,7 +355,7 @@ const edgeDeclarationShape = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
-// POST /documents/with-cursor — atomic per-page sync write (issue #322).
+// POST /documents/with-cursor — atomic per-page sync write.
 // Bundles every SQLite-side write the collector needs to commit at the
 // end of a sync page so they either all land or none do, closing the
 // at-least-once gap where the cursor could lag the documents on a
@@ -367,7 +367,7 @@ export const upsertWithCursorBody = z
     documents: z.array(documentInputShape).optional(),
     documentTemporalProjections: documentTemporalProjectionsShape.optional(),
     deletedExternalIds: z.array(z.string()).optional(),
-    /** Source-declared structural edges for this page (#430). */
+    /** Source-declared structural edges for this page. */
     edges: z.array(edgeDeclarationShape).optional(),
     /**
      * Snapshot of currently-present external IDs (final-page only). The
@@ -386,12 +386,12 @@ export const upsertWithCursorBody = z
     observationId: z.string().min(1).max(256).optional(),
     hasMore: z.boolean(),
     cursor: z.record(z.string(), z.unknown()),
-    /** Wipe epoch the collector read at sync start; gateway rejects stale writes (#551). */
+    /** Wipe epoch the collector read at sync start; gateway rejects stale writes. */
     wipeEpoch: z.number().int().nonnegative().optional(),
     pendingPageId: z.string().uuid().optional(),
     /**
-     * Forward-looking consent deadline (ISO 8601) the source reported on this page
-     * (#927). Persisted on `sync_state` so the gateway derives a non-terminal
+     * Forward-looking consent deadline (ISO 8601) the source reported on this page.
+     *Persisted on `sync_state` so the gateway derives a non-terminal
      * `auth-expiring` warning ahead of the deadline. `null` clears a stored
      * deadline (re-consent that no longer expires); omitted leaves it unchanged.
      */

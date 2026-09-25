@@ -86,7 +86,7 @@ export interface TransactionDocumentOptions extends TransactionRecordOptions {
  * Searchable document for one transaction. Compact body — merchant/name, signed
  * amount, date, category, institution label. No account numbers ever reach a
  * document body. The externalId is `${item_id}:${transaction_id}` so the 1:1
- * doc↔row binding (#450) splits cleanly back into the composite primary key.
+ * doc↔row binding splits cleanly back into the composite primary key.
  */
 export function transactionToDocument(
   txn: PlaidTransaction,

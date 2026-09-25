@@ -310,7 +310,7 @@ export function upsertDocuments(
     };
   }
 
-  // Privacy-delete suppression (#1065). Drop any incoming doc the user has
+  // Privacy-delete suppression. Drop any incoming doc the user has
   // tombstoned via `DELETE /documents/:id` BEFORE it can be re-inserted —
   // this is the durable choke point both the collector sync path
   // (`upsertWithCursor`) and the push-source ingest path (`POST /documents`)
@@ -894,8 +894,8 @@ export function tombstoneDocuments(
 }
 
 /**
- * User-initiated single-document privacy delete (`DELETE /documents/:id`,
- * #1065). Unlike `deleteDocuments` (the collector's sync-reconcile path,
+ * User-initiated single-document privacy delete (`DELETE /documents/:id`).
+ * Unlike `deleteDocuments` (the collector's sync-reconcile path,
  * which removes a doc only because it vanished upstream), this:
  *
  *   1. Cascades to the document's extracted-attachment child docs
@@ -1049,7 +1049,7 @@ export function deleteAllBySource(db: Db, sourceId: string): number {
   db.prepare("DELETE FROM document_temporal_projection_sources WHERE source_id = ?").run(sourceId);
   deleteSourceWatermark(db, sourceId);
   // Bump the wipe epoch so an in-flight sync that started before this delete
-  // can't resurrect its stale cursor onto the now-empty source (#551).
+  // can't resurrect its stale cursor onto the now-empty source.
   bumpWipeEpoch(db, sourceId);
   db.prepare("DELETE FROM source_stats WHERE source_id = ?").run(sourceId);
   // Wipe also CASCADE-deletes every document_links row owned by the
@@ -1086,7 +1086,7 @@ export function deleteAllBySource(db: Db, sourceId: string): number {
        AND id NOT IN (SELECT DISTINCT person_id FROM person_aliases)`,
   ).run();
   // A full source wipe is the user-facing "remove & re-add" that resets
-  // privacy-delete tombstones (#1065) — clear this source's so re-adding
+  // privacy-delete tombstones — clear this source's so re-adding
   // it gives a clean slate.
   db.prepare("DELETE FROM removed_documents WHERE source_id = ?").run(sourceId);
   invalidateTombstoneCache();
@@ -1232,7 +1232,7 @@ export function deleteAllByProvider(db: Db, providerId: string): number {
        AND id NOT IN (SELECT DISTINCT person_id FROM document_people)`,
   ).run();
 
-  // Clear privacy-delete tombstones (#1065) for every wiped source so a
+  // Clear privacy-delete tombstones for every wiped source so a
   // provider-wide remove & re-add gives a clean slate.
   db.prepare("DELETE FROM removed_documents WHERE provider_id = ?").run(providerId);
   invalidateTombstoneCache();
@@ -1433,7 +1433,7 @@ export function listDocuments(
  *
  * `source_url` is the canonicalized column, carried so the indexer can
  * detect (and propagate to `chunks.source_url`) a URL-only change whose
- * content hash is unchanged — without a full content fetch. See #462.
+ * content hash is unchanged — without a full content fetch.
  */
 export interface LightweightDocRow {
   id: string;
@@ -1711,7 +1711,7 @@ export function lookupDocumentIdsByExternal(
 
 /**
  * Resolve a single document id from its `(sourceId, externalId)` — the
- * row→document direction of the cross-store binding (#757). Used by the
+ * row→document direction of the cross-store binding. Used by the
  * cite-record path to find the document a cited analytics row co-describes,
  * after `reconstructBoundDocumentRef` inverts the row's primary key into the
  * document's source identity + external id.
@@ -1844,7 +1844,7 @@ export function checkExistingExternalIds(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// At-least-once cursor-write (issue #322)
+// At-least-once cursor-write
 //
 // `upsertWithCursor` runs the per-page write sequence —
 // upserts → deletions → snapshot reconcile → cursor advance — inside a
@@ -2065,7 +2065,7 @@ export interface UpsertWithCursorArgs {
    */
   absencePolicy?: SnapshotAbsencePolicy;
   /**
-   * Structural edges the source declares between its documents (#430) —
+   * Structural edges the source declares between its documents —
    * containment, reply chains, sequences, sibling groups, cross-source
    * references. Applied in this same transaction after the documents are
    * upserted, with `source-declared` provenance; forward references (target not
@@ -2075,7 +2075,7 @@ export interface UpsertWithCursorArgs {
   /** The cursor to persist after the writes succeed. */
   cursor: SyncCursor;
   /**
-   * The write epoch this sync attempt claimed (#551; legacy name: wipeEpoch).
+   * The write epoch this sync attempt claimed (legacy name: wipeEpoch).
    * A newer attempt or source wipe advances the epoch, so stale writes are
    * rejected with no documents or cursor applied. Omitted by older collectors
    * to preserve protocol compatibility.
@@ -2083,7 +2083,7 @@ export interface UpsertWithCursorArgs {
   wipeEpoch?: number;
   /**
    * Forward-looking consent / authorization deadline (ISO 8601) the source
-   * reported on this page (#927). Persisted on `sync_state` alongside the cursor
+   * reported on this page. Persisted on `sync_state` alongside the cursor
    * so the gateway can derive a non-terminal `auth-expiring` warning ahead of
    * the deadline. `undefined` leaves the stored value unchanged; `null` clears
    * it (re-consent that no longer expires). A normal successful sync without a
@@ -2127,7 +2127,7 @@ export interface UpsertWithCursorResult {
   absence?: SnapshotAbsenceOutcome;
   /**
    * True when the write was rejected because the source was wiped after this
-   * sync started (stale `wipeEpoch`) — nothing was applied. See #551.
+   * sync started (stale `wipeEpoch`) — nothing was applied.
    */
   rejected?: boolean;
   /**
@@ -2193,7 +2193,7 @@ export function upsertWithCursor(
   canonicalizers?: ReadonlyMap<string, UrlCanonicalizerSpec>,
 ): UpsertWithCursorResult {
   const txn = db.transaction((a: UpsertWithCursorArgs): UpsertWithCursorResult => {
-    // #551: if the source was wiped after this sync started (its echoed
+    // If the source was wiped after this sync started (its echoed
     // wipeEpoch is now stale), reject the whole write — applying its documents
     // would re-add deleted data and advancing its cursor would resurrect a
     // stale position onto the now-empty source, defeating the resync. The
@@ -2299,7 +2299,7 @@ export function upsertWithCursor(
             : { ...plan, revision: upserted.absencePlanScope.revision };
       }
     }
-    // Source-declared edges (#430) land after the page's documents are upserted
+    // Source-declared edges land after the page's documents are upserted
     // — the declaring `from` document is co-emitted in this page, so it now
     // exists — and inside this same transaction so edges and documents commit
     // atomically. A target not yet ingested is parked in `pending_edges`.
@@ -2602,7 +2602,7 @@ export function upsertWithCursorYieldable(
   if (remaining.length > 0) {
     // `upsertDocuments` polled the token and yielded mid pre-final. Resume by
     // document IDENTITY, not by a recomputed index: `upsertDocuments` drops
-    // tombstoned docs (#1065) up front, so its `remaining` is a slice of the
+    // tombstoned docs up front, so its `remaining` is a slice of the
     // *filtered* array whose length no longer shares a basis with the
     // unfiltered `preFinal.length` — an index like `preFinal.length -
     // remaining.length` would mis-map and silently skip real docs. `remaining`

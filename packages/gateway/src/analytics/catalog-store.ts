@@ -217,10 +217,10 @@ export class AnalyticsCatalogStore {
         schema.sharedDiscriminatorColumn ?? previousSchema?.sharedDiscriminatorColumn,
       sharedDiscriminatorParent:
         schema.sharedDiscriminatorParent ?? previousSchema?.sharedDiscriminatorParent,
-      // Persist the doc↔row binding (#450) so the graph walker can synthesize
+      // Persist the doc↔row binding so the graph walker can synthesize
       // `same-entity` edges from the catalog even when the source isn't syncing.
       boundDocument: schema.boundDocument,
-      // Persist the record-citation contract (#757) so the cite-record path
+      // Persist the record-citation contract so the cite-record path
       // derives the semantic time + title/key-fields from the declared schema
       // at read time — even when the source isn't currently syncing.
       semanticTimeColumn: schema.semanticTimeColumn,
@@ -265,7 +265,7 @@ export class AnalyticsCatalogStore {
   /**
    * Full schema + identity for a single table, or `null` when the catalog has
    * no such row (or its `schema_json` is corrupt). Carries the persisted
-   * `semanticTimeColumn` + `record` display spec (#757) and the
+   * `semanticTimeColumn` + `record` display spec and the
    * `boundDocument` binding — everything the cite-record path needs to derive
    * a record citation without re-deriving anything client-side.
    */
@@ -335,7 +335,7 @@ export class AnalyticsCatalogStore {
   }
 
   /**
-   * Build the cross-store `boundDocument` registry (#450) from every catalog
+   * Build the cross-store `boundDocument` registry from every catalog
    * row that declares one, keyed by bare source type. The graph walker uses it
    * to synthesize `same-entity` edges from a document's `externalId` without
    * the source being mid-sync. Cheap (one row per table); the façade caches it

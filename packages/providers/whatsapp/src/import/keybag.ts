@@ -7,7 +7,7 @@ import { RFC3394_IV, WRAP_PASSPHRASE } from "./constants.js";
 /**
  * iOS backup keybag parsing + the passphrase-key derivation and RFC-3394 AES
  * key (un)wrap. Pure and self-contained so it is unit-testable against the
- * published RFC vectors, independent of any real backup. (#588)
+ * published RFC vectors, independent of any real backup.
  *
  * Format + algorithm ported from jsharkey13/iphone_backup_decrypt
  * (google_iphone_dataprotection.py). The keybag is a flat TLV stream; class-key

@@ -44,7 +44,7 @@ public struct TypeEntry: Sendable, Equatable {
 
 /// v1 set of HealthKit types Omnesis reads. See design doc §6.
 ///
-/// TODO(#164): full HealthKit identifier coverage is still in progress.
+/// TODO: full HealthKit identifier coverage is still in progress.
 /// Shipped here: nutrition micros (vitamins + minerals), mobility
 /// (walking/stair gait quantities), and cardio (AFib burden, HR
 /// recovery, walking HR average) — all plain quantity samples that fold

@@ -13,7 +13,7 @@
  *
  * Trackers must NOT issue DB queries. They are read by the registry
  * cache refresh on a 2s tick — turning that into a per-tracker DB hit
- * would directly worsen #199. Counters are always derived from
+ * would directly worsen writer-queue contention. Counters are always derived from
  * already-computed work or from external reconciliation.
  */
 

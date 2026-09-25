@@ -20,8 +20,8 @@
  *     `watermark` for cursor-driven loops, `scan` for sweeps,
  *     `stateless` for caches with no progress concept). Forces honesty.
  *   - `observe()` must be a pure read of in-memory state. Issuing a DB
- *     query inside `observe()` would worsen #199 (writer-worker queue
- *     contention) and turn portal pollers into bursty readers. Counters
+ *     query inside `observe()` would worsen writer-worker queue
+ *     contention and turn portal pollers into bursty readers. Counters
  *     are maintained as a side effect of the work itself; periodic
  *     ground-truth reconciliation lives elsewhere.
  *   - No persistence. All observation state is in-memory; lost on

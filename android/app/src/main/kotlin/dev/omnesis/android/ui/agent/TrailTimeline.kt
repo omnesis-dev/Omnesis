@@ -127,7 +127,7 @@ object AgentTimelineBuilder {
      * The unified timeline for the drawer — built purely from what the agent explicitly
      * referenced this conversation: one row per cited document (an `annotate` call, projected by
      * [synthesiseEvent] from the citation's captured [AgentDocRef]) plus one row per directly-cited
-     * analytics record (#757, projected by [synthesiseRecordEvent]). A graph walk's raw output does
+     * analytics record (projected by [synthesiseRecordEvent]). A graph walk's raw output does
      * NOT populate the timeline — only the agent's deliberate annotations and record citations do.
      * Citations are already unique per documentId and records unique per recordKey (deduped
      * upstream), so the two sets never collide. Sorted by `at` ascending with nil-`at` rows sinking
@@ -168,7 +168,7 @@ object AgentTimelineBuilder {
     }
 
     /**
-     * Fabricate a record-only timeline event from a directly-cited record (#757). It carries no
+     * Fabricate a record-only timeline event from a directly-cited record. It carries no
      * `doc` (the renderer's [AgentTrailEvent.doc] == null branch draws the record body), keys its
      * entity on the `recordKey`, and sits at the record's `semanticTime`. Identical in shape to a
      * record-only event the `trace_connections` tool emits, so the existing renderer just works.
@@ -620,7 +620,7 @@ private fun TrailEventBody(
     onOpenDocument: (String) -> Unit,
 ) {
     val doc = event.doc
-    // #757: a record-only event (a bound DuckDB row with no co-described document) has no `doc`
+    // A record-only event (a bound DuckDB row with no co-described document) has no `doc`
     // to head the row — render the record body instead. Records never nest as attachments, so
     // this only fires at top level.
     if (doc == null) {
@@ -698,7 +698,7 @@ private fun TrailEventBody(
             )
         }
 
-        // #757: a document that deduped with its same-entity row (one timeline entity, not two)
+        // A document that deduped with its same-entity row (one timeline entity, not two)
         // carries the row's derived key fields inline. The record's title is already the doc
         // title — only the declared key columns add information, so we surface those and never
         // re-print the title. Only at top level (a record never rides on an attachment).
@@ -777,11 +777,11 @@ private fun RelatedRow(
 }
 
 // =====================================================================================
-// Record body (#757)
+// Record body
 // =====================================================================================
 
 /**
- * Renders a record-only trail event (#757): a single DuckDB analytics row surfaced as a
+ * Renders a record-only trail event: a single DuckDB analytics row surfaced as a
  * point-in-time citation that binds no document. Compose port of the iOS `TrailTimelineRecordBody`
  * and the portal `RecordBody`. The source icon/colour come from the registry (resolved one level
  * up via the spine's [AgentTrailEvent.eventSourceId]); the title, table label, and key fields are
@@ -854,7 +854,7 @@ private fun TrailRecordBody(
 }
 
 /**
- * The declared key columns of a record citation (#757), rendered as a label/value list. Compose
+ * The declared key columns of a record citation, rendered as a label/value list. Compose
  * port of the iOS `TrailTimelineRecordKeyFields` and the portal `RecordKeyFields`. The gateway
  * already redacted `sensitive` columns server-side (the value arrives as the redaction
  * placeholder), so this renderer prints values verbatim and re-exposes nothing. A null value

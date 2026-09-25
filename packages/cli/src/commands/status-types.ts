@@ -44,7 +44,7 @@ export interface StatusData {
       durationMs: number;
     };
     unitName?: string;
-    /** Descriptor's headline-count plane (#993); undefined → heuristic. */
+    /** Descriptor's headline-count plane (#40); undefined → heuristic. */
     primaryCount?: "documents" | "analytics";
   }>;
   sourceStats?: Record<string, SourceStats>;
@@ -80,10 +80,10 @@ export interface ProcessVitalsSnapshot {
   gc?: { windowCount: number; windowTotalMs: number };
 }
 
-// ── Gateway-driven status (post-#168) ──────────────────────────────────────
+// ── Gateway-driven status ──────────────────────────────────────────────────
 //
 // Status is assembled from several gateway endpoints in parallel:
-//   - /admin/sources         registered sources (post-#166 source of truth)
+//   - /admin/sources         registered sources (source of truth)
 //   - /admin/sync/status     live per-source sync state
 //   - /status                global doc counts + DB size
 //   - /index/stats           per-source index breakdown

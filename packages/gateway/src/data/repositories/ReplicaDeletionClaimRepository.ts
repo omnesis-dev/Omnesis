@@ -281,7 +281,7 @@ export interface TombstoneJudgement {
  * deleted is the caller's call (only the lease holder leads a fresh deletion),
  * and `recordDeletionClaims` writes their rows once they are.
  */
-// See #2222 — planned: a deletion stamp on the wire settles a stale restore at once.
+// See #80 — planned: a deletion stamp on the wire settles a stale restore at once.
 export function judgeTombstones(
   db: Db,
   namespace: string,

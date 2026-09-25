@@ -179,7 +179,7 @@ describe("region-aware phone identity (e2e-minimal synthetic universe)", () => {
     });
   });
 
-  // Known flaky: #1765 — these document_links reads race the link-backfill pipeline.
+  // Known flaky: these document_links reads race the link-backfill pipeline.
   test("national-format references create normalized, resolved shares-phone edges", () => {
     withDb(harness, (db) => {
       const rows = db

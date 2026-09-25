@@ -199,7 +199,7 @@ export interface SearchConfig {
    *     The Phase-0 measurement gate showed this is the dominant
    *     lever for tail latency under live ingest. Default 1 GiB. Set
    *     to 0 to disable. Only applied to read-only handles — writer-
-   *     side mmap is the #192 SIGBUS class and stays off.
+   *     side mmap is the SIGBUS class and stays off.
    *   - `cacheSizeBytes`: positive bytes applied as
    *     `PRAGMA cache_size = -<KiB>`. With mmap on, the pcache is
    *     mostly redundant; a small value (~2 MiB) is sufficient for

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Unit tests for the near-dup inbox buffer + flush task (#555). The
+ * Unit tests for the near-dup inbox buffer + flush task. The
  * buffer is pure in-memory state; the flush task is driven by calling
  * `run()` / `flushNow()` directly with a mocked writeGate, so these
  * don't need a scheduled scheduler — the periodic wiring is covered by

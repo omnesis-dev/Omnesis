@@ -41,7 +41,7 @@ export async function bodyBackfillSync(
       // permanent drop:
       // re-throw so the backfill page fails and retries next tick with the
       // cursor un-advanced, rather than skipping the message's body/attachment
-      // for good (#680).
+      // for good.
       if (isTransientSyncError(err)) throw err;
       // Permanent per-message failures are logged at `warn` with a per-batch
       // info summary so the failure rate is visible (without spamming on a

@@ -3,7 +3,7 @@
 
 /**
  * The Briefs scorecard kit — the measurement half of the reconcile-quality
- * instrument (epic #137 S13, criteria 4, 13, 16).
+ * instrument.
  *
  * Where the reconcile e2e asserts individual behaviors, the scorecard runs
  * the FULL arc set through a spawned gateway and reduces the end state to

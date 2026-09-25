@@ -1089,7 +1089,7 @@ export class OutlookCalendarSource {
           // (including ICS attachments delivered by email). Stored under the
           // same `iCalUID` key the Google Calendar source uses so the link
           // extractor resolves `calendar-event` cross-source links from
-          // email-attached invites — see #266.
+          // email-attached invites
           iCalUID: event.iCalUId ?? undefined,
           // Names the series an occurrence belongs to, so a reader can tell a
           // one-off apart from one instance of a standing meeting.

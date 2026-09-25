@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Export worker (#57) — serializes the documents table to a portable
+ * Export worker — serializes the documents table to a portable
  * JSONL or CSV file entirely off the gateway main thread. better-sqlite3
  * is synchronous, so walking a 100k-doc corpus on the main thread would
  * park the HTTP path for the whole run; hosting it here keeps the gateway

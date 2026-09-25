@@ -503,7 +503,7 @@ describe("pairing flow", () => {
     expect(p.name).toBe("");
   });
 
-  // #284 — self annotation staged with the pairing code, carried back through
+  // Self annotation staged with the pairing code, carried back through
   // consumePairing so the redeem path can apply it to the new device.
   test("createPairing carries staged self info through consumePairing", () => {
     const p = createPairing(db, {
@@ -905,7 +905,7 @@ describe("replaceDeviceForRepair", () => {
   });
 });
 
-// #282 — device self annotation
+// Device self annotation
 describe("device self annotation", () => {
   test("createDevice initializes empty selfEmails / selfPhones", () => {
     const d = createDevice(db, { name: "mac", kind: "collector" });
@@ -1440,7 +1440,7 @@ describe("schema migration: devices.self_emails / self_phones", () => {
   });
 });
 
-// #284 — device_pairings.self_emails / self_phones carry the staged
+// device_pairings.self_emails / self_phones carry the staged
 // annotation. Verify the columns exist and round-trip on a fresh DB.
 describe("schema: device_pairings.self_emails / self_phones", () => {
   test("the columns are present on a freshly created database", () => {

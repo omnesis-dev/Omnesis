@@ -82,7 +82,7 @@ public enum OmnesisURLSession {
     /// Discard the cached session so the next access re-reads the store.
     /// Call from `PairingService` after the pairing bundle changes.
     ///
-    /// See #2131 — the dropped session is not invalidated; live clients may
+    /// See #75 — the dropped session is not invalidated; live clients may
     /// still hold it.
     public static func reset() {
         lock.lock()

@@ -18,7 +18,7 @@
  * tries chat-completions and, if the model 404s as "not a chat model",
  * transparently re-runs that turn against Responses and remembers the decision
  * for the rest of the session. (Systematic, probe-driven capability detection
- * is tracked separately in #508.)
+ * is tracked separately.)
  */
 
 import { createLogger, type AgentEvent, type AgentProtocol } from "@omnesis/core";

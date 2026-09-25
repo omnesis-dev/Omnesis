@@ -3,7 +3,7 @@
 
 /**
  * Source / provider registry — the state-and-lifecycle half of the
- * collector's sync surface (issue #317). Extracted from
+ * collector's sync surface. Extracted from
  * `sync-engine.ts` so the orchestration shell stays focused on actually
  * running syncs.
  *

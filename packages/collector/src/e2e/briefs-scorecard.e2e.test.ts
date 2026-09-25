@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Scorecard instrument validation (epic #137 S13, criterion 16): the
+ * Scorecard instrument validation: the
  * scorecard's numbers are only trustworthy if a known-good agent scores
  * clean and a known-bad one is flagged on every planted defect. Both
  * lanes run the REAL `runScorecard` pipeline — a spawned gateway on

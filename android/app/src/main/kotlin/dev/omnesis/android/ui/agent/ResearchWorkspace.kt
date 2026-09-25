@@ -48,7 +48,7 @@ import dev.omnesis.android.designsystem.theme.OmRadius
 import dev.omnesis.android.designsystem.theme.OmTheme
 import dev.omnesis.android.sources.SourceCatalog
 
-// ─── Research working-set surface (#748) ─────────────────────────────────
+// ─── Research working-set surface ─────────────────────────────────
 //
 // The bespoke multi-panel research working-set surface — the Android twin of the
 // portal `ResearchWorkspace` and the iOS `ResearchWorkspaceView`. During a Deep
@@ -89,7 +89,7 @@ fun ResearchWorkspace(
             .fillMaxWidth()
             // Bound the whole band so it stays a fixed bottom rail and never grows
             // into a full-screen overlay that covers (and blocks scrolling of) the
-            // conversation above it (#890).
+            // conversation above it.
             // A faint accent wash + top hairline marks the band as a distinct workspace
             // region, not a transcript bubble.
             .background(OmTheme.colors.accent.copy(alpha = 0.06f))
@@ -265,7 +265,7 @@ private fun PanelDocs(
     } else {
         // Cap the per-panel doc list and scroll WITHIN the panel so a researcher
         // that reaches dozens of docs can't grow the panel taller than the screen
-        // and bury the conversation (#890). The rail scrolls horizontally; this is
+        // and bury the conversation. The rail scrolls horizontally; this is
         // the orthogonal vertical axis.
         Column(
             Modifier

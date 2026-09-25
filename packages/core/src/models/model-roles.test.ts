@@ -50,7 +50,7 @@ describe("classifyModelRoles", () => {
     }
   });
 
-  it("classifies image/video/music-generation families as no role (#706)", () => {
+  it("classifies image/video/music-generation families as no role", () => {
     for (const id of [
       "models/veo-3.1-fast-generate-preview",
       "models/lyria-realtime-exp",
@@ -62,7 +62,7 @@ describe("classifyModelRoles", () => {
     }
   });
 
-  it("keeps conversational audio-I/O models generative (not excluded as media-gen) (#706)", () => {
+  it("keeps conversational audio-I/O models generative (not excluded as media-gen)", () => {
     for (const id of [
       "gpt-4o-audio-preview",
       "gpt-audio",

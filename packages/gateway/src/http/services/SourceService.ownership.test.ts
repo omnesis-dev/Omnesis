@@ -21,7 +21,7 @@ const databases: ReturnType<typeof createDatabase>[] = [];
 afterEach(() => databases.splice(0).forEach((db) => db.close()));
 
 /**
- * Cross-device source ownership (#1513). A source configured on one device
+ * Cross-device source ownership. A source configured on one device
  * must never be silently adopted by another: the add paths reject, and the
  * one legitimate re-home (PATCH deviceId) tears the instance down on the
  * losing host without deleting its data.

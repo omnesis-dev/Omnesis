@@ -20,7 +20,7 @@ The repo at a glance:
 ```
 packages/core/         shared types, branded IDs, define-source helpers, people-utils, attachments, the shared doctor health check (`@omnesis/core/doctor`)
 packages/config/       config schema (omnesisConfigSchema, zod validators, defaults)
-packages/gateway-client/ shared HTTP + WS GatewayClient implementation (HttpGatewayClient, GatewayWsClient) — extracted from collector (#384)
+packages/gateway-client/ shared HTTP + WS GatewayClient implementation (HttpGatewayClient, GatewayWsClient) — extracted from collector
 packages/gateway/      HTTP server, SQLite store, indexer, scheduler, search, analytics-db
 packages/collector/    sync engine, source manager, auth subprocess
 packages/cli/          unified `omnesis` CLI — read commands hit /search, /documents, /analytics, /status, /whoami; admin commands hit /admin/*; also hosts the daemons (`gateway serve` / `collector run`) and the `service`/`update` lifecycle commands
@@ -279,7 +279,7 @@ Use `scripts/shot-portal.sh <route> [--wait <selector>] [--click <selector>]`: i
 
 ## Known performance work
 
-Gateway slow-request tail / writer-worker queue contention is tracked in [#199](https://github.com/omnesis-dev/Omnesis/issues/199). Pull that issue first before starting any HTTP-latency / writer-worker / backfill-worker performance work — it carries the diagnosis, the four incremental compute/upsert splits (`refreshPeopleCounts`, `touchTokenUsage` coalescing, `reconcileUnresolvedLinks`, `runMergePass` candidate-selection) and the structural priority-queue alternative, plus bench numbers from each round.
+The gateway's slow-request tail comes from writer-worker queue contention. Before starting any HTTP-latency / writer-worker / backfill-worker performance work, know its levers: the four incremental compute/upsert splits (`refreshPeopleCounts`, `touchTokenUsage` coalescing, `reconcileUnresolvedLinks`, `runMergePass` candidate-selection) and the structural priority-queue alternative. Bench each change before and after.
 
 ## Labelling GitHub issues
 

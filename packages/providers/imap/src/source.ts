@@ -633,7 +633,7 @@ export class ImapEmailSource {
     const automatedSender =
       isAutoSubmittedGenerated(message.autoSubmitted) ||
       isAutomatedSenderAddress(message.envelope.from?.[0]?.address ?? "");
-    // Typed scheduled/due promotion (#1168), shared with Gmail. The client
+    // Typed scheduled/due promotion, shared with Gmail. The client
     // downloads the HTML sibling of a preferred plain part exactly so this
     // scan sees the markup transactional multipart/alternative mail carries.
     const schemaDates = message.html ? extractSchemaOrgDatesFromHtml(message.html) : {};
@@ -708,7 +708,7 @@ export class ImapEmailSource {
         // A typed SyncError from the client is infrastructure — auth, network,
         // rate limit — and must fail the page so it retries, not get recorded
         // as a permanent per-attachment failure that advances the cursor past
-        // the message forever (the Gmail #680 lesson).
+        // the message forever (the Gmail lesson).
         if (error instanceof SyncError || isTransientSyncError(error)) throw error;
         log.warn(
           `Failed to extract attachment ${part.filename} from UID ${message.uid}: ${error instanceof Error ? error.message : String(error)}`,
@@ -920,7 +920,7 @@ function assertPresentIdLimit(count: number, limit: number): void {
   }
 }
 
-// Known bug: #2700 — a message moved between folders gets a new id, so a move reads as a create plus a delete.
+// Known bug: #96 — a message moved between folders gets a new id, so a move reads as a create plus a delete.
 function externalId(mailbox: string, uidValidity: string, uid: number): string {
   return `${Buffer.from(mailbox).toString("base64url")}:${uidValidity}:${uid}`;
 }

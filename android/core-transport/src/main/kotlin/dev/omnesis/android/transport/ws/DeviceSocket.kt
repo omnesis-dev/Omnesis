@@ -349,7 +349,7 @@ class DeviceSocket(
             }
             // The gateway owns the source registry and the app re-reads it on
             // reconnect, so this acks receipt without claiming to have applied
-            // the delta. See #1510.
+            // the delta. See #54.
             "source.added", "source.updated", "sources.snapshot" ->
                 ok(buildJsonObject { put("ok", true); put("applied", false) })
             "source.removed" ->

@@ -35,12 +35,12 @@ import type { RouteApp } from "../types.js";
  *
  * Path/param conventions:
  *   - primary-resource path param is always `:id` (the rule the
- *     pre-#387 `:flowId` naming violated)
+ *     older `:flowId` naming violated)
  *   - per-call `deviceId` always rides in the JSON body for POSTs
- *     (the rule the pre-#387 query-string usage violated)
+ *     (the rule the older query-string usage violated)
  *   - sub-resource action verbs are kebab-case
  *
- * Pre-#387 prefix `/admin/sources/auth/*` retired in the same change —
+ * The older prefix `/admin/sources/auth/*` is retired —
  * an auth flow is not a sub-resource of any single source.
  */
 export function mountAuthRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
@@ -51,7 +51,7 @@ export function mountAuthRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
     return c.json(buildPage(flows, { hasMore: false, limit: flows.length }));
   });
 
-  // Pre-#387 path was `POST /admin/sources/auth/start` — the verb-suffix
+  // The older path was `POST /admin/sources/auth/start` — the verb-suffix
   // `start` is implicit in `POST <collection>` so we drop it.
   app.post("/admin/auth-flows", scope.admin(), validateJson(authStartBody), async (c) => {
     const body = c.req.valid("json");

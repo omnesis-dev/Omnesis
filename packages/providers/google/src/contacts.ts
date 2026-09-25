@@ -289,7 +289,7 @@ export class GoogleContactsSource {
     const emails = (person.emailAddresses ?? [])
       .filter((e) => e.value)
       .map((e) => normalizeEmail(e.value!));
-    // Region inference (closes the #280 follow-up): Google's first
+    // Region inference: Google's first
     // address carries `countryCode` (already ISO-2 when populated) and/or
     // `country` (display name). Use them as a region hint so bare-national
     // numbers like "06 39 98 00 33" for a French contact normalize to

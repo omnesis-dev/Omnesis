@@ -18,7 +18,7 @@ public struct AnalyticsTableSchema: Codable, Equatable, Sendable {
     public let exampleQueries: [String]?
 
     /// The real-world, semantic-time column for a row in this table — the
-    /// single instant a record citation is placed at on a timeline (#757).
+    /// single instant a record citation is placed at on a timeline.
     /// Set it to the name of a DATE/TIMESTAMP/TIMESTAMPTZ column on this
     /// table (every Apple Health table has `start_time`), or to `nil` for a
     /// genuinely timeless table. Serializes to the camelCase
@@ -26,15 +26,15 @@ public struct AnalyticsTableSchema: Codable, Equatable, Sendable {
     public let semanticTimeColumn: String?
 
     /// How to title a single row and which columns to surface as its key
-    /// fields when it is cited as a record (#757). A current build always
+    /// fields when it is cited as a record. A current build always
     /// declares this so health rows are citation-eligible; the gateway
-    /// tolerates its absence only for clients built before #757.
+    /// tolerates its absence only for older clients.
     public let record: RecordDisplaySpec?
 
     /// Declares that each row of this table co-describes a searchable
     /// document whose `externalId` is built from `externalIdColumns`.
     /// The gateway persists this in its analytics catalog and synthesizes
-    /// the `same-entity` doc↔row edge at walk time (#450 / #640).
+    /// the `same-entity` doc↔row edge at walk time.
     ///
     /// `nil` for tables with no bound document (the tall sample tables).
     /// When set it serializes to the camelCase `boundDocument` key the
@@ -213,7 +213,7 @@ public struct AnalyticsTemporalProjectionSpec: Codable, Equatable, Sendable {
 }
 
 /// Swift mirror of `RecordDisplaySpec` in
-/// `packages/source-sdk/src/structured-source.ts` (#757). Tells the gateway
+/// `packages/source-sdk/src/structured-source.ts`. Tells the gateway
 /// how to render one row of this table when it is cited as a record: which
 /// columns compose the title (optionally via a `{column}` template) and which
 /// to surface as key fields. Both column lists must be non-empty and name

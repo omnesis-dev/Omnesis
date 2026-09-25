@@ -1163,7 +1163,7 @@ public enum AssistantPart: Codable, Sendable, Equatable, Hashable {
     }
 }
 
-/// The persisted Deep Research write-back part (#748) decoded from a resumed
+/// The persisted Deep Research write-back part decoded from a resumed
 /// conversation's `report_artifact` assistant part. The transport-layer twin of
 /// the gateway `ReportArtifactPart`: it carries the structured artifact facts
 /// PLUS the merged citation refs, so the coordinator can rebuild the same
@@ -1192,7 +1192,7 @@ public struct AgentReportArtifactPart: Codable, Sendable, Equatable, Hashable {
 
 // MARK: - Token usage
 
-/// Per-turn / per-sub-agent / per-tree token spend (#748). Mirrors the
+/// Per-turn / per-sub-agent / per-tree token spend. Mirrors the
 /// gateway `agentUsageSchema`. Every field is optional so a backend that
 /// reports only some counts still decodes; `total` sums whatever is
 /// present so the sub-agent card and report footer render one figure.
@@ -1596,8 +1596,8 @@ public struct AgentTrailRecordKeyField: Codable, Sendable, Equatable, Hashable {
     }
 }
 
-/// A DuckDB analytics row surfaced on the trail as a point-in-time record
-/// (#757). The gateway derives every display string from the table's
+/// A DuckDB analytics row surfaced on the trail as a point-in-time record.
+///The gateway derives every display string from the table's
 /// declared record-display contract, so the renderer prints these
 /// directly and never learns a column name or branches on a source.
 /// Mirrors `TrailRecord` in `@omnesis/core/agent-protocol.ts`.
@@ -1614,7 +1614,7 @@ public struct AgentTrailRecord: Codable, Sendable, Equatable, Hashable {
     public let title: String
     public let keyFields: [AgentTrailRecordKeyField]
     /// ISO-8601 declared semantic time. Always present (a timeless row is
-    /// never surfaced as a trail record — frozen #757 rule).
+    /// never surfaced as a trail record — a frozen rule).
     public let semanticTime: String
     public let sourceId: String
     public let sourceType: String
@@ -1650,7 +1650,7 @@ public struct AgentTrailRecord: Codable, Sendable, Equatable, Hashable {
 /// attachments / people / related links so the renderer doesn't
 /// have to branch on nil.
 ///
-/// An event carries a `doc`, a `record` (#757), or BOTH:
+/// An event carries a `doc`, a `record`, or BOTH:
 ///   - `doc` only — an ordinary document event.
 ///   - `doc` + `record` — a document and its `same-entity` analytics row
 ///     collapsed into ONE timeline entity (dedup on `record.recordKey`);
@@ -1666,7 +1666,7 @@ public struct AgentTrailEvent: Codable, Sendable, Equatable, Hashable, Identifia
     /// Primary document — `nil` for a record-only event (a bound row with
     /// no co-described document).
     public let doc: AgentTrailEventDoc?
-    /// Cited DuckDB row (#757). Present on a record-only event and on a
+    /// Cited DuckDB row. Present on a record-only event and on a
     /// deduped doc+record event; `nil` for an ordinary document event.
     public let record: AgentTrailRecord?
     public let attachments: [AgentTrailEvent]
@@ -1768,7 +1768,7 @@ public enum AgentToolResult: Codable, Sendable, Equatable, Hashable {
         quoteAuthor: String?,
         quoteIsSelf: Bool
     )
-    /// Successful `cite_record` tool result (#757) — the agent cited a
+    /// Successful `cite_record` tool result — the agent cited a
     /// single DuckDB analytics row that materially informed its answer
     /// (the structured twin of `annotate.recorded`). The payload decodes
     /// straight into `AgentTrailRecord` so the same Timeline primitives
@@ -2242,7 +2242,7 @@ public enum AgentEvent: Decodable, Sendable, Equatable {
         quoteIsSelf: Bool
     )
     case citationsUpdate(sessionId: String, added: [AgentDocRef], removed: [String])
-    /// A sub-agent (#748) the parent spawned via `spawn_subagent` just
+    /// A sub-agent the parent spawned via `spawn_subagent` just
     /// launched. Opens a compact live card on the parent's assistant turn;
     /// subsequent `subagentEvent` values update its usage and reached sources.
     case subagentSpawned(
@@ -2279,7 +2279,7 @@ public enum AgentEvent: Decodable, Sendable, Equatable {
         treeUsage: AgentUsage?,
         failure: AgentTerminalFailure? = nil
     )
-    /// Additive end-of-run summary for an explicit Deep Research run (#748),
+    /// Additive end-of-run summary for an explicit Deep Research run,
     /// emitted ONCE just before the parent turn's `message.end`. Carries the
     /// structured terminal reason, planner decomposition, whole-tree token
     /// total, and quote-verification tally. Retained for protocol/history
@@ -2704,7 +2704,7 @@ public enum AgentEvent: Decodable, Sendable, Equatable {
     }
 }
 
-// MARK: - Deep Research summary (#748)
+// MARK: - Deep Research summary
 
 /// One planner-decomposition row retained in Deep Research summary metadata.
 public struct AgentDeepResearchPlanItem: Codable, Sendable, Equatable, Hashable {

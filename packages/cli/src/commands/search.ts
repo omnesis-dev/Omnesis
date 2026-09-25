@@ -125,7 +125,7 @@ export const searchCommand = defineCommand({
       const srcIcon = iconFor(r.sourceId, fx);
       const srcIconPrefix = srcIcon ? `${srcIcon} ` : "";
 
-      // Clickable title on OSC 8-capable terminals (#231): cmd-click opens
+      // Clickable title on OSC 8-capable terminals: cmd-click opens
       // the result's `sourceUrl`, the `OMNESIS_RESULT_URI` template, or the
       // portal doc page (see `buildResultUrl`). `linkify` is a no-op on
       // terminals without hyperlink support, so the plain title still prints.

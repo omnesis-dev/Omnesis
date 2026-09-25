@@ -6,7 +6,7 @@
  * `sync-engine.ts` so the new collaborators (`SourceRegistry`,
  * `SyncDispatcher`) can depend on them without a circular import on
  * the engine façade. Same role as `scheduler/internals.ts` in the
- * gateway's `scheduler-class-split` (PR #364).
+ * gateway's `scheduler-class-split`.
  */
 
 import { parseSourceKey } from "@omnesis/core";

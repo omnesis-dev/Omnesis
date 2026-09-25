@@ -11,7 +11,7 @@
  * Why buffered: the event fires synchronously inside the originating
  * request's realtime priority scope, so a writer op dispatched from the
  * handler would inherit realtime and compete with the actual document
- * writes (see #555). The handler therefore does no writer work at all.
+ * writes. The handler therefore does no writer work at all.
  *
  * The buffer folds per document (one entry per doc id, matching the
  * queue's one-pending-row-per-doc invariant): a second event before the

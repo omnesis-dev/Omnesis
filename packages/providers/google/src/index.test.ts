@@ -95,7 +95,7 @@ describe("gmail urlCanonicalizer — collapses every Gmail URL flavor onto #mess
     `https://mail.google.com/mail/u/0/#label/Work%20Stuff/${MSG}`,
     `https://mail.google.com/mail/u/0/#category/Promotions/${MSG}`,
     `https://mail.google.com/mail/u/0/#category/Updates/${MSG}`,
-    // ?authuser=<email> account-pin (#463) — must collapse to the same key.
+    // ?authuser=<email> account-pin — must collapse to the same key.
     `https://mail.google.com/mail/u/0/?authuser=user@gmail.com#all/${MSG}`,
     `https://mail.google.com/mail/u/0/?authuser=user%40gmail.com#all/${MSG}`,
     // Higher account indices — Gmail's URL slot supports any digit;

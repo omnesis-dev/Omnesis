@@ -3,7 +3,7 @@
 
 /**
  * Regression test for the citty-positional-doubling bug that hit
- * `omnesis sql "SELECT 1"` and `omnesis search "foo"` after PR #307.
+ * `omnesis sql "SELECT 1"` and `omnesis search "foo"`.
  *
  * Citty parses a named positional like `query: { type: "positional",
  * required: true }` into BOTH `args.query` (the named field) AND

@@ -408,7 +408,7 @@ private fun ManualPayload(payload: String) {
     }
 }
 
-// See #2758 — planned: take the address from /admin/devices/pair-addresses.
+// See #103 — planned: take the address from /admin/devices/pair-addresses.
 @Composable
 private fun HostDropdown(identities: List<NetworkIdentity>, selectedIdx: Int, onSelect: (Int) -> Unit) {
     val c = OmTheme.colors

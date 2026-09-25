@@ -121,7 +121,7 @@ export type SetApnsTokenBody = z.infer<typeof setApnsTokenBody>;
 // caller that wants a narrower or wider grant states it explicitly (the CLI's
 // `--scopes`); an empty list is still rejected.
 //
-// `selfEmails` / `selfPhones` (#284) stage the device owner's identifiers
+// `selfEmails` / `selfPhones` stage the device owner's identifiers
 // inline with pairing — applied to the new device at redeem, the same write
 // `omnesis devices set-self` / PATCH /admin/devices/:id use. Raw strings here;
 // the route validates + normalizes them (normalizeEmail / normalizePhone) at
@@ -173,7 +173,7 @@ export const createTokenBody = z.object({
   // Optional time-to-live in milliseconds. Omit for a never-expiring token
   // (the default — existing and unscoped tokens never expire). When set, the
   // token's `expires_at` is stamped `ttlMs` into the future and `lookupToken`
-  // rejects it past that point. See #61.
+  // rejects it past that point.
   ttlMs: z.number().int().positive().optional(),
 });
 export type CreateTokenBody = z.infer<typeof createTokenBody>;
@@ -525,7 +525,7 @@ export type SelfIdentitySourcesBody = z.infer<typeof selfIdentitySourcesBody>;
 //
 // Link extraction (`urlTargetCouldResolve`) reads this superset to keep an
 // unresolved `url` link whose target matches a known source type — so a link
-// to a not-yet-added source resolves once that source is ingested (#668),
+// to a not-yet-added source resolves once that source is ingested,
 // while truly-external targets are still dropped. Each pattern is an opaque
 // regex string; per-source URL knowledge lives in each source package.
 export const knownUrlPatternsBody = z.object({
@@ -543,7 +543,7 @@ export type LinkDeclarationsBody = z.infer<typeof linkDeclarationsBody>;
 // every KNOWN source type (the union of every loaded source definition's
 // `ownedWebDomains`), not just the ones the user has added. The gateway holds
 // the set in memory and serves it on the public GET /owned-web-domains route.
-// The browser-capture source (#791) fetches the union and skips any visited
+// The browser-capture source fetches the union and skips any visited
 // host already owned by another source. Each entry is an opaque lowercase
 // hostname; per-source ownership lives in each source package.
 export const ownedWebDomainsBody = z.object({
@@ -646,7 +646,7 @@ export const widgetRenderersBody = z.object({
 export type WidgetRenderersBody = z.infer<typeof widgetRenderersBody>;
 
 // POST /admin/sources/:id/import-history — the user-supplied values for a
-// source's declared `historyImport.fields` (#588). Generic flat string map; the
+// source's declared `historyImport.fields`. Generic flat string map; the
 // source validates the individual fields. `default({})` lets an empty body
 // through; malformed JSON still yields the canonical 400.
 export const importHistoryBody = z.object({

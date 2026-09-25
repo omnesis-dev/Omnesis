@@ -119,7 +119,7 @@ enum Theme {
         case "needs-auth":
             return PillColor(background: warning.opacity(0.15), foreground: warning)
         case "auth-expiring":
-            // Forward-looking consent-expiry (#927): the source is still
+            // Forward-looking consent-expiry: the source is still
             // syncing fine, but its authorization expires soon. A softer
             // amber-tinted warning, distinct from the harder terminal
             // `needs-auth`; the inline "Expires on <date>" copy carries the

@@ -13,7 +13,7 @@ import type { ProviderCredentialsSpec } from "@omnesis/core";
  * to rotate the secret without re-shipping the binary, and any
  * scanner that catches up to the obfuscation lights the repo up
  * again. Aligning with Google/Strava removes the literal entirely
- * and cleans the OSS-launch blocker (#314).
+ * and cleans the OSS-launch blocker.
  *
  * The wizard walks the user through registering their own Notion
  * public integration and pasting the resulting OAuth client ID +

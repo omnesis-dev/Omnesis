@@ -212,7 +212,7 @@ export function createAgentClient() {
       // Events are delivered only to the listener for their own session, so
       // activity on any other session (e.g. a conversation advanced on another
       // device) is dropped here rather than refreshing the sidebar live.
-      // See #1445 — planned: a list-level SSE event handled before this per-
+      // See #52 — planned: a list-level SSE event handled before this per-
       // session dispatch so the conversation list updates without interaction.
       const subs = listeners.get(sessionId);
       if (!subs) {

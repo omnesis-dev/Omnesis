@@ -26,7 +26,7 @@ import type { IoGate } from "../scheduler/io-ops.js";
  *  2. **Bootstrap-self-from-config.** `config.self` (the operator's own
  *     name / emails / phones) creates the canonical self person, or enriches
  *     an already-elected one — the install-level home for who you are.
- *  3. **Bootstrap-self-from-devices** (#282, legacy). Per-device
+ *  3. **Bootstrap-self-from-devices** (legacy). Per-device
  *     annotation becomes a canonical self person when nothing above
  *     elected one. Pre-dates `config.self`; kept for back-compat.
  *  4. **Self-from-source-ids.** Every registered source account is paired
@@ -68,7 +68,7 @@ export async function runBootDataMigrations(deps: {
   // reconcileSelfFromConfig logs its own create/enrich events.
   await writeGate.bootstrapSelfFromConfig(deps.selfConfig);
 
-  // #282 — legacy fallback self bootstrap from per-device annotation. Pre-dates
+  // Legacy fallback self bootstrap from per-device annotation. Pre-dates
   // `config.self`; kept for installs still carrying `omnesis devices set-self`
   // annotations. Materializes a self person from the earliest-annotated device
   // when nothing above elected one. Idempotent / no-op when a self already
@@ -127,7 +127,7 @@ export async function runBootDataMigrations(deps: {
     );
   }
 
-  // Self-heal phone/email-shaped headlines (#583). Runs last so it operates
+  // Self-heal phone/email-shaped headlines. Runs last so it operates
   // on the settled people graph: the contacts seed above already promoted
   // real names onto every contact-matched person (via the resolution-time
   // upgrade), so this backstop only touches the remainder — placeholder

@@ -5,7 +5,7 @@
  * E2E WebSocket Tests — validates real-time events emitted by the gateway
  * when the collector ingests documents.
  *
- * The collector's legacy `:7601/ws` server is gone (#167 / #169); the only
+ * The collector's legacy `:7601/ws` server is gone; the only
  * WebSocket surface is the gateway's `/device/ws`. Tests authenticate with
  * the bootstrap admin token on the upgrade request and listen for
  * `documents.upserted` broadcasts which fire whenever the in-process

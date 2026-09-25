@@ -367,7 +367,7 @@ function createTestDefinitions(): SourceOrProviderDefinition[] {
       provider: { id: "other-provider", name: "Other Provider" },
       authType: "local",
       // A url-id pattern on a source that is NOT enabled/added in the test
-      // config — `pushKnownUrlPatterns` must still surface it (#668).
+      // config — `pushKnownUrlPatterns` must still surface it.
       urlPatterns: [{ regex: "other\\.example\\.com/([a-z0-9]+)", idGroup: 1 }],
       widgetRenderer: {
         kind: "other-widget",
@@ -1386,7 +1386,7 @@ describe("SourceManager", () => {
     // The config mirror names every source on every device. A
     // same-provider/same-account key this collector never registered is
     // usually hosted by another device — expanding it in would instantiate
-    // a source this host doesn't own and race its cursor (#1513).
+    // a source this host doesn't own and race its cursor.
     const config: CollectorInternalConfig = {
       sources: {
         // In config (from the gateway-global mirror), never registered here.
@@ -1643,7 +1643,7 @@ describe("SourceManager", () => {
   test("addSources() throws when the gateway rejects an entry as hosted by another device", async () => {
     // The bulk-upsert HTTP call succeeds with per-entry results; a source
     // already hosted by another collector comes back as an error entry
-    // rather than being silently adopted (#1513). The collector must treat
+    // rather than being silently adopted. The collector must treat
     // that as a failed registration — no local instance, no config mirror —
     // or it would sync a source this host doesn't own.
     (gateway as unknown as { bulkUpsertSources: unknown }).bulkUpsertSources = async () => ({
@@ -1986,7 +1986,7 @@ describe("SourceManager", () => {
   });
 
   // -------------------------------------------------------------------------
-  // applySourcesSnapshot — gateway-driven reconciliation (#166)
+  // applySourcesSnapshot — gateway-driven reconciliation
   // -------------------------------------------------------------------------
 
   test("applySourcesSnapshot adds new sources from gateway", async () => {
@@ -2497,8 +2497,8 @@ describe("SourceManager", () => {
     // The config broadcast is gateway-global: it names every source on
     // every device. A key this collector hasn't registered is usually
     // another device's source, and registering it here would resurrect a
-    // source this host no longer owns — both hosts then race one cursor
-    // (#1513). The per-device WS commands (`source.added`,
+    // source this host no longer owns — both hosts then race one cursor.
+    //The per-device WS commands (`source.added`,
     // `sources.snapshot`) are the only registration paths.
     const manager = createManager({});
 
@@ -2576,12 +2576,12 @@ describe("SourceManager", () => {
     expect(after?.maxAge).toBeUndefined();
   });
 
-  test("pushKnownUrlPatterns() surfaces patterns from every definition, even unadded sources (#668)", async () => {
+  test("pushKnownUrlPatterns() surfaces patterns from every definition, even unadded sources", async () => {
     // Empty config — no source is added. The push must still collect the
     // url-id pattern declared on `other-source`'s definition, because the
     // gateway's link-extraction keep-gate needs the FULL known set, not just
     // the added sources (otherwise a link to a not-yet-added source is
-    // dropped permanently — the #668 regression).
+    // dropped permanently).
     const manager = createManager({});
     await manager.pushKnownUrlPatterns();
 
@@ -2619,7 +2619,7 @@ describe("SourceManager", () => {
     ]);
   });
 
-  test("pushWidgetRenderers() surfaces renderer modules from every definition, even unadded sources (#984)", async () => {
+  test("pushWidgetRenderers() surfaces renderer modules from every definition, even unadded sources", async () => {
     const manager = createManager({});
     await manager.pushWidgetRenderers();
 

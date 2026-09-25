@@ -106,7 +106,7 @@ export interface MergeRuleGroupItem {
  * equivalence apply before responding anyway. On timeout the apply keeps
  * running in the background — it is OCC-guarded and idempotent, and the
  * periodic eval remains the reconciliation net — so the request never
- * hangs on a congested gateway. See #1377.
+ * hangs on a congested gateway.
  */
 export const FAST_APPLY_TIMEOUT_MS = 5_000;
 

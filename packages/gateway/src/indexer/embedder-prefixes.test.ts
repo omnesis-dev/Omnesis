@@ -116,7 +116,7 @@ describe("resolveEmbedderEncoding", () => {
   test("Gemini via the OpenAI-compat shim resolves to none (shim rejects task_type)", () => {
     // Empirically the shim 400s on task_type / taskType / extra_body, so the
     // only correct OpenAI-compat encoding is symmetric. Native asymmetry needs
-    // a separate non-OpenAI client (#718).
+    // a separate non-OpenAI client.
     expect(
       resolveEmbedderEncoding({ modelId: "gemini-embedding-001", providerId: "google" }),
     ).toEqual(NO_ENCODING);

@@ -8,7 +8,7 @@ import { ImportFlowRegistry, type ImportFlowEvent } from "./import-flows.js";
 const DEV = "11111111-1111-4111-8111-111111111111";
 const SRC = "whatsapp-messages:+15550100001";
 
-describe("ImportFlowRegistry (#588)", () => {
+describe("ImportFlowRegistry", () => {
   test("start returns a flow with a UUID id and starting state", () => {
     const reg = new ImportFlowRegistry();
     const flow = reg.start({ sourceId: SRC, deviceId: DeviceId(DEV) });

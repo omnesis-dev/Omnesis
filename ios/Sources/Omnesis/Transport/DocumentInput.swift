@@ -7,7 +7,7 @@ import Foundation
 /// Swift mirror of `@omnesis/types`' `DocumentInput` (TypeScript) — the
 /// wire DTO a source pushes to the gateway's `POST /documents/with-cursor`
 /// so a row of structured analytics can be paired with a searchable prose
-/// document (see #450 / #640).
+/// document.
 ///
 /// Field names match the TS interface verbatim so they serialize to the
 /// exact camelCase keys the gateway's `documentInputShape` validator

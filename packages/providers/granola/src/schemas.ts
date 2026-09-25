@@ -121,7 +121,7 @@ export const granolaMeetingsSchema: AnalyticsTableSchema = {
     keyColumns: ["title", "started_at", "duration_seconds", "attendee_count"],
   },
   // Each row co-describes the meeting-note document whose externalId is the
-  // same note id (#450). 1:1; the same-entity edge is synthesized at walk time.
+  // same note id. 1:1; the same-entity edge is synthesized at walk time.
   boundDocument: { externalIdColumns: ["id"] },
   exampleQueries: [
     "SELECT date_trunc('month', started_at) AS month, COUNT(*) AS meetings, ROUND(SUM(duration_seconds)/3600, 1) AS hours FROM granola_meetings GROUP BY month ORDER BY month DESC",

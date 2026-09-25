@@ -24,7 +24,7 @@ interface DescriptorItem {
 }
 
 /**
- * `omnesis sources import-history <sourceId>` (#588).
+ * `omnesis sources import-history <sourceId>`.
  *
  * Generic, source-agnostic: reads the source's `historyImport` form-spec from
  * its descriptor, prompts for each declared field, POSTs them to the gateway,

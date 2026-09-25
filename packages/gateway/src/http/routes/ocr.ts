@@ -7,8 +7,8 @@
  * The collector posts raw image (or scanned-PDF) bytes — Content-Type = the
  * attachment MIME type — while extracting an attachment during sync; the
  * gateway runs the configured OCR backend and returns the recognized text. The
- * bytes are held only for the duration of the request — nothing is persisted
- * (#260, #265). Gated behind the `ocr` experimental feature, so the endpoint
+ * bytes are held only for the duration of the request — nothing is persisted.
+ *Gated behind the `ocr` experimental feature, so the endpoint
  * 404s unless the operator opted in.
  *
  * Scope: `writeAny` — the same scope the collector uses to ingest documents.

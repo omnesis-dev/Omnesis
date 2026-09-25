@@ -152,7 +152,7 @@ export {
 export { retryOnBusy } from "./data/retry.js";
 
 /**
- * Open omnesis.db **read-only** for main-thread use. Post-#192 the
+ * Open omnesis.db **read-only** for main-thread use. The
  * main thread must not hold a writable handle; every mutation goes
  * through the writer worker (see write-gate.ts / writer-worker.ts).
  * `fileMustExist: true` ensures a typo'd path doesn't silently create
@@ -217,7 +217,7 @@ export function createDatabase(path: string, opts: GatewayDatabaseOptions = {}):
   // mode NONE online requires a full, exclusive VACUUM and can need roughly
   // twice the database's size in free space.
   runSchemaSetup(db);
-  runDowngradeCompatCheck(db); // See #1078 — per-source cursor reset on downgrade
+  runDowngradeCompatCheck(db); // Per-source cursor reset on downgrade
   runMigrations(db);
 
   return db;

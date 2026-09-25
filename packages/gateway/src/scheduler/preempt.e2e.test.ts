@@ -151,7 +151,7 @@ describe("Cooperative preemption e2e", () => {
   test("upsertWithCursor under mid-flight preemption loses no doc, even with tombstones", async () => {
     // The riskiest yieldable op is the collector's `db.upsertWithCursor`: it
     // resumes a mid-page yield by document identity, because `upsertDocuments`
-    // drops tombstoned (#1065 privacy-deleted) docs up front and thus returns a
+    // drops tombstoned (privacy-deleted) docs up front and thus returns a
     // `remaining` slice on a filtered basis. An index-based resume would
     // mis-map and silently drop real docs. This drives the whole thing through
     // the REAL writer worker (real SharedArrayBuffer token + postMessage resume

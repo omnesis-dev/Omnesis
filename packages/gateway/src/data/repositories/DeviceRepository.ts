@@ -738,7 +738,7 @@ function parseApnsRegistration(row: DeviceRow): ApnsRegistration | null {
  * leave it untouched. The caller is responsible for upstream validation
  * (E.164 phones, normalized emails) — this is a raw setter.
  *
- * #282 — used by `omnesis devices set-self` to seed the canonical self
+ * Used by `omnesis devices set-self` to seed the canonical self
  * person before any contacts source has synced.
  */
 export function updateDeviceSelfInfo(
@@ -1061,7 +1061,7 @@ export interface PendingPairing {
   expiresAt: number;
   createdAt: number;
   /**
-   * Self annotation (#284) staged with the pairing code. Normalized
+   * Self annotation staged with the pairing code. Normalized
    * email / E.164 phone identifiers belonging to the device's owner,
    * applied to the new device row at redeem time so the canonical self
    * person can bootstrap before any contacts source has synced. Empty
@@ -1097,7 +1097,7 @@ export function createPairing(
     scopes: readonly Scope[];
     ttlMs?: number;
     /**
-     * Self annotation (#284) to stage with this pairing code. Already
+     * Self annotation to stage with this pairing code. Already
      * validated + normalized by the caller (the HTTP boundary): emails
      * lowercased via `normalizeEmail`, phones in E.164 via `normalizePhone`.
      * Applied to the device row at redeem. Omit / empty to skip.
@@ -1800,7 +1800,7 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-// ── Self bootstrap from device annotation (#282) ──────────────────────────
+// ── Self bootstrap from device annotation ──────────────────────────
 //
 // When the operator runs `omnesis devices set-self` on a fresh install
 // (no contacts source synced yet), the gateway has no canonical self

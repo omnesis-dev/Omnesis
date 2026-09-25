@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Backup worker (#57) — runs `VACUUM INTO` snapshots of the SQLite stores
+ * Backup worker — runs `VACUUM INTO` snapshots of the SQLite stores
  * plus plain copies of the config files, entirely off the gateway main
  * thread. `VACUUM INTO` in better-sqlite3 is synchronous and takes minutes
  * on multi-GB databases; hosting it here keeps the HTTP path responsive

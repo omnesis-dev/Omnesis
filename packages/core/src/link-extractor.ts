@@ -6,7 +6,7 @@ import { countryNameToISO2, extractPhonesFromText } from "./people-utils.js";
 
 /**
  * The closed set of `document_links.link_type` values — the source-declared
- * structural taxonomy (#430) plus the derived / special edge kinds.
+ * structural taxonomy plus the derived / special edge kinds.
  *
  * Structural source-declared edges (the source knows the relationship and
  * asserts it, either via the `metadata.extra` conventions `extractLinks`
@@ -38,12 +38,12 @@ import { countryNameToISO2, extractPhonesFromText } from "./people-utils.js";
  *                        toward the canonical `webpage` entity (source `web`),
  *                        so the bookmark and the page it bookmarks are joined in
  *                        the graph. Directed bookmark→page. Declared via the
- *                        `EdgeDeclaration` contract (#895).
+ *                        `EdgeDeclaration` contract.
  *  - `visited`         — this document records a visit to that web page. A
  *                        `browser-history` day document declares one edge per
  *                        distinct URL visited that day toward the canonical
  *                        `webpage` entity (source `web`). Directed day→page.
- *                        Declared via the `EdgeDeclaration` contract (#895).
+ *                        Declared via the `EdgeDeclaration` contract.
  */
 export type LinkType =
   | "url"
@@ -58,7 +58,7 @@ export type LinkType =
   // Identity link between two attachment documents that share the same
   // extracted-content SHA-256. Emitted at upsert time (not by extractLinks)
   // since detection requires querying the DB. See
-  // `domain/LinkGraphService.ts#linkDuplicateContentDocs` and #264.
+  // `domain/LinkGraphService.ts#linkDuplicateContentDocs`.
   | "duplicate-content"
   // Two retained representations of the same URL-addressed resource, such
   // as a rendered browser capture and the structured record from the source
@@ -68,7 +68,7 @@ export type LinkType =
   // calendar-source event (Google Calendar and Apple Calendar today,
   // Outlook Calendar when it ships) with the same `iCalUID`. Cross-source by design — same
   // UID, different sources, same logical event. Extracted from
-  // `metadata.extra.iCalUIDs` (one link per UID) — see #266.
+  // `metadata.extra.iCalUIDs` (one link per UID)
   | "calendar-event"
   // Shared phone number: this document's content mentions a phone number
   // (E.164-normalized) that another document also mentions — e.g. a
@@ -88,7 +88,7 @@ export type LinkType =
 
 /**
  * The subset of `LinkType` a source DECLARES as a structural relationship —
- * the closed vocabulary of the `EdgeDeclaration` contract (#430). These are
+ * the closed vocabulary of the `EdgeDeclaration` contract. These are
  * the edges a source knows from its own structure (containment, threading,
  * reply chains, sequences, sibling groups, references, web-page bookmarks and
  * visits), as opposed to edges Omnesis derives (`url`, `duplicate-content`,
@@ -144,7 +144,7 @@ export interface ExtractedLink {
  * 4. Containment (`contains`) from metadata.extra.parentExternalId
  * 5. Calendar cross-reference (`calendar-event`) from metadata.extra.iCalUIDs
  *
- * These are the implicit source-declared structural edges (#430): the source
+ * These are the implicit source-declared structural edges: the source
  * asserts the relationship via a metadata field it controls, and Omnesis
  * records it with `source-declared` provenance. Richer / explicit edges
  * (`replies-to`, `succeeds`, cross-source `accompanies`) ride the first-class
@@ -244,7 +244,7 @@ export function extractLinks(
     });
   }
 
-  // 5. Calendar-event links from metadata.extra.iCalUIDs (#266). Set on
+  // 5. Calendar-event links from metadata.extra.iCalUIDs. Set on
   // ICS attachment docs by the calendar text extractor; resolves to any
   // calendar-source event whose metadata.extra.iCalUID matches.
   const iCalUIDs = metadata?.extra?.iCalUIDs;

@@ -3,7 +3,7 @@
 
 /**
  * The saboteur behavior table — the scorecard's instrument-validation
- * counterpart to the correct arc behaviors (epic #137 S13, criterion 16).
+ * counterpart to the correct arc behaviors.
  *
  * The scorecard is only trustworthy if it flags known-bad agent behavior,
  * so this module derives a second behavior table from the same arc set

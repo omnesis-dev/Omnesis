@@ -4,7 +4,7 @@
 /**
  * Row → projection mapper for the canonical `ListedDocument` shape.
  *
- * Per #386, the gateway's `/documents/list` route, the
+ * The gateway's `/documents/list` route, the
  * indexer's `DirectDocumentSource`, and any future `ListedDocument`
  * consumer all funnel through this single hop. Pre-fix the same
  * "parse metadata + pluck subset + copy top-level fields" block was

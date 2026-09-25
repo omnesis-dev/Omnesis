@@ -138,7 +138,7 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS = 30000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 30000;
 
 /**
- * Hard cap on concurrent WS connections (#58). A personal gateway serves a
+ * Hard cap on concurrent WS connections. A personal gateway serves a
  * handful of devices; this ceiling is generous headroom while bounding a
  * connection-exhaustion DoS (opening many sockets without ever
  * authenticating — each would otherwise sit in `connections` until the
@@ -157,7 +157,7 @@ export interface DeviceWsOptions {
   authTimeoutMs?: number;
   heartbeatIntervalMs?: number;
   commandTimeoutMs?: number;
-  /** Concurrent-connection ceiling (#58). Defaults to MAX_WS_CONNECTIONS. */
+  /** Concurrent-connection ceiling. Defaults to MAX_WS_CONNECTIONS. */
   maxConnections?: number;
   /** Handler for events emitted by a device. */
   onDeviceEvent?: (conn: DeviceConnection, event: WsEvent) => void;
@@ -298,7 +298,7 @@ export class DeviceWsServer {
     upgradeAuth: WsUpgradeAuth | null = null,
     liveness: WsLiveness | null = null,
   ): void {
-    // Concurrent-connection cap (#58): refuse new sockets past the ceiling
+    // Concurrent-connection cap: refuse new sockets past the ceiling
     // so a compromised token or buggy client can't exhaust the connection
     // table. Legitimate use stays far below this.
     if (this.connections.size >= this.maxConnections) {

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Unit tests for the backend re-probe periodic task (#1267). The recovery
+ * Unit tests for the backend re-probe periodic task. The recovery
  * schedule + backoff live in InferenceRegistry.reprobeUnavailable (covered in
  * inference/registry.test.ts); here we only assert the task wrapper: it drives
  * the registry, reports idle when nothing is down and reconciliation succeeds,
@@ -47,7 +47,7 @@ function stubRegistry(
   return { registry, calls: state.calls };
 }
 
-describe("createBackendReprobeTask (#1267)", () => {
+describe("createBackendReprobeTask", () => {
   test("names the task and job", () => {
     const { registry } = stubRegistry({ down: 0, probed: 0, recovered: 0 });
     const bundle = createBackendReprobeTask({ registry, log }, makeScheduler());

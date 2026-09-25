@@ -48,7 +48,7 @@ public final class AgentCoordinator {
     /// row per annotated document.
     private(set) var trailAnnotations: AgentTrailAnnotations = .empty
 
-    /// Directly-cited analytics rows from `cite_record.recorded` (#757),
+    /// Directly-cited analytics rows from `cite_record.recorded`,
     /// deduped by `recordKey` (last write wins), in arrival order. The
     /// Timeline synthesises a record-only row for each one.
     private(set) var recordCitations: [AgentTrailRecord] = []
@@ -699,7 +699,7 @@ public final class AgentCoordinator {
         }
         var cits = AgentTurnBuilder.citations(from: visible)
         // Seed the Citations set from any persisted Deep Research
-        // `report_artifact` part (#748). A deep-research run cites via the
+        // `report_artifact` part. A deep-research run cites via the
         // merged artifact set, not via `annotate` tool pairs, so
         // `citations(from:)` reconstructs none of them — without this the
         // resumed citation drawer loses those sources. Each seed has empty
@@ -1597,7 +1597,7 @@ public final class AgentCoordinator {
         // Drop events for other sessions (the SSE is admin-scoped and
         // sees every caller's session). The reducer-style match here
         // mirrors the portal one-for-one.
-        // See #1445 — planned: a list-level conversation event handled above
+        // See #52 — planned: a list-level conversation event handled above
         // this guard so the drawer updates live for conversations advanced on
         // another device.
         guard let live = sessionId, event.sessionId == live else { return }
@@ -1758,7 +1758,7 @@ public final class AgentCoordinator {
                 // arm a live annotate_many turn left the Timeline empty until reload.
                 applyAnnotationTimeline(result)
             case .citeRecordRecorded(let record):
-                // #757: upsert the directly-cited row, deduped by
+                // Upsert the directly-cited row, deduped by
                 // recordKey (last wins). The unified Timeline synthesises
                 // a record-only row for it.
                 upsertRecordCitation(record)
@@ -1962,8 +1962,8 @@ public final class AgentCoordinator {
             }
 
         case .deepResearchSummary(_, let messageId, let stoppedReason, let plan, let treeUsage, let verification):
-            // Fold the additive summary onto the assistant turn it names
-            // (#748). The report prose already streamed as `text` parts, so a
+            // Fold the additive summary onto the assistant turn it names.
+            //The report prose already streamed as `text` parts, so a
             // run that never carries this event still renders as a plain
             // bubble — the artifact is the enrichment, not a precondition.
             attachReportArtifact(
@@ -2080,7 +2080,7 @@ public final class AgentCoordinator {
         }
     }
 
-    /// Insert or replace a directly-cited record (#757), deduped by
+    /// Insert or replace a directly-cited record, deduped by
     /// `recordKey` so a re-cite of the same row updates in place (last
     /// write wins) while preserving the original arrival position.
     private func upsertRecordCitation(_ record: AgentTrailRecord) {
@@ -2103,7 +2103,7 @@ public final class AgentCoordinator {
         }
     }
 
-    // MARK: - Sub-agent cards (#748)
+    // MARK: - Sub-agent cards
 
     /// Locate the `subagent` card with `subagentId` across every assistant
     /// turn (a card can outlive the turn that spawned it) and replace it
@@ -2146,7 +2146,7 @@ public final class AgentCoordinator {
     }
 
     /// Fold an `agent.deep_research.summary` onto the assistant turn it names
-    /// (#748) — the iOS twin of the portal `attachReportArtifact`. Located by
+    /// — the iOS twin of the portal `attachReportArtifact`. Located by
     /// the event's `messageId`; cross-session is already guarded by the
     /// `event.sessionId == live` check at the top of `handle`. If the matching
     /// turn isn't found (a race / a resumed transcript that lost the turn) the
@@ -2366,7 +2366,7 @@ public final class AgentCoordinator {
         }
     }
 
-    // MARK: - Research working-set surface (#748)
+    // MARK: - Research working-set surface
 
     /// The bespoke multi-panel research working-set surface is driven entirely
     /// off coordinator state — no side channel. `researchPanels` projects the
@@ -2799,7 +2799,7 @@ enum AgentPart: Equatable {
     case text(String)
     case thinking(String)
     case tool(AgentToolCall)
-    /// A sub-agent (#748) the parent spawned. Renders as a compact live
+    /// A sub-agent the parent spawned. Renders as a compact live
     /// `AgentSubAgentCard` with status, token usage, and reached sources.
     /// Mirrors the portal `subagent` part.
     case subagent(AgentSubagentCard)
@@ -2976,7 +2976,7 @@ func agentBatchChildCalls(for call: AgentToolCall) -> [AgentToolCall] {
     }
 }
 
-/// A sub-agent (#748) nested under the parent agent — the iOS twin of the
+/// A sub-agent nested under the parent agent — the iOS twin of the
 /// portal `subagent` part. `spawned` seeds a compact progress row, wrapped
 /// events update its bounded accounting state, and `result` finalises status,
 /// summary, sources, and the authoritative token total.
@@ -3046,7 +3046,7 @@ struct AgentSubagentCard: Equatable, Identifiable {
 }
 
 /// A single document a researcher sub-agent has reached, in minimal
-/// source-tintable form (#748). Carries only what the research working-set
+/// source-tintable form. Carries only what the research working-set
 /// surface needs to paint one source-tinted chip — the title plus the
 /// `sourceId` the source registry resolves to an icon/accent/label. Source
 /// identity rides this ref; the view never branches on a source name.
@@ -3062,7 +3062,7 @@ struct AgentResearchDoc: Equatable, Identifiable {
 }
 
 /// View-facing descriptor for one researcher panel on the research working-set
-/// surface (#748) — the projection `researchPanels(of:)` builds per sub-agent
+/// surface — the projection `researchPanels(of:)` builds per sub-agent
 /// card in spawn order. Pure value type so the selector stays testable.
 @available(iOS 17.0, *)
 struct AgentResearchPanel: Equatable, Identifiable {
@@ -3331,7 +3331,7 @@ enum AgentTurnBuilder {
                                 toolIndexById[id] = assistant.parts.count - 1
                                 // Citation tools feed the bubble's citation
                                 // chip: `annotate` cites one document,
-                                // `cite_record` one analytics row (#757), and
+                                // `cite_record` one analytics row, and
                                 // `annotate_many` contributes one per child.
                                 if tool == "annotate_many" {
                                     assistant.citationCount += annotateManyChildCount(args)
@@ -3532,7 +3532,7 @@ enum AgentTurnBuilder {
     }
 
     /// The merged citation refs carried on any persisted Deep Research
-    /// `report_artifact` part (#748), in transcript order, deduped by
+    /// `report_artifact` part, in transcript order, deduped by
     /// documentId. A deep-research run cites via this single merged set, NOT
     /// via `annotate` tool pairs, so `citations(from:)` reconstructs none of
     /// them. This seeds the resumed citation drawer, mirroring the portal
@@ -3620,7 +3620,7 @@ enum AgentTurnBuilder {
     }
 
     /// Walk a persisted transcript and pull out every directly-cited
-    /// record (#757), deduped by `recordKey` (last write wins) while
+    /// record, deduped by `recordKey` (last write wins) while
     /// preserving arrival order. Used on conversation resume so a
     /// reloaded conversation shows directly-cited records in the
     /// Timeline exactly like it does live.

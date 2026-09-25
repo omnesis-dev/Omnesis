@@ -449,7 +449,7 @@ describe("upsertWithCursor snapshot reconcile off the writer", () => {
     expect(survivingExternalIds()).toEqual(["a", "b", "c"]);
   });
 
-  test("a stale echoed wipeEpoch (#551) skips the compute and the writer rejects", async () => {
+  test("a stale echoed wipeEpoch skips the compute and the writer rejects", async () => {
     const { service, calls } = makeService({ ioGate: true });
     await seed(service, ["a", "b"]);
     bumpWipeEpoch(db, "gmail");

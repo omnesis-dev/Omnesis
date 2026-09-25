@@ -16,7 +16,7 @@ function formatDuration(seconds: number): string {
 
 /**
  * Build one searchable per-day digest document from a batch of
- * `screen_time_daily` rows (#4 / #450). Screen Time is otherwise pure-
+ * `screen_time_daily` rows. Screen Time is otherwise pure-
  * structured — invisible to BM25 — so "how much did I use Chrome last week"
  * can only be answered via SQL. The digest doc puts the day's usage into prose
  * the search index can reach. One document per date in the batch.

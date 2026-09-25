@@ -54,12 +54,12 @@ describe("canonicalEmbedIdentity", () => {
     });
     expect(id).toEqual({ name: "text-embedding-demo-small", dim: 1024 });
     // The backend key never leaks into the identity — that divergence (a
-    // `<backend>/<model>` stamp vs a bare served id) is exactly #698 B1.
+    // `<backend>/<model>` stamp vs a bare served id) is what re-wiped valid indexes.
     expect(id.name).not.toContain("my-vllm-box");
     expect(id.name).not.toContain("/");
   });
 
-  test("http: the swap path and the boot path produce the IDENTICAL identity (the #698 B1/B2 guarantee)", () => {
+  test("http: the swap path and the boot path produce the IDENTICAL identity", () => {
     const resolved = {
       kind: "http",
       backendKey: "cloud-embed",

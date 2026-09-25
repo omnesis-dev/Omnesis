@@ -19,7 +19,7 @@
  *   POST   /admin/models/activate          body { id, role, capability? }→ switch active model
  *   GET    /admin/models/doctor/:id                          → integrity check
  *   POST   /admin/inference/backends/:key/probe              → re-probe an HTTP backend
- *   POST   /admin/inference/backends/:key/verify            → behavioral capability check (#508)
+ *   POST   /admin/inference/backends/:key/verify            → behavioral capability check
  *   POST   /admin/inference/anthropic/refresh               → refresh Anthropic's model catalog
  *   POST   /admin/inference/codex/refresh                   → refresh Codex login/model status
  *   POST   /admin/inference/codex/agent                     → assign Codex if Agent is unassigned
@@ -34,8 +34,7 @@
  * Switch semantics:
  *
  *   - For role=embed, activating a different model wipes the vector
- *     index and queues a full re-embed (see #240 for the planned
- *     double-buffered alternative). The route returns a flag so the
+ *     index and queues a full re-embed. The route returns a flag so the
  *     CLI/portal can show the impact before the user clicks through.
  *
  * The actual restart/reload is driven by the gateway's
@@ -430,7 +429,7 @@ export function registerModelRoutes(app: RouteApp, opts: RegisterOptions): void 
   });
 
   // Behavioral capability confirm for one (backend, model, role). On-demand
-  // only — never auto-probed per model on page load. See #508.
+  // only — never auto-probed per model on page load.
   app.post("/admin/inference/backends/:key/verify", scope.admin(), async (c) => {
     const key = c.req.param("key");
     const backend = modelInferenceOverview().backends[key];

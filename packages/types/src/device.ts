@@ -64,8 +64,7 @@ export function tryTokenId(s: unknown): TokenId | null {
  * /analytics/ingest`). Like the iOS app hosting Apple Health, it exists only as
  * a push client — the desktop collector never syncs on its behalf. Its token
  * carries `write:web` only: the device kind is the physical client, but the
- * source it contributes captures to is the unified `web` source (#895). See
- * #791 — browser-capture extension.
+ * source it contributes captures to is the unified `web` source.
  *
  * `integration` is third-party code that asks Omnesis questions on the
  * operator's behalf — a voice assistant's handler, a home-automation hook, a
@@ -244,7 +243,7 @@ export const DEVICE_HOSTED_SOURCE_TYPES: Readonly<Record<DeviceKind, readonly So
   // separate least-privilege ingestion credential, not its device token.
   agent: [],
   // The extension's device kind is the physical client; the source it
-  // captures into is the unified `web` source (#895).
+  // captures into is the unified `web` source.
   browser: [SourceType("web")],
   // Asks questions; hosts no source of its own.
   integration: [],

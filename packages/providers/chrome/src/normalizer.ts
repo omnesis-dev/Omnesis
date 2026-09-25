@@ -108,7 +108,7 @@ export function normalizeBookmark(
 }
 
 /**
- * The `bookmark → webpage` declared edge for one bookmark (#895). A bookmark
+ * The `bookmark → webpage` declared edge for one bookmark. A bookmark
  * stays its own first-class `bookmark` document; this edge joins it to the
  * canonical `webpage` entity (source `web`) the URL resolves to, so the graph
  * links "this is bookmarked" to the page itself. The edge resolves immediately

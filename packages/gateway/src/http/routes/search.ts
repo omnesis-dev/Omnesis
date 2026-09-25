@@ -53,7 +53,7 @@ export function mountSearchRoutes(app: RouteApp, deps: SearchRoutesDeps): void {
   });
 
   app.post("/search", scope.read(), validateJson(searchBody), async (c) => {
-    // Per-IP rate limit (#58): defence-in-depth against a runaway/abusive
+    // Per-IP rate limit: defence-in-depth against a runaway/abusive
     // client pinning the search pipeline on an exposed gateway. Loopback is
     // exempt — a same-host client already has full local access, so the limit
     // buys nothing there, and throttling it would break local automation like

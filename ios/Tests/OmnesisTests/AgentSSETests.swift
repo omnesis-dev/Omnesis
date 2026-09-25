@@ -214,7 +214,7 @@ final class AgentSSETests: XCTestCase {
         XCTAssertEqual(type, "agent.future.event")
     }
 
-    // MARK: - Sub-agent events (#748)
+    // MARK: - Sub-agent events
 
     /// `agent.subagent.spawned` decodes into `.subagentSpawned` with the
     /// specialist + task + optional parent tool-call id.
@@ -337,7 +337,7 @@ final class AgentSSETests: XCTestCase {
         XCTAssertEqual(failure?.code, "http_api_error")
     }
 
-    // MARK: - Deep Research summary (#748)
+    // MARK: - Deep Research summary
 
     /// `agent.deep_research.summary` decodes into `.deepResearchSummary` with
     /// the honest `stoppedReason`, the planner decomposition, the whole-tree
@@ -408,7 +408,7 @@ final class AgentSSETests: XCTestCase {
         XCTAssertEqual(items[2].status, .pending)
     }
 
-    /// #757: an `event_trail.built` result carrying a record-only event
+    /// An `event_trail.built` result carrying a record-only event
     /// (no `doc`) and a deduped doc+record event decodes natively into
     /// `AgentTrailEvent`s. Exercises the optional `doc`, the `record`
     /// payload, and the heterogeneous key-field `value` coercion
@@ -462,7 +462,7 @@ final class AgentSSETests: XCTestCase {
         XCTAssertEqual(docRecord.record?.keyFields.first?.value, "24.8 km")
     }
 
-    /// #757: a `cite_record.recorded` tool result decodes into
+    /// A `cite_record.recorded` tool result decodes into
     /// `.citeRecordRecorded`, lifting the result object straight into an
     /// `AgentTrailRecord`. The extra `primaryKeyColumns` / `snapshot`
     /// keys are ignored, and the heterogeneous key-field `value` shapes

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Low-disk ingestion guard (#15). Drives the full route → DocumentService →
+ * Low-disk ingestion guard. Drives the full route → DocumentService →
  * writeGate → DB path via a real `createServer`, asserting:
  *   - an absurdly-high `minFreeDiskMb` (no real volume satisfies it) makes
  *     `POST /documents` return 507 INSUFFICIENT_STORAGE and write nothing,
@@ -87,7 +87,7 @@ afterEach(() => {
   cleanupDb(dbPath);
 });
 
-describe("DocumentService low-disk guard (#15)", () => {
+describe("DocumentService low-disk guard", () => {
   test("POST /documents returns 507 under low disk and writes nothing", async () => {
     app = createServer(db, dbPath, { minFreeDiskMb: ABSURD_MIN_FREE_MB });
     const res = await req("/documents", { method: "POST", body: ingestBody("low-1") });

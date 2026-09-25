@@ -198,7 +198,7 @@ export interface NotionDatabasesCursor extends SyncCursor {
    */
   missingDatabaseIds?: string[];
 
-  // ── Analytics-row deletion detection (#156) ───────────────────────
+  // ── Analytics-row deletion detection ───────────────────────
   /**
    * Map of analytics `tableName` → the row primary-key values (`id` =
    * page UUID with dashes stripped) enumerated so far during the

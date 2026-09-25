@@ -320,7 +320,7 @@ describe("PushClient — no data loss across gateway downtime", () => {
     const deliveredIds = delivered
       .map((req) => (req.body as { documents: { externalId: string }[] }).documents[0].externalId)
       .sort();
-    // externalId is SHA256(normalizedUrl) (#895), so derive the expected ids
+    // externalId is SHA256(normalizedUrl), so derive the expected ids
     // the same way the builder does rather than comparing raw URL strings.
     const expectedIds = (await Promise.all(urls.map((u) => hashText(u)))).sort();
     expect(deliveredIds).toEqual(expectedIds);

@@ -119,7 +119,7 @@ export function resolveTlsBundle(opts: ResolveTlsBundleOpts): TlsBundle {
   // The installer (scripts/install.sh) auto-provisions a real cert here when
   // it can — Tailscale `tailscale cert`, or mkcert on opt-in — and points
   // these env vars at it via the config dir's .env, so the portal loads
-  // without the self-signed-cert browser warning (#605).
+  // without the self-signed-cert browser warning.
   if (envCertPath && envKeyPath) {
     const cert = readFileSync(envCertPath, "utf8");
     const key = readFileSync(envKeyPath, "utf8");
@@ -206,7 +206,7 @@ export function fingerprintFromCertPem(certPem: string): string {
 /**
  * Generate a fresh RSA-2048 keypair + a self-signed X.509 cert valid for 10
  * years, with SAN entries for localhost / 127.0.0.1 / ::1 / <hostname>.local /
- * omnesis.local (the stable mDNS name the gateway advertises — see #49), plus
+ * omnesis.local (the stable mDNS name the gateway advertises), plus
  * whatever `extraNames` (OMNESIS_TLS_EXTRA_NAMES) validly names.
  *
  * Subject CN: "Omnesis Gateway (auto-generated)".
@@ -249,7 +249,7 @@ export function generateSelfSigned(opts: { extraNames?: string } = {}): {
       ...new Set([
         "DNS:localhost",
         `DNS:${hostLocal}`,
-        // Stable mDNS name the gateway advertises (#49) — keeps
+        // Stable mDNS name the gateway advertises — keeps
         // https://omnesis.local:7600 free of a cert-name mismatch.
         "DNS:omnesis.local",
         // The compose service name the installer's Docker role gives the gateway,

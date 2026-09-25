@@ -252,8 +252,8 @@ object HealthSchemas {
     )
 
     /**
-     * Record-citation display spec shared by the four "tall" sample tables
-     * (#757): one reading per row, titled by its metric and surfacing the
+     * Record-citation display spec shared by the four "tall" sample tables:
+     *one reading per row, titled by its metric and surfacing the
      * value/unit/time as key fields. The semantic time is always `start_time`.
      */
     private val hcSampleRecord = RecordDisplaySpec(

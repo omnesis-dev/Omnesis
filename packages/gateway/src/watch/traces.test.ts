@@ -569,7 +569,7 @@ describe("what the judge decided, kept per subject", () => {
     ).toHaveLength(2);
   });
 
-  it("folds a live singleton sibling, which is the shape to watch for (#1933)", () => {
+  it("folds a live singleton sibling, which is the shape to watch for", () => {
     // The third origin the two above do not cover. A node reached by one edge
     // that declares a key and another that does not inherits the upstream
     // signal's key on the second — and an unkeyed upstream renders as

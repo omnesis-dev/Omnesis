@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Endpoint tests for the owned-web-domains routes (#791).
+ * Endpoint tests for the owned-web-domains routes.
  *
  * Auth posture under test:
  *   - `POST /admin/owned-web-domains` requires broad write (`write:*`) or admin
@@ -53,7 +53,7 @@ afterEach(() => {
   resetOwnedWebDomains();
 });
 
-describe("owned-web-domains endpoints (#791)", () => {
+describe("owned-web-domains endpoints", () => {
   test("a write token pushes the set; the public GET returns the union", async () => {
     const writeToken = mintToken([SCOPE_WRITE_ALL]);
     const post = await app.request("/admin/owned-web-domains", {

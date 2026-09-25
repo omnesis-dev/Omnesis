@@ -793,7 +793,7 @@ class AgentCoordinator @Inject constructor() {
                         turns = it.chat.turns + AgentTurn.User(optimisticId, cleaned),
                         busy = true,
                         // A Deep Research send (`/`-pill) opens the working-set surface for this
-                        // run; an ordinary send closes any surface left from a prior run (#748).
+                        // run; an ordinary send closes any surface left from a prior run.
                         deepResearch = deepResearch,
                         lastTurnError = null,
                     ),
@@ -1522,7 +1522,7 @@ class AgentCoordinator @Inject constructor() {
             return
         }
         // Drop events for other sessions (the SSE is admin-scoped and sees every caller).
-        // See #1445 — planned: a list-level conversation event handled above this guard
+        // See #52 — planned: a list-level conversation event handled above this guard
         // so the drawer updates live for conversations advanced on another device.
         val live = _state.value.sessionId ?: return
         if (event.sessionId != live) return

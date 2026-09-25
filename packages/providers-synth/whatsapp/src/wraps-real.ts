@@ -2,11 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Wraps-real WhatsApp synth path (#586).
+ * Wraps-real WhatsApp synth path.
  *
  * Unlike the default synth twin — which renders pre-baked day-doc fixtures and
  * BYPASSES the real provider — this path drives the **real** `WhatsAppProvider`
- * (real durable `store.db`, the #579 tri-state seal state machine, the #580
+ * (real durable `store.db`, the tri-state history-seal state machine, the
  * backfill / day-doc deepening) end-to-end. It injects a `FakeWhatsAppServer`
  * (seeded from the universe's `fake-corpus.json`) through the provider's
  * existing `SocketFactory` seam, then runs the exact production `create()`
@@ -15,7 +15,7 @@
  * inside the real provider; all the test-shaped wiring lives here.
  *
  * The real provider needs a writable home for its `store.db` + Baileys auth
- * state; it reads it from `CreateOptions.configDir` (added in #586). A gateway-
+ * state; it reads it from `CreateOptions.configDir`. A gateway-
  * level E2E (`SyntheticE2EHarness`) sets `configDir` to its isolated temp dir.
  *
  * Backfill is driven out-of-band: the universe scenario may declare a `backfill`
@@ -40,7 +40,7 @@ const log = createLogger("provider:whatsapp-synth").child("wraps-real");
  * The universe fixture that opts WhatsApp into the wraps-real path. It carries
  * the {@link FakeCorpus} the `FakeWhatsAppServer` replays plus a `scenario`
  * directive describing how the server terminates the initial push (which drives
- * the #579 seal outcome) and, optionally, a deeper `backfill` batch.
+ * the history-seal outcome) and, optionally, a deeper `backfill` batch.
  */
 export interface WhatsAppFakeCorpusFixture {
   /** The server-side corpus the fake replays through the real provider. */
@@ -51,7 +51,7 @@ export interface WhatsAppFakeCorpusFixture {
      * - `complete`: terminate `isLatest` → store seals `complete` (coverage
      *   reports `complete`).
      * - `interrupted`: terminate `paused` after deep batches → store seals
-     *   `interrupted` synchronously (coverage reports `partial`, #579).
+     *   `interrupted` synchronously (coverage reports `partial`).
      */
     mode: "complete" | "interrupted";
     /**
@@ -68,7 +68,7 @@ export interface WhatsAppFakeCorpusFixture {
     /**
      * Optional deeper history streamed later via `pushBackfill()`. When present,
      * a second push (full depth) re-streams the corpus so days already emitted
-     * gain their older messages — the #580 day-doc deepening. The controller
+     * gain their older messages — the day-doc deepening. The controller
      * exposes `pushBackfill()`; the test calls it between syncs.
      */
     backfill?: {
@@ -145,7 +145,7 @@ export async function createWrapsRealWhatsApp(opts: CreateOptions): Promise<Sour
     // The real provider keeps a durable store.db; without a writable home it
     // would fall back to DEFAULT_CONFIG_DIR and clobber the operator's data.
     throw new Error(
-      "wraps-real WhatsApp twin requires CreateOptions.configDir — the harness must thread the collector config dir (see #586).",
+      "wraps-real WhatsApp twin requires CreateOptions.configDir — the harness must thread the collector config dir.",
     );
   }
 
@@ -169,7 +169,7 @@ export async function createWrapsRealWhatsApp(opts: CreateOptions): Promise<Sour
   log.info(`Connected wraps-real WhatsApp account ${accountId} (mode=${scenario.mode})`);
 
   // Initial history push. `complete` seals via isLatest; `interrupted` seals
-  // synchronously via a `paused` milestone after deep RECENT batches (#579) —
+  // synchronously via a `paused` milestone after deep RECENT batches —
   // no quiet-gap wall-clock wait, so the gateway-level E2E stays fast.
   const initialPush: PushHistoryOptions =
     scenario.mode === "complete"
@@ -221,7 +221,7 @@ export async function createWrapsRealWhatsApp(opts: CreateOptions): Promise<Sour
       if (backfillPushed) return false;
       backfillPushed = true;
       // Re-stream the corpus at the backfill depth. Days already emitted gain
-      // their older messages (the #580 deepening); the store re-marks them
+      // their older messages (the deepening); the store re-marks them
       // dirty. The seal is already complete/interrupted, so this push doesn't
       // re-enter the seal state machine — it just deepens the durable store.
       fake.pushInitialHistory({

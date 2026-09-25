@@ -46,7 +46,7 @@ export interface FakeEmbedderServer {
    * Total number of text inputs embedded across all `/v1/embeddings` POSTs
    * since boot (probe + corpus + query/trigger calls). A monotonic counter
    * tests read before/after an action to prove how many chunks were
-   * (re-)embedded — e.g. the #586 O(1)-re-embed assertion that a backfill
+   * (re-)embedded — e.g. the O(1)-re-embed assertion that a backfill
    * which re-emits N day-docs re-embeds only the changed one's chunks.
    */
   embedCount: () => number;

@@ -46,7 +46,7 @@ class SourceRecentViewModel @Inject constructor(
     private val _isInternal = MutableStateFlow(false)
     val isInternal = _isInternal.asStateFlow()
 
-    // Single-document privacy delete (#1065) error surface; null = no error.
+    // Single-document privacy delete error surface; null = no error.
     private val _deleteError = MutableStateFlow<String?>(null)
     val deleteError = _deleteError.asStateFlow()
 
@@ -129,7 +129,7 @@ class SourceRecentViewModel @Inject constructor(
     }
 
     /**
-     * Delete a recent-list document (#1065) — for good, or only this copy with
+     * Delete a recent-list document — for good, or only this copy with
      * [keepCopy] — dropping its row in place.
      */
     fun delete(doc: RecentDocument, keepCopy: Boolean) {

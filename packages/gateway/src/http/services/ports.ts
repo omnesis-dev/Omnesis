@@ -4,7 +4,7 @@
 /**
  * Ports owned by the HTTP-services layer.
  *
- * ## Layering rule (settled by issue #345)
+ * ## Layering rule
  *
  * **Routes only call services.** Every read or write a route handler
  * needs lands on a method of `DocumentService` / `PersonService` /

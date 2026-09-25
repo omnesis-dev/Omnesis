@@ -4,11 +4,11 @@
 /**
  * Migration 32: back-fill `self_emails` / `self_phones` on the `devices` table.
  *
- * The regression this guards: the device owner's self identifiers (#282) were
+ * The regression this guards: the device owner's self identifiers were
  * only ever declared inline in `runSchemaSetup`'s `CREATE TABLE IF NOT EXISTS
  * devices`, which is a no-op on an already-existing `devices` table. The
  * sibling `device_pairings` columns got an ALTER migration (v18); the `devices`
- * table never did. So an install whose `devices` table predates #282 carried it
+ * table never did. So an install whose `devices` table predates these columns carried it
  * forward WITHOUT these columns — and `DEVICE_SELECT_COLS` selects them on every
  * `getDevice`/`listDevices`, throwing `no such column: self_emails` on a core,
  * always-hit path.
@@ -40,9 +40,9 @@ afterEach(() => {
 });
 
 describe("migration 32 — existing-DB upgrade", () => {
-  test("back-fills self columns when devices predates #282 and stays readable via the repository", () => {
+  test("back-fills self columns when devices predates the self columns and stays readable via the repository", () => {
     // Build the full current schema, then DROP the self columns to recreate a
-    // genuine pre-#282 `devices` (apns columns still present, self columns not),
+    // genuine older `devices` (apns columns still present, self columns not),
     // pinned at v31 — the exact live shape that threw `no such column`.
     runSchemaSetup(db);
     db.exec("ALTER TABLE devices DROP COLUMN self_emails");

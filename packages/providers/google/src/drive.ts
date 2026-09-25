@@ -81,7 +81,7 @@ function isProcessable(mimeType: string, allowedAttachmentTypes: ReadonlyArray<s
   // An explicitly allow-listed type is always processable, even if it matches
   // a skip prefix. This is what lets image OCR reach Drive files: `image/*` is
   // in the default allow-list (resolveAttachmentConfig), overriding the default
-  // skip of binary media (#427). With no OCR backend assigned the image is
+  // skip of binary media. With no OCR backend assigned the image is
   // downloaded but extraction returns null (extraction-failed), retried later.
   if (allowedAttachmentTypes.includes(mimeType)) return true;
   if (shouldSkip(mimeType)) return false;
@@ -309,7 +309,7 @@ export class GoogleDriveSource {
     // (unsupported type, corrupt/empty binary) and the file is dropped from
     // this page. A *transient* extraction-backend failure throws out of here
     // instead (it does not collapse to null) so the page fails and retries
-    // rather than silently dropping the file forever (#680).
+    // rather than silently dropping the file forever.
     const extracted = await this.extractContent(file.id, mimeType, file.size ?? null);
     if (extracted === null) return null;
     if (extracted.noText) return null;
@@ -399,7 +399,7 @@ export class GoogleDriveSource {
         // on extending DRIVE_FILE_FIELDS + a folder-cache resolver.
         extra: {
           // Extractor-emitted extras first (e.g. `ocr`/`ocrPageCount` when a
-          // scanned/image-only page was OCR'd, #427) so Drive carries the same
+          // scanned/image-only page was OCR'd) so Drive carries the same
           // provenance as attachment docs from Gmail/Outlook; Drive's own keys
           // below override on collision.
           ...(extracted.extra ?? {}),
@@ -450,7 +450,7 @@ export class GoogleDriveSource {
 
       // Binary files (PDF, Office, EML, …) — route through the shared
       // attachment-extraction pipeline if it's available and the type is
-      // allowlisted. #270.
+      // allowlisted.
       if (this.extractAttachment && this.attachmentConfig.enabled) {
         const sizeNumber = fileSize !== null ? parseInt(fileSize, 10) : null;
         const check = shouldExtractAttachment(mimeType, sizeNumber, this.attachmentConfig);
@@ -478,7 +478,7 @@ export class GoogleDriveSource {
     } catch (error: unknown) {
       // A transient non-OCR extraction failure must NOT be swallowed into a
       // null drop — that silently omits the file and advances the cursor past
-      // it, never to be retried (#680). Re-throw so it propagates out of the
+      // it, never to be retried. Re-throw so it propagates out of the
       // page's `pMap`, fails the sync page, and leaves the cursor un-advanced
       // for a retry next tick. Optional OCR failures are already normalized to
       // null by the collector's shared extractor; permanent extraction failures

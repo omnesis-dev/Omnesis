@@ -66,7 +66,7 @@ describe("TranscribeService", () => {
     expect(await svc.transcribe(enc("hi"), "audio/ogg")).toBeNull();
   });
 
-  test("transcription is local-only: http and anthropic assignments resolve to no transcriber (#260)", async () => {
+  test("transcription is local-only: http and anthropic assignments resolve to no transcriber", async () => {
     const http: ResolvedAssignment = {
       role: "transcriber",
       kind: "http",

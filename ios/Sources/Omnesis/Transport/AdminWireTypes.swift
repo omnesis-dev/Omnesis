@@ -333,7 +333,7 @@ public struct SourceSyncStatus: Decodable, Equatable, Sendable, Identifiable {
     public let lastUpdated: Int64?
 
     /// Forward-looking consent / authorization deadline (ISO 8601) the source
-    /// last reported, when known (#927). Mirrors `DisplaySyncStatus.consentExpiresAt`
+    /// last reported, when known. Mirrors `DisplaySyncStatus.consentExpiresAt`
     /// in packages/gateway/src/sync-status.ts. Present whenever a deadline is
     /// stored — independent of `state`, so a healthy `synced` source can still
     /// surface "your connection expires on <date>". When `state ==

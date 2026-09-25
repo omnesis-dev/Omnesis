@@ -6,7 +6,7 @@
 // gateway, the live DB, or ~/.config/omnesis. All sample data is invented per
 // the repo's privacy rules (RFC-2606 domains, fabricated names).
 //
-// Tier-0 criteria of epic #804:
+// Tier-0 criteria:
 //   - scripts/db-stats.ts runs clean (node:fs statSync, not Bun.file).
 //   - scripts/test-env.sh emits https:// URLs + exports NODE_EXTRA_CA_CERTS so a
 //     sourced CLI/curl call completes the TLS handshake against an isolated
@@ -405,7 +405,7 @@ describe("scripts/chaos-gateway.mjs cross-platform liveness", () => {
 
   // Run the real chaos harness against the isolated gateway, returning its
   // exit code + combined stdout/stderr. Light load (no checkpoint pressure;
-  // we are testing crash DETECTION, not reproducing #192's SIGBUS).
+  // we are testing crash DETECTION, not reproducing the -shm SIGBUS).
   function runChaos(gw, durationSec) {
     return new Promise((resolve) => {
       execFile(
@@ -1101,7 +1101,6 @@ describe("scripts/lib/safe_kill helper (C7)", () => {
       "noclobber",
       "networkidle",
       "symlink-farm",
-      "#563",
     ]) {
       expect(gotchas, `agent-gotchas.md must cover ${needle}`).toContain(needle);
     }

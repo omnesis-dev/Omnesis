@@ -10,7 +10,7 @@
  * where available — Tailscale MagicDNS + tailnet IP). The first entry is
  * always the safest default (typically LAN IP on en0/en1).
  *
- * Tailscale shellout is macOS-only for now; see #177 for Linux/Windows.
+ * Tailscale shellout is macOS-only for now; Linux/Windows are tracked separately.
  */
 
 import { BlockList, isIP } from "node:net";
@@ -250,7 +250,7 @@ export async function discoverNetworkIdentities(): Promise<NetworkIdentity[]> {
   // a `tailscale cert` certificate validates (the cert covers the MagicDNS
   // name, not a raw IP), so it's the address a paired device must use once the
   // gateway is fronted by a Tailscale cert. Probed on macOS AND Linux (the CLI
-  // behaves identically); Windows is still TODO — see #177. If the CLI isn't
+  // behaves identically); Windows is still TODO. If the CLI isn't
   // installed, fall back to the utun* CGNAT addresses discovered above (macOS
   // App Store Tailscale with the CLI opt-in disabled — a macOS interface name).
   const os = platform();

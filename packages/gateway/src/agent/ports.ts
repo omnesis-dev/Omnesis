@@ -611,7 +611,7 @@ export function createGatewaySqlPort(
       const maxRows = runOpts?.maxRows ?? 200;
       // Fetch one row past the cap so an over-cap result is detectable without
       // a silent partial. If more than `maxRows` come back the query is too
-      // broad — throw (#757) so the agent narrows it; the agent never reasons
+      // broad — throw so the agent narrows it; the agent never reasons
       // over a clipped table.
       // A source-restricted denial arrives as a distinct error so the tool
       // wrapper can answer it actionably (drop the refused tables) rather
@@ -672,7 +672,7 @@ export function createGatewaySqlPort(
 }
 
 /**
- * Per-row record identity for a `run_sql` result (#757).
+ * Per-row record identity for a `run_sql` result.
  *
  * Identity is surfaced ONLY when the projected columns expose exactly one
  * known table's *full* primary key. That rule deliberately omits identity for
@@ -752,8 +752,8 @@ function deriveRowIdentities(
 // ─── RecordPort (cite_record) ───────────────────────────────────────────────
 
 /**
- * Wraps `AnalyticsDb` + the document store for the agent's `cite_record` tool
- * (#757). Given a `RecordReference` the agent obtained from `run_sql` and the
+ * Wraps `AnalyticsDb` + the document store for the agent's `cite_record` tool.
+ *Given a `RecordReference` the agent obtained from `run_sql` and the
  * row snapshot it saw, it:
  *   1. loads the table's declared contract from the analytics catalog
  *      (`semanticTimeColumn`, the record display spec, the column defs);
@@ -791,7 +791,7 @@ export function createGatewayRecordPort(db: Database.Database, analytics: Analyt
 }
 
 /**
- * Shared resolve step for #757 record citations — the single place that turns a
+ * Shared resolve step for record citations — the single place that turns a
  * `(table, primaryKeyColumns, snapshot)` triple into a fully-derived,
  * client-ready {@link RecordCitationResolved}. Both `cite_record`
  * (`createGatewayRecordPort`) and `trace_connections` (`createGatewayTrailPort`,
@@ -827,7 +827,7 @@ async function resolveRecordCitation(
     return { kind: "unknown_table" };
   }
 
-  // Frozen rule (#757): a timeless table cannot produce a timeline record
+  // Frozen rule: a timeless table cannot produce a timeline record
   // citation. Reject before deriving so the agent narrows to a timed table.
   if (table.semanticTimeColumn === null) {
     return { kind: "not_timeline_eligible" };
@@ -871,7 +871,7 @@ async function resolveRecordCitation(
 }
 
 /**
- * Resolve the co-described document id for a cited row (#757), or `null` when
+ * Resolve the co-described document id for a cited row, or `null` when
  * the table declares no `boundDocument` binding, the row's PK doesn't invert to
  * a document ref, or no matching document exists. The row→document inverse of
  * the graph walker's document→row `reconstructRowKey`.
@@ -1059,7 +1059,7 @@ export function createGatewayTrailPort(db: Db, analytics: AnalyticsDb): TrailPor
       // rather than falling through to the walker's heavier 10 / 50 defaults —
       // the walk's cost then matches what the tool promises.
       //
-      // #757: surface `same-entity` bound rows. The two-phase walk attaches an
+      // Surface `same-entity` bound rows. The two-phase walk attaches an
       // `analytics-row` vertex (with its identity + projected snapshot) for
       // every reachable document whose source declares a `boundDocument`; we
       // then derive each row's record-citation fields the SAME way `cite_record`
@@ -1077,7 +1077,7 @@ export function createGatewayTrailPort(db: Db, analytics: AnalyticsDb): TrailPor
 
 /**
  * Derive the client-ready record-citation fields for every `analytics-row`
- * vertex on a trail graph (#757) and stamp them onto `vertex.record`, reusing
+ * vertex on a trail graph and stamp them onto `vertex.record`, reusing
  * the same `resolveRecordCitation` step `cite_record` uses. A row whose table
  * is unknown or timeless (or whose semantic-time value is empty on this row) is
  * left without a `record` — the timeline builder then drops it (a timeless row

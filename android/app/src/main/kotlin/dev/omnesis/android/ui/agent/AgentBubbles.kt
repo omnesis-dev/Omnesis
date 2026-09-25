@@ -142,7 +142,7 @@ fun AssistantTurn(
     onFlushEphemeral: (String) -> Unit,
     onOpenDocument: (String) -> Unit,
     /**
-     * The conversation's single merged citation set (#748) — passed so a Deep Research
+     * The conversation's single merged citation set — passed so a Deep Research
      * turn's verified-report artifact can render numbered inline citation markers off it
      * (no per-sub-agent attribution). Empty for an ordinary turn.
      */
@@ -173,7 +173,7 @@ fun AssistantTurn(
                         ToolCard(part.call, pillRuns[index], catalog, onFlushEphemeral, onOpenDocument)
                     }
 
-                // A sub-agent (#748) the parent spawned via `spawn_subagent` — a
+                // A sub-agent the parent spawned via `spawn_subagent` — a
                 // collapsible card whose expanded body recurses through the same
                 // part renderers (registry-tinted), one level of recursion.
                 //
@@ -197,7 +197,7 @@ fun AssistantTurn(
         turn.failure?.let { failure -> AssistantErrorRow(failure) }
         turn.stopped?.let { stopped -> AssistantStoppedRow(stopped) }
 
-        // The verified-report artifact (#748) hangs below the streamed report prose —
+        // The verified-report artifact hangs below the streamed report prose —
         // only when the reducer folded a summary event onto this turn. A turn without one
     }
 }
@@ -509,7 +509,7 @@ internal fun ToolCard(
     // True when rendered AFTER-THE-FACT (a finished sub-agent card's expanded
     // transcript): freezes the ephemeral tool cards so they render statically —
     // no roll-in animation, no self-dismiss — instead of replaying every
-    // animation at once on expand (#890).
+    // animation at once on expand.
     freeze: Boolean = false,
 ) {
     when {
@@ -527,7 +527,7 @@ internal fun ToolCard(
             AgentCitingPill(annotateManyCount(call))
 
         // Silent / panel-only tools: annotate / annotate_many feed the citations card, cite_record
-        // (#757) feeds the citations drawer's Timeline (the directly-cited row never
+        // feeds the citations drawer's Timeline (the directly-cited row never
         // surfaces as an inline card), plan feeds the pinned TODO panel, read-only
         // trigger fetches are background data. All bump the bubble's citation count
         // where applicable but render nothing in the transcript flow.

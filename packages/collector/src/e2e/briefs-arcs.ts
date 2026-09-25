@@ -4,7 +4,7 @@
 /**
  * The Briefs "test life" arc kit — seeded generation of the planted
  * commitment→resolution arcs the reconcile-quality instrument delivers
- * over time (epic #137 S13, criterion 4).
+ * over time.
  *
  * An **arc** is an ordered set of documents (steps) plus, per document,
  * the behavior a *correct* Cognition Steward takes when its data run processes

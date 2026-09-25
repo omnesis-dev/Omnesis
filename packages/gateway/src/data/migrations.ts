@@ -565,7 +565,7 @@ export const MIGRATIONS: readonly Migration[] = [
     },
   },
   {
-    // See #568 — runner callback tokens are short-lived and read-only; the
+    // Runner callback tokens are short-lived and read-only; the
     // expiry column lets `lookupToken` reject a replayed credential past its
     // window and a periodic sweep prune the rows. NULL for every existing
     // (never-expiring) device token.
@@ -582,7 +582,7 @@ export const MIGRATIONS: readonly Migration[] = [
     },
   },
   {
-    // See #284 — pairing flows (CLI + portal) can now stage the device
+    // Pairing flows (CLI + portal) can now stage the device
     // owner's self email/phone identifiers at code-creation time; they're
     // applied to the new device row at redeem. The pending pairing carries
     // them in these JSON-array columns. '[]' for every pre-existing row.
@@ -602,7 +602,7 @@ export const MIGRATIONS: readonly Migration[] = [
     },
   },
   {
-    // See #430 — source-declared edges + link provenance. Adds the four
+    // Source-declared edges + link provenance. Adds the four
     // provenance columns to document_links, migrates the structural edge
     // vocabulary on existing rows (attachment→contains, email-thread→
     // part-of-thread, intra-source→references), backfills provenance from the
@@ -612,7 +612,7 @@ export const MIGRATIONS: readonly Migration[] = [
     // runs ahead of this migration); this step owns only the column ALTERs and
     // the data transformation.
     version: 19,
-    description: "add provenance columns to document_links + migrate edge vocabulary (#430)",
+    description: "add provenance columns to document_links + migrate edge vocabulary",
     up(db) {
       const cols = db
         .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('document_links')")
@@ -793,7 +793,7 @@ export const MIGRATIONS: readonly Migration[] = [
     up() {},
   },
   {
-    // Forward-looking consent-expiry (#927). Open-banking aggregators (Plaid
+    // Forward-looking consent-expiry. Open-banking aggregators (Plaid
     // `item.consent_expiration_time`, PSD2/CDR windows) require periodic
     // re-consent on a *known* schedule. The source reports its deadline on each
     // successful page; the gateway persists it here so `deriveDisplayStatus` can
@@ -801,8 +801,7 @@ export const MIGRATIONS: readonly Migration[] = [
     // distinct from the reactive terminal `needs-auth`. No data to transform —
     // an existing install just gains the column (NULL = no known deadline).
     version: 24,
-    description:
-      "add consent_expires_at column to sync_state for forward-looking re-consent (#927)",
+    description: "add consent_expires_at column to sync_state for forward-looking re-consent",
     up(db) {
       const cols = db
         .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('sync_state')")
@@ -823,7 +822,7 @@ export const MIGRATIONS: readonly Migration[] = [
     // longer has. The whole rule lives in `prune-orphan-source-stats.ts` so it
     // is testable in isolation; idempotent (a replay finds no orphans).
     version: 25,
-    description: "prune orphaned source_stats rows for re-homed/removed sources (#895)",
+    description: "prune orphaned source_stats rows for re-homed/removed sources",
     up(db) {
       const removed = pruneOrphanSourceStats(db);
       if (removed > 0) {
@@ -839,7 +838,7 @@ export const MIGRATIONS: readonly Migration[] = [
     // cookie value is hashed into `session_hash`, then removed from `id`.
     //
     // The same migration also adds the durable `last_active_at` gate for the
-    // throttled sliding expiry window (#65), so background refresh attempts can
+    // throttled sliding expiry window, so background refresh attempts can
     // be safely fire-and-forget without writing on every authenticated request.
     version: 26,
     description: "hash portal session secrets at rest and add throttled activity refresh gate",
@@ -848,8 +847,8 @@ export const MIGRATIONS: readonly Migration[] = [
     },
   },
   {
-    // Repair live installs that recorded an earlier migration 26 from #65
-    // before #1039's session_hash hardening merged under the same version.
+    // Repair live installs that recorded an earlier migration 26
+    // before the session_hash hardening merged under the same version.
     // Those databases have `last_active_at` but not `session_hash`, so the
     // migration runner skips v26 and portal cookie lookup fails at runtime.
     version: 27,
@@ -876,10 +875,10 @@ export const MIGRATIONS: readonly Migration[] = [
     // binary is older than any source's recorded version; if so it resets
     // only those sources (cursor cleared, wipe epoch bumped) so they resync
     // cleanly. Upgrade path is unchanged — forward migrations always run and
-    // sources always keep their data. See #1078 and runDowngradeCompatCheck.
+    // sources always keep their data. See runDowngradeCompatCheck.
     version: 29,
     description:
-      "add minimum_gateway_version to sync_state for downgrade-safe per-source cursor reset (#1078)",
+      "add minimum_gateway_version to sync_state for downgrade-safe per-source cursor reset",
     up(db) {
       const cols = db
         .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('sync_state')")
@@ -906,7 +905,7 @@ export const MIGRATIONS: readonly Migration[] = [
     },
   },
   {
-    // Per-document privacy-delete tombstones (#1065). `runSchemaSetup`
+    // Per-document privacy-delete tombstones. `runSchemaSetup`
     // already creates the table idempotently ahead of this migration, so
     // for an existing install this only needs to ensure it exists — there
     // is no data to transform. Before this shipped a single-document delete
@@ -928,18 +927,18 @@ export const MIGRATIONS: readonly Migration[] = [
   },
   {
     // The `devices.self_emails` / `self_phones` columns — the device owner's
-    // self email/phone identifiers (#282) — were only ever declared inline in
+    // self email/phone identifiers — were only ever declared inline in
     // `runSchemaSetup`'s `CREATE TABLE IF NOT EXISTS devices`, which is a no-op
     // on an already-existing `devices` table. The sibling `device_pairings`
     // columns got their own ALTER migration (v18); the `devices` table never
-    // did. So an install whose `devices` table was created before #282 and then
+    // did. So an install whose `devices` table was created before these columns and then
     // upgraded across it is left without these columns — and `DEVICE_SELECT_COLS`
     // selects them on every getDevice/listDevices, throwing `no such column:
     // self_emails` on a core, always-hit path. This back-fills them. Idempotent
     // via the pragma_table_info guard, so it's a no-op on a fresh DB whose
     // `devices` table already carries the columns.
     version: 32,
-    description: "back-fill self_emails / self_phones columns on devices (#282)",
+    description: "back-fill self_emails / self_phones columns on devices",
     up(db) {
       const cols = db
         .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('devices')")
@@ -4805,18 +4804,17 @@ function rebuildForSourceMembership(db: Db): void {
  * is older than the DB. Any source whose cursor was written at a version
  * higher than this binary's is considered incompatible: its cursor is cleared
  * and its wipe epoch bumped so in-flight syncs from the previous binary are
- * rejected (#551). Documents already in the index are NOT bulk-deleted; they
+ * rejected. Documents already in the index are NOT bulk-deleted; they
  * are tombstoned as the fresh resync comes in.
  *
  * Sources written at or below `LATEST_SCHEMA_VERSION` are untouched — their
  * data is still interpretable by the running binary.
  *
- * Protection scope: activates for binaries at schema v29+ (the #1078 release
+ * Protection scope: activates for binaries at schema v29+ (the release
  * that added both this check and the `minimum_gateway_version` column). A
  * downgrade to a pre-v29 binary has no detection code on the old side and is
  * unprotected.
  *
- * See #1078.
  */
 export function runDowngradeCompatCheck(db: Db, opts?: { log?: Logger }): void {
   const logger = opts?.log ?? log;
@@ -4828,7 +4826,7 @@ export function runDowngradeCompatCheck(db: Db, opts?: { log?: Logger }): void {
 
   // Binary is older than the DB — downgrade detected.
   // Check whether the minimum_gateway_version column exists. It was added in
-  // migration 29 (the same #1078 release that introduced this check), so any
+  // migration 29 (the same release that introduced this check), so any
   // binary carrying this code also carries the column migration. If somehow
   // we're downgrading past a DB that pre-dates migration 29 (impossible in
   // practice since this code only ships at v29+), log a warning and skip.

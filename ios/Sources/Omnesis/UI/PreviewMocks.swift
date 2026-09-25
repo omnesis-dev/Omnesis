@@ -527,7 +527,7 @@ enum PreviewMocks {
         updatedAt: 0
     )
     /// A bank-aggregator source in the forward-looking `auth-expiring` state
-    /// (#927) — still syncing, but its authorization expires soon. Fictional
+    /// — still syncing, but its authorization expires soon. Fictional
     /// institution id; no real account.
     static let sourceExpiring = SourceRecord(
         id: "plaid:ins_northstar_demo",
@@ -817,7 +817,7 @@ enum PreviewMocks {
             ),
         ]
     )
-    /// Forward-looking consent-expiry (#927): a healthy-but-expiring source.
+    /// Forward-looking consent-expiry: a healthy-but-expiring source.
     /// The deadline is ~9 days out so the row/detail render "Expires on <date>"
     /// distinct from the red terminal `needs-auth` / `error`.
     static let syncStatusExpiring = SourceSyncStatus(
@@ -2020,7 +2020,7 @@ enum PreviewMocks {
         nextCursor: nil
     )
 
-    /// Cross-store `same-entity` bound rows (#450, #644) — the
+    /// Cross-store `same-entity` bound rows — the
     /// `analytics-row` vertices the graph walker returns for an activity
     /// document. Invented Strava activity (NOT from the user's corpus).
     static let documentGraphBoundRows: [GraphVertex] = [
@@ -3121,9 +3121,9 @@ enum PreviewMocks {
         }
     }()
 
-    // MARK: - Record citation fixtures (#757)
+    // MARK: - Record citation fixtures
 
-    /// A record-only trail event (#757): a cited DuckDB analytics row that
+    /// A record-only trail event: a cited DuckDB analytics row that
     /// binds NO document. Renders as a point-in-time citation with the
     /// database glyph, the gateway-derived title, the table label, and the
     /// declared key columns — no tap target (no bound doc → no dead link).
@@ -3152,7 +3152,7 @@ enum PreviewMocks {
         ),
     ]
 
-    /// A deduped doc+record trail event (#757): a document and its
+    /// A deduped doc+record trail event: a document and its
     /// `same-entity` analytics row collapsed into ONE timeline entity. The
     /// doc card heads the row; the record's declared key fields appear
     /// inline below it (the title is the doc's, so it is never re-printed).
@@ -3188,7 +3188,7 @@ enum PreviewMocks {
         ),
     ]
 
-    /// A mixed trail (#757): a document event, a record-only event WITH a
+    /// A mixed trail: a document event, a record-only event WITH a
     /// bound document (tappable title), and a record-only event with empty
     /// key fields and a long title — exercises chronological interleave,
     /// the bound-doc deep-link, and the edge layout cases.
@@ -4197,7 +4197,7 @@ enum PreviewMocks {
         durationMs: 4
     )
 
-    // MARK: - Sub-agent cards (#748)
+    // MARK: - Sub-agent cards
 
     //
     // Fully fictional Deep Research fixtures — invented names, vendors, and
@@ -4326,7 +4326,7 @@ enum PreviewMocks {
         + "6ICCFkUGIAjrQAKpDAysFcgC7QEMbB0oIIFBAlWgkUEDVaCJwQNVoJmhAw0QKdA5EwKGpQB+71ug8lswA"
         + "xkjGjAiCiMqMSIbmBzgcdUMTA4ArAQHjGwG/5cAAAAASUVORK5CYII="
 
-    // MARK: - Research working-set surface (#748)
+    // MARK: - Research working-set surface
 
     /// A live Deep Research run mid-flight: three researchers side by side, two
     /// still searching (with their documents accumulating) and one already
@@ -4409,8 +4409,8 @@ enum PreviewMocks {
 
     /// A live run where one researcher has accumulated MANY documents — stresses
     /// the per-panel doc-list height cap so the band stays a fixed bottom rail
-    /// and never grows into a full-screen overlay that buries the conversation
-    /// (#890). The first panel holds 16 source-tinted docs; it must scroll
+    /// and never grows into a full-screen overlay that buries the conversation.
+    ///The first panel holds 16 source-tinted docs; it must scroll
     /// WITHIN the panel rather than make the panel taller than the screen.
     static let researchPanelsManyDocs: [AgentResearchPanel] = [
         AgentResearchPanel(

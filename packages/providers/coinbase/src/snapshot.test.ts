@@ -380,7 +380,7 @@ describe("CoinbaseSnapshotSource", () => {
   });
 });
 
-// ── orders / fills / transactions (#753) ────────────────────────────
+// ── orders / fills / transactions ────────────────────────────
 
 const ORDER_PAGE: CoinbaseOrdersPage = {
   orders: [

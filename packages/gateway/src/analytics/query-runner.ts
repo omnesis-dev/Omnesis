@@ -491,7 +491,7 @@ export class AnalyticsQueryRunner {
   }
 
   /**
-   * Batched primary-key lookup for the cross-store graph walker (#450). Fetch
+   * Batched primary-key lookup for the cross-store graph walker. Fetch
    * the rows of `tableName` whose key columns match any of `keyTuples`; each
    * tuple aligns positionally with `keyColumns`. A column's optional `castType`
    * wraps the *bound value* in `CAST($v AS <type>)` so a string key (from a

@@ -112,7 +112,7 @@ export function buildTimeline(graph) {
     if (v.kind === "document") docsById.set(v.id, v);
   }
 
-  // Index analytics-row vertices that resolved to a record citation (#757).
+  // Index analytics-row vertices that resolved to a record citation.
   // A row WITHOUT a `.record` (timeless table, empty semantic time, or an
   // unresolved table) is not a timeline record citation and is skipped
   // entirely — it never becomes an entity. The gateway derives `.record`
@@ -123,7 +123,7 @@ export function buildTimeline(graph) {
   }
 
   // Resolve each record row to its co-described document via the `same-entity`
-  // edge (#450/#757). A document plus its same-entity row dedup to ONE timeline
+  // edge. A document plus its same-entity row dedup to ONE timeline
   // entity: the row's record rides on the document event (which keeps
   // navigation), and the row is NOT emitted as its own entity. A record row
   // with no document in the walk stands alone as a record-only event below.
@@ -284,7 +284,7 @@ export function buildTimeline(graph) {
       eventKind === "duplicate"
         ? people.filter((p) => p.role !== "mentioned")
         : people;
-    // #757: when this document has a same-entity record row, the two dedup to
+    // When this document has a same-entity record row, the two dedup to
     // one entity — the record rides on the document event and the row is not
     // emitted separately. The event's `at` becomes the row's semantic time so
     // the record places chronologically by the real-world event time it
@@ -318,7 +318,7 @@ export function buildTimeline(graph) {
     eventByDocId.set(v.documentId, ev);
   }
 
-  // #757: emit a record-only event for every resolved record row that bound NO
+  // Emit a record-only event for every resolved record row that bound NO
   // document in the walk — it stands as its own point-in-time entity, placed by
   // its declared semantic time and interleaved with document events. A row that
   // deduped onto a document above is in `boundRecordRowVids` and skipped here.

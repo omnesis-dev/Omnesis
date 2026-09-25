@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// See #610 — Apple Calendar source design (DB schema, store exclusions).
-
 import {
   createLogger,
   computeContentHash,
@@ -229,7 +227,7 @@ export class AppleCalendarSource {
   }
 
   /** Hybrid view: the same documents PLUS one `apple_calendar_events` row per
-   * event (#450 / #5). Deletion stays snapshot-based via `presentExternalIds`. */
+   * event. Deletion stays snapshot-based via `presentExternalIds`. */
   async syncStructured(cursor: SyncCursor | null): Promise<StructuredSyncResult> {
     const p = await this.syncPage(cursor);
     return {
@@ -458,7 +456,7 @@ export class AppleCalendarSource {
       ),
     );
 
-    // One analytics row per event (#450 / #5), in the same pass — subscribed
+    // One analytics row per event, in the same pass — subscribed
     // feeds (holidays/birthdays) emit a document but no row.
     const records: Record<string, unknown>[] = [];
     for (const row of pageRows) {
@@ -763,7 +761,7 @@ export class AppleCalendarSource {
           // RFC 5545 UID — the standard identifier shared by every system
           // that exposes this event. The gateway's link graph resolves
           // `calendar-event` cross-source links (e.g. from email-attached
-          // ICS invites) through this key — see #266.
+          // ICS invites) through this key
           iCalUID: row.iCalUid ?? undefined,
         },
       },
@@ -775,7 +773,7 @@ export class AppleCalendarSource {
   /**
    * Build the `apple_calendar_events` row for an event — the structured twin of
    * `normalizeEvent`, keyed on the same UUID so the doc↔row `same-entity` edge
-   * is 1:1 (#450). Returns null for subscribed-feed events (holidays /
+   * is 1:1. Returns null for subscribed-feed events (holidays /
    * birthdays), which get a document but pollute meeting-time analytics.
    */
   private eventToRow(

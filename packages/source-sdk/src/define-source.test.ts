@@ -379,7 +379,7 @@ describe("supportedPlatforms — serializeDescriptor", () => {
   });
 });
 
-describe("historyImport — serializeDescriptor (#588)", () => {
+describe("historyImport — serializeDescriptor", () => {
   const base = {
     id: SourceType("x"),
     name: "X",

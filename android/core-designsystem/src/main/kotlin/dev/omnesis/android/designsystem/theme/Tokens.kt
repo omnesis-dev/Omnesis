@@ -65,7 +65,7 @@ fun OmnesisColors.pill(state: String?, paused: Boolean = false): PillColors {
         "synced", "completed" -> PillColors(success.copy(alpha = 0.15f), success)
         "error" -> PillColors(danger.copy(alpha = 0.15f), danger)
         "needs-auth" -> PillColors(warning.copy(alpha = 0.15f), warning)
-        // Forward-looking consent-expiry (#927): the source is still syncing fine,
+        // Forward-looking consent-expiry: the source is still syncing fine,
         // but its authorization expires soon. A softer amber-tinted warning, distinct
         // from the harder terminal `needs-auth`; the inline "Expires on <date>" copy
         // carries the actual distinction in the rows/detail. Mirrors iOS Theme.pillColor.

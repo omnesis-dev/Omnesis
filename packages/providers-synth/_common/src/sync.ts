@@ -51,10 +51,10 @@ export function syncFromFixture<TEntry>(
      */
     sourceId?: string;
     /**
-     * Optional per-entry declared edges (#430). Emitted alongside the page's
+     * Optional per-entry declared edges. Emitted alongside the page's
      * documents so a synth source exercises the same `applyDeclaredEdges` path
      * the real provider does (e.g. chrome-bookmarks' `bookmarks → webpage`
-     * edge, #895). Edges for the current page's entries only.
+     * edge). Edges for the current page's entries only.
      */
     mapEdges?: (entry: TEntry) => EdgeDeclaration | EdgeDeclaration[];
   },

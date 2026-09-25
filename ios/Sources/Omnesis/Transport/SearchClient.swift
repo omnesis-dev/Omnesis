@@ -196,7 +196,7 @@ public final class SearchClient: Sendable {
 
     /// GET `/documents/:id/graph?depth=1` — the graph walker's
     /// neighbourhood for this document. iOS uses it only to surface the
-    /// cross-store `same-entity` doc↔row edge (#450, #644): the bound
+    /// cross-store `same-entity` doc↔row edge: the bound
     /// DuckDB analytics row is a direct neighbour, so one shallow hop is
     /// enough. The matching portal call lives in `graph-card.js`'s
     /// `useBoundRows`. Callers filter `vertices` to `kind == "analytics-row"`.
@@ -452,7 +452,7 @@ public final class SearchClient: Sendable {
     }
 
     /// DELETE `/documents/:id` — remove a single document from the corpus
-    /// for privacy (#1065). The gateway also deletes its extracted-attachment
+    /// for privacy. The gateway also deletes its extracted-attachment
     /// children. By default it writes a durable tombstone so a re-sync /
     /// re-capture can't bring the page back; with `keepCopy` only this copy
     /// goes and the source may bring it back. Returns the number of rows
@@ -1133,7 +1133,7 @@ public struct NearDupEdge: Decodable, Hashable, Sendable, Identifiable {
 /// Graph-walker neighbourhood for one document — the `GET
 /// /documents/:id/graph` payload. The portal consumes the full vertex /
 /// edge graph; iOS only needs the `analytics-row` vertices to surface
-/// the cross-store `same-entity` doc↔row edge (#450), so we decode the
+/// the cross-store `same-entity` doc↔row edge, so we decode the
 /// vertex list and ignore `edges` / `stats`.
 public struct DocumentGraph: Decodable, Sendable {
     public let vertices: [GraphVertex]

@@ -112,7 +112,7 @@ function getSourceUrl(db: Db, externalId: string): string | null {
 
 /**
  * Register a permissive url-id pattern so that any http(s) url link is
- * treated as "could resolve later" by the #570 storage gate — kept
+ * treated as "could resolve later" by the url-link storage gate — kept
  * stored (unresolved) instead of dropped at extraction. The capture
  * group is the whole url, so Strategy-2 (`external_id = <captured-url>
  * AND source_id LIKE 'google-drive%'`) never matches a real doc unless a
@@ -152,7 +152,7 @@ afterEach(() => {
 
 describe("processDocumentLinks — preserved link types", () => {
   // Keep extracted url links stored (unresolved) rather than dropped by
-  // the #570 gate, so the pre-gate assertions about re-extraction hold.
+  // the url-link storage gate, so the pre-gate assertions about re-extraction hold.
   beforeEach(() => keepUrlLinks(db));
 
   test("does NOT wipe rows whose link_type is in PRESERVED_LINK_TYPES", () => {
@@ -252,7 +252,7 @@ describe("processDocumentLinks — preserved link types", () => {
 
 describe("processDocumentLinks", () => {
   // Keep extracted url links stored (unresolved) rather than dropped by
-  // the #570 gate, so the pre-gate extraction/count assertions hold.
+  // the url-link storage gate, so the pre-gate extraction/count assertions hold.
   beforeEach(() => keepUrlLinks(db));
 
   test("extracts URL links from content", () => {
@@ -744,7 +744,7 @@ describe("processDocumentLinks", () => {
 
 describe("resolveInboundLinks", () => {
   // Keep the source's url link stored (unresolved) so the later
-  // target-arrival resolution path has a row to resolve (#570 gate).
+  // target-arrival resolution path has a row to resolve (url-link storage gate).
   beforeEach(() => keepUrlLinks(db));
 
   test("leaves URL target arrival to the role-aware read-side reconciler", () => {
@@ -994,7 +994,7 @@ describe("getInboundRefCounts", () => {
 
 describe("reconcileUnresolvedLinks", () => {
   // Keep extracted url links stored (unresolved) so the reconcile pass
-  // has rows to resolve once their targets arrive (#570 gate).
+  // has rows to resolve once their targets arrive (url-link storage gate).
   beforeEach(() => keepUrlLinks(db));
 
   test("resolves links that can now be matched", () => {
@@ -1086,10 +1086,10 @@ describe("reconcileUnresolvedLinks", () => {
 
 describe("computeLinkResolutions / upsertLinkResolutions (split path)", () => {
   // Keep extracted url links stored (unresolved) so the compute/upsert
-  // split path has rows to resolve and report (#570 gate).
+  // split path has rows to resolve and report (url-link storage gate).
   beforeEach(() => keepUrlLinks(db));
 
-  // The direct scan is the safety net for links both eager (#569) and
+  // The direct scan is the safety net for links both eager and
   // inbound resolution missed. Its cost must track the unresolved backlog,
   // never the corpus: driven from `documents`, it pays a full corpus pass
   // every tick precisely when there is nothing to find, which is the steady
@@ -1811,7 +1811,7 @@ describe("computeLinkResolutions / upsertLinkResolutions (split path)", () => {
       source.externalId,
       null,
     );
-    // #569 resolves url links eagerly at extraction; un-resolve here to
+    // URL links resolve eagerly at extraction; un-resolve here to
     // exercise the reconcile DIRECT SCAN / cursor scan on the historical
     // backlog of links inserted before eager resolution existed.
     db.prepare(
@@ -1883,7 +1883,7 @@ describe("computeLinkResolutions / upsertLinkResolutions (split path)", () => {
       );
     }
 
-    // #569 resolves url links eagerly at extraction; un-resolve here to
+    // URL links resolve eagerly at extraction; un-resolve here to
     // exercise the reconcile DIRECT SCAN / cursor scan on the historical
     // backlog of links inserted before eager resolution existed.
     db.prepare(
@@ -2546,7 +2546,7 @@ describe("retroactive URL ownership", () => {
 
 describe("backfillOneDocument", () => {
   // Keep extracted url links stored (unresolved) so backfill's `extracted`
-  // count reflects the pre-gate behavior (#570 gate).
+  // count reflects the pre-gate behavior (url-link storage gate).
   beforeEach(() => keepUrlLinks(db));
 
   test("processes one unprocessed document", () => {
@@ -2607,7 +2607,7 @@ describe("backfillOneDocument", () => {
 
 describe("getLinkStats", () => {
   // Keep extracted url links stored (unresolved) so the link-count stats
-  // include them as the pre-gate assertions expect (#570 gate).
+  // include them as the pre-gate assertions expect (url-link storage gate).
   beforeEach(() => keepUrlLinks(db));
 
   test("returns correct stats", () => {
@@ -2652,7 +2652,7 @@ describe("getLinkStats", () => {
 
 describe("CASCADE/SET NULL behavior", () => {
   // Keep extracted url links stored so there's a row to CASCADE/SET NULL
-  // when the source/target doc is deleted (#570 gate).
+  // when the source/target doc is deleted (url-link storage gate).
   beforeEach(() => keepUrlLinks(db));
 
   test("deleting source doc cascades to its outbound links", () => {
@@ -2744,7 +2744,7 @@ describe("source_url backfill and storage", () => {
 
 describe("deduplication", () => {
   // Keep the (duplicated) url link stored so the dedup-to-one assertion
-  // has a row to assert on (#570 gate).
+  // has a row to assert on (url-link storage gate).
   beforeEach(() => keepUrlLinks(db));
 
   test("deduplicates links by (type, normalizedTarget)", () => {
@@ -3017,7 +3017,7 @@ describe("extractLinksForBatch + upsertExtractedLinksBatch (split path)", () => 
     }
   });
 
-  test("resolves a url link to an existing target eagerly on the read handle (#569)", () => {
+  test("resolves a url link to an existing target eagerly on the read handle", () => {
     const otherPath = `/tmp/omnesis-links-test-${randomUUID()}.db`;
     const otherDb = createDatabase(otherPath);
     try {
@@ -3233,7 +3233,7 @@ describe("extractLinksForBatch + upsertExtractedLinksBatch (split path)", () => 
     }
   });
 
-  test("EXISTS-guard skips a url target deleted between compute and apply (#569)", () => {
+  test("EXISTS-guard skips a url target deleted between compute and apply", () => {
     const otherPath = `/tmp/omnesis-links-test-${randomUUID()}.db`;
     const otherDb = createDatabase(otherPath);
     try {
@@ -3482,7 +3482,7 @@ describe("link_stats materialization", () => {
 
   test("OCC: mark-dirty between compute and upsert makes upsert no-op", () => {
     // Keep the url link stored (unresolved) so compute has a real link to
-    // count toward total_links (#570 gate).
+    // count toward total_links (url-link storage gate).
     keepUrlLinks(db);
     // Settle once so we have a known starting point.
     upsertLinkStats(db, computeLinkStats(db));
@@ -3604,7 +3604,7 @@ describe("link_stats mark-dirty audit (every mutation site bumps dirty_version)"
 
   test("upsertLinkResolutions bumps dirty_version when at least one row resolves", () => {
     // Keep the url link stored (unresolved) so the later reconcile has a
-    // row to resolve, which is what bumps dirty_version (#570 gate).
+    // row to resolve, which is what bumps dirty_version (url-link storage gate).
     keepUrlLinks(db);
     const target = makeDoc({ externalId: "audit-tgt", metadata: { sourceUrl: "https://x.com" } });
     const source = makeDoc({ externalId: "audit-src", content: "See https://x.com" });
@@ -3683,7 +3683,7 @@ describe("link_stats mark-dirty audit (every mutation site bumps dirty_version)"
   });
 });
 
-describe("#264 — duplicate-content links between attachment docs", () => {
+describe("duplicate-content links between attachment docs", () => {
   function makeAttDoc(
     externalId: string,
     contentHash: string,
@@ -3898,7 +3898,7 @@ describe("#264 — duplicate-content links between attachment docs", () => {
   });
 });
 
-describe("#271 — duplicate-content links broadened to file (Drive) docs", () => {
+describe("duplicate-content links broadened to file (Drive) docs", () => {
   function makeAttDoc(
     externalId: string,
     contentHash: string,
@@ -3965,7 +3965,7 @@ describe("#271 — duplicate-content links broadened to file (Drive) docs", () =
   }
 
   test("Drive file ↔ Gmail attachment with same content_hash links bidirectionally", () => {
-    // The headline use case behind #271: the same PDF lives in your Drive
+    // The headline use case: the same PDF lives in your Drive
     // AND was attached to an email. Both surfaces should cross-reference.
     const sharedHash = "drive-and-att-hash";
     const att = makeAttDoc("msg-A/att/pdf", sharedHash);
@@ -4155,7 +4155,7 @@ describe("#271 — duplicate-content links broadened to file (Drive) docs", () =
   });
 });
 
-describe("#266 — calendar-event links via ICS UID ↔ event iCalUID", () => {
+describe("calendar-event links via ICS UID ↔ event iCalUID", () => {
   function makeIcsAttachment(externalId: string, uid: string): DocumentInput {
     return {
       providerId: ProviderId("microsoft"),
@@ -4345,7 +4345,7 @@ describe("processDocumentLinks with URL canonicalizer (Fix 1)", () => {
     ]);
     // Keep the canonicalized url link stored (unresolved) so the
     // extraction-form and Strategy-1-on-arrival assertions have a row to
-    // inspect. The permissive pattern only flips the #570 gate — it
+    // inspect. The permissive pattern only flips the url-link storage gate — it
     // captures the whole url, so its Strategy-2 lookup never matches the
     // Drive doc's external_id and can't cause a false resolve-now (which
     // the "stored unresolved" assertions rely on).
@@ -4641,7 +4641,7 @@ describe("cursor-paginated URL reconciler (Fix 2)", () => {
 
   function seedUnresolvedUrl(content: string): number {
     // Keep the (unresolvable) url link stored so the cursor scan has rows
-    // to walk — without this the #570 gate drops them at extraction. The
+    // to walk — without this the url-link storage gate drops them at extraction. The
     // permissive pattern flips the gate only; these urls match no doc so
     // they stay unresolved, exercising the cursor/wrap behavior.
     keepUrlLinks(db);
@@ -4823,7 +4823,7 @@ describe("cursor-paginated URL reconciler (Fix 2)", () => {
     const msgId = getDocId(db, "wa-strat2");
     processDocumentLinks(db, msgId, msg.content, msg.metadata, msg.sourceId, msg.externalId, null);
 
-    // #569 resolves url links eagerly at extraction; un-resolve here to
+    // URL links resolve eagerly at extraction; un-resolve here to
     // exercise the reconcile DIRECT SCAN / cursor scan on the historical
     // backlog of links inserted before eager resolution existed.
     db.prepare(
@@ -4942,11 +4942,11 @@ describe("cursor-paginated URL reconciler (Fix 2)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Additive-only link extraction for best-effort content retention (#481)
+// Additive-only link extraction for best-effort content retention
 // ---------------------------------------------------------------------------
 describe("additive-only link extraction (best-effort content retention)", () => {
   // Keep extracted url links stored (unresolved) so the additive
-  // preserve/accumulate assertions have rows to count (#570 gate). The
+  // preserve/accumulate assertions have rows to count (url-link storage gate). The
   // permissive pattern is registered under a separate source_id, so it
   // doesn't disturb the best-effort `content_retention` row.
   beforeEach(() => keepUrlLinks(db));
@@ -5544,7 +5544,7 @@ describe("additive-only link extraction (best-effort content retention)", () => 
 });
 
 // ---------------------------------------------------------------------------
-// #570 — url-link storage gate: a `url` link is stored only if it resolves
+// URL-link storage gate: a `url` link is stored only if it resolves
 // now (source_url / url-pattern → already-ingested doc) OR its target could
 // resolve later (matches a registered url-id pattern). Otherwise it's a
 // permanent external dead-end and is dropped at extraction; the periodic
@@ -5552,13 +5552,13 @@ describe("additive-only link extraction (best-effort content retention)", () => 
 // NO matching pattern on purpose — that's the whole point of the gate.
 //
 // The "drops a url with no target and no matching pattern" cases below also
-// lock the INTENTIONAL #570 trade-off: a url whose target would only ever
+// lock the INTENTIONAL trade-off: a url whose target would only ever
 // resolve via the deferred strategy-1 path (a `source_url` host with no
 // url-id pattern — e.g. a browser-history or bookmark page that
 // lands AFTER the link is extracted) is dropped, not kept. See the
 // `urlTargetCouldResolve` doc-comment for why that's acceptable.
 // ---------------------------------------------------------------------------
-describe("#570 — url-link storage gate", () => {
+describe("url-link storage gate", () => {
   function allLinks(docId: string) {
     return db
       .prepare<
@@ -5765,7 +5765,7 @@ describe("#570 — url-link storage gate", () => {
 
   describe("prune via computeLinkResolutions + upsertLinkResolutions", () => {
     // Insert a historical unresolved url link directly (bypassing the
-    // extraction gate) to model a backlog row written before #570 landed.
+    // extraction gate) to model a backlog row written before the gate existed.
     function insertHistoricalUrlLink(sourceDocId: string, url: string): number {
       const now = new Date().toISOString();
       const info = db
@@ -5827,18 +5827,18 @@ describe("#570 — url-link storage gate", () => {
 });
 
 // ---------------------------------------------------------------------------
-// #668 — cross-source links to not-yet-added sources survive the #570 gate.
+// Cross-source links to not-yet-added sources survive the url-link storage gate.
 //
-// The #570 keep-gate keys on the KNOWN-source-type url-id pattern set
+// The keep-gate keys on the KNOWN-source-type url-id pattern set
 // (pushed by the collector from every loaded source definition), not just
 // the *registered* (added) sources from `sync_state`. So a link whose target
 // matches a source the user hasn't added yet is kept unresolved at
 // extraction and survives the periodic prune — then resolves via the
 // reconcile path once that source is added and its target doc is ingested.
-// Pre-#668 it was dropped permanently (re-extraction only re-fires on the
-// SOURCE doc changing, so the link never came back on its own).
+// Keyed on added sources alone, it would be dropped permanently (re-extraction
+// only re-fires on the SOURCE doc changing, so the link would never come back).
 // ---------------------------------------------------------------------------
-describe("#668 — known-but-not-added source link survives the #570 gate", () => {
+describe("known-but-not-added source link survives the url-link storage gate", () => {
   // A pattern for a source type that is NOT registered in sync_state — it is
   // only known via the descriptor set the collector pushed. The capture group
   // is the page-id so the eventual resolution (Strategy 2) has something to

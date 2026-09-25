@@ -286,7 +286,7 @@ export function createAbsenceSweepTask(
       // A config edit can kick this periodic while its HTTP request still
       // carries user-priority AsyncLocalStorage. Override that inherited
       // context for the whole unit so every nested writer call remains
-      // background work, and stays subject to admission control (#199).
+      // background work, and stays subject to admission control.
       return runWithPriority("background", async () => {
         if (phaseIndex === 0) tracker.recordSweepStarted();
         const phase: SweepPhase = phases[phaseIndex]!;

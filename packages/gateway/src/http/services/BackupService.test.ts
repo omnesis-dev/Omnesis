@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * BackupService coverage (#57): the worker-thread VACUUM INTO path against
+ * BackupService coverage: the worker-thread VACUUM INTO path against
  * small temp SQLite stores, config-file allowlist copies, manifest
  * correctness, single-flight 409, includeIndex:false, the disk preflight,
  * the failure cleanup path, and list().

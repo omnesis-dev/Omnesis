@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Synthetic Coinbase twin (#754).
+ * Synthetic Coinbase twin.
  *
  * Spreads the REAL Coinbase provider descriptor (icon, name, schemas, cursor
  * validator, unit noun) and overrides only the auth lifecycle and `create()`.

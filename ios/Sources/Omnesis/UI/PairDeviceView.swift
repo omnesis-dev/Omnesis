@@ -22,7 +22,7 @@ struct PairDeviceView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
 
-    // See #2758 — planned: take the address from /admin/devices/pair-addresses.
+    // See #103 — planned: take the address from /admin/devices/pair-addresses.
     @State private var identities: [NetworkIdentity] = []
     @State private var phase: Phase = .form
     let repairTarget: DeviceRecord?

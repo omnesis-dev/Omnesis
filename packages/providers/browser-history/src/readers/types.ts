@@ -40,7 +40,7 @@ export interface SearchTermBatch {
 /**
  * Interface for reading browser history from a local SQLite database.
  * Each implementation handles one browser engine (Chromium, Safari).
- * TODO: Add Firefox reader when Firefox support is implemented (#158).
+ * TODO: Add Firefox reader when Firefox support is implemented (#17).
  */
 export interface BrowserHistoryReader {
   /**

@@ -20,7 +20,7 @@ import { judgeCaptureUrl } from "@omnesis/provider-web/capture-policy";
 import { SyntheticE2EHarness } from "./synth-harness.js";
 
 /**
- * Headline spawned-gateway E2E for the browser-capture push path (#791, #895).
+ * Headline spawned-gateway E2E for the browser-capture push path.
  *
  * This is the true end-to-end for a push-based producer: it boots a REAL gateway
  * (SyntheticE2EHarness), mints a `browser` device + `write:web` token via the
@@ -309,7 +309,7 @@ describe("Browser-capture push path (spawned gateway)", () => {
     expect(PAGE_VISITS_SCHEMA).toEqual(realVisits);
   });
 
-  test("(3b) the push source self-registers in the sources list on first ingest (#791)", async () => {
+  test("(3b) the push source self-registers in the sources list on first ingest", async () => {
     // A push source must surface in the sources list automatically once it
     // ingests — no manual "Add", the way Apple Health appears after the iOS
     // app pushes. Pairing only created the `browser` device; it's the first

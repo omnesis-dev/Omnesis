@@ -278,7 +278,7 @@ export const getStatus = () => request("GET", "/status");
 
 export const getDocument = (id) => request("GET", `/documents/${encodeURIComponent(id)}`);
 
-// Delete a single document from the corpus for privacy (#1065). The gateway
+// Delete a single document from the corpus for privacy. The gateway
 // also removes its attachment children. By default it writes a durable
 // tombstone so a re-sync / re-capture can't bring the document back; with
 // `keepCopy` only this copy goes and the source may bring it back.
@@ -498,7 +498,7 @@ export async function getDocumentSummariesBulk(ids) {
 }
 
 /**
- * People list — post-#330 the server returns `Page<T>` (`{items, pageInfo}`).
+ * People list — the server returns `Page<T>` (`{items, pageInfo}`).
  * Tolerate both shapes during the cutover so the portal works against
  * either, then settle on `items` once the migration is complete.
  */
@@ -517,7 +517,7 @@ export async function getPeople(query = "", limit = 100, cursor, sort) {
 export const getPerson = (id) => request("GET", `/people/${encodeURIComponent(id)}`);
 
 /**
- * Server returns Page<{ id, roles[] }> — `{ items, pageInfo }` post-#330.
+ * Server returns Page<{ id, roles[] }> — `{ items, pageInfo }` post
  * The cursor is opaque to the client even though the current gateway encodes
  * an offset in it.
  */
@@ -1097,7 +1097,7 @@ export const getSourceDescriptorsUnion = () => request("GET", "/admin/source-des
 export const getSourcesSnapshot = (deviceId) =>
   request("GET", "/admin/sources/snapshot", { query: deviceId ? { deviceId } : undefined });
 
-// --- History import (#588): one-time bulk import from a local artifact ---
+// --- History import: one-time bulk import from a local artifact ---
 // Starts the import in the collector; progress streams back over the SSE
 // endpoint (`/import-history/events`), consumed via EventSource in the modal.
 export const startSourceHistoryImport = (id, values) =>
@@ -1559,7 +1559,7 @@ export const doctorModel = (id) => request("GET", `/admin/models/doctor/${encode
 export const getRecentModels = (capability) =>
   request("GET", `/admin/models/recent/${encodeURIComponent(capability)}`);
 
-// Rebuild the vector index (#1011). `graceful` (default) keeps search live on
+// Rebuild the vector index. `graceful` (default) keeps search live on
 // the current model while the new index rebuilds, then atomically flips; `hard`
 // is the immediate cutover that stops the old model now and accepts keyword-only
 // search until the rebuild finishes.

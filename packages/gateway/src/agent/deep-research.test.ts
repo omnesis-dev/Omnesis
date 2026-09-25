@@ -3,7 +3,7 @@
 
 /**
  * Unit tests for the Deep Research loop's pure helpers + the orchestrator with
- * in-memory ports (#748). Deterministic, no model, no corpus — all invented
+ * in-memory ports. Deterministic, no model, no corpus — all invented
  * data. The full streamed-turn + write-back path is covered by
  * `deep-research.e2e.test.ts`.
  */
@@ -297,7 +297,7 @@ describe("DeepResearchService.run", () => {
     // spend recording resolves each stage separately — never one blended
     // Deep Research bucket, and never the generic sub-agent label.
     expect(spawns.every((s) => s.spendMechanism === `deep-research:${s.specialist}`)).toBe(true);
-    // VERIFICATION TALLY (#748): neither finding embedded a line-leading
+    // VERIFICATION TALLY: neither finding embedded a line-leading
     // blockquote or a long double-quoted span, so there were no verbatim quotes
     // to string-match — an honest 0/0 tally (the run is still answer_complete
     // because the citations resolved). The badge reads "no quotes to verify"

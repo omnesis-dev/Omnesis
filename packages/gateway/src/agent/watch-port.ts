@@ -297,7 +297,7 @@ export function createGatewayWatchPort(opts: CreateGatewayWatchPortOpts): WatchP
         // mentions what the compiler found crosses nothing it has not crossed
         // already, and it is what makes the refusal actionable in the reply.
         //
-        // See #1813 — that argument holds for the interactive agent and is
+        // See #65 — that argument holds for the interactive agent and is
         // what the issue is about: the write tools are unreachable off-host
         // (`selectSubagentTools` drops everything declaring `mutates`), so a
         // refusal message quoting the corpus is only ever read by the operator
@@ -455,7 +455,7 @@ export function createGatewayWatchPort(opts: CreateGatewayWatchPortOpts): WatchP
       };
     },
 
-    // See #1813 — the answer profile holds this tool, so a watch's compiler-
+    // See #65 — the answer profile holds this tool, so a watch's compiler-
     // authored interpretation is reachable from a path that serves off-host
     // agents (reviewed and ledgered, but not deliberately scoped). The same
     // question applies to the refusal messages on the create/update path

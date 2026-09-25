@@ -29,7 +29,7 @@ const log = createLogger("provider:strava:client");
 // base per request (see `resolveApiBase`) rather than at module load because the
 // gateway/collector are long-running processes that may cross the cutover date
 // without restarting. Only the API base moves — the OAuth endpoints below and
-// website deep-links stay on `www.strava.com`. See #561 (remove the date-gate
+// website deep-links stay on `www.strava.com`. See #27 (remove the date-gate
 // once the new host is verified live).
 const LEGACY_API_BASE = "https://www.strava.com/api/v3";
 const NEW_API_BASE = "https://www.api-v3.strava.com";
@@ -348,7 +348,7 @@ export class StravaClient {
         // `computeRateLimitBackoff` returns up to 16 min on short-term-cap
         // exhaustion and a full 1h on daily-cap exhaustion. Sleeping that long
         // in-tick blocks the whole sync (the engine's wall-clock timeout from
-        // #324 eventually fires, but only after the wait is wasted). Cap the
+        // eventually fires, but only after the wait is wasted). Cap the
         // in-tick wait at the threshold below; for longer waits, carry the
         // backoff out on the error so the engine flips the source to
         // `rate-limit` and defers the next tick by exactly that long.

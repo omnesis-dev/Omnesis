@@ -80,7 +80,7 @@ describe("buildMediaDownloadMessage", () => {
 
   test("reconstructs an imageMessage for an image — NOT a documentMessage", () => {
     // Decryption keys are derived from the media type's HKDF info string, so an
-    // image rebuilt as a documentMessage would fail to decrypt. See #964.
+    // image rebuilt as a documentMessage would fail to decrypt.
     const msg = base({
       type: "image",
       media: {

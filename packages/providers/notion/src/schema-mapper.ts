@@ -373,7 +373,7 @@ export function mapDatabaseToSchema(database: DataSourceObjectResponse): Analyti
   const columns: ColumnDefinition[] = [...SYSTEM_COLUMNS];
 
   // The sanitized column name of the database's title property, captured for
-  // the record-display spec (#757). Notion guarantees exactly one `title`
+  // the record-display spec. Notion guarantees exactly one `title`
   // property per database; it carries the row's human name.
   let titleColumn: string | undefined;
 
@@ -401,7 +401,7 @@ export function mapDatabaseToSchema(database: DataSourceObjectResponse): Analyti
   }
 
   // A Notion row's real-world event time is the page's last-edited instant —
-  // a system column always present (#757). The title comes from the database's
+  // a system column always present. The title comes from the database's
   // title property when it has one; otherwise the page id (always present)
   // titles the record so the spec stays valid for property-less databases.
   const recordTitleColumn = titleColumn ?? "id";
@@ -420,7 +420,7 @@ export function mapDatabaseToSchema(database: DataSourceObjectResponse): Analyti
     },
     // Each row co-describes the per-row document, whose externalId is the same
     // hyphenless page id under a `row-` prefix (normalizer.ts, property-
-    // extractor.ts) — declare the 1:1 doc↔row edge (#450). The per-database
+    // extractor.ts) — declare the 1:1 doc↔row edge. The per-database
     // summary doc (`db-<id>`) lacks the prefix and is intentionally unbound.
     boundDocument: { externalIdColumns: ["id"], externalIdPrefix: "row-" },
     exampleQueries: [

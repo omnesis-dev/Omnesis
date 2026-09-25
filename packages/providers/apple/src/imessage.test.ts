@@ -1512,8 +1512,8 @@ describe("AppleIMessageSource", () => {
       expect(cursor.lastRowId).toBe(2);
     });
 
-    test("bootstrap bumps cursor past pre-cutoff rows in one shot, no walk (#203)", async () => {
-      // 5 old messages, 1 recent. Pre-#203 bootstrap paged through all 6
+    test("bootstrap bumps cursor past pre-cutoff rows in one shot, no walk", async () => {
+      // 5 old messages, 1 recent. Without the cutoff bump, bootstrap paged through all 6
       // ROWIDs even though only 1 produced a doc. With the cutoff bump,
       // ROWIDs 1..5 are skipped and the fetch starts from ROWID 6.
       for (let i = 1; i <= 5; i++) {

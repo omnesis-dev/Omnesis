@@ -137,7 +137,7 @@ xcrun devicectl device install app --device <UDID> \
 xcrun devicectl device process launch --device <UDID> <your-app-bundle-id>
 ```
 
-When the user is away from the macOS build host, `devicectl install` doesn't work over Tailscale (no Bonjour/mDNS — see #285). Use the TestFlight pipeline in `ios/TESTFLIGHT.md` instead.
+When the user is away from the macOS build host, `devicectl install` doesn't work over Tailscale (no Bonjour/mDNS). Use the TestFlight pipeline in `ios/TESTFLIGHT.md` instead.
 
 ## OmnesisDemo — the side-by-side demo app
 
@@ -268,7 +268,7 @@ contains 2907" — and, unlike `type_body_length` and `function_body_length`, it
 So **adding a single comment to an already-oversized file unmatches its baseline entry**, the
 violation resurfaces, and CI goes red on a change that touched nothing but a comment. About
 thirty files are in that state. Regenerating the baseline needs macOS, which is the part that
-hurts if you are working from Linux. See #2132 for the proposed fix.
+hurts if you are working from Linux. See #76 for the proposed fix.
 
 Two more traps worth knowing before you edit Swift:
 

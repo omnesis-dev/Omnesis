@@ -96,7 +96,7 @@ export interface OpenSearchSnapshotHandleOptions {
    * `search.readHandle.mmapBytes` in `omnesis.json` (default 1 GiB).
    * Phase-0 measurement showed mmap on the snapshot reader drops p99
    * by 82% under live ingest. See `OpenIndexDbOptions.mmapBytes` for
-   * the safety reasoning re: #192.
+   * the safety reasoning.
    */
   mmapBytes?: number;
   /**

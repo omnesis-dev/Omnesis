@@ -110,7 +110,7 @@ public struct AgentTrailAnnotations: Sendable, Equatable, Hashable {
 
 /// Compute the unified Timeline event list from the doc-level annotation
 /// bucket (`annotate.recorded`) + the directly-cited record bucket
-/// (`cite_record.recorded`, #757). These are the ONLY inputs — a
+/// (`cite_record.recorded`). These are the ONLY inputs — a
 /// `trace_connections` graph walk's raw output never reaches the Timeline;
 /// the agent must deliberately cite what its answer rests on.
 ///
@@ -142,7 +142,7 @@ public enum AgentTimelineBuilder {
         -> [AgentTrailEvent] {
         var eventOrder: [String] = []
         var eventByEntityId: [String: AgentTrailEvent] = [:]
-        // Directly-cited analytics rows (`cite_record`, #757): one
+        // Directly-cited analytics rows (`cite_record`): one
         // record-only event each, deduped by recordKey (first wins).
         for record in records {
             let key = record.recordKey
@@ -164,7 +164,7 @@ public enum AgentTimelineBuilder {
         return events.sorted(by: compareTrailEventsByAt)
     }
 
-    /// Build a record-only event for a directly-cited row (#757). The
+    /// Build a record-only event for a directly-cited row. The
     /// row's `semanticTime` (always present on a recorded citation) drives
     /// `at` so the row interleaves chronologically with document events.
     private static func synthesisedRecordEvent(

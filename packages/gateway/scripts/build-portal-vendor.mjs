@@ -174,7 +174,7 @@ const TARGETS = [
   // Our own browser-safe subpath — pure `{gatewayOrigin}` token expansion shared
   // with the CLI wizard so the two credentials-spec renderers can't drift. The
   // subpath imports only a `import type` from the node-flavored credentials
-  // module, which esbuild erases, so the bundle stays browser-clean (#1243).
+  // module, which esbuild erases, so the bundle stays browser-clean.
   {
     key: "@omnesis/core/credentials-tokens",
     out: "omnesis-credentials-tokens.js",

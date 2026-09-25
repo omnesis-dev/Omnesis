@@ -8,7 +8,7 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
 /**
- * Spec for the forward-looking consent-expiry pill label (#927), which must be distinct
+ * Spec for the forward-looking consent-expiry pill label, which must be distinct
  * from the red terminal `needs-auth`. Keyed on the generic state string — no source-name
  * branching.
  */

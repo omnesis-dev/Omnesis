@@ -36,7 +36,7 @@ function metadataJsonFor(link: ExtractedLink): string | null {
 
 /**
  * Whether an as-yet-unresolved `url`-type link could still resolve to an
- * Omnesis document later — i.e. whether it is worth storing at all (#570).
+ * Omnesis document later — i.e. whether it is worth storing at all.
  *
  * On the live corpus the overwhelming majority of extracted url links
  * point at external web pages (news sites, newsletters, tracking links)
@@ -54,7 +54,7 @@ function metadataJsonFor(link: ExtractedLink): string | null {
  *   - **registered** patterns, from `sync_state.url_patterns` — the
  *     currently-added sources; and
  *   - **known** patterns, from `known-url-patterns.ts` — every source type
- *     the collector knows about, added or not (#668).
+ *     the collector knows about, added or not.
  * Keying on the known superset means a link to a first-class source the
  * user hasn't added *yet* (e.g. a Notion URL before Notion is a source) is
  * kept unresolved and resolves via the reconcile path once that source is
@@ -62,8 +62,8 @@ function metadataJsonFor(link: ExtractedLink): string | null {
  * only re-fires on the *source* doc changing, so a dropped link never
  * comes back on its own).
  *
- * INTENTIONAL TRADE-OFF (#570): a url whose target matches no source type's
- * url-id pattern is NOT kept. After #668 the targets that fail this gate are
+ * INTENTIONAL TRADE-OFF: a url whose target matches no source type's
+ * url-id pattern is NOT kept. The targets that fail this gate are
  * pages no known dedicated source can own (news sites, newsletters, tracking
  * links). A Web Pages capture can still satisfy one of those URLs when it
  * already exists at extraction time; browser-history summaries and bookmark
@@ -188,7 +188,7 @@ export function processDocumentLinks(
   // Sources with best-effort content retention (e.g. WhatsApp) may lose
   // older content between syncs due to buffer rollover. For these sources,
   // link extraction is additive-only: we never delete existing links,
-  // only insert new ones. See #481.
+  // only insert new ones.
   const additive = isBestEffortRetention(db, sourceId);
 
   if (!additive) {
@@ -255,7 +255,7 @@ export function processDocumentLinks(
         AND target_doc_id IS NULL`,
   );
 
-  // #570: a url link that neither resolves now nor could ever resolve
+  // A url link that neither resolves now nor could ever resolve
   // (its target matches no source type's url-id pattern) is a permanent
   // external dead-end — don't store it. See `urlTargetCouldResolve`.
   const knownPatterns = getKnownUrlPatterns();
@@ -297,7 +297,7 @@ export function processDocumentLinks(
 
   insertAll(links);
 
-  // #264 / #271 — also emit duplicate-content links for binary-extracted
+  // Also emit duplicate-content links for binary-extracted
   // docs (attachment + Drive file). Runs unconditionally — Drive `file`
   // docs typically have zero extracted-from-content links, so a previous
   // early-return on `links.length === 0` would have skipped this entirely
@@ -321,7 +321,7 @@ export function processDocumentLinks(
   db.prepare("UPDATE documents SET links_extracted_at = ? WHERE id = ?").run(now, docId);
 
   // `extracted` counts links actually stored — `urlTargetCouldResolve`
-  // drops the permanently-unresolvable url majority (#570), so it can be
+  // drops the permanently-unresolvable url majority, so it can be
   // well below `links.length`. `resolved=0` because callers tracking
   // resolution counts read from the periodic reconcile's logs.
   return { extracted: inserted + dupLinks, resolved: 0 };
@@ -1080,7 +1080,7 @@ export function upsertExtractedLinksBatch(
       continue;
     }
     applied += 1;
-    // Count links actually stored — the #570 gate drops the
+    // Count links actually stored — the resolvability gate drops the
     // permanently-unresolvable url majority, so this is below
     // `row.links.length` for link-heavy docs.
     extracted += insertedThisRow + dupLinks;

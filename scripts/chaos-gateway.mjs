@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// Chaos harness for #192: drives the gateway with mixed search + synthetic
+// Chaos harness: drives the gateway with mixed search + synthetic
 // ingest load while an external better-sqlite3 handle forces periodic
 // wal_checkpoint(TRUNCATE) to churn the -shm mapping.
 //

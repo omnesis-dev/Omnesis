@@ -227,13 +227,13 @@ export class AnalyticsTableManager {
     // `defineStructuredSource` time; dynamic schemas (Notion's
     // `mapDatabaseToSchema` output) only reach the gateway, so the
     // boundary check is here.
-    // Reject a malformed boundDocument (#450) at the same boundary, so dynamic
+    // Reject a malformed boundDocument at the same boundary, so dynamic
     // Notion schemas that declare one can't persist a binding the walker can't
     // invert into a unique row.
-    // Validate the record-citation contract (#757) at the same boundary —
+    // Validate the record-citation contract at the same boundary —
     // dynamic Notion schemas declare semanticTimeColumn + record spec at sync
     // time, so this is where they're checked. `requireRecord: false` keeps the
-    // gateway backward-compatible: a device client built before #757 omits these
+    // gateway backward-compatible: an older device client omits these
     // fields, and its rows must still ingest (the table is simply not citation-
     // eligible until the client is updated). A present-but-malformed contract is
     // still rejected.
@@ -346,7 +346,7 @@ export class AnalyticsTableManager {
    *
    * **Three-phase merge.** Runs in this order:
    *
-   *   1. **Rename** (#318 follow-up) — for every new
+   *   1. **Rename** — for every new
    *      column carrying `sourceColumnId`, look up the previously-
    *      persisted catalog row and find a column with the same
    *      `sourceColumnId` but a different name. If one exists, issue
@@ -566,7 +566,7 @@ export class AnalyticsTableManager {
       // recoverable from the column name alone.
       if (/_\d+$/.test(existing) && /^notion_/.test(schema.tableName)) {
         log.warn(
-          `Notion table ${schema.tableName} has legacy suffixed column ${existing} — predates rename detection (#318); manual review recommended.`,
+          `Notion table ${schema.tableName} has legacy suffixed column ${existing} — predates rename detection; manual review recommended.`,
         );
       }
       await this.archiveColumn(conn, schema.tableName, existing, existingColumns);

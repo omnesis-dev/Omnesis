@@ -312,7 +312,7 @@ export class AgentSession {
 
   /**
    * Inject a completed user→assistant exchange into history WITHOUT running the
-   * backend (#748). The Deep Research orchestrator drives its own
+   * backend. The Deep Research orchestrator drives its own
    * plan→fan-out→verify→synthesis loop outside the normal turn loop, then calls
    * this so the parent conversation records the user's question and the final
    * synthesised report — which is what `persistConversation` + the omnesis-chat
@@ -823,7 +823,7 @@ export class AgentSession {
         if (turn.pendingUserParts.length > 0) commitUserSegment(turn);
         // Persist any opaque provider signature (e.g. Gemini thought_signature)
         // alongside the call so it can be replayed when this turn's history is
-        // sent on a later turn. See #510.
+        // sent on a later turn.
         const part: AssistantPart = {
           kind: "tool_use",
           toolCallId: event.payload.toolCallId,
@@ -948,7 +948,7 @@ export class AgentSession {
         // cassette, or any backend that emits the summary) persists the same
         // `report_artifact` part the real engine records via `recordTurn` — so
         // the "answer complete · N/N verified · N sources" card survives a
-        // reload instead of being a live-only event (#748). The real-engine
+        // reload instead of being a live-only event. The real-engine
         // path (`runDeepResearch`) bypasses the turn loop and records its own.
         const v = event.payload.verification;
         const artifact: ReportArtifactPart = {

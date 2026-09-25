@@ -88,7 +88,7 @@ class AgentDtoDecodeTest {
 
     @Test
     fun event_trail_record_only_event_decodes() {
-        // A bound DuckDB row reached from the seed that binds no document (#757): `doc` is absent,
+        // A bound DuckDB row reached from the seed that binds no document: `doc` is absent,
         // `record` carries the derived display strings, key fields coerce mixed wire types.
         val e = OmnesisJson.decodeFromString<AgentEvent>(
             """{"type":"agent.tool.result","payload":{"sessionId":"s","messageId":"m","toolCallId":"t","durationMs":3.0,"result":{"kind":"event_trail.built","seeds":["d1"],"truncated":false,"events":[{"eventId":"rec:health_workout|wk-1","at":"2026-05-02T07:14:00.000Z","kind":"record","record":{"recordKey":"health_workout|wk-1","table":"health_workout","tableDisplayName":"Workouts","title":"Morning run","keyFields":[{"label":"Distance","value":5.2},{"label":"Active","value":true},{"label":"Notes","value":null}],"semanticTime":"2026-05-02T07:14:00.000Z","sourceId":"demo-fitness:device","sourceType":"demo-fitness","boundDocumentId":null}}]}}}""",
@@ -112,7 +112,7 @@ class AgentDtoDecodeTest {
 
     @Test
     fun event_trail_deduped_doc_plus_record_event_decodes() {
-        // A document and its same-entity row collapsed into ONE event (#757): both `doc` and
+        // A document and its same-entity row collapsed into ONE event: both `doc` and
         // `record` present; the event keys (entityId) on the doc, and the bound doc deep-links.
         val e = OmnesisJson.decodeFromString<AgentEvent>(
             """{"type":"agent.tool.result","payload":{"sessionId":"s","messageId":"m","toolCallId":"t","durationMs":3.0,"result":{"kind":"event_trail.built","seeds":["doc-run"],"truncated":false,"events":[{"eventId":"doc-run","at":"2026-05-02T07:14:00.000Z","kind":"document","doc":{"documentId":"doc-run","title":"Morning run","sourceId":"demo-fitness:device","documentType":"event"},"record":{"recordKey":"health_workout|wk-1","table":"health_workout","tableDisplayName":"Workouts","title":"Morning run","keyFields":[{"label":"Distance","value":"5.2 km"}],"semanticTime":"2026-05-02T07:14:00.000Z","sourceId":"demo-fitness:device","sourceType":"demo-fitness","boundDocumentId":"doc-run"}}]}}}""",
@@ -127,7 +127,7 @@ class AgentDtoDecodeTest {
 
     @Test
     fun cite_record_recorded_result_decodes() {
-        // A directly-cited DuckDB row (#757): `cite_record.recorded` carries the derived display
+        // A directly-cited DuckDB row: `cite_record.recorded` carries the derived display
         // strings; key fields coerce mixed wire types; the bound document deep-links.
         val e = OmnesisJson.decodeFromString<AgentEvent>(
             """{"type":"agent.tool.result","payload":{"sessionId":"s","messageId":"m","toolCallId":"t","durationMs":4.0,"result":{"kind":"cite_record.recorded","table":"demo_fitness.workouts","recordKey":"demo_fitness.workouts|wk-1","primaryKeyColumns":[{"name":"id","value":"wk-1"}],"title":"Morning run","keyFields":[{"label":"Distance","value":5.2},{"label":"Active","value":true},{"label":"Notes","value":null}],"semanticTime":"2026-05-02T07:14:00.000Z","snapshot":{"id":"wk-1","distance_km":5.2},"sourceId":"demo-fitness:device","sourceType":"demo-fitness","tableDisplayName":"Workouts","boundDocumentId":"doc-run"}}}""",
@@ -328,7 +328,7 @@ class AgentDtoDecodeTest {
 
     @Test
     fun chat_message_assistant_with_report_artifact_part_decodes() {
-        // The persisted Deep Research write-back part (#748) — structured facts + the merged
+        // The persisted Deep Research write-back part — structured facts + the merged
         // citation set — decodes from the literal wire string the gateway writes. A strict/
         // non-tolerant decode would discard the part, so a reloaded conversation would silently
         // lose its verified-report card. Mirrors the iOS testReportArtifactPartDecodesFromWire.
@@ -407,7 +407,7 @@ class AgentDtoDecodeTest {
         assertNull(response.terminalFailure)
     }
 
-    // --- Sub-agent events (#748) ---
+    // --- Sub-agent events ---
 
     @Test
     fun subagent_spawned_event_decodes() {
@@ -439,7 +439,7 @@ class AgentDtoDecodeTest {
 
     @Test
     fun subagent_event_with_thin_child_search_result_decodes_not_dropped() {
-        // Regression net (#748): a wrapped `agent.tool.result` carrying a `search.results`
+        // Regression net: a wrapped `agent.tool.result` carrying a `search.results`
         // payload, with NO sessionId/messageId on the child (the parent envelope already names
         // the session). A strict child payload would throw and discard the whole sub-agent event,
         // so the researcher silently loses its nested search results. The decode must keep the doc.
@@ -513,7 +513,7 @@ class AgentDtoDecodeTest {
         assertTrue(e.citations.isEmpty())
     }
 
-    // --- verified-report artifact: agent.deep_research.summary (#748) ---
+    // --- verified-report artifact: agent.deep_research.summary ---
 
     @Test
     fun deep_research_summary_event_decodes() {

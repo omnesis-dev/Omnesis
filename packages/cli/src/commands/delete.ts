@@ -17,7 +17,7 @@ import {
 
 /**
  * `omnesis delete <id>` — remove a single document from the corpus for
- * privacy (#1065). The document and its extracted-attachment children are
+ * privacy. The document and its extracted-attachment children are
  * deleted from search. By default a durable tombstone keeps a later re-sync /
  * re-capture from bringing the page back (until the whole source is removed &
  * re-added); `--copy` deletes only this copy and lets the source bring it

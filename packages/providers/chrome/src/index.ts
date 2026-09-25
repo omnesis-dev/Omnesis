@@ -311,7 +311,7 @@ export default defineSource({
           currentIds.add(primary.url);
           const doc = normalizeBookmark(primary, providerId, sourceId, fileMtime, folderPaths);
           documents.push(doc);
-          // Each bookmark declares a `bookmark → webpage` edge (#895): the
+          // Each bookmark declares a `bookmark → webpage` edge: the
           // bookmark stays its own document and joins the canonical `web` page
           // it points at, resolving now or via `pending_edges` once the
           // extension captures the page.

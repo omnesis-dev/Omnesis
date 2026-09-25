@@ -214,8 +214,8 @@ class SchemasTest {
 
     @Test
     fun everySchemaDeclaresStartTimeAsSemanticTime() {
-        // The gateway places a record citation at this column on the timeline
-        // (#757). Every hc_* table is event-stamped by start_time. Omitting it
+        // The gateway places a record citation at this column on the timeline.
+        //Every hc_* table is event-stamped by start_time. Omitting it
         // makes the table non-citation-eligible.
         for (schema in HealthSchemas.ALL_SCHEMAS) {
             assertEquals(schema.tableName, "start_time", schema.semanticTimeColumn)
@@ -224,7 +224,7 @@ class SchemasTest {
 
     @Test
     fun everyRecordSpecIsNonEmptyAndReferencesRealColumns() {
-        // Mirrors the gateway's validateRecordCitationContract (#757): the record
+        // Mirrors the gateway's validateRecordCitationContract: the record
         // display spec must be present, both column lists non-empty, and every
         // referenced column (incl. titleTemplate placeholders) must exist.
         for (schema in HealthSchemas.ALL_SCHEMAS) {

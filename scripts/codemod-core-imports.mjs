@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * #384 prong D — consumer-import sweep.
+ * Consumer-import sweep.
  *
  * Rewrites `import … from "@omnesis/core"` / `export … from "@omnesis/core"`
  * statements so each named binding is imported from its *narrowest* home

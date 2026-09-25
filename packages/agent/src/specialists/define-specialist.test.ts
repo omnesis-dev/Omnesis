@@ -13,7 +13,7 @@ import {
   UnknownSpecialistError,
 } from "./index.js";
 
-describe("specialist registry (#748)", () => {
+describe("specialist registry", () => {
   it("resolves each v1 built-in by name to its prompt + role + tools", () => {
     const registry = createBuiltinSpecialistRegistry();
     for (const name of ["history-sweep", "source-digest", "citation-verifier"]) {
@@ -21,7 +21,7 @@ describe("specialist registry (#748)", () => {
       expect(s.name).toBe(name);
       expect(s.systemPrompt.length).toBeGreaterThan(0);
       // A specialist names a model ROLE only — never a backend/model (frozen
-      // #748 constraint). Deep Research runs every specialist on the agent role.
+      // constraint). Deep Research runs every specialist on the agent role.
       expect(s.modelRole).toBe("agent");
     }
   });

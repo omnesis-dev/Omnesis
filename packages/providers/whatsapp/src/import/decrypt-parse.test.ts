@@ -91,7 +91,7 @@ const CORPUS: FixtureCorpus = {
   ],
 };
 
-describe("iOS backup decrypt + ChatStorage parse (#588)", () => {
+describe("iOS backup decrypt + ChatStorage parse", () => {
   const dirs: string[] = [];
   afterEach(() => {
     for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });

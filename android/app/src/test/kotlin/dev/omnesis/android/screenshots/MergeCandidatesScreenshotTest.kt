@@ -23,8 +23,8 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 /**
- * Pixel-parity screenshots for the merge-candidate review queue (epic #719,
- * sub-issue #722), the Android analogue of the iOS `30-merge-candidates-list`
+ * Pixel-parity screenshots for the merge-candidate review queue, the Android
+ * analogue of the iOS `30-merge-candidates-list`
  * / `30b-merge-candidates-empty` snapshots. Robolectric + Roborazzi. All
  * sample data is invented (privacy rule), never sourced from the corpus.
  *

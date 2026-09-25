@@ -88,7 +88,7 @@ object AgentTurnBuilder {
                                         // history. Drop it so reopening a past conversation
                                         // shows the answer alone. The server record is untouched.
                                         is AssistantPart.Thinking -> continue
-                                        // Persisted Deep Research artifact (#748): rebuild the
+                                        // Persisted Deep Research artifact: rebuild the
                                         // same `reportArtifact` the live
                                         // `agent.deep_research.summary` event folds on (see
                                         // AgentReducer.attachReportArtifact) so the verified-report
@@ -270,8 +270,8 @@ object AgentTurnBuilder {
     }
 
     /**
-     * The merged citation refs carried on any persisted Deep Research `report_artifact` part
-     * (#748), in transcript order, deduped by documentId. A deep-research run cites via this
+     * The merged citation refs carried on any persisted Deep Research `report_artifact` part,
+     * in transcript order, deduped by documentId. A deep-research run cites via this
      * single merged set, NOT via `annotate` tool pairs, so [citations] reconstructs none of them
      * — without seeding from here the resumed report card renders "0 sources" and no inline
      * markers. Mirrors the iOS `reportArtifactCitations` and the portal `load-conversation`
@@ -293,7 +293,7 @@ object AgentTurnBuilder {
     }
 
     /**
-     * Rebuild the directly-cited records (#757) from a resumed history: walk every user
+     * Rebuild the directly-cited records from a resumed history: walk every user
      * `tool_result` part for a `cite_record.recorded` result, deduped by `recordKey` (last wins).
      * A record the agent cited directly is restored onto the timeline feed through here.
      */
@@ -329,7 +329,7 @@ object AgentTurnBuilder {
 
     fun stateFrom(messages: List<ChatMessage>, idPrefix: String = ""): AgentChatState {
         val cits = citations(messages, idPrefix).toMutableList()
-        // Seed the Citations set from any persisted Deep Research `report_artifact` part (#748).
+        // Seed the Citations set from any persisted Deep Research `report_artifact` part.
         // A deep-research run cites via the merged artifact set, not via `annotate` tool pairs, so
         // `citations` reconstructs none of them — without this the resumed report card renders
         // "0 sources" and no inline markers. Each seed has empty entries (no quote/note context

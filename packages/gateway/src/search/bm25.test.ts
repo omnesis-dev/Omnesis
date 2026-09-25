@@ -109,7 +109,7 @@ describe("bm25Search — documentIds pushdown", () => {
     expect(res).toHaveLength(2);
   });
 
-  test("a documentIds set far above SQLite's variable cap does not 500 (#581)", () => {
+  test("a documentIds set far above SQLite's variable cap does not 500", () => {
     // A `from:`/`with:` filter on a very high-volume person resolves to more
     // doc ids than SQLite's 32766 bound-variable limit. An inline IN-list
     // throws "too many SQL variables"; the temp-table path must absorb it.
@@ -304,7 +304,7 @@ describe("toFts5Query", () => {
     expect(toFts5Query("real-world")).toBe("real OR world");
   });
 
-  test("any punctuation-laden text yields a valid MATCH query, never a syntax error (#552)", () => {
+  test("any punctuation-laden text yields a valid MATCH query, never a syntax error", () => {
     // Each of these used to reach FTS5 as invalid syntax and 500 the search.
     expect(toFts5Query("c++")).toBe("c");
     expect(toFts5Query("c#")).toBe("c");

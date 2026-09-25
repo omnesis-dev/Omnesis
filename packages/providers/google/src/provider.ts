@@ -211,7 +211,7 @@ export function accountSelectionParams(reauthAccountId?: string): {
  *
  * Device flow (RFC 8628) is not viable for Google: it restricts the scope
  * allowlist to drive/youtube/email/profile/openid, which can't cover Gmail /
- * Calendar / Contacts (#170). Cross-device Google auth instead relies on
+ * Calendar / Contacts. Cross-device Google auth instead relies on
  * catching the redirect on the admin-client host or relaying it through the
  * gateway.
  */

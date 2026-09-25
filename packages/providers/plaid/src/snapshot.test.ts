@@ -420,13 +420,13 @@ describe("PlaidSyncSource — phase machine", () => {
   });
 });
 
-// Forward-looking consent-expiry (#927). The balances phase — which opens every
+// Forward-looking consent-expiry. The balances phase — which opens every
 // snapshot pass — reads `/item/get` once per pass and reports the item's
 // `consent_expiration_time` as `consentExpiresAt` on its result. The collector
 // forwards it to the gateway, which persists it and derives the non-terminal
 // `auth-expiring` warning. Only the balances phase reports it (the per-pass
 // cadence); the other phases leave it `undefined` (keep the stored value).
-describe("PlaidSyncSource — consent-expiry reporting (#927)", () => {
+describe("PlaidSyncSource — consent-expiry reporting", () => {
   test("the balances phase reports the item's consent deadline once per pass", async () => {
     const deadline = "2026-08-01T00:00:00Z";
     const transport = makeTransport(deadline);

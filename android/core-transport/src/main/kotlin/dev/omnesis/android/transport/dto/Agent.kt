@@ -156,7 +156,7 @@ data class AgentPlanItem(
 )
 
 /**
- * One event on a trail. An event carries a [doc], a [record] (#757), or BOTH:
+ * One event on a trail. An event carries a [doc], a [record], or BOTH:
  *   - [doc] only — an ordinary document event.
  *   - [doc] + [record] — a document and its `same-entity` analytics row collapsed into ONE
  *     timeline entity (dedup on [AgentTrailRecord.recordKey]); `at` is the row's semantic time
@@ -223,7 +223,7 @@ data class AgentTrailEventRelated(
 )
 
 /**
- * One declared key column of a record citation (#757). The gateway derives the label/value
+ * One declared key column of a record citation. The gateway derives the label/value
  * from the table's record-display contract and redacts `sensitive` columns server-side — the
  * value here is print-ready. The wire value is heterogeneous (`string | number | boolean |
  * null`); [AgentTrailRecordKeyFieldValueSerializer] coerces every shape to a display string so
@@ -266,7 +266,7 @@ object AgentTrailRecordKeyFieldValueSerializer : KSerializer<String?> {
 }
 
 /**
- * A DuckDB analytics row surfaced on the trail as a point-in-time record (#757). The gateway
+ * A DuckDB analytics row surfaced on the trail as a point-in-time record. The gateway
  * derives every display string from the table's declared record-display contract, so the
  * renderer prints these directly and never learns a column name or branches on a source.
  *

@@ -132,7 +132,7 @@ export interface DocumentServiceDeps {
    */
   ingestYieldBatch?: number;
   /**
-   * Low-disk write guard (#15). Filesystem path whose free space gates
+   * Low-disk write guard. Filesystem path whose free space gates
    * ingestion — typically the gateway DB file. When omitted the guard is
    * inert (test paths that don't care about disk). The directory of this
    * path is what's checked, so a not-yet-created DB file still resolves to
@@ -240,7 +240,7 @@ export class DocumentService {
 
   /**
    * Refuse the write when free disk on the DB volume is below the
-   * configured floor (#15) — writing under low disk risks a partial /
+   * configured floor — writing under low disk risks a partial /
    * corrupting SQLite write. A 507 leaves the sync cursor un-advanced, so the
    * collector re-sends the same page on its next scheduled sync once disk
    * frees (the source shows a transient error state meanwhile) — nothing is
@@ -256,7 +256,7 @@ export class DocumentService {
     if (!ok) {
       const freeMb = Math.round(freeBytes / (1024 * 1024));
       const minMb = Math.round(minFreeDiskBytes / (1024 * 1024));
-      log.warn(`Rejecting ingest: ${freeMb}MB free < ${minMb}MB minimum on the DB volume (#15)`);
+      log.warn(`Rejecting ingest: ${freeMb}MB free < ${minMb}MB minimum on the DB volume`);
       throw new InsufficientStorageError(
         `Insufficient disk space: ${freeMb}MB free is below the ${minMb}MB minimum on the gateway DB volume. Free up disk; ingestion resumes automatically.`,
       );
@@ -411,7 +411,7 @@ export class DocumentService {
   ): Promise<IngestResult> {
     const { db, writeGate: w, events } = this.deps;
 
-    // See #15 — pause ingestion under low disk before any write.
+    // Pause ingestion under low disk before any write.
     this.assertDiskSpace();
 
     const docs = this.applyMaxAgeCutoff(documents);
@@ -583,8 +583,8 @@ export class DocumentService {
   }
 
   /**
-   * User-initiated single-document privacy delete (`DELETE /documents/:id`,
-   * #1065). Removes the document and its extracted-attachment children and
+   * User-initiated single-document privacy delete (`DELETE /documents/:id`).
+   * Removes the document and its extracted-attachment children and
    * cascades the cleanup into the separate index DB. With `tombstone` (the
    * default) it also writes a durable tombstone (inside
    * `writeGate.deleteDocumentForUser`) so a later re-sync / re-capture can't
@@ -691,7 +691,7 @@ export class DocumentService {
   }
 
   /**
-   * Atomic per-page sync write (issue #322). Bundles
+   * Atomic per-page sync write. Bundles
    * documents + tombstones + snapshot reconcile + cursor advance into
    * one SQLite transaction so either every effect lands or none of
    * them do. Replaces the prior four-step
@@ -861,7 +861,7 @@ export class DocumentService {
       body = args.body;
     }
 
-    // See #15 — pause ingestion under low disk before any write. This path
+    // Pause ingestion under low disk before any write. This path
     // always also advances the sync cursor, so a 507 here means the
     // collector re-sends the same page (with its cursor) once disk frees.
     this.assertDiskSpace();
@@ -879,7 +879,7 @@ export class DocumentService {
 
     // Normalize the icon at the write boundary so every consumer (portal,
     // iOS, iTerm OSC inline-image) reads back a uniform PNG data URI —
-    // mirrors the pre-#322 `POST /sync-state/:sourceId` route. Hosted
+    // mirrors the older `POST /sync-state/:sourceId` route. Hosted
     // SVG URLs and SVG data URIs get rasterized once here instead of
     // forcing each renderer to decode SVG.
     let meta = body.meta;
@@ -1018,7 +1018,7 @@ export class DocumentService {
         })
       : 0;
 
-    // #551: the source was wiped after this sync started — the writer
+    // The source was wiped after this sync started — the writer
     // applied nothing (no docs, no cursor advance). Surface it so the
     // collector logs it; the next sync reads the empty cursor and
     // re-bootstraps cleanly.
@@ -1038,7 +1038,7 @@ export class DocumentService {
     }
     if (result.rejected) {
       log.warn(
-        `upsertWithCursor for ${body.sourceId}: rejected stale write (source superseded mid-sync, epoch=${body.wipeEpoch}) — ${documents.length} docs not applied, cursor not advanced (#551)`,
+        `upsertWithCursor for ${body.sourceId}: rejected stale write (source superseded mid-sync, epoch=${body.wipeEpoch}) — ${documents.length} docs not applied, cursor not advanced`,
       );
       return {
         ingested: 0,
@@ -1176,7 +1176,7 @@ export class DocumentService {
    * deleted here — an omission carries a deadline, and the absence sweep is
    * what spends it.
    *
-   * The wipe epoch fences the whole operation (#551): a wipe and re-bootstrap
+   * The wipe epoch fences the whole operation: a wipe and re-bootstrap
    * racing this read must not mark fresh bootstrap documents as absent on the
    * strength of a snapshot taken before the wipe.
    */
@@ -1535,7 +1535,7 @@ export class DocumentService {
     };
   }
 
-  /** Provenance-annotated edges incident to a document, plus pending forward refs (#430). */
+  /** Provenance-annotated edges incident to a document, plus pending forward refs. */
   getEdges(id: string) {
     return getDocumentEdges(this.deps.db, id);
   }
@@ -1615,7 +1615,7 @@ export class DocumentService {
     return this.sourceSyncState.getState(sourceId, deviceId);
   }
 
-  /** Current write epoch of one cursor row (0 if never claimed or wiped). See #551. */
+  /** Current write epoch of one cursor row (0 if never claimed or wiped). */
   getWipeEpoch(sourceId: string, cursorRow = ""): number {
     return this.sourceSyncState.getEpoch(sourceId, cursorRow);
   }

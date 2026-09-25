@@ -4,7 +4,7 @@
 @testable import Omnesis
 import XCTest
 
-/// Exercises the sub-agent card reducer (#748) in `AgentCoordinator` — the
+/// Exercises the sub-agent card reducer in `AgentCoordinator` — the
 /// iOS twin of the portal `agent.subagent.*` reducer arms. Drives events
 /// through `applyEventForTesting`, bypassing the live SSE stream, so the
 /// card-building semantics (spawn → live accounting → finalise) can be
@@ -417,7 +417,7 @@ final class AgentCoordinatorSubagentTests: XCTestCase {
         ))
     }
 
-    // MARK: - Verified-report artifact (#748)
+    // MARK: - Verified-report artifact
 
     private func assistantTurn(_ coord: AgentCoordinator, _ id: String) -> AgentAssistantTurn? {
         for turn in coord.turns {

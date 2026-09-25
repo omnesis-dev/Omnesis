@@ -25,7 +25,7 @@ export const KNOWN_DOCUMENT_TYPES = [
   "bookmark",
   // The canonical document type for pages captured by the browser extension.
   "webpage",
-  // Legacy: the type the pre-#895 browser extension stamped on pushed pages.
+  // Legacy: the type an older browser extension stamped on pushed pages.
   // No live producer emits it any more, but it is retained because the fold
   // migration (migration 21) reads existing `web-page` rows out of live user
   // DBs to re-home them under `web` as `webpage`, and migrations are
@@ -37,11 +37,11 @@ export const KNOWN_DOCUMENT_TYPES = [
   // calls (Apple call-log source); a future WhatsApp-calls source will
   // reuse this same type.
   "call-log",
-  // A device screenshot (Photos source, #169). Distinct from "photo" so
+  // A device screenshot (Photos source). Distinct from "photo" so
   // clients can filter/boost the two independently (e.g. `type:screenshot`
   // for document-like captures vs. camera photos).
   "screenshot",
-  // A device camera photo (Photos source, #169), OCR'd + on-device
+  // A device camera photo (Photos source), OCR'd + on-device
   // analyzed. Every photo becomes exactly one of "screenshot" or "photo".
   "photo",
 ] as const;
@@ -352,7 +352,7 @@ export interface DocumentMetadata {
    * it generically, without branching on a source name. Distinct from
    * {@link rollingAggregate}: this marks an individually low-value document,
    * not a continuously-rewritten aggregate. Set by the producing source
-   * during normalization (e.g. the Photos source, #169, on a text-less,
+   * during normalization (e.g. the Photos source, on a text-less,
    * caption-less, label-less photo). Omitted (never `false`) otherwise.
    */
   lowSignal?: boolean;

@@ -169,7 +169,7 @@ describe("resolveAttachmentConfig", () => {
     expect(resolveAttachmentConfig({ extractAttachments: true }).enabled).toBe(true);
   });
 
-  describe("OCR image types (#427)", () => {
+  describe("OCR image types", () => {
     test("image types are included in the default allow-list", () => {
       const types = resolveAttachmentConfig().allowedTypes;
       expect(types).toContain("image/png");
@@ -185,7 +185,7 @@ describe("resolveAttachmentConfig", () => {
     });
   });
 
-  describe("STT audio-type gating (#260)", () => {
+  describe("STT audio-type gating", () => {
     test("audio types are excluded by default (includeAudioTypes unset)", () => {
       const types = resolveAttachmentConfig(undefined, { defaultEnabled: true }).allowedTypes;
       for (const audio of STT_AUDIO_TYPES) expect(types).not.toContain(audio);
@@ -338,14 +338,14 @@ describe("formatAttachmentMarkers", () => {
   });
 });
 
-describe("deriveAttachmentStableId (#268)", () => {
+describe("deriveAttachmentStableId", () => {
   test("same inputs produce the same id (stability across re-syncs)", () => {
     const a = deriveAttachmentStableId("report.pdf", 12_345, "application/pdf");
     const b = deriveAttachmentStableId("report.pdf", 12_345, "application/pdf");
     expect(a).toBe(b);
   });
 
-  test("id is independent of source-supplied attachmentId (the whole point of #268)", () => {
+  test("id is independent of source-supplied attachmentId (the whole point of the stable id)", () => {
     // Old scheme used Gmail's attachmentId in the externalId. New scheme
     // doesn't take it as input at all — so two calls "from different sync
     // runs" return the same id even when the surrounding context changes.
@@ -535,9 +535,9 @@ describe("buildAttachmentDocument", () => {
     expect(doc.externalId).toMatch(/^msg-abc123\/att\/[0-9a-f]{16}$/);
   });
 
-  test("re-sync (same attachment, same parent) produces the same externalId — #268 fix", () => {
+  test("re-sync (same attachment, same parent) produces the same externalId", () => {
     // Simulates what would happen when Gmail returns the same parent twice
-    // with re-issued attachment IDs. The pre-#268 scheme would create two
+    // with re-issued attachment IDs. The older scheme would create two
     // child docs; under the new scheme, the externalId is stable so the
     // gateway's ON CONFLICT (provider_id, source_id, external_id) upsert
     // collapses them.

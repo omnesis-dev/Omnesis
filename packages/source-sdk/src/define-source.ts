@@ -380,7 +380,7 @@ export interface SourceInstance<TCursor extends SyncCursor = SyncCursor> {
 
   /**
    * Run a one-time bulk import of historical data from a user-supplied local
-   * artifact (#588). Present only on sources that also declare `historyImport`
+   * artifact. Present only on sources that also declare `historyImport`
    * on their definition. `values` are keyed by the declared `ImportField.key`s;
    * the source decrypts/parses the artifact and merges it into its own store,
    * reporting progress via `callbacks.onProgress` and returning a tally.
@@ -790,7 +790,7 @@ export interface SourceDefinition<
   config?: ConfigSchema<TFields>;
   params?: SourceParam[];
   /**
-   * Declares a one-time bulk-history import capability (#588). When set, the
+   * Declares a one-time bulk-history import capability. When set, the
    * matching `SourceInstance.importHistory` runs the import; clients render a
    * generic form from `historyImport.fields`. Source-agnostic — the source owns
    * the artifact format and parsing.

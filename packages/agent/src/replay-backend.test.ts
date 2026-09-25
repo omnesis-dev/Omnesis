@@ -180,7 +180,7 @@ describe("ReplayBackend", () => {
     expect(reparsed.entries.length).toBe(2);
   });
 
-  it("round-trips the three agent.subagent.* event kinds through parse/serialize (#748)", () => {
+  it("round-trips the three agent.subagent.* event kinds through parse/serialize", () => {
     const src = [
       JSON.stringify({
         afterMs: 0,
@@ -240,7 +240,7 @@ describe("ReplayBackend", () => {
     ]);
   });
 
-  it("rejects a malformed agent.subagent.result payload (#748)", () => {
+  it("rejects a malformed agent.subagent.result payload", () => {
     const src = JSON.stringify({
       afterMs: 0,
       event: {

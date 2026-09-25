@@ -48,7 +48,7 @@ const BROWSER_DEFS: BrowserDef[] = [
     linuxSubdir: "vivaldi",
   },
   { id: "safari", name: "Safari", engine: "safari", darwinSubdir: "../Safari", linuxSubdir: null },
-  // TODO: Add Firefox browser definition when Firefox support is implemented (#158)
+  // TODO: Add Firefox browser definition when Firefox support is implemented (#17)
 ];
 
 function getBaseDir(def: BrowserDef): string | null {

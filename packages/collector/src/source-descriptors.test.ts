@@ -272,7 +272,7 @@ describe("extractDescriptors — singleInstance inheritance", () => {
   });
 });
 
-describe("extractDescriptors — gatewayHosted flag (#993)", () => {
+describe("extractDescriptors — gatewayHosted flag", () => {
   it("a defineSource gatewayHosted flag travels to the descriptor and serializes", () => {
     const def = defineSource({
       id: "gateway-hosted-source",
@@ -340,7 +340,7 @@ describe("extractDescriptors — URL graph roles", () => {
   });
 });
 
-describe("extractDescriptors — primaryCount headline plane (#993)", () => {
+describe("extractDescriptors — primaryCount headline plane", () => {
   it("a defineSource primaryCount flag travels to the descriptor and serializes", () => {
     const def = defineSource({
       id: "doc-primary-source",
@@ -899,7 +899,7 @@ describe("extractDescriptors — conversational flag round-trip", () => {
   });
 });
 
-describe("Web Pages source registers + renders generically (#895)", () => {
+describe("Web Pages source registers + renders generically", () => {
   it("extracts a single `web` descriptor that serializes to a JSON-safe shape", () => {
     // The exact path the gateway uses to ship a descriptor to clients:
     // extractDescriptors(definition) → serializeDescriptor(descriptor). Proves

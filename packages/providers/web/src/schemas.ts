@@ -12,7 +12,7 @@ import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
  * point-in-time event keyed by `(url, visited_at)` — so the same page visited
  * twice yields two visit rows but a single, latest-snapshot content document.
  *
- * `visited_at` is the semantic time (record-citations, #757): a visit is
+ * `visited_at` is the semantic time (record-citations): a visit is
  * placed at the instant the dwell was confirmed.
  */
 export const pageVisitsSchema: AnalyticsTableSchema = {

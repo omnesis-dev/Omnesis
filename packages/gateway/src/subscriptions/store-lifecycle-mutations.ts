@@ -848,7 +848,7 @@ export function purgeSubscription(
     // set enumerates every table with a workflow FK that is not a pure child
     // of the workflow row: a residual reference from any of them means the
     // workflow is shared and deleting it would cascade into that owner.
-    // See #1564 — a workflow kept alive here is never reaped when its last
+    // See #58 — a workflow kept alive here is never reaped when its last
     // reference goes away later.
     let workflowsDeleted = 0;
     const deleteOrphanWorkflow = db.prepare(

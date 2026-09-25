@@ -44,7 +44,7 @@ const REDIRECT_URI = `http://${OAUTH_CALLBACK_HOST}:${OAUTH_CALLBACK_PORT}${OAUT
  * base64-encoded to defeat scanner regexes). The literal lit up every
  * secret scanner the moment the repo went public; switching to the
  * user-provided-creds pattern matches Google/Strava and removes the
- * literal entirely. See #314 for the migration history.
+ * literal entirely.
  */
 export function loadClientCredentials(configDir?: string): NotionCredentials {
   const path = providerCredentialsPath("notion", configDir);

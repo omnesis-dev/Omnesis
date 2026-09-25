@@ -47,7 +47,7 @@ data class AnalyticsColumn(
 )
 
 /**
- * How to render one row of a table when it is cited as a record (#757). Mirrors
+ * How to render one row of a table when it is cited as a record. Mirrors
  * `RecordDisplaySpec` in `packages/source-sdk/src/structured-source.ts`:
  * `titleColumns` (optionally joined via a `{column}` `titleTemplate`) compose the
  * row's title; `keyColumns` are surfaced as its key fields. Both must be non-empty
@@ -63,7 +63,7 @@ data class RecordDisplaySpec(
 /**
  * A DuckDB table declaration the source owns. Primary key is mandatory — ingest is
  * at-least-once. `semanticTimeColumn` names the real-world event-time column a
- * record citation is placed at on a timeline (#757) — `start_time` for every
+ * record citation is placed at on a timeline — `start_time` for every
  * `hc_*` table — and `record` declares how to render a single row when cited.
  */
 @Serializable

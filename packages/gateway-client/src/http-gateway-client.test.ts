@@ -52,7 +52,7 @@ const postDocCalls: Array<{ docCount: number }> = [];
 const ocrRequestBodies: string[] = [];
 const withCursorBodies: Array<Record<string, unknown>> = [];
 const reconcileBodies: Array<Record<string, unknown>> = [];
-// Spy log of POST /analytics/ingest calls (#619): asserts deletes-only pages
+// Spy log of POST /analytics/ingest calls: asserts deletes-only pages
 // still reach the gateway with the rows they name.
 const ingestAnalyticsCalls: Array<{
   tableName: string;
@@ -190,7 +190,7 @@ function createTestGateway(database: Db, apiKey: string) {
         });
       }
 
-      // POST /analytics/ingest (#619)
+      // POST /analytics/ingest
       if (path === "/analytics/ingest" && req.method === "POST") {
         return req.json().then((body: any) => {
           ingestAnalyticsCalls.push({
@@ -391,24 +391,24 @@ describe("HttpGatewayClient.transcribe", () => {
 
   test("returns null when STT is disabled (404) — permanent, no retry", async () => {
     // A 4xx is permanent ("the gateway won't transcribe this"): the caller
-    // treats it as no transcript and the page advances. No throw (#680).
+    // treats it as no transcript and the page advances. No throw.
     expect(await client.transcribe(enc("TRIGGER_DISABLED"), "audio/ogg")).toBeNull();
   });
 
-  test("throws transient SyncError on a 5xx so the page retries (#680)", async () => {
+  test("throws transient SyncError on a 5xx so the page retries", async () => {
     await expect(client.transcribe(enc("TRIGGER_ERROR"), "audio/ogg")).rejects.toMatchObject({
       name: "SyncError",
       kind: "transient",
     });
   });
 
-  test("throws transient SyncError on a 503 (backend warming up) (#680)", async () => {
+  test("throws transient SyncError on a 503 (backend warming up)", async () => {
     await expect(client.transcribe(enc("TRIGGER_UNAVAILABLE"), "audio/ogg")).rejects.toBeInstanceOf(
       SyncError,
     );
   });
 
-  test("throws transient SyncError when the gateway is unreachable (#680)", async () => {
+  test("throws transient SyncError when the gateway is unreachable", async () => {
     const bad = new HttpGatewayClient("http://localhost:19998", API_KEY);
     await expect(bad.transcribe(enc("x"), "audio/ogg")).rejects.toMatchObject({
       name: "SyncError",
@@ -416,7 +416,7 @@ describe("HttpGatewayClient.transcribe", () => {
     });
   });
 
-  test("throws transient SyncError on a 429 and carries Retry-After (#680)", async () => {
+  test("throws transient SyncError on a 429 and carries Retry-After", async () => {
     await expect(client.transcribe(enc("TRIGGER_RATELIMIT"), "audio/ogg")).rejects.toMatchObject({
       name: "SyncError",
       kind: "transient",
@@ -456,24 +456,24 @@ describe("HttpGatewayClient.ocr", () => {
 
   test("returns null when OCR is disabled (404) — permanent, no retry", async () => {
     // A 4xx is permanent: the attachment is treated as unextractable binary and
-    // the page advances. No throw (#680).
+    // the page advances. No throw.
     expect(await client.ocr(enc("TRIGGER_DISABLED"), "image/png")).toBeNull();
   });
 
-  test("throws transient SyncError on a 5xx so the page retries (#680)", async () => {
+  test("throws transient SyncError on a 5xx so the page retries", async () => {
     await expect(client.ocr(enc("TRIGGER_ERROR"), "image/png")).rejects.toMatchObject({
       name: "SyncError",
       kind: "transient",
     });
   });
 
-  test("throws transient SyncError on a 503 (backend warming up) (#680)", async () => {
+  test("throws transient SyncError on a 503 (backend warming up)", async () => {
     await expect(client.ocr(enc("TRIGGER_UNAVAILABLE"), "image/png")).rejects.toBeInstanceOf(
       SyncError,
     );
   });
 
-  test("throws transient SyncError when the gateway is unreachable (#680)", async () => {
+  test("throws transient SyncError when the gateway is unreachable", async () => {
     const bad = new HttpGatewayClient("http://localhost:19998", API_KEY);
     await expect(bad.ocr(enc("x"), "image/png")).rejects.toMatchObject({
       name: "SyncError",
@@ -481,7 +481,7 @@ describe("HttpGatewayClient.ocr", () => {
     });
   });
 
-  test("throws transient SyncError on a 429 and carries Retry-After (#680)", async () => {
+  test("throws transient SyncError on a 429 and carries Retry-After", async () => {
     await expect(client.ocr(enc("TRIGGER_RATELIMIT"), "image/png")).rejects.toMatchObject({
       name: "SyncError",
       kind: "transient",
@@ -700,7 +700,7 @@ describe("HttpGatewayClient", () => {
     expect(postDocCalls.length).toBe(beforeCalls);
   });
 
-  test("a deletes-only page reaches the gateway (#619)", async () => {
+  test("a deletes-only page reaches the gateway", async () => {
     const before = ingestAnalyticsCalls.length;
     const response = await client.ingestAnalyticsPage({
       tableName: "txns",
@@ -829,14 +829,14 @@ describe("HttpGatewayClient", () => {
     expect(ingestAnalyticsCalls.at(-1)?.writeEpoch).toBe(7);
   });
 
-  test("a page with no records and no deletes is a no-op (#619)", async () => {
+  test("a page with no records and no deletes is a no-op", async () => {
     const before = ingestAnalyticsCalls.length;
     const response = await client.ingestAnalyticsPage({ tableName: "txns", records: [] });
     expect(ingestAnalyticsCalls.length).toBe(before);
     expect(response.ingested).toBe(0);
   });
 
-  test("a schema-only registration still reaches the gateway (#757)", async () => {
+  test("a schema-only registration still reaches the gateway", async () => {
     const before = ingestAnalyticsCalls.length;
     const schema = {
       tableName: "txns",

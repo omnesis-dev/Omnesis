@@ -85,7 +85,7 @@ describe("isVirtualInterface", () => {
 });
 
 describe("realLanIpv4s", () => {
-  test("excludes docker/tailscale/loopback, returns the real LAN IP (the #49 bug)", () => {
+  test("excludes docker/tailscale/loopback, returns the real LAN IP", () => {
     const ifaces = {
       lo: [ip4("127.0.0.1", true)],
       enP7s7: [ip4("192.168.1.81")], // real home LAN

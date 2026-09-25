@@ -4,7 +4,7 @@
 /**
  * Runtime-settings resolver for the gateway.
  *
- * These knobs grew out of the #192 crash investigation — the original
+ * These knobs grew out of a SIGBUS crash investigation — the original
  * "mitigations on/off" master flag has been broken apart into individual
  * config fields so each one is independently tunable via
  * `omnesis.json` (config file, CLI `config set`, or portal).
@@ -16,7 +16,7 @@
  *
  * Defaults reflect the post-2026-04-28 architecture:
  *   - `journalMode = WAL` is the default. The single-writer
- *     architecture from #192 (writer worker owns the only writable
+ *     architecture (writer worker owns the only writable
  *     handle, all other handles read-only) is what made WAL safe;
  *     ~73 cumulative minutes of chaos pressure with 800+ explicit
  *     `wal_checkpoint(TRUNCATE)` ops produced zero new SIGBUS
@@ -114,7 +114,7 @@ export interface ResolvedRuntimeSettings {
   analyticsThreads: number | undefined;
   /**
    * Minimum free disk (megabytes) on the DB volume below which ingestion
-   * (507) + indexing pause. See #15 / `gateway.minFreeDiskMb`.
+   * (507) + indexing pause. See `gateway.minFreeDiskMb`.
    */
   minFreeDiskMb: number;
   /**
@@ -255,7 +255,7 @@ const DEFAULTS = {
   // the box, starving query-embeds during a heavy resync. Override via
   // gateway.cpuConcurrency / OMNESIS_CPU_CONCURRENCY.
   cpuConcurrency: Math.max(2, Math.floor(availableParallelism() / 2) - 2),
-  // Low-disk write guard (#15). Below this many MB free on the DB volume,
+  // Low-disk write guard. Below this many MB free on the DB volume,
   // ingestion is rejected with 507 and indexing cycles are skipped so the
   // gateway never writes under low disk. 500 MB is a comfortable floor for
   // a WAL checkpoint + an indexer batch flush on a typical corpus.

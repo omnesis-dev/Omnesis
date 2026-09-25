@@ -57,7 +57,7 @@ function extractPlainText(data: Uint8Array, maxLen: number): ExtractionResult | 
  * Minimum input size below which the "implausibly small extraction" guard is
  * disabled. A 200-byte HTML doc legitimately producing 1 byte of markdown is
  * not interesting; the guard exists to catch cases like the 198 KB Oney bank
- * statement that turned into "s" (#269).
+ * statement that turned into "s".
  */
 const HTML_GUARD_MIN_INPUT_BYTES = 1024;
 
@@ -101,7 +101,7 @@ function extractHtmlText(data: Uint8Array, maxLen: number): ExtractionResult | n
 
   if (!markdown.trim()) return null;
 
-  // Guard against silent failures (#269) — if the extractor returned almost
+  // Guard against silent failures — if the extractor returned almost
   // nothing from a non-trivial input, it likely hit something it couldn't
   // parse (encoding mismatch, mangled MIME, hostile markup) and the caller
   // is better off treating it as an extraction failure than indexing useless
@@ -223,7 +223,7 @@ function extractCalendarText(data: Uint8Array, maxLen: number): ExtractionResult
   if (events.length === 0 && todos.length === 0) return null;
 
   const parts: string[] = [];
-  // RFC 5545 UIDs from each VEVENT — the cross-source link key (#266).
+  // RFC 5545 UIDs from each VEVENT — the cross-source link key.
   // VTODOs also carry UIDs but we have no todo source on the resolve side
   // today, so skip them. Dedupe in case an ICS file has multiple VEVENTs
   // with the same UID (recurring-event RECURRENCE-ID overrides).

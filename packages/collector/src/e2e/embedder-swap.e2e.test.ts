@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Headline live-swap E2E for the double-buffered embedder swap (epic #1011).
+ * Headline live-swap E2E for the double-buffered embedder swap.
  *
  * This is the criterion the epic names first: a live, spawned-gateway swap that
  * proves vector (semantic) search NEVER goes offline while the embedding model
@@ -35,7 +35,7 @@
  * covered by the deterministic matrix above and called out with explicit
  * `it.skip`s below so the gap is visible rather than silently green.
  *
- * Dependency policy (mirrors `search-quality.e2e.ts`, epic #804 / C12): the
+ * Dependency policy (mirrors `search-quality.e2e.ts`): the
  * `:8001` embedder is a REQUIRED dependency. On a CI runner an unreachable
  * `:8001` FAILS the job loudly; only on a developer's local box does it skip.
  *
@@ -66,8 +66,8 @@ const EMBEDDER_MODEL = process.env.OMNESIS_TEST_EMBEDDER_MODEL ?? "Qwen/Qwen3-Em
 const IS_CI = Boolean(process.env.CI || process.env.GITHUB_ACTIONS || process.env.RUNNER_NAME);
 
 // The target (new) model's dimension — deliberately different from the real
-// `:8001` embedder's 1024 so the swap is a genuine dimension change (#698 class:
-// the read handle must adopt the new dim with no restart).
+// `:8001` embedder's 1024 so the swap is a genuine dimension change (the
+// read handle must adopt the new dim with no restart).
 const TARGET_DIM = 512;
 const TARGET_MODEL_ID = "fake-embed-swap-target-512";
 
@@ -276,7 +276,7 @@ async function probeEmbedderReachable(): Promise<boolean> {
 
 let reachable = false;
 
-describe("Live double-buffered embedder swap keeps vector search live (headline, epic #1011)", () => {
+describe("Live double-buffered embedder swap keeps vector search live (headline)", () => {
   let harness: SyntheticE2EHarness | null = null;
   let target: GatedEmbedderServer | null = null;
 

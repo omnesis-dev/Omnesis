@@ -42,7 +42,7 @@ import type { TrailRecord } from "./agent-protocol.js";
  * losers are dereferenced through `merged_into` before they ever appear as a
  * vertex); an `analytics-row` vertex is a row in a DuckDB analytics table,
  * identified by `(tableName, primaryKey)` and reached via the synthesized
- * `same-entity` edge from its co-described document (#450).
+ * `same-entity` edge from its co-described document.
  */
 export type GraphVertexKind = "document" | "person" | "analytics-row";
 
@@ -127,7 +127,7 @@ export interface GraphVertex {
    */
   row?: Record<string, unknown>;
   /**
-   * The fully-derived, client-ready record citation for this row (#757),
+   * The fully-derived, client-ready record citation for this row,
    * computed gateway-side from the table's declared record-display contract
    * (title / key fields / semantic time / redacted snapshot / bound document).
    * Set only for an `analytics-row` vertex the trail walk resolved as a
@@ -151,7 +151,7 @@ export function analyticsRowKey(tableName: string, primaryKey: string): string {
 
 /**
  * A stable, platform-neutral reference to a single analytics row — the
- * identity half of a record citation (#757). It names the row's `table` and
+ * identity half of a record citation. It names the row's `table` and
  * the typed primary-key columns that address it, plus the `recordKey`
  * (`analyticsRowKey(table, pkValues.join(":"))`) that consumers use as a
  * dedup id. Producers (the `run_sql` row identity, the `trace_connections` bound
@@ -294,7 +294,7 @@ export type GraphEdgeProvenanceKind =
 /**
  * Where a given edge type lives. `"synthesized"` edges are not persisted at
  * all — they are recomputed on every walk from a declarative binding (the
- * `same-entity` boundDocument edge, #450).
+ * `same-entity` boundDocument edge).
  */
 export type GraphEdgeStorage =
   | "document_links"

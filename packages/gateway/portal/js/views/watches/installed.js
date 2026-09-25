@@ -419,7 +419,7 @@ function WatchFiringRow({ watchId, row, subscriptionId, egressKnown = true }) {
   const dated = firing?.noticedAt && !watchInstantsAgree(firing.noticedAt, firing.firedAt)
     ? formatPrivacyDate(watchInstant(firing.firedAt))
     : null;
-  // See #1865 — a subscription's firings carry no journal sequence, so a
+  // A subscription's firings carry no journal sequence, so a
   // sent-only row cannot address the canvas at all.
   const debugHref = Number.isFinite(firing?.seq)
     ? watchDebugHref(watchId, firing.seq)

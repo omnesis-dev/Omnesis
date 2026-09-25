@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * HTTP-level coverage for the export routes (#57): POST /admin/export,
+ * HTTP-level coverage for the export routes: POST /admin/export,
  * GET /admin/export/status, GET /admin/exports — scope guard, body
  * validation, the 202 start + poll contract, and the 409 single-flight.
  */

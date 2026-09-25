@@ -11,7 +11,7 @@ import type { RouteApp } from "../types.js";
 const log = adminLog.child("widget-origins");
 
 /**
- * Mount the widget-origins admin endpoint (#918).
+ * Mount the widget-origins admin endpoint.
  *
  * The collector POSTs the union of external widget-vendor origins declared by
  * *every known source type* (every loaded `link-widget` source descriptor's

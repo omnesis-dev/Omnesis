@@ -703,7 +703,7 @@ describe("agent-protocol", () => {
     expect(result.success).toBe(false);
   });
 
-  it("trailEventSchema accepts a document event carrying a deduped record (#757)", () => {
+  it("trailEventSchema accepts a document event carrying a deduped record", () => {
     const result = trailEventSchema.safeParse({
       eventId: "doc-1",
       at: "2026-05-01T08:30:00Z",
@@ -728,7 +728,7 @@ describe("agent-protocol", () => {
     expect(result.success).toBe(true);
   });
 
-  it("trailEventSchema accepts a record-only event with no doc (#757)", () => {
+  it("trailEventSchema accepts a record-only event with no doc", () => {
     const result = trailEventSchema.safeParse({
       eventId: "row:demo_txn:tx-1",
       at: "2026-05-02T12:00:00Z",
@@ -752,7 +752,7 @@ describe("agent-protocol", () => {
     expect(result.success).toBe(true);
   });
 
-  it("trailEventSchema rejects an event with neither doc nor record (#757)", () => {
+  it("trailEventSchema rejects an event with neither doc nor record", () => {
     const result = trailEventSchema.safeParse({
       eventId: "x",
       at: null,

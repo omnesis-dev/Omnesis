@@ -188,7 +188,7 @@ export class NotionDatabasesSource {
             : {}
           : cursor.snapshot,
         // Reset the in-progress per-table present set when a fresh rewalk
-        // starts; keep `lastSnapshotRowIdsByTable` as the diff baseline (#156).
+        // starts; keep `lastSnapshotRowIdsByTable` as the diff baseline.
         snapshotRowIdsByTable: inSnapshotMode ? {} : cursor.snapshotRowIdsByTable,
       });
     }
@@ -376,7 +376,7 @@ export class NotionDatabasesSource {
       // replaces them; a retrying rewalk cannot repair a missing partition.
       discoveryIncomplete: discoveryHole || undefined,
       // Carry the diff baseline across re-discovery;
-      // start a clean in-progress accumulator when a rewalk begins (#156).
+      // start a clean in-progress accumulator when a rewalk begins.
       lastSnapshotRowIdsByTable: retainedRowIds,
       snapshotRowIdsByTable: inSnapshotMode ? {} : currentCursor.snapshotRowIdsByTable,
     };
@@ -473,7 +473,7 @@ export class NotionDatabasesSource {
     const snapshotIdsThisPage: string[] = [];
     // Present analytics-row primary keys (`id` = page UUID, dashes stripped)
     // seen on THIS page — flushed into cursor.snapshotRowIdsByTable below.
-    // Excludes the summary doc, which has no analytics row (#156).
+    // Excludes the summary doc, which has no analytics row.
     const snapshotRowIdsThisPage: string[] = [];
 
     // Emit summary document on the first page of each database — but only
@@ -506,7 +506,7 @@ export class NotionDatabasesSource {
         // A partial/reference object (no `properties`) — the row still exists
         // upstream, just without a full payload this page. Both planes record
         // it as present: the analytics diff would otherwise mistake a transient
-        // object shape for an upstream delete (#156), and the document snapshot
+        // object shape for an upstream delete, and the document snapshot
         // would order the deletion of a row document whose row is still there.
         // Nothing to upsert without `properties`.
         if (cursor.inSnapshotMode) {
@@ -523,8 +523,8 @@ export class NotionDatabasesSource {
       // `created_time` filter (Notion still returns the row) and a ROLLING
       // window recomputed at every source instantiation — so an aged-out row is
       // present upstream, NOT deleted. Recording it keeps the deletion diff from
-      // conflating retention with an upstream delete and tombstoning a live row
-      // (#156). Retention pruning, if ever wanted, is a separate concern.
+      // conflating retention with an upstream delete and tombstoning a live row.
+      //Retention pruning, if ever wanted, is a separate concern.
       if (this.dataCutoff && page.created_time < this.dataCutoff) {
         if (cursor.inSnapshotMode) {
           snapshotRowIdsThisPage.push(page.id.replace(/-/g, ""));
@@ -541,7 +541,7 @@ export class NotionDatabasesSource {
       records.push(record);
       if (cursor.inSnapshotMode) {
         // The analytics PK is `id` (page UUID, dashes stripped) — see
-        // schema-mapper (primaryKey: ["id"]) and extractRowRecord (#156).
+        // schema-mapper (primaryKey: ["id"]) and extractRowRecord.
         snapshotRowIdsThisPage.push(String(record.id));
       }
 
@@ -588,7 +588,7 @@ export class NotionDatabasesSource {
       ? this.resumeSnapshot(cursor).add(db.id, snapshotIdsThisPage)
       : undefined;
 
-    // Accumulate present analytics-row PKs for this DB's table (#156).
+    // Accumulate present analytics-row PKs for this DB's table.
     // Keyed on `schema.tableName` so multi-page pagination across this
     // database lands in the same bucket. Only meaningful in snapshot mode.
     const accumulatedRowIdsByTable = cursor.inSnapshotMode
@@ -626,7 +626,7 @@ export class NotionDatabasesSource {
       // This database is fully enumerated this cycle. In snapshot mode,
       // diff its now-complete present set against the last clean rewalk
       // to derive deleted analytics rows, then roll the baseline forward
-      // and drop the in-progress bucket for this table (#156).
+      // and drop the in-progress bucket for this table.
       //
       // Per-table delete emission is deliberately INDEPENDENT of whether the
       // rewalk can vouch for the workspace as a whole: a database whose OWN
@@ -772,7 +772,7 @@ export class NotionDatabasesSource {
       // Per-table baselines were rolled at each database's completion. What is
       // left here belongs to databases that never completed one, and is
       // discarded rather than rolled: a partial set diffed against the last
-      // clean one would name every row the walk did not reach (#156).
+      // clean one would name every row the walk did not reach.
       snapshotRowIdsByTable: undefined,
     };
 

@@ -46,7 +46,7 @@ export function mountAnalyticsRoutes(app: RouteApp, deps: AnalyticsRoutesDeps): 
   // (including ones smuggled through CTEs, leading comments,
   // multi-statement scripts, or PRAGMA writes) fails with
   // "attempt to write a readonly database". Defence in depth: the
-  // production main-thread `db` is already read-only post-#192, but
+  // production main-thread `db` is already read-only, but
   // a separate handle here means the test harness's writable test DB
   // can't accidentally accept a write through /sql either.
   const readonlyDb: Db = db.readonly

@@ -76,7 +76,7 @@ let logFilePath = process.env.OMNESIS_LOG_FILE ?? null;
 // Logs are written to stderr (see writeLog), so colorize based on stderr's TTY.
 const isTTY = process.stderr.isTTY ?? false;
 
-// ── Size-based rotation (#50) ───────────────────────────────────────
+// ── Size-based rotation ───────────────────────────────────────
 // When appending a line would push the file past `maxBytes`, the file is
 // shifted to `<file>.1` (existing `<file>.N` → `<file>.N+1`, the oldest
 // — `<file>.keep` — dropped) and a fresh file starts. The running size is

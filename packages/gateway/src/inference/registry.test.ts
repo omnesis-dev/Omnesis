@@ -1805,7 +1805,7 @@ function simulateBackendOk(reg: InferenceRegistry, key: string, models: string[]
   };
 }
 
-// ── verifyModel() — behavioral capability probe (#508) ──────────────
+// ── verifyModel() — behavioral capability probe ──────────────
 
 describe("InferenceRegistry.verifyModel", () => {
   let originalFetch: typeof globalThis.fetch;
@@ -2031,7 +2031,7 @@ describe("InferenceRegistry.degradedAssignments / configHealth", () => {
   });
 });
 
-describe("reprobeUnavailable (#1267)", () => {
+describe("reprobeUnavailable", () => {
   function configWithAgent() {
     return {
       inference: {

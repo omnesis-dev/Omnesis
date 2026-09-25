@@ -600,7 +600,7 @@ describe("findOrCreatePerson", () => {
   });
 });
 
-// ─── canonical_name self-heal (#583) ────────────────────────────────
+// ─── canonical_name self-heal ────────────────────────────────
 
 describe("canonical_name placeholder self-heal", () => {
   test("a trusted name upgrades a phone-shaped headline (message-then-contact)", () => {
@@ -1015,7 +1015,7 @@ describe("findOrCreatePerson isSelf primitive", () => {
   });
 });
 
-// ─── Conflict-path partial alias attach (issue #219) ────────────────
+// ─── Conflict-path partial alias attach ────────────────
 
 /**
  * The identifier-conflict branch of `findOrCreatePerson` (when a single
@@ -1025,7 +1025,7 @@ describe("findOrCreatePerson isSelf primitive", () => {
  * (non-conflicting) subset to the chosen winner while leaving the
  * conflict-causing identifiers on whichever person already owns them.
  */
-describe("findOrCreatePerson conflict path: partial alias attach (#219)", () => {
+describe("findOrCreatePerson conflict path: partial alias attach", () => {
   /**
    * Build an aliases-by-type lookup for the given person. Uses the raw
    * `person_aliases` table (not `getPersonById`) so we can verify that an
@@ -1087,7 +1087,7 @@ describe("findOrCreatePerson conflict path: partial alias attach (#219)", () => 
   });
 
   test("conflict on email: non-conflicting phone and trusted name are attached to winner", () => {
-    // Mirrors the live-DB pattern from #219: a mention has a conflicting
+    // Mirrors a live-DB pattern: a mention has a conflicting
     // email (matches a phantom person) plus a brand-new phone and name.
     const idA = findOrCreatePerson(
       db,
@@ -1133,7 +1133,7 @@ describe("findOrCreatePerson conflict path: partial alias attach (#219)", () => 
     expect(aliasesA.has("email:priyanair@example.com")).toBe(true);
 
     // The conflicting email stays on the polluted row too — we do NOT
-    // remove it (that's a future cleanup pass, out of scope for #219).
+    // remove it (that's a future cleanup pass, out of scope here).
     const aliasesB = aliasesOf(idB);
     expect(aliasesB.has("email:priyanair@example.com")).toBe(true);
     // Phone was NOT spread to the polluted row
@@ -1406,9 +1406,9 @@ describe("resolveDocumentPeople", () => {
   });
 });
 
-// ─── Contact-card alias reconciliation (#222) ───────────────────────
+// ─── Contact-card alias reconciliation ───────────────────────
 
-describe("resolveDocumentPeople contact-card alias reconciliation (#222)", () => {
+describe("resolveDocumentPeople contact-card alias reconciliation", () => {
   /** Rewrite a document's `people` metadata to a new mention set in-place. */
   function setDocMentions(docId: string, people: PersonMention[]): void {
     const metadata = JSON.stringify({ documentType: "contact", people });
@@ -2010,7 +2010,7 @@ describe("seedFromContacts — multiple isMe contacts", () => {
   });
 
   test("losing isMe candidates are merged_into self so their aliases survive", () => {
-    // Issue #283: previously the dedupe pass just cleared `is_self` on the
+    // Previously the dedupe pass just cleared `is_self` on the
     // losing candidates, silently dropping their aliases from self's
     // effective alias set. Now we logical-merge them so reads through self
     // dereference back to those aliases.
@@ -2069,9 +2069,9 @@ describe("seedFromContacts — multiple isMe contacts", () => {
   });
 });
 
-describe("seedFromContacts — same-name consolidation (#283)", () => {
+describe("seedFromContacts — same-name consolidation", () => {
   test("same-name contact cards (not isMe) are consolidated into self", () => {
-    // The actual #283 case: an isMe card with email A, plus two contact
+    // The motivating case: an isMe card with email A, plus two contact
     // cards with the same name (e.g. cross-container duplicates from
     // Google contacts) carrying emails B and C but no isMe flag. After
     // seed, all three should collapse into the single self person.
@@ -2902,7 +2902,7 @@ describe("searchPeople", () => {
     expect(results.length).toBe(1);
   });
 
-  test("finds a Gmail person by the dotted / +tag form of their email (#298 people-search)", () => {
+  test("finds a Gmail person by the dotted / +tag form of their email", () => {
     // Ingestion normalizes Gmail addresses to the no-dot canonical, so the
     // stored alias is "mayareeves@gmail.com". A human naturally searches the
     // dotted or +tag form, which must still find them.
@@ -2991,7 +2991,7 @@ describe("resolvePersonIdsFromQuery", () => {
     expect(resolvePersonIdsFromQuery(db, "reeves")).toEqual([canonical]);
   });
 
-  test("gmail dotted query resolves to the canonical no-dot alias (#298)", () => {
+  test("gmail dotted query resolves to the canonical no-dot alias", () => {
     // Stored under the normalizeEmail canonical (no dots). A dotted query
     // must normalize before lookup, not merely lowercase.
     const id = findOrCreatePerson(
@@ -3003,7 +3003,7 @@ describe("resolvePersonIdsFromQuery", () => {
     expect(resolvePersonIdsFromQuery(db, "vance.car.75@gmail.com")).toEqual([id]);
   });
 
-  test("gmail +suffix query resolves to the canonical alias (#298)", () => {
+  test("gmail +suffix query resolves to the canonical alias", () => {
     const id = findOrCreatePerson(
       db,
       { role: "sender", emails: ["mayareeves@gmail.com"] },

@@ -84,7 +84,7 @@ function shouldSkip(mimeType: string): boolean {
  * family). The actual decision to download binary bytes is gated again by
  * `shouldExtractAttachment` against `attachmentConfig.allowedTypes` at fetch
  * time, so config opt-outs still win — this gate only avoids skipping a file
- * outright. An allow-listed type (e.g. `image/*` once OCR is on, #427) is always
+ * outright. An allow-listed type (e.g. `image/*` once OCR is on) is always
  * processable even when it matches a skip prefix.
  */
 function isProcessable(mimeType: string, allowedAttachmentTypes: ReadonlyArray<string>): boolean {
@@ -205,7 +205,7 @@ export class OneDriveSource {
    * token has aged out; recover with the **bounded re-walk** (`reWalkPage`) —
    * re-enumerate metadata from a fresh `/me/drive/root/delta` but
    * re-download+extract content only for items whose fingerprint changed. NOT a
-   * from-zero re-bootstrap (the #111/#593 rule): unchanged files emit nothing
+   * from-zero re-bootstrap (the cursor-recovery rule): unchanged files emit nothing
    * and their existing documents stay intact, so a re-walk never re-extracts
    * the whole drive.
    */
@@ -502,7 +502,7 @@ export class OneDriveSource {
     // `extractContent` returns null for a permanent no-content outcome and the
     // file is dropped. A *transient* extraction-backend failure throws instead
     // (it does not collapse to null) so the page fails and retries rather than
-    // silently dropping the file forever (#680).
+    // silently dropping the file forever.
     const extracted = await this.extractContent(item, mimeType);
     if (extracted === null) return null;
     if (extracted.noText) return null;
@@ -546,13 +546,13 @@ export class OneDriveSource {
       metadata: {
         // webUrl → sourceUrl is the same URL Outlook `referenceAttachment`
         // links point at, so the reference graph can auto-resolve
-        // email→OneDrive-doc links once both sides exist (#262).
+        // email→OneDrive-doc links once both sides exist.
         sourceUrl: item.webUrl ?? undefined,
         tags: [],
         documentType: "file",
         people: people.length > 0 ? people : undefined,
         extra: {
-          // Extractor-emitted extras first (e.g. `ocr`/`ocrPageCount`, #427)
+          // Extractor-emitted extras first (e.g. `ocr`/`ocrPageCount`)
           // so OneDrive carries the same provenance as Drive; own keys override.
           ...(extracted.extra ?? {}),
           mimeType,
@@ -654,7 +654,7 @@ export class OneDriveSource {
     } catch (error: unknown) {
       // A transient extraction-backend failure must NOT collapse to a null drop
       // — that silently omits the file and advances the cursor past it, never to
-      // be retried (#680). Re-throw so the page fails and the cursor stays put.
+      // be retried. Re-throw so the page fails and the cursor stays put.
       // A DeltaExpiredError can't arrive here (content paths aren't delta), but
       // an AuthError should propagate too. Permanent failures stay a null drop.
       if (isTransientSyncError(error)) throw error;

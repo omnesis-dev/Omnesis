@@ -769,7 +769,7 @@ export function ModelsView({ section }) {
         if (role === "embedder" && mode === "hard") {
           // The config change above kicked off a graceful swap; the hard
           // cutover request supersedes it (gateway newest-wins) — stop the old
-          // model now, keyword-only search until the rebuild completes (#1011).
+          // model now, keyword-only search until the rebuild completes.
           await rebuildIndex("hard");
           flashOk(`Switching ${role} to ${model} — hard cutover; keyword-only search until ready.`);
         } else if (role === "embedder") {
@@ -800,7 +800,7 @@ export function ModelsView({ section }) {
   const pickLocal = (entry, catalogRole = CAPABILITY_TO_CATALOG[role]) => {
     setShowPicker(false);
     if (catalogRole === "embed") {
-      // Graceful swaps now cover a local target too (epic #1011, mechanism 1):
+      // Graceful swaps now cover a local target too:
       // the new local model builds in an off-main-thread build worker while the
       // active index keeps serving, then flips. Offer the same graceful-vs-hard
       // choice as an HTTP target — graceful (default), hard cutover as the opt-out.

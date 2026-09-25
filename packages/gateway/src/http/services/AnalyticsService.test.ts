@@ -613,7 +613,7 @@ describe("AnalyticsService.ingest", () => {
   });
 
   it("rejects a composite-PK delete with no explicit deleteKeyColumn (no silent over-delete)", async () => {
-    // #669: matching `deletedIds` on `primaryKey[0]` alone would delete every row
+    // Matching `deletedIds` on `primaryKey[0]` alone would delete every row
     // sharing the first key column's value — data loss. Fail loud instead.
     const compositeSchema: AnalyticsTableSchema = {
       tableName: "fin_transactions",
@@ -638,7 +638,7 @@ describe("AnalyticsService.ingest", () => {
         deletedIds: ["acct-1"],
       }),
       // A BadRequestError so the route surfaces a 400 carrying the message,
-      // not a sanitized 500 (#669).
+      // not a sanitized 500.
     ).rejects.toThrowError(BadRequestError);
     expect(db.ingestPage).toHaveBeenCalledOnce();
   });

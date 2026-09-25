@@ -551,8 +551,8 @@ describe("AppleContactsSource", () => {
     expect(extra.dates).toHaveLength(2);
   });
 
-  test("region inference from address country: French address + bare-national French phone normalizes to E.164 (#280 follow-up)", async () => {
-    // Reproduces the #280 region-inference follow-up: a French contact
+  test("region inference from address country: French address + bare-national French phone normalizes to E.164", async () => {
+    // Reproduces the region-inference case: a French contact
     // with a bare-national-format phone like "06 39 98 00 33" used to
     // drop entirely because normalizePhone fell through to the system
     // locale → "US" chain without ever knowing the contact lived in
@@ -700,7 +700,7 @@ describe("AppleContactsSource", () => {
     // Contact with a "00"-prefixed (international-access-code) phone — the
     // E.123 IDD style. This input shape previously dropped silently when
     // normalizePhone didn't recognize "00" as equivalent to "+". The fix
-    // landed in core (#280); this test pins the body↔mention contract on
+    // landed in core; this test pins the body↔mention contract on
     // the Apple Contacts side: every phone rendered in the markdown must
     // also appear as a valid E.164 string in metadata.people[0].phones.
     //

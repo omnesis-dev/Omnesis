@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * `omnesis export` — portable, non-SQLite data export (#57).
+ * `omnesis export` — portable, non-SQLite data export.
  *
  * Wraps the gateway's `/admin/export*` routes: POSTs to start an export,
  * then polls `/admin/export/status` at 2 Hz rendering the running document

@@ -207,7 +207,7 @@ export function renderStatus(data: StatusData, fx: CliFx): void {
     const stats = data.sourceStats?.[s.sourceId];
     const unit = s.unitName ?? "docs";
     // Choose the headline count. A source can override the heuristic via its
-    // descriptor's `primaryCount` (#993):
+    // descriptor's `primaryCount` (#40):
     //   - "documents" → always the document total (e.g. `web`, whose tiny
     //     page_visits log must not shadow its page count).
     //   - "analytics" → always the analytics row count.
@@ -486,7 +486,7 @@ export function renderStatus(data: StatusData, fx: CliFx): void {
     }
   }
 
-  // Index migration (epic #1011): a graceful double-buffered embedder swap is
+  // Index migration: a graceful double-buffered embedder swap is
   // rebuilding a new generation in the background. The per-source Idx column
   // above keeps reading the ACTIVE generation (search is live and complete on
   // the old model); this line surfaces the migration as separate, clearly-

@@ -3,7 +3,7 @@
 
 /**
  * The deepseek scorecard lane — the model-in-the-loop half of
- * `npm run briefs:scorecard` (epic #137, criterion 16).
+ * `npm run briefs:scorecard`.
  *
  * Every part of this lane is inert by default and deliberately hostile
  * to accidental spend:

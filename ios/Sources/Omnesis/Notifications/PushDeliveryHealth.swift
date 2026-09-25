@@ -7,7 +7,7 @@ import Foundation
 /// the OS notification settings after permission is requested. Surfacing this —
 /// instead of silently registering an APNs token and assuming delivery — is what
 /// lets the app tell the user when pushes won't visibly arrive: denied
-/// permission, iOS "Scheduled Summary" batching, or alerts turned off (#1260).
+/// permission, iOS "Scheduled Summary" batching, or alerts turned off.
 public enum PushDeliveryHealth: Equatable, Sendable {
     /// Authorized, alerts on, not batched — pushes arrive as banners.
     case ok

@@ -176,7 +176,7 @@ public struct AppleHealthSource: OmnesisSource {
     }
 
     /// Converts one page's raw `HKSample`s into analytics rows +
-    /// summary documents. #640 — for the episodic, nameable tables
+    /// summary documents. For the episodic, nameable tables
     /// (workouts + mindful + mood) we also mint a searchable summary
     /// `DocumentInput` per sample, bound 1:1 to its analytics row via
     /// `externalId == row.id` + the table's `boundDocument` spec. The 6

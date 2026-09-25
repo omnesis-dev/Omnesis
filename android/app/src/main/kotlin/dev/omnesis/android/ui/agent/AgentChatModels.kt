@@ -35,7 +35,7 @@ sealed interface AgentTurn {
         val stopped: String? = null,
         val citationCount: Int = 0,
         /**
-         * The end-of-run verified-report artifact (#748), folded on by the reducer from
+         * The end-of-run verified-report artifact, folded on by the reducer from
          * the additive `agent.deep_research.summary` event (located by this turn's id =
          * the event's `messageId`). `null` until that event arrives — and it never
          * arrives for an ordinary turn or an older/resumed Deep Research run, so the
@@ -61,7 +61,7 @@ data class AgentTurnFailure(
 )
 
 /**
- * The verified-report artifact (#748) for one completed Deep Research turn — the
+ * The verified-report artifact for one completed Deep Research turn — the
  * structured facts that hang below the streamed report prose: the honest terminal
  * [stoppedReason], the planner's [plan], the whole-tree token total ([treeUsage]),
  * and the REAL quote-[verification] tally driving the badge. Built from the additive
@@ -82,13 +82,13 @@ sealed interface AgentPart {
     data class Text(val text: String) : AgentPart
     data class Thinking(val text: String) : AgentPart
     data class Tool(val call: AgentToolCall) : AgentPart
-    /** A collapsible sub-agent card (#748). Mirrors the iOS `AgentPart.subagent`. */
+    /** A collapsible sub-agent card. Mirrors the iOS `AgentPart.subagent`. */
     data class Subagent(val card: AgentSubagentCard) : AgentPart
     data class Unknown(val label: String, val kind: String) : AgentPart
 }
 
 /**
- * The compact state for one sub-agent (#748) the parent spawned via
+ * The compact state for one sub-agent the parent spawned via
  * `spawn_subagent`, rendered as an [AgentPart.Subagent] on the parent's assistant
  * turn. Built from the three `agent.subagent.*` events: `spawned` seeds an empty
  * card, each wrapped `event` bumps [stepCount] / [tokens] and grows [docs],
@@ -144,7 +144,7 @@ data class AgentSubagentCard(
 
 /**
  * A single document a researcher sub-agent has reached, in minimal source-tintable
- * form (#748). Carries only what the research working-set surface needs to paint one
+ * form. Carries only what the research working-set surface needs to paint one
  * source-tinted chip — the title plus the [sourceId] the source registry ([SourceCatalog])
  * resolves to an icon/accent/label. Source identity rides this ref; the surface NEVER
  * branches on a source name. Mirrors the iOS `AgentResearchDoc`.
@@ -157,7 +157,7 @@ data class AgentResearchDoc(
 
 /**
  * View-facing descriptor for one researcher panel on the research working-set surface
- * (#748) — the projection [AgentReducer.researchPanels] builds per sub-agent card in
+ * — the projection [AgentReducer.researchPanels] builds per sub-agent card in
  * spawn order. A pure value type so the selector stays unit-testable without Compose.
  * Mirrors the iOS `AgentResearchPanel`.
  */
@@ -240,14 +240,14 @@ data class AgentChatState(
     val citationsByDocId: Map<String, Int> = emptyMap(),
     val planItems: List<AgentPlanItem> = emptyList(),
     /**
-     * Directly-cited records (#757) from `cite_record` tool results, deduped by `recordKey`
+     * Directly-cited records from `cite_record` tool results, deduped by `recordKey`
      * (last wins). These feed the timeline drawer: a record the agent cited directly appears on
      * the timeline through here.
      */
     val records: List<AgentTrailRecord> = emptyList(),
     val busy: Boolean = false,
     /**
-     * True while a user-invoked Deep Research run is in flight (#748) — the `/`-pill set
+     * True while a user-invoked Deep Research run is in flight — the `/`-pill set
      * `deepResearch:true` on the send. Drives the bespoke multi-panel research working-set
      * surface: it appears only while this holds AND at least one sub-agent panel exists
      * ([AgentReducer.isResearchWorkspaceActive]), and collapses into the written-back report

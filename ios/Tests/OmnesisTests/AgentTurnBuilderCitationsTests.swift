@@ -299,7 +299,7 @@ final class AgentTurnBuilderCitationsTests: XCTestCase {
         XCTAssertTrue(ann.byDoc["d-1"]?.quotes.isEmpty ?? false)
     }
 
-    // MARK: - recordCitations(from:) (#757)
+    // MARK: - recordCitations(from:)
 
     private func citedRecord(
         recordKey: String,

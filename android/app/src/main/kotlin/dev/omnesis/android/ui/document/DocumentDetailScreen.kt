@@ -233,7 +233,7 @@ fun DocumentDetailContent(
                             Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = "Open in source", tint = c.accent)
                         }
                     }
-                    // Destructive single-document privacy delete (#1065).
+                    // Destructive single-document privacy delete.
                     // Generated Notes day documents are read-only: Manage
                     // notes instead, and the gateway refuses deletion anyway.
                     // The button only renders when the URL resolves (Notes

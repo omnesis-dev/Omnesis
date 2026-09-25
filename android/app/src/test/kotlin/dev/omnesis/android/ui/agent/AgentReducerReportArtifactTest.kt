@@ -17,7 +17,7 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
- * Spec for the verified-report artifact reduction + badge (#748), the Android twin of the
+ * Spec for the verified-report artifact reduction + badge, the Android twin of the
  * iOS `attachReportArtifact` / `ReportVerificationBadge` tests + the portal report-artifact
  * reducer tests. The additive `agent.deep_research.summary` event folds onto its named
  * assistant turn as a `reportArtifact` field; an absent event yields no artifact (the bubble
@@ -96,7 +96,7 @@ class AgentReducerReportArtifactTest {
         assertEquals("answer_complete", assistant(state).reportArtifact?.stoppedReason)
     }
 
-    // --- resume: rebuild artifact + seed citations from the persisted part (#748) ---
+    // --- resume: rebuild artifact + seed citations from the persisted part ---
 
     @Test
     fun resume_rebuilds_report_artifact_and_seeds_citations_from_persisted_part() {

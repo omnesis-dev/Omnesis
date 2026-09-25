@@ -34,7 +34,7 @@ enum ModelManagement {
         return assignment.kind != "disabled" && assignment.kind != "unresolved"
     }
 
-    /// Known bug: #1928 — a local GGUF on a chat role reads as enabled here
+    /// Known bug: #67 — a local GGUF on a chat role reads as enabled here
     /// while the gateway's readiness check refuses it.
     static func state(_ assignment: ResolvedAssignment?) -> CapabilityState {
         if isEnabled(assignment) { return .on }

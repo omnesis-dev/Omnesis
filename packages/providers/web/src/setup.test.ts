@@ -21,7 +21,7 @@ describe("Web Pages provider definition", () => {
     expect(definition.name).toBe("Web Pages");
   });
 
-  test("headline count is its documents, not the page_visits analytics log (#993)", () => {
+  test("headline count is its documents, not the page_visits analytics log", () => {
     // Without this the count heuristic prefers the small analytics row count
     // and the source reads as "N visits" instead of its real page total.
     expect(definition.primaryCount).toBe("documents");
@@ -96,7 +96,7 @@ describe("page_visits analytics schema", () => {
     expect(pageVisitsSchema.primaryKey).toEqual(["url", "visited_at"]);
   });
 
-  test("satisfies the record-citation contract (#757)", () => {
+  test("satisfies the record-citation contract", () => {
     expect(() =>
       validateRecordCitationContract([pageVisitsSchema], "web/page_visits"),
     ).not.toThrow();

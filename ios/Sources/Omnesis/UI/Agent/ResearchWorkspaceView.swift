@@ -4,7 +4,7 @@
 #if canImport(UIKit)
 import SwiftUI
 
-// ─── Research working-set surface (#748) ─────────────────────────────────
+// ─── Research working-set surface ─────────────────────────────────
 //
 // The bespoke multi-panel research working-set surface — the iOS twin of the
 // portal `ResearchWorkspace` (`portal/js/components/agent/parts.js`). During a
@@ -212,7 +212,7 @@ private struct ResearchPanelView: View {
         } else {
             // Cap the per-panel doc list and let it scroll WITHIN the panel, so
             // a researcher that reaches dozens of docs can't grow the panel
-            // taller than the screen and bury the conversation (#890). The outer
+            // taller than the screen and bury the conversation. The outer
             // rail scrolls horizontally; this inner scroll is the orthogonal
             // vertical axis.
             ScrollView(.vertical, showsIndicators: false) {

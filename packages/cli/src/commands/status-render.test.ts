@@ -86,7 +86,7 @@ test("successful sources display persistent warning age and remedy", () => {
   expect(out).toContain("Check the example folder permission.");
 });
 
-describe("renderStatus count column (#993)", () => {
+describe("renderStatus count column", () => {
   test("primaryCount 'documents' shows the document total, not the analytics rows", () => {
     const out = captureRender({
       ...baseData(),
@@ -138,10 +138,10 @@ describe("renderStatus mobile permission states", () => {
   });
 });
 
-// Status two-readout (epic #1011): a graceful embedder swap must surface as an
+// Status two-readout: a graceful embedder swap must surface as an
 // upgrade-in-flight — search live on the active model + a separate migration
 // progress line — never as the existing index regressing.
-describe("renderStatus index migration (#1011)", () => {
+describe("renderStatus index migration", () => {
   function indexStatsWith(
     indexVersions: NonNullable<NonNullable<StatusData["indexStats"]>["indexVersions"]>,
   ): NonNullable<StatusData["indexStats"]> {

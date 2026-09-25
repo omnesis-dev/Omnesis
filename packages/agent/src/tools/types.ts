@@ -203,7 +203,7 @@ export interface SqlPortResult {
   /**
    * Always `false`. A `run_sql` result is never a silent partial: when a
    * query would exceed the row cap the port throws {@link SqlPortOverCapError}
-   * instead of returning a truncated set (#757), so the agent narrows the
+   * instead of returning a truncated set, so the agent narrows the
    * query rather than reasoning over a clipped table. Retained on the wire
    * shape for compatibility with the ephemeral SQL tool-call card.
    */
@@ -214,7 +214,7 @@ export interface SqlPortResult {
    * Entry `i` is the {@link RecordReference} for `rows[i]` when the result
    * exposes a single known table's full primary key, or `null` when the row
    * has no addressable identity — an aggregate, a join that surfaces several
-   * tables' keys, or a projection that drops a primary-key column (#757).
+   * tables' keys, or a projection that drops a primary-key column.
    * Absent entirely when the query touches no known table. Identity is never
    * fabricated: a `RecordReference` means the row round-trips back to its
    * source row.
@@ -232,7 +232,7 @@ export interface SqlPortResult {
 
 /**
  * Thrown by a {@link SqlPort} when the query result would exceed the row
- * cap (#757). Carries the cap so the tool wrapper can ship a structured,
+ * cap. Carries the cap so the tool wrapper can ship a structured,
  * actionable `kind: "error"` (code `sql_over_cap`) telling the agent to add
  * a `LIMIT`, aggregate, or filter — never a silently-clipped result.
  */
@@ -283,7 +283,7 @@ export interface SqlPort {
    * Runs `sql` against the analytics database read-only. Implementations MUST
    * reject any statement that is not a pure SELECT/WITH. When the result would
    * exceed `maxRows`, implementations MUST throw {@link SqlPortOverCapError}
-   * rather than return a truncated set (#757).
+   * rather than return a truncated set.
    */
   run(sql: string, opts?: { maxRows?: number; signal?: AbortSignal }): Promise<SqlPortResult>;
 }
@@ -291,7 +291,7 @@ export interface SqlPort {
 // ─── cite_record ────────────────────────────────────────────────────────────
 
 /**
- * A fully resolved record citation (#757) — everything the `cite_record` tool
+ * A fully resolved record citation — everything the `cite_record` tool
  * ships to clients and persists, derived gateway-side from the table's declared
  * contract. The tool layer holds no source-specific or analytics knowledge: it
  * passes the agent's `RecordReference` + the row snapshot to the port and
@@ -315,13 +315,13 @@ export interface RecordCitationResolved {
 }
 
 /**
- * Why a record can't be cited (#757). The tool maps each to a stable
+ * Why a record can't be cited. The tool maps each to a stable
  * `kind:'error'` ToolResult so the agent corrects its call rather than seeing a
  * stack trace.
  *   - `unknown_table` — the referenced table isn't in the analytics catalog.
  *   - `not_timeline_eligible` — the table is timeless (`semanticTimeColumn:
  *     null`) or this row's semantic-time value is empty, so it can't be a
- *     timeline record citation (a frozen rule, #757).
+ *     timeline record citation (a frozen rule).
  */
 export type RecordCitationRejection =
   | { reason: "unknown_table"; table: string }
@@ -342,7 +342,7 @@ export class RecordPortError extends Error {
 }
 
 /**
- * Resolves a single analytics row into a fully-derived record citation (#757).
+ * Resolves a single analytics row into a fully-derived record citation.
  * The gateway impl (`createGatewayRecordPort`) reads the table's
  * `AnalyticsTableSchema` from the analytics catalog to derive the title, key
  * fields, semantic time, and redacted snapshot, and resolves the bound document
@@ -612,7 +612,7 @@ export interface SubagentPortInput {
    * runs and its result + usage are returned normally — it just doesn't
    * surface as a researcher card/panel (the planner's raw JSON and the
    * synthesis prompt are internals, not "researchers"; the report reaches the
-   * bubble on its own). Reader sub-agents leave this unset (#748/#890).
+   * bubble on its own). Reader sub-agents leave this unset.
    */
   internal?: boolean;
   /**
@@ -626,7 +626,7 @@ export interface SubagentPortInput {
 }
 
 /**
- * The launch handle `spawn_subagent` returns IMMEDIATELY (#748). Fan-out is
+ * The launch handle `spawn_subagent` returns IMMEDIATELY. Fan-out is
  * asynchronous: the child runs in the background (or waits in the concurrency
  * queue), and the parent collects its finding later via `join_subagents`. So
  * the handle carries only identity + a transient status — no summary/citations
@@ -638,7 +638,7 @@ export interface SubagentSpawnHandle {
   status: "queued" | "running";
 }
 
-/** A single child's distilled finding, returned by `join_subagents` (#748). */
+/** A single child's distilled finding, returned by `join_subagents`. */
 export interface SubagentPortResult {
   subagentId: string;
   specialist: string;
@@ -695,7 +695,7 @@ export class SubagentPortError extends Error {
 }
 
 /**
- * Orchestrates nested {@link AgentSession}s for the parent agent (#748).
+ * Orchestrates nested {@link AgentSession}s for the parent agent.
  *
  * Fan-out is asynchronous: `spawn` LAUNCHES a child (running it in the
  * background, bounded by the configured concurrency cap) and returns a handle
@@ -820,7 +820,7 @@ export interface ToolPorts {
   trail?: TrailPort;
   sql?: SqlPort;
   /**
-   * Optional record-citation port (#757). When omitted, the registry does not
+   * Optional record-citation port. When omitted, the registry does not
    * register the `cite_record` tool — used by rigs without an analytics DB.
    */
   record?: RecordPort;
@@ -832,7 +832,7 @@ export interface ToolPorts {
    */
   watch?: WatchPort;
   /**
-   * Optional sub-agent port (#748). When omitted, the registry does not
+   * Optional sub-agent port. When omitted, the registry does not
    * register the `spawn_subagent` tool — child sessions can't spawn further
    * children once the depth cap is reached (the port is withheld), and rigs
    * without a SubagentService omit it entirely.

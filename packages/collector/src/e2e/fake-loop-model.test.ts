@@ -368,7 +368,7 @@ describe("decideNextTurn", () => {
       },
     ];
     // The re-verify run is scheduled for the day, carrying the loop's id so
-    // #1165's cascade can retract it if the task completes first.
+    // the completion cascade can retract it if the task completes first.
     const schedule = decideNextTurn(history(dataPrompt("created"), afterBrief), b);
     expect(schedule).toMatchObject({ kind: "tool", name: "schedule_agent_run" });
     expect((schedule as { args: { when: string; loopId: string } }).args).toMatchObject({

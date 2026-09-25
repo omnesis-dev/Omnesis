@@ -11,7 +11,7 @@ import type { RouteApp } from "../types.js";
 const log = adminLog.child("widget-renderers");
 
 /**
- * Mount the widget-renderers admin endpoint (#984).
+ * Mount the widget-renderers admin endpoint.
  *
  * The collector POSTs the provider-owned browser modules declared by every
  * loaded hosted-widget source/provider. The gateway holds the registry in

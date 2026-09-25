@@ -152,7 +152,7 @@ describe("extractTextContent", () => {
       expect(result!.truncated).toBe(true);
     });
 
-    test("#269 — large HTML that extracts to ~zero chars is treated as failed", async () => {
+    test("large HTML that extracts to ~zero chars is treated as failed", async () => {
       // Reproduces the Oney bank pattern: a multi-KB HTML body whose only
       // parseable text is a single character. The extractor should refuse to
       // claim success on output this implausibly small relative to input.
@@ -233,7 +233,7 @@ describe("extractTextContent", () => {
     });
   });
 
-  describe("calendar (#266 — UID extraction)", () => {
+  describe("calendar (UID extraction)", () => {
     test("exposes RFC 5545 UID in result.extra.iCalUIDs", async () => {
       const ics = [
         "BEGIN:VCALENDAR",

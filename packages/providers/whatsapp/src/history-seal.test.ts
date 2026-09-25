@@ -33,7 +33,7 @@ function ts(date: string, hour = 12): number {
   return Math.floor(Date.parse(`${date}T${String(hour).padStart(2, "0")}:00:00.000Z`) / 1000);
 }
 
-describe("WhatsApp history-sync seal (#579 tri-state)", () => {
+describe("WhatsApp history-sync seal (tri-state)", () => {
   let dir: string;
   let provider: WhatsAppProvider | null = null;
 
@@ -84,7 +84,7 @@ describe("WhatsApp history-sync seal (#579 tri-state)", () => {
     fake.pushInitialHistory({ terminate: "interrupt", syncType: 3 /* RECENT */ });
     await vi.advanceTimersByTimeAsync(1);
     expect(p.getStore().historySyncState).toBe("streaming"); // still waiting
-    // Quiet-gap (120s) fires → interrupted, NOT complete (the #579 fix).
+    // Quiet-gap (120s) fires → interrupted, NOT complete (the seal fix).
     await vi.advanceTimersByTimeAsync(120_000);
     expect(p.getStore().historySyncState).toBe("interrupted");
     expect(p.getStore().historySyncComplete).toBe(false);

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// Write benchmark for #192 mitigations on/off comparison.
+// Write benchmark for an on/off comparison of the gateway's SQLite mitigations.
 // Spawns a clean isolated gateway (its own config dir + port), fires a
 // fixed batch-ingest load via POST /documents, records per-batch latency
 // and total throughput, shuts the gateway down cleanly. Run twice with

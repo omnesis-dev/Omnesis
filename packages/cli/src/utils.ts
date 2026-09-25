@@ -93,8 +93,8 @@ export function targetsLocalGateway(url: string = GATEWAY_REQUEST_URL): boolean 
 }
 
 /**
- * Build the URL a result title should hyperlink to on OSC 8-capable terminals
- * (#231). Precedence:
+ * Build the URL a result title should hyperlink to on OSC 8-capable terminals.
+ *Precedence:
  *   1. The `OMNESIS_RESULT_URI` template, if set — a power-user override to
  *      route results into an editor/app. Placeholders: `{id}` (document id),
  *      `{sourceUrl}` (the result's own URL, empty when it has none), and

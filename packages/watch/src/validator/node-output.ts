@@ -103,7 +103,7 @@ export const PERSON_MENTION_FIELDS: Record<string, ValueType> = {
 /**
  * `analytics.row` — deduplicated before it reaches a watch, so `inserted`
  * really does mean a row nobody has seen. The raw ingest signal is not: it
- * re-fires for every row on every sync page (see #1559), which would make a
+ * re-fires for every row on every sync page, which would make a
  * naive count climb on every re-sync.
  */
 export const ANALYTICS_ROW_FIELDS: Record<string, ValueType> = {

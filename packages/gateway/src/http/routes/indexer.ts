@@ -74,7 +74,7 @@ export function mountIndexerRoutes(app: RouteApp, deps: IndexerRoutesDeps): void
     if (!indexerControl?.rebuild) {
       throw new ServiceUnavailableError("indexer control not available");
     }
-    // Optional swap mode (#1011). `graceful` (default) keeps vector search live
+    // Optional swap mode. `graceful` (default) keeps vector search live
     // on the current model while the new index rebuilds in the background, then
     // atomically flips; `hard` is the deliberate immediate cutover — stop using
     // the old model now and accept BM25-only search until the rebuild finishes.
@@ -90,7 +90,7 @@ export function mountIndexerRoutes(app: RouteApp, deps: IndexerRoutesDeps): void
     } catch (err) {
       // A rebuild arriving while one is already in flight is not rejected —
       // it abandons the in-flight build and starts a fresh one for the newest
-      // model (epic #1011, newest-wins/bounded-to-two). Any genuine failure
+      // model (newest-wins/bounded-to-two). Any genuine failure
       // falls through to the sanitized 500 in app.onError.
       const message = err instanceof Error ? err.message : String(err);
       log.error(`Manual index rebuild failed: ${message}`);

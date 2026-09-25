@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Message contract between `BackupService` and `backup-worker.ts` (#57).
+ * Message contract between `BackupService` and `backup-worker.ts`.
  *
  * The worker is one-shot: it receives its full work list via `workerData`
  * (no request/response loop), streams one `begin` + `file` pair per

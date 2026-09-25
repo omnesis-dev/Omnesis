@@ -8,7 +8,7 @@
  * This is the superset companion to `getCachedUrlIdPatterns()` (which reads
  * `sync_state.url_patterns` and therefore only knows currently-added
  * sources). Link extraction uses it to decide whether an unresolved `url`
- * link is worth keeping (#668): a target that matches a known source type's
+ * link is worth keeping: a target that matches a known source type's
  * pattern is kept unresolved and resolves later via the reconcile path once
  * that source is added and ingested — even if the source isn't added *yet*.
  * Only truly-external targets (matching no known source type) are dropped.
@@ -22,7 +22,7 @@
  * In-memory only — it's data the collector knows authoritatively and
  * re-pushes every boot, so there's nothing to persist. Before the collector
  * pushes, the set is empty and the keep decision falls back to the
- * registered-pattern set alone (the pre-#668 behaviour).
+ * registered-pattern set alone.
  *
  * No source-specific logic lives here — the gateway treats patterns as
  * opaque regex strings. Per-source URL knowledge lives in each source

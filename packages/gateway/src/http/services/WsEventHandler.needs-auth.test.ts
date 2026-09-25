@@ -2,10 +2,10 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Covers the needs-auth re-auth reminder edge (#617, #683): a source
+ * Covers the needs-auth re-auth reminder edge: a source
  * in `needs-auth` invokes the notifier so the persisted backoff gate can
  * decide whether a reminder is due, a successful sync after needs-auth
- * resets that device's reminder backoff (#683), and a notifier failure
+ * resets that device's reminder backoff, and a notifier failure
  * never breaks sync-status ingestion. Credentials are held per member
  * device, so both the reminder and its reset are attributed to the
  * reporting device — a sibling member's healthy sync leaves a lapsed
@@ -109,7 +109,7 @@ function makeHandler(
   return { handler, syncStatus };
 }
 
-describe("WsEventHandler — needs-auth re-auth reminder (#617)", () => {
+describe("WsEventHandler — needs-auth re-auth reminder", () => {
   test("transition idle → needs-auth pushes exactly one reminder attributed to the reporting device", () => {
     const notify = vi.fn(() => Promise.resolve(undefined));
     const { handler } = makeHandler(notify);
@@ -180,7 +180,7 @@ describe("WsEventHandler — needs-auth re-auth reminder (#617)", () => {
     expect(notify).not.toHaveBeenCalled();
   });
 
-  test("a re-auth (needs-auth → syncing → completed) resets the device's backoff (#683)", () => {
+  test("a re-auth (needs-auth → syncing → completed) resets the device's backoff", () => {
     const notify = vi.fn(() => Promise.resolve(undefined));
     const reset = vi.fn(() => Promise.resolve(undefined));
     const { handler } = makeHandler(notify, reset);

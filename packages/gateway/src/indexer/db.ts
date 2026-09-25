@@ -141,7 +141,7 @@ export function createIndexDatabase(path: string, opts: OpenIndexDbOptions = {})
   // them each cycle. Without this, HTTP-side deletes orphan vectors
   // permanently (their indexed_documents tracking is gone, so
   // reconcileDeletedDocuments can't find them) and a large resync bloats
-  // the index until OOM. See #553.
+  // the index until OOM.
   db.exec(`
     CREATE TABLE IF NOT EXISTS pending_vector_deletes (
       chunk_rowid INTEGER PRIMARY KEY,
@@ -383,7 +383,7 @@ export function createIndexDatabase(path: string, opts: OpenIndexDbOptions = {})
     )
   `);
 
-  // Versioned-index registry (epic #1011). One row per index generation —
+  // Versioned-index registry. One row per index generation —
   // a complete, self-consistent (embedder model, dim, encoding) build.
   // Today there is exactly one row (the active generation) so behaviour is
   // identical to the single-index world; the double-buffered swap (later
@@ -408,7 +408,7 @@ export function createIndexDatabase(path: string, opts: OpenIndexDbOptions = {})
   `);
 
   // Scratch store for the in-flight BUILDING generation's vectors during a
-  // graceful (double-buffered) embedder swap (epic #1011). The builder
+  // graceful (double-buffered) embedder swap. The builder
   // re-embeds the existing `chunks` corpus under the new model and stages the
   // new vectors here — keyed by the SAME `chunks.rowid` the active index is
   // keyed by — WITHOUT touching `chunks.embedding`, so the active generation
@@ -426,7 +426,7 @@ export function createIndexDatabase(path: string, opts: OpenIndexDbOptions = {})
 
   migrateAdoptInPlaceVersion(db);
   // NOTE: a `building` generation left over from a crash mid-rebuild is NOT
-  // abandoned here. Crash-safe resume (epic #1011) RESUMES it from its durable
+  // abandoned here. Crash-safe resume RESUMES it from its durable
   // progress (`chunk_embeddings_building` + `docs_built`) rather than re-embedding
   // from zero, and that decision needs the live embedder — so it is made by the
   // indexer lifecycle at boot (`IndexerLifecycle.startIndexer`), not in this pure
@@ -457,7 +457,7 @@ const ACTIVE_VERSION_KEY = "active_version";
 
 /**
  * Idempotent adopt-in-place migration to the versioned-index model
- * (epic #1011, non-destructive upgrade). When `index_versions` is empty
+ * (non-destructive upgrade). When `index_versions` is empty
  * but `index_meta` already carries an embedding-model stamp (i.e. an
  * existing single-index install), record the current index in place as
  * `version = 1, state = 'active'` — copying the stamp's (model, dim) — and
@@ -642,7 +642,7 @@ export function listIndexVersions(db: Db): IndexVersionRow[] {
 /**
  * The in-flight `building` generation, or null when none is in flight. There is
  * at most one (bounded-to-two), so this returns the lowest-version building row
- * defensively. Consulted at boot (epic #1011, crash-safe resume): a building row
+ * defensively. Consulted at boot (crash-safe resume): a building row
  * present at startup means a rebuild was in flight when the gateway last stopped,
  * and the lifecycle decides to resume it (when its recorded model still matches
  * the configured embedder) or abandon it.
@@ -658,7 +658,7 @@ export function getBuildingIndexVersion(db: Db): IndexVersionRow | null {
   );
 }
 
-/** Summary of an index generation for the status surfaces (epic #1011). */
+/** Summary of an index generation for the status surfaces. */
 export interface IndexGenerationSummary {
   version: number;
   embedModel: string;
@@ -673,8 +673,8 @@ export interface BuildingGenerationSummary extends IndexGenerationSummary {
 }
 
 /**
- * The active + building index generations for the status two-readout (epic
- * #1011). Computed entirely here so `/index/stats` and `/status` expose the
+ * The active + building index generations for the status two-readout.
+ * Computed entirely here so `/index/stats` and `/status` expose the
  * active-vs-building distinction and the rebuild progress as first-class fields
  * and clients render them with NO client-side inference.
  *
@@ -733,7 +733,7 @@ export function getIndexGenerationStatus(db: Db): IndexGenerationStatus {
 /**
  * A page of staged building-generation vectors, keyed by `chunk_rowid` and
  * ordered by it so a `chunk_rowid > afterRowid` cursor walks the whole table.
- * Used by crash-safe resume (epic #1011) to reconstruct a building generation's
+ * Used by crash-safe resume to reconstruct a building generation's
  * usearch file from the durable staging table — the file is only flushed every
  * few thousand chunks during a build, so after a crash it may be stale, torn, or
  * truncated, while the staging rows committed transactionally per batch. Rebuilding
@@ -766,8 +766,8 @@ export function nextIndexVersion(db: Db): number {
 }
 
 /**
- * Insert a fresh `building` generation row for a double-buffered rebuild
- * (epic #1011). The caller embeds the corpus under `embedModel` into the
+ * Insert a fresh `building` generation row for a double-buffered rebuild.
+ * The caller embeds the corpus under `embedModel` into the
  * version's own usearch file, then {@link flipActiveIndexVersion} promotes it.
  */
 export function createBuildingIndexVersion(
@@ -836,7 +836,7 @@ export function getBuildingEmbeddingCount(db: Db): number {
  * mid-rebuild fan-out catch-up ({@link GenerationBuilder.catchUp}) removes
  * these vectors from the building usearch and drops their staging rows BEFORE
  * the flip, so a doc deleted mid-rebuild can never resurrect in the new
- * generation. Empty in the common case. See epic #1011.
+ * generation. Empty in the common case.
  */
 export function getOrphanBuildingRowids(db: Db): number[] {
   return db
@@ -861,7 +861,7 @@ export function deleteBuildingEmbeddings(db: Db, rowids: readonly number[]): voi
 }
 
 /**
- * The atomic flip (epic #1011): promote a completed building generation to
+ * The atomic flip: promote a completed building generation to
  * active in a single transaction so search never observes a blended or
  * half-built state. In one commit it:
  *
@@ -870,7 +870,7 @@ export function deleteBuildingEmbeddings(db: Db, rowids: readonly number[]): voi
  *     NULLing any chunk the build didn't produce a vector for so no
  *     stale old-dimension vector is ever left behind to mix dimensions.
  *  2. Re-stamps `index_meta` with the new (model, dim) so the restarted worker
- *     sees a matching stamp and does NOT trigger a spurious re-wipe (#698).
+ *     sees a matching stamp and does NOT trigger a spurious re-wipe.
  *  3. Marks the new generation `active` (+ `activated_at`) and the previous one
  *     `retired`.
  *  4. Moves the `active_version` pointer — the single read the registry
@@ -1058,9 +1058,9 @@ export function setIndexEmbedModel(db: Db, name: string, dim: number): void {
  *     content hash still forces every surviving gateway document through the
  *     rebuild.
  *
- * #240 (double-buffered) replaces this brute-force invalidation with a
- * parallel index that keeps vector search live during the rebuild.
- * Until then, vector search is unavailable for the duration of the
+ * The graceful (double-buffered) swap avoids this brute-force invalidation
+ * with a parallel index that keeps vector search live during the rebuild.
+ * On this path, vector search is unavailable for the duration of the
  * reindex (BM25 still works).
  */
 export function wipeAndRecreateVectorIndex(
@@ -1469,7 +1469,7 @@ export interface IndexWriteOptions {
  * `pending_vector_deletes` for the indexer worker to remove on its next
  * cycle (`preparePendingVectorDeletes`). The HTTP delete cascade runs on the
  * main thread without a write handle; enqueueing keeps its deleted vectors
- * from being orphaned forever — the root cause of the resync OOM (#553).
+ * from being orphaned forever — the root cause of the resync OOM.
  */
 function removeOrEnqueueVectors(
   db: Db,
@@ -1503,7 +1503,6 @@ export interface PendingVectorDelete {
  * row means its newly upserted vector already replaced the stale key, so the
  * queued key needs no removal. Completion is generation-checked so another
  * deletion of the same numeric rowid cannot be cleared by an older save.
- * See #553.
  */
 export function preparePendingVectorDeletes(
   db: Db,
@@ -1763,7 +1762,7 @@ export function upsertChunksAndMarkIndexedBatch(
           // between delete and re-write cannot leave the doc unsearchable.
           // Collect rowids before delete so their vectors are removed (or
           // enqueued for removal) too — otherwise re-indexed docs orphan
-          // their old vectors (#553).
+          // their old vectors.
           const rowids = db
             .prepare<[string], { rowid: number }>("SELECT rowid FROM chunks WHERE document_id = ?")
             .all(documentId)
@@ -1954,7 +1953,7 @@ export function deleteChunksByDocumentBatch(
  * Normally a one-element array (every chunk of a doc shares the doc's URL),
  * but returns the full set so a caller can detect any drift. Used by the
  * indexer to decide whether a URL-only change needs propagating to the
- * denormalized column. See #462.
+ * denormalized column.
  */
 export function getChunkSourceUrls(db: Db, documentId: string): Array<string | null> {
   return db
@@ -1971,7 +1970,7 @@ export function getChunkSourceUrls(db: Db, documentId: string): Array<string | n
  * canonical source URL changed but its content hash did not (e.g. after a
  * URL-canonicalizer change re-derives `documents.source_url`), so search
  * results stop serving the stale URL. Returns the number of chunk rows
- * touched. See #462.
+ * touched.
  */
 export function updateChunkSourceUrls(
   db: Db,
@@ -2273,7 +2272,7 @@ export function getIndexedDocumentCount(db: Db): number {
 /**
  * The number of documents a generation rebuild will actually embed — distinct
  * `document_id` over `chunks` (the table the builder walks). This is the honest
- * denominator for the migration percentage (epic #1011): both `docs_total` (the
+ * denominator for the migration percentage: both `docs_total` (the
  * {@link createBuildingIndexVersion} seed) and `docs_built` (the builder's
  * progress counter) must count THIS same population, so the percentage reaches
  * exactly 100% at completion. It differs from {@link getIndexedDocumentCount}

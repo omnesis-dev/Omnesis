@@ -2008,7 +2008,6 @@ export const writerYieldableHandlers = {
    * DF_APPLY_CHUNK_SIZE, yielding between chunks when the time slice expires
    * or the token fires so same- and higher-priority writes can interleave.
    * Progress is a keyset position in the staging table, carried on the resume.
-   * See #500.
    */
   "nearDup.applyDfFromStaging": (
     db: Db,

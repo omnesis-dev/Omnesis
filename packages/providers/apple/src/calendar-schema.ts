@@ -3,14 +3,14 @@
 
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
 
-/** DuckDB table for Apple Calendar events (#450 / #5). Per-source (not shared
+/** DuckDB table for Apple Calendar events. Per-source (not shared
  * with Google Calendar) so it stays source-encapsulated. */
 export const APPLE_CALENDAR_EVENTS_TABLE = "apple_calendar_events";
 
 /**
  * Structured twin of the Apple Calendar event document. The row's `id` is the
  * event UUID that is also the document's `externalId`, so the doc↔row
- * `same-entity` edge (#450) is a clean 1:1 `boundDocument`. Subscribed feeds
+ * `same-entity` edge is a clean 1:1 `boundDocument`. Subscribed feeds
  * (holiday / birthday calendars) are excluded from the table so they don't
  * pollute meeting-time analytics. `response_status` stays null: Apple's local
  * store doesn't surface the viewer's RSVP in the columns we read.

@@ -2146,7 +2146,7 @@ describe("buildUnifiedTimeline", () => {
     expect(buildUnifiedTimeline(byDoc, [])).toEqual([]);
   });
 
-  // #757 — directly-cited records (`cite_record`) arrive via the `records`
+  // Directly-cited records (`cite_record`) arrive via the `records`
   // param and interleave with annotated documents by semantic time.
   it("keeps a directly-cited record (records param) as a record-only row", () => {
     const merged = buildUnifiedTimeline({}, [
@@ -2378,7 +2378,7 @@ describe("reducer integration — unified Timeline", () => {
   });
 });
 
-// ─── Sub-agent card (#748) ───────────────────────────────────────────────
+// ─── Sub-agent card ───────────────────────────────────────────────
 
 describe("agent reducer — sub-agent card", () => {
   it("does not rebuild spawn or join controls from a completed transcript", () => {
@@ -2976,7 +2976,7 @@ describe("reduceChildEvent — graceful degradation", () => {
   });
 });
 
-// ─── Research working-set surface (#748) ─────────────────────────────────
+// ─── Research working-set surface ─────────────────────────────────
 //
 // The bespoke multi-panel surface is driven entirely off reducer state: a
 // Deep Research send flips `state.deepResearch`, the `agent.subagent.*`
@@ -3026,7 +3026,7 @@ describe("research working-set surface — reducer + selectors", () => {
     // A replay demo cassette (or an agent that fans out mid-turn) emits
     // subagent.spawned without the send having armed the `/` pill. The spawn
     // itself IS the research signal, so the working-set surfaces anyway and
-    // still collapses on message.end (#890).
+    // still collapses on message.end.
     let s = { ...initialState(), sessionId: "sess-r" } as State;
     s = r(s, { kind: "user-send", text: "hi", optimisticId: "u1" });
     expect(s.deepResearch).toBe(false);

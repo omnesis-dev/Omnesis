@@ -5,7 +5,7 @@ import { describe, it, expect } from "vitest";
 import { WEB_PAGE_SOURCE_ID, webPageEdgeTarget } from "./edge-declaration.js";
 import { normalizeUrl, urlToExternalId } from "./url-utils.js";
 
-describe("webPageEdgeTarget (#895)", () => {
+describe("webPageEdgeTarget", () => {
   it("addresses the canonical `web` entity by SHA256(normalizeUrl(url))", () => {
     const url = "https://example.com/article";
     const ref = webPageEdgeTarget(url);

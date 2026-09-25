@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// Load $OMNESIS_CONFIG_DIR/.env into process.env before any env reads. See #52.
+// Load $OMNESIS_CONFIG_DIR/.env into process.env before any env reads.
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { hostname as osHostname } from "node:os";
@@ -336,7 +336,7 @@ await primeSecretFileKeyCache({ configDir }).catch((err) => {
   );
 });
 // Drop a commented `.env` template into the config dir on first boot so
-// operators have a discoverable place to set bootstrap vars (#52). Never
+// operators have a discoverable place to set bootstrap vars. Never
 // overwrites an existing file.
 if (scaffoldDotEnv(configDir)) {
   log.info(`Wrote a commented .env template to ${configDir}/.env — edit it to set bootstrap vars`);
@@ -421,7 +421,7 @@ const indexerStatus = new IndexerStatusReporter();
 
 // One-shot schema creation + migrations on the main thread. We close
 // this writable handle immediately after so the writer worker is the
-// only connection with write access from this point on (#192).
+// only connection with write access from this point on.
 {
   const bootDb = createDatabase(DB_PATH, { encryptionKey: storageEncryption.mainDbKey });
   bootDb.close();
@@ -433,7 +433,7 @@ const indexerStatus = new IndexerStatusReporter();
 //
 // Three runners cover every consumer:
 //   - writer  → single writable better-sqlite3 handle on omnesis.db
-//               (the post-#192 single-writer invariant lives in this
+//               (the single-writer invariant lives in this
 //               worker; Scheduler just owns its priority queue).
 //   - compute → read-only handle, hosts the SELECT-side halves of
 //               compute/upsert splits (mergeCandidates, peopleCounts,
@@ -529,7 +529,7 @@ const ioGate = ioGateFromScheduler(scheduler);
 const cpuGate = cpuGateFromScheduler(scheduler);
 
 // Main-thread READ-ONLY handle — used by every SELECT on the HTTP
-// path, by WS device lookups, and by the search pipeline. Post-#192
+// path, by WS device lookups, and by the search pipeline. Post
 // the main thread can't open writable; any accidental write here now
 // fails fast with SQLITE_READONLY instead of silently reintroducing
 // the `-shm` mmap race.
@@ -563,7 +563,7 @@ const authFlows = new AuthFlowRegistry({
 const importFlows = new ImportFlowRegistry();
 
 // APNs client for iOS push — a watch notifying the operator's phones, and the
-// built-in needs-auth re-auth reminder (#617). Wired only when the
+// built-in needs-auth re-auth reminder. Wired only when the
 // operator has set `gateway.apns` in omnesis.json — otherwise null, and
 // both push paths become logged no-ops.
 //
@@ -658,7 +658,7 @@ const pushWakeRetryBundle = createPushWakeRetryTask(
 // list + clear-token through the same callbacks a watch's notification
 // uses; the backoff gate reservation and recovery operations provide
 // persisted per-(connection, device) de-dup + exponential backoff so one
-// revoke nudges once, not once per source per tick (#683). The backoff
+// revoke nudges once, not once per source per tick. The backoff
 // schedule is a boot-time config snapshot.
 const reauthBackoffConfig = resolveReauthBackoffConfig(config.gateway?.reauthReminders);
 const needsAuthNotifier = new NeedsAuthNotifier({
@@ -837,7 +837,7 @@ const snapshotRefreshMs = searchConfig?.snapshot?.refreshIntervalMs ?? 600_000;
 // winning configuration: OS-unified-cache sharing across all
 // connections drops p99 by 82% under live ingest vs the historical
 // mmap=0. Operator can disable via search.readHandle.mmapBytes = 0 if
-// any #192-class SIGBUS shows up after deploy.
+// any SIGBUS shows up after deploy.
 const readMmapBytes = searchConfig?.readHandle?.mmapBytes ?? DEFAULT_SEARCH_READ_MMAP_BYTES;
 const readCacheBytes = searchConfig?.readHandle?.cacheSizeBytes ?? DEFAULT_SEARCH_READ_CACHE_BYTES;
 // We always open a dedicated read-only handle for search, regardless
@@ -927,7 +927,7 @@ const searchQueryEnricher = {
 const searchLinkRefSource = {
   getInboundRefCounts: (docIds: readonly string[]) => getInboundRefCounts(db, [...docIds]),
 };
-// Versioned read router (#1011). Follows the `active_version` pointer and
+// Versioned read router. Follows the `active_version` pointer and
 // opens the read handle on the active generation's usearch file at that
 // generation's OWN embedding dimension. Always a live handle (empty until
 // the writer produces a file); it re-views on demand (`maybeRefresh()`), so
@@ -1080,7 +1080,7 @@ const analyticsDb = new AnalyticsDb(analyticsDbPath, {
   onFatal: () => requestShutdown(1),
 });
 await analyticsDb.open();
-// Cross-store search hydration (#450): a hit whose source declares a
+// Cross-store search hydration: a hit whose source declares a
 // `boundDocument` carries its co-described analytics row when the request sets
 // `includeBoundRow`. Wired here (not at pipeline construction) because the
 // analytics DB initialises after the pipeline.
@@ -1537,7 +1537,7 @@ log.info(
 );
 if (tlsBundle.source === "auto-generated") {
   // Self-signed: the portal shows a one-time browser warning, and the
-  // browser-capture extension (#791) can't connect at all. Nudge the operator
+  // browser-capture extension can't connect at all. Nudge the operator
   // toward the in-place retrofit rather than enforcing anything.
   log.info(
     "Serving a self-signed certificate — run `omnesis tls provision` to mint a browser-trusted cert (Tailscale or mkcert) and silence the portal warning.",
@@ -2159,7 +2159,7 @@ const app = createServer(db, DB_PATH, {
   onMcpHttpRuntime: (runtime) => {
     mcpHttpRuntime = runtime;
   },
-  // Low-disk write guard (#15). DocumentService rejects ingestion with 507
+  // Low-disk write guard. DocumentService rejects ingestion with 507
   // when free disk on the DB volume drops below this many MB.
   minFreeDiskMb: runtime.minFreeDiskMb,
   ingestYieldBatch: runtime.ingestYieldBatch,
@@ -2231,7 +2231,7 @@ const app = createServer(db, DB_PATH, {
     // the fast lane below usually applies the merge first, and the
     // tick then finds a caught-up watermark and idles.
     wakeMergeEval: () => scheduler.kickPeriodic("backfill.mergeRulesEval"),
-    // The user-action fast lane (#1377): the same io → cpu → writer trio
+    // The user-action fast lane: the same io → cpu → writer trio
     // the periodic eval runs, but enqueued at "user" priority so a
     // human-issued merge/undo queue-jumps congested background lanes and
     // materializes before the HTTP response. Concurrency with the
@@ -2357,7 +2357,7 @@ void reconcileWakeAnchors?.();
 // Seed the gateway-hosted Web Pages source's display identity (icon/label/
 // colors) into sync_state. No collector syncs `web`, so the usual
 // sync.status-driven seed never fires for it; without this, native clients
-// render a placeholder glyph (#993). Idempotent — setSourceMeta COALESCEs.
+// render a placeholder glyph. Idempotent — setSourceMeta COALESCEs.
 await seedWebSourceMeta(writeGate);
 
 // The background-agent backend resolver for the run drainer (resolved fresh
@@ -2692,7 +2692,7 @@ const backfillHandles = backfillBundle.tasks.map((t) => scheduler.schedule(t));
 // Each doc-upsert event records the doc id in an in-memory buffer; the
 // `nearDupInboxFlushTask` below drains it into `near_dup_inbox` in
 // coalesced, background-priority batches. Doing the enqueue off the hot
-// path is what keeps bulk ingest from parking the writer (#555).
+// path is what keeps bulk ingest from parking the writer.
 // Eligibility filtering + reason picking live in
 // `near-dupes/event-handler.ts`; the FK cascade on the near-dup tables
 // handles document deletes automatically (no inbox row needed).
@@ -2779,7 +2779,7 @@ const principalCredentialUsageBundle = principalCredentialUsageFlushTask(
 const principalCredentialUsageHandle = scheduler.schedule(principalCredentialUsageBundle.task);
 
 // Near-dup inbox flush — drains the buffer the event-bus subscriber fills
-// into coalesced, background-priority `near_dup_inbox` inserts (#555).
+// into coalesced, background-priority `near_dup_inbox` inserts.
 const nearDupInboxFlushBundle = nearDupInboxFlushTask(
   {
     buffer: nearDupInboxBuffer,
@@ -2912,7 +2912,7 @@ configStore.onChange((_before, _after, changedPaths) => {
 });
 
 // Recover inference backends that were unreachable at boot (or during a
-// transient network blip) without a restart or a manual /probe (#1267). The
+// transient network blip) without a restart or a manual /probe. The
 // per-backend exponential backoff lives in InferenceRegistry.reprobeUnavailable.
 const backendReprobeBundle = createBackendReprobeTask(
   {
@@ -3195,7 +3195,7 @@ const doShutdown = async (): Promise<void> => {
   // Near-dup inbox: detach the subscriber so no further docs buffer and stop
   // the periodic flush so it can't drain concurrently, then drain what's
   // pending into the writer while it's still alive. A graceful restart loses
-  // nothing; the periodic flush handles steady state (#555).
+  // nothing; the periodic flush handles steady state.
   try {
     offNearDupInbox();
     for (const h of derivationSlaHandles) h.stop();

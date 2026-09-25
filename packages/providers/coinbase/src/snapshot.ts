@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Structured sync for a Coinbase portfolio (#752 + #753).
+ * Structured sync for a Coinbase portfolio.
  *
  * Two shapes of data share one phase machine:
  *

@@ -6,7 +6,7 @@ import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import { SyntheticE2EHarness } from "./synth-harness.js";
 
 /**
- * End-to-end coverage for the synthetic Coinbase source (#754) — Omnesis's
+ * End-to-end coverage for the synthetic Coinbase source — Omnesis's
  * first finance source. The synth twin feeds canned multi-page Coinbase API
  * responses into the REAL provider's HTTP client, so this exercises the
  * production parse → normalize → key → ingest path, not a re-implementation.

@@ -51,7 +51,7 @@ export default tseslint.config(
       "android/**",
 
       // Portal is hand-rolled vanilla JS/CSS served as static assets;
-      // not part of the TypeScript build graph. See #2125 — planned: a narrow
+      // not part of the TypeScript build graph. See #74 — planned: a narrow
       // rule set for it, since nothing mechanical checks this tree today.
       "packages/gateway/portal/**",
 

@@ -123,8 +123,8 @@ export function mailHeaderRelevancePenalty(headers: {
 /**
  * Parse schema.org JSON-LD (`<script type="application/ld+json">`) out of email
  * HTML and promote any booking / reservation / order dates to the typed
- * `scheduledAt` (earliest planned start) / `dueAt` (earliest deadline) fields
- * (#1168). Cheap + robust: regex the script blocks, JSON.parse each, walk for
+ * `scheduledAt` (earliest planned start) / `dueAt` (earliest deadline) fields.
+ *Cheap + robust: regex the script blocks, JSON.parse each, walk for
  * the known date keys. Returns {} when the HTML carries no such markup.
  */
 export function extractSchemaOrgDatesFromHtml(html: string): {

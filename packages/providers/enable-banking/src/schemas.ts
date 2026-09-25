@@ -372,7 +372,7 @@ export const bankTransactionsSchema: AnalyticsTableSchema = {
   sharedDiscriminatorColumn: "source_account_id",
   // Each row co-describes the transaction document whose externalId is
   // `${account_key}:${transaction_key}` (normalizer.ts) — declare the 1:1
-  // doc↔row edge (#450). Neither key component contains the ':' separator, so
+  // doc↔row edge. Neither key component contains the ':' separator, so
   // the composite externalId splits cleanly back into the primary key.
   boundDocument: { externalIdColumns: ["account_key", "transaction_key"] },
   exampleQueries: [

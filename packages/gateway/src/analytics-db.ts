@@ -66,7 +66,7 @@ import type { BoundDocumentBinding } from "./analytics/bound-documents.js";
 
 /**
  * The full schema + identity of one analytics table, as the cite-record path
- * (#757) needs it: the persisted record-citation contract
+ * needs it: the persisted record-citation contract
  * (`semanticTimeColumn` + `record`), the column defs (for sensitive-column
  * redaction), the primary key, and the `boundDocument` binding (to resolve a
  * row back to its co-described document). A public projection of the internal
@@ -95,7 +95,7 @@ export class AnalyticsDb {
   private readonly watchOutbox: WatchAnalyticsOutboxStore;
   private watchBackfill: ((sourceId: string) => boolean) | null = null;
   /**
-   * Cached `boundDocument` registry (#450), keyed by bare source type. Built
+   * Cached `boundDocument` registry, keyed by bare source type. Built
    * lazily from the catalog and invalidated on any catalog mutation
    * (`ensureTable` / source-id change / source removal). Read on the graph
    * walker's hot path, so it must not re-query DuckDB per walk.
@@ -141,7 +141,7 @@ export class AnalyticsDb {
 
   /**
    * Online copy of the live database into a fresh DuckDB file at
-   * `destPath` (#57). Used by the gateway's BackupService — see
+   * `destPath`. Used by the gateway's BackupService — see
    * `AnalyticsConnectionPool.backupTo` for why the copy must go through
    * this pool rather than a second DuckDB instance.
    */
@@ -151,7 +151,7 @@ export class AnalyticsDb {
 
   /**
    * Export every analytics table to its own `<table>.csv` file under
-   * `destDir` (#57). Used by the gateway's ExportService for the portable
+   * `destDir`. Used by the gateway's ExportService for the portable
    * CSV export — see `AnalyticsConnectionPool.exportTablesToCsv` for why the
    * copies must go through this pool. Returns the table names written.
    */
@@ -339,7 +339,7 @@ export class AnalyticsDb {
   }
 
   /**
-   * Batched primary-key lookup for the cross-store graph walker (#450) —
+   * Batched primary-key lookup for the cross-store graph walker —
    * delegates to the read-side runner. See `AnalyticsQueryRunner.getRowsByKeys`.
    */
   async getRowsByKeys(
@@ -352,7 +352,7 @@ export class AnalyticsDb {
   }
 
   /**
-   * The cross-store `boundDocument` registry (#450), keyed by bare source
+   * The cross-store `boundDocument` registry, keyed by bare source
    * type, cached until the next catalog mutation. The graph walker reads this
    * to decide which document vertices have a bound analytics row.
    */
@@ -457,10 +457,10 @@ export class AnalyticsDb {
   }
 
   /**
-   * Full schema + identity for one table (#757), or `null` when the catalog
+   * Full schema + identity for one table, or `null` when the catalog
    * has no such row. Carries the persisted record-citation contract so the
    * cite-record path derives a record without any source-specific code. Older
-   * catalog rows (written before #757) read `semanticTimeColumn` as
+   * catalog rows (written before the record-citation contract) read `semanticTimeColumn` as
    * `undefined`; this maps it to `null` (timeless until re-synced).
    */
   async getRecordTableSchema(tableName: string): Promise<RecordTableSchema | null> {

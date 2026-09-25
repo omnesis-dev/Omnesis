@@ -245,7 +245,7 @@ struct AgentEphemeralSearchCard: View {
         self.freeze = freeze
         // Frozen (after-the-fact) cards start showing their first result
         // immediately — without this a frozen card parks the slot off-screen
-        // and renders header-only (#890).
+        // and renders header-only.
         self._currentIndex = State(initialValue: initialIndex ?? (freeze ? 0 : nil))
     }
 
@@ -402,7 +402,7 @@ struct AgentEphemeralTrailCard: View {
         self.freeze = freeze
         // Frozen (after-the-fact) cards start showing their first result
         // immediately — without this a frozen card parks the slot off-screen
-        // and renders header-only (#890).
+        // and renders header-only.
         self._currentIndex = State(initialValue: initialIndex ?? (freeze ? 0 : nil))
     }
 
@@ -415,7 +415,7 @@ struct AgentEphemeralTrailCard: View {
     /// into a single chronological list of `AgentTrailEventDoc` rows
     /// for the rolling slot. Dedup by documentId so a doc surfacing as
     /// both an event and an attachment doesn't roll twice. Record-only
-    /// events (#757, no `doc`) carry no document to reveal here, so they
+    /// events (no `doc`) carry no document to reveal here, so they
     /// are skipped. Capped at `maxDocsToReveal`.
     private var docs: [AgentTrailEventDoc] {
         guard case .eventTrailBuilt(_, let events, _, _) = call.result else { return [] }
@@ -553,7 +553,7 @@ struct AgentEphemeralDocumentCard: View {
         self.freeze = freeze
         // Frozen (after-the-fact) cards start showing their first result
         // immediately — without this a frozen card parks the slot off-screen
-        // and renders header-only (#890).
+        // and renders header-only.
         self._currentIndex = State(initialValue: initialIndex ?? (freeze ? 0 : nil))
     }
 
@@ -722,7 +722,7 @@ struct AgentEphemeralSqlCard: View {
         self.initialRowIndex = initialRowIndex
         self.freeze = freeze
         // Frozen (after-the-fact) cards render their first SQL line + row
-        // statically rather than parking both slots off-screen (#890).
+        // statically rather than parking both slots off-screen.
         self._sqlIndex = State(initialValue: initialSqlIndex ?? (freeze ? 0 : nil))
         self._rowIndex = State(initialValue: initialRowIndex ?? (freeze ? 0 : nil))
         self._sqlDone = State(initialValue: initialSqlIndex != nil)
@@ -1042,7 +1042,7 @@ struct AgentEphemeralPeopleCard: View {
         self.freeze = freeze
         // Frozen (after-the-fact) cards start showing their first result
         // immediately — without this a frozen card parks the slot off-screen
-        // and renders header-only (#890).
+        // and renders header-only.
         self._currentIndex = State(initialValue: initialIndex ?? (freeze ? 0 : nil))
     }
 
@@ -1197,7 +1197,7 @@ struct AgentEphemeralUrlLookupCard: View {
         self.freeze = freeze
         // Frozen (after-the-fact) cards start showing their first result
         // immediately — without this a frozen card parks the slot off-screen
-        // and renders header-only (#890).
+        // and renders header-only.
         self._currentIndex = State(initialValue: initialIndex ?? (freeze ? 0 : nil))
     }
 
@@ -1446,7 +1446,7 @@ struct AgentEphemeralLoopSearchCard: View {
         self.freeze = freeze
         // Frozen (after-the-fact) cards start showing their first result
         // immediately — without this a frozen card parks the slot off-screen
-        // and renders header-only (#890).
+        // and renders header-only.
         self._currentIndex = State(initialValue: initialIndex ?? (freeze ? 0 : nil))
     }
 
@@ -1584,7 +1584,7 @@ struct AgentEphemeralLoopFetchCard: View {
         self.initialIndex = initialIndex
         self.freeze = freeze
         // Frozen (after-the-fact) cards start showing their first ledger
-        // line immediately rather than parking the slot off-screen (#890).
+        // line immediately rather than parking the slot off-screen.
         self._currentIndex = State(initialValue: initialIndex ?? (freeze ? 0 : nil))
     }
 

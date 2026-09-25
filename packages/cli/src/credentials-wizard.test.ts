@@ -6,7 +6,7 @@ import { expandSpecTokens, type SerializedProviderCredentialsSpec } from "@omnes
 import { resolveWizardOrigin, runCredentialsWizard } from "./credentials-wizard.js";
 
 /**
- * #1243 regression: the CLI wizard is the second consumer of a shared
+ * Regression: the CLI wizard is the second consumer of a shared
  * credentials spec. Before this it rendered `step.body` / `field.placeholder`
  * verbatim, so an Enable Banking user saw the literal `{gatewayOrigin}` token.
  * These cover the CLI's origin resolution and confirm the shared

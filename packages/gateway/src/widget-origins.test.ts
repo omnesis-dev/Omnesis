@@ -5,7 +5,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { getWidgetOrigins, resetWidgetOrigins, setWidgetOrigins } from "./widget-origins.js";
 import { widgetOriginsBody } from "./http/schemas/admin.js";
 
-describe("widget-origins registry (#918)", () => {
+describe("widget-origins registry", () => {
   afterEach(() => {
     // Process-level module state; reset so tests don't leak into each other.
     resetWidgetOrigins();
@@ -53,7 +53,7 @@ describe("widget-origins registry (#918)", () => {
   });
 });
 
-describe("widgetOriginsBody schema rejects malformed origins (#918)", () => {
+describe("widgetOriginsBody schema rejects malformed origins", () => {
   test("accepts https origins with optional wildcard and port", () => {
     const parsed = widgetOriginsBody.parse({
       script: ["https://cdn.plaid.com"],

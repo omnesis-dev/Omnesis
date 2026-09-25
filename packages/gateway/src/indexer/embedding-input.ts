@@ -8,7 +8,7 @@
  *   - the live indexer chunker ({@link import("./chunker.js").DocumentChunker}),
  *     which builds the preamble from the freshly-fetched document, and
  *   - the double-buffered generation builder
- *     ({@link import("./generation-builder.js").GenerationBuilder}, epic #1011),
+ *     ({@link import("./generation-builder.js").GenerationBuilder}),
  *     which re-embeds the *existing* `chunks` rows under a new model and must
  *     reproduce the exact same embedding input from the stored columns
  *     (`document_type`, `title`, `author`, `source_created_at`, `content`).

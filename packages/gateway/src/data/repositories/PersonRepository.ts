@@ -332,7 +332,7 @@ export function findAliasOwnerAndCanonical(
 ): AliasResolution | null {
   // Deterministic order ensures earliest-seen winner survives multi-owner
   // alias collisions (e.g. noisy upstream extraction polluting a phantom
-  // person with someone else's email — issue #219).
+  // person with someone else's email).
   const row = db
     .prepare<[string, string], { person_id: string }>(
       `SELECT pa.person_id
@@ -694,7 +694,7 @@ export function searchPeople(
   // ingestion. `normalizeEmail` strips Gmail dots + `+tag` and lowercases for
   // an email; for a plain name it just lowercases, so `normPattern` collapses
   // to `pattern` and the extra clause is a harmless no-op. Mirrors the same
-  // fix on the `from:`/`by:` filter path (`resolvePersonIdsFromQuery`, #298).
+  // fix on the `from:`/`by:` filter path (`resolvePersonIdsFromQuery`).
   const normPattern = `%${escapeLike(normalizeEmail(query))}%`;
   const sortBy: PersonSortBy = options.sortBy ?? "interaction";
   const after = options.after;

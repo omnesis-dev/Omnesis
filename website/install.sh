@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Adrien Conrath
 #
-# Omnesis installer (#41, #605).
+# Omnesis installer.
 #
 #   curl -fsSL https://omnesis.dev/install.sh | sh
 #
@@ -12,7 +12,7 @@
 #   3. Install the `omnesis` CLI from the newest stable source tag. `--method
 #      package` installs the published npm package instead, and `--method auto`
 #      prefers the package when the registry serves it.
-#   4. Provision TLS (#605): if Tailscale is up, mint a real cert via
+#   4. Provision TLS: if Tailscale is up, mint a real cert via
 #      `tailscale cert` and point the gateway at it; `--mkcert` opts into a
 #      local CA instead; otherwise the gateway's self-signed cert stands.
 #   5. Initialize the OS keyring root key when a durable keyring is already
@@ -2352,7 +2352,7 @@ EOF
   info "Embedding model: $EMBEDDER_ID"
 }
 
-# ── Step 4: TLS (#605) ───────────────────────────────────────────────────────
+# ── Step 4: TLS ───────────────────────────────────────────────────────
 
 env_key_set() {
   # Whether KEY already has a line in the config dir's .env.

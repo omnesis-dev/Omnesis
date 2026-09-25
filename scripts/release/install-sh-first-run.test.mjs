@@ -900,7 +900,7 @@ describe("install.sh workspace build", () => {
   // A first attempt that died part-way leaves a tree a second `npm ci` does not
   // fully replace: it reports success while packages are left without the
   // declaration files their tarballs ship, so the build fails TS7016 and fails
-  // the same way on every later run (meth-042, #2676). The build-failure message
+  // the same way on every later run (meth-042). The build-failure message
   // tells the operator to remove node_modules by hand; the retry should not need
   // to be told. Observed for real on 17 Sep: `npm ci` took a SIGBUS core dump and
   // the installer retried straight into the wreckage.

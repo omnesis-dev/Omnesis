@@ -304,7 +304,7 @@ export class WhatsAppMessagesSource {
     // `streaming` keeps the sync alive so the engine re-polls as history
     // batches land; `complete`/`interrupted` only continue while pages remain.
     // An interrupted bootstrap drains what it has and exits — recovery is
-    // re-pair / a one-time backup import (#588), not an endless sync loop.
+    // re-pair / a one-time backup import, not an endless sync loop.
     const historyState = this.store.historySyncState;
     const historyComplete = historyState === "complete";
     const hasMore = morePending || historyState === "streaming";
@@ -312,11 +312,11 @@ export class WhatsAppMessagesSource {
     const phase = historyComplete ? "incremental" : "bootstrap";
     // Coverage reports whether the synced corpus is whole. WhatsApp only serves
     // a companion the recent (~90-day) window; "complete" means that window is
-    // fully synced, "partial" means the bootstrap stalled (#579), and
+    // fully synced, "partial" means the bootstrap stalled, and
     // "unknown" is a bootstrap still in flight — the phone may yet finish the
     // window or stall partway through, and until the quiet-gap resolves the
     // sync neither claim is honest. The full archive beyond the window is
-    // recovered via the backup import (#588), which this signal does not track.
+    // recovered via the backup import, which this signal does not track.
     const coverage: HistoryCoverage = historyComplete
       ? "complete"
       : historyState === "interrupted"
@@ -397,7 +397,7 @@ export class WhatsAppMessagesSource {
     const attachmentInfos: AttachmentInfo[] = [];
     const attachmentDocs: DocumentInput[] = [];
     const now = Math.floor(Date.now() / 1000);
-    // Track seq per (filename, size, mimeType) within this day-doc — see #268.
+    // Track seq per (filename, size, mimeType) within this day-doc
     const seqByBase = new Map<string, number>();
 
     const mediaMessages = messages.filter(

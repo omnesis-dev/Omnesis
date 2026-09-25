@@ -212,7 +212,7 @@ class HealthConnectSource(
                 // it and keep going so a failing type does not starve the healthy
                 // types on every retry. The type is reported
                 // in the returned `failed` list; the token is left untouched, so a
-                // later provider/data change re-attempts it. See #716.
+                // later provider/data change re-attempts it.
                 Log.w("Omnesis:health", "Health Connect provider failed to read ${entry.name}; skipping this type: ${e.message}")
                 failed += entry.name
             } catch (e: Exception) {
@@ -242,7 +242,7 @@ class HealthConnectSource(
      * We back off and retry the SAME call rather than skipping the type, so a busy
      * provider just slows the sync instead of dropping data. Non-rate-limit errors
      * (e.g. the "parsing a protocol message" internal error) propagate immediately so
-     * their own handling (re-baseline / skip) still applies. See #716.
+     * their own handling (re-baseline / skip) still applies.
      */
     private suspend fun <T> withRateLimitRetry(block: suspend () -> T): T {
         var delayMs = RATE_LIMIT_BASE_DELAY_MS
@@ -287,7 +287,7 @@ class HealthConnectSource(
                 // expired token: drop the broken delta and re-read the type from
                 // scratch via baseline (which doesn't hit the bug). Rows dedup by
                 // primary key on re-ingest, so no duplication. If baseline ALSO
-                // throws, it propagates to the per-type skip in sync(). See #716.
+                // throws, it propagates to the per-type skip in sync().
                 val rebaselined = baseline(entry, cursor, onPage)
                 return EntryResult(rebaselined.cursor, upserted + rebaselined.upserted, deleted)
             }

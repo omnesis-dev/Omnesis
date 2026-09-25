@@ -52,7 +52,7 @@ const CORPUS: FixtureCorpus = {
   ],
 };
 
-describe("importWhatsAppHistory — merge + idempotency (#588)", () => {
+describe("importWhatsAppHistory — merge + idempotency", () => {
   const dirs: string[] = [];
   let store: MessageStore | null = null;
 

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * `defineSpecialist` + the specialist registry (#748).
+ * `defineSpecialist` + the specialist registry.
  *
  * A **specialist** is a private profile selected by an owned workflow such as
  * Deep Research: it owns the child session's system prompt, model *role*, and
@@ -10,7 +10,7 @@
  * typing, mirroring `defineSource()` (a specialist exposes what consumers need
  * through the descriptor; consumers never branch on a specialist name).
  *
- * Frozen #748 constraints encoded here:
+ * Frozen constraints encoded here:
  *   - A specialist names a model *role* only (the built-in research specialists
  *     use `agent`). There is **no** backend/model in the descriptor —
  *     the concrete model behind a role is assigned in `/portal/settings/models` and the

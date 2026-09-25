@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Writer for source-declared edges (#430) — the explicit `EdgeDeclaration`
+ * Writer for source-declared edges — the explicit `EdgeDeclaration`
  * contract path, distinct from the implicit `metadata.extra` conventions that
  * `extractLinks` reads.
  *

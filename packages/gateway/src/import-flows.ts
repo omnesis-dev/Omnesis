@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * In-memory registry of cross-device history-import flows (#588).
+ * In-memory registry of cross-device history-import flows.
  *
  * A flow is started by an admin client (CLI / portal) calling
  * POST /admin/sources/:id/import-history. The gateway forwards an `import.begin`

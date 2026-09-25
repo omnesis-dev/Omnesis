@@ -4,7 +4,7 @@
 /**
  * SyncEngine — the orchestration shell for the collector's sync surface.
  *
- * Post-#317 (issue #317), the engine is a thin façade over
+ * The engine is a thin façade over
  * three focused collaborators:
  *
  *   - `SourceRegistry` (`source-registry.ts`) — owns the providers Map +
@@ -697,7 +697,7 @@ export class SyncEngine {
    * The gateway persists each table's schema in its analytics catalog, but only
    * rewrites that catalog row when a sync actually ingests records. A schema
    * field added after a table was last synced — e.g. the record-citation
-   * contract `semanticTimeColumn` + `record` (#757) — would otherwise stay
+   * contract `semanticTimeColumn` + `record` — would otherwise stay
    * absent from the catalog (and so the `cite_record` path would reject the
    * table as "unknown") until the source next happened to ingest a row. An
    * incremental sync that returns zero new records never re-pushes, so the row
@@ -968,7 +968,7 @@ export class SyncEngine {
    * the tick through `dispatcher.tickSource` (the single auth-check +
    * state-guard preamble). The one scheduling path for every trigger site
    * (`startSyncLoop`, `updateSyncIntervals`, `startSourceSyncLoops`) so the
-   * rate-limit deferral (#616) is handled identically everywhere: when a
+   * rate-limit deferral is handled identically everywhere: when a
    * tick returns a `{ retryAfterMs }` deferral, push the *next* tick out to
    * `max(interval, retryAfterMs)` via the scheduler's one-shot `deferNext`.
    * The deferral is one-shot — `deferNext` re-arms the steady interval after
@@ -1033,7 +1033,7 @@ export class SyncEngine {
       // dispatcher's fire-and-forget invocation can't escalate it into a
       // process-killing unhandled rejection — a single slow or stuck source
       // (e.g. a sync that hits the wall-clock timeout) must never take down
-      // the whole collector. See #554.
+      // the whole collector.
       log.warn(`Sync for ${source.id} ended with error: ${toErrorMessage(err)}`);
     } finally {
       this.inflightSyncs.delete(promise);

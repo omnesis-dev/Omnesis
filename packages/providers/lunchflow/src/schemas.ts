@@ -269,7 +269,7 @@ export const lunchflowTransactionsSchema: AnalyticsTableSchema = {
   },
   // Each row co-describes the transaction document whose externalId is
   // `${account_id}:${transaction_key}` (normalizer.ts) — declare the 1:1
-  // doc↔row edge (#450). The gateway reconstructs the externalId by joining
+  // doc↔row edge. The gateway reconstructs the externalId by joining
   // these columns with the default ':' separator, so each component must be
   // colon-free for the split to round-trip: account_id is always a numeric
   // string, and transaction_key is either a content hash (`<hex>-<n>`) or the

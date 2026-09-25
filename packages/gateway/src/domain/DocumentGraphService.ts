@@ -243,7 +243,7 @@ interface NeighborRow {
   /** Present on near-duplicate edges. */
   jaccard?: number;
   /**
-   * Per-row provenance for the `provenanceKinds` filter (#430). Set from
+   * Per-row provenance for the `provenanceKinds` filter. Set from
    * `document_links.provenance_kind` when stored; the filter falls back to the
    * type-level default for rows / edge sources that don't carry one.
    */
@@ -416,7 +416,7 @@ function expandDocument(
           break;
         case "analytics-row":
           // Analytics-row vertices are never reached by the BFS — they are
-          // attached post-walk by `attachBoundRows` (#450). An EDGE_EXPANDERS
+          // attached post-walk by `attachBoundRows`. An EDGE_EXPANDERS
           // entry declaring this kind is a programming error.
           throw new Error("analytics-row neighbours are not expanded during BFS");
         default:
@@ -777,7 +777,7 @@ export function expandOneHop(
   return { neighbors: neighbors.slice(0, fanout), truncated };
 }
 
-// ─── Cross-store: attach bound analytics rows (#450) ──────────────────────────
+// ─── Cross-store: attach bound analytics rows ──────────────────────────
 
 export interface AttachBoundRowsOptions {
   /** Hard cap on total vertices; shares the BFS default (600). */
@@ -791,7 +791,7 @@ export interface AttachBoundRowsOptions {
 const DEFAULT_ROW_COLUMNS = 12;
 
 /**
- * Second phase of the cross-store walk (#450): for every document vertex whose
+ * Second phase of the cross-store walk: for every document vertex whose
  * source declares a `boundDocument`, synthesize the `same-entity` edge to its
  * co-described DuckDB row and attach that row as an `analytics-row` vertex.
  *

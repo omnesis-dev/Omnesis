@@ -42,7 +42,7 @@ export const initialState = () => ({
   trailAnnotations: {
     byDoc: {},
   },
-  // Record citations fed by `cite_record.recorded` (#757) — every DuckDB row
+  // Record citations fed by `cite_record.recorded` — every DuckDB row
   // the agent cited directly. Each is a record-only timeline event keyed by
   // `recordKey`; `buildUnifiedTimeline` interleaves them with the annotated
   // documents by semantic time.
@@ -451,7 +451,7 @@ export function chatMessagesToTurns(
             toolIndexById.set(p.toolCallId, t.parts.length - 1);
             // Citation tools count toward the turn's "N citations" chip:
             // `annotate`/`annotate_many` cite documents, `cite_record` cites a
-            // DuckDB row (#757). `annotate_many` contributes one per child.
+            // DuckDB row. `annotate_many` contributes one per child.
             if (p.tool === "annotate_many") {
               t.citationCount += Array.isArray(p.args?.annotations) ? p.args.annotations.length : 1;
             } else if (p.tool === "annotate" || p.tool === "cite_record") {
@@ -829,7 +829,7 @@ export function trailAnnotationsFromMessages(messages) {
 }
 
 /**
- * Map a `cite_record.recorded` tool result (#757) to a record-only timeline
+ * Map a `cite_record.recorded` tool result to a record-only timeline
  * event — the same shape `event_trail.built` emits for a bound row, so the
  * renderer treats a directly-cited record and a trail-surfaced record
  * identically. Returns null for a malformed result (no recordKey / no semantic
@@ -863,7 +863,7 @@ function citeRecordToEvent(r) {
 
 /**
  * Walk a `ChatMessage[]` history and build the record-citation timeline events
- * from every `cite_record.recorded` tool result (#757), deduped by `recordKey`
+ * from every `cite_record.recorded` tool result, deduped by `recordKey`
  * (last cite of a row wins). Mirrors `trailAnnotationsFromMessages` for the
  * resume path so the Timeline renders directly-cited records the same way
  * live and on reload.
@@ -902,8 +902,8 @@ function bumpDocSlot(prev, ref, quote, quoteAuthor, note, quoteIsSelf) {
 /**
  * Compute the unified Timeline event list from the agent's deliberate
  * citations: the doc-level annotation bucket (`byDoc`, from `annotate`)
- * plus the directly-cited analytics rows (`records`, from `cite_record`,
- * #757). Nothing else feeds the Timeline — a `trace_connections` graph
+ * plus the directly-cited analytics rows (`records`, from `cite_record`).
+ * Nothing else feeds the Timeline — a `trace_connections` graph
  * walk's raw output never lands here.
  *
  * Algorithm:
@@ -929,7 +929,7 @@ function bumpDocSlot(prev, ref, quote, quoteAuthor, note, quoteIsSelf) {
  */
 export function buildUnifiedTimeline(byDoc, records) {
   const eventByKey = new Map();
-  // Directly-cited analytics rows (`cite_record`, #757): one record-only event
+  // Directly-cited analytics rows (`cite_record`): one record-only event
   // each, deduped by recordKey.
   for (const event of records ?? []) {
     const recordKey = event?.record?.recordKey;
@@ -980,7 +980,7 @@ function compareTrailEventsByAt(a, b) {
   const aMissing = !a.at;
   const bMissing = !b.at;
   if (aMissing && bMissing) {
-    // Records (#757) have no `doc`; fall back to the stable record key so
+    // Records have no `doc`; fall back to the stable record key so
     // undated record-only events still order deterministically.
     const aId = a.doc?.documentId ?? a.record?.recordKey ?? "";
     const bId = b.doc?.documentId ?? b.record?.recordKey ?? "";
@@ -1101,7 +1101,7 @@ function attachAgentError(state, payload) {
   return { ...state, turns, busy: false, deepResearch: false };
 }
 
-// ─── Sub-agent card (#748) ───────────────────────────────────────────────
+// ─── Sub-agent card ───────────────────────────────────────────────
 //
 // A sub-agent is a nested AgentSession the parent spawns via `spawn_subagent`.
 // Its lifecycle reaches the portal through three events, defined once in
@@ -1402,7 +1402,7 @@ function mutateSubagentCard(state, subagentId, fn) {
   return state;
 }
 
-// ─── Research working-set surface selectors (#748) ───────────────────────
+// ─── Research working-set surface selectors ───────────────────────
 //
 // The bespoke multi-panel research working-set surface is driven entirely
 // off reducer state — no side channel. `researchPanels` projects the
@@ -1796,7 +1796,7 @@ export function reducer(state, action) {
       let trailAnnotations = state.trailAnnotations;
       let recordCitations = state.recordCitations;
       if (result?.kind === "cite_record.recorded") {
-        // A directly-cited DuckDB row (#757) → a record-only Timeline event,
+        // A directly-cited DuckDB row → a record-only Timeline event,
         // deduped by recordKey (a re-cite of the same row replaces the prior).
         const event = citeRecordToEvent(result);
         if (event) {

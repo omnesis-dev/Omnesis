@@ -7,8 +7,8 @@ import { APPLE_EPOCH_OFFSET, MESSAGE_TYPE_BY_CODE } from "./constants.js";
 import type { StoredMessage } from "../types.js";
 
 /**
- * Parse a decrypted WhatsApp iOS `ChatStorage.sqlite` into `StoredMessage[]`
- * (#588). Pure: opens the DB read-only and maps each `ZWAMESSAGE` row, joining
+ * Parse a decrypted WhatsApp iOS `ChatStorage.sqlite` into `StoredMessage[]`.
+ *Pure: opens the DB read-only and maps each `ZWAMESSAGE` row, joining
  * its chat session, group member, and media item.
  *
  * The ChatStorage schema differs across WhatsApp iOS releases — some columns

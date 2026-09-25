@@ -90,8 +90,8 @@ describe("graph edge vocabulary", () => {
     expect(d.storage).toBe("synthesized");
     expect(d.directed).toBe(false);
     expect(d.endpoints).toBe("document-analytics-row");
-    // Type-level default; cross-source-derived same-entity edges carry per-edge
-    // provenance when #430 lands.
+    // Type-level default; cross-source-derived same-entity edges will carry
+    // per-edge provenance.
     expect(d.provenance).toBe("source-declared");
   });
 
@@ -124,7 +124,7 @@ describe("graph edge vocabulary", () => {
   });
 });
 
-describe("record reference identity (#757)", () => {
+describe("record reference identity", () => {
   it("recordReference mints the same recordKey analyticsRowKey would", () => {
     const ref = recordReference("bank_transactions", [
       { name: "account_key", value: "acct-1", castType: "VARCHAR" },

@@ -225,7 +225,7 @@ export class PrivacyReviewer {
     // An abort that arrives *during* review is a transport drop after the
     // candidate was already generated: destroying the task there would lose
     // completed work, so hold the answer for the user's approval instead of
-    // failing it (#1407 — a lost answer is worse than a held one).
+    // failing it (a lost answer is worse than a held one).
     const abortedAtEntry = signal?.aborted ?? false;
     let submission: Awaited<ReturnType<typeof runPrivacyReviewSubmission>>;
     try {

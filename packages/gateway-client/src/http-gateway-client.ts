@@ -311,7 +311,7 @@ export class HttpGatewayClient implements GatewayClient {
     // unreachable) instead throws a `SyncError("transient")`. That propagates
     // up through the source's page `pMap`, fails the sync page, and leaves the
     // cursor un-advanced so the page retries next tick — a flaky transcriber
-    // doesn't silently drop audio attachments from a durable index (#680).
+    // doesn't silently drop audio attachments from a durable index.
     //
     // Sends raw bytes (no base64 inflation) with the audio MIME type as
     // Content-Type; the gateway holds them only for the request.
@@ -779,7 +779,7 @@ export class HttpGatewayClient implements GatewayClient {
    * loaded source definition's `urlPatterns`), not just the added ones.
    * Sent at collector startup; the gateway holds the set in memory and
    * uses it as the link-extraction keep-gate so a link to a not-yet-added
-   * source survives and resolves once that source is ingested (#668).
+   * source survives and resolves once that source is ingested.
    * Replaces whatever was previously registered.
    */
   async setKnownUrlPatterns(patterns: Array<{ regex: string }>): Promise<void> {
@@ -794,7 +794,7 @@ export class HttpGatewayClient implements GatewayClient {
    * loaded source definition's declared web hosts), not just the added ones.
    * Sent at collector startup; the gateway holds the set in memory and serves
    * it on the public `GET /owned-web-domains` route so the browser-capture
-   * source (#791) can skip hosts already owned by another source. Replaces
+   * source can skip hosts already owned by another source. Replaces
    * whatever was previously registered.
    */
   async setOwnedWebDomains(domains: string[]): Promise<void> {
@@ -871,13 +871,13 @@ export class HttpGatewayClient implements GatewayClient {
     /** See `SyncResult.presentClaims`. Mutually exclusive with the above. */
     presentClaims?: SnapshotClaim[];
     observationId?: string;
-    /** Source-declared structural edges for this page (#430). */
+    /** Source-declared structural edges for this page. */
     edges?: EdgeDeclaration[];
     hasMore: boolean;
     cursor: SyncCursor;
-    /** Wipe epoch read at sync start; lets the gateway reject stale writes (#551). */
+    /** Wipe epoch read at sync start; lets the gateway reject stale writes. */
     wipeEpoch?: number;
-    /** Forward-looking consent deadline (ISO) the source reported this page (#927). */
+    /** Forward-looking consent deadline (ISO) the source reported this page. */
     consentExpiresAt?: string | null;
     watermark?: SourceWatermark;
     meta?: Omit<SourceSyncMeta, "contentRetention">;
@@ -980,7 +980,7 @@ export class HttpGatewayClient implements GatewayClient {
 
   async ingestAnalyticsPage(page: AnalyticsPageIngest): Promise<IngestAnalyticsResponse> {
     // A page may upsert records, delete rows, or both — only skip the round
-    // trip when there is nothing to do (#619). A schema-only call (empty
+    // trip when there is nothing to do. A schema-only call (empty
     // records, no deletes, schema given) still goes through: it registers or
     // refreshes the table and its catalog row without inserting any rows.
     if (
@@ -1062,7 +1062,7 @@ export class HttpGatewayClient implements GatewayClient {
     }
   }
 
-  // ── Admin source registry mirror (#166/#168 migration bridge) ────────────
+  // ── Admin source registry mirror (migration bridge) ──────────────────────
   //
   // The collector still owns the canonical source list (collector.json) but
   // pushes its state to the gateway so the portal/admin API see a fully

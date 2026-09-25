@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { afterEach, describe, expect, test } from "vitest";
-import { buildPortalCsp } from "./portal.js";
 import { resetWidgetOrigins, setWidgetOrigins } from "../../widget-origins.js";
+import { buildPortalCsp } from "./portal.js";
 
 /**
  * The portal CSP must fold in the external widget-vendor origins a source
@@ -13,7 +13,7 @@ import { resetWidgetOrigins, setWidgetOrigins } from "../../widget-origins.js";
  * an INVENTED fixture source, never hardcoding a real source's origins, so the
  * mechanism stays source-agnostic.
  */
-describe("portal CSP widget-origin aggregation (#918)", () => {
+describe("portal CSP widget-origin aggregation", () => {
   // A representative inline-script hash (the importmap hash the real portal
   // emits). The exact value is irrelevant here — we only assert how the widget
   // origins compose around it.

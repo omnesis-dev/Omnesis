@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Message contract between `ExportService` and `export-worker.ts` (#57).
+ * Message contract between `ExportService` and `export-worker.ts`.
  *
  * The worker is one-shot: it receives its full job via `workerData` (no
  * request/response loop), keyset-paginates the documents table in bounded

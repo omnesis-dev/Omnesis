@@ -27,14 +27,14 @@ export interface ImportOptions {
 }
 
 /**
- * One-time WhatsApp full-history import from a local encrypted iOS backup (#588).
+ * One-time WhatsApp full-history import from a local encrypted iOS backup.
  * The heavy decrypt + parse runs in a worker thread (off the collector's main
  * loop); this parent merges the streamed batches into the durable store by
  * stable id, so dirty-day marking + the normal sync drain publish the result.
  * Cancellation (`callbacks.signal`) terminates the worker.
  *
  * This is the iOS-backup variant. Planned siblings emit the same batches into
- * the same merge: #591 (Android crypt15 backup), #590 (Tier-2 targeted pull).
+ * the same merge: #29 (Android crypt15 backup), #28 (Tier-2 targeted pull).
  */
 export async function importWhatsAppHistory(opts: ImportOptions): Promise<ImportSummary> {
   const { backupPath, passphrase, store, own, callbacks } = opts;

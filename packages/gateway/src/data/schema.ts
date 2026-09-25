@@ -154,7 +154,7 @@ function runSchemaSetupInTxn(db: Db): void {
     "CREATE INDEX IF NOT EXISTS idx_documents_source_id_updated_at ON documents(source_id, updated_at)",
   );
 
-  // Partial index supporting #264 / #271 / cross-source dedup — duplicate
+  // Partial index supporting cross-source dedup — duplicate
   // -content detection between binary-extracted docs (attachments and
   // Drive files). Indexed on `extracted_content_hash` so a Drive PDF
   // (whose `content` is wrapped with a markdown header) and the same PDF
@@ -173,7 +173,7 @@ function runSchemaSetupInTxn(db: Db): void {
          AND extracted_content_hash IS NOT NULL`,
   );
 
-  // Partial index supporting #266 — calendar-event link resolution by
+  // Partial index supporting calendar-event link resolution by
   // RFC 5545 iCalUID. `resolveCalendarEventLink` queries by
   // `json_extract(metadata, '$.extra.iCalUID')`; without an expression
   // index it would scan every document on every link insert. Partial on
@@ -252,7 +252,7 @@ function runSchemaSetupInTxn(db: Db): void {
   // in-flight attempt whatever row it holds. Kept outside sync_state so a
   // wipe cannot erase its own fence. The collector echoes its claimed epoch
   // on each write; stale overlapping runs and pre-wipe runs are rejected
-  // before they can regress documents/cursors. See #551.
+  // before they can regress documents/cursors.
   db.exec(`
     CREATE TABLE IF NOT EXISTS source_wipe_epoch (
       source_id TEXT NOT NULL,
@@ -426,7 +426,7 @@ function runSchemaSetupInTxn(db: Db): void {
       scopes TEXT NOT NULL DEFAULT '[]',
       created_at INTEGER NOT NULL,
       expires_at INTEGER NOT NULL,
-      -- Optional self annotation (#284) staged at pairing-code creation and
+      -- Optional self annotation staged at pairing-code creation and
       -- applied to the new device row at redeem time, so the operator can
       -- pin the owner email/phone identifiers inline with pairing rather
       -- than via a separate devices set-self. JSON arrays; empty = none.
@@ -672,7 +672,7 @@ function runSchemaSetupInTxn(db: Db): void {
   // the standard URL-derived edges that don't need it. Readers treat the
   // column as opaque metadata.
   //
-  // Provenance (#430): every row records how the edge came to exist, so the
+  // Provenance: every row records how the edge came to exist, so the
   // graph walker can filter by trust (`provenanceKinds`) and an upgraded
   // parser/annotator can invalidate only its own edges.
   //   - `provenance_kind`    — source-declared | content-derived |
@@ -741,7 +741,7 @@ function runSchemaSetupInTxn(db: Db): void {
     );
   }
 
-  // Pending source-declared edges (#430): a declared edge whose target document
+  // Pending source-declared edges: a declared edge whose target document
   // hasn't been ingested yet (a forward reference). Held here — not in
   // `document_links` — so the graph walker and link stats only ever see real,
   // resolved edges. A periodic drain (`scheduler/tasks` pendingEdges) retries
@@ -1403,7 +1403,7 @@ function runSchemaSetupInTxn(db: Db): void {
 
   createCanonicalizationStateTable(db);
 
-  // Per-connection re-auth reminder backoff state (#683). One row per
+  // Per-connection re-auth reminder backoff state. One row per
   // re-auth principal (provider connection id) records when the last
   // needs-auth reminder push fired + how many have fired, so the built-in
   // notifier sends one reminder per connection on an exponential backoff

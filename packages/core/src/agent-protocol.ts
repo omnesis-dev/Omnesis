@@ -379,8 +379,8 @@ export const trailRecordKeyFieldSchema = z.object({
 export type TrailRecordKeyField = z.infer<typeof trailRecordKeyFieldSchema>;
 
 /**
- * A DuckDB analytics row surfaced on the trail as a point-in-time record
- * (#757). Reached via a `same-entity` edge from a seed document (or attached as
+ * A DuckDB analytics row surfaced on the trail as a point-in-time record.
+ *Reached via a `same-entity` edge from a seed document (or attached as
  * its own entity when the row binds no document). The gateway derives every
  * field from the table's declared record-display contract — clients render
  * these strings directly and never learn the column names or branch on the
@@ -403,7 +403,7 @@ export const trailRecordSchema = z.object({
   /**
    * ISO-8601 value of the declared `semanticTimeColumn` on this row. Always
    * present here — a timeless row (null/empty semantic time) is never surfaced
-   * as a trail record (frozen #757 rule).
+   * as a trail record (frozen rule).
    */
   semanticTime: z.string().min(1),
   sourceId: z.string().min(1),
@@ -429,7 +429,7 @@ export type TrailRecord = z.infer<typeof trailRecordSchema>;
  * (a bound row with no co-described document) — recomputable from any
  * reference, but the field is kept distinct so the format can evolve.
  *
- * An event carries a `doc`, a `record` (#757), or BOTH:
+ * An event carries a `doc`, a `record`, or BOTH:
  *   - `doc` only — an ordinary document event.
  *   - `doc` + `record` — a document and its `same-entity` analytics row
  *     collapsed into ONE timeline entity (dedup on `record.recordKey`);
@@ -540,7 +540,7 @@ const sqlRowsResult = z.object({
   rowCount: z.number().nonnegative(),
   truncated: z.boolean().optional(),
   /**
-   * Per-row record identity (#757), positionally aligned with `rows`. Entry
+   * Per-row record identity, positionally aligned with `rows`. Entry
    * `i` references `rows[i]` when the result exposes exactly one known table's
    * full primary key, else `null` (aggregate, multi-table join, or a
    * projection that drops a primary-key column). Absent when the query touches
@@ -678,7 +678,7 @@ const annotateRecordedResult = z.object({
 });
 
 /**
- * Result of a successful `cite_record` tool call (#757). The agent records
+ * Result of a successful `cite_record` tool call. The agent records
  * that a single analytics row — a point-in-time **record** — materially
  * informed its answer, the structured twin of an `annotate` document
  * citation. The gateway has already derived everything a client needs from
@@ -772,7 +772,7 @@ const planUpdatedResult = z.object({
 /**
  * LLM-token spend for one turn (or, summed, one sub-agent / one tree). The
  * single shape every cost-accounting surface reads. NOT the device-auth
- * `touchTokenUsage` beacon — that is unrelated (#748).
+ * `touchTokenUsage` beacon — that is unrelated.
  */
 export const agentUsageSchema = z.object({
   inputTokens: z.number().optional(),
@@ -914,7 +914,7 @@ export type AgentConversationTerminalFailure = z.infer<
 >;
 
 /**
- * Lifecycle status of a sub-agent (#748). `queued`/`running` are transient
+ * Lifecycle status of a sub-agent. `queued`/`running` are transient
  * (a `spawn_subagent` launch handle); `complete`/`failed`/`budget_exhausted`
  * are terminal (an `agent.subagent.result` event or a `join_subagents`
  * collected entry). `budget_exhausted` is the honest, named reason the
@@ -930,7 +930,7 @@ export const subagentStatusSchema = z.enum([
 export type SubagentStatus = z.infer<typeof subagentStatusSchema>;
 
 /**
- * Honest terminal reason a Deep Research run stopped (#748). Every value is a
+ * Honest terminal reason a Deep Research run stopped. Every value is a
  * real terminal state the orchestrator can reach — never a euphemism for a
  * silent stop:
  *   - `answer_complete` — the loop planned, fanned out, verified, and
@@ -969,7 +969,7 @@ export const deepResearchStoppedReasonSchema = z.enum([
 export type DeepResearchStoppedReason = z.infer<typeof deepResearchStoppedReasonSchema>;
 
 /**
- * Result of a `spawn_subagent` tool call (#748). Fan-out is asynchronous: the
+ * Result of a `spawn_subagent` tool call. Fan-out is asynchronous: the
  * tool LAUNCHES a child (`status: "queued"` while the concurrency cap holds it,
  * `"running"` once it starts) and returns a handle IMMEDIATELY so the parent
  * can launch several children that run concurrently, then await them with
@@ -986,7 +986,7 @@ const subagentSpawnedResult = z.object({
   citations: z.array(docRefSchema).optional(),
 });
 
-/** One collected sub-agent finding inside a `join_subagents` result (#748). */
+/** One collected sub-agent finding inside a `join_subagents` result. */
 const subagentJoinedEntry = z.object({
   subagentId: z.string(),
   specialist: z.string(),
@@ -1001,7 +1001,7 @@ const subagentJoinedEntry = z.object({
 export type SubagentJoinedEntry = z.infer<typeof subagentJoinedEntry>;
 
 /**
- * Result of a `join_subagents` tool call (#748) — the barrier the parent uses
+ * Result of a `join_subagents` tool call — the barrier the parent uses
  * to await a set of in-flight (or already-finished) sub-agents and collect
  * their distilled findings. Carries the per-tree token aggregate so the parent
  * (and the report footer) can reason about total research cost. No per-citation
@@ -1426,7 +1426,7 @@ export const agentMessageSendRequest = z.object({
   sessionId: z.string().min(1),
   text: z.string().min(1),
   /**
-   * Explicit opt-in to the Deep Research loop (#748) for THIS message only —
+   * Explicit opt-in to the Deep Research loop for THIS message only —
    * plan → parallel fan-out → citation-verify → cited synthesis. Off/absent =
    * an ordinary single agent turn. There is no implicit auto-gating: the loop
    * runs only when a client sets this (the `/`→"Deep Research" pill flips it),
@@ -1613,7 +1613,7 @@ export const agentCitationsUpdateEvent = z.object({
   removed: z.array(z.string()),
 });
 
-// ─── Sub-agent events (#748) ───────────────────────────────────────────────
+// ─── Sub-agent events ───────────────────────────────────────────────
 //
 // A sub-agent is a nested `AgentSession` the parent spawns via the
 // `spawn_subagent` tool. Its lifecycle is surfaced to clients through three
@@ -1668,14 +1668,14 @@ export const agentSubagentResultEvent = z.object({
    * Whole-tree token aggregate (this child + every other sub-agent sharing the
    * same root parent) at the moment this child finished. Clients render it as
    * the research-total in the report footer; the backend uses it to enforce the
-   * tree-wide token budget. Cumulative and monotonic across a fan-out (#748).
+   * tree-wide token budget. Cumulative and monotonic across a fan-out.
    */
   treeUsage: agentUsageSchema.optional(),
 });
 export type AgentSubagentResultEvent = z.infer<typeof agentSubagentResultEvent>;
 
 /**
- * One planned reader sub-task the Deep Research planner produced (#748): which
+ * One planned reader sub-task the Deep Research planner produced: which
  * specialist chased which slice of the question. Surfaced on the summary event
  * and retained in persisted compatibility metadata; never carries a
  * backend/model (a specialist names a model ROLE only — frozen).
@@ -1688,7 +1688,7 @@ export const deepResearchPlanItemSchema = z.object({
 export type DeepResearchPlanItem = z.infer<typeof deepResearchPlanItemSchema>;
 
 /**
- * Quote-verification tally for a Deep Research run (#748). The citation-verify
+ * Quote-verification tally for a Deep Research run. The citation-verify
  * pass re-fetches each cited document and string-matches the verbatim quotes a
  * reader embedded against the fetched body (the `verifyQuotes` trust check).
  * `quotesChecked` is how many quotes were tested; `quotesVerified` how many
@@ -1703,7 +1703,7 @@ export const deepResearchVerificationSchema = z.object({
 export type DeepResearchVerification = z.infer<typeof deepResearchVerificationSchema>;
 
 /**
- * Additive end-of-run summary for an explicit Deep Research run (#748). Emitted
+ * Additive end-of-run summary for an explicit Deep Research run. Emitted
  * ONCE by the `DeepResearchService` just before the parent turn's
  * `agent.message.end`, after the report has streamed as `agent.text.delta` and
  * the single merged citation set landed via `agent.citations.update`.

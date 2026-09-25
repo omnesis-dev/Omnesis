@@ -260,7 +260,7 @@ function drawNode(group, node, isSeed, onClick, onHover, svgEl) {
 
   const isPerson = node.kind === "person";
   const isRow = node.kind === "analytics-row";
-  // Analytics-row vertices (#450) get a distinct teal so the cross-store
+  // Analytics-row vertices get a distinct teal so the cross-store
   // `same-entity` edge reads as "this doc ↔ its structured row".
   const fill = isPerson
     ? node.isSelf

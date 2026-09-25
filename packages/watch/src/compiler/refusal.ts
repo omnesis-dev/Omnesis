@@ -43,7 +43,7 @@
  * being read. The same shape as the grounding rejection this vocabulary is
  * modelled on, which hides *which* refusal but not *that* it refused. Narrowing
  * it needs a decision about the create endpoint itself rather than about what a
- * refusal may say: see #1812.
+ * refusal may say: see #64.
  *
  * The code set itself lives in `@omnesis/types`, which has no dependencies and
  * is therefore the one place every runtime that has to agree on it can reach.

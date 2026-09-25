@@ -51,7 +51,7 @@ export class AppleRemindersSource {
   /**
    * Pattern A: stamp the source's account email as document author. Resolves to
    * self via the existing alias graph. Per-reminder creator extraction for
-   * shared lists from other users is tracked in #281.
+   * shared lists from other users is tracked in #25.
    */
   private readonly accountPeople: { role: "author"; emails: [string] }[] | undefined;
 

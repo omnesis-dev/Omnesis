@@ -3,7 +3,7 @@
 
 /**
  * `spawn_subagent` — delegate a focused sub-task to a nested `AgentSession`
- * driven by a generic read-only worker (#748).
+ * driven by a generic read-only worker.
  *
  * The parent agent calls this when a sub-task is large enough to warrant its
  * own fresh context (a long history sweep, a single source's digest, a

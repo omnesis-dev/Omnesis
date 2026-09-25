@@ -66,7 +66,7 @@ export interface GmailSyncCursor extends SyncCursor {
    *  incremental historyId 404s. Narrows `messages.list` to `after:<date>` so
    *  we backfill just the missed window instead of re-walking the whole
    *  mailbox. Carried across bootstrap pages, cleared on the transition to
-   *  incremental. See #111. */
+   *  incremental. */
   recoverAfter?: string;
   /** ISO timestamp of the last sync that left us in the incremental phase.
    *  The watermark a 404 recovery backfills from (minus a safety overlap).
@@ -169,7 +169,7 @@ export interface GmailSourceOptions {
 // Gmail's own URLs use; `/u/<email>/` is NOT a recognized form (Gmail
 // returns "Temporary Error (404)").
 //
-// `?authuser=<email>` pins the message to the account that received it (#463),
+// `?authuser=<email>` pins the message to the account that received it,
 // so multi-account users land in the right inbox instead of whichever account
 // happens to sit at index 0 in the browser. The query goes before the `#`
 // fragment. Omitted (single-account / legacy `accountId`-less sources) → the
@@ -202,7 +202,7 @@ export class GmailSource {
   private labelMap: Map<string, string> | null = null;
   private labelMapFetchedAt = 0;
   // The account email (== accountId for multi-account sources). Used to pin
-  // "open in Gmail" links to the right account via `?authuser=` (#463).
+  // "open in Gmail" links to the right account via `?authuser=`.
   private accountEmail?: string;
   constructor(
     auth: OAuth2Client,
@@ -554,7 +554,6 @@ export class GmailSource {
       // few days' gap is a quota/time sink. The bounded bootstrap fetches the
       // missed window, then transitions to incremental from a fresh historyId.
       // Re-ingest is idempotent (upsert keys on provider/source/external_id).
-      // See #111.
       if ((error as { code?: number } | undefined)?.code === 404) {
         const recoverAfter = this.recoveryFloor(state);
         log.warn(
@@ -782,8 +781,8 @@ export class GmailSource {
             // We'll build the attachment doc after the parent doc is created
             // below. Note: we no longer carry `attachmentId` here — the
             // child's externalId derives from (filename, size, mimeType, seq)
-            // via deriveAttachmentStableId, which is stable across re-syncs
-            // (#268). Gmail's attachmentId is only used for the download
+            // via deriveAttachmentStableId, which is stable across re-syncs.
+            //Gmail's attachmentId is only used for the download
             // call above.
             attachmentDocs.push({
               filename: part.filename,
@@ -803,7 +802,7 @@ export class GmailSource {
         } catch (err) {
           // A transient non-OCR extraction failure must fail the page so it
           // retries, not get recorded as a permanent download/extraction
-          // failure that advances the cursor past the message forever (#680).
+          // failure that advances the cursor past the message forever.
           // Optional OCR failures are normalized to null before this boundary.
           if (isTransientSyncError(err)) throw err;
           log.warn(
@@ -863,7 +862,7 @@ export class GmailSource {
         ...(listUnsubscribe ? { bulkMail: true } : {}),
         // Generic automated-notification marker (see DocumentMetadata.automatedSender).
         ...(automatedSender ? { automatedSender: true } : {}),
-        // Typed scheduled/due date promotion (#1168) — parsed from schema.org
+        // Typed scheduled/due date promotion — parsed from schema.org
         // JSON-LD markup that transactional mail (flights, hotels, orders,
         // reservations, invoices) embeds. Lets downstream consumers key off the
         // date without re-parsing prose, and lets the steward waker treat a
@@ -913,7 +912,7 @@ export class GmailSource {
    * `text/calendar`, once as `application/ics`) with distinct attachmentIds
    * but identical filename + size. Both parts have separate attachmentIds
    * but point at byte-identical content, and the user sees the result as
-   * two duplicate rows in the portal Attachments panel (#267).
+   * two duplicate rows in the portal Attachments panel.
    *
    * The dedup keeps the *first* occurrence in tree-walk order — for the
    * calendar-invite case Gmail puts the `text/calendar` part first, which
@@ -1006,8 +1005,8 @@ export class GmailSource {
 
   /**
    * Promote schema.org JSON-LD dates from the email's HTML part to the typed
-   * `scheduledAt` (earliest planned start) / `dueAt` (earliest deadline) fields
-   * (#1168). Cheap + robust: regex the `<script type="application/ld+json">`
+   * `scheduledAt` (earliest planned start) / `dueAt` (earliest deadline) fields.
+   *Cheap + robust: regex the `<script type="application/ld+json">`
    * blocks, JSON.parse each, walk for the known date keys. Returns {} when the
    * mail carries no such markup (the common case).
    */

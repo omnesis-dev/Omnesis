@@ -19,7 +19,7 @@
  * package's surface — the unified `OmnesisConfig` is now the only
  * cross-package config contract — without forcing a deeper collector
  * refactor away from `enabled`-on-config tracking. That refactor is a
- * separate, larger change tracked in #384.
+ * separate, larger change tracked separately.
  */
 
 import type { DataRetentionConfig, IndexerConfig, SearchConfig, SourceConfig } from "@omnesis/core";

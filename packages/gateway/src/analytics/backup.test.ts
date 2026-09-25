@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Coverage for the DuckDB online-backup path (#57):
+ * Coverage for the DuckDB online-backup path:
  * `AnalyticsDb.backupTo` → `AnalyticsConnectionPool.backupTo` (ATTACH +
  * COPY FROM DATABASE + DETACH through the live pool, serialized with
  * other writes).

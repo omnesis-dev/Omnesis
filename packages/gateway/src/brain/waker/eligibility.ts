@@ -215,7 +215,7 @@ export function decideWake(
   if (docType !== null && WAKER_DAILY_BATCH_DOC_TYPES.has(docType)) return null;
 
   // Actionable-transactional override: a document carrying a promoted typed
-  // scheduled/due date (`metadata.scheduledAt` / `dueAt`, #1168) is a real
+  // scheduled/due date (`metadata.scheduledAt` / `dueAt`) is a real
   // dated obligation — a booking, an invoice, an appointment. Let it through
   // the bulk-mail and automated-sender gates that otherwise drop the very
   // transactional confirmations (flights, hotels, renewals) that make the best

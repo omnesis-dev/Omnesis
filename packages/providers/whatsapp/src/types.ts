@@ -30,12 +30,12 @@ export interface WhatsAppSyncCursor extends SyncCursor {
  *   `messaging-history.status` or `isLatest`), so the corpus is whole.
  * - `interrupted`: the push stalled (quiet-gap / no-history timeout fired)
  *   without a genuine completion — the corpus is truncated and recovery is
- *   re-pair (refreshes the recent window) or a one-time backup import (#588).
- *   Never silently promoted to `complete` by a timer. See #579.
+ *   re-pair (refreshes the recent window) or a one-time backup import.
+ *   Never silently promoted to `complete` by a timer.
  */
 export type HistorySyncState = "streaming" | "interrupted" | "complete";
 
-/** Group sub-kind. Only meaningful when `StoredChat.isGroup` is true. See #580 communities gap. */
+/** Group sub-kind. Only meaningful when `StoredChat.isGroup` is true. */
 export type ChatKind = "group" | "community" | "community-subgroup";
 
 /**
@@ -165,7 +165,7 @@ export interface StoredChat {
   /**
    * Group sub-kind (community announcement group, community sub-group, or a
    * plain group). Undefined for 1:1 chats and for groups not yet classified
-   * via the community enumeration pass (#580). Display-neutral today; carried
+   * via the community enumeration pass. Display-neutral today; carried
    * so consumers can distinguish a community from a plain group without
    * re-deriving it.
    */
@@ -247,7 +247,7 @@ export interface SocketFactoryResult {
       )[],
       isInitialSync: boolean,
     ) => Promise<void>;
-    /** Community enumeration (#580 communities gap). Optional. */
+    /** Community enumeration. Optional. */
     communityFetchAllParticipating?: () => Promise<Record<string, unknown>>;
     communityFetchLinkedGroups?: (
       jid: string,

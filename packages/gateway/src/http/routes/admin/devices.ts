@@ -38,7 +38,7 @@ import { log, type AdminRoutesDeps } from "./internals.js";
 import type { RouteApp, AuthContext } from "../types.js";
 
 /**
- * Validate + normalise a `selfEmails` / `selfPhones` patch (#282 self
+ * Validate + normalise a `selfEmails` / `selfPhones` patch (self
  * annotation). Returns the writer-bound patch; throws BadRequestError
  * with a human-readable message on the first invalid entry. Extracted
  * out of the route body so the handler stays a thin
@@ -101,7 +101,7 @@ function requireSelfBearer(auth: AuthContext, id: DeviceId): void {
  *   GET    /admin/devices
  *   POST   /admin/devices
  *   DELETE /admin/devices/:id
- *   PATCH  /admin/devices/:id          (#282 self annotation)
+ *   PATCH  /admin/devices/:id          (self annotation)
  *   POST   /admin/devices/pair
  *   POST   /admin/devices/pair-addresses
  *   POST   /admin/devices/pair-qr
@@ -326,7 +326,7 @@ export function mountDeviceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
     return c.json({ ok: true, revoked: true });
   });
 
-  // #282 — device-level self annotation. Operator pins the human-side
+  // Device-level self annotation. Operator pins the human-side
   // identifiers (emails / phones) for the device's owner so sources
   // emitting `isSelf: true` mentions resolve cleanly even before any
   // contacts source has synced. Boot-time `bootstrapSelfFromDevices`
@@ -603,7 +603,7 @@ export function mountDeviceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
       }
     }
 
-    // #284 — optional inline self annotation. Reuses the exact validation /
+    // Optional inline self annotation. Reuses the exact validation /
     // normalization the PATCH /admin/devices/:id (set-self) path uses, so a
     // staged-at-pairing annotation and a post-pair one land identically:
     // emails normalizeEmail-d, phones normalizePhone-d to E.164, an

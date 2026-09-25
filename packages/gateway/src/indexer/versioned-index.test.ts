@@ -170,7 +170,7 @@ describe("version pointer + path scheme", () => {
   });
 });
 
-// Status two-readout (epic #1011): the gateway computes the active-vs-building
+// Status two-readout: the gateway computes the active-vs-building
 // distinction + rebuild progress as first-class fields so `/index/stats` and
 // `/status` can surface a graceful swap as an upgrade-in-flight (the existing
 // "% indexed" stays on the complete active generation; the migration progress

@@ -3,7 +3,7 @@
 
 /**
  * `join_subagents` — await a set of in-flight sub-agents and collect their
- * findings (#748).
+ * findings.
  *
  * This is the barrier the parent uses after fanning out with `spawn_subagent`:
  * it blocks until every named child has finished, then returns each child's
@@ -11,7 +11,7 @@
  * Already-finished children resolve immediately; a mixed set (some done, some
  * in-flight) is fine.
  *
- * Deliberately argument-minimal (a frozen #748 constraint): it takes only the
+ * Deliberately argument-minimal (a frozen constraint): it takes only the
  * set of sub-agent handle ids to await — no backend/model/scope. When the
  * tree-wide token budget tripped during the fan-out, the result carries an
  * honest, named `stoppedReason` rather than silently dropping work.

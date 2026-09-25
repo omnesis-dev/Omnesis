@@ -40,7 +40,7 @@ export function getSyncState(db: Db, sourceId: string, deviceId = ""): StoredSyn
  * Current write epoch of one cursor row (legacy wire name: wipeEpoch) —
  * `""` the shared row, a device id a member's own. It advances for every
  * sync attempt on that row and for every wipe of the source, so stale
- * writers lose authority. See #551.
+ * writers lose authority.
  */
 export function getWipeEpoch(db: Db, sourceId: string, deviceId = ""): number {
   const row = db
@@ -55,7 +55,7 @@ export function getWipeEpoch(db: Db, sourceId: string, deviceId = ""): number {
 /**
  * Wipe a source or one of its cursor rows. Without `deviceId` every row's
  * epoch advances, so a sync that began before the wipe is rejected when it
- * tries to advance its cursor, whichever row it holds (#551); the shared row
+ * tries to advance its cursor, whichever row it holds; the shared row
  * is created if the source never claimed one. With `deviceId` only that
  * member's row advances — a stream wipe or a per-device resync must not
  * revoke the siblings' claims — and the row is created if absent, so a
@@ -219,8 +219,8 @@ export function setSyncState(
   cursor: SyncCursor,
   meta?: SourceSyncMeta,
   /**
-   * Forward-looking consent deadline (ISO 8601) the source reported this page
-   * (#927). `undefined` leaves the stored value unchanged (the common case —
+   * Forward-looking consent deadline (ISO 8601) the source reported this page.
+   *`undefined` leaves the stored value unchanged (the common case —
    * a source with no known deadline); an explicit string SETS it; an explicit
    * `null` CLEARS it (re-consent that no longer expires). The undefined-vs-null
    * distinction is preserved by writing the prior value back on `undefined`

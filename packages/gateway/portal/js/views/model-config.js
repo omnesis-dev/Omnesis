@@ -413,7 +413,7 @@ function BackendModelSelect({ backendKey, role, overview, onPick, onBack }) {
 
 function LocalModelList({ role, overview, sys, onInstall, onUse, onUninstall, onCancelDownload, onBack }) {
   // Bundled-catalog GGUFs fit for this capability's role. When sideloading /
-  // HF-browse lands (#241), an installed model absent from the catalog has no
+  // HF-browse lands (#21), an installed model absent from the catalog has no
   // role and would not appear here — it'll need its own home to stay listable.
   const entries = overview.catalog.filter((e) => e.kind === "gguf" && (e.roles ?? []).includes(CAPABILITY_TO_CATALOG[role]));
   return html`

@@ -14,7 +14,7 @@ plugins {
     alias(libs.plugins.roborazzi) apply false
 }
 
-// ── Roborazzi zero-capture guard (epic #804, C15b) ──────────────────────────
+// ── Roborazzi zero-capture guard ─────────────────────────────────────────────
 // A Roborazzi record/verify run that captured ZERO images is a silent no-op: the
 // committed goldens under src/test/roborazzi/ are still present, so neither the unit
 // test task nor verifyRoborazzi reddens — yet nothing was actually rendered (every

@@ -216,7 +216,7 @@ class AgentReducerGateTest {
 
     @Test
     fun cite_record_result_folds_into_records_and_bumps_count() {
-        // A directly-cited record (#757) is non-ephemeral, so it lands as a normal tool result:
+        // A directly-cited record is non-ephemeral, so it lands as a normal tool result:
         // its record folds into state.records and the citing turn's citationCount bumps (no SSE
         // Citation event exists for a record, so the count is bumped here).
         val citeResult = AgentToolResult.CiteRecord(

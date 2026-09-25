@@ -39,7 +39,7 @@ struct CitationsDrawer: View {
     /// Timeline. `byDoc` is the synthesis source: each slot carries the
     /// captured DocRef the builder needs to fabricate the document's row.
     let trailAnnotations: AgentTrailAnnotations
-    /// Directly-cited analytics rows from `cite_record` (#757). The
+    /// Directly-cited analytics rows from `cite_record`. The
     /// builder synthesises a record-only Timeline row for each one.
     let recordCitations: [AgentTrailRecord]
     @Binding var isOpen: Bool
@@ -750,7 +750,7 @@ struct TimelineEventStickyTab: View {
     static let iconSize: CGFloat = 16
 
     /// Source id resolved source-agnostically — a document event uses its
-    /// `doc.sourceId`, a record-only event (#757) its `record.sourceId`.
+    /// `doc.sourceId`, a record-only event its `record.sourceId`.
     private var eventSourceId: String {
         event.eventSourceId ?? ""
     }
@@ -810,7 +810,7 @@ struct TimelineEventStickyTab: View {
     }
 
     /// Source-agnostic title for the tab's accessibility label — the
-    /// document title, the record's derived title (#757), or a fallback.
+    /// document title, the record's derived title, or a fallback.
     private var eventTitle: String {
         if let title = event.doc?.title, !title.isEmpty { return title }
         if let recordTitle = event.record?.title, !recordTitle.isEmpty { return recordTitle }

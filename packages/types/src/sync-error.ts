@@ -200,7 +200,7 @@ export function syncRemediationOf(err: unknown): SyncRemediation | undefined {
  *
  * Used by source call sites to decide whether a thrown provider or
  * transcription failure should be re-thrown so the sync page retries instead
- * of advancing its cursor past the durable input (#680). Optional OCR is
+ * of advancing its cursor past the durable input. Optional OCR is
  * normalized to a non-fatal result at the collector's shared attachment
  * boundary before it reaches these call sites; an OCR outage must not hold
  * primary source freshness behind one attachment.

@@ -114,7 +114,7 @@ async function handleInit(init: SearchInit): Promise<void> {
     // Yield CPU to real-time work under contention. Search candidate-gen is
     // user-facing, but it runs at the same OS priority as the main loop and the
     // embedder unless reniced; renicing DOWN lets the kernel prefer main-thread
-    // work when cores are contended. See #199 (Lever 3).
+    // work when cores are contended.
     const nice = deprioritizeBackgroundWorker(init.backgroundWorkerNice, "search", (m) =>
       log("warn", "search-worker", m),
     );

@@ -36,7 +36,7 @@ export const CONFIG_DEFAULTS = {
     // died mid-view stops suppressing the unread marker within a couple of
     // minutes.
     conversationViewingTtl: "90s",
-    // Sub-agent fan-out caps (#748). subagentTreeTokenBudget has no static
+    // Sub-agent fan-out caps. subagentTreeTokenBudget has no static
     // default (see NO_STATIC_DEFAULT_PATHS — unset = unbounded).
     subagentDepthCap: 2,
     subagentConcurrencyCap: 4,

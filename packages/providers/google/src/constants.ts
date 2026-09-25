@@ -16,7 +16,7 @@ export const GMAIL_LABEL_CACHE_TTL_MS = 60 * 60 * 1000;
 // When `history.list` 404s (the stored historyId aged past Gmail's retention
 // window — typically after the OAuth token sat dead for days), we recover by
 // backfilling only the *recent* window rather than re-walking the entire
-// mailbox. These bound that window. See #111.
+// mailbox. These bound that window.
 //
 // Safety overlap subtracted from the last-sync watermark: covers clock skew
 // and the internalDate-vs-historyId ordering gap so the backfill can't slip

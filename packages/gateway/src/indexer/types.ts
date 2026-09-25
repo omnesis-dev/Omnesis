@@ -14,8 +14,8 @@ import type { ListedDocument } from "@omnesis/source-sdk";
 // ---------------------------------------------------------------------------
 
 /**
- * The shape the indexer pipeline operates on. Per #386,
- * this is now an alias for the canonical `ListedDocument` from
+ * The shape the indexer pipeline operates on.
+ * This is now an alias for the canonical `ListedDocument` from
  * `@omnesis/core` — the same shape the gateway's `/documents/list`
  * HTTP route serves and the same shape `DirectDocumentSource` reads
  * from `omnesis.db`. A single field addition lands in core's
@@ -42,7 +42,7 @@ export interface LightweightDocumentHeader {
    * Canonicalized `documents.source_url`. Carried in the lightweight scan
    * so a URL-only change (content hash unchanged) can be propagated to the
    * denormalized `chunks.source_url` column in place — without paying for a
-   * full content fetch + re-embed. See #462.
+   * full content fetch + re-embed.
    */
   sourceUrl: string | null;
   sourceCreatedAt: string;

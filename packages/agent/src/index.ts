@@ -230,7 +230,7 @@ export {
   type JoinSubagentsToolDeps,
 } from "./tools/join-subagents.js";
 
-// Specialists — the named personas spawn_subagent drives (#748).
+// Specialists — the named personas spawn_subagent drives.
 export {
   defineSpecialist,
   SpecialistRegistry,

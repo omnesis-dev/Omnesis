@@ -14,7 +14,7 @@
  * "Remove this source" is one of those ops, and it is the one that has to win —
  * `deleteAllBySource` advances the source's write epoch, and the resumed page is
  * fenced on the epoch its sync attempt claimed, so nothing it still holds may
- * land (#551).
+ * land.
  *
  * `db.test.ts` pins the fence itself with a stubbed token and two hand-sequenced
  * calls. What only an end-to-end can show is that the three moving parts line up

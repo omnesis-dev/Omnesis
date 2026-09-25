@@ -8,7 +8,7 @@
 //   - Graph: the document-graph walker (views/graph.js).
 //   - Metrics: /admin/metrics + /admin/scheduler-metrics (writer queue,
 //     per-route latency, scheduler SLA + per-task stats). Built to
-//     validate the fairness work landing in #199.
+//     validate the writer-queue fairness work.
 //   - Background Jobs: /admin/background-jobs — every long-running
 //     loop in the gateway (indexer cycle, link / people backfills,
 //     stats refreshes, token usage flush, …) with progress and state.

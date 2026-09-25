@@ -40,8 +40,8 @@ export default defineSource<SynthCursor>({
   async create(opts) {
     // Two synth modes, selected by what the active universe ships:
     //
-    // 1. WRAPS-REAL (#586) — universes that carry a `fake-corpus.json` drive
-    //    the REAL WhatsAppProvider (durable store, #579 seal, #580 backfill)
+    // 1. WRAPS-REAL — universes that carry a `fake-corpus.json` drive
+    //    the REAL WhatsAppProvider (durable store, history seal, backfill)
     //    via an injected FakeWhatsAppServer. Exercises the full provider
     //    end-to-end through the gateway pipeline.
     //

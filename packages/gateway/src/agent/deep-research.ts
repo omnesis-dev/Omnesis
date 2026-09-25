@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * `DeepResearchService` — the explicit Deep Research orchestration loop (#748).
+ * `DeepResearchService` — the explicit Deep Research orchestration loop.
  *
  * It runs a fixed, observable pipeline on top of the {@link SubagentService}:
  *
@@ -19,7 +19,7 @@
  * an HONEST {@link DeepResearchStoppedReason} — never a euphemism for a silent
  * stop.
  *
- * Frozen #748 constraints honoured here:
+ * Frozen sub-agent constraints honoured here:
  *   - **Explicit-only.** The loop runs only when the turn carries the
  *     `deepResearch` flag — there is NO implicit auto-gating (the caller, e.g.
  *     the future `/`→pill, flips the flag per message).
@@ -375,7 +375,7 @@ export class DeepResearchService {
         title: "Planning research",
         task,
         // The planner is an internal stage — its fenced-JSON output is plumbing,
-        // not a researcher card. Keep it off the client stream (#890).
+        // not a researcher card. Keep it off the client stream.
         internal: true,
         spendMechanism: deepResearchSpendMechanism("research-planner"),
         signal,
@@ -419,8 +419,8 @@ export class DeepResearchService {
    * trust SIGNAL on the artifact, NOT a hard gate. A finding is NOT discarded
    * just because its quotes didn't string-match: readers legitimately
    * paraphrase, and dropping a well-cited finding over a paraphrase produced
-   * "no results" on broad queries that had clearly found relevant documents
-   * (#890 follow-up). Deterministic — no model.
+   * "no results" on broad queries that had clearly found relevant documents.
+   * Deterministic — no model.
    */
   private async verify(
     results: ReadonlyArray<SubagentPortResult>,
@@ -473,7 +473,7 @@ export class DeepResearchService {
       quotesVerified += quoteMatched.filter(Boolean).length;
       // Keep the finding when it has at least one resolving citation. Quote
       // verification drives the report's honest tally (the badge), but does NOT
-      // gate the finding — a paraphrased-but-well-cited finding is kept (#890).
+      // gate the finding — a paraphrased-but-well-cited finding is kept.
       if (verifiedCitations.length > 0) {
         findings.push({
           specialist: r.specialist,

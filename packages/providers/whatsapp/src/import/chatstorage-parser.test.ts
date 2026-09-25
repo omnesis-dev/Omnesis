@@ -18,7 +18,7 @@ function ts(date: string): number {
   return Math.floor(Date.parse(`${date}T12:00:00.000Z`) / 1000);
 }
 
-describe("parseChatStorage — field mapping, fallbacks, skips (#588)", () => {
+describe("parseChatStorage — field mapping, fallbacks, skips", () => {
   const dirs: string[] = [];
   afterEach(() => {
     for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });

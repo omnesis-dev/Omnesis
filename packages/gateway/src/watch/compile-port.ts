@@ -279,7 +279,7 @@ export interface CompilePortDeps {
    * every model's context window.
    */
   readonly people: () => readonly PersonDirectoryEntry[];
-  // See #1953 — measured against a real install, this deadline is reached on
+  // See #69 — measured against a real install, this deadline is reached on
   // 18% of attempts, and the requests that reach it are not the easy ones.
   /**
    * How long one model turn may take, from this install's configuration.

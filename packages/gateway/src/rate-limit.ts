@@ -170,7 +170,7 @@ export function wsHelloRateLimiter(): IpRateLimiter {
 }
 
 /**
- * Per-IP limiter for the authenticated `POST /search` endpoint (#58).
+ * Per-IP limiter for the authenticated `POST /search` endpoint.
  * Defence-in-depth for a gateway exposed beyond the LAN: a stolen token or
  * a runaway client can't pin the search pipeline. Sized well above any
  * human's interactive cadence (2/s burst, ~1/s sustained).
@@ -241,8 +241,8 @@ export function oauthTokenRateLimiter(): IpRateLimiter {
 }
 
 /**
- * Per-IP limiter for the authenticated `POST /documents` ingest endpoint
- * (#58). The collector is a legitimate high-volume client (batched
+ * Per-IP limiter for the authenticated `POST /documents` ingest endpoint.
+ *The collector is a legitimate high-volume client (batched
  * bootstrap ingestion), so the ceiling is deliberately generous — 20 req/s
  * burst — far above realistic batched ingestion, yet still a backstop
  * against a pathological write loop.

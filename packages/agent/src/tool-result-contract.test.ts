@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Cross-surface tool-result contract test (epic #804, criterion C19).
+ * Cross-surface tool-result contract test.
  *
  * The agent emits typed tool results on the wire; three surfaces decode them —
  * the gateway/portal reducer (TS), the iOS app (Swift), and the Android app
@@ -14,8 +14,8 @@
  *   1. ONE canonical, invented fixture (`__fixtures__/tool-result-contract.json`)
  *      carries a representative payload per tool-result kind — emphasising the
  *      fields that have been dead-wired on clients before: a DocRef's `refCount`
- *      + `breadcrumb`, a record citation's `primaryKeyColumns` + `snapshot`
- *      (#757), and a `run_sql` result's `rowIdentities` (#757).
+ *      + `breadcrumb`, a record citation's `primaryKeyColumns` + `snapshot`,
+ *and a `run_sql` result's `rowIdentities`.
  *   2. Each fixture `wire` payload is re-derived through the REAL server projector
  *      — the tool's `invoke()` driven by a stub port that yields the corresponding
  *      internal result — and asserted to round-trip every advertised field with no
@@ -253,7 +253,7 @@ describe("cross-surface tool-result contract (C19)", () => {
   it("specifically pins the dead-wire-prone fields on cite_record + sql.rows", () => {
     const cite = caseFor("cite_record.recorded").wire;
     if (cite.kind !== "cite_record.recorded") throw new Error("kind");
-    // #757 fields a renderer ignores but the wire must still carry intact.
+    // Record fields a renderer ignores but the wire must still carry intact.
     expect(cite.primaryKeyColumns.length).toBeGreaterThan(0);
     expect(Object.keys(cite.snapshot).length).toBeGreaterThan(0);
 

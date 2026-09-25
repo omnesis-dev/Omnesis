@@ -146,7 +146,7 @@ public enum HealthRecordBuilder {
 
 /// Mints the searchable per-session summary `DocumentInput` for the
 /// episodic, nameable Health tables — workouts, mindful sessions, and
-/// State of Mind logs (#640). The 6 tall sample tables (body/activity/
+/// State of Mind logs. The 6 tall sample tables (body/activity/
 /// vitals/sleep/nutrition/environment) are aggregate-only and get NO
 /// document.
 ///

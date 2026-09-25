@@ -5,7 +5,7 @@
  * A phone's cursor write, after something else advanced the write epoch.
  *
  * The write-epoch fence refuses a page whose author claimed authority before
- * the source was wiped (#551). A collector participates in that protocol: it
+ * the source was wiped. A collector participates in that protocol: it
  * claims an attempt, is handed the epoch, and quotes it back on every write.
  * A phone does not — the iOS and Android clients hold `write:<source-type>`
  * rather than `write:*`, never call the attempt routes, and post a bare

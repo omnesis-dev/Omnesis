@@ -407,7 +407,7 @@ export default defineProvider<AppleContext>({
     },
     {
       id: "apple-contacts",
-      // See #2182 — Contact ZUNIQUEID values are host-local even for the
+      // See #78 — Contact ZUNIQUEID values are host-local even for the
       // same iCloud address book. Joining replicas would duplicate every
       // logical person.
       multiDevice: { mode: "exclusive" },
@@ -449,7 +449,7 @@ export default defineProvider<AppleContext>({
     },
     {
       id: "apple-calendar",
-      // See #2182 — CalendarItem.UUID is host-local across macOS replicas.
+      // See #78 — CalendarItem.UUID is host-local across macOS replicas.
       // Keep this exclusive until the provider owns a stable cross-host key.
       multiDevice: { mode: "exclusive" },
       name: "Apple Calendar",
@@ -478,7 +478,7 @@ export default defineProvider<AppleContext>({
           phoneRegion: ctx.phoneRegion,
         });
 
-        // Event documents sync alongside the analytics dual-push (#5 / #450): an
+        // Event documents sync alongside the analytics dual-push: an
         // `apple_calendar_events` table and the synthesized doc↔row edge.
         return {
           probeReadAccess,

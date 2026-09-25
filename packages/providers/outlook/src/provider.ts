@@ -215,7 +215,7 @@ function publicCallbackState(callbacks: AuthFlowCallbacks, providerName: string)
 /**
  * Run the Microsoft OAuth flow using MSAL's PKCE + browser-callback path.
  *
- * Device-code flow (#171) is unviable for Microsoft: passwordless-only
+ * Device-code flow is unviable for Microsoft: passwordless-only
  * accounts require a passkey/security key/biometric on the device being
  * authenticated, and the verification URL doesn't fall back to password —
  * so we use the same-machine PKCE callback. Cross-device auth instead relies

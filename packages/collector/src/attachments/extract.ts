@@ -66,8 +66,7 @@ export interface AttachmentExtractorDeps {
  * Build the shared attachment text extractor. OCR and STT are injected here —
  * closed over — rather than handed to each provider, so the `(bytes, mime) →
  * text` contract every source already calls is unchanged and recognition /
- * transcription happen transparently inside it (no per-source code). See
- * #427 / #260.
+ * transcription happen transparently inside it (no per-source code).
  */
 export function createAttachmentExtractor(deps: AttachmentExtractorDeps = {}) {
   const { transcribe } = deps;
@@ -98,7 +97,7 @@ export function createAttachmentExtractor(deps: AttachmentExtractorDeps = {}) {
    * Returns null if the type is unsupported or extraction fails.
    *
    * Identical bytes arriving again (the same file attached to a second
-   * message) are extracted from scratch — see #1790 for a raw-bytes-hash
+   * message) are extracted from scratch — see #62 for a raw-bytes-hash
    * cache and why it is deferred.
    */
   return async function extractAttachmentText(

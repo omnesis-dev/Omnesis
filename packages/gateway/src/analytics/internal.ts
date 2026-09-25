@@ -69,7 +69,7 @@ export interface CatalogSchemaJson {
   sharedDiscriminatorColumn?: string;
   sharedDiscriminatorParent?: AnalyticsTableSchema["sharedDiscriminatorParent"];
   /**
-   * The 1:1 doc↔row binding (#450), persisted so the graph walker can
+   * The 1:1 doc↔row binding, persisted so the graph walker can
    * synthesize `same-entity` edges at read time from the catalog without the
    * source being mid-sync. Survives the catalog codec's `.passthrough()`.
    */
@@ -77,17 +77,17 @@ export interface CatalogSchemaJson {
   /**
    * The declared semantic-time column (or explicit `null` for a timeless
    * table), persisted so a record citation reads the true event-time column
-   * the source declared — not the query-runner's `pickTimeColumn` heuristic
-   * (#757). Survives the catalog codec's `.passthrough()`. Older catalog rows
+   * the source declared — not the query-runner's `pickTimeColumn` heuristic.
+   *Survives the catalog codec's `.passthrough()`. Older catalog rows
    * written before this field existed read back as `undefined`; the record
    * port treats `undefined` like `null` (not timeline-eligible until re-synced).
    */
   semanticTimeColumn?: string | null;
   /**
    * How to title a row and which columns to surface as its key fields when it
-   * is cited as a record (#757). Persisted so the gateway derives the
+   * is cited as a record. Persisted so the gateway derives the
    * client-ready title/key-fields without any source-specific code. Absent on
-   * pre-#757 catalog rows.
+   * older catalog rows.
    */
   record?: RecordDisplaySpec;
   /** Explicit source-owned temporal projection contract, when opted in. */

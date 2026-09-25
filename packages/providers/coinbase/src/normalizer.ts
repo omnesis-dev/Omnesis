@@ -3,7 +3,7 @@
 
 /**
  * Pure mapping from Coinbase API shapes to point-in-time snapshot rows.
- * Deterministic and free of I/O — reused verbatim by the synth twin (#754),
+ * Deterministic and free of I/O — reused verbatim by the synth twin,
  * so fixture semantics cannot drift from production behavior.
  *
  * Money/quantity columns are DECIMAL and Coinbase money fields are decimal
@@ -114,7 +114,7 @@ function isZeroOrNull(v: unknown): boolean {
   return typeof v === "string" && /^-?0(\.0+)?$/.test(v);
 }
 
-// ── orders / fills / transactions (#753) ────────────────────────────
+// ── orders / fills / transactions ────────────────────────────
 
 /** Normalize an upstream timestamp to strict ISO 8601, or null if absent/unparseable. */
 export function toIso(value: string | null | undefined): string | null {

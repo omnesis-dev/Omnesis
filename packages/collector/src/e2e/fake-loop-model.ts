@@ -4,8 +4,8 @@
 /**
  * The scripted loop-model server — a deterministic fake OpenAI-compatible
  * chat-completions server that stands in for the `background-agent` model
- * in the Briefs reconcile instrument (epic #137 S13, criterion 16's
- * scripted half).
+ * in the Briefs reconcile instrument (the scripted half of its
+ * instrument validation).
  *
  * Unlike the config-level ReplayBackend (which replays transcripts and
  * never invokes tools), this server emits real `tool_calls`, so the

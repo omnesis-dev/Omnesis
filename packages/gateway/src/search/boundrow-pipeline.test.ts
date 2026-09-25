@@ -78,7 +78,7 @@ const resolver: BoundRowResolver = {
   },
 };
 
-describe("search boundRow hydration (#450)", () => {
+describe("search boundRow hydration", () => {
   test("attaches the co-described analytics row when includeBoundRow is set", async () => {
     const pipeline = new SearchPipeline({ indexDb: indexWithStravaDoc() });
     pipeline.setGatewayDb(gatewayDbWithDoc());

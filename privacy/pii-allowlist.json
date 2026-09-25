@@ -6207,7 +6207,7 @@
         "packages/cli/src/commands/status-render.test.ts",
         "packages/cli/src/commands/status-render.ts"
       ],
-      "reason": "index status header label (epic #1011)"
+      "reason": "index status header label"
     },
     {
       "value": "Index Migration",
@@ -6215,7 +6215,7 @@
         "packages/cli/src/commands/status-render.test.ts",
         "packages/cli/src/commands/status-render.ts"
       ],
-      "reason": "index status header label (epic #1011)"
+      "reason": "index status header label"
     },
     {
       "value": "Indoor Greenery Care",
@@ -7838,11 +7838,6 @@
       "value": "Pharmacie Lafayette",
       "paths": ["packages/gateway/src/people.test.ts"],
       "reason": "reviewed existing fixture"
-    },
-    {
-      "value": "Phase Two",
-      "paths": ["packages/collector/src/e2e/briefs-backtest.e2e.test.ts"],
-      "reason": "reviewed product phase label in a doc comment"
     },
     {
       "value": "Photography Walk Route",

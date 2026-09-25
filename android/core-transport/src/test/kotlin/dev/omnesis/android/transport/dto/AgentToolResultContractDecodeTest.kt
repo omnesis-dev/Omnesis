@@ -11,7 +11,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Cross-surface tool-result contract — Android half (epic #804, criterion C19).
+ * Cross-surface tool-result contract — Android half.
  *
  * Loads the SAME canonical, invented fixture the TS round-trip test and the iOS
  * decode test load (`tool-result-contract.json` on the test classpath, a

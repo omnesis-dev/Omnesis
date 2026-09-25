@@ -53,7 +53,7 @@ export interface SearchWorkerPoolOptions {
   /**
    * When the inflight call count reaches this, the pipeline runs inline on main
    * instead of queueing behind a slow query on the single-worker FIFO — bounds
-   * worst-case per-request latency (#1436 posture).
+   * worst-case per-request latency.
    */
   maxInflightBeforeFallback: number;
   heartbeatIntervalMs?: number;

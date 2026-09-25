@@ -176,7 +176,7 @@ final class AgentTimelineBuilderTests: XCTestCase {
         XCTAssertTrue(AgentTimelineBuilder.buildUnifiedTimeline(byDoc: byDoc).isEmpty)
     }
 
-    // MARK: - Directly-cited records (cite_record, #757)
+    // MARK: - Directly-cited records (cite_record)
 
     func testKeepsCitedRecordAsRecordOnlyRow() {
         let merged = AgentTimelineBuilder.buildUnifiedTimeline(

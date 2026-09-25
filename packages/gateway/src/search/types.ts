@@ -94,7 +94,7 @@ export interface SearchQuery {
    */
   verbose?: boolean;
   /**
-   * When true, a hit whose source declares a `boundDocument` (#450) carries
+   * When true, a hit whose source declares a `boundDocument` carries
    * its co-described DuckDB analytics row in `boundRow`. Opt-in because it
    * costs one batched DuckDB lookup per table on the result frame — default
    * searches don't pay it. This is what lets a BM25/vector hit on a Strava or
@@ -112,7 +112,7 @@ export interface SearchQuery {
 }
 
 /**
- * The DuckDB analytics row a search-hit document co-describes (#450) — attached
+ * The DuckDB analytics row a search-hit document co-describes — attached
  * post-fusion when the source declares a `boundDocument` and the request sets
  * `includeBoundRow`. A bounded projection, never the full (possibly wide) row.
  */
@@ -151,8 +151,8 @@ export interface SearchResultItem {
   refCount?: number;
   /**
    * The analytics row this document co-describes — present only when the
-   * request set `includeBoundRow` and the source declares a `boundDocument`
-   * (#450). The cross-store half of the result.
+   * request set `includeBoundRow` and the source declares a `boundDocument`.
+   *The cross-store half of the result.
    */
   boundRow?: BoundRowRef;
 }

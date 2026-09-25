@@ -178,7 +178,7 @@ export type AssistantPart =
        * Opaque provider metadata for this tool call (e.g. a Gemini
        * `thought_signature`), echoed back to the model verbatim when the
        * history is replayed on a later turn. Absent for providers that
-       * don't emit one. See #510.
+       * don't emit one.
        */
       extraContent?: unknown;
       /** Opaque assistant-level reasoning blocks kept with the tool turn. */
@@ -187,7 +187,7 @@ export type AssistantPart =
   | ReportArtifactPart;
 
 /**
- * Durable record of a Deep Research run's verified-report artifact (#748),
+ * Durable record of a Deep Research run's verified-report artifact,
  * persisted alongside the assistant message's report text so the artifact card
  * (the verification badge, the honest `stoppedReason`, the merged citations, the
  * whole-tree token total) survives a conversation reload. It carries exactly the

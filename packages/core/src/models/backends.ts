@@ -442,7 +442,7 @@ export interface CodexLoginFlow {
  * model can actually serve a given role. The `/v1/models` protocol advertises
  * no purpose, so model→role classification is otherwise a name heuristic; this
  * is the authoritative confirm, issued on demand (never auto-probed per model
- * on page load) and cached per `(backend, model, role)`. See #508.
+ * on page load) and cached per `(backend, model, role)`.
  */
 export interface CapabilityVerdict {
   role: CapabilityRole;

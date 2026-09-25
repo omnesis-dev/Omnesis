@@ -18,7 +18,7 @@ import { normalizeCaptureUrl } from "./normalize.js";
  * This is the regression net for the canonicalizer unification: it asserts the
  * extension's `normalizeCaptureUrl` produces the byte-identical normalized
  * string the shared `normalizeUrl` does, across a judged URL table that
- * covers exactly the divergence axes the #895 audit flagged — tracking-param
+ * covers exactly the divergence axes an audit flagged — tracking-param
  * stripping (including the bare `ref` that the old extension mirror dropped),
  * slash-bearing-fragment handling, anchor-fragment stripping, trailing slashes,
  * param ordering, host case, and a sampling of the union click-id params. It

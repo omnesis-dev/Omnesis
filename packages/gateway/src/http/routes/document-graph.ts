@@ -27,7 +27,7 @@ export interface DocumentGraphRouteDeps {
   /**
    * The analytics store, as a bound-row resolver. When present, the subgraph
    * includes the synthesized `same-entity` edge to each document's
-   * co-described DuckDB row (#450). Optional so test/headless mounts that have
+   * co-described DuckDB row. Optional so test/headless mounts that have
    * no analytics DB still serve the document-only graph.
    */
   analyticsDb?: BoundRowResolver;

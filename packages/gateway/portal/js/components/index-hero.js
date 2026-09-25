@@ -307,7 +307,7 @@ export function PctBar({ pct }) {
 }
 
 /**
- * Status two-readout (epic #1011): turn the gateway's neutral
+ * Status two-readout: turn the gateway's neutral
  * `indexVersions: { active, building }` payload into the migration readout the
  * `MigrationBar` renders. This is rendering, NOT inference — the gateway already
  * decided which generation is active (complete, serving) and which is building;
@@ -360,7 +360,7 @@ export function migrationReadout(versions) {
 
 /**
  * Separate, clearly-labeled background-progress element for a graceful embedder
- * swap (epic #1011). Renders BELOW the OverviewBar and per-source bars, which
+ * swap. Renders BELOW the OverviewBar and per-source bars, which
  * keep reporting the ACTIVE generation as complete/serving — this element never
  * repoints those at the half-built new index. It reads as an upgrade-in-flight,
  * not a loss of the existing index. Renders nothing when no rebuild is running.

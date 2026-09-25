@@ -387,7 +387,7 @@ export interface SourceDescriptor {
    * per-source Count uses the right plane instead of the generic heuristic's
    * pick (`logical-unit → analytics-rows → documents`).
    *
-   * The motivating case is the Web Pages dataset (#993): it holds thousands of
+   * The motivating case is the Web Pages dataset (#40): it holds thousands of
    * `webpage` documents plus a small `page_visits` analytics log, so the
    * heuristic would surface the tiny visit count as the headline. Declaring
    * `"documents"` shows the page total instead. `"analytics"` forces the
@@ -451,7 +451,7 @@ export interface SourceDescriptor {
   memberScopedParamNames?: string[];
 
   /**
-   * One-time bulk-history import capability (#588). Present when the source's
+   * One-time bulk-history import capability. Present when the source's
    * instance implements `importHistory`. Clients render a generic form from
    * `historyImport.fields` and POST the values to the import endpoint.
    */
@@ -687,7 +687,7 @@ export interface SerializedDescriptor {
   hasAuthFlow: boolean;
   hasDiscover: boolean;
   hasResolveAccountId?: boolean;
-  /** Generic import form-spec (#588). Present when the source supports importing. */
+  /** Generic import form-spec. Present when the source supports importing. */
   historyImport?: HistoryImportSpec;
   /**
    * Platforms this source supports. Omitted on the wire when undefined

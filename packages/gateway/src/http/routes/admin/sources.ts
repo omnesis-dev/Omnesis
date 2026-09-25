@@ -642,7 +642,7 @@ export function mountSourceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
     }
   });
 
-  // ── History import (#588) — one-time bulk import from a local artifact ──
+  // ── History import — one-time bulk import from a local artifact ──
   // Runs source.importHistory() in the collector; progress streams back as
   // import.progress/import.complete events, surfaced via SSE below.
   app.post(

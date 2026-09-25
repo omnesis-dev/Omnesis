@@ -43,7 +43,7 @@ export default defineStructuredSource<SyncCursor>({
   // Headline count = the document (page) total, not the small `page_visits`
   // analytics log. Without this, the generic count heuristic prefers the
   // analytics row count and the source reads as e.g. "19 visits" instead of
-  // "1,095 web pages" (#993). Read generically by the portal/CLI Count column.
+  // "1,095 web pages" (#40). Read generically by the portal/CLI Count column.
   primaryCount: "documents",
   // Hosted by the gateway, not a collector: documents arrive via the browser
   // extension's HTTP push, and no collector ever syncs `web`. So the gateway

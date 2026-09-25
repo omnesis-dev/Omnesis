@@ -15,7 +15,7 @@ import type { ResolvedAssignment } from "@omnesis/core";
  * (`IndexerLifecycle.runEmbedSwap` → the stamp written by
  * `wipeAndRecreateVectorIndex`) call this. Routing both through one function
  * is what makes the writer's stamp and the reader's comparison agree by
- * construction — the #698 class of "the swap stamps a backend-prefixed label
+ * construction — the class of "the swap stamps a backend-prefixed label
  * while the boot check compares the bare served model, so every boot after an
  * HTTP-embedder swap re-wipes a perfectly valid index" cannot recur.
  *

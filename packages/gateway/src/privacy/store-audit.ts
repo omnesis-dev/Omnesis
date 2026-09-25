@@ -610,7 +610,7 @@ export function deletePrivacyConversation(
         input.now,
       );
     }
-    // See #1564 — a workflow orphaned by this delete is never garbage-collected.
+    // See #58 — a workflow orphaned by this delete is never garbage-collected.
     db.prepare("DELETE FROM answer_conversations WHERE id = ?").run(input.conversationId);
     db.prepare(
       `DELETE FROM answer_egress_payloads

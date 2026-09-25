@@ -87,7 +87,7 @@ describe("agent instructions — output contract", () => {
 });
 
 /**
- * #1209: the catalogue used to hard-code both a `cd ~/Desktop/Projects/Omnesis`
+ * The catalogue used to hard-code both a `cd ~/Desktop/Projects/Omnesis`
  * preamble and 51 `npm run cli --` commands, so an installed user — who has
  * only the `omnesis` binary on PATH and no checkout — was handed a catalogue of
  * commands they could not run.

@@ -73,7 +73,7 @@ import dev.omnesis.android.ui.common.landingPalette
  * command's send options (today only `deepResearch`), then the pill clears. The `×` dismisses
  * without sending. A default send (no pill) is an ordinary turn — explicit-only, no auto-gating.
  *
- * Dictation (a mic button) is not yet implemented on Android — tracked in #715.
+ * Dictation (a mic button) is not yet implemented on Android — tracked in #35.
  */
 @Composable
 fun AgentComposer(
@@ -346,7 +346,7 @@ private fun ComposerTrailingButton(
     onSend: () -> Unit,
 ) {
     val colors = OmTheme.colors
-    // No dictation affordance on Android yet — implementing the mic button is tracked in #715.
+    // No dictation affordance on Android yet — implementing the mic button is tracked in #35.
     when {
         busy -> Icon(
             Icons.Filled.StopCircle,

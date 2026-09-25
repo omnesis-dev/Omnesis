@@ -3,11 +3,11 @@
 
 /**
  * Gateway-level E2E driving the REAL WhatsAppProvider through the full
- * collector → gateway → indexer → search/links pipeline (#586), backfill half.
+ * collector → gateway → indexer → search/links pipeline, backfill half.
  *
  * The `whatsapp-backfill` universe ships a `fake-corpus.json`, which makes the
  * synth WhatsApp twin take its WRAPS-REAL path: it instantiates the real
- * provider (durable store.db, the #579 seal, the #580 day-doc deepening)
+ * provider (durable store.db, the history seal, the day-doc deepening)
  * against an injected `FakeWhatsAppServer`. The real provider's writable home
  * is the harness's isolated config dir, threaded via `CreateOptions.configDir`.
  *
@@ -16,7 +16,7 @@
  * in place. Asserts, end-to-end through a spawned gateway:
  *   - the backfill deepens the day-doc (same id, more content);
  *   - the messages' bare external-URL links resolve to no registered source, so
- *     they are dropped at extraction (#570) rather than stored unresolved — the
+ *     they are dropped at extraction rather than stored unresolved — the
  *     deepened day-doc carries no outbound graph edges (the URLs stay in the
  *     searchable content);
  *   - deep-history search finds the older backfilled message;
@@ -99,7 +99,7 @@ async function waitForIndexed(harness: SyntheticE2EHarness, timeoutMs: number): 
 /**
  * Wait until link extraction has RUN for a doc (`links_extracted_at` set).
  * These messages' only links are bare external URLs that resolve to no source,
- * so they are dropped at extraction (#570) and never appear in `document_links`
+ * so they are dropped at extraction and never appear in `document_links`
  * — meaning we can't wait for a link row. We wait for the extraction watermark
  * instead, then assert the drop.
  */
@@ -166,18 +166,18 @@ describe("WhatsApp wraps-real — backfill deepens day-docs, drops unresolvable 
     expect(maya!.content).not.toContain("Q3 retrospective");
   });
 
-  test("backfill deepens the Maya day-doc, drops unresolvable links (#570), and re-embeds O(1)", async () => {
+  test("backfill deepens the Maya day-doc, drops unresolvable links, and re-embeds O(1)", async () => {
     await waitForIndexed(harness, 60_000);
     const mayaBefore = readDoc(db, MAYA_DAY)!;
     const jamieBefore = readDoc(db, JAMIE_DAY)!;
     // The shallow message's only outbound link is a bare external URL
     // (example.org/marathon-entry) that resolves to no registered source — it
-    // is dropped at extraction (#570), not stored unresolved. Wait for
+    // is dropped at extraction, not stored unresolved. Wait for
     // extraction to RUN, then assert the URL produced no graph edge.
     await waitForLinkExtraction(db, mayaBefore.id, 60_000);
     expect(
       linkTargets(db, mayaBefore.id).some((t) => t.includes("example.org/marathon-entry")),
-      "a bare external URL must not become a document_links edge (#570)",
+      "a bare external URL must not become a document_links edge",
     ).toBe(false);
 
     // Both day-docs are at index steady-state; snapshot the embed counter so the
@@ -216,18 +216,18 @@ describe("WhatsApp wraps-real — backfill deepens day-docs, drops unresolvable 
 
     // ── Re-extraction ran on the deepened doc; its links are still bare
     // external URLs (the recent marathon one + the newly-surfaced Q3 one), both
-    // resolving to no source → still dropped (#570). The deepened doc carries no
+    // resolving to no source → still dropped. The deepened doc carries no
     // outbound edges; the URLs stay in the message content — the deep-history
     // search test below confirms the backfilled message stays searchable.
     await waitForLinkExtraction(db, mayaAfter.id, 60_000);
     const linksAfter = linkTargets(db, mayaAfter.id);
     expect(
       linksAfter.some((t) => t.includes("example.org/marathon-entry")),
-      `marathon URL must not be a graph edge (#570); got ${linksAfter.join(", ")}`,
+      `marathon URL must not be a graph edge; got ${linksAfter.join(", ")}`,
     ).toBe(false);
     expect(
       linksAfter.some((t) => t.includes("example.com/q3-retrospective")),
-      `backfilled Q3 URL must not be a graph edge (#570); got ${linksAfter.join(", ")}`,
+      `backfilled Q3 URL must not be a graph edge; got ${linksAfter.join(", ")}`,
     ).toBe(false);
   }, 120_000);
 

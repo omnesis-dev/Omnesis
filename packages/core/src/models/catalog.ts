@@ -19,7 +19,7 @@
  *
  * What does NOT go in here:
  *  - Sideloaded models the user dropped in manually (those still work
- *    via the manifest's `unverified` flag — see #241 for the planned
+ *    via the manifest's `unverified` flag — see #21 for the planned
  *    HuggingFace browse flow that adds them to the picker).
  *  - Remote *embedding* providers (OpenAI, Cohere, Voyage). Embedding
  *    every chunk would mean uploading the entire personal corpus to a

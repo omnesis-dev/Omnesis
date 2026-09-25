@@ -198,7 +198,7 @@ describe("ChromeBookmarks sync", () => {
     expect(doc.content).toContain("URL: https://example.com");
   });
 
-  test("declares a `bookmarks → webpage` edge for each bookmark (#895)", async () => {
+  test("declares a `bookmarks → webpage` edge for each bookmark", async () => {
     const file = makeBookmarksFile();
     file.roots.bookmark_bar.children = [
       {

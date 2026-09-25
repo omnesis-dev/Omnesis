@@ -223,7 +223,7 @@ describe("convertHistoryToOpenAI", () => {
     ]);
   });
 
-  it("replays a tool_use part's extraContent as extra_content across turns (#510)", () => {
+  it("replays a tool_use part's extraContent as extra_content across turns", () => {
     const sig = { google: { thought_signature: "c2lnbmF0dXJl" } };
     const out = convertHistoryToOpenAI(
       [
@@ -248,7 +248,7 @@ describe("convertHistoryToOpenAI", () => {
     expect(assistantMsg!.tool_calls![0].extra_content).toEqual(sig);
   });
 
-  it("keeps per-call extraContent distinct when one turn has multiple tool calls (#510)", () => {
+  it("keeps per-call extraContent distinct when one turn has multiple tool calls", () => {
     const sigA = { google: { thought_signature: "QQ==" } };
     const sigB = { google: { thought_signature: "Qg==" } };
     const out = convertHistoryToOpenAI(

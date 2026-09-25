@@ -16,7 +16,7 @@ function ts(date: string, hour = 12): number {
   return Math.floor(Date.parse(`${date}T${String(hour).padStart(2, "0")}:00:00.000Z`) / 1000);
 }
 
-describe("WhatsApp communities (#580) — provider + fake integration", () => {
+describe("WhatsApp communities — provider + fake integration", () => {
   let dir: string;
   let provider: WhatsAppProvider | null = null;
 

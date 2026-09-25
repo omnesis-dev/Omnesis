@@ -20,7 +20,7 @@ import { coinbaseStateSpec } from "./state.js";
 import { validateCoinbaseCursor } from "./types.js";
 import type { CoinbaseContext } from "./types.js";
 
-/** Descriptor id of the brokerage source — also used by the synth twin (#754). */
+/** Descriptor id of the brokerage source — also used by the synth twin. */
 export const COINBASE_SOURCE_ID = "coinbase";
 
 // Re-exports for tests and the (future) synth twin.

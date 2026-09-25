@@ -350,8 +350,8 @@ export const stravaActivitiesSchema: AnalyticsTableSchema = {
     keyColumns: ["name", "sport_type", "start_time", "distance_m"],
   },
   // Each row co-describes the activity document whose externalId is the same
-  // activity id (String(a.id), normalizer.ts) — declare the 1:1 doc↔row edge
-  // (#450). Synthesized at walk time; no edge rows persisted.
+  // activity id (String(a.id), normalizer.ts) — declare the 1:1 doc↔row edge.
+  //Synthesized at walk time; no edge rows persisted.
   boundDocument: { externalIdColumns: ["id"] },
   exampleQueries: [
     "SELECT sport_type, COUNT(*) AS n, ROUND(SUM(distance_m)/1000, 1) AS km FROM strava_activities GROUP BY sport_type ORDER BY km DESC",

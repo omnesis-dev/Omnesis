@@ -39,7 +39,7 @@ import dev.omnesis.android.designsystem.theme.OmRadius
 import dev.omnesis.android.designsystem.theme.OmTheme
 import dev.omnesis.android.sources.SourceCatalog
 
-// ─── Verified-report artifact (#748) ─────────────────────────────────────
+// ─── Verified-report artifact ─────────────────────────────────────
 //
 // The polished final-report enrichment at the end of a Deep Research run — the
 // Android twin of the portal `ReportArtifact` and the iOS `ReportArtifactView`. The
@@ -89,7 +89,7 @@ data class ReportVerificationBadge(val kind: Kind, val text: String) {
 }
 
 /**
- * The IN-APP deep-link target for one inline citation marker (#748): the citation's own
+ * The IN-APP deep-link target for one inline citation marker: the citation's own
  * `documentId`, opened through `onOpenDocument` → the in-app document page (the single
  * source-exit). Never an external URL. A pure helper so the deep-link target is asserted
  * directly in a unit test — a Roborazzi snapshot can't drive the marker tap/nav. Mirrors

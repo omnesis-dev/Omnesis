@@ -65,8 +65,8 @@ export interface CoinbaseAccountsResponse {
 /**
  * Phase machine for the structured sync.
  *
- * Balances + holdings are point-in-time snapshots (#752); orders, fills, and
- * the v2 transaction ledger are current-state APPEND-ONLY activity walks (#753).
+ * Balances + holdings are point-in-time snapshots; orders, fills, and
+ * the v2 transaction ledger are current-state APPEND-ONLY activity walks.
  *
  * Flow: `snapshot-balances` (paginate `GET /accounts`) → `snapshot-holdings`
  * (iterate portfolios, breakdown each) → `orders` (cursor-walk historical
@@ -103,7 +103,7 @@ export interface CoinbaseCursor extends SyncCursor {
   /** UTC day of the last completed snapshot — `incremental` re-snapshots when the day rolls over. */
   lastSnapshotDate?: string;
 
-  // ── append-only activity watermarks (#753) ───────────────────────
+  // ── append-only activity watermarks ───────────────────────
   /**
    * Watermark for the orders walk: the `created_time` of the newest order
    * ingested so far. The next walk fetches only orders at/after this time, so
@@ -119,7 +119,7 @@ export interface CoinbaseCursor extends SyncCursor {
   /** Running max `trade_time` observed during the in-progress fills walk. */
   fillsSweepMax?: string;
 
-  // ── v2 ledger state (#753) ────────────────────────────────────────
+  // ── v2 ledger state ────────────────────────────────────────
   /** v2 wallet account ids to walk, resolved once at the start of the transactions phase. */
   ledgerAccountIds?: string[];
   /** Index into `ledgerAccountIds` during the transactions phase. */

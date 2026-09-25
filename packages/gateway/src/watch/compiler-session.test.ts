@@ -350,7 +350,7 @@ describe("the caller's deadline", () => {
     async (endsWith) => {
       // A turn here is a model reply plus however many tool calls it decides to
       // make, so no provider-level timeout bounds it. Without this the request
-      // hangs for as long as the connection does — the bug #1800 fixed on the
+      // hangs for as long as the connection does — the bug fixed on the
       // single-shot path, which this path never had.
       const failure = await turnAgainst(backendThatStalls(endsWith).backend, `slow-${endsWith}`);
 

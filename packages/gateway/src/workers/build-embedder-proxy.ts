@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Main-thread proxy for the build-embedder worker (epic #1011, graceful swap
- * for a LOCAL target).
+ * Main-thread proxy for the build-embedder worker (graceful swap for a
+ * LOCAL target).
  *
  * Implements the indexer `Embedder` interface so the main-thread
  * `GenerationBuilder` can re-embed the corpus through it exactly as it would an

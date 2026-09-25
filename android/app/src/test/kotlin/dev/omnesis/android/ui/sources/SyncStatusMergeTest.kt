@@ -107,7 +107,7 @@ class SyncStatusMergeTest {
     }
 
     @Test
-    fun `auth-expiring broadcast carries the consent deadline through (#927)`() {
+    fun `auth-expiring broadcast carries the consent deadline through`() {
         val b = broadcast(
             """{"sourceId":"s","state":"auth-expiring","consentExpiresAt":"2026-07-15T00:00:00Z"}""",
         )
@@ -118,7 +118,7 @@ class SyncStatusMergeTest {
     }
 
     @Test
-    fun `a progress event without a deadline does not blank a known consent deadline (#927)`() {
+    fun `a progress event without a deadline does not blank a known consent deadline`() {
         val existing = SourceSyncStatus(
             sourceId = "s",
             state = "auth-expiring",

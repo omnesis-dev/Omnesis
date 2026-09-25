@@ -551,7 +551,7 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view.environment(store), name: "05-source-detail-synced")
     }
 
-    /// Forward-looking consent-expiry (#927): a healthy-but-expiring source
+    /// Forward-looking consent-expiry: a healthy-but-expiring source
     /// shows the amber "expiring" pill and a warning icon beside its host
     /// device.
     func testSourceDetailAuthExpiring() {
@@ -1772,7 +1772,7 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view, name: "31c-inspector-graph-tab-with-near-dupes")
     }
 
-    /// Graph tab with a cross-store `same-entity` bound row (#450, #644):
+    /// Graph tab with a cross-store `same-entity` bound row:
     /// the "Same entity" section leads, showing the Strava analytics
     /// table's display name + headline fields above the other edge types.
     func testInspectorGraphTabSameEntity() {
@@ -4328,7 +4328,7 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view, name: "78m-agent-ephemeral-loop-fetch-no-match")
     }
 
-    // MARK: - Agent tab — sub-agent card (#748)
+    // MARK: - Agent tab — sub-agent card
 
     /// Compact researcher cards cover live, completed, and grounded-partial states.
     func testAgentSubAgentCardStates() {
@@ -4388,7 +4388,7 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view, name: "82f-agent-subagent-card-many-sources-accessibility", size: CGSize(width: 320, height: 640))
     }
 
-    /// The bespoke research working-set surface mid-run (#748): three
+    /// The bespoke research working-set surface mid-run: three
     /// researchers side by side in a horizontal rail, each accumulating its
     /// own source-tinted document chips, two still searching and one done.
     /// Verifies the panels read distinctly (not the citation drawer) and the
@@ -4407,7 +4407,7 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view, name: "83-agent-research-workspace-live", size: CGSize(width: 393, height: 420))
     }
 
-    /// The working-set surface as the run finishes (#748): every researcher has
+    /// The working-set surface as the run finishes: every researcher has
     /// a terminal status + a distilled summary, the frame just before the
     /// surface collapses into the written-back report.
     func testAgentResearchWorkspaceFinishing() {
@@ -4424,8 +4424,8 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view, name: "83b-agent-research-workspace-finishing", size: CGSize(width: 393, height: 380))
     }
 
-    /// The working-set surface when one researcher has accumulated MANY docs
-    /// (#890): the per-panel doc list must scroll WITHIN the panel and the band
+    /// The working-set surface when one researcher has accumulated MANY docs:
+    ///the per-panel doc list must scroll WITHIN the panel and the band
     /// must stay a fixed bottom rail — never grow into a full-screen overlay
     /// that buries the conversation. The surrounding frame is full phone height
     /// so a regression (an unbounded panel) would visibly eat the screen.
@@ -4952,7 +4952,7 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view, name: "106-trail-timeline-empty", size: CGSize(width: 393, height: 280))
     }
 
-    // MARK: - Record citations (#757)
+    // MARK: - Record citations
 
     /// A record-only citation: a cited DuckDB row binding no document.
     /// Renders the database glyph, derived title, table label, and key
@@ -5071,7 +5071,7 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view, name: "108-trail-timeline-self-bubble")
     }
 
-    // MARK: - Models view (#11), agent model header (#13), provider glyphs (#6)
+    // MARK: - Models view, agent model header, provider glyphs
 
     func testModelsViewConfigured() {
         // Full capability list: enabled (embedder, agent,
@@ -6048,7 +6048,7 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view.environment(AppStore.preview()), name: "111e-model-picker-local-lifecycle")
     }
 
-    // MARK: - HTTP-backend management (#727)
+    // MARK: - HTTP-backend management
 
     func testBackendsList() {
         // Collapsed summary cards: a reachable backend with a key + models, and an
@@ -6124,7 +6124,7 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view.environment(AppStore.preview()), name: "112h-codex-setup-pending-login")
     }
 
-    // MARK: - Behavioral capability verify (#727)
+    // MARK: - Behavioral capability verify
 
     /// The pushed backend detail: the backend header + the "Verify capabilities"
     /// section, one (model, role) row idle, one with an in-verdict supported
@@ -7596,7 +7596,7 @@ final class PreviewSnapshotTests: XCTestCase {
     }
 }
 
-/// Integrity guard for the snapshot suite's write path (epic #804, C15b): a write
+/// Integrity guard for the snapshot suite's write path: a write
 /// failure must SURFACE, not be swallowed — guards against reverting the render
 /// write-site to `try?`. Lives in its own XCTestCase so the per-test "≥1 PNG"
 /// gate in `PreviewSnapshotTests` does not apply to a test that writes nothing.

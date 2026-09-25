@@ -258,7 +258,7 @@ export default defineStructuredSource({
           dailyRecords.length > 0
             ? { tableName: "screen_time_daily", records: dailyRecords }
             : undefined,
-        // Per-day digest documents (#4 / #450) make Screen Time BM25-searchable.
+        // Per-day digest documents make Screen Time BM25-searchable.
         documents: buildDailyDigests(dailyRecords, providerId, sourceId),
         cursor: cur,
         hasMore: false,

@@ -25,7 +25,7 @@ const log = adminLog.child("known-url-patterns");
  * definition's `urlPatterns`. Link extraction uses the set to keep an
  * unresolved url link whose target matches a known source type — so a link
  * to a not-yet-added source (e.g. a Notion URL before Notion is added)
- * survives and resolves once that source is ingested (#668), while
+ * survives and resolves once that source is ingested, while
  * truly-external targets are still dropped.
  *
  * No source-specific logic lives here — the gateway treats patterns as

@@ -4,7 +4,7 @@
 
 export {};
 
-// Load $OMNESIS_CONFIG_DIR/.env before ./utils.js freezes GATEWAY_URL. See #52.
+// Load $OMNESIS_CONFIG_DIR/.env before ./utils.js freezes GATEWAY_URL.
 import "./load-env.js";
 import { defineCommand, runCommand, showUsage, type CommandDef, type SubCommandsDef } from "citty";
 import { runCli } from "@omnesis/cli-shared";

@@ -87,7 +87,7 @@ const log = createLogger("gateway:http").child("routes:agent");
 
 const messageBody = z.object({
   text: z.string().min(1).max(10_000),
-  // Explicit, per-message opt-in to the Deep Research loop (#748). Off/absent =
+  // Explicit, per-message opt-in to the Deep Research loop. Off/absent =
   // an ordinary agent turn. There is no implicit auto-gating — the `/`→"Deep
   // Research" pill (a later client chunk) flips this for the next send only.
   deepResearch: z.boolean().optional(),

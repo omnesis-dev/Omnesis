@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Deterministic deep-research replay scenario (#748) — the headline test.
+ * Deterministic deep-research replay scenario — the headline test.
  *
  * Reproduces a multi-sub-agent Deep Research run fully deterministically in CI:
  * synthetic sub-agent transcripts (planner + two readers) AND a synthetic final
@@ -23,7 +23,7 @@
  * spawns a sub-agent.
  *
  * All data is invented (a fictional Q4 budget review / marathon-entry topic) —
- * never sourced from any real corpus (frozen privacy constraint, #748).
+ * never sourced from any real corpus (frozen privacy constraint).
  */
 
 import { mkdtempSync, rmSync, readdirSync } from "node:fs";
@@ -368,7 +368,7 @@ function conversationFiles(dir: string): string[] {
   }
 }
 
-describe("Deep Research loop — deterministic replay (#748)", () => {
+describe("Deep Research loop — deterministic replay", () => {
   afterEach(() => {
     while (tempDirs.length) {
       const d = tempDirs.pop()!;

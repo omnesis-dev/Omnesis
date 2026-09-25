@@ -110,7 +110,7 @@ export class AppleNotesSource {
     }
 
     // Fetch notes modified since last cursor, ordered by modification date.
-    // Known gap: #2216 — a note restored from "Recently Deleted" bumps only
+    // Known gap: #79 — a note restored from "Recently Deleted" bumps only
     // the folder-move stamp, so this window misses it until its next edit.
     // Excludes permanently deleted notes (ZMARKEDFORDELETION=1) and notes
     // moved to the "Recently Deleted" folder (folder ZIDENTIFIER starts with
@@ -236,7 +236,7 @@ export class AppleNotesSource {
     // Pattern A: stamp the source's account email as document author. Resolves to
     // self via the existing alias graph because the email is already a self-alias
     // (set up via Apple Contacts isMe=true card). Per-note creator extraction
-    // (family-shared notes from another user) is tracked in #281.
+    // (family-shared notes from another user) is tracked in #25.
     const { accountId } = parseSourceId(this.id);
     const authorPeople: PersonMention[] | undefined = accountId.includes("@")
       ? [{ role: "author", emails: [accountId], phones: [] }]

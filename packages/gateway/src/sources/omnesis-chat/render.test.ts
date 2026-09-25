@@ -289,7 +289,7 @@ describe("renderConversation — citation harvest", () => {
     ]);
   });
 
-  test("harvests a cite_record.recorded result as a record citation (#757)", () => {
+  test("harvests a cite_record.recorded result as a record citation", () => {
     const { citations } = renderConversation(
       makeRecord({
         messages: [

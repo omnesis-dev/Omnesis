@@ -182,7 +182,7 @@ describe("upsertConversationCitations", () => {
   });
 });
 
-// ─── record citations (#757, sub-issue c) ──────────────────────────────────
+// ─── record citations (sub-issue c) ──────────────────────────────────
 
 function recordCitation(
   overrides: Partial<ConversationRecordCitationInput> = {},
@@ -207,7 +207,7 @@ function recordCitation(
   };
 }
 
-describe("upsertConversationCitations — record citations (#757)", () => {
+describe("upsertConversationCitations — record citations", () => {
   let dbPath: string;
   let db: Db;
   beforeEach(() => {

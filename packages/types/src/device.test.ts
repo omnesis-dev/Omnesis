@@ -252,7 +252,7 @@ describe("scopeSatisfies", () => {
     expect(scopeSatisfies(granted, writeScope(SourceType("gmail")))).toBe(false);
   });
 
-  test("write:browser (#791) is accepted for browser writes and nothing else", () => {
+  test("write:browser is accepted for browser writes and nothing else", () => {
     // The browser-capture extension's token carries write:browser ONLY. It
     // must authorize a browser-source write but reject every other write and
     // any read/admin — the minimal-trust constraint of the device kind.

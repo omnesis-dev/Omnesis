@@ -4,7 +4,7 @@
 @testable import Omnesis
 import XCTest
 
-/// Exercises the research working-set surface state (#748) in
+/// Exercises the research working-set surface state in
 /// `AgentCoordinator` — the iOS twin of the portal reducer's docs-accumulator
 /// + `researchPanels` / `isResearchWorkspaceActive` selectors. Drives events
 /// through `applyEventForTesting`, bypassing the live SSE stream, so the

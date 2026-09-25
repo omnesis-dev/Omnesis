@@ -5,7 +5,7 @@ import CryptoKit
 @testable import Omnesis
 import XCTest
 
-/// Covers the workout/mindful → `DocumentInput` normalizer (#640): the
+/// Covers the workout/mindful → `DocumentInput` normalizer: the
 /// summary document a searchable Apple Health workout becomes, bound 1:1
 /// to its analytics row via `externalId == health_workouts.id`.
 final class HealthDocumentBuilderTests: XCTestCase {

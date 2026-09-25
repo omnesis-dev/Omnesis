@@ -7,7 +7,7 @@
 # cross-workspace package resolution points at THIS worktree's source, not the
 # primary's.
 #
-# Why this exists (see GitHub #563):
+# Why this exists:
 #
 #   `npm install` in a fresh worktree currently fails on a dedup quirk
 #   (`Invalid Version:` from @clack/prompts resolution). The historical

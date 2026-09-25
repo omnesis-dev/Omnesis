@@ -113,7 +113,7 @@ export default defineProvider<GoogleContext>({
       unitName: "emails",
       urlPatterns: [{ regex: "mail\\.google\\.com/mail/.*#[^/]*/([a-f0-9]+)$" }],
       // Gmail's web app — already ingested here, so the browser-capture
-      // source (#791) skips it rather than double-capturing the inbox UI.
+      // source skips it rather than double-capturing the inbox UI.
       ownedWebDomains: ["mail.google.com"],
       // A Gmail message has many URL flavors in the wild — the API form
       // `https://mail.google.com/mail/#inbox/<id>`, the browser's
@@ -135,7 +135,7 @@ export default defineProvider<GoogleContext>({
             // `(?:/u/[^/]+)?` matches `/u/0`, `/u/foo@example.com`,
             // `/u/foo%40example.com` — anything up to the next slash.
             // `(?:\?[^#]*)?` swallows an `?authuser=<email>` query that the
-            // source now emits to pin the message to its account (#463) — it
+            // source now emits to pin the message to its account — it
             // sits between the path and the `#` fragment, so it must collapse
             // here too or per-account links would dedup as distinct docs.
             // Hash path segments are `[^/]+` so user-defined label and
@@ -195,7 +195,7 @@ export default defineProvider<GoogleContext>({
       unitName: "events",
       urlPatterns: [{ regex: "calendar\\.google\\.com/calendar/.*[?&]eid=([^&]+)" }],
       // Google Calendar's web app — already ingested here, so the
-      // browser-capture source (#791) skips the calendar UI.
+      // browser-capture source skips the calendar UI.
       ownedWebDomains: ["calendar.google.com"],
       icon: {
         sfSymbol: "calendar",
@@ -217,7 +217,7 @@ export default defineProvider<GoogleContext>({
       documentEventProfile: googleCalendarDocumentEventProfile,
       async create(_options, ctx) {
         const source = new GoogleCalendarSource(ctx.auth, ctx.accountId, ctx.dataCutoff);
-        // Event documents sync alongside the analytics dual-push (#5 / #450): a
+        // Event documents sync alongside the analytics dual-push: a
         // `google_calendar_events` table and the synthesized doc↔row edge.
         return {
           sync: (cursor) => source.sync(cursor),
@@ -237,7 +237,7 @@ export default defineProvider<GoogleContext>({
       ],
       // Drive surfaces files under both hosts (the Drive shell and the
       // Docs/Sheets/Slides editors). Already ingested here, so the
-      // browser-capture source (#791) skips both rather than re-capturing the
+      // browser-capture source skips both rather than re-capturing the
       // rendered editor DOM.
       ownedWebDomains: ["drive.google.com", "docs.google.com"],
       // Drive surfaces a file under several URL paths depending on its
@@ -274,7 +274,7 @@ export default defineProvider<GoogleContext>({
       async create({ accountId, dataCutoff, sourceConfig, host }, ctx) {
         // Drive defaults to extracting binary file content (PDFs, Office,
         // …) so a search for "annual report" hits the PDF in your Drive
-        // the same way it hits an email attachment of that PDF (#270).
+        // the same way it hits an email attachment of that PDF.
         // Set `extractAttachments: false` per source to opt out.
         const attachmentConfig = resolveAttachmentConfig(sourceConfig, {
           defaultEnabled: true,

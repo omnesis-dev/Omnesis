@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Migration 25 (#895): prune orphaned `source_stats` rows. Seeds a DB where one
+ * Migration 25: prune orphaned `source_stats` rows. Seeds a DB where one
  * source still has documents, one is legitimately empty (`doc_count = 0`), and
  * one is a re-homed/removed source whose stale row claims documents the
  * `documents` table no longer has. Asserts only the orphan is removed, then

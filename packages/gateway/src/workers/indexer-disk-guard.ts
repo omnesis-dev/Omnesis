@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Per-cycle low-disk gate for the indexer worker (#15).
+ * Per-cycle low-disk gate for the indexer worker.
  *
  * An indexing cycle embeds + writes chunks into index.db and flushes the
  * usearch HNSW file. Under low disk those writes risk a partial / corrupting

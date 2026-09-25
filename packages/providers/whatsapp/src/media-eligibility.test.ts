@@ -90,7 +90,7 @@ describe("WhatsApp media retry eligibility", () => {
     vi.useRealTimers();
   });
 
-  // See #2520 — optional media must not starve message pagination.
+  // Optional media must not starve message pagination.
   test.each(cases)("$name cannot requeue old pages or wake useless retries", async (scenario) => {
     const src = source(scenario.options);
     const wake = vi.fn();

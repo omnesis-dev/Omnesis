@@ -21,7 +21,7 @@
  * The heuristic is the default, not the last word: the portal pairs it
  * with a free-text box so any model can still be assigned by hand.
  * Behavioral capability probing — confirming purpose by actually calling
- * the endpoint — is the authoritative upgrade, tracked in #508.
+ * the endpoint — is the authoritative upgrade, tracked separately.
  */
 
 import type { CapabilityRole } from "./capabilities.js";

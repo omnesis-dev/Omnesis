@@ -50,7 +50,7 @@ object ModelManagement {
         return assignment.kind != "disabled" && assignment.kind != "unresolved"
     }
 
-    // Known bug: #1928 — a local GGUF on a chat role reads as enabled here
+    // Known bug: #67 — a local GGUF on a chat role reads as enabled here
     // while the gateway's readiness check refuses it.
     fun state(assignment: ResolvedAssignment?): CapabilityState = when {
         isEnabled(assignment) -> CapabilityState.ON

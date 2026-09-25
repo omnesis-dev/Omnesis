@@ -71,7 +71,7 @@ export type IndexerInit = {
    * runtime config-change path. Produced by `canonicalEmbedIdentity` — the
    * SAME function the swap path stamps with — so the value the worker
    * compares against `index_meta` is byte-identical to what the swap wrote
-   * (no backend-prefixed-vs-bare drift; see #698). It is an identity string
+   * (no backend-prefixed-vs-bare drift). It is an identity string
    * only, NOT the embedder's served model id (HTTP uses `httpEmbedderModel`;
    * local loads from `modelPath`). The worker compares `(modelName, embedDim)`
    * against the stamp and runs a `wipeAndRecreateVectorIndex` before the
@@ -114,7 +114,7 @@ export type IndexerInit = {
   /** Embedder hard cap on input length, chars. See `indexer.embedder.maxInputChars`. */
   embedderMaxInputChars: number;
   /**
-   * Low-disk write guard (#15). Free megabytes on the index.db volume below
+   * Low-disk write guard. Free megabytes on the index.db volume below
    * which the worker SKIPS an indexing cycle (no embed/write) rather than
    * risk a partial usearch/SQLite flush under low disk. Unindexed docs stay
    * pending; the next wake retries once disk frees. Resolved at boot from
@@ -122,7 +122,7 @@ export type IndexerInit = {
    */
   minFreeDiskMb: number;
   /**
-   * Per-model retrieval encoding (#718): none | text-prefix | api-param.
+   * Per-model retrieval encoding: none | text-prefix | api-param.
    * Resolved at boot from `search.embedderPrefixes.enabled` × the family /
    * provider detected from the embedder model. A plain discriminated union of
    * primitives — structured-clone carries it losslessly over postMessage.
@@ -168,7 +168,7 @@ export type MainToIndexer =
   // Hot-reload of per-source maxAge map. Sent on every config.changed where
   // dataRetention or sources.<id>.maxAge moved. Worker swaps the map atomically.
   | { type: "updateCutoffs"; cutoffs: IndexerCutoffMap }
-  // Quiesce-but-stay-alive for the graceful embedder swap (epic #1011). When the
+  // Quiesce-but-stay-alive for the graceful embedder swap. When the
   // OLD model is a LOCAL in-process embedder it lives inside THIS worker, which
   // is therefore also the search query embedder. A graceful swap must freeze the
   // `chunks` corpus before its catch-up + flip, but must NOT take query embedding
@@ -260,7 +260,7 @@ export type IndexerToMain =
   | { type: "deleteDocumentIndexBatchError"; id: number; error: string }
   // Confirms a `pauseIndexing` request: indexing is paused AND any cycle that
   // was in flight when the pause arrived has fully drained, so the `chunks`
-  // corpus is now frozen for the graceful swap's catch-up (epic #1011).
+  // corpus is now frozen for the graceful swap's catch-up.
   | { type: "pausedAck"; id: number }
   // Confirms a `flushSave` request: indexing is frozen, any in-flight cycle has
   // drained, and the HNSW graph has been saved to disk (stamping
@@ -418,7 +418,7 @@ export type CpuToMain =
   | CpuResult
   | { type: "shutdownComplete" };
 
-// ── Build-embedder worker (epic #1011, graceful swap for a LOCAL target) ──
+// ── Build-embedder worker (graceful swap for a LOCAL target) ──
 // Short-lived worker that hosts a single LOCAL (node-llama-cpp) embedder for
 // the duration of a graceful double-buffered build whose TARGET model is local.
 // The main-thread GenerationBuilder drives it through the BuildWorkerEmbedder
@@ -435,7 +435,7 @@ export type BuildEmbedderInit = {
   modelPath: string;
   /** Effective output dimension (MRL truncation target, when applicable). */
   embedDim: number;
-  /** Per-model retrieval encoding (#718). Only the text-prefix branch applies locally. */
+  /** Per-model retrieval encoding. Only the text-prefix branch applies locally. */
   embedderEncoding: EmbedderEncoding;
   /** Embedding-context pool size. */
   embedConcurrency: number;

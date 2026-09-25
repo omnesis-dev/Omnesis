@@ -8,7 +8,7 @@ export type BrowserId = "chrome" | "safari" | "arc" | "brave" | "edge" | "vivald
 
 /** Browser engine type — determines which reader to use */
 export type BrowserEngine = "chromium" | "safari";
-// TODO: Add "firefox" engine when Firefox support is implemented (#158)
+// TODO: Add "firefox" engine when Firefox support is implemented (#17)
 
 /** Metadata about an installed browser */
 export interface BrowserInfo {

@@ -4,7 +4,7 @@
 /**
  * Descriptors for sources the gateway hosts itself — no collector syncs them.
  *
- * Currently the single entry is the unified Web Pages dataset (#895): its
+ * Currently the single entry is the unified Web Pages dataset: its
  * documents arrive via the browser extension's HTTP push, so no collector is
  * involved. Because the descriptor follows the host, the **gateway** advertises
  * these (merged into `/admin/source-descriptors`) and

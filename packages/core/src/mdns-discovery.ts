@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Collector-side mDNS / Bonjour discovery of the gateway (#49).
+ * Collector-side mDNS / Bonjour discovery of the gateway.
  *
  * Counterpart to the gateway's `MdnsAdvertiser`: browses for an
  * `_omnesis._tcp` service on the LAN and, on the first hit, reconstructs

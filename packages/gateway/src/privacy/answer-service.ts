@@ -353,7 +353,7 @@ export class AnswerService {
       const answerHistory = boundReleasedHistory(
         toChatHistory(generationContext.priorExternalConversation),
       );
-      // Known bug: #1405 — this in-process agent run can hold the event loop
+      // Known bug: #50 — this in-process agent run can hold the event loop
       // long enough to starve trusted-app reads (incl. the approval surface).
       const candidateOptions = {
         ...(request.firingEvidence ? { firingEvidence: request.firingEvidence } : {}),

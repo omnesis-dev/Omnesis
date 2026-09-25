@@ -6,7 +6,7 @@
  * `staggeredInitialSync`, the per-source interval timer, and the
  * external `triggerSync` API) through a single
  * `tickSource(source, provider)` method. Extracted from `sync-engine.ts`
- * per issue #317 so the auth-check + state-guard logic
+ * so the auth-check + state-guard logic
  * lives in exactly one place; adding a fifth trigger (cron, signal,
  * remote-poke) no longer means copying the same five-line preamble.
  *

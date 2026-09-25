@@ -487,7 +487,7 @@ export const plaidTransactionsSchema: AnalyticsTableSchema = {
   sharedDiscriminatorColumn: "item_id",
   // Each row co-describes the transaction document whose externalId is
   // `${item_id}:${transaction_id}` (normalizer.ts) — declare the 1:1 doc↔row
-  // edge (#450). Neither key component contains ':', so the composite
+  // edge. Neither key component contains ':', so the composite
   // externalId splits cleanly back into the primary key.
   boundDocument: { externalIdColumns: ["item_id", "transaction_id"] },
   exampleQueries: [

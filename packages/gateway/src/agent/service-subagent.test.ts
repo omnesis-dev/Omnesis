@@ -182,7 +182,7 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
 }
 
-describe("AgentService sub-agent wiring (#748)", () => {
+describe("AgentService sub-agent wiring", () => {
   afterEach(() => {
     while (tempDirs.length) {
       const d = tempDirs.pop()!;

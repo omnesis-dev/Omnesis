@@ -41,7 +41,7 @@ export function resolvePersonDocIds(
   // The returned doc set is unbounded for very high-volume people; downstream
   // candidate queries stage it into a temp table rather than an inline
   // `IN (…)` list, so it never overflows SQLite's variable limit (see
-  // withDocIdRestriction, #581). `personIds`/`roles` here are small (a handful
+  // withDocIdRestriction). `personIds`/`roles` here are small (a handful
   // of canonical ids and roles), so this query's inline lists are safe.
   const idPlaceholders = personIds.map(() => "?").join(",");
   const roleClause = roles?.length ? ` AND role IN (${roles.map(() => "?").join(",")})` : "";

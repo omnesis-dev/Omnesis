@@ -357,7 +357,7 @@ export class WhatsAppProvider implements Provider {
   // "complete" — otherwise we truncate it (the bug that left the store with
   // 103 chats but 0 messages). Genuine reconnects have it complete already.
   private expectingFullHistory = false;
-  // Per-connection history-progress flags driving the #579 tri-state seal.
+  // Per-connection history-progress flags driving the tri-state history seal.
   // Reset on every fresh-pair connect (see the connect handler).
   /** Any non-ON_DEMAND `messaging-history.set` batch arrived this connection. */
   private historyBatchSeen = false;
@@ -669,12 +669,12 @@ export class WhatsAppProvider implements Provider {
   }
 
   /**
-   * One-time full-history import from a local encrypted iOS backup (#588).
+   * One-time full-history import from a local encrypted iOS backup.
    * Decrypts + parses the backup's ChatStorage.sqlite and merges it into the
    * durable store by stable id. Runs against the live store (single writer) —
    * the dirty-day marking means the normal sync drain publishes the result.
-   * Planned: dispatch on a backup-variant value for #591 (Android crypt15)
-   * and #590 (Tier-2 targeted pull); both reuse the merge below.
+   * Planned: dispatch on a backup-variant value for #29 (Android crypt15)
+   * and #28 (Tier-2 targeted pull); both reuse the merge below.
    */
   async importHistory(
     values: Record<string, string>,
@@ -906,7 +906,7 @@ export class WhatsAppProvider implements Provider {
         // every reconnect, which strands the source in a permanent reconnect
         // loop. Gate on the same `historySyncComplete` signal `expectingFullHistory`
         // reads below — read per attempt so a reconnect after a completed pass
-        // stops asking. See #1128.
+        // stops asking.
         const syncFullHistory = !this.store.historySyncComplete;
         const sock = makeWASocket({
           version,
@@ -1119,7 +1119,7 @@ export class WhatsAppProvider implements Provider {
             }
             // Enumerate communities once per provider lifetime (server-driven;
             // independent of history completion — it can surface chats absent
-            // from the initial push). See #580 communities gap.
+            // from the initial push).
             if (!this.communitiesEnumerated) {
               this.communitiesEnumerated = true;
               void this.enumerateCommunities(sock as WASocket);
@@ -1154,7 +1154,7 @@ export class WhatsAppProvider implements Provider {
               // pair history can lag minutes; a reconnect won't re-stream so
               // settle quickly. The resolution (complete vs interrupted) is
               // decided by `resolveHistoryOnQuiet` — it does NOT blindly seal
-              // complete (the #579 bug).
+              // complete.
               //
               // It measures THIS connection's quiet time. A dropped connection
               // restarts the history push, so a timer armed by the connection
@@ -1386,7 +1386,7 @@ export class WhatsAppProvider implements Provider {
         } else {
           // No genuine completion yet — arm the quiet-gap backstop. Resolution
           // (complete vs interrupted) is decided by `resolveHistoryOnQuiet`,
-          // which never blindly seals complete (the #579 fix).
+          // which never blindly seals complete.
           armQuietGap();
         }
       },
@@ -1577,7 +1577,7 @@ export class WhatsAppProvider implements Provider {
     // Community membership comes reliably from the group's own metadata
     // (`linkedParent` / `isCommunity`), which we already fetch here — far more
     // dependable than the dedicated communityFetchAllParticipating API, which is
-    // flaky and frequently returns nothing (#580 communities gap).
+    // flaky and frequently returns nothing.
     if (meta?.isCommunity || meta?.isCommunityAnnounce) {
       this.store.setChatKind(jid, "community");
     } else if (meta?.linkedParent) {
@@ -1617,8 +1617,8 @@ export class WhatsAppProvider implements Provider {
 
   /**
    * Record that the fresh-pair history push stalled without a genuine
-   * completion (#579). The recent-window corpus is truncated; recovery is
-   * re-pair (refreshes the recent window) or a one-time backup import (#588).
+   * completion. The recent-window corpus is truncated; recovery is
+   * re-pair (refreshes the recent window) or a one-time backup import.
    * Never silently promoted to `complete` by a timer.
    */
   private markHistoryInterrupted(): void {
@@ -1626,14 +1626,14 @@ export class WhatsAppProvider implements Provider {
     if (this.store.historySyncState === "interrupted") return;
     this.store.setHistorySyncState("interrupted");
     log.warn(
-      "History sync interrupted — recent-window corpus may be truncated. Re-pair to refresh, or import full history from a phone backup (#588).",
+      "History sync interrupted — recent-window corpus may be truncated. Re-pair to refresh, or import full history from a phone backup.",
     );
   }
 
   /**
    * Discover WhatsApp communities and their linked sub-groups, tagging
    * `chats.kind` / `parent_community_jid` so a community group absent from the
-   * initial chat-list push is still surfaced (the #580 communities gap). Runs
+   * initial chat-list push is still surfaced. Runs
    * once per connection; best-effort and non-fatal.
    */
   private async enumerateCommunities(sock: WASocket): Promise<void> {
@@ -1677,7 +1677,7 @@ export class WhatsAppProvider implements Provider {
 
   /**
    * Decide the history-sync outcome when the stream goes quiet (quiet-gap /
-   * settle timer fired, or Baileys reported `paused`). This is where the #579
+   * settle timer fired, or Baileys reported `paused`). This is where the seal
    * fix lives: an interrupted fresh-pair push resolves to `interrupted`, NOT
    * `complete`.
    */
@@ -1705,7 +1705,7 @@ export class WhatsAppProvider implements Provider {
       return;
     }
     // We received history batches but the stream stalled before completing —
-    // the truncated-corpus case #579 is about.
+    // the truncated-corpus case.
     if (this.historyBatchSeen) {
       this.markHistoryInterrupted();
       return;

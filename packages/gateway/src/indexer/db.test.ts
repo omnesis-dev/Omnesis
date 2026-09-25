@@ -687,10 +687,10 @@ describe("chunks", () => {
     expect(otherError?.document_id).toBe("doc-b");
   });
 
-  // #553: the HTTP delete cascade has no usearch write handle, so it must
+  // The HTTP delete cascade has no usearch write handle, so it must
   // enqueue the deleted chunks' rowids for the indexer worker to remove —
   // otherwise the vectors orphan forever and a large resync OOMs the box.
-  describe("pending vector deletes (#553)", () => {
+  describe("pending vector deletes", () => {
     function fakeUsearch(): { handle: UsearchWriteHandle; removed: bigint[] } {
       const removed: bigint[] = [];
       const handle = {
@@ -909,7 +909,7 @@ describe("counts", () => {
     expect(getIndexedDocumentCount(db)).toBe(2);
   });
 
-  test("getBuildableDocumentCount counts distinct document_id over chunks — the honest rebuild denominator (epic #1011)", () => {
+  test("getBuildableDocumentCount counts distinct document_id over chunks — the honest rebuild denominator", () => {
     expect(getBuildableDocumentCount(db)).toBe(0);
 
     // Two documents, the first with two chunks: distinct documents = 2.

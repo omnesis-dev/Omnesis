@@ -4,7 +4,7 @@
 /**
  * Near-dup inbox flush — coalesces the per-document near-dup enqueues that
  * the event-bus subscriber (`near-dupes/event-handler.ts`) produces into
- * batched, background-priority `near_dup_inbox` inserts. See #555.
+ * batched, background-priority `near_dup_inbox` inserts.
  *
  * Why the indirection (buffer + periodic task) instead of enqueuing inline:
  *   - `document.upserted` is emitted synchronously inside the originating
@@ -34,7 +34,7 @@
  * ingested docs); there is no signature-coverage reconciler, so those docs
  * regain a near-dup signature only when `bumpNearDupAlgo` next re-enqueues
  * the whole corpus — i.e. on an algo-version change, not on a same-version
- * restart. That gap (and a durable backstop for it) is tracked in #556.
+ * restart. That gap (and a durable backstop for it) is tracked in #26.
  */
 
 import { QueueTracker } from "../../background-jobs/trackers.js";
@@ -58,7 +58,7 @@ const DEFAULT_CHUNK_SIZE = 1_000;
  * still drains the flush eventually, so this is a safety ceiling, not a
  * normal operating point). Document ids are short strings, so at the cap
  * the buffer is on the order of ~100 MB — bounded, never a normal state.
- * Drops are recovered at the next algo-bump bulk re-enqueue (see #556).
+ * Drops are recovered at the next algo-bump bulk re-enqueue (see #26).
  */
 const DEFAULT_CAP = 500_000;
 
@@ -177,7 +177,7 @@ export function nearDupInboxFlushTask(
   // transient writer error mid-ingest would back the flush off to the idle
   // cadence while docs keep arriving. `flushed` counts only ids that landed,
   // for the throughput tracker. A failed chunk is re-buffered (capped) so
-  // the next active tick retries it — a transient writer stall (the #555
+  // the next active tick retries it — a transient writer stall (the bulk-ingest
   // condition) must not silently drop near-dup coverage. The per-chunk
   // try/catch keeps a failure isolated: sibling chunks and other reasons
   // still flush.
@@ -229,7 +229,7 @@ export function nearDupInboxFlushTask(
     scheduler,
     displayName: "Near-dup inbox flush",
     description:
-      "Coalesces per-document near-dup enqueues from an in-memory buffer into batched, background-priority writer inserts. Keeps bulk ingest from parking the writer (#555).",
+      "Coalesces per-document near-dup enqueues from an in-memory buffer into batched, background-priority writer inserts. Keeps bulk ingest from parking the writer.",
     category: "graph",
     tracker,
   });

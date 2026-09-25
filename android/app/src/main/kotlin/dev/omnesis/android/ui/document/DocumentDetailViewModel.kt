@@ -99,7 +99,7 @@ class DocumentDetailViewModel @Inject constructor(
     val state = _state.asStateFlow()
     private var generation = 0L
 
-    // Single-document privacy delete (#1065) in-flight / error state. Kept
+    // Single-document privacy delete in-flight / error state. Kept
     // separate from the loaded bundle so a failed delete leaves the document
     // on screen rather than replacing it with an error state.
     private val _deleting = MutableStateFlow(false)
@@ -481,7 +481,7 @@ class DocumentDetailViewModel @Inject constructor(
     suspend fun loadTrail(): DocumentEventTrail = session.requireSession().search.documentTrail(documentId)
 
     /**
-     * Delete this document for privacy (#1065): for good by default, or only
+     * Delete this document for privacy: for good by default, or only
      * this copy with [keepCopy] so the source may bring it back. On success the
      * screen pops via [onDone]; there's deliberately no reload (the document is
      * gone, so re-fetching would 404 into an error as the caller pops).

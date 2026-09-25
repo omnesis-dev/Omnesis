@@ -65,7 +65,7 @@ export class HttpEmbedder implements Embedder {
   private timeoutMs: number;
   private batchSize: number;
   private maxInputChars: number;
-  /** Per-model retrieval encoding (#718): none | text-prefix | api-param. */
+  /** Per-model retrieval encoding: none | text-prefix | api-param. */
   private encoding: EmbedderEncoding;
   private apiKey?: string;
   private allowRemoteInference: boolean;
@@ -84,7 +84,7 @@ export class HttpEmbedder implements Embedder {
     batchSize?: number;
     maxInputChars?: number;
     /**
-     * Per-model retrieval encoding (#718). Takes precedence over `prefixes`.
+     * Per-model retrieval encoding. Takes precedence over `prefixes`.
      * When omitted, falls back to `prefixes` (back-compat) or `none`.
      */
     encoding?: EmbedderEncoding;
@@ -206,7 +206,7 @@ export class HttpEmbedder implements Embedder {
     try {
       const url = `${this.baseUrl}${this.apiPathPrefix}/embeddings`;
       const body: Record<string, unknown> = { model: this.model, input };
-      // #718: api-param encodings (e.g. Voyage `input_type`) select the
+      // API-param encodings (e.g. Voyage `input_type`) select the
       // query/document role via a top-level body field set per call.
       if (this.encoding.kind === "api-param") {
         body[this.encoding.param] =

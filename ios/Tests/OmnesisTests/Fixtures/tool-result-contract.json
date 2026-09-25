@@ -1,6 +1,6 @@
 {
   "_comment": [
-    "Canonical cross-surface tool-result contract fixture (epic #804, criterion C19).",
+    "Canonical cross-surface tool-result contract fixture.",
     "SINGLE SOURCE OF TRUTH for the agent tool-result wire shape. The TS round-trip",
     "test (packages/agent/src/tool-result-contract.test.ts) drives each real server",
     "projector and asserts its output equals the `wire` payload here (no advertised",
@@ -12,7 +12,7 @@
     "privacy rules — never sourced from any real corpus.",
     "Emphasis is on the fields that have been silently dead-wired on clients before:",
     "DocRef.refCount + DocRef.breadcrumb, cite_record primaryKeyColumns +",
-    "snapshot (#757), and run_sql rowIdentities (#757)."
+    "snapshot, and run_sql rowIdentities."
   ],
   "cases": [
     {

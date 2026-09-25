@@ -55,7 +55,7 @@ export function mapBookmark(
 }
 
 /**
- * The `bookmarks → webpage` declared edge for one synth bookmark (#895),
+ * The `bookmarks → webpage` declared edge for one synth bookmark,
  * mirroring the real provider's `bookmarkWebpageEdge`. `from` is this synth
  * document's own external id; `to` is the canonical `web` entity for the URL,
  * so the edge parks in `pending_edges` until the extension captures the page.

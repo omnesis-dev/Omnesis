@@ -268,7 +268,7 @@ beforeEach(() => {
       return Promise.resolve(stateResult);
     },
     liveState: () => Promise.resolve(liveState),
-    // See #1885 — a required dep added here is not caught by the typechecker,
+    // A required dep added here is not caught by the typechecker,
     // because `*.test.ts` is excluded from every tsconfig; it surfaces as a
     // 500 in whichever case first reads it.
     //

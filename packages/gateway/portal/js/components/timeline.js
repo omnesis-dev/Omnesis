@@ -43,7 +43,7 @@ const CONVERSATION_DOC_TYPES = new Set(["conversation"]);
 
 /**
  * The sourceId that tints/icons an event row. A document (or deduped
- * doc+record, #757) event carries `doc.sourceId`; a record-only event
+ * doc+record) event carries `doc.sourceId`; a record-only event
  * (a bound DuckDB row with no co-described document) carries
  * `record.sourceId`. Both resolve through the same source-registry
  * helpers (`sourceIcon` / `sourceAccentColor`) — no per-source branch.
@@ -280,7 +280,7 @@ function TimelineBundle({ event, nextAccent, annotations, hideRelations, visible
  * paperclip prefix + tighter filename formatting.
  */
 function EventBody({ event, isAttachment, annotations, hideRelations, visibleDocIds, authorColorMap }) {
-  // #757: a record-only event (a bound DuckDB row with no co-described
+  // A record-only event (a bound DuckDB row with no co-described
   // document) has no `doc` to head the row — render the record body
   // instead. Records never nest as attachments, so this only fires at
   // top level.
@@ -310,7 +310,7 @@ function EventBody({ event, isAttachment, annotations, hideRelations, visibleDoc
       ${showFileIcon
         ? html`<${FileTypeIcon} mimeType=${doc.mimeType} filename=${doc.title} size=${14} />`
         : null}
-      ${/* See #625 — opens by documentId only; a destructive resync re-mints the id and this 404s (url fallback can't help url-less sources). */ ""}
+      ${/* See #31 — opens by documentId only; a destructive resync re-mints the id and this 404s (url fallback can't help url-less sources). */ ""}
       <a
         class="graph-debug-event-doc"
         href=${`/portal/doc/${encodeURIComponent(doc.documentId)}`}
@@ -377,7 +377,7 @@ function EventBody({ event, isAttachment, annotations, hideRelations, visibleDoc
           </ul>
         `
       : null}
-    ${/* #757: a document that deduped with its same-entity DuckDB row (one
+    ${/* A document that deduped with its same-entity DuckDB row (one
          timeline entity, not two) carries the row's derived key fields
          inline on the doc card. The record's title is already the doc
          title — only the declared key columns add information. */ ""}
@@ -389,7 +389,7 @@ function EventBody({ event, isAttachment, annotations, hideRelations, visibleDoc
 }
 
 /**
- * Render a record-only trail event (#757): a single DuckDB analytics
+ * Render a record-only trail event: a single DuckDB analytics
  * row surfaced as a point-in-time citation that binds no document. The
  * source icon/colour come from the registry keyed by `record.sourceId`
  * (resolved one level up via `eventSourceId`); the title and key fields
@@ -434,7 +434,7 @@ function RecordBody({ record, time }) {
 }
 
 /**
- * The declared key columns of a record citation (#757), rendered as a
+ * The declared key columns of a record citation, rendered as a
  * label/value list. The gateway already redacted `sensitive` columns
  * server-side (the value arrives as the redaction placeholder), so this
  * renderer prints values verbatim and re-exposes nothing. A null value
@@ -520,7 +520,7 @@ function PaperclipIcon() {
   ><path d=${PAPERCLIP_PATH} /></svg>`;
 }
 
-// A row/record glyph for record citations (#757) — a stacked-cylinder
+// A row/record glyph for record citations — a stacked-cylinder
 // database mark, distinguishing a structured DuckDB row from a document.
 const DATABASE_PATHS = [
   "M3 5a9 3 0 1 0 18 0a9 3 0 1 0-18 0",

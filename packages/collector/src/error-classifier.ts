@@ -95,7 +95,7 @@ const TRANSIENT_PATTERNS: readonly string[] = [
   "bad gateway",
   "service unavailable",
   "gateway timeout",
-  // Low-disk write guard (#15): the gateway ingest endpoint returns 507 with
+  // Low-disk write guard: the gateway ingest endpoint returns 507 with
   // an "insufficient disk space" message. Treat it as transient alongside the
   // other 5xx codes so the source resumes (no needs-auth mis-flip).
   " 507 ",

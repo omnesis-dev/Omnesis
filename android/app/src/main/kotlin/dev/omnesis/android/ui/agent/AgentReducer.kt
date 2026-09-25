@@ -152,7 +152,7 @@ object AgentReducer {
                         }
                     }
                     if (result is AgentToolResult.CiteRecord) {
-                        // A directly-cited record (#757): fold it into the timeline feed deduped by
+                        // A directly-cited record: fold it into the timeline feed deduped by
                         // recordKey (last wins) and bump the citing turn's reference count — there is
                         // no SSE Citation event for a record, so the count is bumped here, mirroring
                         // how `applyCitation` bumps it for an annotate document citation.
@@ -284,7 +284,7 @@ object AgentReducer {
                     }
                 // The run is over — collapse the research working-set surface into the
                 // written-back report (the now-finished assistant turn). The finished
-                // cards stay on the transcript; only the live band disappears (#748).
+                // cards stay on the transcript; only the live band disappears.
                 // Drain first: a queued subagent.spawned event may own the
                 // stable worker row that replaces its launch tool card.
                 removeOrchestrationTools(
@@ -369,7 +369,7 @@ object AgentReducer {
         return next
     }
 
-    // --- sub-agent card (#748) ---
+    // --- sub-agent card ---
 
     /**
      * Locate the [AgentPart.Subagent] card with [subagentId] across every assistant
@@ -580,7 +580,7 @@ object AgentReducer {
         cacheCreationTokens = next?.cacheCreationTokens ?: previous?.cacheCreationTokens,
     )
 
-    // --- verified-report artifact (#748) ---
+    // --- verified-report artifact ---
 
     /**
      * Fold the additive `agent.deep_research.summary` onto the assistant turn it names
@@ -602,7 +602,7 @@ object AgentReducer {
             )
         }
 
-    // --- research working-set surface (#748) ---
+    // --- research working-set surface ---
 
     /**
      * Extract the documents a child tool result reached, in the minimal source-tintable
@@ -918,7 +918,7 @@ private fun AgentChatState.updateAssistantById(
 /**
  * Append-or-replace a record citation by its `recordKey` (last wins), preserving first-seen
  * order. Used by both the live reducer and the resume-path turn builder so a re-cite updates the
- * existing timeline row's metadata rather than duplicating it (#757).
+ * existing timeline row's metadata rather than duplicating it.
  */
 internal fun mergeRecord(records: List<AgentTrailRecord>, record: AgentTrailRecord): List<AgentTrailRecord> {
     val idx = records.indexOfFirst { it.recordKey == record.recordKey }
@@ -935,7 +935,7 @@ private fun AgentTurn.Assistant.replaceLast(part: AgentPart): AgentTurn.Assistan
 private fun AgentTurn.Assistant.replaceAt(index: Int, part: AgentPart): AgentTurn.Assistant =
     copy(parts = parts.toMutableList().also { it[index] = part })
 
-// --- sub-agent child-turn update helpers (#748) ---
+// --- sub-agent child-turn update helpers ---
 
 /**
  * Mutate the scratch state of the child request in flight. Seeds an implicit entry

@@ -7,7 +7,7 @@ import Foundation
 
 /// Owns the pairing service + persisted pairing record.
 ///
-/// Per #320, this is one of three coordinators extracted
+/// This is one of three coordinators extracted
 /// from the former 1267-line `AppStore` god class. Responsibilities:
 ///   - Read / pair / unpair via `PairingService`.
 ///   - Persist + rehydrate `pairing` across app launches (Keychain via

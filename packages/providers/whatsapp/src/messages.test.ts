@@ -190,7 +190,7 @@ describe("WhatsAppMessagesSource", () => {
     expect(r1.progress?.coverage).toBe("complete");
 
     // An interrupted bootstrap is truncated → surface "partial" so the UI can
-    // point at re-pair / the backup import (#588).
+    // point at re-pair / the backup import.
     store.setHistorySyncState("interrupted");
     store.addMessages([makeMsg({ id: "2", timestamp: 1709900100 })]);
     const r2 = await source.sync(r1.cursor);

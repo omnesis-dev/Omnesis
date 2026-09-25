@@ -58,7 +58,7 @@ async function capturedSocketOptions(provider: WhatsAppProvider): Promise<Record
   return (lastCall?.[0] ?? {}) as Record<string, unknown>;
 }
 
-describe("WhatsApp syncFullHistory gating (#1128)", () => {
+describe("WhatsApp syncFullHistory gating", () => {
   beforeEach(() => {
     makeWASocketSpy.mockClear();
   });

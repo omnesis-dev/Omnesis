@@ -79,7 +79,7 @@ export class LunchflowAccountsSource {
         return this.transactionsPage(cursor ?? { phase: "transactions" });
       case "balances":
         return this.balancesPage(cursor ?? { phase: "balances" });
-      // See #720 — a future `holdings` phase (GET /accounts/{id}/holdings)
+      // See #36 — a future `holdings` phase (GET /accounts/{id}/holdings)
       // would snapshot brokerage positions for accounts that support them.
       default:
         return assertNever(phase);

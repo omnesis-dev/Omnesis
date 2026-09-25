@@ -661,7 +661,7 @@ export interface WriteGate {
     streamId?: string,
   ): Promise<string[]>;
   /**
-   * User-initiated single-document privacy delete (#1065). Cascades to the
+   * User-initiated single-document privacy delete. Cascades to the
    * document's extracted-attachment children and, with `tombstone` (the
    * default), writes a durable tombstone per deleted key so a later re-sync /
    * re-capture can't resurrect it. Returns the deleted document_ids for the
@@ -775,7 +775,7 @@ export interface WriteGate {
   /**
    * Atomic per-page sync write — upserts + deletions + snapshot
    * reconcile + cursor advance in one SQLite transaction. Closes the
-   * at-least-once gap from issue #322 where the cursor could lag the
+   * at-least-once gap where the cursor could lag the
    * documents on a partial failure. The collector's
    * `source-sync-runner.ts` calls this in place of the prior
    * upsertDocuments → deleteDocuments → snapshot absence marks →
@@ -987,7 +987,7 @@ export interface WriteGate {
    */
   pruneNoreplyAliases(): Promise<{ aliasesRemoved: number; documentsToRebackfill: number }>;
   /**
-   * One-shot data fix (#583). Promote a trusted `name` alias onto any
+   * One-shot data fix. Promote a trusted `name` alias onto any
    * canonical person whose `canonical_name` is still a phone/email-shaped
    * placeholder, healing the People graph regardless of sync order.
    * Idempotent — subsequent boots are no-ops once headlines are real names.
@@ -1090,7 +1090,7 @@ export interface WriteGate {
     entries: DateExtractionResult[],
   ): Promise<{ applied: number; datesWritten: number }>;
   /**
-   * Drain the `pending_edges` backlog (#430): promote forward-reference
+   * Drain the `pending_edges` backlog: promote forward-reference
    * source-declared edges whose target has since been ingested, and TTL-drop
    * ones whose target never arrived. Bounded by `limit`.
    */
@@ -1279,7 +1279,7 @@ export interface WriteGate {
   /** Persist a report only while this exact run still owns the device slot. */
   completeDeviceDoctorRun(input: CompleteDeviceDoctorRunInput): Promise<boolean>;
   /**
-   * Replace the device's self annotation (#282). Each field is
+   * Replace the device's self annotation. Each field is
    * optional; pass `undefined` (or omit) to leave it untouched. The
    * caller validates upstream — phones must be E.164 and emails must
    * be `normalizeEmail`-d before this is called.
@@ -1327,7 +1327,7 @@ export interface WriteGate {
   confirmNotification(input: ConfirmNotificationInput): Promise<boolean>;
   cleanupExpiredNotifications(now: number): Promise<number>;
   /**
-   * Boot-time helper (#282): if no canonical self person exists,
+   * Boot-time helper: if no canonical self person exists,
    * materialize one from the earliest-paired device that carries self
    * annotation. Idempotent — returns null when self already exists or
    * no device has annotation.
@@ -1356,7 +1356,7 @@ export interface WriteGate {
   // ── tokens.ts ─────────────────────────────────────────────────────
   /**
    * Mint a token. `opts.ttlMs` sets an expiry (omit for a never-expiring
-   * device token); short-lived callback tokens (#568) pass a TTL.
+   * device token); short-lived callback tokens pass a TTL.
    */
   createToken(
     deviceId: DeviceId,
@@ -1401,7 +1401,7 @@ export interface WriteGate {
   purgeExpiredSession(sessionId: string): Promise<void>;
   deleteSession(sessionId: string): Promise<void>;
   cleanupExpiredSessions(): Promise<number>;
-  /** Delete tokens past their `expires_at` (short-lived callback tokens, #568). */
+  /** Delete tokens past their `expires_at` (short-lived callback tokens). */
   cleanupExpiredTokens(): Promise<number>;
   /** Delete one bounded batch of disposable operational history. */
   pruneActivityRetentionBatch(
@@ -2098,7 +2098,7 @@ export type WriterCallFn = <K extends WriterOpName>(
 ) => Promise<Awaited<WriterReturn<K>>>;
 
 /**
- * Apply a pairing's staged self annotation (#284) to the freshly created
+ * Apply a pairing's staged self annotation to the freshly created
  * device, reusing the same `updateDeviceSelfInfo` write the explicit
  * `devices set-self` path uses. No-op when the operator skipped the
  * annotation (both lists empty), so the default pairing flow is unchanged.

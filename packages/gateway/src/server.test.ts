@@ -2180,7 +2180,7 @@ describe("device management endpoints", () => {
     expect(exchange.status).toBe(400);
   });
 
-  // #282 — device-level self annotation
+  // Device-level self annotation
   test("PATCH /admin/devices/:id stores self emails and phones (E.164)", async () => {
     const create = await req("/admin/devices", {
       method: "POST",
@@ -2785,13 +2785,13 @@ describe("device management endpoints", () => {
     expect(exchange.status).toBe(400);
   });
 
-  // #791/#895 — the browser-capture extension pairs as its own `browser`
+  // The browser-capture extension pairs as its own `browser`
   // device kind and receives a token scoped to write:web ONLY. The device
   // kind is the physical client; the source it contributes captures to is the
   // unified `web` source. This is the end-to-end of the device-kind chunk:
   // the real handshake mints a browser device, and the resulting token can
   // push web docs but nothing else.
-  test("pairing flow: browser kind redeems into a write:web-only token (#791, #895)", async () => {
+  test("pairing flow: browser kind redeems into a write:web-only token", async () => {
     const pair = await req("/admin/devices/pair", {
       method: "POST",
       body: JSON.stringify({
@@ -3168,7 +3168,7 @@ describe("device management endpoints", () => {
     });
   });
 
-  // #284 — self annotation staged at pairing-code creation lands on the
+  // Self annotation staged at pairing-code creation lands on the
   // device at redeem, via the same write path as PATCH /admin/devices/:id.
   test("pairing flow: staged self info is applied to the device at redeem (normalized)", async () => {
     const pair = await req("/admin/devices/pair", {
@@ -4219,7 +4219,7 @@ describe("token management endpoints", () => {
     expect(body.token).toMatch(/^omn_[a-f0-9]{32}$/);
   });
 
-  test("POST /admin/tokens honors ttlMs (expiry) and defaults to never-expire (#61)", async () => {
+  test("POST /admin/tokens honors ttlMs (expiry) and defaults to never-expire", async () => {
     const create = await req("/admin/devices", {
       method: "POST",
       body: JSON.stringify({ name: "ttl-dev", kind: "cli", scopes: ["admin"] }),
@@ -4721,7 +4721,7 @@ describe("sync state endpoints", () => {
   test("returns null cursor for unknown source", async () => {
     const res = await req("/sync-state/unknown");
     expect(res.status).toBe(200);
-    // wipeEpoch is 0 for a source that has never been wiped (#551).
+    // wipeEpoch is 0 for a source that has never been wiped.
     expect(await res.json()).toEqual({ cursor: null, lastSyncedAt: null, wipeEpoch: 0 });
   });
 
@@ -7240,7 +7240,7 @@ describe("POST /documents/with-cursor cross-cutting concerns", () => {
 
   test("normalizes meta.icon at the write boundary (SVG → PNG data URI)", async () => {
     // A raw inline SVG data URI should land as a PNG data URI in
-    // `sync_state.icon` — mirrors the pre-#322 `POST /sync-state/:sourceId`
+    // `sync_state.icon` — mirrors the older `POST /sync-state/:sourceId`
     // path that the portal/iOS rely on for uniform icon rendering.
     const svgDataUri =
       "data:image/svg+xml;base64," +
@@ -7481,7 +7481,7 @@ describe("POST /documents/delete-all/source/:sourceId", () => {
     // Cursor wiped — the next sync starts fresh, re-discovering anything
     // the provider had cached internally. The wipe also bumped the source's
     // wipe epoch to 1, so an in-flight sync's stale cursor write is rejected
-    // rather than resurrecting the old cursor (#551).
+    // rather than resurrecting the old cursor.
     const afterRes = await req("/sync-state/gmail");
     const afterData = await afterRes.json();
     expect(afterData).toEqual({ cursor: null, lastSyncedAt: null, wipeEpoch: 1 });
@@ -9280,7 +9280,7 @@ describe("GET /links/stats", () => {
     const stored = db
       .prepare<[string], any>("SELECT * FROM documents WHERE external_id = ?")
       .get("stats-1");
-    // #570: url links are stored only if they could ever resolve. Register a
+    // URL links are stored only if they could ever resolve. Register a
     // permissive url-id pattern so the two example links are kept (the gate's
     // drop path is covered directly in links.test.ts).
     const { setSyncState, invalidateUrlIdPatternCache } = await import("./db.js");
@@ -10175,7 +10175,7 @@ describe("POST /admin/index/rebuild", () => {
       headers: { Authorization: `Bearer ${TEST_TOKEN}` },
     });
     expect(res.status).toBe(200);
-    // Defaults to a graceful swap when no mode is sent (#1011), echoed back.
+    // Defaults to a graceful swap when no mode is sent, echoed back.
     expect(await res.json()).toEqual({ ok: true, mode: "graceful" });
     expect(called).toBe(1);
   });
@@ -10832,7 +10832,6 @@ describe("POST /admin/background/run/:taskName", () => {
 
 // CORS is wired before app.onError and before auth, so it must answer
 // preflight unauthenticated and emit its headers on error responses too.
-// See #61.
 describe("CORS middleware (wired in createServer)", () => {
   const CORS_ORIGIN = "https://omnesis.example.com";
 

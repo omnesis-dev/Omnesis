@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Per-page PDF OCR interleave (#427): native text layer + OCR of image-only
+ * Per-page PDF OCR interleave: native text layer + OCR of image-only
  * pages, spliced together in page order. unpdf + the text joiner are mocked so
  * we can construct exact per-page native text (a real mixed PDF fixture would
  * be brittle); the OCR fn is a stub returning page-aligned `pageTexts`.

@@ -24,7 +24,7 @@ struct DocumentInspectorSheet: View {
     let refs: DocumentRefs?
     let attachments: [DocumentAttachment]
     let nearDupes: DocumentNearDupes?
-    /// Cross-store `same-entity` doc↔row neighbours (#450, #644) — the
+    /// Cross-store `same-entity` doc↔row neighbours — the
     /// bound DuckDB analytics rows from the graph walker.
     let boundRows: [GraphVertex]
     let outboundPaging: CursorPagingState
@@ -408,7 +408,7 @@ private struct GraphPane: View {
     let refs: DocumentRefs?
     let attachments: [DocumentAttachment]
     let nearDupes: DocumentNearDupes?
-    /// Cross-store `same-entity` doc↔row neighbours (#450, #644).
+    /// Cross-store `same-entity` doc↔row neighbours.
     let boundRows: [GraphVertex]
     let outboundPaging: CursorPagingState
     let inboundPaging: CursorPagingState
@@ -891,7 +891,7 @@ private struct NearDupGraphRow: View {
     }
 }
 
-/// Cross-store `same-entity` row (#450, #644): the document's bound
+/// Cross-store `same-entity` row: the document's bound
 /// DuckDB analytics row. Unlike the other graph rows there's no iOS
 /// destination to push (the portal links to its table browser, which has no
 /// app equivalent), so this is a static, non-tappable row: a table glyph,

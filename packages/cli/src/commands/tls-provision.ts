@@ -3,11 +3,11 @@
 
 /**
  * `omnesis tls provision` — the in-place, idempotent retrofit of the
- * installer's `provision_tls()` (scripts/install.sh, #605) for an EXISTING
+ * installer's `provision_tls()` (scripts/install.sh) for an EXISTING
  * install. It mints a browser-trusted TLS certificate and wires it into the
  * config dir's `.env`, so the gateway stops serving its self-signed cert —
  * removing the portal's "proceed anyway" warning AND unblocking the MV3
- * browser-capture extension (#791), whose service-worker `fetch()` cannot
+ * browser-capture extension, whose service-worker `fetch()` cannot
  * clear an untrusted-cert prompt at all.
  *
  * Two tiers, matching the installer:

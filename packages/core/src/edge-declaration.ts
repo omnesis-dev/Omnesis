@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The source-declared edge contract (#430).
+ * The source-declared edge contract.
  *
  * A source declares structural relationships between documents alongside the
  * documents themselves, as a first-class output of `sync()` (the `edges` field
@@ -64,7 +64,7 @@ export interface EdgeDeclaration {
 }
 
 /**
- * The `source_id` the unified Web Pages dataset (#895) stores every `webpage`
+ * The `source_id` the unified Web Pages dataset stores every `webpage`
  * document under. A producer that knows a URL the user encountered — a Chrome
  * bookmark, a browser-history day — declares an `EdgeDeclaration` toward the
  * canonical web-page entity addressed by this source id, so the edge resolves

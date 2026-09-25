@@ -148,7 +148,7 @@ export function ConfigView() {
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState(null);
   const [loadError, setLoadError] = useState(null);
-  // Known bug: #2566 — a rejected field keeps its server error until the
+  // Known bug: #88 — a rejected field keeps its server error until the
   // next mutation, Discard or an external change, even once it is corrected.
   const [serverErrors, setServerErrors] = useState(null);
   const [externalRevision, setExternalRevision] = useState(0);

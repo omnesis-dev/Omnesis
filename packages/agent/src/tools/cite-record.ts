@@ -3,7 +3,7 @@
 
 /**
  * `cite_record` — cite a single DuckDB analytics row that materially informed
- * the agent's answer (#757). The structured twin of `annotate`: where
+ * the agent's answer. The structured twin of `annotate`: where
  * `annotate` cites an unstructured document, `cite_record` cites one row — a
  * point-in-time **record** — so it appears in the conversation's
  * citations/timeline drawer chronologically alongside document citations.

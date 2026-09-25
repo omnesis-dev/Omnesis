@@ -3,14 +3,14 @@
 
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
 
-/** DuckDB table for Google Calendar events (#450 / #5). Per-source (not shared
+/** DuckDB table for Google Calendar events. Per-source (not shared
  * with Apple Calendar) so it stays source-encapsulated. */
 export const GOOGLE_CALENDAR_EVENTS_TABLE = "google_calendar_events";
 
 /**
  * Structured twin of the Google Calendar event document. The row's `id` is the
  * `calendarId:eventId` string that is also the document's `externalId`, so the
- * doc↔row `same-entity` edge (#450) is a clean 1:1 `boundDocument`. Derived
+ * doc↔row `same-entity` edge is a clean 1:1 `boundDocument`. Derived
  * analytical columns the document body can't aggregate — `duration_minutes`,
  * `attendee_count`, `response_status` — are what make this dual-push worth it
  * ("meeting hours per week", "accept rate", "busiest day").
@@ -107,7 +107,7 @@ export const googleCalendarEventsSchema: AnalyticsTableSchema = {
     keyColumns: ["title", "start_time", "end_time", "location"],
   },
   // The event document's externalId is exactly this row's `id` — declare the
-  // 1:1 doc↔row edge (#450). Synthesized at walk time; no edge rows persisted.
+  // 1:1 doc↔row edge. Synthesized at walk time; no edge rows persisted.
   boundDocument: { externalIdColumns: ["id"] },
   temporalProjection: {
     slot: "calendar",

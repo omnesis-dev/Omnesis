@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Low-disk write guard (#15). `hasFreeDiskSpace` is exercised against a real
+ * Low-disk write guard. `hasFreeDiskSpace` is exercised against a real
  * path so the statfs seam is the production one — minFreeBytes=0 is always
  * ok, a huge minimum is never ok, and a statfs failure reads as ok (free =
  * Infinity) so a flaky syscall never wedges writes.

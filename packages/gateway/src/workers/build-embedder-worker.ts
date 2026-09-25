@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Build-embedder worker (epic #1011, graceful swap for a LOCAL target).
+ * Build-embedder worker (graceful swap for a LOCAL target).
  *
  * Hosts a single LOCAL (node-llama-cpp) embedder so a graceful double-buffered
  * rebuild whose TARGET model is local runs OFF the gateway event loop. The

@@ -351,7 +351,7 @@ const authAnswerResponse = z.object({
   ok: z.boolean(),
 });
 
-// History import (#588): gateway → device command to run a source's one-time
+// History import: gateway → device command to run a source's one-time
 // bulk import, with progress/result streamed back as events.
 const importBeginRequest = z.object({
   flowId: z.string().min(1),
@@ -757,7 +757,7 @@ const syncStatusEvent = z.object({
       message: z.string().optional(),
       // Source-agnostic coverage signal. "partial" means the source holds only
       // a truncated slice of upstream history (e.g. an interrupted one-shot
-      // hand-off it can't re-request) while live sync stays healthy. See #579.
+      // hand-off it can't re-request) while live sync stays healthy.
       // "unknown" is a distinct answer, not a synonym for "complete": a source
       // that has not established whether it is missing history has not said it
       // is whole, and a client that collapses the two shows a corpus as
@@ -863,7 +863,7 @@ const authCompleteEvent = z.object({
     .optional(),
 });
 
-// History import (#588) device → gateway events, keyed by flowId.
+// History import device → gateway events, keyed by flowId.
 const importProgressEvent = z.object({
   flowId: z.string().min(1),
   phase: z.string(),

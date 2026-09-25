@@ -177,7 +177,7 @@ class PeopleCollector {
    * A thread's people carry a login and a display name only — GitHub exposes
    * no email for the author of an issue, pull request or discussion — so the
    * git email a commit carries is the sole bridge to the rest of the graph.
-   * See #2082: a login first seen here becomes a person of its own.
+   * See #73: a login first seen here becomes a person of its own.
    */
   build(): PersonMention[] {
     const mentions: PersonMention[] = [];

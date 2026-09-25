@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// Forward-looking consent-expiry persistence (#927). A source reports its
+// Forward-looking consent-expiry persistence. A source reports its
 // consent deadline on each successful page via `setSyncState`'s
 // `consentExpiresAt` argument; the gateway persists it on `sync_state` so it
 // survives a gateway restart (the warning is re-derived from the row, not from
@@ -34,7 +34,7 @@ afterEach(() => {
   }
 });
 
-describe("setSyncState — consent_expires_at persistence (#927)", () => {
+describe("setSyncState — consent_expires_at persistence", () => {
   test("an explicit deadline is persisted and read back", () => {
     const deadline = "2026-09-01T00:00:00.000Z";
     setSyncState(db, SRC, { phase: "incremental" }, undefined, deadline);

@@ -12,7 +12,7 @@
  */
 
 /**
- * Hard ceiling on a one-shot rate-limit deferral (#616). Node's `setTimeout`
+ * Hard ceiling on a one-shot rate-limit deferral. Node's `setTimeout`
  * clamps any delay above ~24.8 days (2^31-1 ms, TIMEOUT_MAX) to 1 (it fires on
  * the next tick, effectively immediately) — so an un-capped `Retry-After` larger
  * than that would turn a back-off into an *immediate* retry loop against the
@@ -25,7 +25,7 @@ export class SyncScheduler {
   private steady = new Map<string, ReturnType<typeof setInterval>>();
   /**
    * Handles for the one-shot timers that fire the *first* tick after
-   * the jittered delay, and the one-shot deferral timer (#616). Both are
+   * the jittered delay, and the one-shot deferral timer. Both are
    * `setTimeout`s, so clearInterval doesn't touch them — we need
    * clearTimeout. The first-tick entry is cleared once it promotes into
    * the steady-state setInterval; the deferral entry is cleared when its
@@ -69,7 +69,7 @@ export class SyncScheduler {
   }
 
   /**
-   * One-shot rate-limit deferral (#616). Tear down the source's current
+   * One-shot rate-limit deferral. Tear down the source's current
    * timer (first-tick or steady) and arm a single `setTimeout` at
    * `delayMs`; when it fires it runs the remembered tick once and re-arms
    * the steady `setInterval` at the *configured* interval — so the source

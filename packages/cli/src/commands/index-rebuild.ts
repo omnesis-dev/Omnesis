@@ -20,7 +20,7 @@ import {
  *
  * Routes through the same gateway code path as a model swap (POST
  * /admin/index/rebuild → applyEmbedSwap), so behaviour and concurrency
- * guarantees match. Defaults to the graceful double-buffered rebuild (#1011):
+ * guarantees match. Defaults to the graceful double-buffered rebuild:
  * search stays live on the existing index and switches automatically when the
  * new one is ready. `--hard` opts into an immediate cutover that wipes the
  * index now and accepts keyword-only search until the rebuild finishes.

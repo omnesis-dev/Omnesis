@@ -98,7 +98,7 @@ describe("IpRateLimiter", () => {
   });
 });
 
-describe("endpoint limiter factories (#58)", () => {
+describe("endpoint limiter factories", () => {
   test("searchRateLimiter refuses past its burst capacity", () => {
     const r = searchRateLimiter();
     const now = 1_000_000;

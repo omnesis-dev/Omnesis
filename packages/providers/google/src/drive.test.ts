@@ -340,7 +340,7 @@ describe("GoogleDriveSource", () => {
       expect(result.documents[0].externalId).toBe("recent-change");
     });
 
-    test("pushes cutoff into files.list `q=` as createdTime filter (#203)", async () => {
+    test("pushes cutoff into files.list `q=` as createdTime filter", async () => {
       const cutoff = "2024-01-01T00:00:00Z";
       const cutoffIso = new Date(cutoff).toISOString();
       const sourceWithCutoff = createDriveSource(drive, { dataCutoff: cutoff });
@@ -510,9 +510,9 @@ describe("GoogleDriveSource", () => {
     });
   });
 
-  // #270 — binary file extraction (PDF, Office, …) via the shared
+  // Binary file extraction (PDF, Office, …) via the shared
   // attachment pipeline.
-  describe("binary file extraction (#270)", () => {
+  describe("binary file extraction", () => {
     function createSourceWithExtractor(
       extractAttachment: import("@omnesis/core").AttachmentExtractFn,
     ) {
@@ -559,7 +559,7 @@ describe("GoogleDriveSource", () => {
       expect(doc.metadata.extra?.mimeType).toBe("application/pdf");
     });
 
-    test("OCRs an image file (#427)", async () => {
+    test("OCRs an image file", async () => {
       // image/* is in the allow-list (resolveAttachmentConfig), so an image
       // Drive file is not skipped as binary media — it downloads and routes
       // through the shared extractor (which OCRs it on the gateway).
@@ -612,7 +612,7 @@ describe("GoogleDriveSource", () => {
       expect(extractAttachment).toHaveBeenCalledOnce();
     });
 
-    test("propagates scanned-PDF OCR provenance (ocrPageCount) into extra (#427)", async () => {
+    test("propagates scanned-PDF OCR provenance (ocrPageCount) into extra", async () => {
       const pdf = makeDriveFile({
         id: "pdf-scanned",
         mimeType: "application/pdf",
@@ -811,12 +811,12 @@ describe("GoogleDriveSource", () => {
     });
   });
 
-  // #680 — a transient non-OCR failure from the injected attachment contract
+  // A transient non-OCR failure from the injected attachment contract
   // must NOT be swallowed into a null drop. It propagates out of the page so
   // the sync fails and the cursor is not advanced — the file is retried next
   // tick instead of being lost forever. A permanent extraction failure
   // (extractor returns null) keeps being skipped.
-  describe("transient extraction failures retry instead of dropping (#680)", () => {
+  describe("transient extraction failures retry instead of dropping", () => {
     function createSourceWithExtractor(
       extractAttachment: import("@omnesis/core").AttachmentExtractFn,
     ) {
@@ -864,7 +864,7 @@ describe("GoogleDriveSource", () => {
     test("a permanent extraction failure (extractor returns null) drops the file without failing the page", async () => {
       mockPdf("pdf-permanent");
       // null = genuinely unextractable (corrupt/empty binary, unsupported) — the
-      // pre-#680 behavior is unchanged: the file is skipped, the page resolves.
+      // established behavior is unchanged: the file is skipped, the page resolves.
       const extractAttachment = vi.fn(() => Promise.resolve(null));
       const driveSource = createSourceWithExtractor(extractAttachment);
 

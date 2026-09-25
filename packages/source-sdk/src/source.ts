@@ -200,7 +200,7 @@ export interface SyncResult<TCursor extends SyncCursor = SyncCursor> {
   presentClaims?: SnapshotClaim[];
 
   /**
-   * Structural edges the source declares between its documents (#430). A
+   * Structural edges the source declares between its documents. A
    * first-class output of `sync()` alongside `documents`: the source asserts
    * relationships it knows from its own structure (a reply via `In-Reply-To`,
    * an ordered sequence, a sibling group, a cross-source reference) and the
@@ -252,7 +252,7 @@ export interface SyncResult<TCursor extends SyncCursor = SyncCursor> {
    * "reconnect within N days" warning) distinct from the terminal `needs-auth`
    * pill. Re-consent that restores sync simply reports a later (or absent)
    * deadline on the next page, clearing the warning. Omitted / `null` means the
-   * source has no known deadline (the common case). See #927.
+   * source has no known deadline (the common case).
    */
   consentExpiresAt?: string | null;
 
@@ -261,7 +261,7 @@ export interface SyncResult<TCursor extends SyncCursor = SyncCursor> {
 }
 
 // ---------------------------------------------------------------------------
-// History import (#588) — generic one-time bulk import from a local artifact
+// History import — generic one-time bulk import from a local artifact
 // ---------------------------------------------------------------------------
 
 /**
@@ -285,7 +285,7 @@ export interface ImportField {
 
 /**
  * Declares that a source can import historical data from a user-supplied local
- * artifact — a one-time, re-runnable bulk import (#588). Source-agnostic: the
+ * artifact — a one-time, re-runnable bulk import. Source-agnostic: the
  * source owns what the artifact is and how to parse it; clients only render a
  * form from `fields`, collect the values, and call `SourceInstance.importHistory`.
  *
@@ -365,7 +365,7 @@ export function syncPage<TCursor extends SyncCursor>(
     issues?: SyncIssue[];
     /** Coverage claim for the completed sync (only valid when `hasMore` is false). */
     watermark?: SourceWatermark;
-    /** Source-declared structural edges for this page (#430). */
+    /** Source-declared structural edges for this page. */
     edges?: EdgeDeclaration[];
   },
 ): SyncResult<TCursor> {
@@ -591,5 +591,5 @@ export interface SourceAttribution {
 // behind the `defineSource()` / `defineProvider()` adapter and uses
 // `SourceInstance` (declared in `define-source.ts`) as the runtime
 // contract. The 6 provider classes that previously `implements Source`
-// were migrated in May 2026 (#399 / #400 / #401 / #402 / #403 / #404);
-// the interface itself was dropped in the cleanup PR (#405).
+// were migrated in May 2026;
+// the interface itself was dropped in the cleanup PR.

@@ -23,7 +23,7 @@
 //                  and syncs it again; with a `deviceId`, only that device's
 //                  stream (partitioned) or cursor (replicated) is reset
 //   - Remove     → DELETE /admin/sources/:id (only meaningful for registered;
-//                  for discovered, surfaces a hint about #166/#168). Returns
+//                  for discovered, surfaces a hint). Returns
 //                  once the source has stopped; its data drains afterwards and
 //                  the row stays visible as `removing` until it has.
 //   - Join a device   → POST /admin/sources/:id/members
@@ -591,7 +591,7 @@ export function SourcesView() {
   const [showAdd, setShowAdd] = useState(false);
   const [confirmState, setConfirmState] = useState(null); // { title, body, confirmLabel, danger, onConfirm } | null
   // sourceType → historyImport spec, for sources that support a one-time
-  // backup/artifact import (#588). Drives the "Import full history" action.
+  // backup/artifact import. Drives the "Import full history" action.
   const [importSpecByType, setImportSpecByType] = useState({});
   const [importState, setImportState] = useState(null); // { sourceId, spec } | null
   // Every device the gateway knows, so a row can name its members and offer
@@ -624,11 +624,11 @@ export function SourcesView() {
         ]);
 
       // Map sourceType → historyImport spec for sources that advertise the
-      // generic one-time-import capability (#588). Empty when no collector is
+      // generic one-time-import capability. Empty when no collector is
       // online, in which case the action simply doesn't appear.
       const importSpecs = {};
       // Per-type descriptor signals used by the Count column: the headline
-      // count plane (#993) and the unit noun (so gateway-hosted sources with
+      // count plane and the unit noun (so gateway-hosted sources with
       // a descriptor but no collector sync.status — e.g. `web` — still read
       // "web pages", not the generic "docs"). Gateway-internal sources such
       // as `omnesis-notes` have no descriptor at all, so they keep the
@@ -690,12 +690,12 @@ export function SourcesView() {
         // syncing it. We deliberately don't surface them as rows (would
         // confuse "is this source active?"). The real fix is to make sure
         // the collector applies `source.removed` / `sources.snapshot`
-        // reconciliation (see #166). If you see an orphan here, restart
+        // reconciliation. If you see an orphan here, restart
         // the collector to let applySourcesSnapshot clean it up.
       }
 
       // Count priority mirrors CLI status. A source can override the heuristic
-      // via its descriptor's `primaryCount` (#993):
+      // via its descriptor's `primaryCount`:
       //   - primaryCount "documents" → always the document total (e.g. `web`,
       //     whose tiny page_visits log must not shadow its page count).
       //   - primaryCount "analytics" → always the analytics row count.
@@ -1005,8 +1005,8 @@ export function SourcesView() {
       ${showLegacyMigrationBanner(overall, sources) && html`
         <div class="sources-banner-v2 info">
           <strong>None of your sources are registered with the gateway yet.</strong>
-          They were added via <code>${"npm run cli -- add <source>"}</code> which writes to <code>collector.json</code> directly. The gateway is the long-term source of truth — see
-          <a href="https://github.com/omnesis-dev/Omnesis/issues/168" target="_blank">#168</a> for the migration. Sources still work; some actions (Remove) are limited.
+          They were added via <code>${"npm run cli -- add <source>"}</code> which writes to <code>collector.json</code> directly. The gateway is the long-term source of truth.
+          Sources still work; some actions (Remove) are limited.
         </div>
       `}
 
@@ -1206,7 +1206,7 @@ function SourceRow({
           <div class="source-cell-name-text">
             <span class="source-display-name">${sourceLabel(s.id)}</span>
             <span class="source-id-inline"><code>${s.id}</code></span>
-            ${s.discoveredOnly && html`<span class="source-discovered-tag" title="Discovered via sync.status only — not in /admin/sources (see #168)">discovered</span>`}
+            ${s.discoveredOnly && html`<span class="source-discovered-tag" title="Discovered via sync.status only — not in /admin/sources">discovered</span>`}
             ${!s.enabled && html`<span class="source-paused-tag">paused</span>`}
           </div>
         </div>

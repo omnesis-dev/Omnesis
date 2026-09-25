@@ -5,7 +5,7 @@
  * The speech-to-text seam inside the shared attachment extractor: when an
  * `AudioTranscribeFn` is wired, audio attachments on document sources (email)
  * are transcribed into a child doc; with no `transcribe` fn the extractor never
- * touches audio. Conversation sources never route audio here. See #260.
+ * touches audio. Conversation sources never route audio here.
  */
 
 import { describe, test, expect, vi } from "vitest";

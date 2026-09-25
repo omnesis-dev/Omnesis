@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Export routes (#57). Mounted from server.ts only when an `ExportService`
+ * Export routes. Mounted from server.ts only when an `ExportService`
  * is wired (production; tests that don't exercise exports skip them).
  *
  * Surface (admin scope):

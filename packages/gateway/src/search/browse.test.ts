@@ -231,7 +231,7 @@ describe("browseByRecency", () => {
     expect(out.map((c) => c.documentId)).toEqual(["d3", "d2"]);
   });
 
-  test("an allowed set far above SQLite's variable cap does not 500 (#581)", () => {
+  test("an allowed set far above SQLite's variable cap does not 500", () => {
     // A `with:`/`source:` browse on a very high-volume entity resolves to more
     // doc ids than SQLite's 32766 bound-variable limit. An inline IN-list
     // throws "too many SQL variables"; the temp-table path must absorb it.

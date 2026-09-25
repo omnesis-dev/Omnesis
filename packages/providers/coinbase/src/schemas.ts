@@ -4,8 +4,8 @@
 /**
  * Boundary schemas for the Coinbase Advanced Trade API (zod — parse, don't
  * cast) and the analytics tables this provider manages: the two point-in-time
- * snapshot tables for balances and holdings (#752) and the three append-only
- * activity tables for orders, fills, and the v2 transaction ledger (#753).
+ * snapshot tables for balances and holdings and the three append-only
+ * activity tables for orders, fills, and the v2 transaction ledger.
  *
  * The zod schemas are deliberately tolerant of upstream evolution: enum-ish
  * fields (`type`, `platform`, …) are plain strings so a new upstream variant
@@ -475,7 +475,7 @@ export const coinbaseHoldingsTableSchema: AnalyticsTableSchema = {
   ],
 };
 
-// ── Append-only activity tables (#753) ──────────────────────────────
+// ── Append-only activity tables ──────────────────────────────
 //
 // Orders, fills, and v2 ledger transactions are CURRENT-STATE APPEND-ONLY (not
 // day snapshots): each row is keyed on the stable upstream id so an at-least-once
@@ -756,7 +756,7 @@ export const coinbaseTransactionsTableSchema: AnalyticsTableSchema = {
   sharedDiscriminatorColumn: "source_account_id",
   // Each transaction row co-describes a searchable ledger document whose
   // externalId is `${account_key}:${transaction_id}` (normalizer.ts) — the 1:1
-  // doc↔row edge (#450). account_key (a UUID/hash) never contains the ':'
+  // doc↔row edge. account_key (a UUID/hash) never contains the ':'
   // separator, so the composite externalId splits cleanly back into the PK.
   boundDocument: { externalIdColumns: ["account_key", "transaction_id"] },
   exampleQueries: [
@@ -766,7 +766,7 @@ export const coinbaseTransactionsTableSchema: AnalyticsTableSchema = {
   ],
 };
 
-/** All analytics tables managed by the Coinbase provider (balances + holdings #752; orders + fills + transactions #753). */
+/** All analytics tables managed by the Coinbase provider (balances + holdings; orders + fills + transactions). */
 export const allSchemas: AnalyticsTableSchema[] = [
   coinbaseBalancesTableSchema,
   coinbaseHoldingsTableSchema,

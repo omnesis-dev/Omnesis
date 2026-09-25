@@ -47,7 +47,7 @@ export function groupNeedsAuthSourcesByProvider(sources) {
 
 /**
  * Sibling of `groupNeedsAuthSourcesByProvider` for the forward-looking
- * `auth-expiring` state (#927). A provider+account is "expiring" on a device if
+ * `auth-expiring` state. A provider+account is "expiring" on a device if
  * any of its entries there is in `auth-expiring`; the same provider+account
  * re-consent heals all its siblings. Each group also carries the soonest
  * `consentExpiresAt` deadline across its sources, so the banner can render

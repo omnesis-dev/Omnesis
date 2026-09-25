@@ -60,7 +60,7 @@ export interface GraphWalkRequest {
   /** Minimum near-duplicate jaccard for scored edges. */
   minScore?: number;
   /**
-   * Attach cross-store `same-entity` edges + `analytics-row` vertices (#450).
+   * Attach cross-store `same-entity` edges + `analytics-row` vertices.
    * Requires a `BoundRowResolver`. Ignored when `vertexTypes` excludes
    * `analytics-row`.
    */

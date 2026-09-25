@@ -6,6 +6,6 @@
 // extract-eml) are wired internally inside extract.ts; only the
 // top-level orchestrator is consumed by main.ts. The previous broad
 // re-export of @omnesis/core helpers was dead — kept only the live
-// edge after the dead-code sweep (#404-era core split + this
+// edge after the dead-code sweep (era core split + this
 // bundle).
 export { createAttachmentExtractor } from "./extract.js";

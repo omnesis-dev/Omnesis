@@ -435,7 +435,7 @@ export class SourceService {
    * The refusal for adopting a source another device hosts. Ownership only
    * moves through the explicit re-home (`updateSource` with a deviceId,
    * surfaced as `omnesis sources move`); a second add would leave both
-   * hosts syncing one shared cursor (#1513).
+   * hosts syncing one shared cursor.
    */
   private alreadyHostedError(sourceId: SourceId, hostDeviceId: DeviceId): HttpError {
     const host = getDevice(this.deps.db, hostDeviceId);
@@ -1759,10 +1759,10 @@ export class SourceService {
   }
 
   /**
-   * Register a push source's `sources` row on first ingest (#791).
+   * Register a push source's `sources` row on first ingest.
    *
    * Pull sources get their row from the collector's bulk-upsert. A push
-   * source (the browser extension #791, the iOS app hosting Apple Health)
+   * source (the browser extension, the iOS app hosting Apple Health)
    * instead authenticates with a SCOPED write token (`write:<type>`, never
    * `write:*` like the collector) and POSTs documents directly — so nothing
    * ever creates its row, and the source has data yet stays invisible in the
@@ -1890,8 +1890,8 @@ export class SourceService {
           // Same account, second collector. For a source several devices
           // may serve this is a join (a member that is already in stays
           // in; the owner's config remains the shared truth). For an
-          // exclusive source, adopting the row here is the silent steal of
-          // #1513 — reject the entry; moving a source is `omnesis sources move`.
+          // exclusive source, adopting the row here would be a silent steal,
+          // so reject the entry; moving a source is `omnesis sources move`.
           if (isSourceMember(db, explicitId, deviceId)) {
             await this.joinSource(explicitId, deviceId, s.memberConfig, pairingFence);
           } else if (this.modeFor(before) !== "exclusive") {

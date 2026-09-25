@@ -142,7 +142,7 @@ describe("reconstructRowKey on a stream-keyed table", () => {
   });
 });
 
-describe("reconstructBoundDocumentRef (row → document, #757)", () => {
+describe("reconstructBoundDocumentRef (row → document)", () => {
   /** Build a map<col,value> the way a RecordReference's PK columns supply it. */
   function pk(pairs: [string, string][]): Map<string, string> {
     return new Map(pairs);

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Structural test for the record-citation contract (#757).
+ * Structural test for the record-citation contract.
  *
  * Enumerates every in-tree source descriptor and asserts that each one whose
  * `analyticsSchemas` is non-empty declares, on every table:
@@ -23,7 +23,7 @@
 import { describe, test, expect } from "vitest";
 import { validateRecordCitationContract } from "@omnesis/source-sdk";
 
-describe("record-citation contract: every structured source declares it (#757)", () => {
+describe("record-citation contract: every structured source declares it", () => {
   test("all descriptors with analyticsSchemas declare semanticTimeColumn + record spec", async () => {
     const { allDescriptors } = await import("./source-descriptors.js");
     expect(allDescriptors.length).toBeGreaterThan(0);

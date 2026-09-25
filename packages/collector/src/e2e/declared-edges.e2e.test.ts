@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * E2E for the source-declared edge contract (#430).
+ * E2E for the source-declared edge contract.
  *
  * Drives a mock source that emits documents AND `edges` (the explicit
  * `EdgeDeclaration` contract) through the real collector→gateway sync path,
@@ -164,7 +164,7 @@ afterAll(async () => {
   await harness.destroy();
 }, 15_000);
 
-describe("Source-declared edges (#430) E2E", () => {
+describe("Source-declared edges E2E", () => {
   test("explicit replies-to edge lands with source-declared provenance", async () => {
     const view = await edgesOf("reply-1");
     const out = view.edges.filter((e) => e.direction === "outbound" && e.linkType === "replies-to");

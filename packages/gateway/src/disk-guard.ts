@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Low-disk write guard (#15).
+ * Low-disk write guard.
  *
  * The gateway must never write under low disk — a partial SQLite write or a
  * truncated usearch flush risks corrupting the store. Two write paths consult

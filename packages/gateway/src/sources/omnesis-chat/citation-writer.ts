@@ -16,7 +16,7 @@
  * rendering a citation edge can read the column without re-loading the
  * source conversation transcript.
  *
- * Two citation variants share this `'cited'` edge path (#757):
+ * Two citation variants share this `'cited'` edge path:
  *   - a **document** citation (the `annotate` tool) — `target_doc_id` is the
  *     cited doc, `normalized_target` is `omnesis://doc/<id>#<idx>`.
  *   - a **record** citation (the `cite_record` tool) — one analytics row;
@@ -33,7 +33,7 @@
  * row multiple times in one conversation; each citation gets its own row
  * because `normalized_target` is uniqueified with an index (`#<index>`)
  * appended. Re-running the upsert over the same conversation reproduces the
- * identical edge set (no duplicate/destroyed edges) — the #757 oracle.
+ * identical edge set (no duplicate/destroyed edges) — the idempotence oracle.
  */
 
 import { analyticsRowKey } from "@omnesis/core";
@@ -47,7 +47,7 @@ type Db = Database.Database;
 export const CONVERSATION_CITATION_LINK_TYPE: LinkType = "cited";
 
 /**
- * Provenance origin recorded on `cited` edges (#430). Identifies the agent
+ * Provenance origin recorded on `cited` edges. Identifies the agent
  * annotator that authored the citation; bumping the version would invalidate
  * a generation's citations for re-derivation.
  */
@@ -77,7 +77,7 @@ export interface RecordCitationKeyField {
 }
 
 /**
- * A record citation (the `cite_record` tool, #757) — one analytics row the
+ * A record citation (the `cite_record` tool) — one analytics row the
  * agent cited as a point-in-time record. Carries the immutable, gateway-derived
  * snapshot + identity; `boundDocumentId` is the co-described document when one
  * exists (becomes `target_doc_id`) or `null` (a record with no bound document

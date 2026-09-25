@@ -73,7 +73,7 @@ function renderEdge(e: DocumentEdge): void {
 const edgesShowCommand = defineCommand({
   meta: {
     name: "show",
-    description: "Show every edge incident to a document, with provenance (#430)",
+    description: "Show every edge incident to a document, with provenance",
   },
   args: {
     id: {

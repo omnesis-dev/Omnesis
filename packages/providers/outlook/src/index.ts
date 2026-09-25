@@ -203,7 +203,7 @@ export default defineProvider<MicrosoftContext>({
         requires: ["state-envelope"],
       },
       async create({ sourceId, providerId, dataCutoff, sourceConfig, host }, ctx) {
-        // OCR opt-in (#427) lights up image files identically to Drive: the
+        // OCR opt-in lights up image files identically to Drive: the
         // resolved attachment config's allow-list drives `shouldExtractAttachment`
         // at fetch time inside the source.
         const attachmentConfig = resolveAttachmentConfig(sourceConfig, {

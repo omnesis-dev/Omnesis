@@ -599,7 +599,7 @@ class HealthConnectSourceTest {
         // The Health Connect provider can hit an internal error serving one record
         // type's read, surfacing client-side as an android.os.RemoteException (seen
         // live for WeightRecord: "while parsing a protocol message…"). One bad type
-        // must be skipped, not abort the whole sync into an endless retry. See #716.
+        // must be skipped, not abort the whole sync into an endless retry.
         val fake = FakeHealthConnectClient(permissionController = FakePermissionController(grantAll = true))
         fake.insertRecords(listOf(weight(71.5), steps(1200)))
 
@@ -669,7 +669,7 @@ class HealthConnectSourceTest {
         // Some providers throw the internal "parsing a protocol message" error serving
         // getChanges (delta) for a type while readRecords (baseline) still works for it.
         // The engine must RECOVER by re-baselining — not skip — so data keeps flowing on
-        // such devices. Mirrors the expired-token re-baseline path. See #716.
+        // such devices. Mirrors the expired-token re-baseline path.
         val fake = FakeHealthConnectClient(permissionController = FakePermissionController(grantAll = true))
         fake.insertRecords(listOf(weight(70.0), steps(8000)))
         val baseline = source(fake).sync(HealthCursor()) {}
@@ -704,7 +704,7 @@ class HealthConnectSourceTest {
     fun baselineTerminatesWhenThePageTokenNeverAdvances() = runTest {
         // A misbehaving provider returns a non-null page token that never advances and
         // keeps re-yielding the same records. Baseline MUST terminate (not loop forever
-        // flooding the provider) and emit each record exactly once. See #716.
+        // flooding the provider) and emit each record exactly once.
         val fake = FakeHealthConnectClient(permissionController = FakePermissionController(grantAll = true))
         val stuck = fake.insertRecords(listOf(weight(70.0))).recordIdsList.single()
         val looping = fake.readRecords(

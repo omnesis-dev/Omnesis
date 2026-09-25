@@ -193,7 +193,7 @@ describe("validateRecordCitationContract", () => {
     ).toThrow(/references '\{amount\}' which is not listed in titleColumns/);
   });
 
-  describe("requireRecord: false (gateway ingest boundary, pre-#757 clients)", () => {
+  describe("requireRecord: false (gateway ingest boundary, clients without record citations)", () => {
     it("accepts a schema that omits the record spec entirely", () => {
       expect(() =>
         validateRecordCitationContract(

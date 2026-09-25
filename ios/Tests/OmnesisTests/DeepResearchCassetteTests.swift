@@ -4,7 +4,7 @@
 @testable import Omnesis
 import XCTest
 
-/// The iOS arm of the cross-client Deep Research cassette test (#748).
+/// The iOS arm of the cross-client Deep Research cassette test.
 ///
 /// Drives the CANONICAL synthetic conversation — the exact
 /// `evals/universes/japan-trip/agent-demos/japan-trip-spend.jsonl` the demo

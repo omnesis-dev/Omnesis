@@ -374,7 +374,7 @@ describe("OutlookEmailSource", () => {
       expect(r2.hasMore).toBeFalsy();
     });
 
-    test("rejects (cursor not advanced) when non-OCR extraction fails transiently (#680)", async () => {
+    test("rejects (cursor not advanced) when non-OCR extraction fails transiently", async () => {
       // A transient non-OCR processor blip during the body-backfill pass must
       // fail the page so it retries — not silently drop the message's
       // attachment and march the backfill index past it.
@@ -1339,7 +1339,7 @@ describe("OutlookEmailSource", () => {
       });
 
       // Attachment doc — externalId is the stable hash from (filename, size,
-      // mimeType); see #268 for why we don't use Outlook's att-1.
+      // mimeType); see `deriveAttachmentStableId` for why we don't use Outlook's att-1.
       expect(attDoc.externalId).toBe(
         `msg-1/att/${deriveAttachmentStableId("invoice.pdf", 8000, "application/pdf")}`,
       );
@@ -1440,7 +1440,7 @@ describe("OutlookEmailSource", () => {
         reason: "type-excluded",
       });
 
-      // Both PDF attachment docs created — stable hash IDs (#268)
+      // Both PDF attachment docs created — stable hash IDs
       expect(attDoc1.externalId).toBe(
         `msg-multi/att/${deriveAttachmentStableId("report.pdf", 5000, "application/pdf")}`,
       );
@@ -1529,7 +1529,7 @@ describe("OutlookEmailSource", () => {
         reason: "extraction-failed",
       });
 
-      // Only successful one gets a doc — stable hash ID (#268)
+      // Only successful one gets a doc — stable hash ID
       expect(attDoc.externalId).toBe(
         `msg-partial/att/${deriveAttachmentStableId("good.pdf", 5000, "application/pdf")}`,
       );
@@ -1565,7 +1565,7 @@ describe("OutlookEmailSource", () => {
       );
     });
 
-    test("#262 — referenceAttachment surfaces as link metadata, not a child doc", async () => {
+    test("referenceAttachment surfaces as link metadata, not a child doc", async () => {
       const g = createMockGraph();
       g.get = vi.fn((url: string) => {
         if (url.includes("/mailFolders?")) {
@@ -1609,7 +1609,7 @@ describe("OutlookEmailSource", () => {
                 sourceUrl: "https://onedrive.live.com/redir?resid=ABC123",
               },
               {
-                // itemAttachment is intentionally dropped (#261).
+                // itemAttachment is intentionally dropped (#22).
                 "@odata.type": "#microsoft.graph.itemAttachment",
                 id: "att-item",
                 name: "forwarded.msg",

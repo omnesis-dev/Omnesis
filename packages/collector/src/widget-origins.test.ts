@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Widget-origins aggregation tests (#918).
+ * Widget-origins aggregation tests.
  *
  * Two concerns:
  *  1. Aggregation — `collectWidgetOrigins` unions every definition's declared
@@ -19,7 +19,7 @@ import { describe, expect, test } from "vitest";
 import { collectWidgetOrigins, collectWidgetRenderers } from "./source-manager.js";
 import type { SourceOrProviderDefinition } from "@omnesis/source-sdk";
 
-describe("collectWidgetOrigins aggregation (#918)", () => {
+describe("collectWidgetOrigins aggregation", () => {
   test("unions declarations across single and multi-source definitions, per directive", () => {
     const defs = [
       {
@@ -105,7 +105,7 @@ describe("collectWidgetOrigins aggregation (#918)", () => {
   });
 });
 
-describe("collectWidgetRenderers aggregation (#984)", () => {
+describe("collectWidgetRenderers aggregation", () => {
   test("unions provider-owned renderer modules by opaque kind", () => {
     const defs = [
       {

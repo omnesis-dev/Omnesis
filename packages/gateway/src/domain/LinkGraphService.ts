@@ -36,17 +36,17 @@ const DUPLICATE_CONTENT_CAP = 100;
 /**
  * Provenance origin recorded on `duplicate-content` edges — the algorithm that
  * produced them (extracted-content SHA-256 match). Bumping the version marks
- * these edges stale for a future re-derivation pass (#430 invalidation model).
+ * these edges stale for a future re-derivation pass (provenance invalidation model).
  */
 const DUPLICATE_CONTENT_PROVENANCE_ORIGIN = "extracted-content-hash-v1";
 const SAME_RESOURCE_PROVENANCE_ORIGIN = "canonical-source-url-v1";
 
 /**
  * Whether a url target matches the url-id pattern of *some known source
- * type* — registered (added) or not. The keep-decision for the #570 prune:
+ * type* — registered (added) or not. The keep-decision for the unresolvable-url prune:
  * a link matching a known-but-not-yet-added source (e.g. a Notion URL
  * before Notion is added) must NOT be pruned, so it survives to resolve via
- * the reconcile path once that source is ingested (#668). Registration is
+ * the reconcile path once that source is ingested. Registration is
  * irrelevant to the keep decision; it only matters for *resolution*, which
  * `extractIdFromUrl` handles separately (a not-yet-added source has no docs
  * to resolve against anyway).
@@ -158,7 +158,7 @@ export function resolveInboundLinks(
       resolved += threadResult.changes;
     }
 
-    // 5. Calendar-event match via iCalUID (#266). Cross-source by
+    // 5. Calendar-event match via iCalUID. Cross-source by
     // design — an ICS attachment from outlook-email links to the
     // matching event in google-calendar (or, in future, any other
     // calendar-source). No same-source scoping clause.
@@ -217,13 +217,13 @@ export function resolveInboundLinks(
  * `duplicate-content` cross-linking. Authored content like emails, notes,
  * messages, contacts, etc. is intentionally OUT of scope — those tend to
  * have legitimate non-duplicate identical bodies (mailing-list resends,
- * recurring templates) that would clutter the graph. #264, #271.
+ * recurring templates) that would clutter the graph.
  */
 const BINARY_EXTRACTED_DOC_TYPES = ["attachment", "file"] as const;
 const BINARY_EXTRACTED_DOC_TYPES_SET = new Set<string>(BINARY_EXTRACTED_DOC_TYPES);
 
 /**
- * #264 / #271 — emit `duplicate-content` outbound links from the just-upserted
+ * Emit `duplicate-content` outbound links from the just-upserted
  * binary-extracted doc to every other binary-extracted doc with the same
  * `extracted_content_hash`. The reverse direction is automatically visible
  * via the standard inbound lookup, so we only insert one row per pair (this
@@ -393,8 +393,7 @@ function resolveSharesPhoneLink(
  * Cross-source by design — an ICS attachment from `outlook-email:...`
  * resolves to a `google-calendar:...` event with the matching UID. The
  * event source must populate `metadata.extra.iCalUID` (Google Calendar
- * and Apple Calendar do this; Outlook Calendar will when #85 ships).
- * #266.
+ * and Apple Calendar do this).
  */
 function resolveCalendarEventLink(
   db: Db,
@@ -572,7 +571,7 @@ export interface LinkReconcileBatch {
   /**
    * Ids of links that can never resolve, for the writer to delete: unresolved
    * `url` links the cursor scan visited whose target neither matches a
-   * `source_url` now nor any registered url-id pattern later (#570), and
+   * `source_url` now nor any registered url-id pattern later, and
    * `duplicate-content` edges whose other copy was deleted. Empty on most
    * ticks once the historical backlog is drained — new such url links are
    * dropped at extraction by `urlTargetCouldResolve`.
@@ -855,7 +854,7 @@ export function computeLinkResolutions(
   //
   // This is a SAFETY NET, not a normal path. A link extracted after its
   // target exists resolves on the read handle at extraction time
-  // (`resolveExtractedLinks`, #569). What survives is a link whose target
+  // (`resolveExtractedLinks`). What survives is a link whose target
   // arrived later, or one left behind by an older build. It is bounded so
   // keeping that eventual-healing path costs little in steady state.
   //
@@ -864,7 +863,7 @@ export function computeLinkResolutions(
   // matches returned, not rows examined, so a scan driven from `documents`
   // pays one pass over the whole corpus precisely when there is nothing to
   // find — which, since permanently-unresolvable external URLs are pruned
-  // (#570) and links resolve as they are extracted (#569), is the steady
+  // and links resolve as they are extracted, is the steady
   // state. Driven from the links, the unresolved set is the small side.
   // Both bounds here are explicit: at most
   // `DIRECT_SCAN_EXAMINE_LIMIT` links are examined, each by one indexed
@@ -999,12 +998,12 @@ export function computeLinkResolutions(
     ...nonUrlResolutions,
   ];
 
-  // #570 prune: among the url rows the cursor just visited, find the ones
+  // Unresolvable-url prune: among the url rows the cursor just visited, find the ones
   // that can never resolve — they didn't resolve now (the cursor scan's
   // `resolveLink` returned null, which also means no `source_url` match,
   // so the direct scan (3) can't claim them either) AND their target
   // matches no KNOWN source type's url-id pattern (so they can't resolve
-  // later, even after the user adds a source — #668). These are the
+  // later, even after the user adds a source). These are the
   // permanently-external links; the writer deletes them so the cursor
   // doesn't re-scan them on the next cycle. A link to a known-but-not-yet-
   // added source survives the prune and resolves once that source is added.
@@ -1080,7 +1079,7 @@ export function computeLinkResolutions(
  * a later tick once the target reappears or the link is re-extracted.
  *
  * Also deletes `batch.deletableLinkIds` — url links the cursor scan found
- * to be permanently unresolvable (#570 prune). The `target_doc_id IS NULL`
+ * to be permanently unresolvable (unresolvable-url prune). The `target_doc_id IS NULL`
  * guard makes a delete a no-op if a concurrent path resolved the link
  * between compute and apply, so a resolvable link is never dropped.
  *

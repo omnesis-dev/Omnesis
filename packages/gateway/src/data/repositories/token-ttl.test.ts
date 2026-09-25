@@ -20,7 +20,7 @@ function cleanupDb(path: string): void {
   }
 }
 
-describe("token TTL (#568)", () => {
+describe("token TTL", () => {
   let path: string;
   let db: Db;
   beforeEach(() => {

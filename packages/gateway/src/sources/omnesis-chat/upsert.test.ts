@@ -132,7 +132,7 @@ describe("renderedCitationsToInputs", () => {
     ]);
   });
 
-  test("maps a record citation to a kind:'record' input (#757)", () => {
+  test("maps a record citation to a kind:'record' input", () => {
     const out = renderedCitationsToInputs([
       {
         kind: "record",

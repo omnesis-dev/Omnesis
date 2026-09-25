@@ -93,7 +93,7 @@ class ModelsSettingsPairingParityScreenshotTest {
         }
     }
 
-    // --- Models (full capability management surface; #728) ---
+    // --- Models (full capability management surface) ---
 
     @Test
     fun models_configured_dark() = capture("models_configured_dark", dark = true) {
@@ -402,7 +402,7 @@ class ModelsSettingsPairingParityScreenshotTest {
         )
     }
 
-    // --- HTTP-backend management (#728) ---
+    // --- HTTP-backend management ---
 
     @Test
     fun backends_list_dark() = capture("backends_list_dark", dark = true) {
@@ -463,7 +463,7 @@ class ModelsSettingsPairingParityScreenshotTest {
         AddBackendForm(presets = samplePresets())
     }
 
-    // --- Model-provider credentials (#728) ---
+    // --- Model-provider credentials ---
 
     @Test
     fun backends_with_credentials_dark() = capture("backends_with_credentials_dark", dark = true) {
@@ -488,7 +488,7 @@ class ModelsSettingsPairingParityScreenshotTest {
         SetCredentialForm(entry = sampleCredentials()[0])
     }
 
-    // --- Backend detail: header + behavioral capability verify (#737) ---
+    // --- Backend detail: header + behavioral capability verify ---
 
     @Test
     fun backend_detail_verify_idle_dark() = capture("backend_detail_verify_idle_dark", dark = true) {

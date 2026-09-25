@@ -4,7 +4,7 @@
 @testable import Omnesis
 import XCTest
 
-/// JSON-decode round-trip regression net for `agent.subagent.event` (#748).
+/// JSON-decode round-trip regression net for `agent.subagent.event`.
 ///
 /// The deep-research researcher cards are fed by a sub-agent's WRAPPED child
 /// events: each `agent.subagent.event` envelope carries an inner `{type,payload}`

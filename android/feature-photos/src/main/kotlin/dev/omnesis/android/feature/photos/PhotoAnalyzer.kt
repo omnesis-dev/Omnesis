@@ -63,7 +63,7 @@ data class PhotoAnalysisFragment(
  * download state) and produces a typed fragment merged into the document —
  * so OCR, place resolution, labeling, and barcode detection are
  * each independently absent-when-unavailable. Mirrors iOS's `PhotoAnalyzer`
- * protocol (#169).
+ * protocol.
  */
 interface PhotoAnalyzer {
     val identifier: String

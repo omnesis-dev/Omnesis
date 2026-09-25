@@ -267,7 +267,7 @@ export function resolveRoleBackend(
  * Wrap a pre-built `agent`-role backend factory into the role-parameterised
  * factory {@link AgentService} now expects. The `agent` role returns the
  * already-resolved parent backend; every other role resolves fresh from the
- * registry (null ⇒ the sub-agent inherits the parent). See #748.
+ * registry (null ⇒ the sub-agent inherits the parent).
  */
 function makeRoleAwareFactory(
   agentFactory: () => ChatBackend,
@@ -290,7 +290,7 @@ function makeRoleAwareFactory(
  * unassigned sub-agent role (the caller then inherits the parent's backend).
  */
 /**
- * The v1 built-in specialist registry (#748): `research-planner`,
+ * The v1 built-in specialist registry: `research-planner`,
  * `history-sweep`, `source-digest`, and `citation-verifier`.
  * Deep Research resolves its private stages through this registry to a
  * `{ systemPrompt, modelRole, defaultTools }` descriptor. The ordinary
@@ -400,12 +400,12 @@ export function createAgentService(
       document: createGatewayDocumentPort(db, syncStatus),
       documentByUrl: createGatewayDocumentByUrlPort(db, syncStatus),
       // `trace_connections` surfaces `same-entity` bound rows as point-in-time
-      // records (#757), so it needs the same analytics DB `cite_record` uses
+      // records, so it needs the same analytics DB `cite_record` uses
       // (for the bound-row resolver + the record-display contract).
       trail: createGatewayTrailPort(db, analyticsDb),
       sql: createGatewaySqlPort(analyticsDb),
-      // `cite_record` persists a single analytics row as a record citation
-      // (#757). Wired with the same analytics DB as `run_sql` (for the table
+      // `cite_record` persists a single analytics row as a record citation.
+      //Wired with the same analytics DB as `run_sql` (for the table
       // contract) and the document store (to resolve a bound document id).
       record: createGatewayRecordPort(db, analyticsDb),
       person: createGatewayPersonPort(db, { lookupGate: deps.personLookupGate }),
@@ -491,7 +491,7 @@ export function createAgentService(
     notifyAnswer: deps.notifyAgentAnswer,
     readState: deps.conversationReadState,
     notifyConversation: deps.notifyConversation,
-    // Sub-agents (#748). Interactive turns expose one generic worker contract;
+    // Sub-agents. Interactive turns expose one generic worker contract;
     // the built-in specialist registry remains private to Deep Research.
     subagents: {
       // A specialist's prompt is a fixed in-repo string; the operator's
@@ -802,7 +802,7 @@ export class AgentLifecycle {
    * Build the service from an `agent`-role backend factory. The factory is
    * wrapped into the role-parameterised form {@link AgentService} expects, so
    * the `agent` role uses `agentFactory` and the sub-agent roles resolve fresh
-   * from the inference registry (null ⇒ inherit the parent — #748).
+   * from the inference registry (null ⇒ inherit the parent).
    */
   private makeAgentService(
     agentFactory: () => ChatBackend,
@@ -847,7 +847,7 @@ export class AgentLifecycle {
    * Sub-agent caps from config — depth, concurrency, and the tree-wide token
    * budget. Defaults live in `CONFIG_DEFAULTS` (or, for the budget, are
    * intentionally unset = unbounded); never magic numbers in code, per the
-   * frozen #748 constraint. Read fresh so a live config edit is picked up on
+   * frozen sub-agent constraint. Read fresh so a live config edit is picked up on
    * the next agent swap.
    */
   private resolveSubagentCaps(): SubagentCaps {

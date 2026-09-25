@@ -12,8 +12,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Unit cover for the decision behind the Roborazzi zero-capture guard (epic #804,
- * C15b) wired in the root `build.gradle.kts`: after a record/verify run it reads
+ * Unit cover for the decision behind the Roborazzi zero-capture guard
+ * wired in the root `build.gradle.kts`: after a record/verify run it reads
  * Roborazzi's `results-summary.json`, and `summary.total == 0` means the screenshot
  * lane captured nothing — a silent no-op that must fail the lane (the committed
  * goldens would otherwise keep it green). This mirrors the gate's parse so the

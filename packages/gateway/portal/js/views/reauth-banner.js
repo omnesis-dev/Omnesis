@@ -117,7 +117,7 @@ export function ReauthBanner({ sources, onReauthed }) {
     devices?.find((d) => d.id === g.deviceId)?.name ??
     (typeof g.deviceId === "string" ? g.deviceId.slice(0, 8) : "this device");
 
-  // See #2737 — the account-id line below is opaque for a provider whose
+  // See #102 — the account-id line below is opaque for a provider whose
   // account id is a platform handle rather than something the user recognises.
   return html`
     <div class="reauth-banner-stack">
@@ -159,7 +159,7 @@ export function ReauthBanner({ sources, onReauthed }) {
 }
 
 /**
- * ExpiringBanner — forward-looking consent-expiry surface (#927). Renders one
+ * ExpiringBanner — forward-looking consent-expiry surface. Renders one
  * non-blocking yellow banner per (providerType, accountId) with a source in the
  * derived `auth-expiring` state: the source is still syncing fine, but its
  * authorization expires soon and the operator should reconnect ahead of the

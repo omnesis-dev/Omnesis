@@ -112,7 +112,7 @@ export default defineProvider<NotionContext>({
       urlPatterns: [{ regex: "notion\\.so/[^?#]*([a-f0-9]{32})(?:[?].*|)$", idGroup: 1 }],
       // Notion's web app — `notion.so` also covers `www.notion.so` and any
       // `*.notion.so` workspace subdomain via the subdomain-match rule. Pages
-      // are already ingested here, so the browser-capture source (#791) skips
+      // are already ingested here, so the browser-capture source skips
       // the Notion UI.
       ownedWebDomains: ["notion.so"],
       icon: notionIcon,
@@ -125,8 +125,8 @@ export default defineProvider<NotionContext>({
       },
       documentEventProfile: notionPagesDocumentProfile,
       // Notion caps API at ~3 req/s; a 30m cadence keeps us under the
-      // limit across typical workspaces. See #178 for the proper fix
-      // (in-cycle rate-limit handling + database-list caching).
+      // limit across typical workspaces. The proper fix (in-cycle
+      // rate-limit handling + database-list caching) is tracked separately.
       defaultSyncInterval: "30m",
       async create({ sourceId, providerId, dataCutoff }, ctx) {
         const source = new NotionPagesSource(
@@ -167,7 +167,7 @@ export default defineProvider<NotionContext>({
       // Dynamic schemas — each page's analytics write carries its own table's
       // schema, discovered from that database's properties at sync time.
       analyticsSchemas: [],
-      // See #178 — Notion databases are the worst offender for rate
+      // Notion databases are the worst offender for rate
       // limits because each sync enumerates databases + queries all rows.
       // 30m default buys headroom while the loop-tightening work lands.
       defaultSyncInterval: "30m",

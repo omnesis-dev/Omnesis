@@ -97,7 +97,7 @@ describe("configSourceEntries", () => {
   });
 });
 
-describe("buildResultUrl (#231)", () => {
+describe("buildResultUrl", () => {
   afterEach(() => {
     delete process.env.OMNESIS_RESULT_URI;
   });

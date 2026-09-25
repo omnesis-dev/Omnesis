@@ -2,8 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The mirror-gateway bridge — the real-data backtest's replay driver
- * (epic #137 Phase Two).
+ * The mirror-gateway bridge — the real-data backtest's replay driver.
  *
  * The bridge turns a corpus SNAPSHOT (a copied gateway `omnesis.db` —
  * never the live database) into a time-faithful replay against an

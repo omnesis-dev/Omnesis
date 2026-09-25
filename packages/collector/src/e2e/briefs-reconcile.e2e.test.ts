@@ -3,7 +3,7 @@
 
 /**
  * Briefs reconcile-quality E2E — the permanent regression net for the
- * make-or-break algorithm (epic #137 S13; criteria 1, 2, 3, 4, 10, 13).
+ * make-or-break algorithm.
  *
  * A real spawned gateway runs the whole engine end-to-end on the
  * `loops-test-life` universe: the scripted fake OpenAI server
@@ -420,7 +420,7 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
 
     // A re-verify run is scheduled for that day, tied to the loop via loopId
     // (never claimed today — its next_attempt_at is in the future), so
-    // resolving the loop early can cascade-retract it (#1165).
+    // resolving the loop early can cascade-retract it.
     const scheduledRun = () =>
       db
         .prepare<

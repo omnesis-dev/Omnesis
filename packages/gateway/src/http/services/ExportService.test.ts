@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * ExportService coverage (#57): the worker-thread documents walk to JSONL
+ * ExportService coverage: the worker-thread documents walk to JSONL
  * and CSV against a small temp SQLite store, manifest correctness + counts,
  * the `--source` (sourceId) filter, CSV field escaping (commas / quotes /
  * newlines), the analytics-table CSV export through a real DuckDB pool,

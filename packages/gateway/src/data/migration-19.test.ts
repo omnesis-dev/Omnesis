@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Migration 19 (#430): provenance columns + edge-vocabulary migration on an
- * EXISTING install. Simulates a pre-#430 install by seeding old-vocabulary
+ * Migration 19: provenance columns + edge-vocabulary migration on an
+ * EXISTING install. Simulates an older install by seeding old-vocabulary
  * rows with NULL provenance, resetting `user_version` below 19, then running
  * the migration and asserting the data transformation.
  */
@@ -34,7 +34,7 @@ function seedDoc(id: string, sourceId = "gmail:me"): void {
   ).run(id, sourceId, id, `h-${id}`, NOW, NOW, NOW, NOW);
 }
 
-/** Insert an old-vocabulary link row with NULL provenance (pre-#430 shape). */
+/** Insert an old-vocabulary link row with NULL provenance (older shape). */
 function seedOldLink(sourceDocId: string, linkType: string, targetDocId: string | null): void {
   db.prepare(
     `INSERT INTO document_links (source_doc_id, link_type, raw_target, normalized_target, target_doc_id, created_at)
@@ -42,7 +42,7 @@ function seedOldLink(sourceDocId: string, linkType: string, targetDocId: string 
   ).run(sourceDocId, linkType, targetDocId ?? "t", targetDocId ?? "t", targetDocId, NOW);
 }
 
-describe("migration 19 — provenance + edge vocabulary (#430)", () => {
+describe("migration 19 — provenance + edge vocabulary", () => {
   test("renames the structural vocabulary and backfills provenance from type", () => {
     seedDoc("email");
     seedDoc("att");

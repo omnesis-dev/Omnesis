@@ -8,7 +8,7 @@
  * here via {type:"call", op, args}, dispatched by the Scheduler's
  * WriterTaskRunner.
  *
- * Why single-writer: Issue #192. With two writable handles on macOS,
+ * Why single-writer: with two writable handles on macOS,
  * WAL's `-shm` mmap is shared between threads and when one connection's
  * checkpoint resizes it the other thread's in-progress read page-faults
  * → SIGBUS. Collapsing every writer into this worker puts exactly one
@@ -67,7 +67,7 @@ function openWriteConn(
       }) as unknown as Db)
     : new Database(path, { fileMustExist: true });
   // Default WAL: MVCC-style concurrent reads, writes don't block
-  // readers. Only safe with the post-#192 single-writer architecture
+  // readers. Only safe with the single-writer architecture
   // (writer worker owns the only writable handle; main + backfill +
   // indexer are all read-only) — otherwise multi-writer races on the
   // `-shm` mmap reintroduce the SIGBUS class.

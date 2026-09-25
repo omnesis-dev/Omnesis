@@ -4,7 +4,7 @@
 import { APPLE_EPOCH_OFFSET } from "./constants.js";
 
 /**
- * Minimal binary-plist (`bplist00`) reader (#588). Covers exactly what the iOS
+ * Minimal binary-plist (`bplist00`) reader. Covers exactly what the iOS
  * backup decrypt needs: reading `Manifest.plist` (BackupKeyBag / ManifestKey)
  * and walking the NSKeyedArchiver graph inside a Manifest.db `Files.file` BLOB
  * to extract `Size`, `ProtectionClass`, and the wrapped `EncryptionKey`.

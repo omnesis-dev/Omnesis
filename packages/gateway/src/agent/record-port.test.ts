@@ -3,7 +3,7 @@
 
 /**
  * Coverage for `createGatewayRecordPort` — the `cite_record` tool's gateway
- * adapter (#757, sub-issue c). Proves the resolve path against a real
+ * adapter (sub-issue c). Proves the resolve path against a real
  * AnalyticsDb + SQLite store:
  *   - derives title / key fields / semantic time / redacted snapshot from the
  *     table's declared contract (persisted through `ensureTable`);
@@ -163,7 +163,7 @@ describe("createGatewayRecordPort", () => {
   test("resolves the bound document id when the catalog source id collapsed to the bare type", async () => {
     // A second account on the same table collapses the catalog source_id to the
     // bare type ("demo"), while the document stays account-qualified
-    // ("demo:acct1"). The row→document inverse must still resolve (#757).
+    // ("demo:acct1"). The row→document inverse must still resolve.
     await analytics.ensureTable(txnSchema, "demo:acct2");
     const docId = await insertBoundDoc("txn-1");
     const port = createGatewayRecordPort(db, analytics);

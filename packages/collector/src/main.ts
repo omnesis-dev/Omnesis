@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// Load $OMNESIS_CONFIG_DIR/.env before any env read (incl. resolveGatewayUrl). See #52.
+// Load $OMNESIS_CONFIG_DIR/.env before any env read (incl. resolveGatewayUrl).
 import "./load-env.js";
 import { pathToFileURL } from "node:url";
 import {
@@ -111,7 +111,7 @@ function ocrEnabledFromConfig(config: OmnesisConfig): boolean {
  * Priority:
  *   1. `OMNESIS_GATEWAY_URL` env var — explicit operator override, used as-is.
  *   2. `OMNESIS_MDNS_DISABLE=1` — skip discovery, fall straight to localhost.
- *   3. mDNS / Bonjour LAN discovery (#49) — find an `_omnesis._tcp` gateway on
+ *   3. mDNS / Bonjour LAN discovery — find an `_omnesis._tcp` gateway on
  *      the same LAN. On a hit, use its URL (and surface the advertised TLS
  *      fingerprint for the TOFU flow); on a miss, fall back to localhost.
  *
@@ -608,7 +608,7 @@ export async function main() {
     ingestionContext,
   });
 
-  // Source registry is owned by the gateway (#166). The collector waits for
+  // Source registry is owned by the gateway. The collector waits for
   // the `sources.snapshot` WS command below to learn which sources to host.
 
   // Gateway WebSocket: bidirectional. Used for:
@@ -786,13 +786,13 @@ export async function main() {
 
   engineCommands.register("source.sync", (payload) => handleSourceSyncCommand(engine, payload));
 
-  // Known bug: #2703 — the reply carries no cursor, so `sources debug` never shows one.
+  // Known bug: #98 — the reply carries no cursor, so `sources debug` never shows one.
   engineCommands.register("source.debug", (payload) => ({
     status: engine.getStatuses().find((s) => s.sourceId === payload.sourceId) ?? null,
   }));
 
   engineCommands.register("sources.snapshot", async ({ sources }) => {
-    // Gateway is authoritative for the source registry (#166). Reconcile
+    // Gateway is authoritative for the source registry. Reconcile
     // local state to match: register new, unregister removed, toggle
     // enabled. Idempotent — safe to receive on every reconnect.
     try {
@@ -825,10 +825,10 @@ export async function main() {
       });
       // The url-id patterns of every KNOWN source type, not just the added
       // ones, so the link-extraction keep-gate retains a link to a
-      // not-yet-added source and resolves it once that source arrives (#668).
+      // not-yet-added source and resolves it once that source arrives.
       // The gateway falls back to the registered-pattern set on failure.
       // The web hosts owned by every KNOWN source type, so browser capture
-      // (#791) skips any visited host a dedicated source already ingests. The
+      // skips any visited host a dedicated source already ingests. The
       // gateway falls back to an empty set — skip nothing extra — on failure.
       manager.pushOwnedWebDomains().catch((err) => {
         log.warn(`pushOwnedWebDomains failed: ${toErrorMessage(err)}`);
@@ -842,20 +842,20 @@ export async function main() {
       });
       // External widget-vendor origins of every KNOWN `link-widget` source, so
       // the gateway can fold them into the portal CSP and a hosted widget can
-      // load its SDK + iframe (#918). The gateway keeps a strictly self-hosted
+      // load its SDK + iframe. The gateway keeps a strictly self-hosted
       // CSP on failure.
       manager.pushWidgetOrigins().catch((err) => {
         log.warn(`pushWidgetOrigins failed: ${toErrorMessage(err)}`);
       });
       // Provider-owned hosted-widget renderer modules; the portal imports
       // these by opaque widget kind, keeping vendor SDK details inside
-      // provider packages (#984).
+      // provider packages.
       manager.pushWidgetRenderers().catch((err) => {
         log.warn(`pushWidgetRenderers failed: ${toErrorMessage(err)}`);
       });
       // Every structured source's analytics table schema, so the gateway's
       // catalog reflects the running collector's descriptors instead of the
-      // schema last written during an ingest (#757). Without it the catalog
+      // schema last written during an ingest. Without it the catalog
       // simply waits for that source's next ingest.
       engine.pushAnalyticsSchemas().catch((err) => {
         log.warn(`pushAnalyticsSchemas failed: ${toErrorMessage(err)}`);

@@ -67,7 +67,7 @@ sealed interface AssistantPart {
     data class ToolUse(val toolCallId: String = "", val tool: String = "", val args: JsonElement = JsonNull) : AssistantPart
 
     /**
-     * The persisted verified-report artifact (#748) — the Deep Research write-back part the
+     * The persisted verified-report artifact — the Deep Research write-back part the
      * gateway appends alongside the report prose so the card survives a reload. Carries exactly
      * the structured facts the live `agent.deep_research.summary` event delivers, plus the merged
      * [citations] that arrive live via `agent.citations.update`. Never sent to a model; the client

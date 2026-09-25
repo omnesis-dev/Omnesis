@@ -19,7 +19,7 @@ const PAGE_TEXT_MIN_CHARS = 15;
 
 /**
  * Extract text from a PDF buffer, **per page**, interleaving the native text
- * layer with OCR of image-only pages (#427).
+ * layer with OCR of image-only pages.
  *
  * For each page we take its native text (via unpdf's per-page items). Pages
  * that carry little or no native text are image-only — when an `ocr` fn is

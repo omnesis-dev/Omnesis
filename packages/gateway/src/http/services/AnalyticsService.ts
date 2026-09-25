@@ -45,7 +45,7 @@ export interface AnalyticsIngestInput {
    * several rows (heart-rate samples share their `record_id`, sleep stages their
    * `session_id`). REQUIRED for a composite primary key — a single-column delete
    * cannot match a composite key without over-deleting, so a composite-PK delete
-   * with no `deleteKeyColumn` is rejected (#669).
+   * with no `deleteKeyColumn` is rejected.
    */
   deleteKeyColumn?: string;
   /** Deletions the gateway derived from the replica ledger, already canonical. */

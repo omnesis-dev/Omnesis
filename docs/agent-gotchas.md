@@ -66,7 +66,7 @@ gateway boot — never on `networkidle`. The committed `playwright.config.ts`
 follows this: its `webServer.url` is `${baseURL}/health`, not a page load. Mirror
 that in any new portal e2e or screenshot script.
 
-## Worktree symlink-farm — workspace package resolution (see #563)
+## Worktree symlink-farm — workspace package resolution
 
 **Trap.** In a secondary git worktree, a naive `ln -s primary/node_modules
 node_modules` is **subtly broken**. Inside the hoisted npm workspace,

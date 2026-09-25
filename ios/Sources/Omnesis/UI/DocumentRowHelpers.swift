@@ -118,7 +118,7 @@ struct DocumentLink<Content: View>: View {
         // its neighbours. Driving the push from Button-toggled state
         // keeps the tap target's render path free of link styling.
         Button {
-            // See #625 — opens by documentId only; a destructive resync re-mints
+            // See #31 — opens by documentId only; a destructive resync re-mints
             // the id and this dead-ends. ref.url/appUrl is a partial fallback, but
             // url-less sources need a (sourceId, externalId) resolver.
             pushDocumentId = ref.documentId

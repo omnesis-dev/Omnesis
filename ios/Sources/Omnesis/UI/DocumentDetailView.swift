@@ -33,7 +33,7 @@ struct DocumentDetailView: View {
     @State private var outboundRefsPaging = CursorPagingState()
     @State private var inboundRefsPaging = CursorPagingState()
     @State private var nearDupesPaging = CursorPagingState()
-    /// Cross-store `same-entity` doc↔row neighbours (#450, #644) — the
+    /// Cross-store `same-entity` doc↔row neighbours — the
     /// bound DuckDB analytics rows from the graph walker. Surfaced as the
     /// inspector's "Same entity" section.
     @State private var boundRows: [GraphVertex] = []
@@ -152,7 +152,7 @@ struct DocumentDetailView: View {
                 .accessibilityLabel("Open in source")
             }
         }
-        // Destructive single-document privacy delete (#1065) lives in an
+        // Destructive single-document privacy delete lives in an
         // overflow menu so it can't be hit by accident next to the info /
         // open-in-source icons. Generated Notes documents are read-only
         // projections — they offer Manage notes instead, and the gateway
@@ -388,8 +388,8 @@ struct DocumentDetailView: View {
             async let attachmentsTask = client.getDocumentAttachments(id: documentId)
             async let refsTask = client.getDocumentRefs(id: documentId)
             async let nearDupesTask = client.getDocumentNearDupes(id: documentId)
-            // See #644 — also surface the cross-store `same-entity` doc↔row edge
-            // (#450) here, as the portal graph panel does. It comes from the
+            // Also surface the cross-store `same-entity` doc↔row edge
+            // here, as the portal graph panel does. It comes from the
             // graph walker (`GET /documents/:id/graph`, kind == "analytics-row"),
             // not these reference endpoints, so it needs a separate fetch + row.
             // One shallow hop is enough: the bound analytics row is a direct

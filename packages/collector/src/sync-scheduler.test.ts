@@ -117,7 +117,7 @@ describe("SyncScheduler", () => {
     scheduler.clearAll();
   });
 
-  test("deferNext() pushes the next tick out by the delay, then resumes the steady interval (one-shot, #616)", () => {
+  test("deferNext() pushes the next tick out by the delay, then resumes the steady interval (one-shot)", () => {
     const scheduler = new SyncScheduler();
     const interval = 60_000;
     let ticks = 0;
@@ -153,7 +153,7 @@ describe("SyncScheduler", () => {
     scheduler.clearAll();
   });
 
-  test("deferNext() clamps an absurd delay to MAX_DEFER_MS so it can't overflow setTimeout (#616)", () => {
+  test("deferNext() clamps an absurd delay to MAX_DEFER_MS so it can't overflow setTimeout", () => {
     const scheduler = new SyncScheduler();
     const interval = 60_000;
     let ticks = 0;

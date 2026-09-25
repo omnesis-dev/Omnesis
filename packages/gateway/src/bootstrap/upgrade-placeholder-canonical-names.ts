@@ -6,7 +6,7 @@ type Db = Database.Database;
 import { isPlaceholderPersonName } from "@omnesis/core";
 
 /**
- * One-shot boot data fix for #583.
+ * One-shot boot data fix for placeholder canonical names.
  *
  * Some people carry a phone/email-shaped `canonical_name` (the display
  * headline) even though a trusted real name already sits among their `name`

@@ -141,7 +141,7 @@ describe("openReadOnlyDatabase", () => {
     expect(db.prepare<[], { cache_size: number }>("PRAGMA cache_size").get()?.cache_size).toBe(
       -262144,
     );
-    // mmap stays off on the encrypted read handle (#192 SIGBUS guard).
+    // mmap stays off on the encrypted read handle (SIGBUS guard).
     expect(db.prepare<[], { mmap_size: number }>("PRAGMA mmap_size").get()?.mmap_size).toBe(0);
     db.close();
     cleanupDb(p);
@@ -1814,7 +1814,7 @@ describe("listDocuments", () => {
     expect(result.documents.map((d) => d.sourceId).sort()).toEqual(["gmail", "notion"]);
   });
 
-  // #211: when includeSourceIds is set, the planner should be free to
+  // When includeSourceIds is set, the planner should be free to
   // pick the more selective `idx_documents_source_id_updated_at`
   // instead of the forced `idx_documents_updated_at_id`. We assert
   // the directive is dropped — that's what gives the planner the
@@ -1848,7 +1848,7 @@ describe("listDocuments", () => {
     expect(detailFree).toMatch(/source_id|idx_documents_source/);
   });
 
-  test("listDocuments discovery pagination is index-satisfied — no temp B-tree sort (#199)", () => {
+  test("listDocuments discovery pagination is index-satisfied — no temp B-tree sort", () => {
     // A broad exclusion scan lists docs with `excludeSourceIds` (never a
     // positive `source_id IN`) and no `updatedSince`, so the SQL is
     // `WHERE source_id NOT IN (?) [AND id > ?] ORDER BY id ASC LIMIT ?`. The
@@ -2471,7 +2471,7 @@ describe("getLatestActivityBySource", () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────
-// upsertWithCursor — atomic per-page sync write (issue #322)
+// upsertWithCursor — atomic per-page sync write
 // ───────────────────────────────────────────────────────────────────────
 
 describe("upsertWithCursor", () => {
@@ -2583,7 +2583,7 @@ describe("upsertWithCursor", () => {
     });
 
     // Cursor lagged on the client (simulating a partial failure in the
-    // pre-#322 world). The same page replays. The
+    // non-atomic world). The same page replays. The
     // (provider_id, source_id, external_id) UNIQUE absorbs the dupe
     // and the cursor re-advances.
     upsertWithCursor(db, {
@@ -2650,7 +2650,7 @@ describe("upsertWithCursor", () => {
   });
 });
 
-describe("upsertWithCursor — wipe-epoch guard (#551)", () => {
+describe("upsertWithCursor — wipe-epoch guard", () => {
   let dbPath: string;
   let db: Db;
 
@@ -3468,7 +3468,7 @@ describe("upsertWithCursorYieldable", () => {
   });
 
   test("yield with tombstoned docs in the page loses NO document (identity-based resume)", () => {
-    // Regression: upsertDocuments drops tombstoned (#1065 privacy-deleted) docs
+    // Regression: upsertDocuments drops tombstoned (privacy-deleted) docs
     // up front, so `remaining` is a slice of the FILTERED array. Resuming by a
     // recomputed index (preFinal.length - remaining.length) mixes a filtered
     // length with an unfiltered one and silently skips real docs. Resume must

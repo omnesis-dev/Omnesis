@@ -160,7 +160,7 @@ class PhotosIntegration @Inject constructor(
         val bitmap = loadBitmap(asset.uri)
         val input = PhotoAnalysisInput(asset, bitmap)
 
-        // See #2553: GenAI image description rejects background inference.
+        // See #86: GenAI image description rejects background inference.
         val analyzers = if (tier == AnalysisTier.NEW) {
             listOf(ocrAnalyzer, placeAnalyzer, sceneLabelAnalyzer, barcodeAnalyzer)
         } else {

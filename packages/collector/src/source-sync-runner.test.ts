@@ -1057,7 +1057,7 @@ describe("SourceSyncRunner — structured branch", () => {
     }
   });
 
-  test("forwards per-page deletedIds + deleteKeyColumn alongside records (#619)", async () => {
+  test("forwards per-page deletedIds + deleteKeyColumn alongside records", async () => {
     const { registry } = makeRegistry();
     const source = makeStructuredSource("finance-txns", async () => ({
       analytics: {
@@ -1082,7 +1082,7 @@ describe("SourceSyncRunner — structured branch", () => {
     }
   });
 
-  test("a deletes-only page (no records) still ingests so the tombstone propagates (#619)", async () => {
+  test("a deletes-only page (no records) still ingests so the tombstone propagates", async () => {
     const { registry } = makeRegistry();
     const source = makeStructuredSource("finance-txns", async () => ({
       analytics: { tableName: "step_counts", deletedIds: ["tx-removed-1"] },
@@ -1094,8 +1094,8 @@ describe("SourceSyncRunner — structured branch", () => {
     const runner = new SourceSyncRunner(gateway as unknown as GatewayClient, registry, 60_000);
     await runner.runOne(source);
 
-    // Before #619 a records-empty page short-circuited and the deletion was
-    // silently dropped. Now the ingest call still fires with the deletedIds.
+    // A records-empty page must not short-circuit and silently drop the
+    // deletion: the ingest call still fires with the deletedIds.
     const ingest = gateway.calls.find((c) => c.kind === "ingestAnalytics");
     expect(ingest?.kind).toBe("ingestAnalytics");
     if (ingest?.kind === "ingestAnalytics") {
@@ -2178,7 +2178,7 @@ describe("SourceSyncRunner — what a run reports it wrote", () => {
   });
 });
 
-describe("SourceSyncRunner — rate-limit deferral (#616)", () => {
+describe("SourceSyncRunner — rate-limit deferral", () => {
   let gateway: RecordingGateway;
 
   beforeEach(() => {

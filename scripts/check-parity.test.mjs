@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// Standing check for the cross-surface PARITY-drift guard (epic #804, C16).
+// Standing check for the cross-surface PARITY-drift guard.
 //
 // Two halves, both required:
 //   1. POSITIVE — the guard PASSES against the real in-tree constants table +

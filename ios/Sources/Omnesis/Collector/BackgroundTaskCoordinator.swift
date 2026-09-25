@@ -26,7 +26,7 @@ public final class BackgroundTaskCoordinator {
         "\(appBundleIdentifier).refresh"
     }
 
-    /// Photos backfill (#169) — OCR is CPU-heavy and a photo library can
+    /// Photos backfill — OCR is CPU-heavy and a photo library can
     /// take many cycles to drain, so it gets its own `BGProcessingTask`
     /// (network- and, unlike the tiny `BGAppRefreshTask` above, NOT
     /// time-boxed to ~30s) rather than riding the refresh task.

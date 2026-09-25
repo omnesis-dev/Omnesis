@@ -22,7 +22,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 /**
- * Transcript suppression for silent tools. `annotate` and `cite_record` (#757) both feed the
+ * Transcript suppression for silent tools. `annotate` and `cite_record` both feed the
  * citations drawer + the bubble's citation-count chip but render nothing inline in the
  * conversation flow (see [ToolCard]) — neither the tool name nor an args summary surfaces as a
  * chip/block. These tests render a real [AssistantTurn] and assert the silent tools produce no

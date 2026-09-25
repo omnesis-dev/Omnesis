@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Cross-collector source ownership E2E (#1513).
+ * Cross-collector source ownership E2E.
  *
  * The same account registered from a second collector must never silently
  * adopt (re-home) the existing source row — historically both hosts then

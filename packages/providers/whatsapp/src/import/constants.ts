@@ -3,7 +3,7 @@
 
 /**
  * Constants for decrypting an encrypted iOS device backup and locating
- * WhatsApp's on-device message database within it (#588).
+ * WhatsApp's on-device message database within it.
  *
  * Sourced from the iOS backup format and the reference decryptor
  * jsharkey13/iphone_backup_decrypt. All multi-byte integers in the keybag TLV

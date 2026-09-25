@@ -55,7 +55,7 @@ export function browseByRecency(
   const { clause: filterClause, params: filterParams } = buildMetadataFilter(filters, "c");
 
   // The `documentIds` set is unbounded; a large set is staged into a temp table
-  // so it never overflows SQLite's bound-variable limit (#581). Pick the
+  // so it never overflows SQLite's bound-variable limit. Pick the
   // most-recent `limit` documents — GROUP BY collapses the per-document chunk
   // fan-out; ORDER BY the max chunk timestamp ranks whole documents by recency.
   const idRows = withDocIdRestriction(

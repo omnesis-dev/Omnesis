@@ -321,7 +321,7 @@ describe("user-SQL sandbox", () => {
       {
         tableName: "ingest_probe",
         displayName: "Ingest probe",
-        description: "Regression for #305-fallout",
+        description: "Ingest probe beside user SQL",
         columns: [
           { name: "id", type: "INTEGER", nullable: false },
           { name: "label", type: "VARCHAR", nullable: true },
@@ -351,7 +351,7 @@ describe("user-SQL sandbox", () => {
       {
         tableName: "ingest_parallel",
         displayName: "Ingest parallel",
-        description: "Regression for #305-fallout (parallelism)",
+        description: "Parallel ingest probe beside user SQL",
         columns: [
           { name: "id", type: "INTEGER", nullable: false },
           { name: "label", type: "VARCHAR", nullable: true },

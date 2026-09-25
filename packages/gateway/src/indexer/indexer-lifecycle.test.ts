@@ -124,7 +124,7 @@ class FakeProxy {
   embedQuery = vi.fn(async () => new Float32Array([0.1, 0.2]));
   reindexMissing = vi.fn(async () => ({ queued: 0 }));
   wake = vi.fn();
-  // Graceful-for-local quiesce (epic #1011): pause keeps the worker alive as the
+  // Graceful-for-local quiesce: pause keeps the worker alive as the
   // query embedder; resume un-pauses on abandon. Track whether dispose was called
   // so a test can prove the worker was paused (not disposed) during the quiesce.
   pauseIndexing = vi.fn(async () => {});
@@ -149,7 +149,7 @@ vi.mock("../workers/indexer-worker-proxy.js", () => ({
 }));
 
 // BuildWorkerEmbedder hosts the NEW local GGUF off the main thread for a
-// graceful swap to a LOCAL target (epic #1011, mechanism 1). The real one spawns
+// graceful swap to a LOCAL target (mechanism 1). The real one spawns
 // a worker thread + loads a GGUF (CUDA-crashes on this box) — so we replace it
 // with a deterministic in-process fake that behaves like FakeHttpEmbedder (same
 // embed-gate hook for the abandon-in-flight tests) and records spawn/teardown so
@@ -758,7 +758,7 @@ describe("IndexerLifecycle", () => {
     );
   });
 
-  test("embed swap stamps the SAME identity the fresh worker boots with — no spurious re-wipe (#698 B1/B2)", async () => {
+  test("embed swap stamps the SAME identity the fresh worker boots with — no spurious re-wipe", async () => {
     const { deps } = makeDeps();
     const lifecycle = new IndexerLifecycle(deps);
     await lifecycle.startIndexer();
@@ -774,7 +774,7 @@ describe("IndexerLifecycle", () => {
     const [stampDim, stampLabel] = wipeAndRecreateVectorIndex.mock.calls[0] as [number, string];
     // … and the fresh worker is spawned with the identity it will compare that
     // stamp against on boot. They MUST be byte-identical, or the worker
-    // re-wipes a perfectly valid index on its first cycle (the #698 bug):
+    // re-wipes a perfectly valid index on its first cycle:
     // historically the swap stamped `${backendKey}/${model}` while the worker
     // compared the bare served model and the dims could diverge too.
     const freshInit = proxyInstances[1].opts;
@@ -784,7 +784,7 @@ describe("IndexerLifecycle", () => {
     expect(stampDim).toBe(64);
   });
 
-  test("embed swap unlinks the stale usearch file so no stale-dimension index is ever loaded (#698 B3)", async () => {
+  test("embed swap unlinks the stale usearch file so no stale-dimension index is ever loaded", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omnesis-embedswap-"));
     try {
       const { deps } = makeDeps({ configDir: dir });
@@ -810,7 +810,7 @@ describe("IndexerLifecycle", () => {
     }
   });
 
-  test("a second swap mid-build abandons the in-flight generation and rebuilds for the newest model — bounded to two files (epic #1011)", async () => {
+  test("a second swap mid-build abandons the in-flight generation and rebuilds for the newest model — bounded to two files", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omnesis-abandon-swap-"));
     try {
       // Seed a complete active generation 1 over a small corpus at dim 32.
@@ -892,7 +892,7 @@ describe("IndexerLifecycle", () => {
     }
   });
 
-  test("crash-safe resume: a building generation found at boot is resumed (not restarted from zero), the active generation serves throughout, then the rebuild flips (epic #1011)", async () => {
+  test("crash-safe resume: a building generation found at boot is resumed (not restarted from zero), the active generation serves throughout, then the rebuild flips", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omnesis-resume-"));
     const oneHot = (dim: number, i: number): Float32Array => {
       const v = new Float32Array(dim);
@@ -1127,7 +1127,7 @@ describe("IndexerLifecycle", () => {
     }
   });
 
-  test("hard cutover stops using the old embedder immediately (indexing + query embedding) and rebuilds destructively under the new model — NOT graceful (epic #1011)", async () => {
+  test("hard cutover stops using the old embedder immediately (indexing + query embedding) and rebuilds destructively under the new model — NOT graceful", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omnesis-hard-cutover-"));
     try {
       // Same seed as the graceful test: a complete active generation 1 over a
@@ -1268,7 +1268,7 @@ describe("IndexerLifecycle", () => {
   });
 });
 
-// ── Four-transition graceful-swap matrix (epic #1011, option A) ─────────────
+// ── Four-transition graceful-swap matrix (option A) ─────────────────────────
 //
 // The operator locked in full parity: a graceful (zero-downtime) embedder swap
 // must hold for ALL FOUR transitions between a LOCAL in-process embedder and an
@@ -1388,7 +1388,7 @@ async function bootThenSwap(opts: {
   return { idxDb, setEmbedder };
 }
 
-describe("embedder swap — four-transition graceful matrix (epic #1011, option A)", () => {
+describe("embedder swap — four-transition graceful matrix (option A)", () => {
   const GREEN: Array<{ oldKind: EmbedderKind; newKind: EmbedderKind }> = [
     { oldKind: "http", newKind: "http" },
     { oldKind: "local", newKind: "http" },
@@ -1460,7 +1460,7 @@ describe("embedder swap — four-transition graceful matrix (epic #1011, option 
   }
 });
 
-describe("embedder swap — N-rapid-swap stress: bounded to two generations (epic #1011, #1027)", () => {
+describe("embedder swap — N-rapid-swap stress: bounded to two generations", () => {
   // A burst of embedder swaps fired in rapid succession, each targeting a
   // DIFFERENT dimension so every follow-up is a genuine newest-wins
   // abandon-in-flight (not a coalesced no-op). The invariant under test: at no

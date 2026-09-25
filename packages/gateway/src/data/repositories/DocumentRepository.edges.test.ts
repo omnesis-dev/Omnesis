@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * upsertWithCursor(+Yieldable) carrying source-declared `edges` (#430). Verifies
+ * upsertWithCursor(+Yieldable) carrying source-declared `edges`. Verifies
  * declared edges commit atomically with the page's documents, including across
  * the chunked yieldable path where only the final transaction applies edges.
  */

@@ -28,7 +28,7 @@ export default defineSource<WhatsAppSyncCursor>({
   // emitted as separate attachment child-docs.
   conversational: true,
   // WhatsApp Web — conversations are already ingested here, so the
-  // browser-capture source (#791) skips the web client.
+  // browser-capture source skips the web client.
   ownedWebDomains: ["web.whatsapp.com"],
   icon: { sfSymbol: "message.fill", color: "#25D366", bgColor: "#12251C", url: whatsappIconUrl },
   contract: {
@@ -98,11 +98,11 @@ export default defineSource<WhatsAppSyncCursor>({
     ],
   },
 
-  // One-time full-history import from a local encrypted iPhone backup (#588).
+  // One-time full-history import from a local encrypted iPhone backup.
   // WhatsApp only streams a companion the recent (~90-day) window; the full
   // archive lives on the phone and is recovered from a backup.
-  // Planned variants surface here as a leading `select` field: #591 (Android
-  // crypt15 backup), #590 (Tier-2 targeted pull via pymobiledevice3).
+  // Planned variants surface here as a leading `select` field: #29 (Android
+  // crypt15 backup), #28 (Tier-2 targeted pull via pymobiledevice3).
   historyImport: {
     label: "Import full history",
     description:

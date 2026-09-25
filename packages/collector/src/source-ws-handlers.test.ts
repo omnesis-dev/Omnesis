@@ -134,7 +134,7 @@ describe("source-ws-handlers", () => {
     expect(ids).toContain("push-source"); // kept for its icon; the picker hides it
   });
 
-  test("source.descriptors excludes gatewayHosted sources — the gateway owns them (#993)", async () => {
+  test("source.descriptors excludes gatewayHosted sources — the gateway owns them", async () => {
     // A gateway-hosted source (the unified Web Pages dataset) is advertised by
     // the gateway itself, not the collector — even though the collector still
     // carries the provider package in its registry. The collector must drop it
@@ -619,7 +619,7 @@ describe("source-ws-handlers (descriptors / credentials)", () => {
     ).rejects.toThrow(/Unknown credentials fileKey/);
   });
 
-  // ── History import (#588) ──
+  // ── History import ──
 
   test("import.begin returns started + emits progress then a complete with the tally", async () => {
     const events: Array<{ type: string; payload: Record<string, unknown> }> = [];

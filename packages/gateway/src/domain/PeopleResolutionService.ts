@@ -151,7 +151,7 @@ function trustedNameForPerson(
  * "Unknown") and `mention` carries a trusted name for that person, the
  * placeholder is replaced with the name. This keeps a person's headline
  * consistent with their identity no matter which source surfaced the name
- * first. See #583.
+ * first.
  *
  * Guardrails:
  *  - Only a placeholder is ever replaced. A real name stands — one trusted
@@ -387,8 +387,7 @@ export function findOrCreatePerson(
   // canonical and polluting its alias set over time.
   //
   // (The conflict path also uses `matchedPersonId` to identify exactly
-  // which identifiers caused the conflict and skip ONLY those — Issue
-  // #219.)
+  // which identifiers caused the conflict and skip ONLY those.)
   const canonical = new Set<string>();
   const identifierMatches: Array<{
     aliasType: "email" | "phone" | "lid";
@@ -458,7 +457,7 @@ export function findOrCreatePerson(
     addNewAliases(db, anchor, mention, sourceId, cache, skipAliases);
     // Self-heal the displayed headline (the canonical's `canonical_name`),
     // not the anchor's: if it's still a phone/email placeholder and this
-    // mention carries a trusted name, promote the real name. #583.
+    // mention carries a trusted name, promote the real name.
     maybeUpgradeCanonicalName(db, canonicalPersonId, mention);
     // Update last_seen on both the anchor row and its canonical so
     // either page reflects "we saw this identity recently".
@@ -497,7 +496,7 @@ export function findOrCreatePerson(
     // had no conflict at all. The bug surfaced as people rows whose
     // `canonical_name` was email-shaped (seeded from mention.emails[0] when
     // the row was first created via a name-only-trusted role) but with no
-    // corresponding `email` alias anywhere in `person_aliases`. (Issue #219.)
+    // corresponding `email` alias anywhere in `person_aliases`.
     //
     // Fix: split the mention into "conflicting" and "safe" identifiers. An
     // identifier is *conflicting* iff it currently resolves to a person
@@ -536,7 +535,7 @@ export function findOrCreatePerson(
 
     addNewAliases(db, winner, mention, sourceId, cache, skipAliases);
     // The winner is the row this document links to; if its headline is
-    // still a placeholder and the mention carries a trusted name, heal it. #583.
+    // still a placeholder and the mention carries a trusted name, heal it.
     maybeUpgradeCanonicalName(db, winner, mention);
     db.prepare("UPDATE people SET last_seen = MAX(last_seen, ?), updated_at = ? WHERE id = ?").run(
       docDate,
@@ -575,7 +574,7 @@ export function findOrCreatePerson(
  * non-identifying, phones/lids verbatim. Names are excluded — they are not
  * lookup keys and are never reconciled (a name may legitimately persist from
  * any source). Mirrors `addNewAliases`'s insert rules exactly so the "kept"
- * set matches what's actually written. See #222.
+ * set matches what's actually written.
  */
 function keptStrongAliasKeys(db: Db, mention: PersonMention): Set<string> {
   const keys = new Set<string>();
@@ -592,7 +591,7 @@ function keptStrongAliasKeys(db: Db, mention: PersonMention): Set<string> {
  * a contact-roled mention whose strong identifiers include `(aliasType, value)`.
  * Recomputed from `documents.metadata` so a re-emitted card that dropped an
  * identifier doesn't orphan an alias another card on the same source still
- * vouches for. See #222.
+ * vouches for.
  */
 function aliasStillVouchedForOnSource(
   db: Db,
@@ -626,7 +625,7 @@ function aliasStillVouchedForOnSource(
  * contact card is re-emitted with an identifier removed (e.g. a phone deleted
  * from an address-book entry), the stale alias would linger forever. This
  * deletes the orphaned strong-identifier rows (email/phone/lid — never names)
- * that this source no longer vouches for. See #222.
+ * that this source no longer vouches for.
  *
  * `keptByPerson` maps each contact-resolved person to the union of strong
  * alias keys its contact mentions on this document would insert. A row is a
@@ -714,7 +713,7 @@ export function resolveDocumentPeople(
 
   // Strong-identifier aliases (email/phone/lid) each contact-roled mention
   // would keep on its resolved person — used to reconcile away aliases that
-  // disappeared from a re-emitted contact card. See #222.
+  // disappeared from a re-emitted contact card.
   const keptContactAliases = new Map<string, Set<string>>();
 
   for (const mention of people) {
@@ -739,7 +738,7 @@ export function resolveDocumentPeople(
 
   // Insert-only alias attach leaves orphans when a contact card drops an
   // identifier on re-emit; prune the strong-identifier rows this source no
-  // longer vouches for. See #222.
+  // longer vouches for.
   if (keptContactAliases.size > 0) {
     reconcileContactAliases(db, docId, sourceId, keptContactAliases);
   }
@@ -781,7 +780,7 @@ export function backfillOnePerson(
         source_created_at: string;
       }
     >(
-      // Unordered — see #1794 (prioritise recent arrivals over an arbitrary
+      // Unordered — see #63 (prioritise recent arrivals over an arbitrary
       // position in the backlog).
       "SELECT id, metadata, source_id, source_created_at FROM documents WHERE people_resolved_at IS NULL LIMIT 1",
     )

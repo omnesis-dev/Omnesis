@@ -5,7 +5,7 @@
  * DocumentSource implementation that reads directly from the gateway SQLite database.
  * Replaces the HTTP-based GatewayDocumentSource now that the indexer runs in-process.
  *
- * Per #386, the row → projection mapping is shared with
+ * The row → projection mapping is shared with
  * the HTTP `/documents/list` route via `data/document-mappers.ts` so
  * the indexer pipeline and the wire response always see the same
  * shape for a given metadata-field addition.

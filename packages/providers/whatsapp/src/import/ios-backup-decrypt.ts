@@ -12,10 +12,10 @@ import { lookupFile } from "./manifest-db.js";
 
 /**
  * Decrypt an encrypted iOS device backup and recover WhatsApp's
- * `ChatStorage.sqlite` bytes (#588). Pure — takes a backup directory + the
+ * `ChatStorage.sqlite` bytes. Pure — takes a backup directory + the
  * backup password, returns the decrypted SQLite file as a Buffer. Holds ALL
  * iOS-backup-format assumptions, so a real-device discrepancy is fixable here
- * alone (see the importer's #588 risk notes).
+ * alone (see the importer's risk notes).
  *
  * Algorithm (per jsharkey13/iphone_backup_decrypt): read Manifest.plist keybag,
  * derive the passphrase KEK via double PBKDF2, RFC-3394-unwrap the class keys,

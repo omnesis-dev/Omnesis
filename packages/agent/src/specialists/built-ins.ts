@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The v1 built-in specialists (#748): `research-planner`, `history-sweep`,
+ * The v1 built-in specialists: `research-planner`, `history-sweep`,
  * `source-digest`, `citation-verifier`.
  *
  * Each is a `defineSpecialist({...})` descriptor — a system prompt, a model
@@ -21,7 +21,7 @@ import { defineSpecialist, type SpecialistDescriptor } from "./define-specialist
 
 /**
  * `research-planner` — decompose a broad research question into a small set of
- * focused, parallelisable sub-tasks for the Deep Research loop (#748).
+ * focused, parallelisable sub-tasks for the Deep Research loop.
  *
  * The Deep Research orchestrator runs this specialist FIRST: it emits a fenced
  * ```json block of `{ specialist, title, task }` entries naming which built-in reader

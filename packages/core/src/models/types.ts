@@ -139,7 +139,7 @@ export interface ManifestEntry {
   downloadedFrom?: string;
   /**
    * True for files installed via the (future) HuggingFace browse path
-   * — i.e. not in the bundled catalog. See #241.
+   * — i.e. not in the bundled catalog. See #21.
    */
   unverified?: boolean;
 }

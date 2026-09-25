@@ -658,7 +658,7 @@ describe("devices pair — named flag parsing", () => {
     expect(parsed["gateway-url"]).toBe("http://10.0.0.42:7600");
   });
 
-  // #284 — the --self-email / --self-phone flags are declared on the command
+  // The --self-email / --self-phone flags are declared on the command
   // so they're surfaced (not dropped on the floor). At runtime citty collects
   // repeats into an array, which `collectSelfInfo` handles via `flagList`.
   it("surfaces --self-email / --self-phone", async () => {
@@ -679,7 +679,7 @@ describe("devices pair — named flag parsing", () => {
   });
 });
 
-describe("parseSelfInfoField — #284 self-info collection", () => {
+describe("parseSelfInfoField — self-info collection", () => {
   const validateEmail = (v: string): string | null =>
     /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()) ? normalizeEmail(v) : null;
   const validatePhone = (v: string): string | null => normalizePhone(v);
@@ -776,7 +776,7 @@ describe("defaultScopesForDeviceKind — per-device-kind default grants", () => 
     expect(defaultScopesForDeviceKind("collector")).toEqual(["read", "write:*"]);
   });
 
-  it("grants the browser device kind write:web only — never read/admin (#791, #895)", () => {
+  it("grants the browser device kind write:web only — never read/admin", () => {
     // Minimal trust: the browser extension feeds the unified `web` source, so
     // its token is scoped to `write:web` — it can contribute captured web
     // pages and nothing more.

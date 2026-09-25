@@ -78,7 +78,7 @@ public struct PhotoAnalysisFragment: Sendable, Equatable {
 /// resolution, labeling, captioning, and barcode detection are each
 /// unit-testable and independently absent-when-unavailable, per the
 /// issue's "every rich signal is best-effort and independently gated"
-/// constraint (#169).
+/// constraint.
 public protocol PhotoAnalyzer: Sendable {
     var identifier: String { get }
 

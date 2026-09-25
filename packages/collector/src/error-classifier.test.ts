@@ -85,7 +85,7 @@ describe("classifySyncError", () => {
     expect(classifySyncError(new Error("Service Unavailable"))).toBe("transient");
   });
 
-  test("507 low-disk ingest error classifies as transient, not auth (#15)", () => {
+  test("507 low-disk ingest error classifies as transient, not auth", () => {
     // The gateway returns 507 with an "Insufficient disk space" body when the
     // disk guard trips; the source must resume on a later tick, not flip to
     // needs-auth/permission.

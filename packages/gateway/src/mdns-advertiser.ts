@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * mDNS / Bonjour advertiser for the gateway (#49).
+ * mDNS / Bonjour advertiser for the gateway.
  *
  * Publishes an `_omnesis._tcp` service record on the LAN carrying the
  * gateway's port, scheme, and TLS fingerprint, plus the mDNS hostname
@@ -129,7 +129,7 @@ export class MdnsAdvertiser {
       return;
     }
     try {
-      // See #2765 — planned: re-read the LAN addresses when they change.
+      // See #104 — planned: re-read the LAN addresses when they change.
       const lanIps = realLanIpv4s();
       const host = opts.hostname.endsWith(".local") ? opts.hostname : `${opts.hostname}.local`;
       if (this.platform === "darwin" && this.bonjourAvailable()) {
@@ -197,7 +197,7 @@ export class MdnsAdvertiser {
     const instance = `${opts.serviceName}.${SERVICE_TYPE}`;
     this.names = new Set([SERVICE_TYPE, instance, host]);
 
-    // See #49 — advertise PTR (browse), SRV (host:port), TXT (scheme + cert
+    // Advertise PTR (browse), SRV (host:port), TXT (scheme + cert
     // fingerprint for pin pre-seeding), and an A record per REAL LAN IPv4.
     this.answers = [
       { name: SERVICE_TYPE, type: "PTR", ttl: 4500, data: instance },

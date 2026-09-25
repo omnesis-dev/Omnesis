@@ -177,7 +177,7 @@ describe("extractLinks", () => {
     expect(links).toHaveLength(0);
   });
 
-  test("#266 — emits one calendar-event link per iCalUID in metadata.extra.iCalUIDs", () => {
+  test("emits one calendar-event link per iCalUID in metadata.extra.iCalUIDs", () => {
     const links = extractLinks("content", {
       extra: { iCalUIDs: ["uid-1@google.com", "uid-2@outlook.com"] },
     });
@@ -189,7 +189,7 @@ describe("extractLinks", () => {
     ]);
   });
 
-  test("#266 — skips empty / non-string entries in iCalUIDs array", () => {
+  test("skips empty / non-string entries in iCalUIDs array", () => {
     const links = extractLinks("content", {
       extra: { iCalUIDs: ["uid-real", "", null, 42, "uid-other"] as unknown[] },
     });
@@ -197,7 +197,7 @@ describe("extractLinks", () => {
     expect(calLinks.map((l) => l.normalizedTarget)).toEqual(["uid-real", "uid-other"]);
   });
 
-  test("#266 — non-array iCalUIDs is silently ignored", () => {
+  test("non-array iCalUIDs is silently ignored", () => {
     const links = extractLinks("content", {
       extra: { iCalUIDs: "uid-string-not-array" as unknown },
     });

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * `.env` file support for Omnesis (issue #52).
+ * `.env` file support for Omnesis.
  *
  * Reads `$OMNESIS_CONFIG_DIR/.env` (default `~/.config/omnesis/.env`) and
  * populates `process.env` for keys that are not already set, so operators

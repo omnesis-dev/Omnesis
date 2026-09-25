@@ -241,7 +241,7 @@ export function getSourceStats(db: Db, sourceId: string): SourceStats {
     };
   }
 
-  // No row yet. The HTTP path runs on a read-only handle (post-#192)
+  // No row yet. The HTTP path runs on a read-only handle
   // so we can't seed inline — that threw `SqliteError: attempt to
   // write a readonly database` on every poll for sources whose
   // source_stats row had not yet been materialized. The backfill

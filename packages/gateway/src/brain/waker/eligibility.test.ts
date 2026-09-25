@@ -101,7 +101,7 @@ describe("waker eligibility (criterion 2)", () => {
 
   test("actionable-transactional override: a promoted due/scheduled date wakes despite bulkMail + automatedSender", () => {
     // A booking / invoice confirmation from a no-reply, bulk-flagged sender that
-    // would otherwise be dropped — but it carries a typed dueAt (the #1168
+    // would otherwise be dropped — but it carries a typed dueAt (the
     // promotion), the transactional signal that makes it worth a run.
     expect(
       decideWake(

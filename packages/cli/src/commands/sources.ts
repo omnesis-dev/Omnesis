@@ -36,7 +36,7 @@ function isPendingRemoval(s: AdminSource | PendingRemoval): s is PendingRemoval 
 /**
  * `omnesis sources` — list source instances registered with the gateway.
  *
- * Post-#168 this is gateway-only. The "available source types" listing
+ * This is gateway-only. The "available source types" listing
  * (which providers can be added) used to come from the collector via
  * /sources; that lives at the device's hello capabilities now and isn't
  * surfaced here. Use `omnesis sources add` for the interactive picker.

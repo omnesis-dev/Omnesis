@@ -144,7 +144,7 @@ export function syntheticPlaidFetch(responses: PlaidResponsesFixture): typeof fe
       return jsonResponse(body, body.error_code ? 400 : 200);
     }
     if (path === "/item/get") {
-      // The snapshot phase reads `consent_expiration_time` here (#927). A fixture
+      // The snapshot phase reads `consent_expiration_time` here. A fixture
       // may omit `itemGet`; synthesize a never-expiring item so the real client's
       // schema still parses and the consent read reports `null` (clears the flag).
       return jsonResponse(

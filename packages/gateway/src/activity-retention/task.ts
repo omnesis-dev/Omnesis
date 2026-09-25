@@ -86,7 +86,7 @@ export function createActivityRetentionTask(
       // A config edit can kick this periodic while its HTTP request still
       // carries user-priority AsyncLocalStorage. Override that inherited
       // context for the whole unit so every nested writer call remains
-      // background work (the #199 priority-inversion rule).
+      // background work (the priority-inversion rule).
       return runWithPriority("background", async () => {
         const config = opts.getConfig();
         const globalRetentionMs = optionalDuration(config.activityRetention?.maxAge);

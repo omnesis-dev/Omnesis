@@ -59,7 +59,7 @@ public enum VisitSchema {
         ),
         // Each visit also mints a searchable summary document whose
         // externalId == this row's id — declare the 1:1 doc↔row same-entity
-        // edge (#640) so the agent can pivot between the structured row and
+        // edge so the agent can pivot between the structured row and
         // its prose.
         boundDocument: BoundDocumentSpec(externalIdColumns: ["id"]),
         temporalProjection: AnalyticsTemporalProjectionSpec(

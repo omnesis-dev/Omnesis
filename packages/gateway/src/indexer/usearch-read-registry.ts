@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Versioned vector-read router (epic #1011).
+ * Versioned vector-read router.
  *
  * The search read path obtains its HNSW handle here instead of opening one
  * fixed file at a hardcoded dimension. The registry follows the

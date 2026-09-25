@@ -700,7 +700,7 @@ final class CollectorCoreTests: XCTestCase {
         XCTAssertNil(summaries[0].error)
     }
 
-    // MARK: - Documents channel (#640)
+    // MARK: - Documents channel
 
     private func sampleDocument(_ externalId: String) -> DocumentInput {
         let content = "Morning Run — 9.2 km, 612 kcal, 48 min"
@@ -826,7 +826,7 @@ final class CollectorCoreTests: XCTestCase {
         XCTAssertTrue(ingests.isEmpty, "no records → no /analytics/ingest call")
     }
 
-    /// A documents-only source (`tableName == nil`, e.g. Photos, #169) never
+    /// A documents-only source (`tableName == nil`, e.g. Photos) never
     /// calls `/analytics/ingest` — there is no analytics table to post to.
     func testNilTableNameSourceSkipsAnalyticsIngest() async throws {
         let session = MockSession()

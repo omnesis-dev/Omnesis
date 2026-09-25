@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Owned-web-domains contract tests (#791).
+ * Owned-web-domains contract tests.
  *
  * Two concerns:
  *  1. Structural — a web-app source must not silently forget to declare
@@ -35,7 +35,7 @@ function ownedDomainEntries(
 // `URL.hostname`, which is exactly this shape.
 const BARE_HOST = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 
-describe("ownedWebDomains: web-app sources declare the contract (#791)", () => {
+describe("ownedWebDomains: web-app sources declare the contract", () => {
   test("known web-app sources each declare a non-empty ownedWebDomains list", async () => {
     const { allDefinitions } = await import("./source-descriptors.js");
     expect(allDefinitions.length).toBeGreaterThan(0);
@@ -82,7 +82,7 @@ describe("ownedWebDomains: web-app sources declare the contract (#791)", () => {
   });
 });
 
-describe("collectOwnedWebDomains aggregation (#791)", () => {
+describe("collectOwnedWebDomains aggregation", () => {
   test("unions declarations across single and multi-source definitions, sorted", () => {
     const defs = [
       { type: "source", id: "alpha", ownedWebDomains: ["alpha.example.com"] },

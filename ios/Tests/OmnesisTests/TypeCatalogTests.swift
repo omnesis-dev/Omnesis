@@ -44,7 +44,7 @@ final class TypeCatalogTests: XCTestCase {
         XCTAssertNil(TypeCatalog.entry(for: "HKQuantityTypeIdentifierDoesNotExist"))
     }
 
-    // MARK: - #164 expanded coverage
+    // MARK: - Expanded coverage
 
     /// Assert that each `identifier → (slug, unit)` entry resolves to a
     /// catalog row in the expected category. Keyed by identifier (a dict)
@@ -64,7 +64,7 @@ final class TypeCatalogTests: XCTestCase {
         }
     }
 
-    /// Every nutrition micro (vitamins + minerals) added for #164 must be
+    /// Every nutrition micro (vitamins + minerals) in the expanded set must be
     /// present, land in the `nutrition` category, and carry a mass unit.
     func testNutritionMicrosPresent() {
         assertCatalogEntries(
@@ -101,7 +101,7 @@ final class TypeCatalogTests: XCTestCase {
         )
     }
 
-    /// Mobility / gait quantities added for #164 fold into `activity`.
+    /// Mobility / gait quantities in the expanded set fold into `activity`.
     func testMobilityMetricsPresent() {
         assertCatalogEntries(
             [
@@ -121,7 +121,7 @@ final class TypeCatalogTests: XCTestCase {
         )
     }
 
-    /// Cardio quantities added for #164 fold into `vitals`.
+    /// Cardio quantities in the expanded set fold into `vitals`.
     func testCardioMetricsPresent() {
         assertCatalogEntries(
             [

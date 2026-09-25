@@ -17,7 +17,7 @@
  *
  * Citations are reconstructed from the persisted tool_result blocks
  * (kind `annotate.recorded` for a document citation, `cite_record.recorded`
- * for a record citation, #757) so this projection works identically for live
+ * for a record citation) so this projection works identically for live
  * upserts and backfill of old JSON files — both sides use the JSON transcript
  * as the source of truth.
  */
@@ -48,7 +48,7 @@ export interface RenderedDocumentCitation {
   note?: string;
 }
 
-/** A harvested record citation (the `cite_record` tool, #757). */
+/** A harvested record citation (the `cite_record` tool). */
 export interface RenderedRecordCitation {
   kind: "record";
   table: string;

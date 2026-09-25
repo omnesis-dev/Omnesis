@@ -12,7 +12,7 @@
  * SQLite caps bound parameters at SQLITE_MAX_VARIABLE_NUMBER (32766 in the
  * better-sqlite3 build). An inline `document_id IN (?, ?, …)` list whose
  * length exceeds that cap throws "too many SQL variables" and 500s the
- * search (#581). This helper keeps the inline list for the common small
+ * search. This helper keeps the inline list for the common small
  * case and stages large sets into a per-connection TEMP table instead,
  * binding zero variables for the id set.
  */
@@ -37,8 +37,7 @@ export interface DocIdRestriction {
 
 /**
  * Build a `<column> IN (…)` restriction for a possibly-large document-id set
- * and run `body` with it, without overflowing SQLite's bound-variable limit
- * (#581).
+ * and run `body` with it, without overflowing SQLite's bound-variable limit.
  *
  * - `documentIds === undefined` → no restriction (empty clause).
  * - An *empty* set → a `1=0` clause that matches nothing (the allowed set is

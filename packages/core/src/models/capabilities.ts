@@ -104,7 +104,7 @@ export interface TranscribeCapability {
  * Note: per-region bounding boxes and per-region confidence are deliberately
  * NOT part of this contract. They are backend-specific (classical engines and
  * Apple Vision emit them; prompt-driven VLM backends generally do not), so the
- * shared seam carries only the text that every backend can produce. See #427.
+ * shared seam carries only the text that every backend can produce.
  */
 export interface OcrResult {
   text: string;

@@ -114,7 +114,7 @@ export function buildBuiltinTools(opts: BuiltinToolsOptions): ToolHandle[] {
     tools.push(createWatchDeleteTool({ port: opts.ports.watch }));
   }
   // `spawn_subagent` + `join_subagents` are gated on a `subagent` port being
-  // wired (#748): launch fans out children concurrently, join awaits them. A
+  // wired: launch fans out children concurrently, join awaits them. A
   // child session at the depth cap is still built WITH the port (depth gating is
   // at runtime, in `SubagentService.spawn`), so a depth-1 child can spawn a
   // depth-2 child; the spawn throws `subagent_depth_exceeded` past the cap.
@@ -206,7 +206,7 @@ export function selectNonCitationTools(tools: ReadonlyArray<ToolHandle>): ToolHa
 }
 
 /**
- * Select the tool set a sub-agent runs with (#748): start from the parent's
+ * Select the tool set a sub-agent runs with: start from the parent's
  * tools, drop every tool that declares `mutates`, and, when an owned workflow
  * supplies a private specialist allowlist, keep only those named read tools.
  * Ordinary interactive workers use {@link selectGenericSubagentTools} instead.

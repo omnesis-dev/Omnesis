@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Pure logic for the cross-store `boundDocument` binding (#450): turn a
+ * Pure logic for the cross-store `boundDocument` binding: turn a
  * source's declarative `BoundDocumentSpec` into the concrete row-key the
  * graph walker looks up, and back.
  *
@@ -176,7 +176,7 @@ export function reconstructRowKey(
 
 /**
  * The reconstructed `(provider/source identity, externalId)` of the document
- * bound to a row — the inverse of {@link reconstructRowKey} (#757). The
+ * bound to a row — the inverse of {@link reconstructRowKey}. The
  * cite-record path uses it to resolve a row back to its co-described document
  * id without walking the graph: given a row's primary-key column values and
  * the table's binding, rebuild the document's `externalId` and its owning
@@ -201,7 +201,7 @@ export interface BoundDocumentRef {
 
 /**
  * Invert a row's primary key back into the `(sourceId, externalId)` of its
- * bound document — the row→document direction (#757), mirroring
+ * bound document — the row→document direction, mirroring
  * {@link reconstructRowKey} (document→row). Returns `null` when the binding's
  * required columns aren't all present in `pkValues` (defensive; the catalog
  * validator guarantees the binding reconstructs the full PK, so the columns

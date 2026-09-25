@@ -317,7 +317,7 @@ export function touchTokenUsageBatch(
 }
 
 /**
- * @deprecated since Phase 2/3 of #192. Use `lookupToken(db, raw)` plus
+ * @deprecated Use `lookupToken(db, raw)` plus
  * a fire-and-forget `writer.touchTokenUsage(id, deviceId)` instead. This
  * combined form is kept only for tests that still expect the old
  * behaviour on a direct writable handle.
@@ -574,7 +574,7 @@ export function purgeExpiredSession(db: Db, sessionId: string): void {
 }
 
 /**
- * @deprecated since Phase 2/3 of #192. Use `lookupSession(db, id)` plus
+ * @deprecated Use `lookupSession(db, id)` plus
  * `writer.purgeExpiredSession(id)` instead. Kept for tests that use the
  * direct writable handle form.
  */

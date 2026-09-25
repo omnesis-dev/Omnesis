@@ -341,7 +341,7 @@ describe("AppleCalendarSource", () => {
     expect(result.hasMore).toBe(false);
   });
 
-  test("syncStructured emits an apple_calendar_events row keyed on the UUID (#5/#450)", async () => {
+  test("syncStructured emits an apple_calendar_events row keyed on the UUID", async () => {
     insertEvent(testDb, { pk: 1, summary: "Quarterly Budget Review" });
 
     const result = await source.syncStructured(null);

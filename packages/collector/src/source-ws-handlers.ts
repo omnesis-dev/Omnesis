@@ -129,7 +129,7 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
    * the cancel closes the latch the reader owns rather than racing it.
    */
   const endFlow = new Map<string, () => void>();
-  /** Active history imports (#588), keyed by flowId; abort() terminates the worker. */
+  /** Active history imports, keyed by flowId; abort() terminates the worker. */
   const activeImports = new Map<string, AbortController>();
 
   // Typed dispatch table: a handler whose payload or answer disagrees with the
@@ -372,7 +372,7 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     // /admin/auth-flows` hands every flow to every admin caller, and the
     // stderr tail is interpolated into a log line on any non-terminal end, so
     // a provider that echoes its input must not be able to leak it there.
-    // Known bug: #2702 — masks every credential field, not only the ones the spec marks secret.
+    // Known bug: #97 — masks every credential field, not only the ones the spec marks secret.
     const secretValues = Object.values(cleanedCredentials ?? {}).filter((v) => v.length > 0);
 
     const proc = spawn(entry.command, args, {
@@ -653,7 +653,7 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     return true;
   }
 
-  // Code-delivery channel only: forwards a gateway-routed authorization code to the live auth subprocess over stdin; NOT the buildAuthUrl/exchangeCode split (that remains future work for iOS #174).
+  // Code-delivery channel only: forwards a gateway-routed authorization code to the live auth subprocess over stdin; NOT the buildAuthUrl/exchangeCode split (that remains future work for iOS).
   function handleAuthCode(body: WsRequestPayload<"auth.code">): WsResponsePayload<"auth.code"> {
     const proc = activeFlows.get(body.flowId);
     if (!proc) {
@@ -746,7 +746,7 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     return { ok: true };
   }
 
-  // ── History import (#588) — run source.importHistory() ──
+  // ── History import — run source.importHistory() ──
   // The source decrypts/parses in a worker thread but merges into its own store
   // from THIS process (single writer). Cancellation aborts the worker. This is
   // the sole emitter of import.complete (the gateway cancel route only mutates

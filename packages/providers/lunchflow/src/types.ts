@@ -69,7 +69,7 @@ export interface LunchflowCursorAccount {
  * Identity is the Lunch Flow account id throughout; transactions are keyed by
  * the Lunch Flow transaction id when present, else a content hash.
  *
- * See #720 — a future `holdings` phase (GET /accounts/{id}/holdings) would
+ * See #36 — a future `holdings` phase (GET /accounts/{id}/holdings) would
  * snapshot investment positions for brokerage accounts.
  */
 export interface LunchflowCursor extends SyncCursor {

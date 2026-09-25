@@ -7,7 +7,7 @@
  *
  * Only local Whisper (and the synthetic replay transcriber for tests) are
  * supported. HTTP and Anthropic assignments resolve to null with a log:
- * transcription is local-only by design (#260 — audio is biometric, it never
+ * transcription is local-only by design (audio is biometric, it never
  * leaves the machine).
  */
 

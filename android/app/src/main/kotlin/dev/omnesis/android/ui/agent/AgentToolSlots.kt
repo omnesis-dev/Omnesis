@@ -535,7 +535,7 @@ private fun trailDocs(result: AgentToolResult.EventTrailBuilt?): List<AgentTrail
         return false
     }
     for (event in result.events) {
-        // A record-only event (#757) carries no doc — the ephemeral rolling-slot card only
+        // A record-only event carries no doc — the ephemeral rolling-slot card only
         // reveals document refs, so skip it here.
         event.doc?.let { if (add(it)) return out }
         for (att in event.attachments) {
@@ -974,7 +974,7 @@ fun AgentEphemeralSqlCard(
     val subjects = result?.subjects.orEmpty()
 
     // Frozen (after-the-fact) cards render their first SQL line + row statically
-    // rather than parking both slots off-screen (#890).
+    // rather than parking both slots off-screen.
     var rowIndex by remember(call.toolCallId) {
         mutableStateOf(initialRowIndex ?: if (freeze) 0 else null)
     }
@@ -1303,7 +1303,7 @@ private fun EphemeralCardFrame(
 ) {
     // Frozen (after-the-fact) cards start showing their first result immediately
     // — without this a frozen card parks the slot off-screen and renders
-    // header-only (#890).
+    // header-only.
     var currentIndex by remember(call.toolCallId) {
         mutableStateOf(initialIndex ?: if (freeze) 0 else null)
     }

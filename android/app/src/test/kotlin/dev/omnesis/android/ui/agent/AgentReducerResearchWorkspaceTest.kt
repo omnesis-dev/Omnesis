@@ -18,7 +18,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Spec for the research working-set surface reduction (#748) — the Android twin of the iOS
+ * Spec for the research working-set surface reduction — the Android twin of the iOS
  * AgentCoordinatorResearchWorkspaceTests + the portal docs-accumulator/selector tests. A
  * per-card `docs[]` accumulates LIVE off the wrapped child `agent.subagent.*` tool results
  * (deduped by documentId, generic over the document-bearing kinds, NO source-name branching);
@@ -218,7 +218,7 @@ class AgentReducerResearchWorkspaceTest {
         assertEquals("done", p.summary)
     }
 
-    // --- JSON-decode round-trip into the surface (#748 regression net) ---
+    // --- JSON-decode round-trip into the surface (regression net) ---
 
     @Test
     fun decoded_subagent_search_result_reaches_research_panel_docs() {

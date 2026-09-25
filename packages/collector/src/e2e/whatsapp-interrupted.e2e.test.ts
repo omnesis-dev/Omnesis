@@ -3,11 +3,11 @@
 
 /**
  * Gateway-level E2E driving the REAL WhatsAppProvider through the full
- * collector → gateway → indexer → search pipeline (#586), interrupted half.
+ * collector → gateway → indexer → search pipeline, interrupted half.
  *
  * The `whatsapp-interrupted` universe ships a `fake-corpus.json` whose initial
  * history push STALLS — a `paused` milestone after partial deep history — so
- * the real provider seals INTERRUPTED (#579) instead of complete. Asserts,
+ * the real provider seals INTERRUPTED instead of complete. Asserts,
  * end-to-end through a spawned gateway:
  *   - the real durable store sealed `interrupted` (the messages that DID arrive
  *     are preserved, not discarded);
@@ -86,7 +86,7 @@ async function searchDocs(
   return res.results ?? [];
 }
 
-describe("WhatsApp wraps-real — interrupted bootstrap (#579 coverage: partial)", () => {
+describe("WhatsApp wraps-real — interrupted bootstrap (partial coverage)", () => {
   let harness: SyntheticE2EHarness;
   let db: InstanceType<typeof Database>;
   let bootstrapCoverage: HistoryCoverage | undefined;
@@ -118,7 +118,7 @@ describe("WhatsApp wraps-real — interrupted bootstrap (#579 coverage: partial)
   });
 
   test("the interrupted sync surfaced coverage: partial through the pipeline", () => {
-    // The WhatsAppMessagesSource (#579) emits `coverage: "partial"` when the
+    // The WhatsAppMessagesSource emits `coverage: "partial"` when the
     // durable store sealed `interrupted` — the truncated-corpus signal the
     // collector reports up the sync pipeline.
     expect(bootstrapCoverage).toBe("partial");

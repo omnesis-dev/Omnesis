@@ -83,12 +83,12 @@ export interface IndexerWorkerOptions {
   embedderTimeoutMs: number;
   embedderMaxInputChars: number;
   /**
-   * Low-disk write guard (#15). Free MB on the index.db volume below which
+   * Low-disk write guard. Free MB on the index.db volume below which
    * the worker skips an indexing cycle. Resolved from `gateway.minFreeDiskMb`.
    */
   minFreeDiskMb: number;
   /**
-   * Per-model retrieval encoding (#718): none | text-prefix | api-param.
+   * Per-model retrieval encoding: none | text-prefix | api-param.
    * Resolved at gateway boot from `search.embedderPrefixes.enabled` × the
    * embedder family / provider detected from the model id.
    */
@@ -467,7 +467,7 @@ export class IndexerWorkerProxy implements Embedder {
   }
 
   /**
-   * Quiesce the worker's indexing for a graceful embedder swap (epic #1011) and
+   * Quiesce the worker's indexing for a graceful embedder swap and
    * resolve once the worker confirms the corpus is frozen (its `pausedAck`,
    * sent after any in-flight cycle drains). The model stays loaded and
    * `embedQuery` keeps answering throughout, so when this worker is also the
@@ -511,7 +511,7 @@ export class IndexerWorkerProxy implements Embedder {
   }
 
   /**
-   * Un-pause indexing (epic #1011) after {@link pauseIndexing}. Fire-and-forget:
+   * Un-pause indexing after {@link pauseIndexing}. Fire-and-forget:
    * used when a newer swap abandons the in-flight build, so the still-active
    * generation's worker resumes ingesting rather than being left quiesced.
    */

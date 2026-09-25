@@ -12,7 +12,7 @@ import BackgroundTasks
 /// `BackgroundTaskCoordinator`, and the `forwardLifecycle` adapter that
 /// bridges collector events back into the WS broadcast surface.
 ///
-/// Per #320, this is one of three coordinators extracted
+/// This is one of three coordinators extracted
 /// from the former 1267-line `AppStore` god class.
 ///
 /// `AppStore` orchestrates rebuilds across pairing changes — after a

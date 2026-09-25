@@ -7,7 +7,7 @@
  * boot probe found unreachable stays `available:false` until a config change or
  * a manual `POST /admin/inference/backends/:key/probe` — so e.g. a cloud
  * provider briefly unreachable during startup would leave the background agent
- * dark indefinitely (#1267).
+ * dark indefinitely.
  *
  * The recovery schedule (per-backend exponential backoff) lives in
  * `InferenceRegistry.reprobeUnavailable`; this task just drives it on a cadence
@@ -114,7 +114,7 @@ export function createBackendReprobeTask(
         scheduler,
         displayName: "Inference backend re-probe",
         description:
-          "Re-probes inference backends that were unreachable at boot so they recover without a restart (#1267).",
+          "Re-probes inference backends that were unreachable at boot so they recover without a restart.",
         category: "infra",
         tracker: new StatelessTracker(),
       }),

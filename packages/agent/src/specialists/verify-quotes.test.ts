@@ -10,7 +10,7 @@ const DOC =
   "The Northstar release ships on the 14th. Maya Reeves confirmed the budget at " +
   "$12,000 and asked the team to freeze scope by Friday. No further changes after that.";
 
-describe("citation-verifier quote check (#748 trust feature)", () => {
+describe("citation-verifier quote check (trust feature)", () => {
   it("VERIFIES a quote that appears verbatim in the cited text", () => {
     const report = verifyQuotes(DOC, ["confirmed the budget at $12,000"]);
     expect(report.allPresent).toBe(true);

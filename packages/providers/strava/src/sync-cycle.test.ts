@@ -5,7 +5,7 @@
  * The provider-contract check, run against the real phase machine: with
  * upstream unchanged, a full sweep→enrich→sweep cycle must write nothing.
  *
- * The regression net for the churn behind #1559: a single unchanged activity
+ * The regression net for a churn bug: a single unchanged activity
  * re-ingesting itself on every cycle, at one detail fetch and two journal
  * events apiece.
  *

@@ -250,7 +250,7 @@ export function upsertSeedFromContacts(
     }
   }
 
-  // Same-name consolidation pass (issue #283).
+  // Same-name consolidation pass.
   //
   // Apple's `isMe` flag is per-container — a card the user owns but synced
   // through a non-iCloud account (Google contacts, Exchange) won't carry
@@ -282,7 +282,7 @@ export function upsertSeedFromContacts(
 }
 
 /**
- * Second consolidation pass for issue #283. Scans the seeded contact docs
+ * Second self-consolidation pass. Scans the seeded contact docs
  * for cards whose name strongly matches the canonical self's name aliases
  * and folds the resolved person into self via `merged_into`.
  *

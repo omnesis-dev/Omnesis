@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Per-cycle low-disk gate for the indexer worker (#15). The pure
+ * Per-cycle low-disk gate for the indexer worker. The pure
  * `shouldRunIndexCycle` decision: run when free disk meets the floor, skip
  * when it's below, and always run when the floor is disabled (≤0).
  */

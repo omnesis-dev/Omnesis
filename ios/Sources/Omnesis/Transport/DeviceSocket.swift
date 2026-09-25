@@ -380,7 +380,7 @@ public actor DeviceSocket {
         case "source.added", "source.updated", "sources.snapshot":
             // The gateway owns the source registry and the app re-reads it
             // via `refreshSources()` on reconnect, so this acks receipt
-            // without claiming to have applied the delta. See #1510.
+            // without claiming to have applied the delta. See #54.
             return .success(.object(["ok": .bool(true), "applied": .bool(false)]))
 
         case "source.removed":

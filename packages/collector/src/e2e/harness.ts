@@ -8,8 +8,8 @@
  * the gateway's HTTP/WebSocket API (for things the gateway is the source of
  * truth for: documents, search, /device/ws events).
  *
- * The legacy collector `:7601` status server + collector-ws-server are gone
- * (#167 / #169); tests no longer reference any collector port.
+ * The legacy collector `:7601` status server + collector-ws-server are gone;
+ * tests no longer reference any collector port.
  */
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";

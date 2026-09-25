@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Backtest infrastructure smoke (epic #137 Phase Two): a spawned gateway booted with
+ * Backtest infrastructure smoke: a spawned gateway booted with
  * `OMNESIS_BRIEFS_VIRTUAL_CLOCK=1`, driven end-to-end by the
  * mirror-gateway bridge from an invented snapshot DB.
  *

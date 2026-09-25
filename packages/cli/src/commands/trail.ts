@@ -78,7 +78,7 @@ function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max - 1) + "…" : s;
 }
 
-/** Render the derived key fields of a record citation (#757) as indented lines. */
+/** Render the derived key fields of a record citation as indented lines. */
 function renderRecordFields(record: NonNullable<TrailEvent["record"]>, pipe: string): void {
   for (const f of record.keyFields) {
     const value = f.value === null ? `${c.dim}—${c.reset}` : String(f.value);
@@ -87,7 +87,7 @@ function renderRecordFields(record: NonNullable<TrailEvent["record"]>, pipe: str
 }
 
 /**
- * Render a record-only trail event (#757) — a bound row reached from the seed
+ * Render a record-only trail event — a bound row reached from the seed
  * that binds no document, so it has no document header of its own. Source
  * icon/colour come from the source registry keyed by the record's `sourceId`,
  * never a per-source branch.
@@ -124,7 +124,7 @@ function renderEvent(
   const pipe = isLast ? " " : "│";
   const time = formatTrailDate(ev.at);
 
-  // #757: a record-only event (a bound row with no co-described document)
+  // A record-only event (a bound row with no co-described document)
   // renders its derived record fields instead of a document header.
   if (!ev.doc) {
     renderRecordOnly(ev, fx, connector, pipe, time);
@@ -147,7 +147,7 @@ function renderEvent(
     `${c.dim}${pipe}${c.reset}  ${time}  ${c.blue}${sourceType}${c.reset}${docType}  ${c.dim}${shortId}${c.reset}`,
   );
 
-  // #757: a document that deduped with its same-entity row carries the
+  // A document that deduped with its same-entity row carries the
   // record's derived key fields inline (one entity, not two).
   if (ev.record) renderRecordFields(ev.record, pipe);
 

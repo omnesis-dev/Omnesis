@@ -32,8 +32,8 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 /**
- * Pixel-parity screenshots for the read-only device-management viewer (epic #719,
- * sub-issue #726), the Android analogue of the iOS `54-devices-list` /
+ * Pixel-parity screenshots for the read-only device-management viewer, the
+ * Android analogue of the iOS `54-devices-list` /
  * `54b-devices-empty` / `55-device-card-expanded` snapshots. Robolectric +
  * Roborazzi. All sample data is invented (privacy rule), never from the corpus.
  *

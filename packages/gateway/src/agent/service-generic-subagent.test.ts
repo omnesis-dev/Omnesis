@@ -3,7 +3,7 @@
 
 /**
  * Integration: spawn an ordinary generic worker through the real
- * `SubagentService` + `AgentService` end-to-end (#748), asserting that the
+ * `SubagentService` + `AgentService` end-to-end, asserting that the
  * host-owned prompt and fixed read-tool policy reach the child session.
  *
  * Behaviour/wiring is tested — NOT verbatim prompt strings (the operator

@@ -36,7 +36,7 @@
  * hit@1 (its decoys quote the query verbatim, so a lexical rank-1 for the decoy
  * is expected, not a defect) and the direct family cannot assert semantics.
  *
- * Dependency policy (FROZEN by epic #804 / C12): the `:8001` embedder is a
+ * Dependency policy (FROZEN): the `:8001` embedder is a
  * REQUIRED dependency. On a CI runner an unreachable `:8001` FAILS the job
  * loudly (never a silent skip); only on a developer's local machine does an
  * unreachable `:8001` skip the semantic assertions. The URL + model id read
@@ -545,7 +545,7 @@ describe("Semantic search quality on the real POST /search pipeline (C12)", () =
       if (IS_CI) {
         throw new Error(
           `search-quality.e2e: required embedder at ${EMBEDDER_URL} is unreachable on a CI ` +
-            `runner. This is a REQUIRED dependency (epic #804 / C12) — failing loudly rather ` +
+            `runner. This is a REQUIRED dependency — failing loudly rather ` +
             `than skipping. Start the local embedding model (OpenAI-compatible /v1/embeddings) ` +
             `or point OMNESIS_TEST_EMBEDDER_URL at one.`,
         );

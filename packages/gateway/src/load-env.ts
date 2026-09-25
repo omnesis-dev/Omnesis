@@ -6,7 +6,7 @@
  * before anything else evaluates. Imported FIRST by `index.ts` so the
  * gateway's later `process.env` reads (config dir, DB paths, TLS, …) and any
  * imported module that freezes an env value at import time see the merged
- * environment. See #52.
+ * environment.
  */
 import { loadDotEnv } from "@omnesis/config";
 

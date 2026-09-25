@@ -13,7 +13,7 @@
  *
  * Why read-only: a read-only handle on a WAL DB just opens a snapshot
  * — it never participates in -shm mmap writes, so the SIGBUS-class
- * race that motivated #192 can't originate here. We don't set
+ * race that motivated the single-writer design can't originate here. We don't set
  * journal_mode/synchronous; those are writer concerns.
  *
  * Protocol: see `protocol.ts`. Same envelope shape as the writer
@@ -100,7 +100,7 @@ async function handleInit(init: IoInit): Promise<void> {
     // Yield CPU to real-time work under contention — this worker mostly runs
     // the background compute-halves of splits, plus a few user-priority
     // read ops (e.g. io.browsePeople for GET /people) the scheduler
-    // front-of-queues. See #199 (Lever 3).
+    // front-of-queues.
     const nice = deprioritizeBackgroundWorker(init.backgroundWorkerNice, "io", (m) =>
       log("warn", "io-worker", m),
     );

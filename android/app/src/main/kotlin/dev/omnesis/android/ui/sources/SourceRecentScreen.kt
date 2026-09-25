@@ -327,7 +327,7 @@ private fun RecentDocRow(
                     Text(it, fontSize = 12.sp, color = c.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
             }
-            // Per-row privacy delete (#1065). The IconButton consumes the tap,
+            // Per-row privacy delete. The IconButton consumes the tap,
             // so it never triggers the row's navigate-on-click. Read-only
             // generated documents get a Manage-notes action instead.
             if (onManageNotes != null) {

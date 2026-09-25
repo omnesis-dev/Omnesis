@@ -987,7 +987,7 @@ function numberField(record: Record<string, unknown> | undefined, key: string): 
  * for less thinking gets no answer at all.
  *
  * `output_config.effort` is the replacement the API names, and expressing a
- * bound that way is tracked in #1973. Until then a model past the budget is
+ * bound that way is tracked in #70. Until then a model past the budget is
  * left to decide for itself, which is what it did before anyone asked.
  */
 export function supportsThinkingBudget(model: string): boolean {

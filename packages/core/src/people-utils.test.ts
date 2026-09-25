@@ -245,11 +245,11 @@ describe("normalizePhone", () => {
     expect(normalizePhone("12", ["GB", "US"])).toBeNull();
   });
 
-  // GH #280: "00" international gateway prefix (E.123) should be treated
+  // "00" international gateway prefix (E.123) should be treated
   // as equivalent to "+". Pre-fix, numbers stored with the IDD-style "00"
   // prefix fell through to region-hint parsing and either dropped to null
   // or got mis-attributed (e.g. a +33 number parsed as US-national).
-  describe("00 international prefix (#280)", () => {
+  describe("00 international prefix", () => {
     test("French number with 00 prefix and spaces", () => {
       expect(normalizePhone("00 33 6 39 98 00 33")).toBe("+33639980033");
     });
@@ -278,8 +278,8 @@ describe("normalizePhone", () => {
       // single leading "0". The "00" rewrite must NOT touch this. With
       // explicit GB+US hints (so we aren't dependent on the test
       // machine's system locale being a non-FR one), libphonenumber
-      // can't validate and returns null. Tracked in #280 as a follow-up
-      // (region inference).
+      // can't validate and returns null. Region inference is a
+      // follow-up.
       expect(normalizePhone("06 39 98 00 33", ["GB", "US"])).toBeNull();
     });
 

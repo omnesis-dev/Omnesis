@@ -156,8 +156,7 @@ function dayRange(date: string): [number, number] {
 /**
  * Parse a stored JSON cell, tolerating a torn/corrupt value (possible after a
  * crash under WAL+synchronous=NORMAL) by returning the fallback rather than
- * throwing out of the constructor — a single bad cell must not block startup
- * (#147).
+ * throwing out of the constructor — a single bad cell must not block startup.
  */
 function safeJsonParse<T>(raw: string | null | undefined, fallback: T): T {
   if (raw == null) return fallback;
@@ -388,12 +387,12 @@ interface MessageRow {
  * Durable, per-account ground truth for WhatsApp messages, backed by a
  * `better-sqlite3` database at `<account-dir>/store.db` (WAL).
  *
- * Unlike the previous transient buffer (#332 Option A), messages are **never
+ * Unlike a transient buffer, messages are **never
  * garbage-collected** — the store is the local archive WhatsApp history is
- * rendered from, and the merge target a one-time backup import writes into
- * (#588). Because a day always re-renders from the complete archive,
+ * rendered from, and the merge target a one-time backup import writes into.
+ * Because a day always re-renders from the complete archive,
  * day-document content is monotonic and never shrinks on buffer rollover, which
- * is what closes the link-loss bug #481. The gateway DB is an indexed *view*;
+ * is what closes the link-loss bug. The gateway DB is an indexed *view*;
  * this store is the reproducible source. Recovery from a wiped/corrupt store is
  * "re-pair the device + history sync" (the store is intentionally non-portable /
  * not backed up).
@@ -485,7 +484,7 @@ export class MessageStore {
     this.emitSeqCounter = this.computeEmitSeqHighWater();
   }
 
-  /** Open the DB with resilient corrupt-file quarantine (de-risks #147). */
+  /** Open the DB with resilient corrupt-file quarantine. */
   private open(): Db {
     if (!this.dir) return this.configurePragmas(new Database(":memory:"));
     mkdirSync(this.dir, { recursive: true });
@@ -693,7 +692,7 @@ export class MessageStore {
           reaction_target_id = excluded.reaction_target_id, quoted_text = excluded.quoted_text,
           quoted_sender = excluded.quoted_sender, deleted = excluded.deleted
       `),
-      // Insert-if-absent for the backup import (#588): a colliding id is left
+      // Insert-if-absent for the backup import: a colliding id is left
       // untouched so a sparse imported row never clobbers a richer live row.
       insertMessageIfAbsent: this.db.prepare(`
         INSERT INTO messages (chat_jid, id, sender_jid, sender_name, from_me, ts, type, text,
@@ -868,7 +867,7 @@ export class MessageStore {
     attachments: boolean;
     minTimestamp: number | null;
   }): void {
-    // See #2520 — disabled processing must not requeue old days or wake useless syncs.
+    // Disabled processing must not requeue old days or wake useless syncs.
     // Scope is runtime-only: pending media survives for a later config change.
     this.mediaRetryScope = {
       voiceNotes: Number(scope.voiceNotes),
@@ -997,7 +996,7 @@ export class MessageStore {
   }
 
   /**
-   * Bulk-import messages from an external archive (the #588 backup import),
+   * Bulk-import messages from an external archive (the backup import),
    * reporting how many were new (`imported`) vs already present (`merged`),
    * keyed on the stable `(chat_jid, id)`. Uses insert-if-absent so an imported
    * row **never overwrites** a richer live-synced row (live carries media keys
@@ -1683,7 +1682,7 @@ export class MessageStore {
    * re-emit — residue can be never-emitted messages that exist only in the
    * JSON; dropping them would be silent loss). Maps the legacy
    * `historySyncComplete` boolean to the tri-state (true→complete,
-   * false→interrupted — never silently `complete`, which would re-seal #579).
+   * false→interrupted — never silently `complete`, which would wrongly re-seal).
    * Gated on an absent `meta.user_version`, so it's a permanent no-op after the
    * first run and the branch is safely removable in a later release.
    */

@@ -221,7 +221,7 @@ describe("GmailSource", () => {
       expect(result.deletedExternalIds).toContain("del-msg");
     });
 
-    test("404 recovers with a bounded backfill, not a full mailbox re-walk (#111)", async () => {
+    test("404 recovers with a bounded backfill, not a full mailbox re-walk", async () => {
       // An expired historyId can't be resumed via history.list. We re-bootstrap,
       // but bounded to the recent window (`recoverAfter`) so we backfill only
       // the missed gap rather than re-paging the entire mailbox. recoverAfter is
@@ -313,7 +313,7 @@ describe("GmailSource", () => {
       expect((result.cursor as any).coverage).toBe("unknown");
     });
 
-    test("404 recovery without a watermark falls back to a bounded look-back (#111)", async () => {
+    test("404 recovery without a watermark falls back to a bounded look-back", async () => {
       // A cursor written before `lastSyncAt` existed has no watermark — recovery
       // must still bound the walk (a ~30-day look-back), never re-walk everything.
       const error: any = new Error("Not Found");
@@ -336,7 +336,7 @@ describe("GmailSource", () => {
       expect(result.progress?.detail).toBeTruthy();
     });
 
-    test("the recovery bootstrap narrows messages.list to after:<recoverAfter> (#111)", async () => {
+    test("the recovery bootstrap narrows messages.list to after:<recoverAfter>", async () => {
       // Feeding the recovery cursor back must page only the bounded window —
       // proven by the `after:` operand — re-ingest the gap message, then
       // transition straight to incremental once the bounded page set exhausts.
@@ -365,7 +365,7 @@ describe("GmailSource", () => {
       expect(out.recoverAfter).toBeUndefined();
     });
 
-    test("a recovery bootstrap exhausts on pagination end, not messagesTotal (#111)", async () => {
+    test("a recovery bootstrap exhausts on pagination end, not messagesTotal", async () => {
       // Bounded walks fetch far fewer than messagesTotal, so the count-based
       // early-exit stays disabled; only `nextPageToken` running out ends it.
       gmail.users.messages.list = vi.fn(() =>
@@ -394,7 +394,7 @@ describe("GmailSource", () => {
       expect(out.recoverAfter).toBe("2026-05-30T00:00:00.000Z");
     });
 
-    test("incremental sync stamps lastSyncAt on the cursor (#111)", async () => {
+    test("incremental sync stamps lastSyncAt on the cursor", async () => {
       gmail.users.history.list = vi.fn(() =>
         Promise.resolve({ data: { history: [], historyId: "history-9" } }),
       );
@@ -1286,7 +1286,7 @@ describe("GmailSource", () => {
       expect(result.hasMore).toBe(true);
     });
 
-    test("pushes cutoff into users.messages.list as `after:` (#203)", async () => {
+    test("pushes cutoff into users.messages.list as `after:`", async () => {
       const cutoff = "2024-06-15T12:34:56Z";
       const sourceWithCutoff = createGmailSource(gmail, { dataCutoff: cutoff });
 
@@ -1451,10 +1451,10 @@ describe("GmailSource", () => {
       expect(parts[1].filename).toBe("photo.jpg");
     });
 
-    test("#267 — dedupes duplicate MIME parts (calendar invite as text/calendar AND application/ics)", () => {
+    test("dedupes duplicate MIME parts (calendar invite as text/calendar AND application/ics)", () => {
       // Reproduces Gmail's behaviour for calendar invites: the same byte
       // payload appears twice in the MIME tree with different attachmentIds
-      // but identical filename + size. Pre-#267 the panel showed two rows;
+      // but identical filename + size. Without the dedupe the panel showed two rows;
       // the first matched our extractable types and got Indexed, the
       // second was Type-not-indexed.
       const attSource = createGmailSource(gmail, {
@@ -1487,7 +1487,7 @@ describe("GmailSource", () => {
       expect(parts[0].attachmentId).toBe("att-cal");
     });
 
-    test("#267 — does NOT dedupe genuine distinct attachments with the same filename but different size", () => {
+    test("does NOT dedupe genuine distinct attachments with the same filename but different size", () => {
       // Edge case: same filename, different bytes (different size) is
       // genuinely two different files — must NOT be dedup'd.
       const attSource = createGmailSource(gmail, {
@@ -1593,8 +1593,8 @@ describe("GmailSource", () => {
       });
 
       // Attachment document. externalId is the stable hash derived from
-      // (filename, size, mimeType) — see #268 for why this isn't Gmail's
-      // attachmentId. The makeMessageWithAttachments fixture uses
+      // (filename, size, mimeType) — see `deriveAttachmentStableId` for why
+      // this isn't Gmail's attachmentId. The makeMessageWithAttachments fixture uses
       // report.pdf @ 12345 bytes, application/pdf.
       expect(attDoc.externalId).toBe(
         `msg-1/att/${deriveAttachmentStableId("report.pdf", 12345, "application/pdf")}`,
@@ -1670,12 +1670,12 @@ describe("GmailSource", () => {
       expect(attDoc.metadata.extra?.mimeType).toBe("application/vnd.apple.pkpass");
     });
 
-    test("a transient non-OCR extraction failure fails the page instead of recording download-failed (#680)", async () => {
+    test("a transient non-OCR extraction failure fails the page instead of recording download-failed", async () => {
       // The injected attachment contract can still throw SyncError("transient")
       // for a non-OCR processor. The per-message catch must re-throw it so the
       // sync page fails and the cursor is not advanced — otherwise the
       // attachment is silently dropped and never retried (the same bug as
-      // Drive #680, via the same shared contract).
+      // Drive, via the same shared contract).
       const transientExtract = vi.fn(async () => {
         throw new SyncError("transient", "attachment processor unavailable");
       });
@@ -1951,7 +1951,7 @@ describe("GmailSource", () => {
       expect(attachments[2]).toMatchObject({ filename: "third.pdf", extracted: true });
     });
 
-    test("#268 — re-sync with rotated Gmail attachmentIds produces stable child externalIds", async () => {
+    test("re-sync with rotated Gmail attachmentIds produces stable child externalIds", async () => {
       // Reproduces the production bug: Gmail mints fresh attachmentId values
       // on every messages.get, so the SAME attachment looks "new" each
       // re-sync. With the stable-hash fix the child externalId derives from
@@ -2040,7 +2040,7 @@ describe("GmailSource", () => {
     // integration test for it because the only way Gmail could surface two
     // attachments with the same (filename, size) is the duplicate-MIME-part
     // pattern (calendar invites), which `findAttachmentParts` now dedupes
-    // upstream — see the #267 test above. iMessage and WhatsApp can still
+    // upstream — see the duplicate-MIME-part test above. iMessage and WhatsApp can still
     // legitimately emit collisions and rely on the seq mechanism.
 
     test("idempotence: calling fetchAndNormalize twice produces same output", async () => {
@@ -2155,7 +2155,7 @@ describe("GmailSource", () => {
   });
 });
 
-describe("gmailMessageUrl (#463)", () => {
+describe("gmailMessageUrl", () => {
   test("pins to the account with ?authuser= when an email is given", () => {
     expect(gmailMessageUrl("abc123", "user@gmail.com")).toBe(
       "https://mail.google.com/mail/u/0/?authuser=user%40gmail.com#all/abc123",
@@ -2173,7 +2173,7 @@ describe("gmailMessageUrl (#463)", () => {
   });
 });
 
-describe("extractSchemaOrgDatesFromHtml (#1168 transactional date promotion)", () => {
+describe("extractSchemaOrgDatesFromHtml (transactional date promotion)", () => {
   let gmail: ReturnType<typeof createMockGmail>;
   let source: GmailSource;
   beforeEach(() => {

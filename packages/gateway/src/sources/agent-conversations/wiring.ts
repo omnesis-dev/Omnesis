@@ -100,7 +100,7 @@ export function bootAgentConversations(
   // that already has data. Re-projecting a current bucket is a no-op upsert, so
   // the pass is idempotent. Never rejects.
   //
-  // See #2294 — this walks the whole ledger, so its cost grows with how long
+  // See #83 — this walks the whole ledger, so its cost grows with how long
   // the install has had a harness connected rather than with what changed.
   const reconciled = Promise.resolve()
     .then(() => {

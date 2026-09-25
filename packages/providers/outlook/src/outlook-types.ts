@@ -122,8 +122,8 @@ export interface GraphFileAttachment {
  * Microsoft Graph reference attachment — a OneDrive / SharePoint link
  * the sender attached as a pointer rather than a file copy. Has no
  * `contentBytes`; the URL lives in `sourceUrl`. We surface these as
- * link-only entries in the parent's metadata.extra.attachments (#262);
- * once the OneDrive/SharePoint source ships (#263) the link graph will
+ * link-only entries in the parent's metadata.extra.attachments;
+ * once the OneDrive/SharePoint source ships the link graph will
  * resolve them to indexed docs automatically.
  */
 export interface GraphReferenceAttachment {

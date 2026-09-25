@@ -408,7 +408,7 @@ export class TemporalQueryService {
 
     // Every matching row is read and ordered here rather than paginated in the
     // stores, because a day-precision row's sort key is resolved in the
-    // caller's time zone and so is not the key it was stored under. See #1518.
+    // caller's time zone and so is not the key it was stored under. See #55.
     ranked.sort((left, right) => compareKeys(left.key, right.key));
     // Anchored = the item starts or ends inside the window, so the window is
     // one of its own boundaries. A merely-spanning item (a long rental, a

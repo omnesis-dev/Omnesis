@@ -674,7 +674,7 @@ describe("OneDriveSource — content extraction", () => {
     await expect(source.sync(null)).rejects.toThrow(/processor unavailable/i);
   });
 
-  test("processes an allow-listed image (OCR opt-in via the default allow-set, #427)", async () => {
+  test("processes an allow-listed image (OCR opt-in via the default allow-set)", async () => {
     const extractAttachment = vi.fn(async () =>
       Promise.resolve({ text: "OCR text", truncated: false }),
     );

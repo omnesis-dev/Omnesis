@@ -45,7 +45,7 @@ sub-agent the exact list of changed files and their role.
 
 - **Background jobs.** If new or modified: (a) is the algorithm correct under
   concurrent execution? (b) could it starve lower-latency work like agent or
-  user requests? Reference #199 for known contention patterns.
+  user requests? Watch for writer-queue contention.
 
 - **What does this cost the writer?** Ask it of every change that touches a
   writer path. Does it do a lookup inside a writer transaction — resolution,

@@ -2,8 +2,8 @@
 
 /**
  * Per-source page-loop runner — the body of what used to be
- * `SyncEngine.runSyncSource`. Extracted from `sync-engine.ts` per
- * issue #317 to keep the façade under the ~500-line
+ * `SyncEngine.runSyncSource`. Extracted from `sync-engine.ts`
+ * to keep the façade under the ~500-line
  * ceiling.
  *
  * The runner owns the actual cursor-loop:
@@ -590,8 +590,8 @@ export class SourceSyncRunner {
       }
       let cursor = state?.cursor ?? null;
       // Echoed back on every cursor write so the gateway can reject this
-      // sync's writes if the source is wiped (resync) while it's in flight
-      // (#551). Undefined against an older gateway → no check there.
+      // sync's writes if the source is wiped (resync) while it's in flight.
+      //Undefined against an older gateway → no check there.
       //
       // Read separately when there is no cursor: a wipe clears the cursor, so
       // the bootstrap that follows one — the sync most likely to be racing
@@ -829,7 +829,7 @@ export class SourceSyncRunner {
                 hasMore: result.hasMore,
                 cursor: result.cursor,
                 wipeEpoch,
-                // Forward the source's forward-looking consent deadline (#927) so the
+                // Forward the source's forward-looking consent deadline so the
                 // gateway persists it and can warn ahead of expiry. Pass through
                 // verbatim — `undefined` leaves the stored value untouched, `null`
                 // clears it (re-consent that no longer expires).
@@ -949,8 +949,8 @@ export class SourceSyncRunner {
           // `pageSnapshot` for why the guard lives in one place.
           const snapshot = pageSnapshot(source.id, result, log, reportSnapshotAssessment);
 
-          // Atomic per-page write — closes the at-least-once gap
-          // (issue #322). Documents + tombstones + snapshot reconcile +
+          // Atomic per-page write — closes the at-least-once gap.
+          //Documents + tombstones + snapshot reconcile +
           // cursor advance all commit (or all roll back) in one gateway
           // SQLite transaction. Cursor lag on partial failure is no
           // longer possible.
@@ -969,7 +969,7 @@ export class SourceSyncRunner {
             hasMore: result.hasMore,
             cursor: result.cursor,
             wipeEpoch,
-            // Forward the source's forward-looking consent deadline (#927). See
+            // Forward the source's forward-looking consent deadline. See
             // the structured branch above for the verbatim-pass-through rationale.
             consentExpiresAt: result.consentExpiresAt,
             watermark: result.hasMore

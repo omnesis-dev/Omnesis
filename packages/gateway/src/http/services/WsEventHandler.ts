@@ -53,7 +53,7 @@ export interface WsEventHandlerDeps {
   agentService?: AgentService;
   /**
    * Optional — when omitted, a source entering `needs-auth` does not push
-   * a re-auth reminder (#617). Wired only when iOS push is in play.
+   * a re-auth reminder. Wired only when iOS push is in play.
    */
   needsAuthNotifier?: NeedsAuthNotifier;
   /**
@@ -170,7 +170,7 @@ export class WsEventHandler {
       // neither satisfies nor clears it. Re-auth reminders are due while
       // this device keeps reporting `needs-auth`; the notifier's persisted,
       // per-(connection, device) gate is the authoritative de-dup +
-      // exponential backoff (#683), so repeated ticks can advance the
+      // exponential backoff, so repeated ticks can advance the
       // reminder ladder without sending once per source per tick.
       if (payload.state === "needs-auth") {
         void this.needsAuthNotifier?.notify({
@@ -181,7 +181,7 @@ export class WsEventHandler {
       }
       // A successful sync means this device's credentials are healthy
       // again — reset its reminder backoff so a future expiry starts the
-      // ladder from the immediate first push (#683). Fire on the edge into
+      // ladder from the immediate first push. Fire on the edge into
       // `completed` (not every steady-state tick): the real re-auth path is
       // needs-auth → syncing → completed, so we can't gate on the prior
       // state being needs-auth. The notifier short-circuits entirely when

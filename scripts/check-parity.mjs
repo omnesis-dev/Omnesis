@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// Cross-surface PARITY-drift guard (epic #804, C16).
+// Cross-surface PARITY-drift guard.
 //
 // The agent transcript ships to three clients — the web portal, iOS, and
 // Android — and a handful of lifecycle/timing constants MUST hold identical

@@ -1436,7 +1436,7 @@ describe("history coverage — the browser prunes its own store", () => {
   });
 });
 
-describe("buildDailyEdges — browsing-history → webpage (#895)", () => {
+describe("buildDailyEdges — browsing-history → webpage", () => {
   const makeVisit = (url: string, timestamp = APRIL_16_10AM_MS): RawVisit => ({
     url,
     domain: extractDomain(url),

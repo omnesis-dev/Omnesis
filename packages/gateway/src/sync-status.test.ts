@@ -456,7 +456,7 @@ describe("deriveDisplayStatus", () => {
     expect(out.state).toBe("syncing");
   });
 
-  test("in-memory rate-limited → state=rate-limited with the back-off note as errorMessage (#616)", () => {
+  test("in-memory rate-limited → state=rate-limited with the back-off note as errorMessage", () => {
     const out = deriveDisplayStatus(
       src,
       inMem("rate-limited", {
@@ -516,12 +516,12 @@ describe("deriveDisplayStatus", () => {
   });
 });
 
-// Forward-looking consent-expiry (#927). `auth-expiring` is a purely DERIVED
+// Forward-looking consent-expiry. `auth-expiring` is a purely DERIVED
 // display state computed from the persisted `consent_expires_at` and a clock —
 // never a persisted SourceSyncState. It only upgrades an otherwise-healthy
 // source (synced / idle) and must never mask syncing / paused / needs-auth /
 // error / rate-limited. `now` is injected so the threshold is deterministic.
-describe("deriveDisplayStatus — forward-looking consent-expiry (#927)", () => {
+describe("deriveDisplayStatus — forward-looking consent-expiry", () => {
   const DAY = 24 * 60 * 60 * 1000;
   const now = Date.parse("2026-04-25T12:00:00Z");
 

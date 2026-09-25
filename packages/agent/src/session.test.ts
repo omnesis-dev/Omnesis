@@ -148,7 +148,7 @@ describe("AgentSession", () => {
     });
   });
 
-  it("recordTurn appends a report_artifact part when given one (#748)", () => {
+  it("recordTurn appends a report_artifact part when given one", () => {
     // The Deep Research write-back path hands `recordTurn` the verified-report
     // artifact so the card survives a conversation reload. The part lands
     // alongside the report text on the same assistant message.
@@ -182,7 +182,7 @@ describe("AgentSession", () => {
     ]);
   });
 
-  it("persists a report_artifact part on a replay/normal turn that emits a deep-research summary (#748)", async () => {
+  it("persists a report_artifact part on a replay/normal turn that emits a deep-research summary", async () => {
     // The demo cassette (and any backend that scripts a deep-research run)
     // plays as a NORMAL turn, not the real-engine `runDeepResearch` write-back.
     // So the session itself must fold the streamed `agent.deep_research.summary`
@@ -322,7 +322,7 @@ describe("AgentSession", () => {
     expect(history[3]!.parts.map((p) => p.kind)).toEqual(["text"]);
   });
 
-  it("records a tool.start's extraContent on the tool_use history part (#510)", async () => {
+  it("records a tool.start's extraContent on the tool_use history part", async () => {
     const sig = { google: { thought_signature: "c2lnbmF0dXJl" } };
     const { session } = newSession([
       {

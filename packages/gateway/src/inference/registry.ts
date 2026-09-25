@@ -72,7 +72,7 @@ const STARVED_PROBE_REASON = "Probe inconclusive — gateway too busy to measure
  */
 const MAX_CONSECUTIVE_HOLDS = 5;
 
-/** Base delay before the first re-probe of an unreachable backend (#1267). */
+/** Base delay before the first re-probe of an unreachable backend. */
 const DEFAULT_REPROBE_BASE_MS = 60_000;
 /** Cap on the exponential re-probe backoff for a persistently-down backend. */
 const DEFAULT_REPROBE_MAX_MS = 15 * 60_000;
@@ -223,9 +223,9 @@ export class InferenceRegistry {
   private allowRemoteInference = false;
   /** Monotone identity for config/probe state; lets hot paths avoid re-resolving unchanged roles. */
   private stateRevision = 0;
-  /** Behavioral capability verdicts, keyed `${backendKey}::${model}::${role}`. See #508. */
+  /** Behavioral capability verdicts, keyed `${backendKey}::${model}::${role}`. */
   private verifyCache = new Map<string, CapabilityVerdict>();
-  /** Per-backend exponential-backoff schedule for {@link reprobeUnavailable} (#1267). */
+  /** Per-backend exponential-backoff schedule for {@link reprobeUnavailable}. */
   private reprobeBackoff = new Map<string, { attempts: number; nextAt: number }>();
   /**
    * Per-backend count of probes in a row that measured only this process. Bounds
@@ -313,7 +313,7 @@ export class InferenceRegistry {
             status: { type: "http", url: typedCfg.url, status: "probing", hasApiKey },
           });
           // A changed URL/key/prefix can change what the backend serves, so a
-          // cached capability verdict is no longer trustworthy. See #508.
+          // cached capability verdict is no longer trustworthy.
           this.clearVerifyCache(key);
           needsProbe = true;
         }
@@ -432,7 +432,7 @@ export class InferenceRegistry {
    * (or during a transient network blip) recovers WITHOUT a restart or a manual
    * `POST /admin/inference/backends/:key/probe`. Config-change re-probing stays
    * in {@link loadConfig}; this is the time-based recovery path a periodic task
-   * drives (#1267).
+   * drives.
    *
    * `unreachable` is the only latch worth healing here: a `reachable` backend is
    * already usable, and `ok` is healthy. A still-failing backend has its next
@@ -633,10 +633,10 @@ export class InferenceRegistry {
    * `/v1/models` protocol advertises no purpose, so a name heuristic otherwise
    * decides model→role fit; this is the authoritative check. On-demand only
    * (never auto-probed per model on page load) and cached per
-   * `(backend, model, role)` — see #508.
+   * `(backend, model, role)`
    *
    * Probe per role: embeddings (`/embeddings`) and chat (`/chat/completions`,
-   * with a Responses-API retry for agent-class models, see #507).
+   * with a Responses-API retry for agent-class models).
    * `transcriber`/`ocr` aren't behaviorally probed (binary audio/image
    * payloads) and report unsupported with a clear reason.
    */
@@ -733,8 +733,8 @@ export class InferenceRegistry {
           stream: false,
         });
         if (res.ok) return ok("chat-completions endpoint served the request");
-        // Agent roles only: a Responses-only model 404s on chat-completions
-        // (#507). The entailment-verifier loader speaks only chat-completions,
+        // Agent roles only: a Responses-only model 404s on chat-completions.
+        //The entailment-verifier loader speaks only chat-completions,
         // so a Responses-only model is genuinely unsupported for it and the
         // retry would report a false positive.
         if (role !== "entailment-verifier" && role !== "watch-judge" && res.status === 404) {
@@ -825,7 +825,7 @@ export class InferenceRegistry {
       };
     }
     // Resolve every known role so the overview never drifts when a new
-    // CapabilityRole is added (e.g. the #748 subagent roles).
+    // CapabilityRole is added (e.g. the subagent roles).
     const assignments = Object.fromEntries(
       CAPABILITY_ROLES.map((role) => [role, this.resolve(role)]),
     ) as Record<CapabilityRole, ResolvedAssignment>;

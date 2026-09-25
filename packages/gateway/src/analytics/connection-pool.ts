@@ -490,8 +490,8 @@ export class AnalyticsConnectionPool {
   }
 
   /**
-   * Online copy of this DuckDB database into a fresh file at `destPath`
-   * (#57). Must run through the live instance: DuckDB allows a single
+   * Online copy of this DuckDB database into a fresh file at `destPath`.
+   *Must run through the live instance: DuckDB allows a single
    * read-write process per file, so a separate instance (or process)
    * cannot even open the database for a backup while the gateway holds
    * it. `ATTACH` + `COPY FROM DATABASE` + `DETACH` produces a complete,
@@ -525,8 +525,8 @@ export class AnalyticsConnectionPool {
   }
 
   /**
-   * Export every base analytics table to its own CSV file under `destDir`
-   * (#57). Like `backupTo`, this must run through the live instance — DuckDB
+   * Export every base analytics table to its own CSV file under `destDir`.
+   *Like `backupTo`, this must run through the live instance — DuckDB
    * allows a single read-write process per file, so a second instance
    * cannot open the database the gateway holds. DuckDB's native
    * `COPY (...) TO '<file>' (FORMAT CSV, HEADER)` handles RFC 4180 quoting

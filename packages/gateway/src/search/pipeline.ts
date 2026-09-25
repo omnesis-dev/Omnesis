@@ -76,7 +76,7 @@ import type {
 
 const log = createLogger("gateway:search");
 
-/** Default column cap for a search hit's `boundRow` projection (#450) — rows
+/** Default column cap for a search hit's `boundRow` projection — rows
  * can be wide; surface a headline subset, never the whole row. */
 const BOUND_ROW_COLUMNS = 12;
 
@@ -199,7 +199,7 @@ export class SearchPipeline {
 
   /**
    * Attach the cross-store resolver (the `AnalyticsDb`) so that, when a request
-   * sets `includeBoundRow`, hits whose source declares a `boundDocument` (#450)
+   * sets `includeBoundRow`, hits whose source declares a `boundDocument`
    * carry their co-described analytics row. No-op until set (test path).
    */
   setBoundRowResolver(resolver: BoundRowResolver): void {
@@ -209,7 +209,7 @@ export class SearchPipeline {
   /**
    * Attach (or clear) the query embedder after construction. Attaching happens
    * once the indexer loads the model and on every atomic flip. Clearing
-   * (`undefined`) is the immediate hard-cutover step (#1011): it stops query
+   * (`undefined`) is the immediate hard-cutover step: it stops query
    * embedding from calling the old model the instant a hard cutover is
    * confirmed, so vector search degrades cleanly to BM25-only for the
    * documented downtime window instead of embedding queries with a now-invalid
@@ -250,7 +250,7 @@ export class SearchPipeline {
 
   /**
    * Delegate-or-fallback gate for candidate generation (mirrors the io-pool
-   * #1436 posture). Delegates to the worker while the pool is wired, ready, not
+   * posture). Delegates to the worker while the pool is wired, ready, not
    * disposed, and below its inflight ceiling; otherwise — or on any worker
    * rejection — runs the IDENTICAL `runCandidateGen` inline on the main thread.
    * The fallback is byte-identical because it is the same function over the same
@@ -781,7 +781,7 @@ export class SearchPipeline {
   }
 
   /**
-   * Post-fusion cross-store hydration (#450). For each result document whose
+   * Post-fusion cross-store hydration. For each result document whose
    * source declares a `boundDocument`, look up its co-described DuckDB row and
    * attach a bounded projection as `boundRow` — the structural answer to "BM25
    * can't reach analytics rows": a hit on the Strava/Notion/finance document

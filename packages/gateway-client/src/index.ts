@@ -3,7 +3,7 @@
 
 /**
  * `@omnesis/gateway-client` — the HTTP + WebSocket implementation of the
- * gateway transport (#384).
+ * gateway transport.
  *
  * {@link HttpGatewayClient} implements the `GatewayClient` contract from
  * `@omnesis/source-sdk` over REST: document upserts, sync-state, search,
@@ -17,7 +17,7 @@
  * interface itself ships from `@omnesis/source-sdk`.
  *
  * Re-exports are explicit by design: vite/vitest does not follow
- * `export *` across workspace-package boundaries (#384/#414), so every
+ * `export *` across workspace-package boundaries, so every
  * symbol consumed across the package edge is named here.
  */
 

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * HTTP-level coverage for the backup routes (#57): POST /admin/backup,
+ * HTTP-level coverage for the backup routes: POST /admin/backup,
  * GET /admin/backup/status, GET /admin/backups — scope guard, body
  * validation, the 202 start + poll contract, and the 409 single-flight.
  */

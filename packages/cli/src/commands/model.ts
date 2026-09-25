@@ -601,7 +601,7 @@ const modelAssignCommand = defineCommand({
     }
     const assignment = rawValue === "disabled" ? null : rawValue;
 
-    // Embedder swap mode (#1011). Graceful (the default) keeps vector search
+    // Embedder swap mode. Graceful (the default) keeps vector search
     // live on the current model while the new index rebuilds, then atomically
     // flips — zero downtime. Hard cutover stops the old model immediately and
     // drops to keyword-only search until the rebuild finishes. Only meaningful
@@ -613,7 +613,7 @@ const modelAssignCommand = defineCommand({
       if (currentId && !assignment.endsWith(currentId)) {
         const prompts = await import("@clack/prompts");
         // Graceful zero-downtime swaps now cover ALL four {local,http} target ×
-        // {local,http} source transitions (epic #1011, option A): an HTTP target
+        // {local,http} source transitions: an HTTP target
         // re-embeds via a non-blocking HTTP client, a local target via an off-
         // main-thread build worker. So the graceful-vs-hard choice is offered for
         // every embedder switch regardless of backend kind.

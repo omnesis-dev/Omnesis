@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * BackupService (#57) — gateway-side online backup of the data directory.
+ * BackupService — gateway-side online backup of the data directory.
  *
  * One backup produces `<configDir>/backups/<YYYY-MM-DDTHH-mm-ss>/` holding:
  *

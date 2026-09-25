@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Backoff policy for the built-in re-auth notification (#683).
+ * Backoff policy for the built-in re-auth notification.
  *
  * Pure decision logic: given a principal's persisted reminder state and the
  * current time, decide whether a reminder is due now. The first reminder

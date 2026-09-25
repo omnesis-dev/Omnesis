@@ -4,7 +4,7 @@
 
 // Stress harness: concurrent search queries against the live gateway to
 // exercise multi-connection DB reads. Throwaway; used to validate the
-// mmap_size=0 mitigation for #192 under load.
+// mmap_size=0 mitigation under load.
 //
 // Usage: node scripts/stress-search.mjs [durationSec] [concurrency]
 import { readFileSync } from "node:fs";

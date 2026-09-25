@@ -15,9 +15,9 @@
  *   response bodies; messages carry status + endpoint label only.
  * - Exposes the liveness-probe reads (`getAccounts`, `getKeyPermissions`), the
  *   balances/holdings snapshot reads (`getAccountsPage`, `getPortfolios`,
- *   `getPortfolioBreakdown`, #752), and the append-only activity reads
+ *   `getPortfolioBreakdown`), and the append-only activity reads
  *   (`getOrdersPage`, `getFillsPage`) plus the v2 ledger reads
- *   (`getV2AccountsPage`, `getV2TransactionsPage`, #753).
+ *   (`getV2AccountsPage`, `getV2TransactionsPage`).
  * - The v2 App-API ledger needs the additional read-only
  *   `wallet:transactions:read` grant. A 401/403 on the v2 path is NOT a source-
  *   wide auth failure (the brokerage key is still fine) — it means the grant is

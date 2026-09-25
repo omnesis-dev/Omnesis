@@ -227,7 +227,7 @@ export function linkReconcileTask(
         );
         const computedMs = Date.now() - startMs;
         const { updated, deleted, retargeted } = await writeGate.upsertLinkResolutions(batch);
-        // Drain the source-declared forward-reference backlog (#430) on the
+        // Drain the source-declared forward-reference backlog on the
         // same cadence: a declared edge whose target has since been ingested
         // is promoted into document_links; one whose target never arrives is
         // TTL-dropped. Cheap when pending_edges is empty (one bounded SELECT).
@@ -242,7 +242,7 @@ export function linkReconcileTask(
         trackers.linkReconcile.recordTick(updated);
         if (updated > 0 || deleted > 0 || retargeted > 0) {
           const tookMs = Date.now() - startMs;
-          // `deleted` is the #570 prune draining the permanently-
+          // `deleted` is the url-link prune draining the permanently-
           // unresolvable external url backlog as the cursor walks it.
           log.info(
             `link reconciliation: ${updated} resolved, ${retargeted} retargeted, ${deleted} pruned in ${tookMs}ms (compute=${computedMs}ms, ${batch.resolutions.length + (batch.retargets?.length ?? 0)} candidates)`,

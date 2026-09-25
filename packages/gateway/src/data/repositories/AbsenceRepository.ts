@@ -473,7 +473,7 @@ export function applySnapshotAbsencePlan(
   expectedWipeEpoch?: number,
   cursorRow = "",
 ): SnapshotAbsenceApplied {
-  // #551: a wipe between the diff and here replaced the source's corpus, so the
+  // A wipe between the diff and here replaced the source's corpus, so the
   // plan describes documents that no longer stand for anything. A re-bootstrap
   // re-derives the same document ids, so the foreign-key guard below would not
   // catch it — the epoch is the only thing that can.

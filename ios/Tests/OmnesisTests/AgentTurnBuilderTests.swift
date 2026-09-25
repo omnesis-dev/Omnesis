@@ -493,7 +493,7 @@ final class AgentTurnBuilderTests: XCTestCase {
         )
     }
 
-    // MARK: - Deep Research report_artifact rebuild on resume (#748)
+    // MARK: - Deep Research report_artifact rebuild on resume
 
     /// The persisted `report_artifact` assistant part decodes from the literal
     /// wire string the gateway writes — the structured facts plus the merged

@@ -617,7 +617,7 @@ struct TrailTimelineEventBody: View {
     }
 
     var body: some View {
-        // #757: a record-only event (a bound DuckDB row with no
+        // A record-only event (a bound DuckDB row with no
         // co-described document) has no `doc` to head the row — render
         // the record body instead. Records never nest as attachments, so
         // this only fires at top level.
@@ -636,7 +636,7 @@ struct TrailTimelineEventBody: View {
             } else if hasVisiblePeople {
                 peopleRow
             }
-            // #757: a document that deduped with its same-entity row
+            // A document that deduped with its same-entity row
             // (one timeline entity, not two) carries the row's derived
             // key fields inline. The record's title is already the doc
             // title — only the declared key columns add information, so
@@ -975,9 +975,9 @@ struct TrailTimelineEventBody: View {
     }
 }
 
-// MARK: - Record body (#757)
+// MARK: - Record body
 
-/// Renders a record-only trail event (#757): a single DuckDB analytics
+/// Renders a record-only trail event: a single DuckDB analytics
 /// row surfaced as a point-in-time citation that binds no document.
 /// SwiftUI port of the portal's `RecordBody`. The source icon/colour
 /// come from the registry (resolved one level up via the spine's
@@ -989,8 +989,8 @@ struct TrailTimelineEventBody: View {
 /// When `record.boundDocumentId` is non-nil the title taps through to
 /// that document via the shared `openTrailDocument` env-handler — the
 /// SAME nav path document citations use, NOT a `NavigationLink` (which
-/// is a no-op in the `CitationsDrawer` overlay; see #757 / memory
-/// "iOS citations drawer has no NavigationStack"). When nil it renders
+/// is a no-op in the `CitationsDrawer` overlay, which has no
+/// NavigationStack). When nil it renders
 /// as plain text with no tap target — no dead link.
 @available(iOS 17.0, *)
 struct TrailTimelineRecordBody: View {
@@ -1054,7 +1054,7 @@ struct TrailTimelineRecordBody: View {
     }
 }
 
-/// The declared key columns of a record citation (#757), rendered as a
+/// The declared key columns of a record citation, rendered as a
 /// label/value list. SwiftUI port of the portal's `RecordKeyFields`. The
 /// gateway already redacted `sensitive` columns server-side (the value
 /// arrives as the redaction placeholder), so this renderer prints values
@@ -1503,7 +1503,7 @@ enum TrailTimelineFormat {
 }
 
 @available(iOS 17.0, *)
-#Preview("TrailTimelineView — record-only citation (#757)") {
+#Preview("TrailTimelineView — record-only citation") {
     let store = AppStore.preview()
     return ScrollView {
         TrailTimelineView(
@@ -1518,7 +1518,7 @@ enum TrailTimelineFormat {
 }
 
 @available(iOS 17.0, *)
-#Preview("TrailTimelineView — deduped doc+record (#757)") {
+#Preview("TrailTimelineView — deduped doc+record") {
     let store = AppStore.preview()
     return ScrollView {
         TrailTimelineView(
@@ -1533,7 +1533,7 @@ enum TrailTimelineFormat {
 }
 
 @available(iOS 17.0, *)
-#Preview("TrailTimelineView — mixed records, edge fields (#757)") {
+#Preview("TrailTimelineView — mixed records, edge fields") {
     let store = AppStore.preview()
     return ScrollView {
         TrailTimelineView(

@@ -21,7 +21,7 @@ import UIKit
 ///     us later; this just extends the *current* execution.
 ///   - A full `URLSession(configuration: .background(…))` delegate
 ///     setup — which survives true app kill. Escalation path tracked
-///     in #195 — revisit if we ever see uploads routinely exceed 30 s
+///     in #20 — revisit if we ever see uploads routinely exceed 30 s
 ///     or if we add a source with large payloads (audio / images).
 ///
 /// Usage:

@@ -201,7 +201,7 @@ export function mountDocumentCoreRoutes(app: RouteApp, deps: DocumentRoutesDeps)
     ingestBodyLimit(DOCUMENTS_BODY_LIMIT_BYTES),
     validateJson(ingestDocumentsBody),
     async (c) => {
-      // Per-IP rate limit (#58). The ceiling is generous (the collector is a
+      // Per-IP rate limit. The ceiling is generous (the collector is a
       // legitimate high-volume ingest client) — it only catches a pathological
       // write loop, not normal batched bootstrap ingestion. Loopback is exempt
       // (a same-host ingest client already has full local access); the check
@@ -326,7 +326,7 @@ export function mountDocumentCoreRoutes(app: RouteApp, deps: DocumentRoutesDeps)
     return c.json(result);
   });
 
-  // User-initiated single-document privacy delete (#1065). Keyed by the
+  // User-initiated single-document privacy delete. Keyed by the
   // internal document id (which every client already holds from the doc
   // page or a recent-list row), so the caller doesn't need to know the
   // `(provider, source, external)` triple. Resolves the row, then removes
@@ -426,7 +426,7 @@ export function mountDocumentCoreRoutes(app: RouteApp, deps: DocumentRoutesDeps)
    * every SQLite-side write the collector needs to commit at the end
    * of a sync page (upserts + tombstones + snapshot reconcile + cursor
    * advance) into one transaction so either every effect lands or
-   * none of them do. Closes the at-least-once gap from issue #322.
+   * none of them do. Closes the at-least-once gap.
    *
    * Supersedes the prior four-step
    * `upsertDocuments → deleteDocuments → reconcileSnapshot →
@@ -440,7 +440,7 @@ export function mountDocumentCoreRoutes(app: RouteApp, deps: DocumentRoutesDeps)
     scope.writeAny(),
     validateJson(upsertWithCursorBody),
     async (c) => {
-      // Per-IP rate limit (#58). This is the collector's PRIMARY ingest path
+      // Per-IP rate limit. This is the collector's PRIMARY ingest path
       // (it supersedes the split `POST /documents` flow), so it shares the same
       // generous ingest ceiling — catches a pathological write loop on an
       // exposed gateway without throttling legitimate batched bootstrap.
@@ -979,7 +979,7 @@ export function mountDocumentRefsRoute(
    * `GET /documents/:id/edges` — every edge incident to a document annotated
    * with its provenance (source-declared / content-derived / cross-source-
    * derived / llm-derived), plus the source-declared forward references still
-   * parked in `pending_edges`. Backs `omnesis edges show <doc-id>` (#430).
+   * parked in `pending_edges`. Backs `omnesis edges show <doc-id>`.
    */
   app.get("/documents/:id/edges", scope.read(), (c) => {
     const id = c.req.param("id");

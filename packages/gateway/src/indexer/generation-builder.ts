@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Double-buffered generation builder (epic #1011).
+ * Double-buffered generation builder.
  *
  * Builds a NEW index generation under a (different, possibly different-
  * dimension) embedding model while the ACTIVE generation keeps serving every
@@ -32,7 +32,7 @@
  * main-thread HTTP client; a LOCAL in-process (llama.cpp) target would block the
  * event loop on the main thread, so the caller injects a `BuildWorkerEmbedder`
  * that round-trips `embed()` to a short-lived off-main-thread build worker
- * hosting the new GGUF (epic #1011, mechanism 1). Either way the re-embed runs
+ * hosting the new GGUF (mechanism 1). Either way the re-embed runs
  * off the event loop and interactive search stays responsive on the active
  * generation throughout. The builder itself is unchanged by the distinction.
  */
@@ -60,8 +60,8 @@ const log = createLogger("gateway:indexer").child("generation-builder");
 /**
  * Thrown by {@link GenerationBuilder.build}/{@link GenerationBuilder.catchUp}
  * when their {@link GenerationBuildOptions.signal} aborts mid-pass — the caller
- * abandoned this generation because a NEWER embedder swap arrived (epic #1011,
- * bounded-to-two). It is a clean, expected unwind, not a build error: the caller
+ * abandoned this generation because a NEWER embedder swap arrived
+ * (bounded-to-two). It is a clean, expected unwind, not a build error: the caller
  * cleans up the half-built generation and starts a fresh one for the newest
  * model, so it is logged at info, never error.
  */
@@ -88,7 +88,7 @@ export interface GenerationBuildOptions {
   /** Save the building usearch file + flush progress every N chunks. */
   saveEveryN?: number;
   /**
-   * Cooperative cancellation (epic #1011, abandon-in-flight). Checked at every
+   * Cooperative cancellation (abandon-in-flight). Checked at every
    * safe point between embed batches; when it aborts, {@link build}/
    * {@link catchUp} stop at the next boundary and throw a {@link
    * BuildAbortedError} WITHOUT persisting further — the partially-built
@@ -147,7 +147,7 @@ export class GenerationBuilder {
 
     // Same denominator the building generation row was seeded with
     // (`createBuildingIndexVersion` → `getBuildableDocumentCount`), so progress
-    // reaches exactly 100% at completion (epic #1011).
+    // reaches exactly 100% at completion.
     const docsTotal = getBuildableDocumentCount(this.db);
 
     const select = this.db.prepare<[number, number], ChunkRowForBuild>(
@@ -222,7 +222,7 @@ export class GenerationBuilder {
   }
 
   /**
-   * Crash-safe resume (epic #1011). Continue a `building` generation that was
+   * Crash-safe resume. Continue a `building` generation that was
    * in flight when the gateway last stopped, from where it left off — never
    * re-embedding the chunks already done. The durable record of "how far the
    * build got" is the `chunk_embeddings_building` staging table: the builder
@@ -299,7 +299,7 @@ export class GenerationBuilder {
   }
 
   /**
-   * Mid-rebuild ingest fan-out (epic #1011). Reconciles the building generation
+   * Mid-rebuild ingest fan-out. Reconciles the building generation
    * against the CURRENT `chunks` state so that documents ingested while the
    * main {@link build} pass was running — which the still-live steady-state
    * worker chunked + embedded into the ACTIVE generation — also land in the

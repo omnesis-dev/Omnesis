@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Per-(connection, device) re-auth reminder state (#683).
+ * Per-(connection, device) re-auth reminder state.
  *
  * When a provider connection's credentials lapse, every source under it
  * (Gmail + Calendar + Contacts + Drive for one Google account) flips to
@@ -33,7 +33,7 @@
  * gateway restart: a restart no longer re-fires a reminder for a connection
  * that's still in its backoff window.
  *
- * Sole-writer constraint (#192): the read-decide-write is done atomically
+ * Sole-writer constraint: the read-decide-write is done atomically
  * inside one writer-worker handler (`db.reserveReauthReminder`); resets
  * route through `db.recoverReauthReminder`. No reads happen off the writer
  * handle, so there is no read-modify-write race across the de-dup decision.

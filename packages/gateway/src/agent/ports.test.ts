@@ -49,7 +49,7 @@ function restrictedAuthorization(mode: "allowlist" | "denylist", sourceIds: stri
 }
 
 // A no-bound-rows analytics stub: these trail-budget tests don't exercise the
-// #757 bound-row surfacing (no analytics tables), so the resolver reports zero
+// bound-row surfacing (no analytics tables), so the resolver reports zero
 // bindings and the walk runs exactly as the pure document graph.
 const noAnalytics = {
   getBoundDocumentBindings: async () => new Map(),

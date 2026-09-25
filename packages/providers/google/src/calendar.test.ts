@@ -942,8 +942,8 @@ describe("GoogleCalendarSource", () => {
       expect(result.documents[0].externalId).toBe("cal-1:weekly-sync");
     });
 
-    test("bootstrap honors cutoff older than the 1-year default (#203)", async () => {
-      // Pre-#203, calendar capped timeMin at oneYearAgo even when the user
+    test("bootstrap honors cutoff older than the 1-year default", async () => {
+      // Previously, calendar capped timeMin at oneYearAgo even when the user
       // set maxAge=2y or wider — silently shrinking history below the
       // configured retention window.
       const cutoff = "2022-01-01T00:00:00Z";
@@ -1073,7 +1073,7 @@ describe("googleCalendarAppUrl", () => {
   });
 });
 
-describe("GoogleCalendarSource.syncStructured (#5 / #450)", () => {
+describe("GoogleCalendarSource.syncStructured", () => {
   let calendar: ReturnType<typeof createMockCalendar>;
   let source: GoogleCalendarSource;
 

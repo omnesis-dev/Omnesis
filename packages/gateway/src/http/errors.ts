@@ -134,7 +134,7 @@ export class GatewayTimeoutError extends HttpError {
  * 507 — the DB volume is below the configured free-disk floor, so the
  * gateway refuses to write rather than risk a partial / corrupting write.
  * The collector's sync cursor doesn't advance, so the page is re-sent on its next scheduled sync once
- * disk frees and a later attempt succeeds. See #15.
+ * disk frees and a later attempt succeeds.
  */
 export class InsufficientStorageError extends HttpError {
   constructor(message: string, detail?: unknown) {

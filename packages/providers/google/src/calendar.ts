@@ -148,7 +148,7 @@ interface CalendarPage {
 /**
  * Google Calendar source.
  * Fetches calendar events, normalizing each into a Document AND a
- * `google_calendar_events` analytics row (hybrid source, #450 / #5).
+ * `google_calendar_events` analytics row (hybrid source).
  */
 export class GoogleCalendarSource {
   readonly id: SourceId;
@@ -192,7 +192,7 @@ export class GoogleCalendarSource {
 
   /**
    * Hybrid view of a sync page: the same documents PLUS one
-   * `google_calendar_events` row per event (#450 / #5). Cancelled events are
+   * `google_calendar_events` row per event. Cancelled events are
    * tombstoned on the document side via `deletedExternalIds`; the runner now
    * forwards those in the structured branch too.
    */
@@ -726,7 +726,7 @@ export class GoogleCalendarSource {
           // identifier shared by every system that exposes this event
           // (including ICS attachments delivered by email). Stored so the
           // link extractor can resolve `calendar-event` cross-source links
-          // from email-attached invites — see #266.
+          // from email-attached invites
           iCalUID: event.iCalUID ?? undefined,
         },
       },
@@ -738,7 +738,7 @@ export class GoogleCalendarSource {
   /**
    * Build the `google_calendar_events` row for an event — the structured twin
    * of `normalizeEvent`, keyed on the same `calendarId:eventId` so the doc↔row
-   * `same-entity` edge is 1:1 (#450). Derives the analytical columns the
+   * `same-entity` edge is 1:1. Derives the analytical columns the
    * document body can't aggregate: duration, attendee count, self RSVP.
    * Returns null for an event with no id (no stable key).
    */

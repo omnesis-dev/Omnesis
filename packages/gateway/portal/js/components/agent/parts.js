@@ -125,7 +125,7 @@ export function MessageBubble({ turn, citations, dispatch }) {
  */
 function computeCitationPillRuns(parts) {
   // Both citation tools coalesce into the pill while pending: `annotate` cites a
-  // document, `cite_record` cites a DuckDB row (#757). Both stream sizable args
+  // document, `cite_record` cites a DuckDB row. Both stream sizable args
   // (a verbatim quote / a row snapshot) that stall the transcript, so the pill
   // covers the pause for either.
   const isPendingCitation = (p) =>
@@ -226,7 +226,7 @@ function batchChildSummary(batchTool, argEntry, item) {
 // (false — they render as STATIC chips). The reducer drops top-level ephemeral
 // tool parts on resume, so only sub-agent `childTurns` (which retain them) need
 // the static path; without it the rolling cards animate-then-vanish, leaving
-// bare text blobs (#890).
+// bare text blobs.
 export function renderPart(part, key, citations, dispatch, pillRuns, thinkingActive, live = true, turnDone = false) {
   switch (part.kind) {
     case "text":
@@ -238,7 +238,7 @@ export function renderPart(part, key, citations, dispatch, pillRuns, thinkingAct
     case "thinking":
       return html`<${ThinkingBlock} key=${key} text=${part.text} active=${thinkingActive} />`;
     case "subagent":
-      // A nested sub-agent's lifecycle (#748): a compact live row showing its
+      // A nested sub-agent's lifecycle: a compact live row showing its
       // title, status, token usage, and reached sources.
       //
       // Once the parent turn is done (`turnDone`), its live researcher rows
@@ -258,8 +258,8 @@ export function renderPart(part, key, citations, dispatch, pillRuns, thinkingAct
       // identical ones. The pill disappears the moment the last
       // annotate in the run resolves; the citation itself still
       // surfaces in the sidebar + footer chip.
-      // `annotate` (document citation) and `cite_record` (DuckDB row citation,
-      // #757) are both silent in the transcript — the unified Timeline sidebar
+      // `annotate` (document citation) and `cite_record` (DuckDB row citation)
+      // are both silent in the transcript — the unified Timeline sidebar
       // and the footer count chip own their visible payload. While pending they
       // coalesce into one inline "Citing N…" pill (see `computeCitationPillRuns`).
       if (part.tool === "annotate" || part.tool === "cite_record") {
@@ -400,7 +400,7 @@ export function renderPart(part, key, citations, dispatch, pillRuns, thinkingAct
   }
 }
 
-// ─── Sub-agent card (#748) ───────────────────────────────────────────────
+// ─── Sub-agent card ───────────────────────────────────────────────
 //
 // Renders one `agent.subagent.*` lifecycle as a compact, live researcher row.
 // The detailed working set remains in ResearchWorkspace; a child transcript is
@@ -1056,7 +1056,7 @@ function StaticToolCard({ call }) {
   `;
 }
 
-// ─── Research working-set surface (#748) ─────────────────────────────────
+// ─── Research working-set surface ─────────────────────────────────
 //
 // The headline Deep Research deliverable: a bespoke, multi-panel surface —
 // "N researchers side by side" — that appears WHILE a Deep Research run is in
@@ -2177,7 +2177,7 @@ function WatchActionCard({ call }) {
 function CitingPill({ count }) {
   const n = Math.max(1, count ?? 1);
   // "source" covers both citation kinds — a document (`annotate`) and a DuckDB
-  // row (`cite_record`, #757) — which coalesce into one pill.
+  // row (`cite_record`) — which coalesce into one pill.
   const label = `Citing ${n} source${n === 1 ? "" : "s"}`;
   return html`
     <div class="agent-citing-pill" role="status" aria-label=${label}>

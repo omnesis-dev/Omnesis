@@ -333,9 +333,8 @@ public final class PairingService: Sendable {
         // `persistExchanged` commits the fingerprint inside the authoritative
         // credential bundle, then `OmnesisURLSession.reset()`
         // method) flips the cached singleton over to the same pin so
-        // every downstream transport client (#390 wiring + #391
-        // lifecycle) refuses to talk to anything that doesn't present
-        // it.
+        // every downstream transport client refuses to talk to anything
+        // that doesn't present it.
         //
         // Tests pass a `pinnedExchangeBuilder` that returns nil so the
         // injected `exchange` stub is used as-is (no real network).

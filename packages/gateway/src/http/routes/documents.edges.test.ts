@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Route tests for `GET /documents/:id/edges` (#430) — the provenance-annotated
+ * Route tests for `GET /documents/:id/edges` — the provenance-annotated
  * edge listing that backs `omnesis edges show`.
  */
 import { randomUUID } from "node:crypto";

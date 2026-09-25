@@ -113,7 +113,7 @@ export const MAX_REPLAY_DAYS = 365;
  * window then reports fewer days than were asked for, which is the honest
  * answer and is why the report says what it *consumed*.
  */
-// See #1991 — sized against a smaller corpus: on a busy install this is a week,
+// See #71 — sized against a smaller corpus: on a busy install this is a week,
 // not the season a compile-time replay asks for.
 export const MAX_REPLAY_EVENTS = 60_000;
 

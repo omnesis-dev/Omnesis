@@ -143,7 +143,7 @@ function redactState(state: ConnectionState, secrets: string[]): ConnectionState
 }
 
 /** Values that must never appear in anything this flow reports upward. */
-// Known bug: #2702 — masks every credential field, not only the ones the spec marks secret.
+// Known bug: #97 — masks every credential field, not only the ones the spec marks secret.
 const secretValues: string[] = Object.values(credentials ?? {}).filter((v) => v.length > 0);
 
 /**

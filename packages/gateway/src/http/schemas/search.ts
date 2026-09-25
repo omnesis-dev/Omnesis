@@ -18,7 +18,7 @@ export const searchBody = z
   .object({
     text: nonEmptyString,
     verbose: z.boolean().optional(),
-    // When true, hits whose source declares a `boundDocument` (#450) carry
+    // When true, hits whose source declares a `boundDocument` carry
     // their co-described DuckDB analytics row in `boundRow`.
     includeBoundRow: z.boolean().optional(),
   })

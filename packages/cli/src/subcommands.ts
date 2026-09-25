@@ -21,7 +21,7 @@ export const SUB_COMMANDS: SubCommandsDef = {
   recent: () => import("./commands/recent.js").then((m) => m.recentCommand),
   // Quick capture into the built-in omnesis-notes source.
   note: () => import("./commands/note.js").then((m) => m.noteCommand),
-  // Destructive: permanently removes one document from the corpus (#1065).
+  // Destructive: permanently removes one document from the corpus.
   delete: () => import("./commands/delete.js").then((m) => m.deleteCommand),
   trail: () => import("./commands/trail.js").then((m) => m.trailCommand),
   edges: () => import("./commands/edges.js").then((m) => m.edgesCommand),

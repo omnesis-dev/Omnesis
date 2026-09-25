@@ -916,8 +916,8 @@ export class Indexer {
    * A one-time migration can re-home documents onto a different source without
    * changing their content — legacy browser-extension pages were folded into
    * the `web` source. The incremental scan
-   * skips content-unchanged docs (it only repairs `source_url` drift in place,
-   * see #462), so the chunks keep the retired `source_id`. The per-source index
+   * skips content-unchanged docs (it only repairs `source_url` drift in place),
+   * so the chunks keep the retired `source_id`. The per-source index
    * stats then count those docs under a source that no longer has any
    * documents, leaving the survivor stuck below 100% indexed forever and a
    * phantom retired source lingering in `/index/stats`.
@@ -936,7 +936,7 @@ export class Indexer {
    * keeps the source alive, so its moved documents' chunks would not be caught
    * here. That is acceptable because the only re-homes that happen are
    * whole-source folds; a steady-state producer never changes an
-   * individual document's `source_id` (the incremental scan's #462 drift path
+   * individual document's `source_id` (the incremental scan's drift path
    * likewise only covers `source_url`, not `source_id`).
    *
    * Repairs chunks only; the caller is responsible for rebuilding the per-source

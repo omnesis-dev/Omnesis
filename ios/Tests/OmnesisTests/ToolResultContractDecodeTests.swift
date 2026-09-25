@@ -4,7 +4,7 @@
 @testable import Omnesis
 import XCTest
 
-/// Cross-surface tool-result contract — iOS half (epic #804, criterion C19).
+/// Cross-surface tool-result contract — iOS half.
 ///
 /// Loads the SAME canonical, invented fixture the TS round-trip test and the
 /// Android decode test load (`Fixtures/tool-result-contract.json`, a

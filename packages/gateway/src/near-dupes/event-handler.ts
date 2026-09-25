@@ -47,7 +47,7 @@ export interface NearDupEventHandlerOpts {
    * the actual `near_dup_inbox` writes are dispatched in coalesced,
    * background-priority batches by `nearDupInboxFlushTask`. Keeping the
    * hot path write-free is what stops bulk ingest from parking the
-   * writer (see #555 and `scheduler/tasks/near-dup-inbox.ts`).
+   * writer (see `scheduler/tasks/near-dup-inbox.ts`).
    */
   buffer: Pick<NearDupInboxBuffer, "add">;
   /** Re-read on every event so config-reload picks up new eligibility. */
@@ -64,11 +64,11 @@ export interface NearDupEventHandlerOpts {
  * keeps bulk ingest from parking the writer: the `document.upserted`
  * event fires synchronously inside the originating request's realtime
  * priority scope, so any writer op dispatched from here would inherit
- * realtime and compete with the actual document writes (see #555).
+ * realtime and compete with the actual document writes.
  *
  * Buffering is best-effort; the durability contract (cap drops, failed-flush
  * retry, graceful-shutdown drain, and the ungraceful-crash gap tracked in
- * #556) lives on `nearDupInboxFlushTask`.
+ * #26) lives on `nearDupInboxFlushTask`.
  */
 export function subscribeNearDupInbox(opts: NearDupEventHandlerOpts): () => void {
   const offUpsert = opts.eventBus.on("document.upserted", (ev: DocumentUpsertedEvent) => {

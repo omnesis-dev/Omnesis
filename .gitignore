@@ -1,5 +1,5 @@
 # Bare (no trailing slash) so it also matches a `node_modules` *symlink*, not
-# just a directory — worktree setup creates symlinks here (see #563).
+# just a directory — worktree setup creates symlinks here.
 node_modules
 # npm is authoritative; extra lockfiles make deploy hosts select the wrong installer.
 pnpm-lock.yaml
