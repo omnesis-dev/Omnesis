@@ -1,11 +1,10 @@
 # Container topology E2E: two containers standing in for two machines, a
 # fixture release server carrying ordered version tags, and the real installer
-# and updater driven across both — install, pair, update. It runs for every
-# admitted full request and for an explicit manual target.
+# and updater driven across both — install, pair, update.
 name: topology-e2e
 
-# Full validation supplies one immutable source revision to this reusable lane.
-# Manual full requests enter through the guarded admission controller.
+# full-validation.yml calls this reusable workflow with the exact revision it
+# validates.
 on:
   workflow_call:
     inputs:

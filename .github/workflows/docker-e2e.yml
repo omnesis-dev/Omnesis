@@ -3,12 +3,11 @@
 # headless passphrase keyring — each against the real CLI + gateway from
 # source inside a clean Linux container — plus the dedicated-account gateway
 # installed, updated and rolled back by scripts/hardened-gateway.sh under real
-# systemd. It runs for every admitted full request and for an explicit manual
-# target, never from a pull request.
+# systemd.
 name: docker-e2e
 
-# Full validation supplies one immutable source revision to this reusable lane.
-# Manual full requests enter through the guarded admission controller.
+# full-validation.yml calls this reusable workflow with the exact revision it
+# validates.
 on:
   workflow_call:
     inputs:

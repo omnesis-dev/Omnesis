@@ -29,7 +29,6 @@ export default defineConfig({
       "skills/**/*.test.ts",
       "scripts/release/**/*.test.mjs",
       "scripts/nx/**/*.test.mjs",
-      "scripts/ci-admission/**/*.test.mjs",
       "scripts/pii-scan.test.mjs",
       "scripts/text-files.test.mjs",
       "scripts/typecheck-lanes.test.mjs",

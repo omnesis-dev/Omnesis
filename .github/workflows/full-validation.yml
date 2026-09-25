@@ -1,169 +1,98 @@
 name: full-validation
-run-name: full-validation [${{ inputs.request_key }}] [${{ inputs.dispatch_token }}]
 
-# The admission controller dispatches this workflow from trusted main. Target
-# code never controls this orchestration file and cannot enter through a PR.
+# The whole validation suite, on GitHub-hosted runners, for every push to
+# `main`, every pull request into `main`, and any manual run
+# (`gh workflow run full-validation.yml --ref <branch-or-tag>`).
+#
+# A newer push to the same branch or pull request cancels the unfinished run
+# before it, so only the latest revision of each is tested to completion.
+#
+# Pull requests — fork pull requests included, once a maintainer approves the
+# run — execute with the plain `pull_request` trigger: a read-only token and no
+# secrets. No job in this suite reads a secret; keep it that way, and never
+# move a job that runs pull-request code to `pull_request_target`.
 on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
-    inputs:
-      request_key:
-        description: "Durable admission request key"
-        required: true
-        type: string
-      target_sha:
-        description: "Exact 40-character source revision to validate"
-        required: true
-        type: string
-      dispatch_token:
-        description: "Opaque token recorded before dispatch"
-        required: true
-        type: string
-      inventory_version:
-        description: "Required-lane inventory digest"
-        required: true
-        type: string
 
 concurrency:
-  group: full-validation-${{ inputs.request_key }}
-  cancel-in-progress: false
+  group: >-
+    full-validation-${{ github.event_name == 'pull_request'
+    && format('pr-{0}', github.event.pull_request.number)
+    || format('{0}-{1}', github.event_name, github.ref) }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  admit:
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    steps:
-      - name: Check out trusted controller
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.workflow_sha }}
-          persist-credentials: false
-
-      - name: Load admission state
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ci-admission-state
-          path: .ci-admission-state
-          persist-credentials: false
-
-      - name: Attest request
-        env:
-          DISPATCH_TOKEN: ${{ inputs.dispatch_token }}
-          INVENTORY_VERSION: ${{ inputs.inventory_version }}
-          REQUEST_KEY: ${{ inputs.request_key }}
-          CONTROLLER_SHA: ${{ github.workflow_sha }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
-          RUN_ID: ${{ github.run_id }}
-          STATE_TOKEN: ${{ github.token }}
-          TARGET_SHA: ${{ inputs.target_sha }}
-        run: |
-          set -euo pipefail
-          node -e '
-            process.stdout.write(JSON.stringify({
-              controllerSha: process.env.CONTROLLER_SHA,
-              inventoryVersion: process.env.INVENTORY_VERSION,
-              requestKey: process.env.REQUEST_KEY,
-              runAttempt: Number(process.env.RUN_ATTEMPT),
-              runId: Number(process.env.RUN_ID),
-              targetSha: process.env.TARGET_SHA,
-              token: process.env.DISPATCH_TOKEN,
-            }));
-          ' > "$RUNNER_TEMP/admit.json"
-
-          # A losing state-branch push is recovered by the half-hour
-          # reconciliation trigger. Keep target code from running until that
-          # recovery has attached this exact run.
-          auth_header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$STATE_TOKEN" | base64 | tr -d '\n')"
-          for attempt in $(seq 1 420); do
-            git -C .ci-admission-state -c "http.${GITHUB_SERVER_URL}/.extraheader=$auth_header" \
-              fetch --quiet origin ci-admission-state
-            git -C .ci-admission-state reset --quiet --hard FETCH_HEAD
-            if node scripts/ci-admission/cli.mjs admit --state .ci-admission-state < "$RUNNER_TEMP/admit.json"; then
-              exit 0
-            fi
-            if [ "$attempt" -lt 420 ]; then sleep 5; fi
-          done
-          echo "::error::The run was not attached to its durable admission request."
-          exit 1
-
   node:
-    needs: admit
     uses: ./.github/workflows/ci.yml
     with:
-      target_sha: ${{ inputs.target_sha }}
+      target_sha: ${{ github.sha }}
 
   knip:
-    needs: admit
     uses: ./.github/workflows/knip.yml
     with:
-      target_sha: ${{ inputs.target_sha }}
+      target_sha: ${{ github.sha }}
 
   swift:
-    needs: admit
     uses: ./.github/workflows/swiftlint.yml
     with:
-      target_sha: ${{ inputs.target_sha }}
+      target_sha: ${{ github.sha }}
 
   ios:
-    needs: admit
     uses: ./.github/workflows/ios.yml
     with:
-      target_sha: ${{ inputs.target_sha }}
+      target_sha: ${{ github.sha }}
 
   android:
-    needs: admit
     uses: ./.github/workflows/android.yml
     with:
-      target_sha: ${{ inputs.target_sha }}
+      target_sha: ${{ github.sha }}
 
   docker-smoke:
-    needs: admit
     uses: ./.github/workflows/docker-smoke.yml
     with:
-      target_sha: ${{ inputs.target_sha }}
+      target_sha: ${{ github.sha }}
 
   install-smoke:
-    needs: admit
     uses: ./.github/workflows/install-smoke.yml
     with:
-      target_sha: ${{ inputs.target_sha }}
+      target_sha: ${{ github.sha }}
 
   topology:
-    needs: admit
     uses: ./.github/workflows/topology-e2e.yml
     with:
-      target_sha: ${{ inputs.target_sha }}
+      target_sha: ${{ github.sha }}
 
   harness:
-    needs: admit
     uses: ./.github/workflows/harness-conformance.yml
     with:
-      target_sha: ${{ inputs.target_sha }}
+      target_sha: ${{ github.sha }}
 
   docker-security:
-    needs: admit
     uses: ./.github/workflows/docker-e2e.yml
     with:
-      target_sha: ${{ inputs.target_sha }}
+      target_sha: ${{ github.sha }}
 
   docker-image:
-    needs: admit
     uses: ./.github/workflows/docker.yml
     with:
-      target_sha: ${{ inputs.target_sha }}
+      target_sha: ${{ github.sha }}
 
   security-static:
-    needs: admit
     uses: ./.github/workflows/security-static.yml
     with:
-      target_sha: ${{ inputs.target_sha }}
+      target_sha: ${{ github.sha }}
 
+  # One result for the whole suite: green only when every lane succeeded.
   verdict:
-    if: always() && needs.admit.result == 'success'
+    if: ${{ !cancelled() }}
     needs:
-      - admit
       - node
       - knip
       - swift
@@ -179,19 +108,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Aggregate required lanes
+      - name: Aggregate lanes
         env:
           RESULTS_JSON: ${{ toJSON(needs) }}
         run: |
           node -e '
             const results = JSON.parse(process.env.RESULTS_JSON);
-            delete results.admit;
             const failed = Object.entries(results).filter(([, {result}]) => result !== "success");
             const lines = Object.entries(results).map(([id, value]) => `| ${id} | ${value.result} |`);
             require("fs").appendFileSync(process.env.GITHUB_STEP_SUMMARY,
               ["## Full validation", "", "| Lane | Result |", "| --- | --- |", ...lines, ""].join("\n"));
             if (failed.length) {
-              console.error(`Required lanes without success: ${failed.map(([id, value]) => `${id}=${value.result}`).join(", ")}`);
+              console.error(`Lanes without success: ${failed.map(([id, value]) => `${id}=${value.result}`).join(", ")}`);
               process.exit(1);
             }
           '

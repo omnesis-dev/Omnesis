@@ -1561,6 +1561,12 @@ describe("release.yml verification permissions", () => {
     );
     expect(ancestry.env.REPOSITORY_TOKEN).toBe("${{ github.token }}");
     expect(ancestry.run).toContain("extraheader=$auth_header");
+    const verdict = workflow.jobs.verify.steps.find(
+      (step) => step.name === "Full validation passed at the tagged commit",
+    );
+    expect(verdict.env.TARGET_SHA).toBe("${{ steps.version.outputs.sha }}");
+    expect(verdict.run).toContain("actions/workflows/full-validation.yml/runs?head_sha=");
+    expect(verdict.run).toContain('node scripts/release/ci-verdict.mjs "$TARGET_SHA"');
   });
 
   it("pins every downstream build and release to the verified tag commit", async () => {
@@ -1704,7 +1710,7 @@ describe("full-validation workflow topology", () => {
 
   beforeAll(async () => {
     const { parse } = await import("yaml");
-    const names = [...validationNames, "ci-admission", "full-validation"];
+    const names = [...validationNames, "full-validation"];
     workflows = Object.fromEntries(
       names.map((name) => [
         name,
@@ -1838,111 +1844,67 @@ describe("full-validation workflow topology", () => {
     expect(scan.run).toContain("SEMGREP_SEND_METRICS=off");
   });
 
-  it("has one guarded full orchestrator that calls every reusable workflow", () => {
+  it("runs the full suite on every push to main and every pull request into it", () => {
     const workflow = workflows["full-validation"];
-    expect(workflow.on).toEqual({
-      workflow_dispatch: expect.objectContaining({ inputs: expect.any(Object) }),
-    });
-    expect(workflow["run-name"]).toBe(
-      "full-validation [${{ inputs.request_key }}] [${{ inputs.dispatch_token }}]",
-    );
-    expect(workflow.concurrency).toMatchObject({
-      group: "full-validation-${{ inputs.request_key }}",
-      "cancel-in-progress": false,
-    });
+    expect(workflow.on.push).toEqual({ branches: ["main"] });
+    expect(workflow.on.pull_request).toEqual({ branches: ["main"] });
+    expect(workflow.on.pull_request_target).toBeUndefined();
+    expect(workflow.on).toHaveProperty("workflow_dispatch");
+    expect(workflow.concurrency["cancel-in-progress"]).toBe(true);
+    expect(workflow.concurrency.group).toContain("github.event.pull_request.number");
+    expect(workflow.concurrency.group).toContain("github.ref");
+    expect(workflow.permissions).toEqual({ contents: "read" });
     const called = Object.values(workflow.jobs)
       .map((job) => job.uses)
       .filter(Boolean);
     for (const name of validationNames) {
       expect(called).toContain(`./.github/workflows/${name}.yml`);
     }
-    expect(workflow.jobs.verdict.if).toContain("always()");
-    expect(workflow.jobs.verdict.needs).toContain("security-static");
-    const attest = workflow.jobs.admit.steps.find((step) => step.name === "Attest request");
-    expect(attest.env.STATE_TOKEN).toBe("${{ github.token }}");
-    expect(attest.run).toContain("extraheader=$auth_header");
-    expect(attest.run).toContain("fetch --quiet origin ci-admission-state");
-  });
-
-  it("keeps automatic triggers on the GitHub-hosted admission controller", () => {
-    const workflow = workflows["ci-admission"];
-    expect(workflow.on.push.branches).toEqual(["main"]);
-    expect(workflow.on.schedule).toEqual([
-      { cron: "0 4 * * *", timezone: "Europe/London" },
-      { cron: "17,47 * * * *" },
-    ]);
-    expect(workflow.on.workflow_run).toEqual({
-      workflows: ["full-validation"],
-      types: ["completed"],
-    });
-    expect(workflow.on.pull_request).toBeUndefined();
-    expect(workflow.jobs.reconcile["runs-on"]).toBe("ubuntu-latest");
-    expect(workflow.concurrency).toBeUndefined();
-    expect(workflow.on.workflow_dispatch.inputs.operation.options).toEqual([
-      "reconcile",
-      "initialize",
-      "manual",
-      "recover",
-    ]);
-    expect(workflow.on.workflow_dispatch.inputs.recovery_reason).toMatchObject({
-      required: false,
-      type: "string",
-    });
-    const stepNames = workflow.jobs.reconcile.steps.map((step) => step.name);
-    expect(stepNames.indexOf("Acquire durable-state writer lock")).toBeLessThan(
-      stepNames.indexOf("Load durable admission state"),
-    );
-    expect(stepNames.at(-1)).toBe("Release durable-state writer lock");
-    for (const [before, after] of [
-      ["Persist claims before dispatch", "Prepare durable dispatch attempts"],
-      ["Prepare durable dispatch attempts", "Persist dispatch attempts before sending"],
-      ["Persist dispatch attempts before sending", "Send prepared dispatches"],
-      ["Send prepared dispatches", "Persist dispatch attachments"],
-      ["Persist dispatch attachments", "Report completed target verdict"],
-    ]) {
-      expect(stepNames.indexOf(before), `${before} must precede ${after}`).toBeLessThan(
-        stepNames.indexOf(after),
-      );
+    for (const job of Object.values(workflow.jobs)) {
+      if (job.uses) expect(job.with).toEqual({ target_sha: "${{ github.sha }}" });
     }
-    const runs = workflow.jobs.reconcile.steps.map((step) => step.run ?? "").join("\n");
-    expect(runs).toContain("--operation dispatch");
-    expect(runs).toContain("--operation send_dispatch");
-    expect(runs).toContain("state-lock.mjs acquire");
-    expect(runs).toContain("state-lock.mjs release");
-    expect(runs).toContain('["initialize", "manual", "recover"].includes(operation)');
-    expect(runs).toContain("normalized.reason = process.env.RECOVERY_REASON");
-    expect(runs).toContain("manual|recover|workflow_run");
-    const loadState = workflow.jobs.reconcile.steps.find(
-      (step) => step.name === "Load durable admission state",
-    )?.run;
-    expect(loadState).toContain("extraheader=$auth_header");
-    expect(loadState).toContain("ls-remote --exit-code --heads origin ci-admission-state");
-    expect(loadState).toContain(
-      "fetch --no-tags origin refs/heads/ci-admission-state:refs/remotes/origin/ci-admission-state",
-    );
-    expect(runs.indexOf("push origin HEAD:refs/heads/ci-admission-state")).toBeLessThan(
-      runs.indexOf("--operation dispatch"),
+    expect(workflow.jobs.verdict.if).toContain("!cancelled()");
+    expect([...workflow.jobs.verdict.needs].sort()).toEqual(
+      Object.keys(workflow.jobs)
+        .filter((name) => name !== "verdict")
+        .sort(),
     );
   });
 
-  it("covers every required manifest lane with a stable marker", async () => {
-    const { REQUIRED_LANES } = await import("./ci-admission/inventory.mjs");
-    const markers = new Set();
-    for (const name of validationNames) {
-      for (const job of Object.values(workflows[name].jobs)) {
-        for (const step of job.steps ?? []) {
-          const match = /^lane \[([^\]]+)\]$/u.exec(step.name ?? "");
-          if (!match) continue;
-          if (match[1] === "harness-${{ matrix.harness }}") {
-            markers.add("harness-openclaw");
-            markers.add("harness-hermes");
-          } else {
-            markers.add(match[1]);
-          }
-        }
+  it("gives pull-request code no secret", async () => {
+    const { parse } = await import("yaml");
+    const workflowDir = join(repoRoot, ".github/workflows");
+    for (const name of ["full-validation", ...validationNames]) {
+      const source = readFileSync(join(workflowDir, `${name}.yml`), "utf8");
+      expect(source, `${name}.yml reads a secret`).not.toMatch(/\bsecrets\.[A-Za-z_]/u);
+    }
+    for (const filename of readdirSync(workflowDir).filter((name) => name.endsWith(".yml"))) {
+      const workflow = parse(readFileSync(join(workflowDir, filename), "utf8"));
+      if (!workflow.on?.pull_request_target) continue;
+      for (const [jobName, job] of Object.entries(workflow.jobs)) {
+        const checkouts = (job.steps ?? []).filter((step) =>
+          step.uses?.startsWith("actions/checkout@"),
+        );
+        expect(checkouts, `${filename}:${jobName} checks out pull_request_target code`).toEqual([]);
       }
     }
-    expect([...markers].sort()).toEqual([...REQUIRED_LANES].sort());
+  });
+
+  it("auto-merges only a validated Dependabot patch update, pinned to its head", async () => {
+    const { parse } = await import("yaml");
+    const workflow = parse(
+      readFileSync(join(repoRoot, ".github/workflows/dependabot-auto-merge.yml"), "utf8"),
+    );
+    expect(workflow.on).toEqual({
+      workflow_run: { workflows: ["full-validation"], types: ["completed"] },
+    });
+    const job = workflow.jobs["auto-merge"];
+    expect(job.if).toContain("github.event.workflow_run.conclusion == 'success'");
+    expect(job.if).toContain("github.event.workflow_run.event == 'pull_request'");
+    const run = job.steps.map((step) => step.run ?? "").join("\n");
+    expect(run).toContain("version-update:semver-patch");
+    expect(run).toContain('--match-head-commit "$HEAD_SHA"');
+    expect(job.steps.some((step) => step.uses?.startsWith("actions/checkout@"))).toBe(false);
   });
 
   it("executes every workflow check owner directly", async () => {

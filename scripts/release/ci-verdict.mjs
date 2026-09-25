@@ -2,45 +2,45 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-/** Verify that the exact release commit earned the current full-CI inventory. */
+/**
+ * Whether an exact commit passed full validation.
+ *
+ * The evidence is the repository's own `full-validation` workflow runs for
+ * that commit. Only a run started by a push to `main` or by a maintainer's
+ * manual dispatch counts: a pull-request run validates a merge commit, not the
+ * commit being released.
+ */
 import { pathToFileURL } from "node:url";
-import { INVENTORY_VERSION, evaluateManifest } from "../ci-admission/inventory.mjs";
 
-export function fullCiVerdict(ledger, targetSha, inventoryVersion = INVENTORY_VERSION) {
-  const requests = Object.values(ledger?.requests ?? {})
-    .filter((request) => request.targetSha === targetSha)
-    .sort((a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")));
-  const successful = requests.find((request) => {
-    if (request.state !== "success") return false;
-    const manifest = request.manifest ?? {};
-    return (
-      manifest.inventoryVersion === inventoryVersion &&
-      evaluateManifest(manifest.results ?? {}, manifest.inventoryVersion).success
-    );
-  });
-  if (successful) {
-    return {
-      ok: true,
-      state: "green",
-      requestKey: successful.key,
-      runId: successful.workflowRunId,
-    };
-  }
-  if (requests.length === 0) return { ok: false, state: "missing" };
-  const newest = requests[0];
+const TRUSTED_EVENTS = new Set(["push", "workflow_dispatch"]);
+
+/** The command that starts a fresh full validation of the current `main`. */
+export const RERUN_COMMAND = "gh workflow run full-validation.yml --ref main";
+
+export function fullCiVerdict(runs, targetSha) {
+  const own = (runs ?? [])
+    .filter((run) => run.head_sha === targetSha && TRUSTED_EVENTS.has(run.event))
+    .sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")));
+  const green = own.find((run) => run.status === "completed" && run.conclusion === "success");
+  if (green) return { ok: true, state: "green", runId: green.id, url: green.html_url };
+  if (own.length === 0) return { ok: false, state: "missing" };
+  const newest = own[0];
   return {
     ok: false,
-    state: newest.state === "success" ? "stale-inventory" : newest.state,
-    requestKey: newest.key,
-    runId: newest.workflowRunId,
+    state: newest.status === "completed" ? (newest.conclusion ?? "unknown") : "running",
+    runId: newest.id,
+    url: newest.html_url,
   };
 }
 
 export function formatVerdict(verdict) {
   const mark = verdict.ok ? "✔" : "✖";
-  const request = verdict.requestKey ? ` (${verdict.requestKey})` : "";
-  const run = verdict.runId ? ` — Actions run ${verdict.runId}` : "";
-  return `${mark} full-validation: ${verdict.state}${request}${run}`;
+  const run = verdict.url
+    ? ` — ${verdict.url}`
+    : verdict.runId
+      ? ` — Actions run ${verdict.runId}`
+      : "";
+  return `${mark} full-validation: ${verdict.state}${run}`;
 }
 
 async function readStdin() {
@@ -49,16 +49,18 @@ async function readStdin() {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+// Reads the GitHub API's workflow-runs listing on stdin.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const targetSha = process.argv[2];
-  let ledger;
+  let listing;
   try {
-    ledger = JSON.parse(await readStdin());
+    listing = JSON.parse(await readStdin());
   } catch {
-    console.error("ci-verdict: could not parse the admission ledger on stdin");
+    console.error("ci-verdict: could not parse the workflow-runs listing on stdin");
     process.exit(1);
   }
-  const verdict = fullCiVerdict(ledger, targetSha);
+  const verdict = fullCiVerdict(listing.workflow_runs, targetSha);
   console.log(formatVerdict(verdict));
+  if (!verdict.ok) console.log(`Validate the commit with: ${RERUN_COMMAND}`);
   process.exit(verdict.ok ? 0 : 1);
 }

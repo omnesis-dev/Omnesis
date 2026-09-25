@@ -149,23 +149,11 @@ coverage and `npm run checks:full` for an explicit uncached full run. Missing Gi
 history, unsupported paths and global toolchain inputs widen visibly rather than
 producing an empty green plan.
 
-Main does not run this affected selection. A lightweight GitHub-hosted admission
-workflow records each integrated revision without executing repository code.
-Owner-authored work is coalesced into at most one complete validation snapshot
-targeted for 04:00 Europe/London each day; each externally authored commit gets
-its own durable full request. Periodic reconciliation resumes persisted work
-after delayed events or API failures. Every required workflow receives the same
-fixed target SHA, and cancelled, failed, skipped or incomplete inventories never
-advance the last-successful marker. Release qualification reads that exact
-durable target verdict rather than accepting a newer run as evidence for an
-older tag.
-
-If an owner force-push deliberately replaces main history, use the
-`ci-admission` workflow's owner-only `recover` operation against the current main
-SHA and provide an audit reason. Recovery preserves completed and in-flight
-history, retires unreachable unassigned commits, marks unreachable pending
-requests unavailable, and establishes the reviewed new frontier. Routine pushes
-and delayed events use automatic reconciliation instead.
+CI does not run this affected selection. `.github/workflows/full-validation.yml`
+runs the whole suite on GitHub-hosted runners for every push to `main` and every
+pull request into it, cancelling a superseded run of the same branch or pull
+request. The release workflow accepts a tag only when a push or manual run of
+that workflow passed at the exact tagged commit.
 
 A scheduler is optional: without one, these commands run locally with bounded
 unit workers and the E2E lane lock. To integrate a host scheduler, put a JSON

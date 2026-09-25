@@ -13,6 +13,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -138,8 +139,12 @@ class NotesRepositoryTest {
         val job = launch(Dispatchers.Default) {
             reachableRepo().capture("new note", "android-assistant")
         }
-        withTimeout(5_000) {
-            while (server.requestCount == 0) delay(10)
+        // Waited for on a real dispatcher: runTest's virtual clock would expire
+        // this timeout at once, before a slower machine's request lands.
+        withContext(Dispatchers.Default) {
+            withTimeout(5_000) {
+                while (server.requestCount == 0) delay(10)
+            }
         }
 
         job.cancelAndJoin()

@@ -3,8 +3,8 @@
 # plugin without issuing a prompt or configuring a chat model.
 name: harness-conformance
 
-# Full validation supplies one immutable source revision to this reusable lane.
-# Manual full requests enter through the guarded admission controller.
+# full-validation.yml calls this reusable workflow with the exact revision it
+# validates.
 on:
   workflow_call:
     inputs:

@@ -123,13 +123,13 @@ This rule applies to every part of the repo: iOS previews, snapshot tests, gatew
 
 ## Tests are mandatory
 
-- **CI runs on `main`, never on a pull request.** Before handoff, run the
-  authoritative affected gate for the actual branch and working tree:
-  `npm run checks:plan -- --base origin/main`, then run
-  `npm run checks:affected -- --base origin/main`. Nx selects package work through the dependency graph and
-  adds declared behavioral E2E/native bundles. A conservative plan can still be
-  broad. Main CI runs the uncached full inventory on GitHub-hosted runners after
-  integration; a red main revision is fixed forward.
+- **CI runs the full suite on every pull request into `main` and every push to
+  `main`**, on GitHub-hosted runners (`.github/workflows/full-validation.yml`);
+  a newer push cancels the superseded run. Before handoff, run the affected gate
+  for the actual branch and working tree: `npm run checks:plan -- --base origin/main`,
+  then `npm run checks:affected -- --base origin/main`. Nx selects package work
+  through the dependency graph and adds declared behavioral E2E/native bundles.
+  A red main revision is fixed forward.
 - Establish a focused baseline before editing, then rerun the affected tests while iterating. Re-run `checks:affected` after relevant edits because queued evidence is bound to the planned tree and rejects changed inputs. Use `npm run checks:bundle -- <name>` to add a diagnosed bundle; a narrower manual bundle does not replace the affected gate. `npm run checks:full` remains available for CI, migration validation and manual diagnosis. `npm run test:unit` excludes the spawned-gateway suite; use `npm run test:e2e -- <path/to/file.e2e.test.ts>` for a focused gateway check.
 - **No chat or agent-model inference in tests, ever.** Substitute the model at a production seam: replay backends, puppet/cassette models, or scripted verdict servers. Local embeddings are the deliberate exception when a suite is specifically proving semantic retrieval quality; `search-quality.e2e.test.ts` and `embedder-swap.e2e.test.ts` keep their real local embedding dependency, which `scripts/test-embedder.sh` provides.
 - Every new feature or bug fix must include tests. Every new source needs sync (bootstrap + incremental), normalization, and error-handling tests — and a `/source-review` pass (`.claude/commands/source-review.md`, the complete source contract as a checklist) before its PR opens.

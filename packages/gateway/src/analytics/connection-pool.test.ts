@@ -63,7 +63,12 @@ async function otherProcessHolder(path: string, keyHex?: string): Promise<ChildP
     (async () => {
       const inst = await DuckDBInstance.create(":memory:");
       const conn = await inst.connect();
-      ${keyHex ? 'await conn.run("LOAD httpfs");' : ""}
+      ${
+        keyHex
+          ? // As the pool does: load httpfs, installing it first on a host that lacks it.
+            'try { await conn.run("LOAD httpfs"); } catch { await conn.run("INSTALL httpfs"); await conn.run("LOAD httpfs"); }'
+          : ""
+      }
       await conn.run(${JSON.stringify(attachSql(path, keyHex, false))});
       process.stdout.write("held");
       setInterval(() => {}, 1000);

@@ -137,9 +137,11 @@ describe("portal gateway-first fleet update", () => {
       "fleet dispatch after the gateway restart",
     );
     expect(collector.updater.calls).toEqual([reviewed.plan.targetVersion]);
+    // The updater learns the device's result by re-reading the fleet plan every
+    // five seconds (RESULT_POLL_MS), so allow several polls, not two.
     await waitForCondition(
       () => readPortalFleetUpdateOperation(harness.gatewayConfigDir)?.state === "succeeded",
-      10_000,
+      30_000,
       "the independent updater's terminal operation",
     );
     expect(await portalJson<HostUpdateSnapshot>("/admin/fleet/host-update")).toMatchObject({

@@ -105,9 +105,24 @@ done
 if [[ -z "$COLLECTOR_ID" ]]; then tail -40 "$MAYA_CONFIG/collector.log" >&2 || true; fi
 assert "the collector running as maya is online" test -n "$COLLECTOR_ID"
 
-api /admin/sources/add -X POST -H 'Content-Type: application/json' \
-  -d "{\"deviceId\":\"$COLLECTOR_ID\",\"descriptorId\":\"obsidian-notes\",\"accountIds\":[\"local\"],\"params\":{\"vaultPath\":\"$VAULT\"}}" \
-  >/e2e/add-source.json
+# The collector announces the sources it can host shortly after it connects,
+# so the add is retried until the gateway accepts it; the last refusal is
+# printed if it never does.
+ADD_BODY="{\"deviceId\":\"$COLLECTOR_ID\",\"descriptorId\":\"obsidian-notes\",\"accountIds\":[\"local\"],\"params\":{\"vaultPath\":\"$VAULT\"}}"
+ADDED=0
+for _ in $(seq 1 60); do
+  if api /admin/sources/add -X POST -H 'Content-Type: application/json' -d "$ADD_BODY" >/e2e/add-source.json; then
+    ADDED=1
+    break
+  fi
+  sleep 1
+done
+if [[ "$ADDED" != 1 ]]; then
+  curl -ks -H "Authorization: Bearer $ADMIN_TOKEN" -X POST -H 'Content-Type: application/json' \
+    -d "$ADD_BODY" -w '\nHTTP %{http_code}\n' "$OMNESIS_GATEWAY_URL/admin/sources/add" >&2 || true
+  tail -40 "$MAYA_CONFIG/collector.log" >&2 || true
+fi
+assert "the gateway accepted the source on maya's collector" test "$ADDED" = 1
 
 DOCS=0
 for _ in $(seq 1 120); do

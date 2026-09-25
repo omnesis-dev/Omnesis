@@ -1,7 +1,7 @@
 name: ci
 
-# Full validation supplies one immutable source revision to this reusable lane.
-# Manual full requests enter through the guarded admission controller.
+# full-validation.yml calls this reusable workflow with the exact revision it
+# validates.
 #
 # Every job runs on a fresh GitHub-hosted runner and owns its whole machine, so
 # the lanes run side by side rather than queueing behind one another, and the
@@ -156,11 +156,6 @@ jobs:
         env:
           TZ: UTC
 
-      # Release-staging validation is the first phase of unit-all. This marker
-      # lets the admission manifest retain it as an explicit requirement.
-      - name: lane [release-staging]
-        run: ":"
-
   # ------------------------------------------------------------------
   # e2e — the spawned-gateway suites, sharded across runners.
   #
@@ -219,11 +214,6 @@ jobs:
           --exclude=packages/collector/src/e2e/embedder-swap.e2e.test.ts
         env:
           TZ: UTC
-
-      # The extension suite executes inside the E2E launcher in whichever shard
-      # holds it. This marker remains unreachable if that launcher fails.
-      - name: lane [browser-e2e]
-        run: ":"
 
   # ------------------------------------------------------------------
   # e2e-embedder — the semantic search suites against a real embedding model.
@@ -320,6 +310,10 @@ jobs:
         run: npm ci
 
       - name: lane [macos-typecheck]
+        # The macOS runner's smaller memory gives Node a ~2 GB default heap,
+        # which the whole-repo `tsc --build` outgrows.
+        env:
+          NODE_OPTIONS: "--max-old-space-size=4096"
         run: exec node scripts/run-check.mjs typecheck
 
       - name: lane [macos-unit]
