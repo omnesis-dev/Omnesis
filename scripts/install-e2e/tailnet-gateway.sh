@@ -128,6 +128,7 @@ if [ "$MODE" = upgrade ]; then
   mailbox put --url "$MAILBOX" --key phase --value fleet-updating
   redacted "$OMNESIS" update --fleet --yes || die "omnesis update --fleet did not finish"
   probe health --url "$GATEWAY_URL" --expect-version "$NEXT_VERSION" --timeout 180 >/dev/null
+  wait_collector_live "$GATEWAY_URL" "$COLLECTOR" 600
   redacted "$OMNESIS" sources sync "$SOURCE_ID" --wait --timeout 300 || die "the vault did not sync after the fleet update"
   snapshot_with_hit updated "$GATEWAY_URL" --fleet
   probe compare --before "$E2E_WORK/before.json" --after "$E2E_WORK/updated.json" \

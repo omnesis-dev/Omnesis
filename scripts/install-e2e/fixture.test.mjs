@@ -97,9 +97,11 @@ describe("pure helpers", () => {
   it("puts the exit after the licence header and before the imports", () => {
     const out = breakGatewayBoot("// header\n\nimport a from 'a';\nrun();\n").split("\n");
     expect(out[0]).toBe("// header");
-    expect(out[2]).toContain(BROKEN_MARKER);
-    expect(out[3]).toBe("process.exit(78);");
-    expect(out[4]).toBe("import a from 'a';");
+    expect(out[2]).toBe("if (process.argv.length > 0) {");
+    expect(out[3]).toContain(BROKEN_MARKER);
+    expect(out[4]).toBe("  process.exit(78);");
+    expect(out[5]).toBe("}");
+    expect(out[6]).toBe("import a from 'a';");
   });
 });
 

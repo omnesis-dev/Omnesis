@@ -110,14 +110,18 @@ export function breakGatewayBoot(text) {
   const lines = text.split("\n");
   // After the leading comment block (licence header), before any import:
   // ES module imports are hoisted anyway, and the exit runs before the
-  // module body that starts the server.
+  // module body that starts the server. The condition is always true but
+  // not provably so, which keeps the compiler from rejecting the rest of the
+  // module as unreachable: the release has to build, and fail at boot.
   let at = 0;
   while (at < lines.length && (lines[at].startsWith("//") || lines[at].trim() === "")) at++;
   lines.splice(
     at,
     0,
-    `process.stderr.write(${JSON.stringify(BROKEN_MARKER + "\n")});`,
-    "process.exit(78);",
+    "if (process.argv.length > 0) {",
+    `  process.stderr.write(${JSON.stringify(BROKEN_MARKER + "\n")});`,
+    "  process.exit(78);",
+    "}",
   );
   return lines.join("\n");
 }

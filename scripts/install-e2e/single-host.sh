@@ -85,6 +85,7 @@ V_N1="$(fixture next-version --remote "$REMOTE")"
 fixture release --remote "$REMOTE" --version "$V_N1" >"$E2E_WORK/release-n1.json"
 installer --no-prompt || die "re-running install.sh did not update to v$V_N1"
 probe health --url "$GATEWAY_URL" --expect-version "$V_N1" --timeout 180 >/dev/null
+wait_collector_live "$GATEWAY_URL" "$COLLECTOR"
 redacted "$OMNESIS" sources sync "$SOURCE_ID" --wait --timeout 300 || die "the vault did not sync after the update"
 snapshot_with_hit updated "$GATEWAY_URL"
 probe compare --before "$E2E_WORK/before.json" --after "$E2E_WORK/updated.json" \
@@ -100,11 +101,17 @@ status=${PIPESTATUS[0]}
 set -e
 [ "$status" -ne 0 ] || die "updating to the broken v$V_N2 reported success"
 grep -q "Rolled back to" "$E2E_WORK/broken-update.log" || die "the failed update did not report a rollback"
+# The broken release builds; what has to trip the rollback is its gateway
+# failing to serve, not a failed build.
+if grep -q "npm run build\` failed" "$E2E_WORK/broken-update.log"; then
+  die "v$V_N2 failed to build, so the boot-failure rollback was not exercised"
+fi
 probe health --url "$GATEWAY_URL" --expect-version "$V_N1" --timeout 180 >/dev/null
 N1_COMMIT="$(json_get "$E2E_WORK/release-n1.json" 'j.commit')"
 [ "$(git -C "$SOURCE_DIR" rev-parse HEAD)" = "$N1_COMMIT" ] || die "the checkout is not back on v$V_N1"
 [ "$(json_get "$CONFIG_DIR/update-state.json" 'j.phase')" = complete ] || die "update state is not complete after the rollback"
 [ "$(json_get "$CONFIG_DIR/update-state.json" 'j.commit')" = "$N1_COMMIT" ] || die "update state does not name v$V_N1"
+wait_collector_live "$GATEWAY_URL" "$COLLECTOR"
 snapshot_with_hit rolled-back "$GATEWAY_URL"
 probe compare --before "$E2E_WORK/updated.json" --after "$E2E_WORK/rolled-back.json" \
   --expect-version "$V_N1" --expect-restart gateway --expect-title "$SEARCH_TITLE"

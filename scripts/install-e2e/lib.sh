@@ -144,6 +144,21 @@ snapshot_with_hit() {
   done
 }
 
+# wait_collector_live <gateway url> <collector name> [seconds]: after an
+# update or a rollback restarts the daemons, the collector reconnects a few
+# seconds after the command that restarted it returns.
+wait_collector_live() {
+  local url="$1" name="$2" deadline=$(($(date +%s) + ${3:-180})) file="$E2E_WORK/devices.json"
+  while :; do
+    if probe snapshot --url "$url" --token-file "$TOKEN_FILE" >"$file" 2>/dev/null &&
+      [ "$(json_get "$file" "(j.devices.find((d) => d.name === '$name') || {}).online === true")" = true ]; then
+      return 0
+    fi
+    [ "$(date +%s)" -lt "$deadline" ] || die "collector $name did not reconnect to the gateway"
+    sleep 3
+  done
+}
+
 # add_vault <collector device name> <vault path> → prints the new source id
 add_vault() {
   local device="$1" vault="$2" out id
