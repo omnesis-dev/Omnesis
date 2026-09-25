@@ -393,6 +393,12 @@
           >, <code>omnesis service stop gateway</code>), add swap or free memory, and run
           <code>omnesis update</code> again.
         </p>
+        <p>
+          On a source install, <code>npm ci</code> installs over the <code>node_modules</code> the
+          running release left. If that install fails, the update removes
+          <code>node_modules</code> and installs once more before it rolls back, and the rollback's
+          own install is retried the same way.
+        </p>
 
         <h3 id="update-flags">Options</h3>
         <div class="table-wrap">

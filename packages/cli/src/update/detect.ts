@@ -189,6 +189,13 @@ export interface CommandSpec {
   cwd?: string;
   /** Variables set on top of the CLI's own environment. */
   env?: Record<string, string>;
+  /**
+   * A second attempt for a command whose failure can leave behind the state
+   * that makes it fail again: when the command exits non-zero on its own,
+   * `reset` runs and the command runs once more. `why` tells the operator
+   * reading the output why the second attempt differs from the first.
+   */
+  retry?: { reset: CommandSpec; why: string };
 }
 
 /** `npm view omnesis@<tag> version` — resolve the channel's target version. */
@@ -296,6 +303,15 @@ export function readImageTag(envFileText: string): string | null {
  * The source-checkout update sequence, run in the checkout root. The build
  * takes the environment the heap policy chose for this machine, as the
  * installer's build does.
+ *
+ * In a workspace checkout `npm ci` clears only the workspaces' own
+ * `node_modules` and installs over the root's, reconciling the tree the
+ * previous build left. npm's reconciliation can fail on a tree an earlier
+ * build left — two packages linking the same `.bin` name, one of them
+ * changing between the two lockfiles, is a known trigger — and its own
+ * rollback then leaves the tree half-moved, so the same `npm ci` fails the
+ * same way every time. A failed install is therefore retried once from an
+ * empty `node_modules`, which is what a fresh install runs.
  */
 export function sourceUpdateSpecs(
   rootDir: string,
@@ -304,7 +320,15 @@ export function sourceUpdateSpecs(
 ): CommandSpec[] {
   return [
     { command: "git", args: ["checkout", "--detach", target], cwd: rootDir },
-    { command: "npm", args: ["ci"], cwd: rootDir },
+    {
+      command: "npm",
+      args: ["ci"],
+      cwd: rootDir,
+      retry: {
+        reset: { command: "rm", args: ["-rf", "node_modules"], cwd: rootDir },
+        why: "installing the dependencies again from an empty node_modules",
+      },
+    },
     {
       command: "npm",
       args: ["run", "build"],

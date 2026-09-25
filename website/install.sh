@@ -1700,6 +1700,14 @@ try {
 update_unfinished() {
   [ "\$UPDATE_PHASE" = "applying" ] || [ "\$UPDATE_PHASE" = "rolling-back" ] || [ "\$UPDATE_PHASE" = "mismatch" ]
 }
+# npm installs over the node_modules a workspace checkout already has, and
+# an install over another build's tree can fail the same way on every run.
+# A failed install is retried once from an empty node_modules.
+install_source_dependencies() {
+  ( cd "\$SOURCE_ROOT" && npm ci ) && return 0
+  printf '%s\n' "Installing dependencies failed; installing them again from an empty node_modules..." >&2
+  rm -rf "\$SOURCE_ROOT/node_modules" && ( cd "\$SOURCE_ROOT" && npm ci )
+}
 read_update_phase
 if update_unfinished; then
   if [ "\${1:-}" != "update" ]; then
@@ -1721,7 +1729,7 @@ if update_unfinished; then
     printf '%s\n' "Could not restore the last completed source commit. Re-run the source installer." >&2
     exit 1
   }
-  ( cd "\$SOURCE_ROOT" && npm ci ) || {
+  install_source_dependencies || {
     printf '%s\n' "Could not restore source dependencies. Re-run this command or the source installer." >&2
     exit 1
   }
@@ -1729,7 +1737,7 @@ elif [ ! -x "\$SOURCE_ROOT/node_modules/.bin/tsx" ]; then
   if [ "\$UPDATE_LOCK_ACQUIRED" != "1" ]; then acquire_update_lock; fi
   if [ ! -x "\$SOURCE_ROOT/node_modules/.bin/tsx" ]; then
     printf '%s\n' "Source recovery: restoring missing CLI dependencies before continuing..." >&2
-    ( cd "\$SOURCE_ROOT" && npm ci ) || {
+    install_source_dependencies || {
       printf '%s\n' "Could not restore source dependencies. Re-run this command or the source installer." >&2
       exit 1
     }

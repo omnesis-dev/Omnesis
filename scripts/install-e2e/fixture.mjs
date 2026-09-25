@@ -87,6 +87,23 @@ export function newestStableTag(tags) {
   );
 }
 
+/**
+ * The release an upgrade from the real releases starts at: the newest stable
+ * tag that is not the candidate commit itself and not numbered above the
+ * candidate, so a candidate that is a release commit still upgrades from
+ * different code. Null when there is none.
+ */
+export function startReleaseTag(tags, candidateVersion, isCandidate) {
+  return newestStableTag(
+    tags.filter(
+      (tag) =>
+        parseStableTag(tag) &&
+        compareVersions(tag.slice(1), candidateVersion) <= 0 &&
+        !isCandidate(tag),
+    ),
+  );
+}
+
 export function bumpPatch(version) {
   const [maj, min, pat] = version.split(".").map(Number);
   return `${maj}.${min}.${pat + 1}`;
@@ -163,13 +180,10 @@ export function init({ source, out, candidate = "HEAD", keepReleases = false }) 
   const tags = listTags(remote);
   const latestRelease = newestStableTag(tags);
   const startRelease = keepReleases
-    ? newestStableTag(
-        tags.filter(
-          (tag) =>
-            parseStableTag(tag) &&
-            compareVersions(tag.slice(1), candidateVersion) <= 0 &&
-            git(["-C", remote, "rev-parse", `${tag}^{commit}`]) !== commit,
-        ),
+    ? startReleaseTag(
+        tags,
+        candidateVersion,
+        (tag) => git(["-C", remote, "rev-parse", `${tag}^{commit}`]) === commit,
       )
     : null;
   if (!keepReleases) {

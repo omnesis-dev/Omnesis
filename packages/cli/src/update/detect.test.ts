@@ -553,7 +553,15 @@ describe("sourceUpdateSpecs", () => {
   test("checks out the selected tag, installs deterministically, and builds", () => {
     expect(sourceUpdateSpecs("/home/dev/omnesis", "v0.10.0")).toEqual([
       { command: "git", args: ["checkout", "--detach", "v0.10.0"], cwd: "/home/dev/omnesis" },
-      { command: "npm", args: ["ci"], cwd: "/home/dev/omnesis" },
+      {
+        command: "npm",
+        args: ["ci"],
+        cwd: "/home/dev/omnesis",
+        retry: {
+          reset: { command: "rm", args: ["-rf", "node_modules"], cwd: "/home/dev/omnesis" },
+          why: "installing the dependencies again from an empty node_modules",
+        },
+      },
       { command: "npm", args: ["run", "build"], cwd: "/home/dev/omnesis" },
     ]);
   });
