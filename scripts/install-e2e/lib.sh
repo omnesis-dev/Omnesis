@@ -30,6 +30,17 @@ die() {
 group() { printf '::group::%s\n' "$*"; }
 endgroup() { printf '::endgroup::\n'; }
 
+# A fresh keyring passphrase in $PASSPHRASE_FILE, readable by this user only
+# and masked like every other secret. Not for use inside $(…): the mask has
+# to reach the runner on stdout.
+PASSPHRASE_FILE="$E2E_WORK/keyring.pass"
+new_passphrase_file() {
+  local pass
+  pass="$(head -c 32 /dev/urandom | base64 | tr -d '\n')"
+  secret "$pass"
+  (umask 077 && printf '%s\n' "$pass" >"$PASSPHRASE_FILE")
+}
+
 # Register a value this run must never publish: masked by the runner from
 # here on, and by the redactor in anything it filters.
 secret() {
@@ -51,14 +62,28 @@ redacted() {
 
 # The value of a JavaScript expression over a JSON file, e.g.
 #   json_get file.json 'j.version'
+#   json_get file.json 'j.devices.find((d) => d.name === a)' "$name"
+# The expression is always a literal written here. A value from outside (a
+# device name, anything read from the mailbox) is passed as `a`, as data,
+# never spliced into the expression.
 json_get() {
   node -e '
     const j = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-    const v = (0, eval)("(j) => " + process.argv[2])(j);
+    const v = (0, eval)("(j, a) => " + process.argv[2])(j, process.argv[3]);
     if (v === undefined || v === null) process.exit(3);
     process.stdout.write(typeof v === "string" ? v : JSON.stringify(v));
-  ' "$1" "$2"
+  ' "$1" "$2" "${3:-}"
 }
+
+# expect_shape <what> <extended regex> <value>: refuse a value, typically
+# read from the other job's mailbox, that is not shaped as it must be.
+expect_shape() {
+  printf '%s' "$3" | grep -Eqx -- "$2" || die "$1 is not in the expected form"
+}
+VERSION_SHAPE='[0-9]+\.[0-9]+\.[0-9]+'
+CODE_SHAPE='[0-9A-F]{10}'
+NAME_SHAPE='[A-Za-z0-9][A-Za-z0-9._-]{0,127}'
+
 
 fixture() { node "$E2E_DIR/fixture.mjs" "$@"; }
 probe() { node "$E2E_DIR/probe.mjs" "$@"; }
@@ -90,10 +115,8 @@ snapshot() {
 # read the HTTP API without touching the installer's (keyring-sealed) token.
 mint_probe_token() {
   local device out token
-  device="$("$OMNESIS" whoami --json | node -e '
-    let s = ""; process.stdin.on("data", (d) => (s += d));
-    process.stdin.on("end", () => process.stdout.write(JSON.parse(s).deviceId || ""));')"
-  [ -n "$device" ] || die "could not resolve the gateway's own device id"
+  "$OMNESIS" whoami --json >"$E2E_WORK/whoami.json" 2>/dev/null || die "omnesis whoami failed on the gateway"
+  device="$(json_get "$E2E_WORK/whoami.json" 'j.deviceId')" || die "could not resolve the gateway's own device id"
   out="$("$OMNESIS" tokens create --device "$device" --scopes read,admin --name install-e2e-probe --ttl 1d 2>&1)" ||
     die "could not mint the probe token"
   token="$(printf '%s\n' "$out" | sed -n 's/^ *Token: *//p' | head -1)"
@@ -134,8 +157,10 @@ snapshot_with_hit() {
   local name="$1" url="$2" deadline=$(($(date +%s) + 180))
   shift 2
   while :; do
-    snapshot "$name" "$url" --query "$SEARCH_WORD" "$@"
-    json_get "$E2E_WORK/$name.json" 'j.search.titles' | grep -qF "$SEARCH_TITLE" && return 0
+    if snapshot "$name" "$url" --query "$SEARCH_WORD" "$@" &&
+      [ "$(json_get "$E2E_WORK/$name.json" 'j.search.titles.includes(a)' "$SEARCH_TITLE")" = true ]; then
+      return 0
+    fi
     if [ "$(date +%s)" -ge "$deadline" ]; then
       log "search for $SEARCH_WORD returned: $(json_get "$E2E_WORK/$name.json" 'j.search.titles' || echo none)"
       die "keyword search does not find the seeded note ($name)"
@@ -151,7 +176,7 @@ wait_collector_live() {
   local url="$1" name="$2" deadline=$(($(date +%s) + ${3:-180})) file="$E2E_WORK/devices.json"
   while :; do
     if probe snapshot --url "$url" --token-file "$TOKEN_FILE" >"$file" 2>/dev/null &&
-      [ "$(json_get "$file" "(j.devices.find((d) => d.name === '$name') || {}).online === true")" = true ]; then
+      [ "$(json_get "$file" '(j.devices.find((d) => d.name === a) || {}).online === true' "$name")" = true ]; then
       return 0
     fi
     [ "$(date +%s)" -lt "$deadline" ] || die "collector $name did not reconnect to the gateway"
@@ -176,7 +201,7 @@ live_collector_name() {
   local url="$1" deadline=$(($(date +%s) + ${2:-120})) file="$E2E_WORK/devices.json" name
   while :; do
     if probe snapshot --url "$url" --token-file "$TOKEN_FILE" >"$file" 2>/dev/null &&
-      name="$(json_get "$file" "(j.devices.find((d) => d.kind === 'collector' && d.online) || {}).name")"; then
+      name="$(json_get "$file" '(j.devices.find((d) => d.kind === "collector" && d.online) || {}).name')"; then
       printf '%s\n' "$name"
       return 0
     fi

@@ -15,8 +15,11 @@
  * candidate. By default every tag is dropped and the candidate itself is
  * tagged with the version its CLI manifest declares, so a fresh install's
  * "newest stable release" is exactly the code under test. `--keep-releases`
- * keeps the real `vX.Y.Z` tags instead, for a lane that starts from the
- * newest real release and updates to the candidate.
+ * keeps the real `vX.Y.Z` tags instead, for a lane that starts from a real
+ * release and updates to the candidate; `fixture.json` names that release as
+ * `startRelease`: the newest one that is not the candidate itself and not
+ * numbered above it, so a candidate that is a release commit still upgrades
+ * from different code.
  *
  * `release` makes a later release inside the fixture only: on top of `--base`
  * (default `main`), one commit moves every tracked manifest carrying the base's
@@ -24,8 +27,9 @@
  * check the CLI's manifest against the tag), tagged `v<version>`. The code is
  * otherwise identical, unless `--break gateway-boot` makes the gateway exit
  * during boot, which is what a release has to look like for an update to roll
- * back after its build succeeded. Nothing is pushed anywhere but the fixture,
- * and `fixture.json` beside the remote records the release as `next`.
+ * back after its build succeeded. Each release also gets a `fixture/<version>`
+ * branch, which keeps its commit reachable. Nothing is pushed anywhere but the
+ * fixture, and `fixture.json` beside the remote records the release as `next`.
  */
 
 import { execFileSync } from "node:child_process";
@@ -33,6 +37,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, mkdirSync
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseCommand } from "./args.mjs";
 
 const STABLE_TAG = /^v(\d+)\.(\d+)\.(\d+)$/;
 const VERSION = /^\d+\.\d+\.\d+$/;
@@ -61,12 +66,12 @@ function git(args, opts = {}) {
 }
 
 /** Parse `vX.Y.Z` into numbers, or null for anything else. */
-export function parseStableTag(tag) {
+function parseStableTag(tag) {
   const m = STABLE_TAG.exec(tag);
   return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
 }
 
-export function compareVersions(a, b) {
+function compareVersions(a, b) {
   const x = a.split(".").map(Number);
   const y = b.split(".").map(Number);
   return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
@@ -102,7 +107,10 @@ export function rewriteManifestVersion(text, from, to) {
   if (pkg.version !== from) return null;
   const needle = `"version": "${from}"`;
   if (!text.includes(needle)) return null;
-  return text.replace(needle, `"version": "${to}"`);
+  const next = text.replace(needle, `"version": "${to}"`);
+  // The first match could be a nested key of the same spelling; only a
+  // rewrite that moved the top-level version counts.
+  return JSON.parse(next).version === to ? next : null;
 }
 
 /** The gateway entry with an exit before anything boots. */
@@ -145,7 +153,7 @@ export function init({ source, out, candidate = "HEAD", keepReleases = false }) 
   // the source's files, which carry the source's own permissions.
   git(["clone", "-q", "--mirror", "--no-local", source, remote]);
   // A mirror of a CI checkout carries its remote-tracking refs; the fixture
-  // offers exactly one branch.
+  // starts with one branch, main.
   for (const ref of git(["-C", remote, "for-each-ref", "--format=%(refname)"]).split("\n")) {
     if (ref && !ref.startsWith("refs/tags/")) git(["-C", remote, "update-ref", "-d", ref]);
   }
@@ -154,6 +162,16 @@ export function init({ source, out, candidate = "HEAD", keepReleases = false }) 
   const candidateVersion = cliVersionAt(remote, commit);
   const tags = listTags(remote);
   const latestRelease = newestStableTag(tags);
+  const startRelease = keepReleases
+    ? newestStableTag(
+        tags.filter(
+          (tag) =>
+            parseStableTag(tag) &&
+            compareVersions(tag.slice(1), candidateVersion) <= 0 &&
+            git(["-C", remote, "rev-parse", `${tag}^{commit}`]) !== commit,
+        ),
+      )
+    : null;
   if (!keepReleases) {
     for (const tag of tags) git(["-C", remote, "tag", "-d", tag]);
     git(["-C", remote, "tag", `v${candidateVersion}`, commit]);
@@ -165,6 +183,7 @@ export function init({ source, out, candidate = "HEAD", keepReleases = false }) 
     candidate: commit,
     candidateVersion,
     latestRelease,
+    startRelease,
     keepReleases,
   };
   writeFileSync(join(out, "fixture.json"), JSON.stringify(info, null, 2) + "\n");
@@ -248,49 +267,36 @@ export function release({ remote, version, base = "refs/heads/main", breakKind =
   }
 }
 
-function parseArgs(argv) {
-  const [command, ...rest] = argv;
-  const flags = {};
-  for (let i = 0; i < rest.length; i++) {
-    const arg = rest[i];
-    if (!arg.startsWith("--")) throw new Error(`unexpected argument ${arg}`);
-    const key = arg.slice(2);
-    if (key === "keep-releases") flags[key] = true;
-    else {
-      const value = rest[++i];
-      if (value === undefined) throw new Error(`${arg} needs a value`);
-      flags[key] = value;
-    }
-  }
-  return { command, flags };
-}
+const COMMANDS = {
+  init: {
+    values: ["source", "out", "candidate"],
+    booleans: ["keep-releases"],
+    required: ["source", "out"],
+  },
+  release: { values: ["remote", "version", "base", "break"], required: ["remote", "version"] },
+  "next-version": { values: ["remote"], required: ["remote"] },
+};
 
 function main(argv) {
-  const { command, flags } = parseArgs(argv);
-  let result;
-  if (command === "init") {
-    if (!flags.source || !flags.out) throw new Error("init needs --source and --out");
-    result = init({
-      source: resolve(flags.source),
-      out: resolve(flags.out),
-      candidate: flags.candidate ?? "HEAD",
-      keepReleases: flags["keep-releases"] === true,
-    });
-  } else if (command === "release") {
-    if (!flags.remote || !flags.version) throw new Error("release needs --remote and --version");
-    result = release({
-      remote: resolve(flags.remote),
-      version: flags.version,
-      base: flags.base ?? "refs/heads/main",
-      breakKind: flags.break ?? null,
-    });
-  } else if (command === "next-version") {
-    if (!flags.remote) throw new Error("next-version needs --remote");
+  const { command, flags } = parseCommand(argv, COMMANDS);
+  if (command === "next-version") {
     process.stdout.write(nextVersion({ remote: resolve(flags.remote) }) + "\n");
     return;
-  } else {
-    throw new Error("usage: fixture.mjs init|release|next-version …");
   }
+  const result =
+    command === "init"
+      ? init({
+          source: resolve(flags.source),
+          out: resolve(flags.out),
+          candidate: flags.candidate ?? "HEAD",
+          keepReleases: flags["keep-releases"] === true,
+        })
+      : release({
+          remote: resolve(flags.remote),
+          version: flags.version,
+          base: flags.base ?? "refs/heads/main",
+          breakKind: flags.break ?? null,
+        });
   process.stdout.write(JSON.stringify(result, null, 2) + "\n");
 }
 

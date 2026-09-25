@@ -3,7 +3,7 @@
 
 import { createServer } from "node:http";
 import { describe, expect, it } from "vitest";
-import { compareSnapshots, takeSnapshot, waitHealthy } from "./probe.mjs";
+import { compareSnapshots, mintPairingCode, takeSnapshot, waitHealthy } from "./probe.mjs";
 
 function snap(overrides = {}) {
   return {
@@ -102,13 +102,22 @@ describe("compareSnapshots", () => {
     expect(compareSnapshots(snap(), after, { ...expectUpdate, restart: ["gateway"] })).toEqual([]);
   });
 
-  it("requires every fleet device current when asked", () => {
+  it("requires every commanded fleet device current, not the host's own devices", () => {
     const fleet = {
       targetVersion: "1.0.1",
       devices: [
         {
+          id: "gw",
+          name: "bootstrap",
+          kind: "cli",
+          version: "1.0.1",
+          disposition: "refused",
+          updateState: null,
+        },
+        {
           id: "col-1",
           name: "laptop",
+          kind: "collector",
           version: "1.0.1",
           disposition: "current",
           updateState: "installed",
@@ -116,6 +125,7 @@ describe("compareSnapshots", () => {
         {
           id: "col-9",
           name: "desk",
+          kind: "collector",
           version: "1.0.0",
           disposition: "update",
           updateState: "failed",
@@ -128,6 +138,30 @@ describe("compareSnapshots", () => {
     expect(compareSnapshots(snap(), updated(), { ...expectUpdate, fleetCurrent: true })).toEqual([
       "no fleet plan was read",
     ]);
+  });
+
+  it("refuses to vouch for a restart it has no service record for", () => {
+    const failures = compareSnapshots(snap({ services: [] }), updated(), expectUpdate);
+    expect(failures).toContain(
+      "gateway had no service record before, so its restart cannot be checked",
+    );
+    expect(failures).toContain(
+      "collector had no service record before, so its restart cannot be checked",
+    );
+  });
+
+  it("reads a short uptime after the time that passed as a restart, and a long one as none", () => {
+    const pids = [
+      { component: "gateway", state: "running", pid: 300 },
+      { component: "collector", state: "running", pid: 400 },
+    ];
+    // Five minutes passed between the snapshots.
+    expect(
+      compareSnapshots(snap(), updated({ uptime: 290, services: pids }), expectUpdate),
+    ).toEqual([]);
+    expect(
+      compareSnapshots(snap(), updated({ uptime: 900, services: pids }), expectUpdate),
+    ).toEqual(["gateway uptime 900s shows no restart"]);
   });
 });
 
@@ -175,6 +209,40 @@ describe("gateway reads", () => {
       await expect(
         waitHealthy(url, { expectVersion: "2.0.0", timeoutMs: 50, intervalMs: 10 }),
       ).rejects.toThrow(/not healthy on 2.0.0: status=ok version=1.0.1/);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("mints a pairing code with the requested lifetime", async () => {
+    let asked;
+    const { server, url } = await fakeGateway({
+      "POST /admin/devices/pair": {
+        auth: true,
+        body: (req) => {
+          asked = req;
+          return { pairingCode: "3FA9C0B21D", kind: "collector" };
+        },
+      },
+    });
+    try {
+      expect(await mintPairingCode(url, "t0k", { kind: "collector", ttlSeconds: 3600 })).toBe(
+        "3FA9C0B21D",
+      );
+      expect(asked).toEqual({ kind: "collector", ttlMs: 3_600_000 });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("refuses a pairing answer without a well-formed code", async () => {
+    const { server, url } = await fakeGateway({
+      "POST /admin/devices/pair": { auth: true, body: { pairingCode: "nope" } },
+    });
+    try {
+      await expect(
+        mintPairingCode(url, "t0k", { kind: "collector", ttlSeconds: 60 }),
+      ).rejects.toThrow(/without a pairing code/);
     } finally {
       server.close();
     }

@@ -13,6 +13,8 @@ describe("redact", () => {
   it("masks bearer tokens and product tokens", () => {
     expect(redact("Authorization: Bearer abc.def-123")).toBe("Authorization: Bearer ***");
     expect(redact("token omn_oat_Zm9vYmFyYmF6cXV4")).toBe("token omn_***");
+    // The device-token form: omn_ followed by 32 hex characters.
+    expect(redact(`token=omn_${"0123456789abcdef".repeat(2)} next`)).toBe("token=omn_*** next");
   });
 
   it("masks secret-bearing JSON fields and env assignments", () => {
@@ -33,8 +35,9 @@ describe("redact", () => {
     expect(redact(`HEAD ${sha}`)).toBe(`HEAD ${sha}`);
   });
 
-  it("masks a keyring recovery code", () => {
-    expect(redact("    ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ23")).toBe("    <recovery-code>");
+  it("masks a keyring recovery code in its Crockford alphabet, digits included", () => {
+    expect(redact("    ABCD-EFGH-JKMN-PQRS-TVWX-YZ01-2345-6789")).toBe("    <recovery-code>");
+    expect(redact("    0189-8910-0000-1111-2222-3333-44")).toBe("    <recovery-code>");
   });
 
   it("masks the tailnet's name and addresses but keeps the neutral node label", () => {
@@ -44,6 +47,9 @@ describe("redact", () => {
     const ip6 = ["fd7a", "115c", "a1e0", "", "1234", "5678"].join(":");
     expect(redact("https://omnesis-ci-gw-1-1.tail1234.ts.net:7600/health")).toBe(
       "https://omnesis-ci-gw-1-1.<tailnet>.ts.net:7600/health",
+    );
+    expect(redact("suffix tail1234.ts.net and https://tail1234.ts.net/x")).toBe(
+      "suffix <tailnet>.ts.net and https://<tailnet>.ts.net/x",
     );
     expect(redact(`peer ${ip4} and 100.63.0.1`)).toBe("peer <tailnet-ip> and 100.63.0.1");
     expect(redact(`addr ${ip6}`)).toBe("addr <tailnet-ip6>");

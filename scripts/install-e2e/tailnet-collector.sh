@@ -27,7 +27,8 @@ GATEWAY_HOST="${E2E_GATEWAY_HOST:?set E2E_GATEWAY_HOST}"
 [ -n "${CI:-}" ] || die "tailnet-collector.sh installs into \$HOME and registers services; it runs on CI machines only"
 
 REMOTE="$FIXTURE_DIR/omnesis.git"
-WAIT_PEER_SECONDS="${E2E_WAIT_PEER_SECONDS:-2700}"
+# Bounded well inside the job's timeout; see tailnet-gateway.sh.
+WAIT_PEER_SECONDS="${E2E_WAIT_PEER_SECONDS:-1800}"
 case "$MODE" in
   fresh) INSTALL_SH="$E2E_ROOT/scripts/install.sh" ;;
   upgrade) INSTALL_SH="$FIXTURE_DIR/release-install.sh" ;;
@@ -53,15 +54,20 @@ group "Offer a vault and ask for a pairing code"
 # without Full Disk Access could not read.
 VAULT="$HOME/omnesis-e2e-vault"
 make_vault "$VAULT"
-mailbox put --url "$MAILBOX" --key vault-path --value "$VAULT" ||
-  die "the gateway's mailbox is not reachable over MagicDNS"
+# The gateway's node is up before its mailbox is: wait for the mailbox to
+# answer (its first marker) before writing to it.
+wait_for phase 300 >/dev/null || die "the gateway's mailbox is not reachable over MagicDNS"
+mailbox put --url "$MAILBOX" --key vault-path --value "$VAULT"
 mailbox put --url "$MAILBOX" --key collector-up --value 1
 CODE="$(wait_for code)" || die "no pairing code arrived from the gateway"
 secret "$CODE"
-JOIN_URL="$(mailbox get --url "$MAILBOX" --key join-url)"
+expect_shape "the pairing code" "$CODE_SHAPE" "$CODE"
+JOIN_URL="$(mailbox get --url "$MAILBOX" --key join-url)" || die "the gateway sent no join URL"
 FINGERPRINT="$(mailbox get --url "$MAILBOX" --key fingerprint || true)"
-START_VERSION="$(mailbox get --url "$MAILBOX" --key expect-version)"
+START_VERSION="$(mailbox get --url "$MAILBOX" --key expect-version)" || die "the gateway sent no version"
 [ "$JOIN_URL" = "https://$GATEWAY_FQDN:7600" ] || die "the join URL does not name the gateway's MagicDNS name"
+[ -z "$FINGERPRINT" ] || expect_shape "the certificate fingerprint" 'sha256:[0-9a-f]{64}' "$FINGERPRINT"
+expect_shape "the gateway's version" "$VERSION_SHAPE" "$START_VERSION"
 endgroup
 
 group "Run the printed --collector line (v$START_VERSION)"
@@ -82,10 +88,17 @@ served="$(curl -fsS --max-time 20 "$JOIN_URL/health" | node -e '
   die "curl could not verify the gateway's certificate from the collector"
 [ "$served" = "$START_VERSION" ] || die "the gateway serves $served, expected $START_VERSION"
 [ "$("$OMNESIS" --version)" = "$START_VERSION" ] || die "this machine's CLI is not on $START_VERSION"
-DEVICE_NAME="$(json_get "$CONFIG_DIR/collector-pairing-state.json" 'j.deviceName')" ||
-  die "the collector recorded no pairing"
-"$OMNESIS" service status --json >"$E2E_WORK/services-before.json"
-[ "$(json_get "$E2E_WORK/services-before.json" "(j.items.find((s) => s.component === 'collector') || {}).state")" = running ] ||
+# The installer can return while the daemon is still starting; its pairing
+# record appears once it has authenticated.
+PAIRING_STATE="$CONFIG_DIR/collector-pairing-state.json"
+deadline=$(($(date +%s) + 180))
+until [ -f "$PAIRING_STATE" ] && [ "$(json_get "$PAIRING_STATE" 'j.state')" = paired ]; do
+  [ "$(date +%s)" -lt "$deadline" ] || die "the collector never recorded a pairing"
+  sleep 3
+done
+DEVICE_NAME="$(json_get "$PAIRING_STATE" 'j.deviceName')" || die "the pairing record names no device"
+"$OMNESIS" service status --json >"$E2E_WORK/services-before.json" || die "omnesis service status failed"
+[ "$(json_get "$E2E_WORK/services-before.json" '(j.items.find((s) => s.component === "collector") || {}).state')" = running ] ||
   die "the collector is not running under launchd"
 mailbox put --url "$MAILBOX" --key collector-installed --value "$DEVICE_NAME"
 endgroup
@@ -93,6 +106,7 @@ endgroup
 if [ "$MODE" = upgrade ]; then
   group "Wait for the gateway's fleet update"
   NEXT_VERSION="$(wait_for fleet-done)" || die "the gateway never finished its fleet update"
+  expect_shape "the fleet's version" "$VERSION_SHAPE" "$NEXT_VERSION"
   verdict=ok
   deadline=$(($(date +%s) + 300))
   until [ "$("$OMNESIS" --version 2>/dev/null)" = "$NEXT_VERSION" ]; do
@@ -103,9 +117,10 @@ if [ "$MODE" = upgrade ]; then
     sleep 5
   done
   "$OMNESIS" service status --json >"$E2E_WORK/services-after.json" || true
-  before_pid="$(json_get "$E2E_WORK/services-before.json" "(j.items.find((s) => s.component === 'collector') || {}).pid")"
-  after_state="$(json_get "$E2E_WORK/services-after.json" "(j.items.find((s) => s.component === 'collector') || {}).state" || echo missing)"
-  after_pid="$(json_get "$E2E_WORK/services-after.json" "(j.items.find((s) => s.component === 'collector') || {}).pid" || echo none)"
+  before_pid="$(json_get "$E2E_WORK/services-before.json" '(j.items.find((s) => s.component === "collector") || {}).pid')" ||
+    die "no collector pid was recorded before the update"
+  after_state="$(json_get "$E2E_WORK/services-after.json" '(j.items.find((s) => s.component === "collector") || {}).state' || echo missing)"
+  after_pid="$(json_get "$E2E_WORK/services-after.json" '(j.items.find((s) => s.component === "collector") || {}).pid' || echo none)"
   if [ "$verdict" = ok ] && [ "$after_state" != running ]; then verdict="the collector is $after_state under launchd"; fi
   if [ "$verdict" = ok ] && [ "$after_pid" = "$before_pid" ]; then verdict="the collector was not restarted (pid $after_pid)"; fi
   if [ "$verdict" = ok ] && [ "$(json_get "$CONFIG_DIR/update-state.json" 'j.phase')" != complete ]; then
@@ -118,4 +133,5 @@ if [ "$MODE" = upgrade ]; then
 fi
 
 wait_for finished 1800 >/dev/null || die "the gateway did not finish"
+mailbox put --url "$MAILBOX" --key collector-done --value ok || true
 log "$MODE lane held on the collector"

@@ -11,10 +11,11 @@ run-name: "Install e2e (${{ github.event_name }}${{ github.event_name == 'workfl
 # need no secrets, so they also run for fork pull requests.
 #
 # Two-machine tailnet lanes (T1 fresh, T2 upgrade + fleet) join a dedicated CI
-# tailnet through workload identity federation. They run nightly, on manual
-# dispatch and before a release (the release conductor reads the newest
-# nightly run), only on main or a release tag of this repository: the
+# tailnet through workload identity federation. They run nightly and on manual
+# dispatch, only on main or a release tag of this repository: the
 # `tailnet-e2e` environment that holds the credential admits nothing else.
+# The release conductor refuses a tag while the newest completed full run on
+# main (nightly, or a dispatch of every lane) is red.
 on:
   pull_request:
     paths:
@@ -45,12 +46,14 @@ on:
         options: [all, single-host, tailnet]
         default: all
 
-permissions:
-  contents: read
+permissions: {}
 
+# A newer push to a pull request replaces its run. Runs on main are never
+# cancelled: the release gate reads them, and a dispatch of one lane must not
+# silently end a dispatch of every lane.
 concurrency:
-  group: install-e2e-${{ github.event_name }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  group: install-e2e-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.lanes || 'all' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -69,6 +72,8 @@ jobs:
             os: macos-15
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -80,7 +85,7 @@ jobs:
       - name: Install vN, update to vN+1, roll back a broken vN+2
         run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/single-host.sh
       - name: Diagnostics (redacted)
-        if: failure()
+        if: failure() || cancelled()
         run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/diagnostics.sh
 
   tailnet-plan:
@@ -113,13 +118,21 @@ jobs:
     outputs:
       ready: ${{ steps.check.outputs.ready }}
     steps:
+      # Without the credential the tailnet lanes cannot run. On a full run
+      # (nightly, or a dispatch of every lane) that is a failure, because the
+      # release gate reads those runs as evidence the lanes passed; on a
+      # dispatch of the tailnet lanes alone it is a notice.
       - id: check
         env:
           TS_CLIENT_ID: ${{ secrets.TS_CLIENT_ID }}
           TS_AUDIENCE: ${{ secrets.TS_AUDIENCE }}
+          FULL_RUN: ${{ github.event_name == 'schedule' || inputs.lanes == 'all' }}
         run: |
           if [ -n "$TS_CLIENT_ID" ] && [ -n "$TS_AUDIENCE" ]; then
             echo "ready=true" >>"$GITHUB_OUTPUT"
+          elif [ "$FULL_RUN" = true ]; then
+            echo "::error title=Tailnet lanes cannot run::The tailnet-e2e environment has no TS_CLIENT_ID/TS_AUDIENCE secrets."
+            exit 1
           else
             echo "::notice title=Tailnet lanes skipped::The tailnet-e2e environment has no TS_CLIENT_ID/TS_AUDIENCE secrets, so T1 and T2 did not run."
             echo "ready=false" >>"$GITHUB_OUTPUT"
@@ -131,6 +144,8 @@ jobs:
     if: needs.tailnet-preflight.outputs.ready == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -147,7 +162,7 @@ jobs:
           out="$RUNNER_TEMP/fixtures"
           node scripts/install-e2e/fixture.mjs init --source . --out "$out/fresh"
           node scripts/install-e2e/fixture.mjs init --source . --out "$out/upgrade" --keep-releases
-          latest="$(node -p "require('$out/upgrade/fixture.json').latestRelease ?? ''")"
+          latest="$(node -p "require('$out/upgrade/fixture.json').startRelease ?? ''")"
           [ -n "$latest" ] || { echo "::error::no vX.Y.Z release exists to upgrade from"; exit 1; }
           next="$(node scripts/install-e2e/fixture.mjs next-version --remote "$out/upgrade/omnesis.git")"
           node scripts/install-e2e/fixture.mjs release --remote "$out/upgrade/omnesis.git" --version "$next"
@@ -175,7 +190,7 @@ jobs:
             mode: upgrade
             os: ubuntu-24.04-arm
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 120
     environment: tailnet-e2e
     permissions:
       contents: read
@@ -204,13 +219,18 @@ jobs:
           audience: ${{ secrets.TS_AUDIENCE }}
           tags: tag:omnesis-ci
           hostname: ${{ env.NODE_NAME }}
+          # Quiet is load-bearing: the other modes print the tailnet's DNS
+          # suffix, and this log is public.
           log-mode: quiet
+      # Only the Tailscale step needs the OIDC token. Nothing after it (the
+      # installer runs npm lifecycle scripts) gets the means to mint one.
       - name: Gateway
         run: |
+          unset ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL
           E2E_WORK="$RUNNER_TEMP/install-e2e" E2E_FIXTURE_DIR="$RUNNER_TEMP/fixtures/$E2E_MODE" \
             scripts/install-e2e/tailnet-gateway.sh
       - name: Tell the collector this job failed
-        if: failure()
+        if: failure() || cancelled()
         run: |
           url="$(cat "$RUNNER_TEMP/install-e2e/mailbox-url" 2>/dev/null || true)"
           [ -n "$url" ] || exit 0
@@ -218,7 +238,7 @@ jobs:
           # Keep the mailbox up long enough for the collector's next poll.
           sleep 20
       - name: Diagnostics (redacted)
-        if: failure()
+        if: failure() || cancelled()
         run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/diagnostics.sh
 
   tailnet-collector:
@@ -235,7 +255,7 @@ jobs:
             mode: upgrade
             os: macos-14
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 120
     environment: tailnet-e2e
     permissions:
       contents: read
@@ -265,17 +285,21 @@ jobs:
           audience: ${{ secrets.TS_AUDIENCE }}
           tags: tag:omnesis-ci
           hostname: ${{ env.NODE_NAME }}
+          # Quiet is load-bearing: the other modes print the tailnet's DNS
+          # suffix, and this log is public.
           log-mode: quiet
+      # Only the Tailscale step needs the OIDC token; see the gateway job.
       - name: Collector
         run: |
+          unset ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL
           E2E_WORK="$RUNNER_TEMP/install-e2e" E2E_FIXTURE_DIR="$RUNNER_TEMP/fixtures/$E2E_MODE" \
             scripts/install-e2e/tailnet-collector.sh
       - name: Tell the gateway this job failed
-        if: failure()
+        if: failure() || cancelled()
         run: |
           url="$(cat "$RUNNER_TEMP/install-e2e/mailbox-url" 2>/dev/null || true)"
           [ -n "$url" ] || exit 0
           node scripts/install-e2e/mailbox.mjs put --url "$url" --key abort --value "the collector job failed" || true
       - name: Diagnostics (redacted)
-        if: failure()
+        if: failure() || cancelled()
         run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/diagnostics.sh

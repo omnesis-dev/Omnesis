@@ -30,7 +30,16 @@ fi
 section "omnesis --version" "$OMNESIS" --version
 section "service status" "$OMNESIS" service status --json
 section "update record" cat "$CONFIG_DIR/update-state.json"
-section "health" curl -sS --max-time 10 --cacert "$CONFIG_DIR/tls/cert.pem" "${E2E_GATEWAY_URL:-https://localhost:7600}/health"
+# The lane records the gateway's URL when it is not the local default; a
+# gateway serving its own self-signed certificate is verified against it,
+# one serving a Tailscale certificate against the system's CAs.
+GATEWAY_URL="$(cat "$E2E_WORK/gateway-url" 2>/dev/null || echo https://localhost:7600)"
+if [ "$GATEWAY_URL" = https://localhost:7600 ] && [ -f "$CONFIG_DIR/tls/cert.pem" ]; then
+  section "health" curl -sS --max-time 10 --cacert "$CONFIG_DIR/tls/cert.pem" "$GATEWAY_URL/health"
+elif [ -f "$E2E_WORK/gateway-url" ]; then
+  section "health" curl -sS --max-time 10 "$GATEWAY_URL/health"
+fi
+[ ! -f "$E2E_WORK/mailbox.log" ] || section "mailbox log" cat "$E2E_WORK/mailbox.log"
 section "gateway log" "$OMNESIS" service logs gateway --lines 200
 section "collector log" "$OMNESIS" service logs collector --lines 120
 case "$(uname -s)" in

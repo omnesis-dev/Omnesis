@@ -42,20 +42,15 @@ use_gateway_ca() {
   [ -s "$NODE_EXTRA_CA_CERTS" ] || die "no gateway certificate at $NODE_EXTRA_CA_CERTS"
 }
 
-keyring_flags() {
-  case "$(uname -s)" in
-    # The login keychain is unlocked in the runner's GUI session, so the
-    # installer takes the macOS Keychain path a real Mac takes.
-    Darwin) ;;
-    # No Secret Service on a headless Linux host: the passphrase backend,
-    # sealed into the systemd unit as a credential.
-    *)
-      local pass="$E2E_WORK/keyring.pass"
-      (umask 077 && head -c 32 /dev/urandom | base64 >"$pass")
-      printf '%s\n' "--keyring-passphrase-file" "$pass"
-      ;;
-  esac
-}
+# macOS: the login keychain is unlocked in the runner's GUI session, so the
+# installer takes the macOS Keychain path a real Mac takes. Linux: no Secret
+# Service on a headless host, so the passphrase backend, sealed into the
+# systemd unit as a credential.
+set -- --source-dir "$SOURCE_DIR" --no-model --no-tls --no-prompt --no-modify-path
+if [ "$(uname -s)" != Darwin ]; then
+  new_passphrase_file
+  set -- "$@" --keyring-passphrase-file "$PASSPHRASE_FILE"
+fi
 
 group "Fixture: the candidate as release vN"
 fixture init --source "$E2E_ROOT" --out "$FIXTURE_DIR" | tee "$E2E_WORK/fixture-init.json"
@@ -64,9 +59,7 @@ log "candidate is v$V_N"
 endgroup
 
 group "Install v$V_N (gateway + collector, supervised)"
-# shellcheck disable=SC2046
-installer --source-dir "$SOURCE_DIR" --no-model --no-tls --no-prompt --no-modify-path $(keyring_flags) ||
-  die "the fresh install failed"
+installer "$@" || die "the fresh install failed"
 use_gateway_ca
 probe health --url "$GATEWAY_URL" --expect-version "$V_N" --timeout 120 >/dev/null
 endgroup

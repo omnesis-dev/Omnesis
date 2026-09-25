@@ -32,7 +32,10 @@ FIXTURE_DIR="${E2E_FIXTURE_DIR:?set E2E_FIXTURE_DIR}"
 
 REMOTE="$FIXTURE_DIR/omnesis.git"
 FIXTURE_JSON="$FIXTURE_DIR/fixture.json"
-WAIT_PEER_SECONDS="${E2E_WAIT_PEER_SECONDS:-2700}"
+# Each wait on the collector is bounded well inside the job's timeout: its
+# install clones, installs dependencies and builds, which a slow macOS runner
+# finishes in about fifteen minutes.
+WAIT_PEER_SECONDS="${E2E_WAIT_PEER_SECONDS:-1800}"
 
 case "$MODE" in
   fresh)
@@ -41,23 +44,34 @@ case "$MODE" in
     ;;
   upgrade)
     INSTALL_SH="$FIXTURE_DIR/release-install.sh"
-    START_VERSION="$(json_get "$FIXTURE_JSON" 'j.latestRelease.slice(1)')"
-    NEXT_VERSION="$(json_get "$FIXTURE_JSON" 'j.next.version')"
+    START_VERSION="$(json_get "$FIXTURE_JSON" 'j.startRelease.slice(1)')" || die "the fixture names no release to start from"
+    NEXT_VERSION="$(json_get "$FIXTURE_JSON" 'j.next.version')" || die "the fixture made no next release"
     ;;
   *) die "unknown E2E_MODE $MODE" ;;
 esac
 
 group "Tailnet"
 ts_register
-FQDN="$(ts_field 'j.Self.DNSName.replace(/\.$/, "")')"
+FQDN="$(ts_field 'j.Self.DNSName.replace(/\.$/, "")')" || die "this node has no MagicDNS name"
+ts_wait_resolves "$FQDN" 120
 GATEWAY_URL="https://$FQDN:7600"
+# For the diagnostics step.
+echo "$GATEWAY_URL" >"$E2E_WORK/gateway-url"
 MAILBOX="http://$TS_SELF_IP:$MAILBOX_PORT"
 # Where the workflow's failure step posts `abort`.
 echo "$MAILBOX" >"$E2E_WORK/mailbox-url"
 nohup node "$E2E_DIR/mailbox.mjs" serve --host "$TS_SELF_IP" --port "$MAILBOX_PORT" \
   >"$E2E_WORK/mailbox.log" 2>&1 &
-echo $! >"$E2E_WORK/mailbox.pid"
-until mailbox put --url "$MAILBOX" --key phase --value gateway-starting 2>/dev/null; do sleep 1; done
+MAILBOX_PID=$!
+tries=0
+until mailbox put --url "$MAILBOX" --key phase --value gateway-starting 2>/dev/null; do
+  tries=$((tries + 1))
+  if ! kill -0 "$MAILBOX_PID" 2>/dev/null || [ "$tries" -ge 30 ]; then
+    redact <"$E2E_WORK/mailbox.log"
+    die "the mailbox did not start"
+  fi
+  sleep 1
+done
 log "mailbox up; gateway node ready"
 endgroup
 
@@ -68,9 +82,8 @@ wait_for() {
 }
 
 group "Install v$START_VERSION ($MODE)"
-PASS="$E2E_WORK/keyring.pass"
-(umask 077 && head -c 32 /dev/urandom | base64 >"$PASS")
-set -- --source-dir "$HOME/omnesis" --no-model --no-prompt --no-modify-path --keyring-passphrase-file "$PASS"
+new_passphrase_file
+set -- --source-dir "$HOME/omnesis" --no-model --no-prompt --no-modify-path --keyring-passphrase-file "$PASSPHRASE_FILE"
 [ "$MODE" = fresh ] || set -- "$@" --version "$START_VERSION"
 # Streamed (redacted) as it runs, and kept for the lines parsed below.
 set +e
@@ -98,26 +111,25 @@ endgroup
 group "Pair the collector"
 mint_probe_token
 wait_for collector-up >/dev/null || die "the collector never came up"
-CODE="$("$OMNESIS" devices pair --kind collector 2>&1 | sed -n 's/^ *Pairing code: *//p' | head -1)"
-[ -n "$CODE" ] || die "could not mint a collector pairing code"
+# An hour, not the CLI's default: the collector redeems the code only after
+# its install has cloned and built.
+CODE="$(probe pair --url "$GATEWAY_URL" --token-file "$TOKEN_FILE" --kind collector --ttl 3600)" ||
+  die "could not mint a collector pairing code"
 secret "$CODE"
 mailbox put --url "$MAILBOX" --key join-url --value "$JOIN_URL"
 mailbox put --url "$MAILBOX" --key fingerprint --value "$FINGERPRINT"
 mailbox put --url "$MAILBOX" --key expect-version --value "$START_VERSION"
 mailbox put --url "$MAILBOX" --key code --value "$CODE"
 COLLECTOR="$(wait_for collector-installed)" || die "the collector install did not finish"
+expect_shape "the collector's device name" "$NAME_SHAPE" "$COLLECTOR"
 log "the collector paired as $COLLECTOR"
-deadline=$(($(date +%s) + 180))
-until probe snapshot --url "$GATEWAY_URL" --token-file "$TOKEN_FILE" >"$E2E_WORK/devices.json" &&
-  [ "$(json_get "$E2E_WORK/devices.json" "(j.devices.find((d) => d.name === '$COLLECTOR' && d.kind === 'collector') || {}).online === true")" = true ]; do
-  [ "$(date +%s)" -lt "$deadline" ] || die "the gateway does not list $COLLECTOR as a live collector"
-  sleep 3
-done
+wait_collector_live "$GATEWAY_URL" "$COLLECTOR" 180
 log "the gateway lists $COLLECTOR as paired and live"
 endgroup
 
 group "Sync an invented vault from the collector"
 VAULT="$(wait_for vault-path)" || die "the collector sent no vault"
+expect_shape "the collector's vault path" '/[A-Za-z0-9._/-]+' "$VAULT"
 SOURCE_ID="$(add_vault "$COLLECTOR" "$VAULT")"
 redacted "$OMNESIS" sources sync "$SOURCE_ID" --wait --timeout 300 || die "the collector's vault did not sync"
 snapshot_with_hit before "$GATEWAY_URL"
@@ -136,9 +148,13 @@ if [ "$MODE" = upgrade ]; then
     --expect-title "$SEARCH_TITLE" --expect-fleet-current
   mailbox put --url "$MAILBOX" --key fleet-done --value "$NEXT_VERSION"
   verdict="$(wait_for collector-verified 900)" || die "the collector did not report after the fleet update"
-  [ "$verdict" = ok ] || die "the collector's own checks failed: $verdict"
+  [ "$verdict" = ok ] || die "the collector's own checks after the fleet update failed; its job log says which"
   endgroup
 fi
 
 mailbox put --url "$MAILBOX" --key finished --value ok
+# The mailbox ends with this job: keep it up until the collector has read
+# `finished`. Its own job reports its own verdict, so a missing
+# acknowledgement is not this job's failure.
+wait_for collector-done 300 >/dev/null || log "the collector did not acknowledge the end of the lane"
 log "$MODE lane held on the gateway"

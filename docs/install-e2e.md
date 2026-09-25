@@ -47,6 +47,21 @@ The scripts install into `$HOME` and register real user services, so they
 refuse to run outside CI. Their logic has unit tests beside them
 (`scripts/install-e2e/*.test.mjs`).
 
+A tailnet lane's two jobs find each other by node names that include the run
+attempt, so re-run both jobs of a failed lane ("Re-run all jobs"), not only
+the one that failed.
+
+## Release gate
+
+`npm run release -- tag` reads this workflow's completed runs on `main` and
+refuses the tag when the newest full run (the nightly schedule, or a dispatch
+with `lanes=all`) is red, or when a push run newer than it is red. A cancelled
+run is passed over for the one before it. With no full run yet the tag
+proceeds with a warning; runs that cannot be read refuse it. After a fix on
+`main`, `gh workflow run install-e2e.yml --ref main -f lanes=all` produces the
+evidence that clears it. `--allow-failed-install-e2e` releases anyway, for an
+emergency, and prints the failing run it overrode.
+
 ## Why the tailnet lanes never run on pull requests
 
 T1 and T2 join a tailnet reserved for CI. The job authenticates with workload

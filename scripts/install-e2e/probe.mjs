@@ -11,6 +11,11 @@
  *   node scripts/install-e2e/probe.mjs compare --before <snapshot> --after <snapshot>
  *        --expect-version <x.y.z> [--expect-restart gateway,collector] [--expect-backup]
  *        [--expect-title <t>] [--expect-fleet-current]
+ *   node scripts/install-e2e/probe.mjs pair --url <gateway> --token-file <f> --kind <kind> [--ttl <s>]
+ *
+ * `pair` mints a pairing code with a lifetime of its own choosing: the
+ * collector redeems it only after cloning and building, which can outlast the
+ * CLI's default code lifetime on a slow runner.
  *
  * `snapshot` reads the gateway's HTTP API with a scoped token the lane minted
  * for itself, and folds in what the CLI printed as JSON on that host (service
@@ -24,6 +29,11 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseCommand } from "./args.mjs";
+
+/** Device kinds `omnesis update --fleet` commands; any other kind is updated with its host. */
+const FLEET_KINDS = new Set(["collector", "agent"]);
+const PAIRING_CODE = /^[0-9A-F]{10}$/;
 
 async function getJson(base, path, token) {
   const res = await fetch(new URL(path, base), {
@@ -32,6 +42,29 @@ async function getJson(base, path, token) {
   });
   if (!res.ok) throw new Error(`GET ${path}: HTTP ${res.status}`);
   return res.json();
+}
+
+async function postJson(base, path, token, body) {
+  const res = await fetch(new URL(path, base), {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!res.ok) throw new Error(`POST ${path}: HTTP ${res.status}`);
+  return res.json();
+}
+
+/** Mint a pairing code for `kind` that stays valid for `ttlSeconds`. */
+export async function mintPairingCode(base, token, { kind, ttlSeconds }) {
+  const pending = await postJson(base, "/admin/devices/pair", token, {
+    kind,
+    ttlMs: Math.round(ttlSeconds * 1000),
+  });
+  if (!PAIRING_CODE.test(String(pending.pairingCode))) {
+    throw new Error("the gateway answered without a pairing code");
+  }
+  return pending.pairingCode;
 }
 
 function readJsonFile(path) {
@@ -62,9 +95,12 @@ export async function waitHealthy(base, { expectVersion, timeoutMs, intervalMs =
 export async function takeSnapshot({ url, token, query, services, doctor, backups, fleet }) {
   const health = await getJson(url, "/health");
   const status = await getJson(url, "/status", token);
+  // When uptime was read, not when the snapshot finished: the restart check
+  // compares the two.
+  const takenAt = new Date().toISOString();
   const devices = await getJson(url, "/admin/devices", token);
   const snapshot = {
-    takenAt: new Date().toISOString(),
+    takenAt,
     version: health.version ?? null,
     uptime: status.uptime ?? null,
     docTotal: status.documents?.total ?? null,
@@ -105,6 +141,7 @@ export async function takeSnapshot({ url, token, query, services, doctor, backup
       devices: (plan.devices ?? []).map((d) => ({
         id: d.id,
         name: d.name,
+        kind: d.kind ?? null,
         version: d.version ?? null,
         disposition: d.disposition?.kind ?? null,
         updateState: d.updateState ?? null,
@@ -120,6 +157,11 @@ export function compareSnapshots(before, after, expect) {
   if (after.version !== expect.version) {
     failures.push(`gateway serves ${after.version}, expected ${expect.version}`);
   }
+  for (const component of expect.restart) {
+    if (!before.services.some((s) => s.component === component)) {
+      failures.push(`${component} had no service record before, so its restart cannot be checked`);
+    }
+  }
   for (const svc of before.services) {
     const now = after.services.find((s) => s.component === svc.component);
     if (!now || now.state !== "running" || !now.pid) {
@@ -132,11 +174,13 @@ export function compareSnapshots(before, after, expect) {
       failures.push(`${svc.component} was not restarted (still pid ${now.pid})`);
     }
   }
+  // A gateway that restarted has been up for less time than has passed
+  // since the first snapshot; the slack absorbs the two roundings.
   if (
     expect.restart.includes("gateway") &&
     before.uptime !== null &&
     after.uptime !== null &&
-    after.uptime >= before.uptime + elapsedSeconds(before, after)
+    after.uptime > elapsedSeconds(before, after) + 2
   ) {
     failures.push(`gateway uptime ${after.uptime}s shows no restart`);
   }
@@ -167,7 +211,10 @@ export function compareSnapshots(before, after, expect) {
     const fleet = after.fleet;
     if (!fleet) failures.push("no fleet plan was read");
     else {
-      for (const d of fleet.devices) {
+      // The gateway host's own devices are updated with the host and the
+      // plan lists them as refused (host-managed); only the kinds the fleet
+      // update commands have to be current.
+      for (const d of fleet.devices.filter((x) => FLEET_KINDS.has(x.kind))) {
         if (d.disposition !== "current" || d.updateState === "failed") {
           failures.push(
             `fleet device ${d.name} is ${d.disposition} on ${d.version} (update ${d.updateState})`,
@@ -183,35 +230,37 @@ function elapsedSeconds(before, after) {
   return Math.max(0, Math.floor((Date.parse(after.takenAt) - Date.parse(before.takenAt)) / 1000));
 }
 
-function parseFlags(argv) {
-  const booleans = new Set(["expect-backup", "expect-fleet-current", "fleet"]);
-  const flags = {};
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (!arg.startsWith("--")) throw new Error(`unexpected argument ${arg}`);
-    const key = arg.slice(2);
-    if (booleans.has(key)) flags[key] = true;
-    else {
-      const value = argv[++i];
-      if (value === undefined) throw new Error(`${arg} needs a value`);
-      flags[key] = value;
-    }
-  }
-  return flags;
-}
+const COMMANDS = {
+  health: { values: ["url", "expect-version"], numbers: ["timeout"], required: ["url"] },
+  snapshot: {
+    values: ["url", "token-file", "query", "services", "doctor", "backups"],
+    booleans: ["fleet"],
+    required: ["url", "token-file"],
+  },
+  compare: {
+    values: ["before", "after", "expect-version", "expect-restart", "expect-title"],
+    booleans: ["expect-backup", "expect-fleet-current"],
+    required: ["before", "after", "expect-version"],
+  },
+  pair: {
+    values: ["url", "token-file", "kind"],
+    numbers: ["ttl"],
+    required: ["url", "token-file", "kind"],
+  },
+};
 
-async function main([command, ...rest]) {
-  const flags = parseFlags(rest);
+async function main(argv) {
+  const { command, flags } = parseCommand(argv, COMMANDS);
   if (command === "health") {
     const health = await waitHealthy(flags.url, {
       expectVersion: flags["expect-version"],
-      timeoutMs: Number(flags.timeout ?? 120) * 1000,
+      timeoutMs: (flags.timeout ?? 120) * 1000,
     });
     process.stdout.write(`${health.version}\n`);
     return;
   }
+  const token = readFileSync(flags["token-file"] ?? "/dev/null", "utf8").trim();
   if (command === "snapshot") {
-    const token = readFileSync(flags["token-file"], "utf8").trim();
     const snapshot = await takeSnapshot({
       url: flags.url,
       token,
@@ -224,25 +273,30 @@ async function main([command, ...rest]) {
     process.stdout.write(JSON.stringify(snapshot, null, 2) + "\n");
     return;
   }
-  if (command === "compare") {
-    const before = readJsonFile(flags.before);
-    const after = readJsonFile(flags.after);
-    if (!before || !after) throw new Error("compare needs --before and --after snapshots");
-    const failures = compareSnapshots(before, after, {
-      version: flags["expect-version"],
-      restart: flags["expect-restart"] ? flags["expect-restart"].split(",") : [],
-      backup: flags["expect-backup"] === true,
-      title: flags["expect-title"],
-      fleetCurrent: flags["expect-fleet-current"] === true,
+  if (command === "pair") {
+    const code = await mintPairingCode(flags.url, token, {
+      kind: flags.kind,
+      ttlSeconds: flags.ttl ?? 3600,
     });
-    if (failures.length === 0) {
-      process.stdout.write(`probe: all expectations held on ${after.version}\n`);
-      return;
-    }
-    for (const f of failures) process.stdout.write(`::error::${f}\n`);
-    process.exit(1);
+    process.stdout.write(`${code}\n`);
+    return;
   }
-  throw new Error("usage: probe.mjs health|snapshot|compare …");
+  const before = readJsonFile(flags.before);
+  const after = readJsonFile(flags.after);
+  if (!before || !after) throw new Error("compare: --before and --after must name snapshots");
+  const failures = compareSnapshots(before, after, {
+    version: flags["expect-version"],
+    restart: flags["expect-restart"] ? flags["expect-restart"].split(",") : [],
+    backup: flags["expect-backup"] === true,
+    title: flags["expect-title"],
+    fleetCurrent: flags["expect-fleet-current"] === true,
+  });
+  if (failures.length === 0) {
+    process.stdout.write(`probe: all expectations held on ${after.version}\n`);
+    return;
+  }
+  for (const f of failures) process.stdout.write(`::error::${f}\n`);
+  process.exit(1);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

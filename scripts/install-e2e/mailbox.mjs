@@ -17,8 +17,12 @@
  * the other's wait instead of running it to its timeout.
  *
  * The server keeps values in memory and binds only the address it is given.
- * The tailnet the lane runs on admits only the run's own nodes; that boundary,
- * not the mailbox, is the access control.
+ * The tailnet the lane runs on admits only CI nodes; that boundary, not the
+ * mailbox, is the access control. Within it the mailbox still refuses what a
+ * well-behaved run never sends: a second, different value for any key but
+ * `phase` (so a value once read cannot be swapped), and control characters
+ * (so a value printed to a log cannot smuggle in a workflow command). The
+ * scripts validate each value's shape before using it as well.
  *
  * A mailbox lives as long as the gateway job, so one that answered once and
  * then stops answering for `--gone-after` seconds belongs to a job that has
@@ -33,12 +37,17 @@ import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseCommand } from "./args.mjs";
 
 export const ABORT_KEY = "abort";
-export const EXIT_ABORTED = 2;
-export const EXIT_TIMEOUT = 3;
-export const EXIT_GONE = 4;
+/** The one key a run rewrites as it moves along. */
+const REWRITABLE_KEY = "phase";
+const EXIT_ABORTED = 2;
+const EXIT_TIMEOUT = 3;
+const EXIT_GONE = 4;
 const KEY = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+// eslint-disable-next-line no-control-regex -- the point is to refuse them
+const CONTROL = /[\u0000-\u001f\u007f]/;
 const MAX_BODY = 64 * 1024;
 
 export function createMailboxServer() {
@@ -73,7 +82,16 @@ export function createMailboxServer() {
       });
       req.on("end", () => {
         if (size > MAX_BODY) return;
-        values.set(key, Buffer.concat(chunks).toString("utf8"));
+        const value = Buffer.concat(chunks).toString("utf8");
+        if (CONTROL.test(value)) {
+          res.writeHead(400).end();
+          return;
+        }
+        if (key !== REWRITABLE_KEY && values.has(key) && values.get(key) !== value) {
+          res.writeHead(409).end();
+          return;
+        }
+        values.set(key, value);
         res.writeHead(204).end();
       });
       return;
@@ -90,6 +108,7 @@ async function request(base, key, init = {}) {
 export async function put(base, key, value) {
   if (!KEY.test(key)) throw new Error(`invalid key ${key}`);
   const res = await request(base, key, { method: "PUT", body: value });
+  if (res.status === 409) throw new Error(`put ${key}: already holds a different value`);
   if (res.status !== 204) throw new Error(`put ${key}: HTTP ${res.status}`);
 }
 
@@ -132,34 +151,31 @@ export async function wait(
   }
 }
 
-function parseFlags(argv) {
-  const flags = {};
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (!arg.startsWith("--")) throw new Error(`unexpected argument ${arg}`);
-    const value = argv[++i];
-    if (value === undefined) throw new Error(`${arg} needs a value`);
-    flags[arg.slice(2)] = value;
-  }
-  return flags;
-}
+const COMMANDS = {
+  serve: { values: ["host"], numbers: ["port"], required: ["host"] },
+  put: { values: ["url", "key", "value", "value-file"], required: ["url", "key"] },
+  get: { values: ["url", "key"], required: ["url", "key"] },
+  wait: {
+    values: ["url", "key"],
+    numbers: ["timeout", "gone-after"],
+    required: ["url", "key", "timeout"],
+  },
+};
 
-async function main([command, ...rest]) {
-  const flags = parseFlags(rest);
+async function main(argv) {
+  const { command, flags } = parseCommand(argv, COMMANDS);
   if (command === "serve") {
     const server = createMailboxServer();
-    const port = Number(flags.port ?? 0);
     await new Promise((ok, fail) => {
       server.once("error", fail);
-      server.listen(port, flags.host ?? "127.0.0.1", ok);
+      server.listen(flags.port ?? 0, flags.host, ok);
     });
     process.stdout.write(`mailbox listening on port ${server.address().port}\n`);
     return;
   }
-  if (!flags.url || !flags.key) throw new Error(`${command} needs --url and --key`);
   if (command === "put") {
     const value = flags["value-file"]
-      ? readFileSync(flags["value-file"], "utf8")
+      ? readFileSync(flags["value-file"], "utf8").trim()
       : (flags.value ?? "");
     await put(flags.url, flags.key, value);
     return;
@@ -170,28 +186,24 @@ async function main([command, ...rest]) {
     process.stdout.write(value);
     return;
   }
-  if (command === "wait") {
-    const timeoutMs = Number(flags.timeout ?? 600) * 1000;
-    const goneAfterMs = flags["gone-after"] ? Number(flags["gone-after"]) * 1000 : Infinity;
-    const result = await wait(flags.url, flags.key, { timeoutMs, goneAfterMs });
-    if (result.status === "ok") {
-      process.stdout.write(result.value);
-      return;
-    }
-    if (result.status === "aborted") {
-      process.stderr.write(`mailbox: the other job aborted: ${result.value}\n`);
-      process.exit(EXIT_ABORTED);
-    }
-    if (result.status === "gone") {
-      process.stderr.write(
-        `mailbox: the mailbox stopped answering while waiting for ${flags.key}\n`,
-      );
-      process.exit(EXIT_GONE);
-    }
-    process.stderr.write(`mailbox: ${flags.key} did not arrive within ${flags.timeout ?? 600}s\n`);
-    process.exit(EXIT_TIMEOUT);
+  const goneAfterMs = flags["gone-after"] !== undefined ? flags["gone-after"] * 1000 : Infinity;
+  const result = await wait(flags.url, flags.key, { timeoutMs: flags.timeout * 1000, goneAfterMs });
+  if (result.status === "ok") {
+    process.stdout.write(result.value);
+    return;
   }
-  throw new Error("usage: mailbox.mjs serve|put|get|wait …");
+  if (result.status === "aborted") {
+    process.stderr.write(
+      `mailbox: the other job aborted: ${result.value.replace(new RegExp(CONTROL.source, "g"), " ")}\n`,
+    );
+    process.exit(EXIT_ABORTED);
+  }
+  if (result.status === "gone") {
+    process.stderr.write(`mailbox: the mailbox stopped answering while waiting for ${flags.key}\n`);
+    process.exit(EXIT_GONE);
+  }
+  process.stderr.write(`mailbox: ${flags.key} did not arrive within ${flags.timeout}s\n`);
+  process.exit(EXIT_TIMEOUT);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

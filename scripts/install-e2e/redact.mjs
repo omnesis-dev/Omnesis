@@ -33,10 +33,10 @@ const RULES = [
     "$1***$2",
   ],
   [/\b(OMNESIS_TOKEN|OMNESIS_ADMIN_TOKEN|TS_AUTHKEY|TS_OAUTH_SECRET)=\S+/g, "$1=***"],
-  // Product tokens: omn_<kind>_<secret>.
-  [/\bomn_[a-z0-9]+_[A-Za-z0-9_-]{8,}/g, "omn_***"],
-  // Keyring recovery codes: base32 in dash-separated groups of four.
-  [/\b[A-Z2-7]{4}(?:-[A-Z2-7]{1,4}){5,}\b/g, "<recovery-code>"],
+  // Product tokens: omn_<secret>, or omn_<kind>_<secret>.
+  [/\bomn_(?:[a-z]+_)?[A-Za-z0-9_-]{16,}/g, "omn_***"],
+  // Keyring recovery codes: Crockford base32 in dash-separated groups of four.
+  [/\b[0-9A-Z]{4}(?:-[0-9A-Z]{1,4}){5,}\b/g, "<recovery-code>"],
   // Pairing codes: ten upper-case hex characters, alone. At least one letter,
   // so a ten-digit number (a Unix timestamp) survives; an all-digit code is
   // still masked through the exact values the run registers.
@@ -44,6 +44,8 @@ const RULES = [
   [/(--code(?:=|\s+))\S+/g, "$1<pairing-code>"],
   // The tailnet: its DNS suffix, IPv4 CGNAT range and IPv6 ULA prefix.
   [/\b([a-z0-9-]+)\.[a-z0-9-]+\.ts\.net\b/gi, "$1.<tailnet>.ts.net"],
+  // The suffix alone (the one above leaves "<tailnet>" in its place).
+  [/(?<![.\w<-])[a-z0-9-]+\.ts\.net\b/gi, "<tailnet>.ts.net"],
   [/\b100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}\b/g, "<tailnet-ip>"],
   [/\bfd7a:115c:a1e0(?::[0-9a-f]{0,4}){1,6}(?:\/\d+)?/gi, "<tailnet-ip6>"],
 ];

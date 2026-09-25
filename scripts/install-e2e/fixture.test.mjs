@@ -92,6 +92,9 @@ describe("pure helpers", () => {
     );
     expect(rewriteManifestVersion(text, "2.0.0", "2.0.1")).toBeNull();
     expect(rewriteManifestVersion("not json", "1.0.0", "1.0.1")).toBeNull();
+    // A nested key spelled the same way comes first: no rewrite rather than the wrong one.
+    const nested = '{\n  "engines": { "version": "1.0.0" },\n  "version": "1.0.0"\n}\n';
+    expect(rewriteManifestVersion(nested, "1.0.0", "1.0.1")).toBeNull();
   });
 
   it("puts the exit after the licence header and before the imports", () => {
@@ -125,6 +128,15 @@ describe("init", () => {
     const source = sourceRepo();
     const info = init({ source, out: tempDir(), keepReleases: true });
     expect(git(info.remote, "tag", "-l")).toBe("v1.2.2");
+    expect(info.startRelease).toBe("v1.2.2");
+  });
+
+  it("starts an upgrade from an older release when the candidate is itself the newest one", () => {
+    const source = sourceRepo();
+    git(source, "tag", "v1.2.3");
+    const info = init({ source, out: tempDir(), keepReleases: true });
+    expect(info.latestRelease).toBe("v1.2.3");
+    expect(info.startRelease).toBe("v1.2.2");
   });
 });
 

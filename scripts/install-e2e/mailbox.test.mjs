@@ -24,10 +24,26 @@ describe("mailbox", () => {
     expect(await get(base, "join")).toBe("https://gateway.example.invalid:7600");
   });
 
-  it("overwrites a key", async () => {
+  it("lets the phase marker move along", async () => {
     await put(base, "phase", "installed");
     await put(base, "phase", "updated");
     expect(await get(base, "phase")).toBe("updated");
+  });
+
+  it("keeps every other key to its first value, accepting a repeat of it", async () => {
+    await put(base, "code", "3FA9C0B21D");
+    await put(base, "code", "3FA9C0B21D");
+    await expect(put(base, "code", "0000000000")).rejects.toThrow(
+      /already holds a different value/,
+    );
+    expect(await get(base, "code")).toBe("3FA9C0B21D");
+  });
+
+  it("refuses a value carrying control characters", async () => {
+    await expect(put(base, "collector-installed", "laptop\n::stop-commands::x")).rejects.toThrow(
+      /HTTP 400/,
+    );
+    expect(await get(base, "collector-installed")).toBeNull();
   });
 
   it("refuses keys outside the allowed shape", async () => {
