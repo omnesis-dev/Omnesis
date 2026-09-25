@@ -1,5 +1,14 @@
 # @omnesis/provider-granola-synth
 
+## 0.5.13
+
+### Patch Changes
+
+- @omnesis/providers-synth-common@0.5.13
+- @omnesis/provider-granola@0.5.13
+- @omnesis/source-sdk@0.5.13
+- @omnesis/types@0.5.13
+
 ## 0.5.12
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # @omnesis/config
 
+## 0.5.13
+
+### Patch Changes
+
+- @omnesis/types@0.5.13
+
 ## 0.5.12
 
 ### Patch Changes

@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "omnesis",
   "displayName": "Omnesis",
-  "version": "0.5.12",
+  "version": "0.5.13",
   "description": "OAuth-protected Answer, Direct, and Notes access to the user's Omnesis knowledge base, limited by the connection's access level.",
   "author": {
     "name": "Adrien Conrath"

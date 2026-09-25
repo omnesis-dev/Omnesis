@@ -1,5 +1,14 @@
 # @omnesis/provider-things-synth
 
+## 0.5.13
+
+### Patch Changes
+
+- @omnesis/providers-synth-common@0.5.13
+- @omnesis/provider-things@0.5.13
+- @omnesis/source-sdk@0.5.13
+- @omnesis/types@0.5.13
+
 ## 0.5.12
 
 ### Patch Changes

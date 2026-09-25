@@ -1,5 +1,23 @@
 # omnesis
 
+## 0.5.13
+
+### Patch Changes
+
+- 7a4a80c: Agent plugins install cleanly across clients. Codex signs in with its default client registration: the gateway accepts the port a native client's loopback redirect is assigned at sign-in for clients identified by a metadata document too, as RFC 9700 allows, so `codex mcp add` alone connects and no `--oauth-client-registration dcr` or separate `codex mcp login` step is needed. The guidance plugin in `plugins/omnesis` uses the portable agent-plugins.org 1.0 format and is listed for Codex, GitHub Copilot CLI and VS Code, which no longer pick up the Claude plugin whose URL only Claude Code can fill in. Its Codex marketplace is now named `omnesis`: remove an existing `omnesis-openai` marketplace with `codex plugin marketplace remove omnesis-openai`, then add the repository again and install `omnesis@omnesis`. The Claude Code plugin gains a setup skill and a README, and takes its URL with `--config` when installed from a terminal. The portal's Connect an agent dialog lists the command or install link for Claude Code, Codex, Gemini CLI, GitHub Copilot CLI, VS Code and Cursor with the gateway's address filled in. Plugins no longer ship their test files.
+- 89724c2: `omnesis update` now restarts OpenClaw and Hermes when their command is installed outside the PATH the update runs with — as it is for a fleet update started from a background service or an update run over SSH. It looks for the harness where its installer puts it (npm's global prefix, `~/.local/bin`, Homebrew, `/usr/local`) the same way the harness plugin's own self-update does.
+- 6c788ca: Running the install command again on a machine it already set up updates that install: the installer uses the checkout the earlier install recorded, lets it fetch from its origin again, and runs the machine's own `omnesis update`, which backs up, rebuilds, refreshes service definitions, restarts and rolls back as usual. Certificate, keyring, embedding model and pairing are left alone, so a collector no longer asks for a new pairing code. `--reconfigure`, `--collector` or `--client-only` on a machine with another role, or a first install that never registered its services, runs the full install, which now restarts the services the machine already had so a rewritten service definition takes effect.
+  - @omnesis/agent-integration@0.5.13
+  - @omnesis/cli-shared@0.5.13
+  - @omnesis/collector@0.5.13
+  - @omnesis/config@0.5.13
+  - @omnesis/core@0.5.13
+  - @omnesis/eval@0.5.13
+  - @omnesis/gateway@0.5.13
+  - @omnesis/gateway-client@0.5.13
+  - @omnesis/source-sdk@0.5.13
+  - @omnesis/types@0.5.13
+
 ## 0.5.12
 
 ### Patch Changes

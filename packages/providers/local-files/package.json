@@ -12,5 +12,5 @@
   "main": "src/index.ts",
   "name": "@omnesis/provider-local-files",
   "type": "module",
-  "version": "0.5.12"
+  "version": "0.5.13"
 }

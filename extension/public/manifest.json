@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "minimum_chrome_version": "130",
   "name": "Omnesis Browser Capture",
-  "version": "0.5.12",
+  "version": "0.5.13",
   "description": "Pairs to your Omnesis gateway and captures the web pages you read into your private index.",
   "incognito": "not_allowed",
   "permissions": ["storage", "unlimitedStorage", "alarms", "scripting"],

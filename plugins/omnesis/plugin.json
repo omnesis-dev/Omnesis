@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "omnesis",
-  "version": "0.5.12",
+  "version": "0.5.13",
   "description": "Use a private Omnesis gateway from your agent: privacy-reviewed Answer, raw read-only Direct, and Notes capture, limited by the connection's access level.",
   "author": {
     "name": "Adrien Conrath",
