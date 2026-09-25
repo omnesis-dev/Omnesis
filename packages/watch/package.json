@@ -13,7 +13,7 @@
     "@duckdb/node-api": "^1.5.0-r.1",
     "@omnesis/types": "*",
     "better-sqlite3": "^13.0.3",
-    "zod": "^4.5.4"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@omnesis/source-sdk": "*"

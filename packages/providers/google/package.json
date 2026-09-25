@@ -9,7 +9,7 @@
     "@omnesis/source-sdk": "*",
     "@omnesis/types": "*",
     "googleapis": "^173.0.0",
-    "libphonenumber-js": "^1.13.12"
+    "libphonenumber-js": "^1.13.13"
   },
   "type": "module",
   "files": [
