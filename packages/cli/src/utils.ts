@@ -26,6 +26,7 @@ import {
   DEFAULT_CONFIG_DIR,
   localGatewayRequestUrl,
   resolveSourcePatterns,
+  resolvesToLoopback,
   resolveToken,
 } from "@omnesis/core";
 import { sourceTypeOf } from "@omnesis/types";
@@ -72,7 +73,8 @@ export const GATEWAY_URL = process.env.OMNESIS_GATEWAY_URL ?? "https://localhost
  * own machine it may name a host that does not resolve here (`omnesis.local`
  * on a Linux server, or on macOS where node is denied local network access).
  * When a live gateway on this host holds the config directory, requests go
- * over loopback on the same port instead.
+ * over loopback on the same port instead — by a `localhost` URL, or, when its
+ * certificate names only the recorded host, by resolving that host to loopback.
  */
 export const GATEWAY_REQUEST_URL = localGatewayRequestUrl(
   GATEWAY_URL,
@@ -80,13 +82,12 @@ export const GATEWAY_REQUEST_URL = localGatewayRequestUrl(
 );
 
 /**
- * Whether a gateway URL names this machine. Only then do local files — the
+ * Whether a gateway URL reaches this machine. Only then do local files — the
  * gateway lock, `omnesis.json` — describe the gateway that URL reaches.
  */
 export function targetsLocalGateway(url: string = GATEWAY_REQUEST_URL): boolean {
   try {
-    const host = new URL(url).hostname;
-    return host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host === "::1";
+    return resolvesToLoopback(new URL(url).hostname);
   } catch {
     return false;
   }
