@@ -307,7 +307,7 @@ describe("website docs", () => {
       textContent: text,
       querySelector: () => null,
     });
-    const card = (lines, pre) => {
+    const card = (lines, pre, copyLabel = null) => {
       const bar = { ...stub(), querySelector: () => null, appendChild: (b) => (bar.button = b) };
       const body = {
         children: lines,
@@ -316,6 +316,7 @@ describe("website docs", () => {
       };
       return {
         bar,
+        getAttribute: (name) => (name === "data-copy-label" ? copyLabel : null),
         querySelector: (selector) =>
           selector === ".term-bar" ? bar : selector === ".term-body" ? body : null,
       };
@@ -332,10 +333,21 @@ describe("website docs", () => {
       [dimmed("2 results in 41ms")],
       '\n{ "dataRetention": { "maxAge": "2y" } }\n',
     );
+    const guidedMarkup = html["install.html"].match(
+      /<div class="term guided-install-terminal" data-copy-label="Copy prompt">[\s\S]*?<pre class="wrap">([\s\S]*?)<\/pre\s*>/,
+    );
+    expect(guidedMarkup, "the authored prompt is a wrapping terminal input").toBeTruthy();
+    const guidedPrompt = guidedMarkup[1].replace(/^\n/, "").replace(/\s+$/, "");
+    const guided = card([], guidedMarkup[1], "Copy prompt");
     const prose = card([], null);
     const copied = [];
     const button = () => {
-      const b = { ...stub(), addEventListener: (_, handler) => (b.click = handler) };
+      const b = {
+        ...stub(),
+        attributes: {},
+        setAttribute: (name, value) => (b.attributes[name] = value),
+        addEventListener: (_, handler) => (b.click = handler),
+      };
       return b;
     };
 
@@ -344,7 +356,8 @@ describe("website docs", () => {
         body: stub(),
         getElementById: () => stub(),
         querySelector: () => stub(),
-        querySelectorAll: (selector) => (selector === ".term" ? [commands, payload, prose] : []),
+        querySelectorAll: (selector) =>
+          selector === ".term" ? [commands, payload, guided, prose] : [],
         createElement: button,
         addEventListener: noop,
       },
@@ -361,6 +374,8 @@ describe("website docs", () => {
     expect(prose.bar.button, "a card with nothing to paste gets no button").toBeUndefined();
     commands.bar.button.click();
     payload.bar.button.click();
+    guided.bar.button.click();
+    expect(guided.bar.button.attributes["aria-label"]).toBe("Copy prompt");
     expect(copied).toEqual([
       // Commands win over the output beside them; the comment that marks the
       // second command as an alternative comes along; the wrap is collapsed.
@@ -368,7 +383,29 @@ describe("website docs", () => {
       // A dimmed line that is not a comment is printed output, so this card
       // shows no command at all and falls back to its <pre>.
       '{ "dataRetention": { "maxAge": "2y" } }',
+      guidedPrompt,
     ]);
+
+    const fallbackCopies = [];
+    const fallbackCard = card([], guidedMarkup[1], "Copy prompt");
+    const input = { ...stub(), value: "", select: noop, remove: noop };
+    runInNewContext(sharedChromeScript, {
+      document: {
+        body: stub(),
+        getElementById: () => stub(),
+        querySelector: () => stub(),
+        querySelectorAll: (selector) => (selector === ".term" ? [fallbackCard] : []),
+        createElement: (tag) => (tag === "textarea" ? input : button()),
+        execCommand: (command) => (fallbackCopies.push([command, input.value]), true),
+        addEventListener: noop,
+      },
+      window: { addEventListener: noop, location: { pathname: "/docs/install" }, scrollY: 0 },
+      navigator: {},
+      setTimeout: noop,
+      clearTimeout: noop,
+    });
+    fallbackCard.bar.button.click();
+    expect(fallbackCopies).toEqual([["copy", guidedPrompt]]);
   });
 
   it("styles every class the copy button renders, and still has a wrapped command to collapse", () => {
