@@ -14,6 +14,18 @@ plugins {
     alias(libs.plugins.roborazzi) apply false
 }
 
+// ── One time zone and locale for every JVM test ─────────────────────────────
+// Screenshots render dates and times through the JVM defaults, so a golden
+// recorded on one machine would drift on a machine in another zone. Every unit
+// test JVM runs in the zone and locale the committed goldens were recorded in.
+subprojects {
+    tasks.withType<Test>().configureEach {
+        systemProperty("user.timezone", "Europe/London")
+        systemProperty("user.language", "en")
+        systemProperty("user.country", "US")
+    }
+}
+
 // ── Roborazzi zero-capture guard ─────────────────────────────────────────────
 // A Roborazzi record/verify run that captured ZERO images is a silent no-op: the
 // committed goldens under src/test/roborazzi/ are still present, so neither the unit
