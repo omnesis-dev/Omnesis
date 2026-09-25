@@ -94,18 +94,20 @@
       '<li><a href="/vision"' +
       (path === "/vision" || path === "/vision.html" ? ' aria-current="page"' : "") +
       ">Vision</a></li>" +
-      (docsPage ? '<li><a href="/docs/" aria-current="page">Docs</a></li>' : "");
+      '<li><a href="/docs/"' +
+      (docsPage ? ' aria-current="page"' : "") +
+      ">Docs</a></li>";
   }
 
   var footerLinks = document.querySelector(".site-footer .footer-links");
   if (footerLinks) {
     footerLinks.innerHTML =
-      (docsPage ? '<a href="/docs/">Docs</a>' : "") +
+      '<a href="/docs/">Docs</a>' +
       '<a href="/privacy">Privacy</a>' +
       '<a class="footer-mail" href="mailto:contact@omnesis.dev" aria-label="Email Omnesis support">' +
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>' +
       "contact@omnesis.dev</a>" +
-      '<a class="footer-gh" href="#" data-oss-open>' +
+      '<a class="footer-gh" href="https://github.com/omnesis-dev/Omnesis">' +
       '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>GitHub</a>' +
       '<a class="footer-social footer-x" href="https://x.com/Omnesisdev" target="_blank" rel="noopener noreferrer" aria-label="Omnesis on X"><span class="footer-social-icon" aria-hidden="true"></span>@Omnesisdev</a>' +
       '<a class="footer-social footer-discord" href="https://discord.gg/4Y8pQHrVv" target="_blank" rel="noopener noreferrer" aria-label="Join Omnesis on Discord"><span class="footer-social-icon" aria-hidden="true"></span>Discord</a>';
@@ -121,8 +123,7 @@
   if (navRight && !navRight.querySelector(".nav-icon-btn")) {
     var github = document.createElement("a");
     github.className = "nav-icon-btn";
-    github.href = "#";
-    github.setAttribute("data-oss-open", "");
+    github.href = "https://github.com/omnesis-dev/Omnesis";
     github.setAttribute("aria-label", "Omnesis on GitHub");
     github.title = "Omnesis on GitHub";
     github.innerHTML =
@@ -184,81 +185,6 @@
       });
     });
   }
-})();
-
-/* "Getting ready for open source" modal. The repo is not public yet, so the
-   GitHub buttons (marked data-oss-open) open this instead of linking out. Defined
-   once here and injected into every docs page that loads this script. */
-(function () {
-  if (!document.body) return;
-  var MODAL_HTML =
-    '<div id="oss-modal" class="oss-modal" role="dialog" aria-modal="true" aria-labelledby="oss-modal-title" hidden>' +
-    '<div class="oss-modal__backdrop" data-oss-close></div>' +
-    '<div class="oss-modal__card">' +
-    '<button class="oss-modal__close" type="button" aria-label="Close" data-oss-close>&times;</button>' +
-    '<h2 id="oss-modal-title" class="oss-modal__title">Getting ready for open source</h2>' +
-    "<p class=\"oss-modal__body\">We're putting the finishing touches on Omnesis. Leave your email and we'll tell you the moment the repo goes public &mdash; plus major releases and new sources.</p>" +
-    '<form class="oss-modal__form" id="oss-form" action="https://app.kit.com/forms/9517046/subscriptions" method="post">' +
-    '<input class="oss-modal__input" type="email" name="email_address" placeholder="you@example.com" required aria-label="Email address" />' +
-    '<button class="oss-modal__btn" type="submit">Notify me</button>' +
-    "</form>" +
-    '<p class="oss-modal__note">A few emails a year, no spam.</p>' +
-    '<div class="oss-modal__ok" id="oss-ok">&#10003; You\'re on the list &mdash; we\'ll email you the moment Omnesis is public.</div>' +
-    "</div></div>";
-  document.body.insertAdjacentHTML("beforeend", MODAL_HTML);
-
-  var modal = document.getElementById("oss-modal");
-  var input = modal.querySelector('input[name="email_address"]');
-  var lastFocus = null;
-  function open(e) {
-    if (e) e.preventDefault();
-    lastFocus = document.activeElement;
-    modal.hidden = false;
-    document.body.style.overflow = "hidden";
-    setTimeout(function () {
-      if (input) input.focus();
-    }, 40);
-  }
-  function close() {
-    modal.hidden = true;
-    document.body.style.overflow = "";
-    if (lastFocus && lastFocus.focus) lastFocus.focus();
-  }
-  document.querySelectorAll("[data-oss-open]").forEach(function (a) {
-    a.addEventListener("click", open);
-  });
-  modal.querySelectorAll("[data-oss-close]").forEach(function (el) {
-    el.addEventListener("click", close);
-  });
-  document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && !modal.hidden) close();
-  });
-
-  // Kit (ConvertKit) subscribe — fire-and-forget (no CORS headers), falling back
-  // to a native submit if the request rejects. Same approach as the landing page.
-  var form = document.getElementById("oss-form");
-  var ok = document.getElementById("oss-ok");
-  var note = modal.querySelector(".oss-modal__note");
-  form.addEventListener("submit", function (e) {
-    e.preventDefault();
-    var email = input && input.value.trim();
-    if (!email) return;
-    function done() {
-      form.style.display = "none";
-      if (note) note.style.display = "none";
-      ok.style.display = "block";
-    }
-    fetch(form.action, {
-      method: "POST",
-      mode: "no-cors",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ email_address: email }),
-    })
-      .then(done)
-      .catch(function () {
-        form.submit();
-      });
-  });
 })();
 
 /* Copy button on every terminal card. What lands on the clipboard is what the

@@ -1,3 +1,5 @@
 # https://omnesis.dev
 User-agent: *
-Disallow: /docs
+Allow: /
+
+Sitemap: https://omnesis.dev/sitemap.xml

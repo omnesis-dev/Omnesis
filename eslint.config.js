@@ -59,10 +59,6 @@ export default tseslint.config(
       // browser globals, no build graph.
       "website/**",
 
-      // Cloudflare Worker for the pre-launch access gate — Workers-runtime
-      // globals, not part of the TypeScript build graph.
-      "worker.js",
-
       // Publish staging output (scripts/release/stage-packages.mjs)
       "release/**",
 
