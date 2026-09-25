@@ -1,9 +1,3 @@
-> [!CAUTION]
->
-> ## ACTIVE DEVELOPMENT — BACK UP BEFORE UPGRADING
->
-> **Omnesis is in early alpha testing.** Updates can include forward-only migrations or require a re-index. Back up your data before upgrading (`omnesis backup`) and read the release notes for operator actions.
-
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/brand/omnesis-mark-white.svg">
