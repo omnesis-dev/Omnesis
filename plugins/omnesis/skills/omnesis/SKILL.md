@@ -5,7 +5,9 @@ description: Ask the sandboxed Omnesis agent about the user's private personal k
 
 # Omnesis
 
-Omnesis is the user's private personal knowledge base. Its own sandboxed agent can search and synthesize that data. When the connection's access level includes Answer, it exposes `ask_omnesis` and `get_answer_status`. Candidate answers pass through the user's Omnesis privacy policy before this ChatGPT or Codex session receives them.
+Omnesis is the user's private personal knowledge base. Its own sandboxed agent can search and synthesize that data. When the connection's access level includes Answer, it exposes `ask_omnesis` and `get_answer_status`. Candidate answers pass through the user's Omnesis privacy policy before this agent session receives them.
+
+The live MCP tool list is authoritative. A tool named here that the server does not list is not available on this gateway version or connection; do not call it or assume it exists.
 
 ## Corpus scope
 

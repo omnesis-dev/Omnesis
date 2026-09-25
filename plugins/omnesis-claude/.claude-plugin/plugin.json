@@ -10,13 +10,13 @@
   "homepage": "https://omnesis.dev",
   "repository": "https://github.com/omnesis-dev/Omnesis",
   "license": "AGPL-3.0-or-later",
-  "mcpServers": "./.mcp.json",
-  "skills": "./skills/",
+  "privacyPolicyUrl": "https://omnesis.dev/privacy",
+  "supportUrl": "https://omnesis.dev/docs#help",
   "userConfig": {
     "omnesis_mcp_url": {
       "type": "string",
       "title": "MCP URL",
-      "description": "Full externally reachable HTTPS URL of your Omnesis MCP resource, ending in /mcp.",
+      "description": "HTTPS URL of your Omnesis MCP resource that this machine can reach, ending in /mcp.",
       "required": true
     }
   }

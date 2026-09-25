@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const PLUGIN_MANIFESTS = [
-  "plugins/omnesis/.codex-plugin/plugin.json",
+  "plugins/omnesis/plugin.json",
   "plugins/omnesis-claude/.claude-plugin/plugin.json",
   "extension/public/manifest.json",
   "integrations/openclaw-omnesis-plugin/package.json",

@@ -212,18 +212,32 @@ describe("MCP OAuth access routes", () => {
     expect(refused.status).toBe(400);
 
     const loopbackClientId = "https://client.example.com/oauth/native.json";
-    resolve.mockResolvedValueOnce({
+    // A native client's metadata document registers its loopback listener
+    // without the port the operating system assigns at sign-in (RFC 9700 §2.1).
+    resolve.mockResolvedValue({
       clientId: loopbackClientId,
       clientName: "Example native client",
-      redirectUris: ["http://127.0.0.1:48123/callback"],
+      redirectUris: ["http://127.0.0.1/callback"],
       grantTypes: ["authorization_code", "refresh_token"],
       responseTypes: ["code"],
       tokenEndpointAuthMethod: "none" as const,
       clientUri: null,
     });
-    const changedPort = authorizationUrl(loopbackClientId, "state-cimd-port");
-    changedPort.searchParams.set("redirect_uri", "http://127.0.0.1:48124/callback");
-    expect((await app.request(changedPort)).status).toBe(400);
+    const assignedPort = authorizationUrl(loopbackClientId, "state-cimd-port");
+    assignedPort.searchParams.set("redirect_uri", "http://127.0.0.1:48124/callback");
+    expect((await app.request(assignedPort)).status).toBe(303);
+
+    for (const redirect of [
+      "http://localhost:48124/callback",
+      "http://127.0.0.1:48124/other",
+      "https://127.0.0.1:48124/callback",
+    ]) {
+      const mismatched = authorizationUrl(loopbackClientId, "state-cimd-mismatch");
+      mismatched.searchParams.set("redirect_uri", redirect);
+      const response = await app.request(mismatched);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: "invalid_request" });
+    }
   });
 
   test("publishes standards-derived discovery for a path-prefixed public URL", async () => {

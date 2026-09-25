@@ -77,14 +77,8 @@ export class AccessService {
   isRegisteredRedirect(clientId: string, redirectUri: string): boolean {
     const client = getOAuthClient(this.reader, clientId);
     if (!client) return false;
-    // URL client identifiers were fetched as metadata documents. Their
-    // redirect registration follows the CIMD simple-string requirement;
-    // only server-issued native-client registrations receive RFC 8252's
-    // variable loopback-port accommodation.
     return client.redirectUris.some((registered) =>
-      /^https:/iu.test(clientId)
-        ? registered === redirectUri
-        : registeredRedirectMatches(registered, redirectUri),
+      registeredRedirectMatches(registered, redirectUri),
     );
   }
 

@@ -14,7 +14,6 @@
     "extension/src/**/*.ts",
     "packages/**/*.ts",
     "packages/**/*.tsx",
-    "plugins/**/*.ts",
     "skills/**/*.ts",
     "scripts/**/*.ts",
     "bench/**/*.ts",

@@ -109,6 +109,24 @@ describe("Nx change selection", () => {
     ]);
   });
 
+  test("plugin marketplace edits run the workspace plugin checks", () => {
+    for (const file of [
+      ".claude-plugin/marketplace.json",
+      ".cursor-plugin/marketplace.json",
+      ".agents/plugins/marketplace.json",
+      ".github/plugin/marketplace.json",
+    ]) {
+      const plan = buildFixturePlan([file]);
+      expect(plan.fallback).toBeNull();
+      expect(plan.tasks).toContain("omnesis-workspace:nx-unit");
+    }
+    const withPortal = buildFixturePlan([
+      "packages/gateway/portal/js/views/access/connect-dialog.js",
+      ".agents/plugins/marketplace.json",
+    ]);
+    expect(withPortal.tasks).toContain("omnesis-workspace:nx-unit");
+  });
+
   test("version-only native release inputs request metadata validation without device tests", () => {
     const plan = buildFixturePlan([
       "android/app/build.gradle.kts",

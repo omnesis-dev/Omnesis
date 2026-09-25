@@ -9,7 +9,7 @@ import { checkProductVersion } from "./check-product-version.mjs";
 
 const jsonPlugins = [
   "plugins/omnesis-claude/.claude-plugin/plugin.json",
-  "plugins/omnesis/.codex-plugin/plugin.json",
+  "plugins/omnesis/plugin.json",
   "extension/public/manifest.json",
   "integrations/openclaw-omnesis-plugin/package.json",
 ];

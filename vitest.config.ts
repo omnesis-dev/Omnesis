@@ -26,7 +26,6 @@ export default defineConfig({
       "extension/src/**/*.test.ts",
       "extension/scripts/**/*.test.mjs",
       "packages/**/*.test.ts",
-      "plugins/**/*.test.ts",
       "skills/**/*.test.ts",
       "scripts/release/**/*.test.mjs",
       "scripts/nx/**/*.test.mjs",

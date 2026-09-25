@@ -17,6 +17,7 @@ import { CopyIconButton } from "../../components/copy-button.js";
 import { Modal } from "../../components/modal.js";
 import { navigate } from "../../lib/router.js";
 import { authorizationStatusNotice } from "./authorization.js";
+import { clientSetups } from "./client-setup.js";
 import { errorMessage } from "./shared.js";
 
 /**
@@ -32,6 +33,31 @@ function unusableCodeReason(request, now = Date.now()) {
     return "That code expired. The client can request a new one.";
   }
   return authorizationStatusNotice(request.status);
+}
+
+function ClientSetupList({ resource }) {
+  return html`<details class="access-client-setup">
+    <summary>Commands and install links for common clients</summary>
+    <ul>
+      ${clientSetups(resource).map(
+        (setup) => html`<li key=${setup.id} data-client=${setup.id}>
+          <span class="access-client-name">${setup.client}</span>
+          ${setup.kind === "link" &&
+          html`<a class="btn-secondary access-client-link" href=${setup.value}>Install in ${setup.client}</a>`}
+          ${setup.kind === "command" &&
+          html`<div class="access-mcp-resource">
+                <code title=${setup.value}>${setup.value}</code>
+                <${CopyIconButton}
+                  text=${setup.value}
+                  class="access-copy-button"
+                  title=${`Copy command for ${setup.client}`}
+                />
+              </div>`}
+          <p>${setup.note}</p>
+        </li>`,
+      )}
+    </ul>
+  </details>`;
 }
 
 function ConnectStep({ number, title, caption, children }) {
@@ -104,6 +130,7 @@ export function ConnectAgentDialog({ oauth, onClose }) {
             title="Copy MCP resource"
           />
         </div>
+        <${ClientSetupList} resource=${oauth.resource} />
       <//>
       <${ConnectStep}
         number="2"
