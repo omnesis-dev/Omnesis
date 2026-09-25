@@ -277,9 +277,9 @@
                   account the machine's Tailscale operator (<code
                     >sudo tailscale set --operator</code
                   >), because only root or the operator can get certificates and the gateway renews
-                  as your account. On macOS, Omnesis can use the app's bundled CLI even if
-                  <code>tailscale</code> is not on your PATH. Omnesis never joins a network or
-                  changes tailnet settings.
+                  as your account. On macOS, Omnesis can use Homebrew's <code>tailscale</code> or
+                  the app's bundled CLI even when they are not on your PATH or the gateway
+                  service's. Omnesis never joins a network or changes tailnet settings.
                 </td>
               </tr>
               <tr>

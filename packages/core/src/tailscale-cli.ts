@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { homedir } from "node:os";
 
 export interface TailscaleCliCandidate {
@@ -9,13 +9,27 @@ export interface TailscaleCliCandidate {
   bundledApp: boolean;
 }
 
-/** Prefer a CLI on PATH, then the CLI bundled with either macOS app variant. */
+/**
+ * Homebrew's `tailscale`, by absolute path: a launchd service's PATH is not a
+ * login shell's, and on Apple Silicon it lacks `/opt/homebrew/bin`.
+ */
+const HOMEBREW_TAILSCALE = ["/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale"];
+
+/**
+ * Prefer a CLI on PATH, then Homebrew's CLI where PATH does not reach it, then
+ * the CLI bundled with either macOS app variant.
+ */
 export function tailscaleCliCandidates(
   platform: NodeJS.Platform = process.platform,
   homeDir: string | undefined = homedir(),
+  pathEnv: string = process.env.PATH ?? "",
 ): TailscaleCliCandidate[] {
   const candidates: TailscaleCliCandidate[] = [{ file: "tailscale", bundledApp: false }];
   if (platform === "darwin") {
+    const onPath = new Set(pathEnv.split(delimiter));
+    for (const file of HOMEBREW_TAILSCALE) {
+      if (!onPath.has(dirname(file))) candidates.push({ file, bundledApp: false });
+    }
     candidates.push({
       file: "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
       bundledApp: true,
