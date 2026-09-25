@@ -84,12 +84,13 @@ export function isTlsCertError(err: unknown, depth = 0): boolean {
 export function fetchPeerCert(
   host: string,
   port: number,
+  timeoutMs = 10_000,
 ): Promise<{ pem: string; fingerprint: string }> {
   return new Promise((resolve, reject) => {
     // TOFU must read the untrusted peer certificate before the operator accepts its fingerprint.
     const socket = tlsConnect(
       // nosemgrep: problem-based-packs.insecure-transport.js-node.bypass-tls-verification.bypass-tls-verification
-      { host, port, rejectUnauthorized: false, timeout: 10_000 },
+      { host, port, rejectUnauthorized: false, timeout: timeoutMs },
       () => {
         const cert = socket.getPeerCertificate();
         socket.destroy();
@@ -110,7 +111,16 @@ export function fetchPeerCert(
     socket.on("error", reject);
     socket.on("timeout", () => {
       socket.destroy();
-      reject(new Error(`TLS probe timed out connecting to ${host}:${port}`));
+      // ETIMEDOUT, as the kernel would have said: a dropped SYN (a cloud
+      // security group, a DROP-target firewall) or a relay whose upstream
+      // never answers ends here, and without a connection code the join's
+      // "cannot reach the gateway" branch missed it — the operator got a stack
+      // trace and was sent to mint a fresh code for a port that was shut.
+      reject(
+        Object.assign(new Error(`TLS probe timed out connecting to ${host}:${port}`), {
+          code: "ETIMEDOUT",
+        }),
+      );
     });
   });
 }

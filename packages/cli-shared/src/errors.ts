@@ -70,7 +70,8 @@ export class CliError extends Error {
  * `Error: connect ECONNREFUSED ...` — match either layer so future
  * undici/Node refactors don't silently break the heuristic.
  */
-const CONNECTION_CODES = /ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|ETIMEDOUT|ECONNRESET|EPIPE/;
+const CONNECTION_CODES =
+  /ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT|ECONNRESET|EPIPE/;
 
 /**
  * A connection that dies *during* the TLS handshake — what a blocked port
