@@ -178,7 +178,8 @@
                 <td><code>--docker</code></td>
                 <td>Docker with the Compose plugin</td>
                 <td>
-                  You want containers and no Node on the host. See <a href="#docker">Docker</a>.
+                  You want containers and no Node on the host. Release images are not published yet;
+                  see <a href="#docker">Docker</a>.
                 </td>
               </tr>
             </tbody>
@@ -724,6 +725,15 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
         </p>
 
         <h2 id="docker">Docker</h2>
+        <div class="callout warn">
+          <p>
+            The gateway and collector images are not published yet, so
+            <code>--docker</code> cannot pull them and the install stops. Until they are, use the
+            default source install. To try the Docker stack anyway, run the installer from a
+            checkout of this repository with <code>sh scripts/install.sh --docker --build</code>,
+            which builds the images on the machine.
+          </p>
+        </div>
         <p>
           The Docker install is the same installer with a flag. The gateway and the collector run as
           containers from published images tagged by release. The host needs Docker with the Compose
