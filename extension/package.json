@@ -23,14 +23,14 @@
     "@omnesis/core": "*",
     "@omnesis/provider-web": "*",
     "@omnesis/types": "*",
-    "defuddle": "^0.19.3",
+    "defuddle": "^0.19.4",
     "turndown": "^7.2.2",
     "turndown-plugin-gfm": "^1.0.2"
   },
   "devDependencies": {
     "@types/turndown": "^5.0.6",
     "esbuild": "^0.28.2",
-    "jszip": "^3.10.1",
+    "jszip": "^3.10.2",
     "linkedom": "^0.18.13",
     "playwright": "^1.60.0",
     "sharp": "^0.35.4"

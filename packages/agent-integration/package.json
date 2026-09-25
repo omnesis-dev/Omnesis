@@ -31,12 +31,12 @@
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0",
     "ws": "^8.21.3",
-    "zod": "^4.5.4"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@omnesis/types": "*",
     "@types/ws": "^8.18.1",
-    "openclaw": "2026.7.35"
+    "openclaw": "2026.9.5"
   },
   "files": [
     "dist",

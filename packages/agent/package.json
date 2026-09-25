@@ -6,10 +6,10 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.122",
+    "@anthropic-ai/sdk": "^0.128",
     "@omnesis/core": "*",
-    "@openai/codex": "0.151.0",
-    "zod": "^4.5.4"
+    "@openai/codex": "0.156.0",
+    "zod": "^4.6.5"
   },
   "files": [
     "dist"
