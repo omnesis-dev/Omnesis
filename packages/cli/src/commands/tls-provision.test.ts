@@ -88,6 +88,7 @@ describe("provisionTls", () => {
       OMNESIS_TLS_CERT: "/tmp/omnesis-test-config/tls/tailscale.crt",
       OMNESIS_TLS_KEY: "/tmp/omnesis-test-config/tls/tailscale.key",
       OMNESIS_GATEWAY_URL: "https://box.tail-scale-example.ts.net:7600",
+      OMNESIS_PAIRING_SYSTEM_TRUST_ORIGIN: "https://box.tail-scale-example.ts.net:7600",
     });
     expect(result.trustedUrl).toBe("https://box.tail-scale-example.ts.net:7600");
     expect(writes).toHaveLength(1);
@@ -217,6 +218,67 @@ describe("provisionTls", () => {
 
     const mac = provisionTls({}, fakeEnv({ ...env, platform: "darwin" }), () => {});
     expect(mac.messages.join("\n")).not.toContain("--operator");
+  });
+
+  describe("tailscaled refusing this account a certificate (Linux)", () => {
+    const denied = () =>
+      new Error("Command failed: tailscale cert\nAccess denied: cert access denied");
+
+    it("takes the Tailscale operator permission once and mints, like the installer", () => {
+      let calls = 0;
+      const take = vi.fn(() => true);
+      const env = fakeEnv({
+        hasTailscale: () => true,
+        tailscaleDnsName: () => "box.example.ts.net",
+        runTailscaleCert: () => {
+          calls += 1;
+          if (calls === 1) throw denied();
+        },
+        takeTailscaleOperator: take,
+      });
+      const result = provisionTls({}, env, () => {});
+      expect(take).toHaveBeenCalledOnce();
+      expect(calls).toBe(2);
+      expect(result.provisioned).toBe(true);
+      expect(result.exitCode).toBe(0);
+      expect(result.messages.join("\n")).toContain("Tailscale operator on this machine only");
+    });
+
+    it("names the fix and fails when the permission cannot be taken", () => {
+      const env = fakeEnv({
+        hasTailscale: () => true,
+        tailscaleDnsName: () => "box.example.ts.net",
+        runTailscaleCert: () => {
+          throw denied();
+        },
+        takeTailscaleOperator: () => false,
+      });
+      const writes: unknown[] = [];
+      const result = provisionTls({}, env, (u) => writes.push(u));
+      expect(result.provisioned).toBe(false);
+      expect(result.exitCode).not.toBe(0);
+      expect(writes).toHaveLength(0);
+      expect(result.messages.join("\n")).toContain("sudo tailscale set --operator=$USER");
+    });
+
+    it("asks for nothing on another failure, or on macOS", () => {
+      const take = vi.fn(() => true);
+      const failing = (error: Error) =>
+        fakeEnv({
+          hasTailscale: () => true,
+          tailscaleDnsName: () => "box.example.ts.net",
+          runTailscaleCert: () => {
+            throw error;
+          },
+          takeTailscaleOperator: take,
+        });
+      expect(provisionTls({}, failing(new Error("HTTPS not enabled")), () => {}).provisioned).toBe(
+        false,
+      );
+      const mac = { ...failing(denied()), platform: "darwin" as const };
+      expect(provisionTls({}, mac, () => {}).provisioned).toBe(false);
+      expect(take).not.toHaveBeenCalled();
+    });
   });
 
   it("Tailscale without a MagicDNS name says what enables one before falling back", () => {
