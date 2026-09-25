@@ -28,6 +28,7 @@ export default defineConfig({
       "packages/**/*.test.ts",
       "skills/**/*.test.ts",
       "scripts/release/**/*.test.mjs",
+      "scripts/install-e2e/**/*.test.mjs",
       "scripts/nx/**/*.test.mjs",
       "scripts/pii-scan.test.mjs",
       "scripts/text-files.test.mjs",

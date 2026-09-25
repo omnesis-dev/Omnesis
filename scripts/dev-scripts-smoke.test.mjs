@@ -2005,7 +2005,17 @@ describe("full-validation workflow topology", () => {
       const workflow = parse(readFileSync(join(workflowDir, filename), "utf8"));
       for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
         if (job.uses) continue;
-        expect(job["runs-on"], `${filename}:${jobName}`).toMatch(hosted);
+        const runsOn = job["runs-on"];
+        // A matrix-chosen runner is checked through every value the matrix offers.
+        const key = /^\$\{\{\s*matrix\.([\w-]+)\s*\}\}$/u.exec(runsOn ?? "")?.[1];
+        const labels = key
+          ? [
+              ...(job.strategy?.matrix?.[key] ?? []),
+              ...(job.strategy?.matrix?.include ?? []).map((entry) => entry[key]),
+            ]
+          : [runsOn];
+        expect(labels.length, `${filename}:${jobName}`).toBeGreaterThan(0);
+        for (const label of labels) expect(label, `${filename}:${jobName}`).toMatch(hosted);
       }
     }
   });
