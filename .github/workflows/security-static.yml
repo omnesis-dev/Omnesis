@@ -39,8 +39,12 @@ jobs:
           curl --fail --silent --show-error --location \
             https://semgrep.dev/c/p/typescript \
             --output "$RUNNER_TEMP/semgrep-typescript.yml"
-          echo "63fbcca1826e787ca43282bf139ccec16745ad6551c87850b9ccee9ca9f98c0b  $RUNNER_TEMP/semgrep-typescript.yml" \
-            | sha256sum --check --strict
+          if ! echo "63fbcca1826e787ca43282bf139ccec16745ad6551c87850b9ccee9ca9f98c0b  $RUNNER_TEMP/semgrep-typescript.yml" \
+            | sha256sum --check --strict; then
+            echo "Served rules ($(wc -c < "$RUNNER_TEMP/semgrep-typescript.yml") bytes) begin:"
+            head -c 600 "$RUNNER_TEMP/semgrep-typescript.yml"
+            exit 1
+          fi
 
       - name: lane [security-static]
         run: |
