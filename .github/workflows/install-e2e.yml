@@ -1,4 +1,7 @@
 name: Install e2e
+# The release gate (scripts/release/install-e2e-gate.mjs) recognizes a
+# dispatch of every lane by "lanes: all" in this name.
+run-name: "Install e2e (${{ github.event_name }}${{ github.event_name == 'workflow_dispatch' && format(', lanes: {0}', inputs.lanes) || '' }})"
 
 # Installs, updates and rolls back Omnesis on real GitHub-hosted machines,
 # under each OS's real service supervisor. See docs/install-e2e.md.
