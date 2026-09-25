@@ -11,7 +11,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 import { execFileSync } from "node:child_process";
-import worker, { isGated, isUnlisted, mobilePrivacyRedirectPath } from "../worker.js";
 
 const WEBSITE = join(dirname(fileURLToPath(import.meta.url)), "..", "website");
 const REPO_ROOT = join(WEBSITE, "..");
@@ -55,13 +54,8 @@ const publicHtml = Object.fromEntries(
 const redirects = readFileSync(join(WEBSITE, "_redirects"), "utf8");
 const idsOf = (f) => new Set([...html[f].matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]));
 const slug = (f) => (f === "index.html" ? "/docs/" : "/docs/" + f.replace(".html", ""));
-const isDocsHref = (href) => {
-  const url = new URL(href, "https://omnesis.dev/");
-  return (
-    url.origin === "https://omnesis.dev" &&
-    (url.pathname === "/docs" || url.pathname.startsWith("/docs/"))
-  );
-};
+const REPO_URL = "https://github.com/omnesis-dev/Omnesis";
+const NAV_LINKS = ["/", "/brain", "/vision", "/docs/"];
 
 // Resolves URLs the way the Cloudflare static-asset host does
 // (html_handling): /docs/install serves docs/install.html, a trailing
@@ -195,24 +189,35 @@ describe("website docs", () => {
     expect(notice).toMatch(/href="mailto:contact@omnesis\.dev"/);
   });
 
-  it("keeps the unlisted documentation out of every public page", () => {
+  it("gives every public page the same nav and a footer with the docs and the repository", () => {
     const links = (fragment) => [...fragment.matchAll(/<a[^>]*href="([^"]+)"/g)].map((m) => m[1]);
     for (const [file, page] of Object.entries(publicHtml)) {
-      const docsLinks = links(page).filter(isDocsHref);
-      expect(docsLinks, file).toEqual([]);
-
       const nav = page.match(/<nav id="nav">[\s\S]*?<\/nav>/)?.[0] ?? "";
-      if (!nav) continue;
+      expect(nav, file).toBeTruthy();
 
       const menu = nav.match(/<ul class="nav-links"(?: id="[^"]+")?>[\s\S]*?<\/ul>/)?.[0] ?? "";
-      expect(links(menu), file).toEqual(["/", "/brain", "/vision"]);
+      expect(links(menu), file).toEqual(NAV_LINKS);
+      expect(nav.match(/<a[^>]*class="nav-logo"[^>]*>/)?.[0], file).toContain('href="/"');
 
       const footer = page.match(/<footer class="site-footer">[\s\S]*?<\/footer>/)?.[0] ?? "";
-      const footerLinks = links(footer);
-      expect(footerLinks).toEqual(
-        expect.arrayContaining(["/privacy", "mailto:contact@omnesis.dev", "#"]),
+      expect(links(footer), file).toEqual(
+        expect.arrayContaining(["/docs/", "/privacy", "mailto:contact@omnesis.dev", REPO_URL]),
       );
+      expect(links(footer), file).toContain(`${REPO_URL}/blob/main/LICENSE`);
     }
+  });
+
+  it("links GitHub buttons to the repository, never to a placeholder", () => {
+    const pages = {
+      ...publicHtml,
+      ...Object.fromEntries(docPages.map((f) => [`docs/${f}`, html[f]])),
+      "docs/docs.js": sharedChromeScript,
+    };
+    for (const [file, page] of Object.entries(pages)) {
+      expect(page, file).not.toMatch(/data-oss-open|oss-modal/);
+      expect(page, file).not.toMatch(/<a[^>]*href="#"/);
+    }
+    expect(existsSync(join(WEBSITE, "oss-modal.js"))).toBe(false);
   });
 
   it("shows the X account and Discord invite in every page footer", () => {
@@ -234,7 +239,7 @@ describe("website docs", () => {
     }
   });
 
-  it("keeps runtime-injected docs chrome within the unlisted subtree", () => {
+  it("renders the same docs chrome at runtime on every page", () => {
     const renderChromeLinks = (pathname) => {
       const navLinks = { id: "primary-navigation", innerHTML: "" };
       const footerLinks = { innerHTML: "" };
@@ -266,18 +271,20 @@ describe("website docs", () => {
         (match) => match[1],
       );
     };
-    const docsLinks = (hrefs) => hrefs.filter(isDocsHref);
-
     for (const [file, page] of Object.entries(publicHtml)) {
       if (!page.includes('src="/docs/docs.js"')) continue;
       const pathname = file === "index.html" ? "/" : `/${file.replace(".html", "")}`;
       const renderedLinks = renderChromeLinks(pathname);
-      expect(docsLinks(renderedLinks), file).toEqual([]);
       expect(renderedLinks, file).toEqual(
-        expect.arrayContaining(["https://x.com/Omnesisdev", "https://discord.gg/4Y8pQHrVv"]),
+        expect.arrayContaining([
+          ...NAV_LINKS,
+          REPO_URL,
+          "https://x.com/Omnesisdev",
+          "https://discord.gg/4Y8pQHrVv",
+        ]),
       );
     }
-    expect(docsLinks(renderChromeLinks("/docs/"))).toEqual(["/docs/", "/docs/"]);
+    expect(renderChromeLinks("/docs/").filter((href) => href === "/docs/")).toHaveLength(2);
   });
 
   it("copies a terminal's commands, never its prompt glyph or its output", () => {
@@ -439,6 +446,27 @@ describe("website docs", () => {
     );
   });
 
+  it("offers the docs' guided prompt and the one-command install in the landing hero", () => {
+    const text = (markup) =>
+      markup
+        .replace(/<[^>]+>/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    const pane = (name) =>
+      landing.match(
+        new RegExp(
+          `id="install-pane-${name}"[\\s\\S]*?<code class="install-text"\\s*>([\\s\\S]*?)</code`,
+        ),
+      )?.[1] ?? "";
+    const guided =
+      html["install.html"].match(
+        /class="term guided-install-terminal"[\s\S]*?<pre class="wrap">([\s\S]*?)<\/pre/,
+      )?.[1] ?? "";
+    expect(text(pane("agent"))).toBe(text(guided));
+    expect(text(pane("manual"))).toBe("curl -fsSL https://omnesis.dev/install.sh | sh");
+    expect(landing).not.toMatch(/<!--[^>]*pre-launch/);
+  });
+
   it("links the general privacy policy, but not the mobile policy, from the landing footer", () => {
     const footer = landing.match(/<footer class="site-footer">[\s\S]*?<\/footer>/)?.[0] ?? "";
     const hrefs = [...footer.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
@@ -469,63 +497,48 @@ describe("website docs", () => {
   });
 });
 
-describe("website access gate", () => {
+describe("website hosting", () => {
   it("keeps npm as the sole root package-manager lockfile", () => {
     expect(existsSync(join(REPO_ROOT, "package-lock.json"))).toBe(true);
     expect(existsSync(join(REPO_ROOT, "pnpm-lock.yaml"))).toBe(false);
   });
 
-  it.each([
-    "/privacy",
-    "/privacy.html",
-    "/mobile-privacy-policy",
-    "/mobile-privacy-policy.html",
-    "/browser-extension-privacy-policy",
-    "/browser-extension-privacy-policy.html",
-  ])("keeps %s public", (path) => {
-    expect(isGated(path)).toBe(false);
+  it("serves the static assets directly, with no Worker in front of them", () => {
+    const wrangler = readFileSync(join(REPO_ROOT, "wrangler.jsonc"), "utf8");
+    expect(wrangler).not.toMatch(/"main"\s*:/);
+    expect(wrangler).not.toMatch(/run_worker_first/);
+    expect(existsSync(join(REPO_ROOT, "worker.js"))).toBe(false);
+    expect(existsSync(join(WEBSITE, "404.html"))).toBe(true);
   });
 
-  it.each(["/install.sh", "/README.md"])("keeps %s behind the pre-launch gate", (path) => {
-    expect(isGated(path)).toBe(true);
+  it("keeps the website's own README out of the published assets", () => {
+    const ignored = readFileSync(join(WEBSITE, ".assetsignore"), "utf8").split("\n");
+    expect(ignored).toContain("README.md");
   });
 
-  it("serves the guided install prompt without authentication", async () => {
-    expect(isGated("/install-prompt.md")).toBe(false);
-    expect(isUnlisted("/install-prompt.md")).toBe(true);
-    const env = { ASSETS: { fetch: async () => new Response("prompt") } };
-    const response = await worker.fetch(new Request("https://omnesis.dev/install-prompt.md"), env);
-    expect(response.status).toBe(200);
-    expect(response.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
+  it("lets crawlers index every page and lists every page in the sitemap", () => {
+    const robots = readFileSync(join(WEBSITE, "robots.txt"), "utf8");
+    expect(robots).not.toMatch(/Disallow:\s*\//);
+    expect(robots).toContain("Sitemap: https://omnesis.dev/sitemap.xml");
+
+    const sitemap = readFileSync(join(WEBSITE, "sitemap.xml"), "utf8");
+    const listed = [...sitemap.matchAll(/<loc>https:\/\/omnesis\.dev([^<]*)<\/loc>/g)].map(
+      (m) => m[1],
+    );
+    const pages = [
+      ...Object.keys(publicHtml)
+        .filter((f) => f !== "404.html")
+        .map((f) => (f === "index.html" ? "/" : `/${f.replace(".html", "")}`)),
+      ...docPages.map(slug),
+    ];
+    expect([...listed].sort()).toEqual([...pages].sort());
+    const indexable = Object.entries(publicHtml).filter(([f]) => f !== "404.html");
+    for (const page of [...indexable.map(([, p]) => p), ...docPages.map((f) => html[f])]) {
+      expect(page).not.toMatch(/<meta[^>]*name="robots"[^>]*noindex/);
+    }
   });
 
-  it.each(["/docs", "/docs/", "/docs/install", "/docs/docs.css"])(
-    "serves %s without a password but out of search engines",
-    async (path) => {
-      expect(isGated(path)).toBe(false);
-      expect(isUnlisted(path)).toBe(true);
-      const env = { ASSETS: { fetch: async () => new Response("page") } };
-      const response = await worker.fetch(new Request(`https://omnesis.dev${path}`), env);
-      expect(response.status).toBe(200);
-      expect(response.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
-    },
-  );
-
-  it("leaves listed pages indexable", async () => {
-    const env = { ASSETS: { fetch: async () => new Response("page") } };
-    const response = await worker.fetch(new Request("https://omnesis.dev/privacy"), env);
-    expect(isUnlisted("/privacy")).toBe(false);
-    expect(response.headers.get("X-Robots-Tag")).toBeNull();
-  });
-
-  it.each(["/privacy-policy", "/privacy-policy.html", "/PRIVACY-POLICY/"])(
-    "redirects the legacy mobile policy path %s",
-    (path) => {
-      expect(mobilePrivacyRedirectPath(path)).toBe("/mobile-privacy-policy");
-    },
-  );
-
-  it("keeps the legacy redirect in the static site after the access worker is removed", () => {
+  it("keeps the legacy mobile privacy-policy redirect in the static site", () => {
     const rules = new Map(
       redirects
         .split("\n")
@@ -538,30 +551,5 @@ describe("website access gate", () => {
       to: "/mobile-privacy-policy",
       status: "301",
     });
-  });
-
-  it("serves both privacy pages without authentication and redirects the legacy URL", async () => {
-    const env = {
-      ASSETS: {
-        fetch: async (request) => new Response(new URL(request.url).pathname),
-      },
-    };
-
-    for (const path of [
-      "/privacy",
-      "/mobile-privacy-policy",
-      "/browser-extension-privacy-policy",
-    ]) {
-      const response = await worker.fetch(new Request(`https://omnesis.dev${path}`), env);
-      expect(response.status, path).toBe(200);
-      expect(await response.text(), path).toBe(path);
-    }
-
-    const legacy = await worker.fetch(
-      new Request("https://omnesis.dev/privacy-policy?from=store"),
-      env,
-    );
-    expect(legacy.status).toBe(301);
-    expect(legacy.headers.get("Location")).toBe("/mobile-privacy-policy?from=store");
   });
 });

@@ -1,8 +1,8 @@
 name: site
 
-# Publishes omnesis.dev: the Worker in wrangler.jsonc (worker.js in front of the
-# static assets under website/). The site has no build step, so neither job
-# installs the monorepo — wrangler reads website/ as it is checked out.
+# Publishes omnesis.dev: the static assets under website/, configured by
+# wrangler.jsonc. The site has no build step, so neither job installs the
+# monorepo — wrangler reads website/ as it is checked out.
 #
 # A pull request that touches the site gets a dry run, which validates the
 # Worker configuration and the asset set without uploading anything; a push to
@@ -14,13 +14,11 @@ on:
     paths:
       - "website/**"
       - "wrangler.jsonc"
-      - "worker.js"
       - ".github/workflows/site.yml"
   pull_request:
     paths:
       - "website/**"
       - "wrangler.jsonc"
-      - "worker.js"
       - ".github/workflows/site.yml"
   workflow_dispatch:
 

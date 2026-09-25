@@ -152,7 +152,6 @@
   "ignore": [
     "website/**",
     ".claude/**",
-    "worker.js",
     "integrations/**",
     "extension/scripts/test-manifest.d.mts"
   ],

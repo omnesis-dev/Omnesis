@@ -1,16 +1,14 @@
 {
   // Deployed by .github/workflows/site.yml on a push to main that touches the
   // site; pull requests that touch it get a dry run.
+  //
+  // Assets only: Cloudflare serves website/ as it is checked out. Redirects
+  // live in website/_redirects, and website/.assetsignore keeps repository
+  // files that are not part of the site from being published.
   "name": "omnesis",
   "compatibility_date": "2026-05-28",
-  // Pre-launch access gate (worker.js). Runs in front of the static assets and
-  // password-protects the installer and keeps the unlisted docs out of search engines. Remove `main` +
-  // `binding`/`run_worker_first` (back to assets-only) when the repo goes public.
-  "main": "worker.js",
   "assets": {
     "directory": "./website/",
     "not_found_handling": "404-page",
-    "binding": "ASSETS",
-    "run_worker_first": true,
   },
 }
