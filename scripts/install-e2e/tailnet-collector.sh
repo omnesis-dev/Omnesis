@@ -69,11 +69,11 @@ set -- --collector --gateway-url "$JOIN_URL" --code "$CODE" \
   --source-dir "$HOME/omnesis" --no-prompt --no-modify-path
 [ -z "$FINGERPRINT" ] || set -- "$@" --trust-fingerprint "$FINGERPRINT"
 [ "$MODE" = fresh ] || set -- "$@" --version "$START_VERSION"
+# Streamed (redacted) as it runs, and kept for the lines parsed below.
 set +e
-OMNESIS_REPO_URL="file://$REMOTE" sh "$INSTALL_SH" "$@" >"$E2E_WORK/install.log" 2>&1
-status=$?
+OMNESIS_REPO_URL="file://$REMOTE" sh "$INSTALL_SH" "$@" 2>&1 | tee "$E2E_WORK/install.log" | redact
+status=${PIPESTATUS[0]}
 set -e
-redact <"$E2E_WORK/install.log"
 [ "$status" -eq 0 ] || die "the collector install failed (exit $status)"
 # Trusted without -k: the gateway's certificate is a real one for its name.
 served="$(curl -fsS --max-time 20 "$JOIN_URL/health" | node -e '

@@ -95,10 +95,9 @@ group "A broken vN+2 must roll back"
 V_N2="$(fixture next-version --remote "$REMOTE")"
 fixture release --remote "$REMOTE" --version "$V_N2" --base "v$V_N1" --break gateway-boot >"$E2E_WORK/release-n2.json"
 set +e
-"$OMNESIS" update --yes >"$E2E_WORK/broken-update.log" 2>&1
-status=$?
+"$OMNESIS" update --yes 2>&1 | tee "$E2E_WORK/broken-update.log" | redact
+status=${PIPESTATUS[0]}
 set -e
-redact <"$E2E_WORK/broken-update.log"
 [ "$status" -ne 0 ] || die "updating to the broken v$V_N2 reported success"
 grep -q "Rolled back to" "$E2E_WORK/broken-update.log" || die "the failed update did not report a rollback"
 probe health --url "$GATEWAY_URL" --expect-version "$V_N1" --timeout 180 >/dev/null

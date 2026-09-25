@@ -34,17 +34,6 @@ async function getJson(base, path, token) {
   return res.json();
 }
 
-async function postJson(base, path, token, body) {
-  const res = await fetch(new URL(path, base), {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(20_000),
-  });
-  if (!res.ok) throw new Error(`POST ${path}: HTTP ${res.status}`);
-  return res.json();
-}
-
 function readJsonFile(path) {
   if (!path || !existsSync(path)) return null;
   const text = readFileSync(path, "utf8").trim();
@@ -99,7 +88,14 @@ export async function takeSnapshot({ url, token, query, services, doctor, backup
     fleet: null,
   };
   if (query) {
-    const result = await postJson(url, "/search", token, { text: query, limit: 10 });
+    // The lane installs without an embedding model, and `POST /search` finds
+    // nothing then (#117), so the keyword check goes through the gateway's
+    // document search, which matches stored document content directly.
+    const result = await getJson(
+      url,
+      `/documents/search?q=${encodeURIComponent(query)}&limit=10`,
+      token,
+    );
     snapshot.search = { query, titles: (result.results ?? []).map((r) => r.title) };
   }
   if (fleet) {

@@ -72,11 +72,11 @@ PASS="$E2E_WORK/keyring.pass"
 (umask 077 && head -c 32 /dev/urandom | base64 >"$PASS")
 set -- --source-dir "$HOME/omnesis" --no-model --no-prompt --no-modify-path --keyring-passphrase-file "$PASS"
 [ "$MODE" = fresh ] || set -- "$@" --version "$START_VERSION"
+# Streamed (redacted) as it runs, and kept for the lines parsed below.
 set +e
-OMNESIS_REPO_URL="file://$REMOTE" sh "$INSTALL_SH" "$@" >"$E2E_WORK/install.log" 2>&1
-status=$?
+OMNESIS_REPO_URL="file://$REMOTE" sh "$INSTALL_SH" "$@" 2>&1 | tee "$E2E_WORK/install.log" | redact
+status=${PIPESTATUS[0]}
 set -e
-redact <"$E2E_WORK/install.log"
 [ "$status" -eq 0 ] || die "the gateway install failed (exit $status)"
 # A Tailscale certificate is publicly trusted: no -k, no CA override.
 curl -fsS --max-time 20 "$GATEWAY_URL/health" >/dev/null ||

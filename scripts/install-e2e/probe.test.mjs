@@ -193,13 +193,9 @@ describe("gateway reads", () => {
           ],
         },
       },
-      // The gateway's search contract: the query is `text`.
-      "POST /search": {
+      "GET /documents/search?q=brindlewick&limit=10": {
         auth: true,
-        body: (req) =>
-          req?.text === "brindlewick"
-            ? { results: [{ title: "Harbor lantern checklist" }] }
-            : undefined,
+        body: { results: [{ id: "d1", title: "Harbor lantern checklist" }], total: 1 },
       },
       "GET /admin/fleet/update": {
         auth: true,
