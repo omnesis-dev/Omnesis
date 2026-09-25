@@ -110,6 +110,11 @@ endgroup
 
 group "Pair the collector"
 mint_probe_token
+# The collector is recognized by device id: the one collector the gateway
+# lists that did not exist before its pairing code was minted. (Its name on
+# the gateway and the name in its own pairing record are spelled differently.)
+probe snapshot --url "$GATEWAY_URL" --token-file "$TOKEN_FILE" >"$E2E_WORK/devices-before-pairing.json" ||
+  die "could not list the gateway's devices"
 wait_for collector-up >/dev/null || die "the collector never came up"
 # An hour, not the CLI's default: the collector redeems the code only after
 # its install has cloned and built.
@@ -120,11 +125,18 @@ mailbox put --url "$MAILBOX" --key join-url --value "$JOIN_URL"
 mailbox put --url "$MAILBOX" --key fingerprint --value "$FINGERPRINT"
 mailbox put --url "$MAILBOX" --key expect-version --value "$START_VERSION"
 mailbox put --url "$MAILBOX" --key code --value "$CODE"
-COLLECTOR="$(wait_for collector-installed)" || die "the collector install did not finish"
-expect_shape "the collector's device name" "$NAME_SHAPE" "$COLLECTOR"
-log "the collector paired as $COLLECTOR"
-wait_collector_live "$GATEWAY_URL" "$COLLECTOR" 180
-log "the gateway lists $COLLECTOR as paired and live"
+REPORTED="$(wait_for collector-installed)" || die "the collector install did not finish"
+expect_shape "the collector's device name" "$NAME_SHAPE" "$REPORTED"
+log "the collector reports it paired as $REPORTED"
+deadline=$(($(date +%s) + 180))
+until probe snapshot --url "$GATEWAY_URL" --token-file "$TOKEN_FILE" >"$E2E_WORK/devices.json" &&
+  COLLECTOR="$(json_get "$E2E_WORK/devices.json" '(j.devices.find((d) => d.kind === "collector" && d.online &&
+      !JSON.parse(require("fs").readFileSync(a, "utf8")).devices.some((b) => b.id === d.id)) || {}).name' \
+    "$E2E_WORK/devices-before-pairing.json")"; do
+  [ "$(date +%s)" -lt "$deadline" ] || die "no newly paired collector is live on the gateway"
+  sleep 3
+done
+log "the gateway lists the new collector $COLLECTOR as paired and live"
 endgroup
 
 group "Sync an invented vault from the collector"
