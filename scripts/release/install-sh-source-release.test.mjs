@@ -42,7 +42,9 @@ function install(args, name, extraEnv = {}, source = join(fixture, `checkout-${n
   mkdirSync(home, { recursive: true });
   execFileSync(
     "sh",
-    [installer, "--client-only", "--no-keyring", "--source-dir", source, ...args],
+    // --reconfigure: the installer's own checkout move, not the update it hands
+    // to an installed updater on a machine it already set up.
+    [installer, "--client-only", "--no-keyring", "--reconfigure", "--source-dir", source, ...args],
     {
       env: {
         ...process.env,
@@ -95,6 +97,9 @@ function rerun(args, name) {
       installer,
       "--client-only",
       "--no-keyring",
+      // The installer's own checkout move, not the update it hands to an
+      // installed updater on a machine it already set up.
+      "--reconfigure",
       "--source-dir",
       join(fixture, `checkout-${name}`),
       ...args,

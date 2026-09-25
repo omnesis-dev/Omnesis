@@ -42,6 +42,18 @@
 # collector for a gateway elsewhere. The harness roles stay native — a plugin
 # runs inside the harness process, so there is no container for it.
 #
+# Re-running on a machine this installer already set up, for the role it
+# already has, updates that install in place: the installer makes the recorded
+# checkout fetchable and runs the machine's own `omnesis update` (to the newest
+# stable release, or --version / --edge), which rebuilds, restarts the services
+# and rolls back on failure. Certificate, keyring, embedding model, pairing and
+# service definitions stay as they are. `--reconfigure`, a different role, a
+# first install that never registered its services, --commit, or a flag that
+# sets one of those things (--code, --gateway-url, --trust-fingerprint,
+# --mkcert, --embedder, --port, --keyring-passphrase-file, --hardened,
+# --method) runs the full install instead. The harness roles already refresh
+# an existing connection.
+#
 # The two required choices (which embedding model, and what to do about a
 # keyring it cannot use) are read from /dev/tty, because under `curl | sh`
 # stdin is the script itself. An ordinary gateway may optionally offer Codex
@@ -136,6 +148,10 @@
 #   --keyring-passphrase-file <p>  arm encryption at rest from this passphrase
 #                                  file (absolute path) when no OS keyring is
 #                                  usable; skips the question
+#   --reconfigure                  on a machine this installer already set up,
+#                                  run the full install again (certificate,
+#                                  keyring, model, pairing, services) instead of
+#                                  updating the existing install in place
 #   --dry-run                      (OMNESIS_DRY_RUN=1) validate this invocation,
 #                                  print the read-only install plan, and exit
 #                                  before installing or changing anything
@@ -182,6 +198,14 @@ REPLACE_SOURCE_WRAPPER=0
 # services are not on yet.
 SOURCE_MOVED=0
 SOURCE_DIR="${OMNESIS_SOURCE_DIR:-$HOME/omnesis}"
+# Whether this run named its checkout (--source-dir or OMNESIS_SOURCE_DIR).
+# When it did not, an install an earlier run recorded is used instead.
+SOURCE_DIR_EXPLICIT=0
+[ -z "${OMNESIS_SOURCE_DIR:-}" ] || SOURCE_DIR_EXPLICIT=1
+# A re-run on this machine's existing source install updates it in place;
+# --reconfigure runs the full installer on it instead.
+UPDATE_EXISTING=0
+RECONFIGURE_FLAG=0
 GATEWAY_PORT="7600"
 GATEWAY_PORT_EXPLICIT=0
 # How long to wait for the freshly registered gateway to answer /health. A
@@ -352,7 +376,8 @@ show_install_plan() {
     fi
     PLAN_TARGET="$CONFIG_DIR"
   else
-    if [ "$COLLECTOR" = 1 ]; then PLAN_ROLE="collector for another gateway"
+    if [ "$UPDATE_EXISTING" = 1 ]; then PLAN_ROLE="update of this machine's existing install"
+    elif [ "$COLLECTOR" = 1 ]; then PLAN_ROLE="collector for another gateway"
     elif [ -n "$HARNESS" ]; then PLAN_ROLE="$(harness_label "$HARNESS") integration for another gateway"
     elif [ "$CLIENT_ONLY" = 1 ]; then PLAN_ROLE="CLI only"
     elif [ "$WANT_HARDENED" = 1 ]; then PLAN_ROLE="dedicated-account gateway"
@@ -2079,7 +2104,9 @@ install_source() {
     fi
     SOURCE_ROOT="$(cd "$SOURCE_DIR" && pwd -P)"
     SOURCE_HEAD="$(git -C "$SOURCE_DIR" rev-parse HEAD)"
-    SOURCE_TARGET="$(git -C "$SOURCE_DIR" rev-parse "$TARGET_REF")"
+    # The commit, not an annotated tag's own object: it is compared with the
+    # commit the last completed build recorded.
+    SOURCE_TARGET="$(git -C "$SOURCE_DIR" rev-parse "$TARGET_REF^{commit}")"
     SOURCE_LAST_COMPLETED="$(source_last_completed_commit "$SOURCE_ROOT" "$SOURCE_HEAD")"
     [ "$SOURCE_LAST_COMPLETED" = "$SOURCE_TARGET" ] || SOURCE_MOVED=1
     if git -C "$SOURCE_DIR" merge-base --is-ancestor "$SOURCE_LAST_COMPLETED" "$TARGET_REF"; then
@@ -3048,13 +3075,20 @@ restart_package_service_for_wrapper() {
 }
 
 # Registering a service does not restart one that is already running: systemd's
-# `enable --now` leaves an active unit on the build it started with. A re-run
-# that moved the source checkout restarts each service onto the build it made.
+# `enable --now` leaves an active unit on the build and definition it started
+# with. A re-run restarts each source-install service that moved onto a new
+# build, or that existed before this run and so may have a rewritten definition.
 restart_moved_source_service() {
-  [ "$METHOD" = source ] && [ "$SOURCE_MOVED" = 1 ] || return 0
-  info "Restarting the $1 on the build this run installed..."
+  [ "$METHOD" = source ] || return 0
+  if [ "$SOURCE_MOVED" = 1 ]; then
+    info "Restarting the $1 on the build this run installed..."
+  elif registered_before_run "$1"; then
+    info "Restarting the $1 on its refreshed service definition..."
+  else
+    return 0
+  fi
   "$OMNESIS_BIN" service restart "$1" && return 0
-  warn "The $1 service did not restart on the new build. Restart it with: omnesis service restart $1"
+  warn "The $1 service did not restart. Restart it with: omnesis service restart $1"
   return 1
 }
 
@@ -5671,6 +5705,163 @@ print_client_banner() {
   echo ""
 }
 
+# ── Updating an existing install ─────────────────────────────────────────────
+#
+# A machine this installer already set up records its source checkout in
+# update-state.json. Re-running the installer there, for the role the machine
+# already has, is an update: the installer makes sure the checkout can fetch
+# from its origin and then hands the update to the machine's own updater
+# (`omnesis update`), which moves and rebuilds the checkout, refreshes and
+# restarts the services it runs, refreshes agent integrations, and rolls back
+# on failure. Certificate, keyring, embedding model and pairing are left as
+# they are. --reconfigure runs the full installer on the machine instead.
+
+# The checkout an earlier run of this installer manages here: an update-state
+# record of a source install whose checkout still carries the installer's
+# marker. Fails when there is none.
+recorded_source_root() {
+  [ -f "$CONFIG_DIR/update-state.json" ] || return 1
+  if ! command -v node >/dev/null 2>&1 && command -v brew >/dev/null 2>&1; then
+    # Homebrew's node@24 is keg-only: an earlier install found it by prefix.
+    RECORDED_NODE_PREFIX="$(brew --prefix node@24 2>/dev/null || true)"
+    [ -z "$RECORDED_NODE_PREFIX" ] || [ ! -x "$RECORDED_NODE_PREFIX/bin/node" ] || \
+      PATH="$RECORDED_NODE_PREFIX/bin:$PATH"
+  fi
+  command -v node >/dev/null 2>&1 && command -v git >/dev/null 2>&1 || return 1
+  RECORDED_ROOT="$(node -e '
+const fs = require("node:fs");
+try {
+  const state = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  if (state?.version === 1 && state?.method === "source" &&
+      typeof state.rootDir === "string" && state.rootDir.startsWith("/") &&
+      ["complete", "applying", "rolling-back"].includes(state.phase)) {
+    process.stdout.write(state.rootDir);
+  }
+} catch {}
+' "$CONFIG_DIR/update-state.json" 2>/dev/null)" || return 1
+  [ -n "$RECORDED_ROOT" ] && [ -d "$RECORDED_ROOT/.git" ] || return 1
+  [ "$(git -C "$RECORDED_ROOT" config --local --no-includes --get omnesis.install 2>/dev/null)" = managed ] || return 1
+  printf '%s' "$RECORDED_ROOT"
+}
+
+# Whether this account's user service for $1 (gateway or collector) exists.
+service_registered() {
+  case "$PLATFORM" in
+    darwin) [ -f "$HOME/Library/LaunchAgents/dev.omnesis.$1.plist" ] ;;
+    *) [ -f "$HOME/.config/systemd/user/omnesis-$1.service" ] ;;
+  esac
+}
+
+# The services this machine had before this run registered anything.
+REGISTERED_BEFORE_RUN=""
+note_registered_services() {
+  for component in gateway collector; do
+    service_registered "$component" && REGISTERED_BEFORE_RUN="$REGISTERED_BEFORE_RUN $component"
+  done
+  return 0
+}
+registered_before_run() {
+  case " $REGISTERED_BEFORE_RUN " in *" $1 "*) return 0 ;; esac
+  return 1
+}
+
+# A checkout first cloned from one release tag is configured to fetch only
+# that tag, and a plain `git fetch` fails once origin no longer has it. Fetch
+# origin's main branch instead, so any updater version can fetch from it.
+repair_source_fetch_config() {
+  CURRENT_FETCH="$(git -C "$1" config --get-all remote.origin.fetch 2>/dev/null || true)"
+  case "$CURRENT_FETCH" in
+    '+refs/heads/main:refs/remotes/origin/main'|'+refs/heads/*:refs/remotes/origin/*') return 0 ;;
+  esac
+  git -C "$1" config --unset-all remote.origin.fetch 2>/dev/null || true
+  git -C "$1" config --add remote.origin.fetch '+refs/heads/main:refs/remotes/origin/main'
+}
+
+# Use the recorded checkout when this run named none, and choose an update when
+# the machine already has the role this run asks for and nothing on the
+# command line asks to set it up again. The role is read from the services
+# registered here: a plain run updates a gateway or collector machine,
+# --collector a collector machine, and --client-only a machine with neither.
+# Anything else — a first install that stopped before its services were
+# registered, a role change, a pinned commit — runs the full installer.
+plan_existing_update() {
+  [ "$DOCKER" = 0 ] || return 0
+  RECORDED_SOURCE_ROOT="$(recorded_source_root)" || return 0
+  if [ "$SOURCE_DIR_EXPLICIT" = 0 ]; then
+    SOURCE_DIR="$RECORDED_SOURCE_ROOT"
+  elif [ "$(cd "$SOURCE_DIR" 2>/dev/null && pwd -P)" != "$(cd "$RECORDED_SOURCE_ROOT" && pwd -P)" ]; then
+    return 0
+  fi
+  [ "$RECONFIGURE_FLAG" = 0 ] && [ -z "$HARNESS" ] && [ "$METHOD" = source ] && [ -z "$PIN_COMMIT" ] || return 0
+  [ "$PAIR_CODE_FLAG$PAIR_GATEWAY_URL_FLAG$PAIR_FINGERPRINT_FLAG" = 000 ] || return 0
+  [ "$MKCERT_EXPLICIT$EMBEDDER_FLAG$KEYRING_PASSPHRASE_FLAG$GATEWAY_PORT_EXPLICIT" = 0000 ] || return 0
+  [ "$HARDENED_FLAG$REPLACE_SOURCE_WRAPPER" = 00 ] || return 0
+  if [ "$COLLECTOR" = 1 ]; then
+    [ "$REGISTERED_BEFORE_RUN" = " collector" ] || return 0
+  elif [ "$CLIENT_ONLY_FLAG" = 1 ]; then
+    [ -z "$REGISTERED_BEFORE_RUN" ] || return 0
+  else
+    [ -n "$REGISTERED_BEFORE_RUN" ] || return 0
+  fi
+  [ -x "$HOME/.local/bin/omnesis" ] || return 0
+  UPDATE_EXISTING=1
+}
+
+# The local gateway's port, bind address and health origin, from this run's
+# --port or the configuration an earlier run saved.
+read_gateway_endpoint() {
+  if [ "$GATEWAY_PORT_EXPLICIT" = 1 ]; then
+    set_env OMNESIS_GATEWAY_PORT "$GATEWAY_PORT"
+  elif SAVED_GATEWAY_PORT="$(dotenv_value OMNESIS_GATEWAY_PORT)"; then
+    valid_gateway_port "$SAVED_GATEWAY_PORT" || \
+      fail "OMNESIS_GATEWAY_PORT in $CONFIG_DIR/.env must be a whole number from 1 through 65535."
+    GATEWAY_PORT="$SAVED_GATEWAY_PORT"
+  fi
+  GATEWAY_BIND="$(dotenv_value OMNESIS_BIND || printf '%s' '0.0.0.0')"
+  GATEWAY_HEALTH_ORIGIN="$(local_gateway_health_origin "$GATEWAY_BIND" "$GATEWAY_PORT")" || \
+    fail "OMNESIS_BIND in $CONFIG_DIR/.env is not a valid local gateway bind address."
+}
+
+update_existing_install() {
+  show_install_plan
+  configure_network_budget
+  stage "Preparing the host"
+  ensure_node
+  ensure_git
+  OMNESIS_BIN="$HOME/.local/bin/omnesis"
+  repair_source_fetch_config "$SOURCE_DIR"
+  set -- update --yes
+  [ -z "$PIN_VERSION" ] || set -- "$@" --target-version "$PIN_VERSION"
+  [ "$EDGE" = 0 ] || set -- "$@" --edge
+  # Updaters before 0.5.6 refuse any target that does not descend from the
+  # installed build, which is every release after a repository's history was
+  # replaced; the newest release is still the forward move, so let them take it.
+  if [ "$FORCE" = 1 ] || version_is_newer 0.5.6 "$(source_version_at HEAD)"; then
+    set -- "$@" --force
+  fi
+  stage "Updating with this machine's own updater"
+  info "Running: omnesis $*"
+  UPDATE_STATUS=0
+  "$OMNESIS_BIN" "$@" </dev/null || UPDATE_STATUS=$?
+  [ "$UPDATE_STATUS" = 0 ] || \
+    fail "The update did not finish (exit $UPDATE_STATUS); its own messages above say why. Fix that and re-run this installer, or run: omnesis update"
+  print_update_banner
+}
+
+print_update_banner() {
+  echo ""
+  printf '\033[1m\033[0;32mOmnesis is up to date.\033[0m\n'
+  echo ""
+  echo "  Version:   $("$OMNESIS_BIN" --version 2>/dev/null || echo '(unavailable)')"
+  echo "  Checkout:  $SOURCE_DIR"
+  echo ""
+  echo "  Its certificate, keyring, embedding model and pairing are unchanged."
+  echo "  To set this machine up again, re-run with --reconfigure."
+  echo "  Update later:  omnesis update"
+  print_path_hints
+  echo ""
+}
+
 # ── Argument parsing + main ──────────────────────────────────────────────────
 
 # One harness per invocation. Refused here rather than in main() because the
@@ -5694,7 +5885,7 @@ parse_args() {
       --edge)       EDGE=1; shift ;;
       --force)      FORCE=1; shift ;;
       --replace-source-wrapper) REPLACE_SOURCE_WRAPPER=1; shift ;;
-      --source-dir) SOURCE_DIR="$2"; SOURCE_DIR_FLAG=1; shift 2 ;;
+      --source-dir) SOURCE_DIR="$2"; SOURCE_DIR_FLAG=1; SOURCE_DIR_EXPLICIT=1; shift 2 ;;
       --port)       GATEWAY_PORT="$2"; GATEWAY_PORT_EXPLICIT=1; shift 2 ;;
       --mkcert)     USE_MKCERT=1; MKCERT_EXPLICIT=1; shift ;;
       --client-only) CLIENT_ONLY=1; CLIENT_ONLY_FLAG=1; WANT_SERVICE=0; WANT_MODEL=0; WANT_TLS=0; shift ;;
@@ -5718,6 +5909,7 @@ parse_args() {
       --no-tls)     WANT_TLS=0; NO_TLS_FLAG=1; shift ;;
       --no-keyring) WANT_KEYRING=0; shift ;;
       --keyring-passphrase-file) KEYRING_PASSPHRASE_FILE="$2"; KEYRING_PASSPHRASE_FLAG=1; shift 2 ;;
+      --reconfigure) RECONFIGURE_FLAG=1; shift ;;
       --dry-run)     DRY_RUN=1; shift ;;
       --no-prompt)   NO_PROMPT=1; shift ;;
       # The header runs to the first empty line, so it stays whole as flags
@@ -5875,6 +6067,8 @@ main() {
   printf '\033[1mOmnesis installer\033[0m — fully local, fully private.\n'
   echo ""
   detect_platform
+  note_registered_services
+  plan_existing_update
   # Before Node, before the CLI, and above all before a single-use pairing code
   # is asked for: a harness role on a machine with no harness is refused now,
   # not after an install that cannot be used and a code that cannot be reused.
@@ -5892,8 +6086,12 @@ main() {
   if [ "$DRY_RUN" = 1 ]; then
     # Validate all read-only gateway-account state. An implicit interactive
     # first-run choice stays clearly deferred rather than being guessed.
-    if [ "$CLIENT_ONLY" != 1 ]; then choose_gateway_account preview; fi
+    if [ "$CLIENT_ONLY" != 1 ] && [ "$UPDATE_EXISTING" = 0 ]; then choose_gateway_account preview; fi
     show_install_plan
+    return 0
+  fi
+  if [ "$UPDATE_EXISTING" = 1 ]; then
+    update_existing_install
     return 0
   fi
   # Asked before the plan and every mutation, so the printed role is the one
@@ -5963,16 +6161,7 @@ main() {
     print_client_banner
     return 0
   fi
-  if [ "$GATEWAY_PORT_EXPLICIT" = 1 ]; then
-    set_env OMNESIS_GATEWAY_PORT "$GATEWAY_PORT"
-  elif SAVED_GATEWAY_PORT="$(dotenv_value OMNESIS_GATEWAY_PORT)"; then
-    valid_gateway_port "$SAVED_GATEWAY_PORT" || \
-      fail "OMNESIS_GATEWAY_PORT in $CONFIG_DIR/.env must be a whole number from 1 through 65535."
-    GATEWAY_PORT="$SAVED_GATEWAY_PORT"
-  fi
-  GATEWAY_BIND="$(dotenv_value OMNESIS_BIND || printf '%s' '0.0.0.0')"
-  GATEWAY_HEALTH_ORIGIN="$(local_gateway_health_origin "$GATEWAY_BIND" "$GATEWAY_PORT")" || \
-    fail "OMNESIS_BIND in $CONFIG_DIR/.env is not a valid local gateway bind address."
+  read_gateway_endpoint
   align_configured_gateway_url_port
   if [ "$WANT_HARDENED" = 1 ]; then
     hardened_install

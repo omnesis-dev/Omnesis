@@ -485,6 +485,17 @@
           installs alike. Re-running the installer on an existing source install applies the same
           rules, with <code>--force</code> in place of <code>--allow-rewind</code>.
         </p>
+        <p>
+          Running the install command again on a machine it already set up, for the role the machine
+          already has, is an update: the installer finds the checkout the earlier install recorded,
+          makes sure it can fetch from its origin, and runs <code>omnesis update</code>
+          on the machine, so the update backs up, rebuilds, restarts and rolls back exactly as
+          described above. The certificate, keyring, embedding model, pairing and service
+          definitions stay as they are, so a collector does not pair again. Pass
+          <code>--reconfigure</code> to run the full install instead; a different role, a first
+          install that never registered its services, or a flag that sets one of those choices, such
+          as <code>--code</code>, <code>--mkcert</code> or <code>--embedder</code>, does the same.
+        </p>
 
         <h3 id="several-collectors">Several collectors, one source</h3>
         <p>

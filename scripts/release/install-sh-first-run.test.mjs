@@ -26,8 +26,9 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { userInfo } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   callStartingWith,
@@ -42,6 +43,7 @@ import {
   installer,
   installFakeTailscale,
   mintCert,
+  tagRelease,
   plantGatewayCert,
   prepareHome,
   repoRoot,
@@ -294,8 +296,13 @@ exit 0
  * fixture rather than the harness's; a test that wants a different catalog
  * overrides the variable.
  */
-const runInstaller = (name, args, extraEnv = {}) =>
-  runInstallerRaw(name, args, { OMNESIS_TEST_CATALOG: fixturePath("catalog.json"), ...extraEnv });
+const runInstaller = (name, args, extraEnv = {}, options = {}) =>
+  runInstallerRaw(
+    name,
+    args,
+    { OMNESIS_TEST_CATALOG: fixturePath("catalog.json"), ...extraEnv },
+    options,
+  );
 const runInstallerOnTty = (name, args, answers, extraEnv = {}) =>
   runInstallerOnTtyRaw(name, args, answers, {
     OMNESIS_TEST_CATALOG: fixturePath("catalog.json"),
@@ -797,6 +804,170 @@ describe("install.sh service registration", () => {
     });
     expect(staleRerun.status).not.toBe(0);
     expect(staleRerun.output).toContain("Gateway did not answer /health");
+  });
+
+  // A machine this installer set up is updated in place by a plain re-run: the
+  // recorded checkout moves and is rebuilt, the registered services restart on
+  // it, and nothing about how the machine is set up is asked or redone.
+  describe("re-running on an existing install", () => {
+    const firstArgs = ["--no-tls", "--embedder", EMBED_IDS[1], "--version", "0.9.0"];
+    const env = {
+      OMNESIS_TEST_KEYRING: "ready",
+      OMNESIS_TEST_HEALTH_BODY: '{"status":"ok","version":"0.10.0"}',
+    };
+    const updates = (run) => run.calls.filter((c) => c.startsWith("update "));
+    const restarts = (run) => run.calls.filter((c) => c.startsWith("service restart"));
+    const setUp = (run) =>
+      run.calls.filter((c) => /^(service install|model install|pair |keyring )/.test(c));
+    // The unit files `omnesis service install` would have written.
+    const registerServices = (home, names = ["gateway", "collector"]) => {
+      for (const name of names) {
+        const unit = join(home, ".config", "systemd", "user", `omnesis-${name}.service`);
+        const plist = join(home, "Library", "LaunchAgents", `dev.omnesis.${name}.plist`);
+        for (const path of [unit, plist]) {
+          mkdirSync(dirname(path), { recursive: true });
+          writeFileSync(path, "");
+        }
+      }
+    };
+    const checkoutGit = (name, ...args) =>
+      execFileSync("git", args, { cwd: fixturePath(`checkout-${name}`), encoding: "utf8" }).trim();
+    const installFirst = (name, args = firstArgs, services) => {
+      const first = runInstaller(name, args, env);
+      expect(first.status, first.output).toBe(0);
+      registerServices(first.home, services);
+      return first;
+    };
+
+    test("hands the update to the machine's own updater and sets nothing up again", () => {
+      installFirst("update-in-place");
+      // A checkout cloned from one tag fetches only that tag until the installer repairs it.
+      checkoutGit(
+        "update-in-place",
+        "config",
+        "--replace-all",
+        "remote.origin.fetch",
+        "+refs/tags/v0.9.0:refs/tags/v0.9.0",
+      );
+
+      const updated = runInstaller("update-in-place", [], env);
+      expect(updated.status, updated.output).toBe(0);
+      expect(updated.output).toContain("update of this machine's existing install");
+      expect(updated.output).toContain("Omnesis is up to date.");
+      expect(updates(updated)).toEqual(["update --yes"]);
+      expect(setUp(updated)).toEqual([]);
+      expect(restarts(updated)).toEqual([]);
+      expect(checkoutGit("update-in-place", "config", "--get-all", "remote.origin.fetch")).toBe(
+        "+refs/heads/main:refs/remotes/origin/main",
+      );
+    });
+
+    test("passes --version and --edge through to the updater", () => {
+      installFirst("update-flags");
+      const pinned = runInstaller("update-flags", ["--version", "0.10.0"], env);
+      expect(pinned.status, pinned.output).toBe(0);
+      expect(updates(pinned)).toEqual(["update --yes --target-version 0.10.0"]);
+      const edge = runInstaller("update-flags", ["--edge"], env);
+      expect(edge.status, edge.output).toBe(0);
+      expect(updates(edge)).toEqual(["update --yes --edge"]);
+    });
+
+    test("lets an updater older than 0.5.6 cross to a release that is not its descendant", () => {
+      tagRelease("0.5.5");
+      installFirst("update-old", ["--no-tls", "--embedder", EMBED_IDS[1], "--version", "0.5.5"]);
+      const updated = runInstaller("update-old", [], env);
+      expect(updated.status, updated.output).toBe(0);
+      expect(updates(updated)).toEqual(["update --yes --force"]);
+    });
+
+    test("a failed update fails the installer and says so", () => {
+      installFirst("update-fails");
+      const failed = runInstaller("update-fails", [], {
+        ...env,
+        OMNESIS_TEST_FAIL: "update --yes",
+      });
+      expect(failed.status).not.toBe(0);
+      expect(failed.output).toContain("The update did not finish (exit 1)");
+      expect(failed.output).not.toContain("Omnesis is up to date.");
+    });
+
+    test("a repeated --collector updates a collector machine without pairing again", () => {
+      installFirst("update-collector", firstArgs, ["collector"]);
+      const updated = runInstaller("update-collector", ["--collector"], env);
+      expect(updated.status, updated.output).toBe(0);
+      expect(updates(updated)).toEqual(["update --yes"]);
+      expect(setUp(updated)).toEqual([]);
+    });
+
+    test("a repeated --client-only updates a machine that runs no services", () => {
+      installFirst("update-client", ["--client-only", "--no-keyring", "--version", "0.9.0"], []);
+      const updated = runInstaller("update-client", ["--client-only"], env);
+      expect(updated.status, updated.output).toBe(0);
+      expect(updates(updated)).toEqual(["update --yes"]);
+    });
+
+    test("finds the recorded checkout when the re-run names none", () => {
+      installFirst("update-recorded");
+      checkoutGit(
+        "update-recorded",
+        "config",
+        "--replace-all",
+        "remote.origin.fetch",
+        "+refs/tags/v0.9.0:refs/tags/v0.9.0",
+      );
+      const updated = runInstaller("update-recorded", [], env, { sourceDir: false });
+      expect(updated.status, updated.output).toBe(0);
+      expect(updates(updated)).toEqual(["update --yes"]);
+      expect(updated.output).toContain(`Checkout:  ${fixturePath("checkout-update-recorded")}`);
+      expect(checkoutGit("update-recorded", "config", "--get-all", "remote.origin.fetch")).toBe(
+        "+refs/heads/main:refs/remotes/origin/main",
+      );
+      expect(existsSync(join(updated.home, "omnesis"))).toBe(false);
+    });
+
+    test("a different role on a machine with services runs the full install", () => {
+      installFirst("update-demote");
+      const client = runInstaller("update-demote", ["--client-only", "--no-keyring"], env);
+      expect(client.status, client.output).toBe(0);
+      expect(updates(client)).toEqual([]);
+      expect(client.output).not.toContain("update of this machine's existing install");
+
+      const collector = runInstaller("update-demote", ["--collector"], env);
+      expect(updates(collector)).toEqual([]);
+      expect(collector.output).not.toContain("update of this machine's existing install");
+    });
+
+    test("a first install that never registered its services runs in full again", () => {
+      const first = runInstaller("update-unfinished", firstArgs, env);
+      expect(first.status, first.output).toBe(0);
+      const again = runInstaller("update-unfinished", ["--no-tls", "--no-model"], env);
+      expect(again.status, again.output).toBe(0);
+      expect(updates(again)).toEqual([]);
+      expect(again.calls.some((c) => c.startsWith("service install"))).toBe(true);
+    });
+
+    test("a role change runs the full install for the new role", () => {
+      installFirst("update-role", ["--client-only", "--no-keyring", "--version", "0.9.0"], []);
+      const gateway = runInstaller("update-role", ["--no-tls", "--no-model"], env);
+      expect(gateway.status, gateway.output).toBe(0);
+      expect(updates(gateway)).toEqual([]);
+      expect(gateway.calls.some((c) => c.startsWith("service install"))).toBe(true);
+    });
+
+    test("--reconfigure runs the full install and restarts the services it had", () => {
+      installFirst("update-reconfigure");
+      const full = runInstaller(
+        "update-reconfigure",
+        ["--reconfigure", "--no-tls", "--no-model", "--version", "0.9.0"],
+        env,
+      );
+      expect(full.status, full.output).toBe(0);
+      expect(full.output).not.toContain("update of this machine's existing install");
+      expect(updates(full)).toEqual([]);
+      expect(full.calls.some((c) => c.startsWith("service install"))).toBe(true);
+      expect(full.output).toContain("Restarting the gateway on its refreshed service definition");
+      expect(restarts(full)).toEqual(["service restart gateway", "service restart collector"]);
+    });
   });
 
   test("--no-modify-path prints the PATH line and leaves the shell profile alone", () => {

@@ -534,8 +534,8 @@ function resultOf(home, proc) {
  * suites never share one — except a `--docker` run, which installs no checkout
  * at all and refuses the flag that would name one.
  */
-function installerArgv(name, args) {
-  if (args.includes("--docker")) return [installer, ...args];
+function installerArgv(name, args, sourceDir = true) {
+  if (args.includes("--docker") || !sourceDir) return [installer, ...args];
   return [installer, "--source-dir", join(fixture, `checkout-${name}`), ...args];
 }
 
@@ -544,20 +544,24 @@ function installerArgv(name, args) {
  * mask instead of the one the test runner inherited, for a suite whose
  * outcome depends on the modes of what the installer creates.
  */
-function shellArgv(name, args, umask) {
-  if (umask === undefined) return installerArgv(name, args);
+function shellArgv(name, args, umask, sourceDir = true) {
+  if (umask === undefined) return installerArgv(name, args, sourceDir);
   return [
     "-c",
     `umask ${umask.toString(8).padStart(3, "0")} && exec sh "$@"`,
     "sh",
-    ...installerArgv(name, args),
+    ...installerArgv(name, args, sourceDir),
   ];
 }
 
-/** Run the installer with no controlling terminal, the way a unit would. */
-export function runInstaller(name, args, extraEnv = {}, { umask } = {}) {
+/**
+ * Run the installer with no controlling terminal, the way a unit would.
+ * `sourceDir: false` leaves --source-dir off the command line, as a user
+ * re-running the published one-liner does.
+ */
+export function runInstaller(name, args, extraEnv = {}, { umask, sourceDir = true } = {}) {
   const home = prepareHome(name, { umask });
-  const proc = spawnSync("sh", shellArgv(name, args, umask), {
+  const proc = spawnSync("sh", shellArgv(name, args, umask, sourceDir), {
     env: installerEnv(home, extraEnv),
     encoding: "utf8",
     detached: true,
