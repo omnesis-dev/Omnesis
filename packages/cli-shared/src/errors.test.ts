@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { createServer, type AddressInfo } from "node:net";
+import { fetchPeerCert } from "@omnesis/core";
 import { describe, expect, it } from "vitest";
 import {
   CliError,
@@ -85,6 +87,42 @@ describe("isFetchConnectionError", () => {
       "Client network socket disconnected before secure TLS connection was established",
     );
     expect(isFetchConnectionError(err)).toBe(true);
+  });
+
+  it("recognises a connection that never completes as unreachable, not as a bad code", () => {
+    // What a dropped SYN produces: a DROP-target firewall or a cloud security
+    // group never refuses, so the dial times out instead. Undici's own connect
+    // timeout, and a route that does not exist, belong with it.
+    for (const code of ["ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT", "ENETUNREACH"]) {
+      expect(isFetchConnectionError(Object.assign(new Error("dial"), { code }))).toBe(true);
+      expect(
+        isFetchConnectionError(
+          new TypeError("fetch failed", { cause: Object.assign(new Error("dial"), { code }) }),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("recognises the join's certificate probe timing out against a silent port", async () => {
+    // The pinned join's first network touch is `fetchPeerCert`'s raw TLS dial.
+    // Its timeout used to reject with a bare Error and no code, which fell past
+    // this guard: a stack trace, then the installer's "mint a fresh code" for a
+    // join that never reached the gateway. A listener that accepts and never
+    // speaks is what the collector sees through a relay whose upstream is
+    // dropped.
+    const server = createServer(() => {});
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    const { port } = server.address() as AddressInfo;
+    try {
+      const err = await fetchPeerCert("127.0.0.1", port, 100).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(err).toMatchObject({ code: "ETIMEDOUT" });
+      expect(isFetchConnectionError(err)).toBe(true);
+    } finally {
+      server.close();
+    }
   });
 });
 
