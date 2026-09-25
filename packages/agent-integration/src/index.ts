@@ -32,6 +32,7 @@ export {
 } from "./oauth.js";
 export { agentIntegrationVersion, describeVersionDrift } from "./version.js";
 export { capDeviceUpdateDetail, summarizeCommandFailure } from "./command-output.js";
+export { resolveHarnessBinary } from "./self-update.js";
 export { integrationOAuthFetch } from "./native-answer-mcp.js";
 export {
   AmbiguousDeliveryError,

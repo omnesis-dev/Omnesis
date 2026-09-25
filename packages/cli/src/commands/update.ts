@@ -59,6 +59,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { defineCommand } from "citty";
+import { resolveHarnessBinary } from "@omnesis/agent-integration";
 import {
   acquireUpdateLock,
   adoptUpdateLock,
@@ -432,6 +433,12 @@ export interface UpdateFlowDeps {
    * device, so it outlives this terminal. Absent on hosts with no harness.
    */
   reportHarnessResult?(harness: Harness, result: HarnessUpdateResult): Promise<void>;
+  /**
+   * The harness executable a restart runs, found on PATH or where harness
+   * installs put it without adding it to PATH; null leaves the bare name.
+   * Defaults to the lookup the harness plugin's own self-update uses.
+   */
+  resolveHarness?(harness: Harness): string | null;
   /** Resolves when the user approved the update; throws `CliError` otherwise. */
   confirm(message: string): Promise<void>;
   /** A skippable interruption: resolves true to go ahead, false to skip it. */
@@ -980,7 +987,10 @@ async function restartHarness(
     console.log(`${c.dim}${manual}${c.reset}`);
     return;
   }
-  const spec = harnessRestartSpec(harness);
+  const spec = harnessRestartSpec(
+    harness,
+    (deps.resolveHarness ?? ((name: Harness) => resolveHarnessBinary(name)))(harness),
+  );
   console.log(`${c.dim}$ ${formatCommandSpec(spec)}${c.reset}`);
   const result = await attempt(deps, spec);
   if (result.code !== 0) {

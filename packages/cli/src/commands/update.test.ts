@@ -271,6 +271,7 @@ function makeDeps(
     restartService: vi.fn((_component: ServiceComponent) => Promise.resolve()),
     awaitHealth: vi.fn(() => Promise.resolve()),
     cliPath: "/usr/local/bin/omnesis",
+    resolveHarness: () => null,
     ...overrides,
   };
 }
@@ -1458,6 +1459,22 @@ describe("executing a host's plan", () => {
     const states = reportHarnessResult.mock.calls.map(([, result]) => result);
     expect(states.map((r) => r.state)).toEqual(["restart-pending", "restart-pending"]);
     expect(states[1]?.detail).toContain("exited 127");
+  });
+
+  test("restarts a harness installed off PATH through its resolved executable", async () => {
+    const runner = fakeRunner([...successfulUpdate, clean, clean]);
+    await source(
+      makeDeps(runner, {
+        roles: hostRoles({
+          harnesses: [{ harness: "hermes", home: "/h", needsAuthorization: false }],
+        }),
+        resolveHarness: (harness) => `/home/example/.local/bin/${harness}`,
+      }),
+    );
+    expect(executed(runner)).toContain("/home/example/.local/bin/hermes gateway restart");
+    const restart = runner.calls.find((call) => call.spec.command.endsWith("/hermes"));
+    expect(restart?.spec.env?.PATH?.split(":")[0]).toBe("/home/example/.local/bin");
+    expect(output()).not.toContain("Could not restart hermes");
   });
 
   test("a report the gateway cannot take is said and does not fail the update", async () => {

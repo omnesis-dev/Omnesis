@@ -13,7 +13,7 @@
  */
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import {
   COLLECTOR_PAIRING_STATE_FILE,
   GATEWAY_STORE_FILE,
@@ -1539,8 +1539,19 @@ export function harnessRefreshSpec(harness: Harness, cliPath: string): CommandSp
  * caller falls back to printing the instruction when the binary or the
  * subcommand is not there.
  */
-export function harnessRestartSpec(harness: Harness): CommandSpec {
-  return { command: harness, args: ["gateway", "restart"] };
+/**
+ * `<harness> gateway restart`. Given the harness's resolved executable, the
+ * spec runs that path with its directory and this Node's leading PATH, so the
+ * restart works from a shell or service whose PATH does not include the
+ * harness's install location, and a `#!/usr/bin/env node` executable still
+ * finds an interpreter.
+ */
+export function harnessRestartSpec(harness: Harness, binary?: string | null): CommandSpec {
+  if (!binary) return { command: harness, args: ["gateway", "restart"] };
+  const path = [dirname(binary), dirname(process.execPath), process.env.PATH ?? ""]
+    .filter((entry) => entry.length > 0)
+    .join(delimiter);
+  return { command: binary, args: ["gateway", "restart"], env: { PATH: path } };
 }
 
 /** What an operator must run themselves when the updater may not do it. */
