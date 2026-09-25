@@ -151,8 +151,8 @@ producing an empty green plan.
 
 CI does not run this affected selection. `.github/workflows/full-validation.yml`
 runs the whole suite on GitHub-hosted runners for every push to `main` and every
-pull request into it, cancelling a superseded run of the same branch or pull
-request. The release workflow accepts a tag only when a push or manual run of
+pull request into it. A newer push to a pull request cancels its older run; on
+`main` a run in progress finishes and later pushes collapse into one waiting run. The release workflow accepts a tag only when a push or manual run of
 that workflow passed at the exact tagged commit.
 
 A scheduler is optional: without one, these commands run locally with bounded

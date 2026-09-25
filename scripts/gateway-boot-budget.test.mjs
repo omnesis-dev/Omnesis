@@ -160,6 +160,10 @@ describe("every consumer reads the shared budget", () => {
       // its migrations. Holding an update to a budget sized for a tsx boot in
       // this repo would roll a healthy update back on a slow machine.
       "scripts/hardened-gateway.sh",
+      // The install lane's "did not start" is its mailbox helper, and the
+      // gateway it waits for is one a real `install.sh` built and started under
+      // the runner's service manager — not a tsx boot.
+      "scripts/install-e2e/tailnet-gateway.sh",
     ];
     const offenders = [];
     for (const dir of searched) {

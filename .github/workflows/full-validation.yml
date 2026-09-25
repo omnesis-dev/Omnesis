@@ -4,8 +4,10 @@ name: full-validation
 # `main`, every pull request into `main`, and any manual run
 # (`gh workflow run full-validation.yml --ref <branch-or-tag>`).
 #
-# A newer push to the same branch or pull request cancels the unfinished run
-# before it, so only the latest revision of each is tested to completion.
+# On a pull request, a newer push cancels the unfinished run before it. On
+# `main`, a run in progress always finishes, so every run the README badge can
+# report is a complete verdict; pushes that land meanwhile collapse into one
+# waiting run of the newest commit.
 #
 # Pull requests — fork pull requests included, once a maintainer approves the
 # run — execute with the plain `pull_request` trigger: a read-only token and no
@@ -23,7 +25,7 @@ concurrency:
     full-validation-${{ github.event_name == 'pull_request'
     && format('pr-{0}', github.event.pull_request.number)
     || format('{0}-{1}', github.event_name, github.ref) }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

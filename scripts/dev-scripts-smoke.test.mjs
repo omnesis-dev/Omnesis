@@ -1850,7 +1850,9 @@ describe("full-validation workflow topology", () => {
     expect(workflow.on.pull_request).toEqual({ branches: ["main"] });
     expect(workflow.on.pull_request_target).toBeUndefined();
     expect(workflow.on).toHaveProperty("workflow_dispatch");
-    expect(workflow.concurrency["cancel-in-progress"]).toBe(true);
+    expect(workflow.concurrency["cancel-in-progress"]).toBe(
+      "${{ github.event_name == 'pull_request' }}",
+    );
     expect(workflow.concurrency.group).toContain("github.event.pull_request.number");
     expect(workflow.concurrency.group).toContain("github.ref");
     expect(workflow.permissions).toEqual({ contents: "read" });

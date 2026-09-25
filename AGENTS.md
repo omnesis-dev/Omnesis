@@ -125,7 +125,7 @@ This rule applies to every part of the repo: iOS previews, snapshot tests, gatew
 
 - **CI runs the full suite on every pull request into `main` and every push to
   `main`**, on GitHub-hosted runners (`.github/workflows/full-validation.yml`);
-  a newer push cancels the superseded run. Before handoff, run the affected gate
+  a newer push to a pull request cancels its older run. Before handoff, run the affected gate
   for the actual branch and working tree: `npm run checks:plan -- --base origin/main`,
   then `npm run checks:affected -- --base origin/main`. Nx selects package work
   through the dependency graph and adds declared behavioral E2E/native bundles.

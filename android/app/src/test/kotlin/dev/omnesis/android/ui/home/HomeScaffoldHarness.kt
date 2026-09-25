@@ -254,7 +254,14 @@ class MockGateway : AutoCloseable {
 
     override fun close() {
         approvalsHold.getAndSet(null)?.release()
-        server.shutdown()
+        // MockWebServer gives up with an IOException when a streaming connection
+        // the app held open has not drained within its shutdown wait, which a
+        // slow machine reaches. Every test has already asserted by then, and
+        // the next test starts its own server.
+        try {
+            server.shutdown()
+        } catch (_: java.io.IOException) {
+        }
     }
 }
 
