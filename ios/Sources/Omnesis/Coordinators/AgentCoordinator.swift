@@ -1963,7 +1963,7 @@ public final class AgentCoordinator {
 
         case .deepResearchSummary(_, let messageId, let stoppedReason, let plan, let treeUsage, let verification):
             // Fold the additive summary onto the assistant turn it names.
-            //The report prose already streamed as `text` parts, so a
+            // The report prose already streamed as `text` parts, so a
             // run that never carries this event still renders as a plain
             // bubble — the artifact is the enrichment, not a precondition.
             attachReportArtifact(

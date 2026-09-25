@@ -324,7 +324,8 @@ public enum NotificationClaimDiagnostic {
     public static func current(
         at now: Date = Date(),
         keychain: PairingStore = NotificationClaimCredentials.sharedKeychain()
-    ) -> Reason? {
+    )
+        -> Reason? {
         guard let failure = decode(Failure.self, from: try? keychain.get(failureKey)),
               failure.startedAt <= now,
               now.timeIntervalSince(failure.startedAt) < failureLifetime
@@ -348,7 +349,7 @@ public enum NotificationClaimDiagnostic {
         }
     }
 
-    private static func encode<Value: Encodable>(_ value: Value) -> String? {
+    private static func encode(_ value: some Encodable) -> String? {
         guard let data = try? JSONEncoder().encode(value) else { return nil }
         return String(data: data, encoding: .utf8)
     }

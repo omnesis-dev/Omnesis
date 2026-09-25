@@ -3,19 +3,19 @@
 
 import Foundation
 
-/// The parts of the source contract this app has to read the same way the
-/// collector does.
-///
-/// The phone hosts sources of its own, so it meets the same persisted state,
-/// the same failures and the same coverage claims. Re-deriving what those mean
-/// here is how three implementations of one vocabulary drift — a value the
-/// gateway started sending that this decoder silently reads as absent is
-/// invisible until a device stops reporting something.
-///
-/// `wire-fixtures/` at the repository root holds the canonical bytes, written
-/// from the TypeScript definitions. `SourceStateWireTests` decodes those exact
-/// files, so a change on either side this decoder cannot read fails there
-/// rather than in someone's pocket.
+// The parts of the source contract this app has to read the same way the
+// collector does.
+//
+// The phone hosts sources of its own, so it meets the same persisted state,
+// the same failures and the same coverage claims. Re-deriving what those mean
+// here is how three implementations of one vocabulary drift — a value the
+// gateway started sending that this decoder silently reads as absent is
+// invisible until a device stops reporting something.
+//
+// `wire-fixtures/` at the repository root holds the canonical bytes, written
+// from the TypeScript definitions. `SourceStateWireTests` decodes those exact
+// files, so a change on either side this decoder cannot read fails there
+// rather than in someone's pocket.
 
 /// A source's persisted state, as the gateway stores it.
 ///

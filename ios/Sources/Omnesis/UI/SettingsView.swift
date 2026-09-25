@@ -806,10 +806,12 @@ struct SettingsView: View {
                 Text(message)
                     .font(.footnote)
                     .foregroundStyle(Theme.textMuted)
-                Text("Away from home? Connect Tailscale on this phone and the gateway. If this pairing uses a home-network address, re-pair using the gateway's Tailscale hostname.")
-                    .font(.footnote)
-                    .foregroundStyle(Theme.textMuted)
-                    .fixedSize(horizontal: false, vertical: true)
+                Text(
+                    "Away from home? Connect Tailscale on this phone and the gateway. If this pairing uses a home-network address, re-pair using the gateway's Tailscale hostname."
+                )
+                .font(.footnote)
+                .foregroundStyle(Theme.textMuted)
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

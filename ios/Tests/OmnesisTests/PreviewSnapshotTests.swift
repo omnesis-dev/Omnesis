@@ -4425,7 +4425,7 @@ final class PreviewSnapshotTests: XCTestCase {
     }
 
     /// The working-set surface when one researcher has accumulated MANY docs:
-    ///the per-panel doc list must scroll WITHIN the panel and the band
+    /// the per-panel doc list must scroll WITHIN the panel and the band
     /// must stay a fixed bottom rail — never grow into a full-screen overlay
     /// that buries the conversation. The surrounding frame is full phone height
     /// so a regression (an unbounded panel) would visibly eat the screen.
