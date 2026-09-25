@@ -67,10 +67,22 @@ done
 
 # The first suite reads the source catalogue, which the gateway gathers from
 # its collector; wait until that answers too.
-for _ in $(seq 1 60); do
-  curl -skf -m 30 -H "Authorization: Bearer $TOKEN" "${URL}/admin/source-descriptors" >/dev/null && break
+catalogue_ready=0
+for _ in $(seq 1 30); do
+  if curl -skf -m 20 -H "Authorization: Bearer $TOKEN" "${URL}/admin/source-descriptors" >/dev/null; then
+    catalogue_ready=1
+    break
+  fi
   sleep 2
 done
+if [[ "$catalogue_ready" != 1 ]]; then
+  echo "The gateway never answered /admin/source-descriptors." >&2
+  for log in "$OMNESIS_CONFIG_DIR"/logs/*.log; do
+    echo "── ${log##*/}" >&2
+    tail -80 "$log" >&2 || true
+  done
+  exit 1
+fi
 
 # The config carries the gateway admin token; create it owner-only from the
 # start (umask in a subshell, no world-readable window).

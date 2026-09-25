@@ -109,12 +109,14 @@ describe("HttpVlmOcr", () => {
       model: "m",
       fetchFn: alwaysLimited,
     });
-    const terminal = exhausted.recognize(enc("i"), "image/png");
+    // The rejection is observed before the timers that produce it advance, so it
+    // is never momentarily unhandled.
+    const terminal = expect(exhausted.recognize(enc("i"), "image/png")).rejects.toThrow(/HTTP 429/);
     await vi.waitFor(() => expect(alwaysLimited).toHaveBeenCalledTimes(1));
     await vi.advanceTimersByTimeAsync(1_500);
     await vi.waitFor(() => expect(alwaysLimited).toHaveBeenCalledTimes(2));
     await vi.advanceTimersByTimeAsync(3_000);
-    await expect(terminal).rejects.toThrow(/HTTP 429/);
+    await terminal;
     expect(alwaysLimited).toHaveBeenCalledTimes(3);
   });
 
