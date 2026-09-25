@@ -120,6 +120,7 @@
               <a href="/docs/install" aria-current="page">Install</a>
               <ul class="side-sub">
                 <li><a href="#requirements">Requirements</a></li>
+                <li><a href="#guided-install">Guided install</a></li>
                 <li><a href="#one-command-install">One-command install</a></li>
                 <li><a href="#first-run">First run</a></li>
                 <li><a href="#add-your-first-source">First source</a></li>
@@ -148,11 +149,11 @@
         <p class="docs-kicker">Start</p>
         <h1>Install</h1>
         <p class="docs-lead">
-          This page installs Omnesis on the machine that will run your gateway, usually an always-on
-          computer. One command installs the CLI, sets up TLS, registers the gateway and a collector
-          as services, and downloads an embedding model. A second machine that only collects, or one
-          running an agent harness, uses the same installer with a
-          <a href="#roles">role flag</a>.
+          Install Omnesis yourself with one command, or ask a local coding agent to guide you across
+          the devices you choose. The gateway usually runs on an always-on computer. Its installer
+          installs the CLI, sets up TLS, registers the gateway and a collector as services, and
+          downloads an embedding model. A second machine that only collects, or one running an agent
+          harness, uses the same installer with a <a href="#roles">role flag</a>.
         </p>
         <p>The installer can deliver Omnesis in two ways:</p>
         <div class="table-wrap">
@@ -217,6 +218,32 @@
             it later. See <a href="/docs/operating#full-disk-access">Full Disk Access</a>.
           </p>
         </div>
+
+        <h2 id="guided-install">Guided install with an agent</h2>
+        <p>
+          If you have a coding agent with terminal access on the computer where you want to begin,
+          copy this prompt into it. The <a href="/install-prompt.md">full install prompt</a> asks
+          the agent to inspect the machine, help you choose a gateway and any additional collectors,
+          then walk through Tailscale, phones, and browser capture one step at a time. It uses the
+          same installer and checks each part before moving on. You choose which devices and sources
+          to add.
+        </p>
+        <div class="term guided-install-terminal" data-copy-label="Copy prompt">
+          <div class="term-body guided-terminal-line">
+            <span class="guided-session-chevron" aria-hidden="true">&gt;</span>
+            <div class="guided-prompt-content">
+              <pre class="wrap">
+Help me install Omnesis across the devices I choose. Read https://omnesis.dev/install-prompt.md and follow it.</pre
+              >
+              <span class="guided-copy-slot"></span>
+            </div>
+          </div>
+        </div>
+        <p>
+          You can also read the <a href="/install-prompt.md">agent instructions</a> before pasting
+          the prompt. The agent will need you for account sign-ins, permissions, and steps on other
+          devices.
+        </p>
 
         <h2 id="one-command-install">One-command install</h2>
         <div class="term">

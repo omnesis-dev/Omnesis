@@ -267,8 +267,7 @@
    glyph, no printed result, no dimmed output line. A card that shows no
    command copies its <pre> payload verbatim instead. */
 (function () {
-  // No DOM to decorate, or an insecure origin with no clipboard to offer.
-  if (!document.body || !navigator.clipboard) return;
+  if (!document.body) return;
   var ICONS =
     '<svg class="icon-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="14" height="14" rx="2"/><path d="M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2"/></svg>' +
     '<svg class="icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
@@ -291,24 +290,48 @@
     return pre ? pre.textContent.replace(/^\n/, "").replace(/\s+$/, "") : "";
   }
 
+  function writeText(value) {
+    if (navigator.clipboard && navigator.clipboard.writeText)
+      return navigator.clipboard.writeText(value);
+
+    // Clipboard API is unavailable on some local HTTP previews. The older
+    // selection API still lets the reader copy a prompt from that page.
+    var input = document.createElement("textarea");
+    input.value = value;
+    input.setAttribute("readonly", "");
+    input.style.position = "fixed";
+    input.style.opacity = "0";
+    document.body.appendChild(input);
+    try {
+      input.select();
+      if (!document.execCommand("copy")) throw new Error("Copy failed");
+      return Promise.resolve();
+    } catch (error) {
+      return Promise.reject(error);
+    } finally {
+      input.remove();
+    }
+  }
+
   document.querySelectorAll(".term").forEach(function (term) {
     // A terminal drawn as a figure (a diagram) is a picture, not a paste.
     if (term.closest && term.closest("figure")) return;
-    var bar = term.querySelector(".term-bar");
+    var target = term.querySelector(".guided-copy-slot") || term.querySelector(".term-bar");
     var text = payload(term);
-    if (!bar || !text || bar.querySelector(".term-copy")) return;
+    if (!target || !text || target.querySelector(".term-copy")) return;
 
     var btn = document.createElement("button");
+    var copyLabel =
+      (term.getAttribute && term.getAttribute("data-copy-label")) || "Copy to clipboard";
     btn.type = "button";
     btn.className = "term-copy";
-    btn.title = "Copy";
-    btn.setAttribute("aria-label", "Copy to clipboard");
+    btn.title = copyLabel;
+    btn.setAttribute("aria-label", copyLabel);
     btn.innerHTML = ICONS;
 
     var reset;
     btn.addEventListener("click", function () {
-      navigator.clipboard
-        .writeText(text)
+      writeText(text)
         .then(function () {
           btn.classList.add("copied");
           btn.title = "Copied";
@@ -316,15 +339,15 @@
           clearTimeout(reset);
           reset = setTimeout(function () {
             btn.classList.remove("copied");
-            btn.title = "Copy";
-            btn.setAttribute("aria-label", "Copy to clipboard");
+            btn.title = copyLabel;
+            btn.setAttribute("aria-label", copyLabel);
           }, 1600);
         })
         // An unfocused document or a denied permission rejects the write: leave
         // the button uncopied rather than throw an unhandled rejection.
         .catch(function () {});
     });
-    bar.appendChild(btn);
+    target.appendChild(btn);
   });
 })();
 

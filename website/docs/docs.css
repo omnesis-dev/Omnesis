@@ -730,6 +730,45 @@ pre[data-highlighted] {
   color: var(--color-note);
 }
 
+/* The guided prompt reads as one terminal input; the copy icon follows its
+   final sentence while the text wraps within the available width. */
+.guided-install-terminal {
+  border-radius: 0;
+  box-shadow: none;
+}
+.guided-install-terminal .guided-terminal-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  overflow-x: hidden;
+  padding: 16px 18px;
+}
+.guided-prompt-content {
+  flex: 1;
+  min-width: 0;
+}
+.guided-session-chevron {
+  flex: none;
+  color: var(--color-bookmark);
+  font-size: 13px;
+  line-height: 1.65;
+}
+.guided-prompt-content pre {
+  display: inline;
+  min-width: 0;
+  color: var(--text-primary);
+}
+.guided-copy-slot {
+  display: inline;
+}
+.guided-install-terminal .term-copy {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
 .docs-shell {
   display: grid;
   grid-template-columns: 232px minmax(0, 1fr);

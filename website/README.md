@@ -2,9 +2,10 @@
 
 Static marketing site (`index.html`) plus its media. Also serves the
 installer: `install.sh` here is a byte-identical mirror of the canonical
-`scripts/install.sh`, so `https://omnesis.dev/install.sh` resolves. After
-editing the canonical script run `cat scripts/install.sh > website/install.sh`
-— a unit test (`scripts/release/install-sh-mirror.test.mjs`) fails on drift. Most assets are
+`scripts/install.sh`, so `https://omnesis.dev/install.sh` resolves. The guided
+install prompt follows the same pattern: `website/install-prompt.md` mirrors
+`scripts/install-prompt.md` at `https://omnesis.dev/install-prompt.md`. After
+editing either canonical file, copy it to `website/`; mirror tests fail on drift. Most assets are
 hand-authored, but a few are **generated from the synthetic demo gateway**
 (the John Smith corpus — no personal data) so they stay current and never
 leak real data. All generators are repeatable: re-run them any time to
