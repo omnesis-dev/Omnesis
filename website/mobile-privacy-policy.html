@@ -117,7 +117,7 @@
       <main id="main" class="docs-content">
         <p class="docs-kicker">Legal</p>
         <h1>Omnesis Mobile App Privacy Policy</h1>
-        <p class="docs-lead"><strong>Last updated:</strong> 2026-08-29</p>
+        <p class="docs-lead"><strong>Last updated:</strong> 2026-09-25</p>
 
         <h2 id="summary">Summary</h2>
         <p>
@@ -133,7 +133,8 @@
           that can wake an official mobile app, but it never receives notification titles, bodies,
           kinds, queries, indexed content, or an application-level gateway identifier. It receives
           the carrier token and public app identity described below. There is no Omnesis account,
-          telemetry, analytics or advertising SDK, or advertising identifier.
+          advertising SDK or advertising identifier, and nothing is reported to Omnesis. On Android,
+          Google's ML Kit library sends Google its own limited diagnostic data, described below.
         </p>
         <p>
           Cloud inference is off by default. If you or the operator of your paired gateway enables a
@@ -269,6 +270,13 @@
             apply.
           </li>
           <li>
+            On Android, Google's ML Kit library reads text and labels from photos on the device. It
+            sends Google limited diagnostic and usage information about the library itself: device
+            and app information, a per-installation identifier, performance metrics and error codes.
+            It does not send the photos, the text read from them, or their labels. Google's ML Kit
+            terms apply.
+          </li>
+          <li>
             As with any internet service, the relay's hosting and network providers necessarily
             process source IP addresses and basic transport metadata to route and protect requests.
             The relay application does not put source IP addresses in its notification database.
@@ -310,7 +318,10 @@
             notification relay still never receives indexed content, queries, or notification
             content.
           </li>
-          <li>We do not include any third-party analytics, advertising, or crash-reporting SDK.</li>
+          <li>
+            We do not include any advertising, analytics or crash-reporting SDK. The only
+            third-party diagnostics are ML Kit's on Android, described above.
+          </li>
           <li>We do not use IDFA or any advertising identifier.</li>
           <li>
             We do not sell, rent, or lease your data. Indexed content is shared only as directed by
