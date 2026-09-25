@@ -802,6 +802,7 @@ function prepareHarnessPlugin(
             // this migration install to discover current manifests.
             OPENCLAW_DISABLE_PERSISTED_PLUGIN_REGISTRY: "1",
           };
+          // Known bug: #112 — OpenClaw 2026.8.1+ refuses this install without capability consent.
           runInstaller(
             "openclaw",
             ["plugins", "install", "--force", `npm-pack:${artifact.archivePath}`],

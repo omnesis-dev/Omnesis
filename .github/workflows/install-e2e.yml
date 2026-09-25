@@ -1,0 +1,309 @@
+name: Install e2e
+# The release gate (scripts/release/install-e2e-gate.mjs) recognizes a
+# dispatch of every lane by "lanes: all" in this name.
+run-name: "Install e2e (${{ github.event_name }}${{ github.event_name == 'workflow_dispatch' && format(', lanes: {0}', inputs.lanes) || '' }})"
+
+# Installs, updates and rolls back Omnesis on real GitHub-hosted machines,
+# under each OS's real service supervisor. See docs/install-e2e.md.
+#
+# Single-host lanes (S1 Linux, S2 macOS) run on pull requests and on pushes to
+# main that touch the installer, the updater or the service definitions. They
+# need no secrets, so they also run for fork pull requests.
+#
+# Two-machine tailnet lanes (T1 fresh, T2 upgrade + fleet) join a dedicated CI
+# tailnet through workload identity federation. They run nightly and on manual
+# dispatch, only on main or a release tag of this repository: the
+# `tailnet-e2e` environment that holds the credential admits nothing else.
+# The release conductor refuses a tag while the newest completed full run on
+# main (nightly, or a dispatch of every lane) is red.
+on:
+  pull_request:
+    paths:
+      - scripts/install.sh
+      - website/install.sh
+      - packages/cli/src/update/**
+      - packages/cli/src/commands/update.ts
+      - packages/cli/src/service/**
+      - scripts/install-e2e/**
+      - .github/workflows/install-e2e.yml
+  push:
+    branches: [main]
+    paths:
+      - scripts/install.sh
+      - website/install.sh
+      - packages/cli/src/update/**
+      - packages/cli/src/commands/update.ts
+      - packages/cli/src/service/**
+      - scripts/install-e2e/**
+      - .github/workflows/install-e2e.yml
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+    inputs:
+      lanes:
+        description: Which lanes to run
+        type: choice
+        options: [all, single-host, tailnet]
+        default: all
+
+permissions: {}
+
+# A newer push to a pull request replaces its run. Runs on main are never
+# cancelled: the release gate reads them, and a dispatch of one lane must not
+# silently end a dispatch of every lane.
+concurrency:
+  group: install-e2e-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.lanes || 'all' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  single-host:
+    name: ${{ matrix.lane }} single host (${{ matrix.os }})
+    if: github.event_name != 'workflow_dispatch' || inputs.lanes != 'tailnet'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: S1
+            os: ubuntu-22.04
+          - lane: S2
+            os: macos-15
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+      - name: Install vN, update to vN+1, roll back a broken vN+2
+        run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/single-host.sh
+      - name: Diagnostics (redacted)
+        if: failure() || cancelled()
+        run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/diagnostics.sh
+
+  tailnet-plan:
+    name: Tailnet lanes — eligibility
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.lanes != 'single-host')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.plan.outputs.run }}
+    steps:
+      - id: plan
+        env:
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REPO" = omnesis-dev/Omnesis ] && { [ "$REF" = refs/heads/main ] || [[ "$REF" == refs/tags/v* ]]; }; then
+            echo "run=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "::notice title=Tailnet lanes skipped::They run only on main or a release tag of omnesis-dev/Omnesis; the tailnet-e2e environment admits nothing else."
+            echo "run=false" >>"$GITHUB_OUTPUT"
+          fi
+
+  tailnet-preflight:
+    name: Tailnet lanes — credential
+    needs: tailnet-plan
+    if: needs.tailnet-plan.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: tailnet-e2e
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      # Without the credential the tailnet lanes cannot run. On a full run
+      # (nightly, or a dispatch of every lane) that is a failure, because the
+      # release gate reads those runs as evidence the lanes passed; on a
+      # dispatch of the tailnet lanes alone it is a notice.
+      - id: check
+        env:
+          TS_CLIENT_ID: ${{ secrets.TS_CLIENT_ID }}
+          TS_AUDIENCE: ${{ secrets.TS_AUDIENCE }}
+          FULL_RUN: ${{ github.event_name == 'schedule' || inputs.lanes == 'all' }}
+        run: |
+          if [ -n "$TS_CLIENT_ID" ] && [ -n "$TS_AUDIENCE" ]; then
+            echo "ready=true" >>"$GITHUB_OUTPUT"
+          elif [ "$FULL_RUN" = true ]; then
+            echo "::error title=Tailnet lanes cannot run::The tailnet-e2e environment has no TS_CLIENT_ID/TS_AUDIENCE secrets."
+            exit 1
+          else
+            echo "::notice title=Tailnet lanes skipped::The tailnet-e2e environment has no TS_CLIENT_ID/TS_AUDIENCE secrets, so T1 and T2 did not run."
+            echo "ready=false" >>"$GITHUB_OUTPUT"
+          fi
+
+  tailnet-fixture:
+    name: Tailnet lanes — fixture remote
+    needs: tailnet-preflight
+    if: needs.tailnet-preflight.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+      # T1 installs the candidate as the newest release. T2 installs the newest
+      # real release with that release's own install.sh, then updates to the
+      # candidate, published in its fixture as the next version.
+      - name: Build the fixtures
+        run: |
+          out="$RUNNER_TEMP/fixtures"
+          node scripts/install-e2e/fixture.mjs init --source . --out "$out/fresh"
+          node scripts/install-e2e/fixture.mjs init --source . --out "$out/upgrade" --keep-releases
+          latest="$(node -p "require('$out/upgrade/fixture.json').startRelease ?? ''")"
+          [ -n "$latest" ] || { echo "::error::no vX.Y.Z release exists to upgrade from"; exit 1; }
+          next="$(node scripts/install-e2e/fixture.mjs next-version --remote "$out/upgrade/omnesis.git")"
+          node scripts/install-e2e/fixture.mjs release --remote "$out/upgrade/omnesis.git" --version "$next"
+          git show "$latest:scripts/install.sh" >"$out/upgrade/release-install.sh"
+          echo "::notice title=Upgrade lane::from $latest (its own install.sh) to the candidate as v$next"
+          tar -C "$out" -czf "$RUNNER_TEMP/fixtures.tgz" fresh upgrade
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: install-e2e-fixtures
+          path: ${{ runner.temp }}/fixtures.tgz
+          retention-days: 1
+          compression-level: 0
+
+  tailnet-gateway:
+    name: ${{ matrix.lane }} tailnet gateway (${{ matrix.os }})
+    needs: tailnet-fixture
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: T1
+            mode: fresh
+            os: ubuntu-24.04
+          - lane: T2
+            mode: upgrade
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    environment: tailnet-e2e
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      E2E_MODE: ${{ matrix.mode }}
+      NODE_NAME: omnesis-ci-gw-${{ matrix.mode == 'fresh' && 't1' || 't2' }}-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: install-e2e-fixtures
+          path: ${{ runner.temp }}
+      - name: Unpack the fixture
+        run: |
+          mkdir -p "$RUNNER_TEMP/fixtures"
+          tar -C "$RUNNER_TEMP/fixtures" -xzf "$RUNNER_TEMP/fixtures.tgz"
+      - uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
+        with:
+          oauth-client-id: ${{ secrets.TS_CLIENT_ID }}
+          audience: ${{ secrets.TS_AUDIENCE }}
+          tags: tag:omnesis-ci
+          hostname: ${{ env.NODE_NAME }}
+          # tailscaled keeps the certificates it issues under its state
+          # directory; with the default in-memory state `tailscale cert`
+          # has nowhere to put one.
+          statedir: ${{ runner.temp }}/tailscale-state
+          # Quiet is load-bearing: the other modes print the tailnet's DNS
+          # suffix, and this log is public.
+          log-mode: quiet
+      # Only the Tailscale step needs the OIDC token. Nothing after it (the
+      # installer runs npm lifecycle scripts) gets the means to mint one.
+      - name: Gateway
+        run: |
+          unset ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL
+          E2E_WORK="$RUNNER_TEMP/install-e2e" E2E_FIXTURE_DIR="$RUNNER_TEMP/fixtures/$E2E_MODE" \
+            scripts/install-e2e/tailnet-gateway.sh
+      - name: Tell the collector this job failed
+        if: failure() || cancelled()
+        run: |
+          url="$(cat "$RUNNER_TEMP/install-e2e/mailbox-url" 2>/dev/null || true)"
+          [ -n "$url" ] || exit 0
+          node scripts/install-e2e/mailbox.mjs put --url "$url" --key abort --value "the gateway job failed" || true
+          # Keep the mailbox up long enough for the collector's next poll.
+          sleep 20
+      - name: Diagnostics (redacted)
+        if: failure() || cancelled()
+        run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/diagnostics.sh
+
+  tailnet-collector:
+    name: ${{ matrix.lane }} tailnet collector (${{ matrix.os }})
+    needs: tailnet-fixture
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: T1
+            mode: fresh
+            os: macos-15
+          - lane: T2
+            mode: upgrade
+            os: macos-14
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    environment: tailnet-e2e
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      E2E_MODE: ${{ matrix.mode }}
+      NODE_NAME: omnesis-ci-col-${{ matrix.mode == 'fresh' && 't1' || 't2' }}-${{ github.run_id }}-${{ github.run_attempt }}
+      E2E_GATEWAY_HOST: omnesis-ci-gw-${{ matrix.mode == 'fresh' && 't1' || 't2' }}-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: install-e2e-fixtures
+          path: ${{ runner.temp }}
+      - name: Unpack the fixture
+        run: |
+          mkdir -p "$RUNNER_TEMP/fixtures"
+          tar -C "$RUNNER_TEMP/fixtures" -xzf "$RUNNER_TEMP/fixtures.tgz"
+      - uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
+        with:
+          oauth-client-id: ${{ secrets.TS_CLIENT_ID }}
+          audience: ${{ secrets.TS_AUDIENCE }}
+          tags: tag:omnesis-ci
+          hostname: ${{ env.NODE_NAME }}
+          # Quiet is load-bearing: the other modes print the tailnet's DNS
+          # suffix, and this log is public.
+          log-mode: quiet
+      # Only the Tailscale step needs the OIDC token; see the gateway job.
+      - name: Collector
+        run: |
+          unset ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL
+          E2E_WORK="$RUNNER_TEMP/install-e2e" E2E_FIXTURE_DIR="$RUNNER_TEMP/fixtures/$E2E_MODE" \
+            scripts/install-e2e/tailnet-collector.sh
+      - name: Tell the gateway this job failed
+        if: failure() || cancelled()
+        run: |
+          url="$(cat "$RUNNER_TEMP/install-e2e/mailbox-url" 2>/dev/null || true)"
+          [ -n "$url" ] || exit 0
+          node scripts/install-e2e/mailbox.mjs put --url "$url" --key abort --value "the collector job failed" || true
+      - name: Diagnostics (redacted)
+        if: failure() || cancelled()
+        run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/diagnostics.sh
