@@ -46,13 +46,18 @@
 # already has, updates that install in place: the installer makes the recorded
 # checkout fetchable and runs the machine's own `omnesis update` (to the newest
 # stable release, or --version / --edge), which rebuilds, restarts the services
-# and rolls back on failure. Certificate, keyring, embedding model, pairing and
-# service definitions stay as they are. `--reconfigure`, a different role, a
-# first install that never registered its services, --commit, or a flag that
-# sets one of those things (--code, --gateway-url, --trust-fingerprint,
-# --mkcert, --embedder, --port, --keyring-passphrase-file, --hardened,
-# --method) runs the full install instead. The harness roles already refresh
-# an existing connection.
+# and rolls back on failure. Certificate, keyring, embedding model and pairing
+# stay as they are; the update refreshes service definitions as `omnesis
+# update` always does. A plain re-run updates any machine with a gateway or
+# collector service, so turning a collector machine into a gateway takes
+# --reconfigure. `--reconfigure`, --collector or --client-only on a machine
+# with another role, a first install that never registered its services,
+# --commit, --method package|auto, or a flag that sets one of the kept choices
+# (--code, --gateway-url, --trust-fingerprint, --mkcert, --embedder, --port,
+# --keyring-passphrase-file, --hardened) runs the full install instead. Flags
+# that only skip a setup step (--no-tls, --no-service, --no-keyring,
+# --no-model) have nothing to skip on an update. The harness roles already
+# refresh an existing connection.
 #
 # The two required choices (which embedding model, and what to do about a
 # keyring it cannot use) are read from /dev/tty, because under `curl | sh`
@@ -408,7 +413,7 @@ show_install_plan() {
   printf '  Role:      %s\n' "$PLAN_ROLE"
   printf '  Delivery:  %s\n' "$PLAN_DELIVERY"
   printf '  Target:    %s\n' "$PLAN_TARGET"
-  if [ "$CLIENT_ONLY" != 1 ] && [ "$DOCKER" != 1 ]; then
+  if [ "$CLIENT_ONLY" != 1 ] && [ "$DOCKER" != 1 ] && [ "$UPDATE_EXISTING" = 0 ]; then
     printf '  Gateway:   https://localhost:%s\n' "$GATEWAY_PORT"
   fi
   if [ "$NO_PROMPT" = 1 ]; then printf '  Prompts:   disabled\n'; fi
@@ -5721,20 +5726,33 @@ print_client_banner() {
 # marker. Fails when there is none.
 recorded_source_root() {
   [ -f "$CONFIG_DIR/update-state.json" ] || return 1
-  if ! command -v node >/dev/null 2>&1 && command -v brew >/dev/null 2>&1; then
-    # Homebrew's node@24 is keg-only: an earlier install found it by prefix.
-    RECORDED_NODE_PREFIX="$(brew --prefix node@24 2>/dev/null || true)"
-    [ -z "$RECORDED_NODE_PREFIX" ] || [ ! -x "$RECORDED_NODE_PREFIX/bin/node" ] || \
-      PATH="$RECORDED_NODE_PREFIX/bin:$PATH"
-  fi
+  # Homebrew installs node@24 keg-only, and a non-login shell may not have
+  # Homebrew on PATH at all: look where the source wrapper looks.
+  case "$(node --version 2>/dev/null)" in
+    v2[4-9].*|v[3-9][0-9].*|v[1-9][0-9][0-9].*) ;;
+    *)
+      for RECORDED_NODE_PREFIX in "${HOMEBREW_PREFIX:-}" /opt/homebrew /usr/local /home/linuxbrew/.linuxbrew; do
+        if [ -n "$RECORDED_NODE_PREFIX" ] && [ -x "$RECORDED_NODE_PREFIX/opt/node@24/bin/node" ]; then
+          PATH="$RECORDED_NODE_PREFIX/opt/node@24/bin:$PATH"
+          break
+        fi
+      done
+      ;;
+  esac
   command -v node >/dev/null 2>&1 && command -v git >/dev/null 2>&1 || return 1
   RECORDED_ROOT="$(node -e '
 const fs = require("node:fs");
 try {
   const state = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  const exactCommit = /^[0-9a-f]{40}$/;
+  // The record the source wrapper accepts. One it refuses sends its repair
+  // back to this installer, so it takes the full install, not the updater.
+  const usable = state?.phase === "complete"
+    ? exactCommit.test(state.commit)
+    : ["applying", "rolling-back"].includes(state?.phase) &&
+      exactCommit.test(state.targetCommit) && exactCommit.test(state.lastCompletedCommit);
   if (state?.version === 1 && state?.method === "source" &&
-      typeof state.rootDir === "string" && state.rootDir.startsWith("/") &&
-      ["complete", "applying", "rolling-back"].includes(state.phase)) {
+      typeof state.rootDir === "string" && state.rootDir.startsWith("/") && usable) {
     process.stdout.write(state.rootDir);
   }
 } catch {}
@@ -5807,21 +5825,6 @@ plan_existing_update() {
   UPDATE_EXISTING=1
 }
 
-# The local gateway's port, bind address and health origin, from this run's
-# --port or the configuration an earlier run saved.
-read_gateway_endpoint() {
-  if [ "$GATEWAY_PORT_EXPLICIT" = 1 ]; then
-    set_env OMNESIS_GATEWAY_PORT "$GATEWAY_PORT"
-  elif SAVED_GATEWAY_PORT="$(dotenv_value OMNESIS_GATEWAY_PORT)"; then
-    valid_gateway_port "$SAVED_GATEWAY_PORT" || \
-      fail "OMNESIS_GATEWAY_PORT in $CONFIG_DIR/.env must be a whole number from 1 through 65535."
-    GATEWAY_PORT="$SAVED_GATEWAY_PORT"
-  fi
-  GATEWAY_BIND="$(dotenv_value OMNESIS_BIND || printf '%s' '0.0.0.0')"
-  GATEWAY_HEALTH_ORIGIN="$(local_gateway_health_origin "$GATEWAY_BIND" "$GATEWAY_PORT")" || \
-    fail "OMNESIS_BIND in $CONFIG_DIR/.env is not a valid local gateway bind address."
-}
-
 update_existing_install() {
   show_install_plan
   configure_network_budget
@@ -5833,10 +5836,16 @@ update_existing_install() {
   set -- update --yes
   [ -z "$PIN_VERSION" ] || set -- "$@" --target-version "$PIN_VERSION"
   [ "$EDGE" = 0 ] || set -- "$@" --edge
-  # Updaters before 0.5.6 refuse any target that does not descend from the
-  # installed build, which is every release after a repository's history was
-  # replaced; the newest release is still the forward move, so let them take it.
-  if [ "$FORCE" = 1 ] || version_is_newer 0.5.6 "$(source_version_at HEAD)"; then
+  # Updaters before 0.5.6 refuse a newer target that shares no history with
+  # the installed build. Their --force also skips the downgrade refusal, so it
+  # is added only when the target is not older than the installed build. The
+  # installed build is the last completed one: after an interrupted update the
+  # wrapper returns to it before running its updater.
+  INSTALLED_VERSION="$(source_version_at "$(source_last_completed_commit "$RECORDED_SOURCE_ROOT" HEAD)")"
+  if [ "$FORCE" = 1 ]; then
+    set -- "$@" --force
+  elif version_is_newer 0.5.6 "$INSTALLED_VERSION" &&
+       { [ -z "$PIN_VERSION" ] || ! version_is_newer "$INSTALLED_VERSION" "$PIN_VERSION"; }; then
     set -- "$@" --force
   fi
   stage "Updating with this machine's own updater"
@@ -6161,7 +6170,16 @@ main() {
     print_client_banner
     return 0
   fi
-  read_gateway_endpoint
+  if [ "$GATEWAY_PORT_EXPLICIT" = 1 ]; then
+    set_env OMNESIS_GATEWAY_PORT "$GATEWAY_PORT"
+  elif SAVED_GATEWAY_PORT="$(dotenv_value OMNESIS_GATEWAY_PORT)"; then
+    valid_gateway_port "$SAVED_GATEWAY_PORT" || \
+      fail "OMNESIS_GATEWAY_PORT in $CONFIG_DIR/.env must be a whole number from 1 through 65535."
+    GATEWAY_PORT="$SAVED_GATEWAY_PORT"
+  fi
+  GATEWAY_BIND="$(dotenv_value OMNESIS_BIND || printf '%s' '0.0.0.0')"
+  GATEWAY_HEALTH_ORIGIN="$(local_gateway_health_origin "$GATEWAY_BIND" "$GATEWAY_PORT")" || \
+    fail "OMNESIS_BIND in $CONFIG_DIR/.env is not a valid local gateway bind address."
   align_configured_gateway_url_port
   if [ "$WANT_HARDENED" = 1 ]; then
     hardened_install

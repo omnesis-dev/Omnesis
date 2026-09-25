@@ -872,12 +872,90 @@ describe("install.sh service registration", () => {
       expect(updates(edge)).toEqual(["update --yes --edge"]);
     });
 
-    test("lets an updater older than 0.5.6 cross to a release that is not its descendant", () => {
+    test("forces an updater older than 0.5.6 toward a release that is not older", () => {
       tagRelease("0.5.5");
       installFirst("update-old", ["--no-tls", "--embedder", EMBED_IDS[1], "--version", "0.5.5"]);
       const updated = runInstaller("update-old", [], env);
       expect(updated.status, updated.output).toBe(0);
       expect(updates(updated)).toEqual(["update --yes --force"]);
+    });
+
+    test("never forces an old updater toward an older release", () => {
+      tagRelease("0.5.5");
+      installFirst("update-old-pin", [
+        "--no-tls",
+        "--embedder",
+        EMBED_IDS[1],
+        "--version",
+        "0.5.5",
+      ]);
+      const pinned = runInstaller("update-old-pin", ["--version", "0.5.0"], env);
+      expect(pinned.status, pinned.output).toBe(0);
+      expect(updates(pinned)).toEqual(["update --yes --target-version 0.5.0"]);
+      const forced = runInstaller("update-old-pin", ["--version", "0.5.0", "--force"], env);
+      expect(forced.status, forced.output).toBe(0);
+      expect(updates(forced)).toEqual(["update --yes --target-version 0.5.0 --force"]);
+    });
+
+    test("judges an interrupted update by the build it returns to", () => {
+      tagRelease("0.5.5");
+      const first = installFirst("update-interrupted", [
+        "--no-tls",
+        "--embedder",
+        EMBED_IDS[1],
+        "--version",
+        "0.5.5",
+      ]);
+      const statePath = join(first.home, ".config", "omnesis", "update-state.json");
+      const state = JSON.parse(readFileSync(statePath, "utf8"));
+      checkoutGit("update-interrupted", "checkout", "-q", "--detach", "v0.10.0");
+      writeFileSync(
+        statePath,
+        JSON.stringify({
+          ...state,
+          phase: "applying",
+          targetCommit: checkoutGit("update-interrupted", "rev-parse", "HEAD"),
+          lastCompletedCommit: state.commit,
+        }),
+      );
+      const resumed = runInstaller("update-interrupted", [], env);
+      expect(resumed.status, resumed.output).toBe(0);
+      expect(updates(resumed)).toEqual(["update --yes --force"]);
+    });
+
+    test("a record the updater cannot use runs the full install", () => {
+      const first = installFirst("update-bad-record");
+      const statePath = join(first.home, ".config", "omnesis", "update-state.json");
+      const state = JSON.parse(readFileSync(statePath, "utf8"));
+      writeFileSync(statePath, JSON.stringify({ ...state, commit: "not-a-commit" }));
+      const again = runInstaller("update-bad-record", ["--no-tls", "--no-model"], env);
+      expect(again.status, again.output).toBe(0);
+      expect(updates(again)).toEqual([]);
+    });
+
+    test("a dry run names the update and changes nothing", () => {
+      installFirst("update-dry");
+      const dry = runInstaller("update-dry", ["--dry-run"], env);
+      expect(dry.status, dry.output).toBe(0);
+      expect(dry.output).toContain("update of this machine's existing install");
+      expect(dry.output).not.toContain("Gateway:");
+      expect(updates(dry)).toEqual([]);
+    });
+
+    test("leaves a checkout that already fetches its branches alone", () => {
+      installFirst("update-heads");
+      checkoutGit(
+        "update-heads",
+        "config",
+        "--replace-all",
+        "remote.origin.fetch",
+        "+refs/heads/*:refs/remotes/origin/*",
+      );
+      const updated = runInstaller("update-heads", [], env);
+      expect(updated.status, updated.output).toBe(0);
+      expect(checkoutGit("update-heads", "config", "--get-all", "remote.origin.fetch")).toBe(
+        "+refs/heads/*:refs/remotes/origin/*",
+      );
     });
 
     test("a failed update fails the installer and says so", () => {
@@ -904,6 +982,34 @@ describe("install.sh service registration", () => {
       const updated = runInstaller("update-client", ["--client-only"], env);
       expect(updated.status, updated.output).toBe(0);
       expect(updates(updated)).toEqual(["update --yes"]);
+    });
+
+    test("a plain re-run updates a collector machine too", () => {
+      installFirst("update-collector-plain", firstArgs, ["collector"]);
+      const updated = runInstaller("update-collector-plain", [], env);
+      expect(updated.status, updated.output).toBe(0);
+      expect(updates(updated)).toEqual(["update --yes"]);
+    });
+
+    test("a flag that sets a kept choice, or another checkout, runs the full install", () => {
+      installFirst("update-flagged");
+      const port = runInstaller(
+        "update-flagged",
+        ["--no-tls", "--no-model", "--port", "7700"],
+        env,
+      );
+      expect(port.status, port.output).toBe(0);
+      expect(updates(port)).toEqual([]);
+      expect(port.calls.some((c) => c.startsWith("service install"))).toBe(true);
+
+      const elsewhere = runInstaller(
+        "update-flagged",
+        ["--source-dir", fixturePath("checkout-update-elsewhere"), "--no-tls", "--no-model"],
+        env,
+      );
+      expect(elsewhere.status, elsewhere.output).toBe(0);
+      expect(updates(elsewhere)).toEqual([]);
+      expect(existsSync(fixturePath("checkout-update-elsewhere", ".git"))).toBe(true);
     });
 
     test("finds the recorded checkout when the re-run names none", () => {
