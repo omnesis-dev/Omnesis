@@ -77,9 +77,7 @@ COLLECTOR="$(live_collector_name "$GATEWAY_URL" 180)" || die "the gateway lists 
 make_vault "$E2E_WORK/vault"
 SOURCE_ID="$(add_vault "$COLLECTOR" "$E2E_WORK/vault")"
 redacted "$OMNESIS" sources sync "$SOURCE_ID" --wait --timeout 300 || die "the vault did not sync"
-snapshot before "$GATEWAY_URL" --query "$SEARCH_WORD"
-json_get "$E2E_WORK/before.json" 'j.search.titles' | grep -qF "$SEARCH_TITLE" ||
-  die "keyword search did not find the seeded note before the update"
+snapshot_with_hit before "$GATEWAY_URL"
 endgroup
 
 group "Update to vN+1 by re-running install.sh"
@@ -88,7 +86,7 @@ fixture release --remote "$REMOTE" --version "$V_N1" >"$E2E_WORK/release-n1.json
 installer --no-prompt || die "re-running install.sh did not update to v$V_N1"
 probe health --url "$GATEWAY_URL" --expect-version "$V_N1" --timeout 180 >/dev/null
 redacted "$OMNESIS" sources sync "$SOURCE_ID" --wait --timeout 300 || die "the vault did not sync after the update"
-snapshot updated "$GATEWAY_URL" --query "$SEARCH_WORD"
+snapshot_with_hit updated "$GATEWAY_URL"
 probe compare --before "$E2E_WORK/before.json" --after "$E2E_WORK/updated.json" \
   --expect-version "$V_N1" --expect-restart gateway,collector --expect-backup --expect-title "$SEARCH_TITLE"
 endgroup
@@ -108,7 +106,7 @@ N1_COMMIT="$(json_get "$E2E_WORK/release-n1.json" 'j.commit')"
 [ "$(git -C "$SOURCE_DIR" rev-parse HEAD)" = "$N1_COMMIT" ] || die "the checkout is not back on v$V_N1"
 [ "$(json_get "$CONFIG_DIR/update-state.json" 'j.phase')" = complete ] || die "update state is not complete after the rollback"
 [ "$(json_get "$CONFIG_DIR/update-state.json" 'j.commit')" = "$N1_COMMIT" ] || die "update state does not name v$V_N1"
-snapshot rolled-back "$GATEWAY_URL" --query "$SEARCH_WORD"
+snapshot_with_hit rolled-back "$GATEWAY_URL"
 probe compare --before "$E2E_WORK/updated.json" --after "$E2E_WORK/rolled-back.json" \
   --expect-version "$V_N1" --expect-restart gateway --expect-title "$SEARCH_TITLE"
 endgroup

@@ -120,9 +120,7 @@ group "Sync an invented vault from the collector"
 VAULT="$(wait_for vault-path)" || die "the collector sent no vault"
 SOURCE_ID="$(add_vault "$COLLECTOR" "$VAULT")"
 redacted "$OMNESIS" sources sync "$SOURCE_ID" --wait --timeout 300 || die "the collector's vault did not sync"
-snapshot before "$GATEWAY_URL" --query "$SEARCH_WORD"
-json_get "$E2E_WORK/before.json" 'j.search.titles' | grep -qF "$SEARCH_TITLE" ||
-  die "gateway search did not find the note synced from the collector"
+snapshot_with_hit before "$GATEWAY_URL"
 endgroup
 
 if [ "$MODE" = upgrade ]; then
@@ -131,7 +129,7 @@ if [ "$MODE" = upgrade ]; then
   redacted "$OMNESIS" update --fleet --yes || die "omnesis update --fleet did not finish"
   probe health --url "$GATEWAY_URL" --expect-version "$NEXT_VERSION" --timeout 180 >/dev/null
   redacted "$OMNESIS" sources sync "$SOURCE_ID" --wait --timeout 300 || die "the vault did not sync after the fleet update"
-  snapshot updated "$GATEWAY_URL" --query "$SEARCH_WORD" --fleet
+  snapshot_with_hit updated "$GATEWAY_URL" --fleet
   probe compare --before "$E2E_WORK/before.json" --after "$E2E_WORK/updated.json" \
     --expect-version "$NEXT_VERSION" --expect-restart gateway,collector --expect-backup \
     --expect-title "$SEARCH_TITLE" --expect-fleet-current

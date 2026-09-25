@@ -127,6 +127,23 @@ EOF
 EOF
 }
 
+# snapshot_with_hit <name> <gateway url> [extra probe flags…]: a snapshot
+# taken once keyword search finds the seeded note. A synced document reaches
+# the search index shortly after the sync reports it, so this polls.
+snapshot_with_hit() {
+  local name="$1" url="$2" deadline=$(($(date +%s) + 180))
+  shift 2
+  while :; do
+    snapshot "$name" "$url" --query "$SEARCH_WORD" "$@"
+    json_get "$E2E_WORK/$name.json" 'j.search.titles' | grep -qF "$SEARCH_TITLE" && return 0
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      log "search for $SEARCH_WORD returned: $(json_get "$E2E_WORK/$name.json" 'j.search.titles' || echo none)"
+      die "keyword search does not find the seeded note ($name)"
+    fi
+    sleep 5
+  done
+}
+
 # add_vault <collector device name> <vault path> → prints the new source id
 add_vault() {
   local device="$1" vault="$2" out id
