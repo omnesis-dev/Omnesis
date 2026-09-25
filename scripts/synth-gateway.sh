@@ -345,12 +345,20 @@ for s in m['sources']:
     [[ -z "$spec" ]] && continue
     desc="${spec%|*}"
     aid="${spec#*|}"
-    local add_response
-    if ! add_response=$(curl -skS --fail-with-body -X POST -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
-      "${URL}/admin/sources/add" \
-      -d "{\"deviceId\":\"${DEVICE_ID}\",\"descriptorId\":\"${desc}\",\"accountIds\":[\"${aid}\"]}" \
-    ); then
-      echo "Failed to add synth source ${desc} (${aid}): ${add_response:-no gateway response}" >&2
+    # A gateway still finishing its boot answers 502/503 for a moment after
+    # /health turns 200 on a slow host; those are retried, anything else fails.
+    local add_response add_status attempt
+    for attempt in $(seq 1 30); do
+      add_response=$(curl -skS -w '\n%{http_code}' -X POST -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
+        "${URL}/admin/sources/add" \
+        -d "{\"deviceId\":\"${DEVICE_ID}\",\"descriptorId\":\"${desc}\",\"accountIds\":[\"${aid}\"]}") || add_response=$'\n000'
+      add_status="${add_response##*$'\n'}"
+      add_response="${add_response%$'\n'*}"
+      [[ "${add_status}" == 502 || "${add_status}" == 503 || "${add_status}" == 000 ]] || break
+      sleep 1
+    done
+    if [[ "${add_status}" != 2* ]]; then
+      echo "Failed to add synth source ${desc} (${aid}): HTTP ${add_status} ${add_response:-no gateway response}" >&2
       return 1
     fi
   done <<< "$specs"

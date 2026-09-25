@@ -2425,7 +2425,8 @@ describe("agent-doc executable-claim drift guard (C6)", () => {
 });
 
 describe("scripts/synth-gateway.sh source seeding", () => {
-  it("fails at a rejected source instead of reporting a seeded gateway", () => {
+  // A fake curl answering the source add with the given status codes in turn.
+  function seedWith(addStatuses) {
     const root = mkdtempSync(join(tmpdir(), "omnesis-synth-seed-test-"));
     try {
       const bin = join(root, "bin");
@@ -2433,6 +2434,7 @@ describe("scripts/synth-gateway.sh source seeding", () => {
       mkdirSync(bin);
       mkdirSync(config);
       writeFileSync(join(config, "token"), "fixture-token");
+      const counter = join(root, "adds");
       const curl = join(bin, "curl");
       writeFileSync(
         curl,
@@ -2440,29 +2442,45 @@ describe("scripts/synth-gateway.sh source seeding", () => {
 case "$*" in
   *'/admin/devices'*) printf '{"items":[{"id":"device_fixture","kind":"collector"}]}' ;;
   *'/admin/sources/add'*)
-    printf '{"error":"fixture rejected"}'
-    if [[ " $* " == *' --fail-with-body '* ]]; then exit 22; fi
+    n=$(( $(cat '${counter}' 2>/dev/null || echo 0) + 1 )); echo "$n" >'${counter}'
+    statuses=(${addStatuses.join(" ")})
+    status=\${statuses[$(( n <= \${#statuses[@]} ? n - 1 : \${#statuses[@]} - 1 ))]}
+    if [[ "$status" == 2* ]]; then printf '{"sourceIds":["fixture"]}\\n%s' "$status"
+    else printf '{"error":"fixture rejected"}\\n%s' "$status"; fi
     ;;
+  *'/admin/search-snapshot/refresh'*) printf '{}' ;;
   *) exit 1 ;;
 esac
 `,
       );
       chmodSync(curl, 0o755);
-
       const result = spawnSync("bash", [join(repoRoot, "scripts/synth-gateway.sh"), "seed"], {
         env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, OMNESIS_CONFIG_DIR: config },
         encoding: "utf8",
-        timeout: 10_000,
+        timeout: 60_000,
       });
-
-      expect(result.status, result.stderr).toBe(1);
-      expect(result.stderr).toContain("Failed to add synth source");
-      expect(result.stderr).toContain("fixture rejected");
-      expect(result.stdout).not.toContain("Refreshing search snapshot");
+      return { result, adds: Number(readFileSync(counter, "utf8")) };
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  }
+
+  it("fails at a rejected source instead of reporting a seeded gateway", () => {
+    const { result, adds } = seedWith([400]);
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("Failed to add synth source");
+    expect(result.stderr).toContain("HTTP 400");
+    expect(result.stderr).toContain("fixture rejected");
+    expect(result.stdout).not.toContain("Refreshing search snapshot");
+    expect(adds).toBe(1);
   });
+
+  it("retries a gateway that is still finishing its boot", () => {
+    const { result, adds } = seedWith([503, 503, 200]);
+    expect(result.stderr).not.toContain("Failed to add synth source");
+    expect(result.stdout).toContain("Refreshing search snapshot");
+    expect(adds).toBeGreaterThanOrEqual(3);
+  }, 60_000);
 });
 
 describe("scripts/shot-portal.sh on-demand portal screenshot loop (C9)", () => {
