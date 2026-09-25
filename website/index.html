@@ -6513,25 +6513,42 @@
             next.focus();
           });
         });
+        // The Clipboard API exists only in secure contexts, so a plain-HTTP
+        // preview falls back to copying from an off-screen textarea.
+        const copyText = (value) => {
+          if (window.isSecureContext && navigator.clipboard) {
+            return navigator.clipboard.writeText(value);
+          }
+          const input = document.createElement("textarea");
+          input.value = value;
+          input.setAttribute("readonly", "");
+          input.style.position = "fixed";
+          input.style.opacity = "0";
+          document.body.appendChild(input);
+          try {
+            input.select();
+            if (!document.execCommand("copy")) throw new Error("Copy failed");
+            return Promise.resolve();
+          } catch (error) {
+            return Promise.reject(error);
+          } finally {
+            input.remove();
+          }
+        };
         card.querySelectorAll(".install-copy").forEach((btn) => {
-          btn.addEventListener("click", async () => {
+          btn.addEventListener("click", () => {
             const text = btn
               .closest(".install-code")
               .querySelector(".install-text")
               .textContent.replace(/\s+/g, " ")
               .trim();
-            try {
-              await navigator.clipboard.writeText(text);
-            } catch (e) {
-              const range = document.createRange();
-              range.selectNodeContents(btn.closest(".install-code").querySelector(".install-text"));
-              const sel = window.getSelection();
-              sel.removeAllRanges();
-              sel.addRange(range);
-              return;
-            }
-            btn.classList.add("is-copied");
-            setTimeout(() => btn.classList.remove("is-copied"), 1600);
+            copyText(text).then(
+              () => {
+                btn.classList.add("is-copied");
+                setTimeout(() => btn.classList.remove("is-copied"), 1600);
+              },
+              () => {},
+            );
           });
         });
       })();
