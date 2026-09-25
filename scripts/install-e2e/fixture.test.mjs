@@ -16,6 +16,7 @@ import {
   nextVersion,
   release,
   rewriteManifestVersion,
+  startReleaseTag,
 } from "./fixture.mjs";
 
 const git = (cwd, ...args) =>
@@ -78,6 +79,13 @@ describe("pure helpers", () => {
   it("picks the newest stable tag numerically and ignores pre-releases", () => {
     expect(newestStableTag(["v0.9.0", "v0.10.0", "v0.10.1-rc.1", "latest"])).toBe("v0.10.0");
     expect(newestStableTag(["nightly"])).toBeNull();
+  });
+
+  it("starts an upgrade at the newest release that is neither the candidate nor above it", () => {
+    const tags = ["v0.5.11", "v0.5.12", "v0.5.13", "v0.6.0", "v0.5.13-rc.1"];
+    expect(startReleaseTag(tags, "0.5.14", () => false)).toBe("v0.5.13");
+    expect(startReleaseTag(tags, "0.5.13", (tag) => tag === "v0.5.13")).toBe("v0.5.12");
+    expect(startReleaseTag(["v0.5.13"], "0.5.13", () => true)).toBeNull();
   });
 
   it("bumps the patch", () => {

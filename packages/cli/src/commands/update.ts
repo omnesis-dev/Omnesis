@@ -530,17 +530,44 @@ async function runStep(deps: UpdateFlowDeps, spec: CommandSpec): Promise<RunOutc
   }
 }
 
-/** Run one command, turning a spawn failure into a non-zero outcome. */
+/**
+ * Run one command, turning a spawn failure into a non-zero outcome. A command
+ * that names a `retry` gets its reset and one more run when it fails on its
+ * own — not when it was killed, since a second run meets the same memory
+ * shortage, and not once the update was interrupted. When the reset itself
+ * fails, the command's own failure is what the caller reports.
+ */
 async function attempt(
   deps: UpdateFlowDeps,
   spec: CommandSpec,
   control?: RunControl,
 ): Promise<RunOutcome> {
-  try {
-    return await deps.run(spec, "inherit", control);
-  } catch (err) {
-    return { code: 1, stdout: err instanceof Error ? err.message : String(err) };
+  const once = async (step: CommandSpec): Promise<RunOutcome> => {
+    try {
+      return await deps.run(step, "inherit", control);
+    } catch (err) {
+      return { code: 1, stdout: err instanceof Error ? err.message : String(err) };
+    }
+  };
+  const first = await once(spec);
+  const { retry } = spec;
+  if (
+    first.code === 0 ||
+    !retry ||
+    killedBuildStep(spec, first) ||
+    first.signal ||
+    control?.signal?.aborted
+  ) {
+    return first;
   }
+  console.log(
+    `${c.yellow}! \`${formatCommandSpec(spec)}\` failed (exit ${first.code}); ${retry.why}.${c.reset}`,
+  );
+  console.log(`${c.dim}$ ${formatCommandSpec(retry.reset)}${c.reset}`);
+  const reset = await once(retry.reset);
+  if (reset.code !== 0 || control?.signal?.aborted) return first;
+  console.log(`${c.dim}$ ${formatCommandSpec(spec)}${c.reset}`);
+  return once(spec);
 }
 
 /**

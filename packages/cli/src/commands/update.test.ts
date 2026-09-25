@@ -2582,6 +2582,94 @@ describe("rolling back a failed update", () => {
     });
   });
 
+  describe("an install that fails over the previous build's node_modules", () => {
+    // npm installs over the root node_modules a workspace checkout already
+    // has, and some transitions between two lockfiles crash that in-place
+    // install the same way every time; an install from an empty tree does not.
+    const failed = { code: 1, stdout: "" };
+
+    test("the install is retried once from an empty node_modules, and the update completes", async () => {
+      const runner = fakeRunner([...preflight, clean, failed, clean, clean, clean]);
+      await source(makeDeps(runner));
+      expect(executed(runner).slice(1)).toEqual([
+        "git checkout --detach v0.3.0",
+        "npm ci",
+        "rm -rf node_modules",
+        "npm ci",
+        "npm run build",
+      ]);
+      const reset = runner.calls.find((call) => call.spec.command === "rm");
+      expect(reset?.spec.cwd).toBe(rootDir);
+      expect(logged.join("\n")).toContain(
+        "`npm ci` failed (exit 1); installing the dependencies again from an empty node_modules.",
+      );
+      expect(logged.join("\n")).not.toContain("Rolled back");
+    });
+
+    test("a retry that fails too rolls back, and the rollback's own install gets the same retry", async () => {
+      const runner = fakeRunner([
+        ...preflight,
+        clean,
+        failed,
+        clean,
+        failed,
+        // The rollback: checkout, a failing install, its reset and retry, build.
+        clean,
+        failed,
+        clean,
+        clean,
+        clean,
+      ]);
+      const failure = await source(makeDeps(runner)).then(
+        unexpectedSuccess,
+        (err: unknown) => err as Error,
+      );
+      expect(failure.message).toContain("`npm ci` failed (exit 1).");
+      expect(failure.message).toContain(`Rolled back to ${previousRef}.`);
+      expect(executed(runner).slice(1)).toEqual([
+        "git checkout --detach v0.3.0",
+        "npm ci",
+        "rm -rf node_modules",
+        "npm ci",
+        `git checkout --detach ${previousRef}`,
+        "npm ci",
+        "rm -rf node_modules",
+        "npm ci",
+        "npm run build",
+      ]);
+    });
+
+    test("a reset that fails reports the install's own failure and rolls back", async () => {
+      const runner = fakeRunner([...preflight, clean, failed, failed, ...rollback]);
+      const failure = await source(makeDeps(runner)).then(
+        unexpectedSuccess,
+        (err: unknown) => err as Error,
+      );
+      expect(failure.message).toContain("`npm ci` failed (exit 1).");
+      expect(executed(runner).slice(1, 4)).toEqual([
+        "git checkout --detach v0.3.0",
+        "npm ci",
+        "rm -rf node_modules",
+      ]);
+    });
+
+    test("a killed install is not retried: a second run meets the same memory shortage", async () => {
+      const runner = fakeRunner([...preflight, clean, { code: 137, stdout: "" }, ...rollback]);
+      await expect(source(makeDeps(runner))).rejects.toMatchObject({
+        message: expect.stringContaining("`npm ci` was killed (exit 137)"),
+      });
+      expect(executed(runner)).not.toContain("rm -rf node_modules");
+    });
+
+    test("a failing build is not a reason to reinstall", async () => {
+      const runner = fakeRunner([...preflight, clean, clean, failed, ...rollback]);
+      await expect(source(makeDeps(runner))).rejects.toMatchObject({
+        message: expect.stringContaining("`npm run build` failed (exit 1)."),
+      });
+      expect(executed(runner)).not.toContain("rm -rf node_modules");
+    });
+  });
+
   describe("a build short of memory", () => {
     const killedBuild = { code: 137, stdout: "" };
 

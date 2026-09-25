@@ -199,6 +199,42 @@ describe("source recovery launcher", () => {
     expect(existsSync(join(configDir, "update.lock"))).toBe(false);
   });
 
+  test("a dependency install that fails over the existing tree is retried from an empty node_modules", () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-source-launcher-"));
+    scratch.push(dir);
+    const rootDir = join(dir, "source");
+    const homeDir = join(dir, "home");
+    const configDir = join(dir, "config");
+    const fakeBin = join(dir, "bin");
+    const ran = join(dir, "ran");
+    mkdirSync(join(rootDir, "node_modules", "left-behind"), { recursive: true });
+    mkdirSync(fakeBin);
+    // An install over a tree it cannot reconcile fails; one from an empty
+    // node_modules installs the CLI's runner.
+    writeFileSync(
+      join(fakeBin, "npm"),
+      `#!/bin/sh\n[ -d node_modules/left-behind ] && exit 1\nmkdir -p node_modules/.bin\nprintf '#!/bin/sh\\ntouch %s\\n' ${JSON.stringify(JSON.stringify(ran))} > node_modules/.bin/tsx\nchmod 755 node_modules/.bin/tsx\n`,
+      { mode: 0o755 },
+    );
+    const launcher = prepareSourceRecoveryLauncher(rootDir, configDir, homeDir);
+
+    const result = spawnSync(launcher, ["status"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+        OMNESIS_CONFIG_DIR: configDir,
+        OMNESIS_UPDATE_LOCK_ID: "",
+      },
+    });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain(
+      "Installing dependencies failed; installing them again from an empty node_modules...",
+    );
+    expect(existsSync(join(rootDir, "node_modules", "left-behind"))).toBe(false);
+    expect(existsSync(ran)).toBe(true);
+  });
+
   test("dependency recovery releases its lock before a non-update daemon stays running", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omnesis-source-launcher-"));
     scratch.push(dir);

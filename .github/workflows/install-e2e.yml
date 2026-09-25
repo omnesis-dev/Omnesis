@@ -19,6 +19,8 @@ run-name: "Install e2e (${{ github.event_name }}${{ github.event_name == 'workfl
 on:
   pull_request:
     paths:
+      - package.json
+      - package-lock.json
       - scripts/install.sh
       - website/install.sh
       - packages/cli/src/update/**
@@ -29,6 +31,8 @@ on:
   push:
     branches: [main]
     paths:
+      - package.json
+      - package-lock.json
       - scripts/install.sh
       - website/install.sh
       - packages/cli/src/update/**
@@ -87,6 +91,31 @@ jobs:
       - name: Diagnostics (redacted)
         if: failure() || cancelled()
         run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/diagnostics.sh
+
+  # The update away from the newest release runs that release's own `npm ci`
+  # over its own node_modules, so a lockfile npm cannot reconcile in place
+  # strands every source install on it. Minutes, not the lanes' hour.
+  lockfile-upgrade:
+    name: U1 npm ci over the newest release (${{ matrix.os }})
+    if: github.event_name != 'workflow_dispatch' || inputs.lanes != 'tailnet'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+      - name: Install the newest release, then the candidate over it
+        run: node scripts/install-e2e/lockfile-upgrade.mjs check
 
   tailnet-plan:
     name: Tailnet lanes — eligibility
