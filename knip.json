@@ -60,6 +60,8 @@
     "packages/collector": {
       "entry": [
         "src/auth-subprocess.ts",
+        "src/event-loop-watchdog-worker.ts",
+        "src/register-tsx.mjs",
         "src/**/*.test.ts",
         "src/**/fixtures/*.mjs",
         "src/e2e/brain-bench/codex-fixture.mjs"

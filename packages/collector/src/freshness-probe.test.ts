@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { spawn } from "node:child_process";
 import { describe, test, expect, vi } from "vitest";
 import { FreshnessProbe, PROBE_CACHE_TTL_MS, defaultIsProcessRunning } from "./freshness-probe.js";
 import type { SourceFreshness } from "@omnesis/source-sdk";
@@ -114,10 +115,19 @@ describe("FreshnessProbe", () => {
 // here: invert it and every healthy source is reported stale while every
 // stalled one looks fine. These drive the actual `pgrep`.
 describe("defaultIsProcessRunning", () => {
-  test("reports true for a process that is certainly running — this one", async () => {
-    // `process.title` for a Node runtime is "node"; the test process itself is
-    // the guaranteed-present match.
-    expect(await defaultIsProcessRunning("node")).toBe(true);
+  test("reports true for a process that is certainly running — one it starts", async () => {
+    // A child with a known name, rather than Node itself: a test runner may
+    // retitle its own processes, so "node" is not guaranteed to be present.
+    const child = spawn("sleep", ["30"], { stdio: "ignore" });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        child.once("spawn", resolve);
+        child.once("error", reject);
+      });
+      expect(await defaultIsProcessRunning("sleep")).toBe(true);
+    } finally {
+      child.kill();
+    }
   });
 
   test("reports false — not an error — for a name that matches nothing", async () => {

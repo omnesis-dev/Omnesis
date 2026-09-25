@@ -56,12 +56,12 @@ wait_device_online collector
 # The host is already on the target, so nothing is rebuilt here; what runs is
 # the fan-out. The collector receives the command over the socket it already
 # holds, runs its own update, reports the result and exits for its supervisor
-# — which a container does not have, so this scenario starts it again.
-second_run="$(on gateway '~/.local/bin/omnesis update --yes --fleet 2>&1')"
-printf '%s\n' "$second_run" | tail -20
-assert_contains "the fan-out named the collector and the version it must reach" \
-  "9.9.1 → 9.9.2" "$second_run"
-assert_contains "the collector took the command" "dispatched" "$second_run"
+# — which a container does not have, so this scenario plays the supervisor.
+# `--fleet` then waits until the collector is back on the target, so it runs
+# in the background while the collector is restarted.
+fleet_output="$(mktemp)"
+on gateway '~/.local/bin/omnesis update --yes --fleet 2>&1' </dev/null >"$fleet_output" 2>&1 &
+fleet_pid=$!
 
 # The collector is doing `npm ci` and a build of its own; give it the same
 # budget an install gets before deciding it failed.
@@ -93,6 +93,19 @@ start_collector
 wait_collector_connected
 wait_device_online collector
 wait_device_version collector 9.9.2
+
+set +e
+wait "$fleet_pid"
+fleet_status=$?
+set -e
+second_run="$(cat "$fleet_output")"
+rm -f "$fleet_output"
+printf '%s\n' "$second_run" | tail -20
+assert "the fan-out finished once the collector came back" test "$fleet_status" -eq 0
+assert_contains "the fan-out named the collector and the version it must reach" \
+  "9.9.1 → 9.9.2" "$second_run"
+assert_contains "the collector took the command" "dispatched" "$second_run"
+assert_contains "and the fan-out saw it arrive on the target" ": updated" "$second_run"
 
 # ── the loop closes on the device list ─────────────────────────────────────
 # The shared wait above accounts for the gateway's short device-cache tick.

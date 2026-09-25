@@ -27,7 +27,7 @@ func externalDocURL(_ value: String?) -> URL? {
 func docOpenURLs(appUrl: String?, sourceUrl: String?) -> [URL] {
     var urls: [URL] = []
     for url in [externalDocURL(appUrl), externalDocURL(sourceUrl)].compactMap({ $0 })
-    where !urls.contains(url) {
+        where !urls.contains(url) {
         urls.append(url)
     }
     return urls

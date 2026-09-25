@@ -188,14 +188,13 @@ or update one in the same commit when you add or materially change a view.
    - [ ] If adding or changing a data source, ran `/source-review` and
          completed its manual validation list
 
-5. **Run the checks locally — CI does not run on pull requests.** The
-   workflows below verify `main` after a change lands, not the branch that
-   proposes it, so your local run is the only signal before merge. A failure
-   on `main` is fixed forward, and a change that reddens it may be reverted.
-   Main admission runs the complete uncached Linux, macOS, browser, native,
-   install, Docker, harness and security inventory. Maintainer-authored changes
-   are coalesced into one Europe/London daily snapshot; every integrated external
-   contribution receives its own fixed-revision request.
+5. **Run the focused checks locally, then let CI run the rest.** Every pull
+   request into `main` and every push to `main` runs the full validation suite
+   (`.github/workflows/full-validation.yml`) on GitHub-hosted runners: Linux,
+   macOS, browser, iOS and Android, install, Docker, harness and security lanes.
+   A pull request from a fork runs once a maintainer approves it. A newer push
+   to the same pull request cancels the older run. A failure on `main` is fixed
+   forward, and a change that reddens it may be reverted.
 
 ---
 

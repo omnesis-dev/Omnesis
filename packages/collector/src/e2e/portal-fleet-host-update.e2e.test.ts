@@ -137,9 +137,18 @@ describe("portal gateway-first fleet update", () => {
       "fleet dispatch after the gateway restart",
     );
     expect(collector.updater.calls).toEqual([reviewed.plan.targetVersion]);
+    // A real collector exits after installing and its supervisor brings it back
+    // on the new release; the fleet update waits for exactly that reconnect.
+    await waitForCondition(() => collector.handedOver, 10_000, "the collector's hand-over");
+    await harness.reannounceCollector(collector, {
+      ...collector.capabilities,
+      version: reviewed.plan.targetVersion,
+    });
+    // The updater learns the device's result by re-reading the fleet plan every
+    // five seconds (RESULT_POLL_MS), so allow several polls, not two.
     await waitForCondition(
       () => readPortalFleetUpdateOperation(harness.gatewayConfigDir)?.state === "succeeded",
-      10_000,
+      30_000,
       "the independent updater's terminal operation",
     );
     expect(await portalJson<HostUpdateSnapshot>("/admin/fleet/host-update")).toMatchObject({

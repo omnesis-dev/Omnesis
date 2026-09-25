@@ -1,7 +1,7 @@
 name: ios
 
-# Full validation supplies one immutable source revision to this reusable lane.
-# Manual full requests enter through the guarded admission controller.
+# full-validation.yml calls this reusable workflow with the exact revision it
+# validates.
 on:
   workflow_call:
     inputs:
@@ -18,8 +18,11 @@ env:
 
 jobs:
   build-and-test:
-    runs-on: [self-hosted, macOS]
-    timeout-minutes: 40
+    # The project requires Xcode 26 (project.yml `xcodeVersion`), which the
+    # macOS 26 image carries as its default Xcode together with the iPhone 17
+    # simulator named below.
+    runs-on: macos-26
+    timeout-minutes: 60
 
     env:
       # The destination must name a simulator runtime installed on the macOS
@@ -88,9 +91,6 @@ jobs:
             -skip-testing:OmnesisTests/GatewayLiveE2ETests \
             test
 
-      - name: lane [ios-snapshots]
-        run: ":"
-
       - name: Upload preview snapshots
         # PreviewSnapshotTests writes PNGs to /tmp/omnesis-snapshots/. Preserve
         # them when the job fails so reviewers can diagnose visual drift without
@@ -106,18 +106,13 @@ jobs:
 
   live-gateway-e2e:
     needs: build-and-test
-    runs-on: [self-hosted, macOS]
-    timeout-minutes: 45
+    runs-on: macos-26
+    timeout-minutes: 60
     env:
       OMNESIS_CONFIG_DIR: /tmp/omnesis-ios-ci-${{ github.run_id }}
       OMNESIS_E2E_DEST: "platform=iOS Simulator,name=iPhone 17,OS=latest"
 
     steps:
-      - name: Clean stale node-llama-cpp xpack toolchain (breaks checkout clean)
-        run: |
-          chmod -R u+w "$GITHUB_WORKSPACE/node_modules/node-llama-cpp" 2>/dev/null || true
-          rm -rf "$GITHUB_WORKSPACE/node_modules/node-llama-cpp/llama/xpack" 2>/dev/null || true
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.target_sha }}
@@ -133,6 +128,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24"
+          cache: npm
 
       - name: Install dependencies
         run: npm ci

@@ -10,12 +10,12 @@ vi.mock("../lib/router.js", () => ({ navigate: vi.fn() }));
 
 // @ts-expect-error — portal is plain JS without sibling declarations.
 import { navigate } from "../lib/router.js";
-// @ts-expect-error — portal is plain JS without sibling declarations.
 import {
   ANDROID_TESTER_GROUP_URL,
   ANDROID_OPT_IN_URL,
   ANDROID_PAIR_PATH,
   ANDROID_LOGO_URL,
+  // @ts-expect-error — portal is plain JS without sibling declarations.
 } from "../lib/android-links.js";
 // @ts-expect-error — portal is plain JS without sibling declarations.
 import { AndroidPromoCard } from "./android-promo.js";

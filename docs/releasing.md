@@ -288,10 +288,11 @@ already exists for the branch.
 
 **`tag`** runs the existing preflight — fetch origin, require a clean tree at
 exactly `origin/main`, rerun the version guard, refuse an existing local or
-remote tag, and refuse a commit with no green full-validation verdict in the
-admission ledger at the current lane inventory (the local enforcement of step 7
-below: an unvalidated commit would fail release verification and burn the
-version number) — and then creates the annotated tag on the verified commit. Pass
+remote tag, and refuse a commit with no green `full-validation` run from a push
+to `main` or a manual dispatch (the local enforcement of step 7 below: an
+unvalidated commit would fail release verification and burn the version
+number; a run a later push cancelled is restarted with
+`gh workflow run full-validation.yml --ref main`) — and then creates the annotated tag on the verified commit. Pass
 `--sign` to sign it with your configured release key. **It never pushes.** The
 push is what arms every downstream publication, so it stays one deliberate,
 separately typed command:
@@ -355,10 +356,10 @@ git -c gpg.format=ssh \
 dispatch against an existing tag). In order:
 
 - **verify** — the tag equals the checked-in product version
-  (`check-product-version.mjs`), the tagged commit is an ancestor of `main`, main
-  CI concluded successfully at that exact commit with the current complete lane
-  inventory (`ci-verdict.mjs` over the durable admission ledger; a later
-  descendant cannot bless an older tag), and `website/install.sh` still
+  (`check-product-version.mjs`), the tagged commit is an ancestor of `main`, a
+  `full-validation` run started by a push or a manual dispatch succeeded at that
+  exact commit (`ci-verdict.mjs` over the workflow's runs; a pull-request run or
+  a later descendant cannot bless the tag), and `website/install.sh` still
   mirrors `scripts/install.sh` byte for byte.
 - **packages** — build, then the local-registry round trip: publish the staged
   graph to a throwaway Verdaccio, install it through

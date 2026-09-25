@@ -94,9 +94,9 @@ containers up when `--keep` was passed.
 ## What it deliberately switches off
 
 `--no-service`, `--no-model`, `--no-tls` and `--no-keyring`. A container has no
-user service manager, so the native supervisors are smoke-tested on the
-self-hosted runners instead; the embedding model is a large download this lane
-has no use for; and the keyring and certificate provisioning are already
+user service manager, so the supervisor paths are left to the security lane's
+hardened-systemd scenario (systemd) and to manual checks (launchd); the
+embedding model is a large download this lane has no use for; and the keyring and certificate provisioning are already
 drilled properly by the security lane against a real keyring. What is left is
 exactly this lane's subject: roles, pairing, and updates.
 
@@ -116,5 +116,6 @@ container has no user service manager, so the gateway and collector are
 started by hand and the updater correctly reports the restarts it may not
 perform rather than performing them. The restart order itself — gateway,
 then the health wait that proves its forward-only migrations finished, then
-the collector — is covered by unit tests over the plan builder, and the
-native supervisors are smoke tested on the self-hosted runners.
+the collector — is covered by unit tests over the plan builder, and a real
+systemd supervisor is exercised by the security lane's hardened-systemd
+scenario.

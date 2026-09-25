@@ -171,7 +171,7 @@ final class SourceStateWireTests: XCTestCase {
     }
 
     private func eventFixture(_ name: String, type: String) throws -> WsEventFrame {
-        let frame: [String: Any] = ["type": type, "payload": try object(name)]
+        let frame: [String: Any] = try ["type": type, "payload": object(name)]
         return try JSONDecoder().decode(WsEventFrame.self, from: JSONSerialization.data(withJSONObject: frame))
     }
 

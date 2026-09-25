@@ -7,7 +7,7 @@ import XCTest
 final class NotificationClaimerTests: XCTestCase {
     private let baseURL = URL(string: "https://gateway.example.test:17600")!
 
-    func testClaimFailureDiagnosticKeepsOnlyARecoverableCategory() throws {
+    func testClaimFailureDiagnosticKeepsOnlyARecoverableCategory() {
         let store = InMemoryStore()
         let now = Date()
         let attempt = NotificationClaimDiagnostic.Attempt(startedAt: now)

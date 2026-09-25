@@ -67,9 +67,6 @@ jobs:
           docker run --rm --entrypoint sh omnesis-updater:ci -c \
             'command -v docker >/dev/null && docker compose version >/dev/null'
 
-      - name: lane [docker-image-build]
-        run: ":"
-
       # The published images are the compiled, non-root runtimes; they are run
       # directly here so the check does not depend on the installer's compose
       # file, which is generated on the operator's host rather than committed.
@@ -129,9 +126,6 @@ jobs:
           curl -sfk -H "Authorization: Bearer ${TOKEN}" -X DELETE \
             "https://localhost:17600/admin/tokens/$new_id" > /tmp/revoke.json
           grep -q '"ok":true' /tmp/revoke.json || { echo "revoke /admin/tokens did not return ok"; cat /tmp/revoke.json; exit 1; }
-
-      - name: lane [docker-image-boot]
-        run: ":"
 
       - name: Tear down
         if: always()

@@ -573,11 +573,16 @@ export function runInstaller(name, args, extraEnv = {}, { umask, sourceDir = tru
 /** Run the installer on a pseudo-terminal, feeding `answers` to its prompts. */
 export function runInstallerOnTty(name, args, answers, extraEnv = {}, { umask } = {}) {
   const home = prepareHome(name, { umask });
-  const command = ["sh", ...shellArgv(name, args, umask)]
+  const env = installerEnv(home, extraEnv);
+  // script(1) runs the command through $SHELL, which the installer also reads
+  // to pick the profile it edits. The fixture's shell need not exist on the
+  // host, so script itself runs under /bin/sh and the installer is handed the
+  // fixture's shell by name.
+  const command = ["env", `SHELL=${env.SHELL}`, "sh", ...shellArgv(name, args, umask)]
     .map((word) => `'${word.replaceAll("'", `'\\''`)}'`)
     .join(" ");
   const proc = spawnSync("script", ["-qec", command, "/dev/null"], {
-    env: installerEnv(home, extraEnv),
+    env: { ...env, SHELL: "/bin/sh" },
     encoding: "utf8",
     input: answers.map((a) => `${a}\n`).join(""),
     timeout: 60_000,

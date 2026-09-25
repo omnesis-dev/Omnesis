@@ -105,9 +105,19 @@ done
 if [[ -z "$COLLECTOR_ID" ]]; then tail -40 "$MAYA_CONFIG/collector.log" >&2 || true; fi
 assert "the collector running as maya is online" test -n "$COLLECTOR_ID"
 
-api /admin/sources/add -X POST -H 'Content-Type: application/json' \
-  -d "{\"deviceId\":\"$COLLECTOR_ID\",\"descriptorId\":\"obsidian-notes\",\"accountIds\":[\"local\"],\"params\":{\"vaultPath\":\"$VAULT\"}}" \
-  >/e2e/add-source.json
+# A vault's account id is derived from its canonical path on the collector's
+# host, so it is resolved there first, the way the portal's Add Source does.
+ACCOUNT_ID="$(api /admin/sources/resolve-account -X POST -H 'Content-Type: application/json' \
+  -d "{\"deviceId\":\"$COLLECTOR_ID\",\"descriptorId\":\"obsidian-notes\",\"params\":{\"vaultPath\":\"$VAULT\"}}" |
+  json_field '(j) => j.accountId')"
+assert "maya's collector resolved the vault's account" test -n "$ACCOUNT_ID"
+ADD_BODY="{\"deviceId\":\"$COLLECTOR_ID\",\"descriptorId\":\"obsidian-notes\",\"accountIds\":[\"$ACCOUNT_ID\"],\"params\":{\"vaultPath\":\"$VAULT\"}}"
+if ! api /admin/sources/add -X POST -H 'Content-Type: application/json' -d "$ADD_BODY" >/e2e/add-source.json; then
+  curl -ks -H "Authorization: Bearer $ADMIN_TOKEN" -X POST -H 'Content-Type: application/json' \
+    -d "$ADD_BODY" -w '\nHTTP %{http_code}\n' "$OMNESIS_GATEWAY_URL/admin/sources/add" >&2 || true
+  echo "  FAILED: the gateway accepted the source on maya's collector" >&2
+  exit 1
+fi
 
 DOCS=0
 for _ in $(seq 1 120); do

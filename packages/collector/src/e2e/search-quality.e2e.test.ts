@@ -59,9 +59,9 @@ const EMBEDDER_MODEL = process.env.OMNESIS_TEST_EMBEDDER_MODEL ?? "Qwen/Qwen3-Em
 
 /**
  * A CI runner must FAIL on an unreachable required dependency; only a local
- * dev box may skip. GitHub Actions sets `CI` and `GITHUB_ACTIONS`; the
- * self-hosted runners additionally set `RUNNER_NAME`. Any of these flips us
- * into fail-loud mode.
+ * dev box may skip. GitHub Actions sets `CI`, `GITHUB_ACTIONS` and
+ * `RUNNER_NAME`; any of these flips us into fail-loud mode. CI serves the
+ * embedder with `scripts/test-embedder.sh`.
  */
 const IS_CI = Boolean(process.env.CI || process.env.GITHUB_ACTIONS || process.env.RUNNER_NAME);
 

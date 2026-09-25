@@ -94,12 +94,11 @@ safe to be public.
   rationale instead. Never use a bare `#NNN` to reference a non-public issue; it
   collides with this repository's own public issue numbers.
 
-- **CI supply-chain & fork safety.** Any new or changed `.github/workflows/` job
-  that triggers on `pull_request` and runs on a self-hosted runner MUST be
-  fork-guarded (`if: github.event.pull_request.head.repo.full_name ==
-github.repository`) — otherwise a fork PR can run arbitrary code on the
-  maintainer's machines. Pin new third-party actions to a full commit SHA. Never
-  expose secrets to `pull_request` / `pull_request_target` from forks.
+- **CI supply-chain & fork safety.** Every `.github/workflows/` job runs on a
+  GitHub-hosted runner; a self-hosted label is a finding (a fork PR could run
+  arbitrary code on a physical machine). Pin new third-party actions to a full
+  commit SHA. Never expose secrets to `pull_request` / `pull_request_target`
+  from forks.
 
 - **License & third-party attribution.** New source files carry the SPDX header.
   Vendored or third-party code must NOT be stamped with the project's

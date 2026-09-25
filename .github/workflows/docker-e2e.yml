@@ -3,12 +3,11 @@
 # headless passphrase keyring — each against the real CLI + gateway from
 # source inside a clean Linux container — plus the dedicated-account gateway
 # installed, updated and rolled back by scripts/hardened-gateway.sh under real
-# systemd. It runs for every admitted full request and for an explicit manual
-# target, never from a pull request.
+# systemd.
 name: docker-e2e
 
-# Full validation supplies one immutable source revision to this reusable lane.
-# Manual full requests enter through the guarded admission controller.
+# full-validation.yml calls this reusable workflow with the exact revision it
+# validates.
 on:
   workflow_call:
     inputs:
@@ -21,7 +20,7 @@ permissions:
   contents: read
 jobs:
   scenarios:
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -42,7 +41,7 @@ jobs:
         run: docker image prune -f --filter label=none >/dev/null 2>&1 || true
 
   hardened-systemd:
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
     # The scenario builds several releases of the monorepo inside the container.
     timeout-minutes: 120
     steps:

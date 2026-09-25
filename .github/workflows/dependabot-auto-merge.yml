@@ -1,41 +1,65 @@
 name: dependabot-auto-merge
 
-# Auto-merge Dependabot PRs, but ONLY for semver-patch updates. Minor and
-# major bumps still require a human eye.
+# Merge a Dependabot pull request once full validation has passed on it, but
+# ONLY for semver-patch updates. Minor and major bumps still require a human eye.
 #
-# No workflow verifies a pull request — CI runs on `main` only — so a patch
-# bump lands unverified and is caught by the `main` run that follows it. That
-# is the accepted trade for these low-risk updates; widening this to minor or
-# major bumps would not be.
-#
-# `gh pr merge --auto` needs Repo Settings → General → "Allow auto-merge".
-# Without it the command is a no-op and no harm is done.
+# It runs after `full-validation` completes for a pull request, in this
+# repository's own context, and never checks out or executes pull-request code:
+# it reads the pull request and its commit through the API and merges through
+# the API. The merge is pinned to the validated head commit, so a later push to
+# the branch cannot ride on an older green run. Nothing here is a required
+# check on `main`: direct pushes stay unblocked.
 
-on: pull_request_target
+on:
+  workflow_run:
+    workflows: [full-validation]
+    types: [completed]
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
   auto-merge:
-    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    if: >-
+      github.event.workflow_run.event == 'pull_request'
+      && github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.actor.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
     steps:
-      - name: Fetch Dependabot metadata
-        id: meta
-        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Enable auto-merge for patch updates
-        if: steps.meta.outputs.update-type == 'version-update:semver-patch'
+      - name: Merge a validated patch update
         env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh pr merge --auto --squash "$PR_URL"
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          pr="$(gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open&head=${GITHUB_REPOSITORY_OWNER}:${HEAD_BRANCH}" \
+            --jq "[.[] | select(.head.sha == \"${HEAD_SHA}\" and .user.login == \"dependabot[bot]\" and .head.repo.full_name == \"${GITHUB_REPOSITORY}\")][0].number // empty")"
+          if [ -z "$pr" ]; then
+            echo "No open Dependabot pull request is at ${HEAD_SHA}; nothing to merge."
+            exit 0
+          fi
+
+          # Dependabot records each update's semver level in its commit message,
+          # the same metadata dependabot/fetch-metadata reads. Every commit on
+          # the pull request must be Dependabot's, and every update a patch.
+          commits="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr}/commits")"
+          if [ "$(jq '[.[] | select(.author.login != "dependabot[bot]")] | length' <<<"$commits")" != 0 ]; then
+            echo "Pull request #${pr} carries commits not authored by Dependabot; leaving it for review."
+            exit 0
+          fi
+          levels="$(jq -r '.[].commit.message' <<<"$commits" | sed -n 's/^[[:space:]]*update-type:[[:space:]]*//p' | sort -u)"
+          if [ "$levels" != "version-update:semver-patch" ]; then
+            echo "Pull request #${pr} is not patch-only (${levels:-no update metadata}); leaving it for review."
+            exit 0
+          fi
+
+          gh pr merge "$pr" --repo "$GITHUB_REPOSITORY" --squash --match-head-commit "$HEAD_SHA"
+
+          # A push made with this workflow's token starts no workflow, so the
+          # merged main is validated by an explicit dispatch instead.
+          gh workflow run full-validation.yml --repo "$GITHUB_REPOSITORY" --ref main

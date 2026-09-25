@@ -41,11 +41,12 @@ env:
 
 jobs:
   # ------------------------------------------------------------------
-  # verify — the tag says what the tree says, and main CI already
-  # approved this exact commit. Nothing is built until both hold.
+  # verify — the tag says what the tree says, and a full-validation run
+  # on main (or a manual one) passed at this exact commit. Nothing is built
+  # until both hold.
   # ------------------------------------------------------------------
   verify:
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -89,15 +90,14 @@ jobs:
           git merge-base --is-ancestor "${{ steps.version.outputs.sha }}" origin/main \
             || { echo "The tagged commit is not an ancestor of main."; exit 1; }
 
-      - name: Check out the CI admission ledger
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ci-admission-state
-          path: .ci-admission-state
-          persist-credentials: false
-
-      - name: Verify the full-CI ledger at the tagged commit
-        run: node scripts/release/ci-verdict.mjs "${{ steps.version.outputs.sha }}" < .ci-admission-state/ledger.json
+      - name: Full validation passed at the tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ steps.version.outputs.sha }}
+        run: |
+          set -o pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/full-validation.yml/runs?head_sha=${TARGET_SHA}&per_page=100" \
+            | node scripts/release/ci-verdict.mjs "$TARGET_SHA"
 
       - name: The published installer mirrors the canonical one
         run: cmp scripts/install.sh website/install.sh
@@ -117,7 +117,7 @@ jobs:
   # ------------------------------------------------------------------
   packages:
     needs: verify
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
       contents: read
@@ -326,7 +326,7 @@ jobs:
   # ------------------------------------------------------------------
   images:
     needs: [verify, packages]
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
       contents: read
@@ -409,7 +409,7 @@ jobs:
   # ------------------------------------------------------------------
   github-release:
     needs: [verify, packages, images]
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: write

@@ -8,7 +8,7 @@
 <h1 align="center">Omnesis</h1>
 
 <p align="center">
-  <a href="https://github.com/omnesis-dev/Omnesis/actions/workflows/full-validation.yml"><img src="https://github.com/omnesis-dev/Omnesis/actions/workflows/full-validation.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/omnesis-dev/Omnesis/actions/workflows/full-validation.yml?query=branch%3Amain+event%3Apush"><img src="https://github.com/omnesis-dev/Omnesis/actions/workflows/full-validation.yml/badge.svg?branch=main&amp;event=push" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL_v3-blue.svg" alt="License: AGPL v3"></a>
   <a href="https://x.com/Omnesisdev"><img src="https://img.shields.io/badge/X-%40Omnesisdev-black?logo=x&amp;logoColor=white" alt="Omnesis on X"></a>
   <a href="https://discord.gg/4Y8pQHrVv"><img src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&amp;logoColor=white" alt="Join Omnesis on Discord"></a>

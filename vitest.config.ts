@@ -30,7 +30,6 @@ export default defineConfig({
       "scripts/release/**/*.test.mjs",
       "scripts/install-e2e/**/*.test.mjs",
       "scripts/nx/**/*.test.mjs",
-      "scripts/ci-admission/**/*.test.mjs",
       "scripts/pii-scan.test.mjs",
       "scripts/text-files.test.mjs",
       "scripts/typecheck-lanes.test.mjs",

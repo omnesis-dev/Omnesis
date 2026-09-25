@@ -31,8 +31,8 @@ env:
   WRANGLER_VERSION: "4.137.0"
 
 jobs:
-  # GitHub-hosted: a pull request from a fork can reach this job, and it must
-  # never run on a self-hosted machine.
+  # A pull request from a fork can reach this job, so it holds no secret and
+  # deploys nothing.
   check:
     name: Dry-run deploy
     if: github.event_name == 'pull_request'

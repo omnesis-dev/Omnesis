@@ -4410,7 +4410,7 @@ enum PreviewMocks {
     /// A live run where one researcher has accumulated MANY documents — stresses
     /// the per-panel doc-list height cap so the band stays a fixed bottom rail
     /// and never grows into a full-screen overlay that buries the conversation.
-    ///The first panel holds 16 source-tinted docs; it must scroll
+    /// The first panel holds 16 source-tinted docs; it must scroll
     /// WITHIN the panel rather than make the panel taller than the screen.
     static let researchPanelsManyDocs: [AgentResearchPanel] = [
         AgentResearchPanel(

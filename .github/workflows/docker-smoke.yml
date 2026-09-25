@@ -1,7 +1,7 @@
 name: Docker smoke
 
-# Full validation supplies one immutable source revision to this reusable lane.
-# Manual full requests enter through the guarded admission controller.
+# full-validation.yml calls this reusable workflow with the exact revision it
+# validates.
 on:
   workflow_call:
     inputs:
@@ -13,20 +13,15 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-# Two jobs on the self-hosted Linux runner, single-platform (native arm64).
-# The first drives the real installer and the real updater against images
-# built from this checkout; the second boots the compiled runtime directly and
-# asserts its hardening. docker.yml runs the multi-arch builds via QEMU on
-# dispatch, and release.yml publishes them.
+# Two jobs on GitHub-hosted Linux runners, single-platform (the runner's native
+# amd64). The first drives the real installer and the real updater against
+# images built from this checkout; the second boots the compiled runtime
+# directly and asserts its hardening. docker.yml builds both platforms, arm64
+# under QEMU, and release.yml publishes them.
 jobs:
-  # No job here carries a fork guard because no trigger above can be reached
-  # from a fork: `push` fires only on this repository's own `main`, and
-  # `workflow_dispatch` needs write access. A `pull_request` trigger added here
-  # would need one on every job — these run on self-hosted runners, where
-  # fork-authored code would execute on a physical machine.
   install-and-update:
     name: install.sh --docker, then an update across two tags
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
     timeout-minutes: 60
 
     steps:
@@ -44,14 +39,11 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
-          # Deliberately no `cache: npm` — see docs/agent-gotchas.md. This
-          # persistent self-hosted runner already retains ~/.npm between jobs.
 
       # The real installer puts a gateway and a collector on this runner as
       # containers, and the real updater moves them across two image tags and
       # back again when the new gateway does not serve. Everything it touches
-      # derives from the run id, so a second job on this runner collides with
-      # nothing — including the live gateway on 7600.
+      # derives from the run id.
       - name: lane [docker-install]
         run: scripts/docker-install-smoke.sh
         env:
@@ -59,7 +51,7 @@ jobs:
 
   compiled-runtime-smoke:
     name: Compiled non-root gateway + seeded state
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
     timeout-minutes: 25
 
     steps:
@@ -77,8 +69,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
-          # Deliberately no `cache: npm` — see docs/agent-gotchas.md. This
-          # persistent self-hosted runner already retains ~/.npm between jobs.
+          cache: npm
 
       - name: Install smoke harness dependencies
         run: npm ci

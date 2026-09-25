@@ -1597,7 +1597,7 @@ public struct AgentTrailRecordKeyField: Codable, Sendable, Equatable, Hashable {
 }
 
 /// A DuckDB analytics row surfaced on the trail as a point-in-time record.
-///The gateway derives every display string from the table's
+/// The gateway derives every display string from the table's
 /// declared record-display contract, so the renderer prints these
 /// directly and never learns a column name or branches on a source.
 /// Mirrors `TrailRecord` in `@omnesis/core/agent-protocol.ts`.
