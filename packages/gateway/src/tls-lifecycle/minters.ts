@@ -15,7 +15,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { assertNever, type TlsOwnership } from "@omnesis/core";
+import {
+  assertNever,
+  tailscaleCliCandidates,
+  tailscaleCliEnv,
+  tailscaleIsRunningStatus,
+  type TailscaleCliCandidate,
+  type TlsOwnership,
+} from "@omnesis/core";
 import { generateSelfSigned } from "../tls.js";
 import type { TlsMinter, TlsPem } from "./service.js";
 
@@ -23,13 +30,25 @@ const execFileAsync = promisify(execFile);
 
 export interface HostMinterDeps {
   /** Run an issuer binary. Injected so tests never need `tailscale` or `mkcert`. */
-  run?: (file: string, args: string[], signal: AbortSignal) => Promise<void>;
+  run?: (
+    file: string,
+    args: string[],
+    signal: AbortSignal,
+    env?: NodeJS.ProcessEnv,
+  ) => Promise<string | void>;
+  tailscaleCandidates?: TailscaleCliCandidate[];
   selfSigned?: () => TlsPem;
 }
 
-async function runBinary(file: string, args: string[], signal: AbortSignal): Promise<void> {
+async function runBinary(
+  file: string,
+  args: string[],
+  signal: AbortSignal,
+  env?: NodeJS.ProcessEnv,
+): Promise<string> {
   try {
-    await execFileAsync(file, args, { signal, encoding: "utf8" });
+    const result = await execFileAsync(file, args, { signal, encoding: "utf8", env });
+    return result.stdout;
   } catch (err) {
     const detail = err as NodeJS.ErrnoException & { stderr?: string };
     if (detail.code === "ENOENT") {
@@ -48,12 +67,13 @@ async function mintWithBinary(
   argsFor: (certPath: string, keyPath: string) => string[],
   run: NonNullable<HostMinterDeps["run"]>,
   signal: AbortSignal,
+  env?: NodeJS.ProcessEnv,
 ): Promise<TlsPem> {
   const dir = mkdtempSync(join(tmpdir(), "omnesis-tls-renew-"));
   try {
     const certPath = join(dir, "cert.pem");
     const keyPath = join(dir, "key.pem");
-    await run(file, argsFor(certPath, keyPath), signal);
+    await run(file, argsFor(certPath, keyPath), signal, env);
     return { cert: readFileSync(certPath, "utf8"), key: readFileSync(keyPath, "utf8") };
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -78,8 +98,29 @@ export function createHostMinter(deps: HostMinterDeps = {}): TlsMinter {
           // A Tailscale certificate covers exactly one MagicDNS name.
           const dnsName = names.find((name) => name.includes(".") && !/^[\d.:]+$/u.test(name));
           if (!dnsName) throw new Error("the current certificate carries no DNS name to renew");
+          let selected: TailscaleCliCandidate | undefined;
+          let lastError: unknown;
+          for (const candidate of deps.tailscaleCandidates ?? tailscaleCliCandidates()) {
+            try {
+              const status = await run(
+                candidate.file,
+                ["status", "--json"],
+                signal,
+                tailscaleCliEnv(candidate),
+              );
+              if (!status || !tailscaleIsRunningStatus(status)) {
+                lastError = new Error("Tailscale is not connected");
+                continue;
+              }
+              selected = candidate;
+              break;
+            } catch (err) {
+              lastError = err;
+            }
+          }
+          if (!selected) throw lastError ?? new Error("Tailscale is unavailable");
           return mintWithBinary(
-            "tailscale",
+            selected.file,
             (certPath, keyPath) => [
               "cert",
               "--cert-file",
@@ -91,6 +132,7 @@ export function createHostMinter(deps: HostMinterDeps = {}): TlsMinter {
             ],
             run,
             signal,
+            tailscaleCliEnv(selected),
           );
         }
         case "mkcert":

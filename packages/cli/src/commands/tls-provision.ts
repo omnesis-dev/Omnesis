@@ -45,6 +45,10 @@ import {
   isCertificateIpAddress,
   localMdnsHostname,
   safeNetworkInterfaces,
+  tailscaleCliCandidates,
+  tailscaleCliEnv,
+  tailscaleIsRunningStatus,
+  type TailscaleCliCandidate,
 } from "@omnesis/core";
 import { upsertDotEnv } from "@omnesis/config";
 import { c, EXIT_USER_ERROR, EXIT_FAILURE, gatewayJson } from "../utils.js";
@@ -85,7 +89,7 @@ export interface TlsProvisionEnv {
   existingGatewayUrl?: string;
   /** The host platform, for guidance that differs by operating system. */
   platform: NodeJS.Platform;
-  /** Is the `tailscale` binary present AND `tailscale status` healthy? */
+  /** Is a Tailscale CLI available and connected to a tailnet? */
   hasTailscale(): boolean;
   /** The host's MagicDNS name (no trailing dot), or "" if none/unavailable. */
   tailscaleDnsName(): string;
@@ -444,8 +448,11 @@ export function provisionTls(
  * gives the MagicDNS name (mirroring the installer); cert issuance shells out
  * to the same binaries the installer uses.
  */
-export function defaultTlsProvisionEnv(): TlsProvisionEnv {
-  const configDir = process.env.OMNESIS_CONFIG_DIR ?? DEFAULT_CONFIG_DIR;
+export function defaultTlsProvisionEnv(
+  candidates: TailscaleCliCandidate[] = tailscaleCliCandidates(),
+  configDir: string = process.env.OMNESIS_CONFIG_DIR ?? DEFAULT_CONFIG_DIR,
+): TlsProvisionEnv {
+  let tailscaleCli: TailscaleCliCandidate | undefined;
   return {
     configDir,
     existingCertPath: process.env.OMNESIS_TLS_CERT,
@@ -453,18 +460,29 @@ export function defaultTlsProvisionEnv(): TlsProvisionEnv {
     existingGatewayUrl: process.env.OMNESIS_GATEWAY_URL,
     platform: process.platform,
     hasTailscale() {
-      try {
-        execFileSync("tailscale", ["status"], { stdio: "ignore" });
-        return true;
-      } catch {
-        return false;
+      for (const candidate of candidates) {
+        try {
+          const status = execFileSync(candidate.file, ["status", "--json"], {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+            env: tailscaleCliEnv(candidate),
+          });
+          if (!tailscaleIsRunningStatus(status)) continue;
+          tailscaleCli = candidate;
+          return true;
+        } catch {
+          // An installed CLI can be disconnected while the macOS app is connected.
+        }
       }
+      return false;
     },
     tailscaleDnsName() {
+      if (!tailscaleCli) return "";
       try {
-        const json = execFileSync("tailscale", ["status", "--json"], {
+        const json = execFileSync(tailscaleCli.file, ["status", "--json"], {
           encoding: "utf8",
           stdio: ["ignore", "pipe", "ignore"],
+          env: tailscaleCliEnv(tailscaleCli),
         });
         const dns = (JSON.parse(json) as { Self?: { DNSName?: string } }).Self?.DNSName ?? "";
         return dns.replace(/\.$/, "");
@@ -473,10 +491,16 @@ export function defaultTlsProvisionEnv(): TlsProvisionEnv {
       }
     },
     runTailscaleCert(dnsName, certPath, keyPath) {
+      if (!tailscaleCli) throw new Error("Tailscale is unavailable");
       mkdirSync(join(configDir, "tls"), { recursive: true });
-      execFileSync("tailscale", ["cert", "--cert-file", certPath, "--key-file", keyPath, dnsName], {
-        stdio: ["ignore", "ignore", "pipe"],
-      });
+      execFileSync(
+        tailscaleCli.file,
+        ["cert", "--cert-file", certPath, "--key-file", keyPath, dnsName],
+        {
+          stdio: ["ignore", "ignore", "pipe"],
+          env: tailscaleCliEnv(tailscaleCli),
+        },
+      );
     },
     hasMkcert() {
       try {

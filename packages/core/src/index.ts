@@ -1211,3 +1211,9 @@ export {
 
 export { createPrivateScratch, type PrivateScratch } from "./private-scratch.js";
 export { localGatewayRequestUrl, servedCertificateCoversLocalhost } from "./local-gateway-url.js";
+export {
+  tailscaleCliCandidates,
+  tailscaleCliEnv,
+  tailscaleIsRunningStatus,
+  type TailscaleCliCandidate,
+} from "./tailscale-cli.js";

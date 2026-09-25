@@ -28,15 +28,46 @@ describe("createHostMinter", () => {
     const minter = createHostMinter({
       run: async (file, args) => {
         calls.push([file, ...args]);
+        if (args[0] === "status") return '{"BackendState":"Running"}';
         writeFileSync(args[2]!, "TS-CERT");
         writeFileSync(args[4]!, "TS-KEY");
+        return undefined;
       },
     });
     const pem = await minter.mint("tailscale", ["gw.tail.example"], signal());
     expect(pem).toEqual({ cert: "TS-CERT", key: "TS-KEY" });
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.slice(0, 2)).toEqual(["tailscale", "cert"]);
-    expect(calls[0]!.slice(-2)).toEqual(["--", "gw.tail.example"]);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual(["tailscale", "status", "--json"]);
+    expect(calls[1]!.slice(0, 2)).toEqual(["tailscale", "cert"]);
+    expect(calls[1]!.slice(-2)).toEqual(["--", "gw.tail.example"]);
+  });
+
+  test("a disconnected PATH CLI falls back to a connected macOS app for renewal", async () => {
+    const calls: string[][] = [];
+    const minter = createHostMinter({
+      tailscaleCandidates: [
+        { file: "tailscale", bundledApp: false },
+        { file: "/Applications/Tailscale.app/Contents/MacOS/Tailscale", bundledApp: true },
+      ],
+      run: async (file, args, _signal, env) => {
+        calls.push([file, ...args]);
+        if (file === "tailscale") return '{"BackendState":"NeedsLogin"}';
+        expect(env?.TAILSCALE_BE_CLI).toBe("1");
+        if (args[0] === "status") return '{"BackendState":"Running"}';
+        writeFileSync(args[2]!, "TS-CERT");
+        writeFileSync(args[4]!, "TS-KEY");
+        return undefined;
+      },
+    });
+    expect(await minter.mint("tailscale", ["gw.tail.example"], signal())).toEqual({
+      cert: "TS-CERT",
+      key: "TS-KEY",
+    });
+    expect(calls.map(([file, command]) => [file, command])).toEqual([
+      ["tailscale", "status"],
+      ["/Applications/Tailscale.app/Contents/MacOS/Tailscale", "status"],
+      ["/Applications/Tailscale.app/Contents/MacOS/Tailscale", "cert"],
+    ]);
   });
 
   test("the mkcert tier re-issues for every name the certificate carries", async () => {
