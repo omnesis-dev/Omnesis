@@ -42,6 +42,7 @@ import { join } from "node:path";
 import { defineCommand } from "citty";
 import {
   DEFAULT_CONFIG_DIR,
+  ensureGatewayTrust,
   isCertificateIpAddress,
   localMdnsHostname,
   safeNetworkInterfaces,
@@ -51,7 +52,7 @@ import {
   type TailscaleCliCandidate,
 } from "@omnesis/core";
 import { upsertDotEnv } from "@omnesis/config";
-import { c, EXIT_USER_ERROR, EXIT_FAILURE, gatewayJson } from "../utils.js";
+import { c, EXIT_USER_ERROR, EXIT_FAILURE, GATEWAY_REQUEST_URL, gatewayJson } from "../utils.js";
 import {
   defaultTlsLifecycleDeps,
   tlsReloadCommand,
@@ -540,6 +541,28 @@ export function defaultTlsProvisionEnv(
 }
 
 /**
+ * Trust the gateway this command talks to the way every other command's
+ * preflight does (`index.ts`), minus its probe. `tls provision` is exempt from
+ * that preflight so it works with the gateway down or its certificate
+ * changed, but it still reads the gateway before minting and asks it to
+ * activate afterwards, and a self-signed gateway is trusted only through the
+ * copy saved in the config directory — on the gateway's own machine, the
+ * certificate it serves. Without a saved copy nothing is added: this never
+ * enters the first-sight prompt, and the gateway calls stay best effort.
+ */
+export async function trustSavedGatewayCertificate(
+  gatewayUrl: string,
+  configDir: string,
+): Promise<void> {
+  if (!existsSync(join(configDir, "tls", "cert.pem"))) return;
+  try {
+    await ensureGatewayTrust({ gatewayUrl, configDir });
+  } catch {
+    // Unreadable copy: the calls below fail and fall back to the restart advice.
+  }
+}
+
+/**
  * Activate freshly provisioned material in the running gateway. It re-reads
  * the config directory's `.env`, so the paths this run wrote are what it
  * loads; a gateway that is down, older, or refuses the material falls back
@@ -654,6 +677,7 @@ async function certificateChangeContext(): Promise<{
 /** Shared execution path for `provision` and `refresh`. */
 async function runProvisionCommand(opts: TlsProvisionOptions): Promise<void> {
   const env = defaultTlsProvisionEnv();
+  if (!opts.dryRun) await trustSavedGatewayCertificate(GATEWAY_REQUEST_URL, env.configDir);
   const before = opts.dryRun ? { previous: null, phones: [] } : await certificateChangeContext();
   const gatewayPort = process.env.OMNESIS_GATEWAY_PORT
     ? Number(process.env.OMNESIS_GATEWAY_PORT)
