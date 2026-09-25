@@ -50,8 +50,10 @@ import {
   tailscaleCliEnv,
   tailscaleIsRunningStatus,
   type TailscaleCliCandidate,
+  type TlsLifecycleSnapshot,
 } from "@omnesis/core";
 import { upsertDotEnv } from "@omnesis/config";
+import { isFetchConnectionError } from "@omnesis/cli-shared";
 import { c, EXIT_USER_ERROR, EXIT_FAILURE, GATEWAY_REQUEST_URL, gatewayJson } from "../utils.js";
 import {
   defaultTlsLifecycleDeps,
@@ -573,7 +575,17 @@ export async function activateProvisionedMaterial(
   lifecycle: Pick<TlsLifecycleDeps, "reload">,
 ): Promise<{ activated: true; fingerprintSha256: string } | { activated: false; reason: string }> {
   try {
-    const snapshot = await lifecycle.reload();
+    let snapshot: TlsLifecycleSnapshot;
+    try {
+      snapshot = await lifecycle.reload();
+    } catch (err) {
+      // The reads before minting leave a keep-alive connection, which the
+      // gateway drops while `tailscale cert` runs (an ACME order takes tens of
+      // seconds), and fetch does not retry a POST on it. A reload only
+      // re-reads and activates what is on disk, so one more try is safe.
+      if (!isFetchConnectionError(err)) throw err;
+      snapshot = await lifecycle.reload();
+    }
     if (snapshot.pendingReplacement) {
       return { activated: false, reason: snapshot.pendingReplacement.error };
     }
