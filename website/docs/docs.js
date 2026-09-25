@@ -316,9 +316,9 @@
   document.querySelectorAll(".term").forEach(function (term) {
     // A terminal drawn as a figure (a diagram) is a picture, not a paste.
     if (term.closest && term.closest("figure")) return;
-    var bar = term.querySelector(".term-bar");
+    var target = term.querySelector(".guided-copy-slot") || term.querySelector(".term-bar");
     var text = payload(term);
-    if (!bar || !text || bar.querySelector(".term-copy")) return;
+    if (!target || !text || target.querySelector(".term-copy")) return;
 
     var btn = document.createElement("button");
     var copyLabel =
@@ -347,7 +347,7 @@
         // the button uncopied rather than throw an unhandled rejection.
         .catch(function () {});
     });
-    bar.appendChild(btn);
+    target.appendChild(btn);
   });
 })();
 

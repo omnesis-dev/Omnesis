@@ -730,79 +730,43 @@ pre[data-highlighted] {
   color: var(--color-note);
 }
 
-/* The guided prompt is a conversational terminal input, so its prose wraps
-   inside the card and its copy control names the action in plain text. */
+/* The guided prompt reads as one terminal input; the copy icon follows its
+   final sentence while the text wraps within the available width. */
 .guided-install-terminal {
-  border-color: color-mix(in srgb, var(--color-bookmark) 40%, var(--border));
+  border-radius: 0;
+  box-shadow: none;
 }
-.guided-install-terminal .term-body {
-  overflow-x: hidden;
-  padding: 20px;
-}
-.guided-session-banner {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding-bottom: 16px;
-  margin-bottom: 16px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-.guided-session-symbol {
-  color: var(--color-bookmark);
-  font-size: 26px;
-  line-height: 1;
-}
-.guided-session-banner strong,
-.guided-session-banner small {
-  display: block;
-}
-.guided-session-banner strong {
-  color: var(--text-primary);
-  font-size: 13px;
-  line-height: 1.3;
-}
-.guided-session-banner small {
-  color: var(--text-muted);
-  font-size: 11px;
-}
-.guided-session-input {
+.guided-install-terminal .guided-terminal-line {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
+  gap: 10px;
+  overflow-x: hidden;
+  padding: 16px 18px;
+}
+.guided-prompt-content {
+  flex: 1;
   min-width: 0;
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-code-bar);
 }
 .guided-session-chevron {
   flex: none;
   color: var(--color-bookmark);
-  font-size: 18px;
-  line-height: 1.2;
+  font-size: 13px;
+  line-height: 1.65;
 }
-.guided-session-input pre {
+.guided-prompt-content pre {
+  display: inline;
   min-width: 0;
   color: var(--text-primary);
 }
+.guided-copy-slot {
+  display: inline;
+}
 .guided-install-terminal .term-copy {
-  width: auto;
-  min-height: 30px;
-  padding: 0 10px;
-  gap: 7px;
-  border-color: var(--border);
-  background: var(--surface-code);
-  color: var(--text-primary);
-  font-family: var(--font-sans);
-  font-size: 11px;
-  font-weight: 600;
-}
-.guided-install-terminal .term-copy::after {
-  content: "Copy prompt";
-  white-space: nowrap;
-}
-.guided-install-terminal .term-copy.copied::after {
-  content: "Copied";
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  margin-left: 4px;
+  vertical-align: middle;
 }
 
 .docs-shell {
