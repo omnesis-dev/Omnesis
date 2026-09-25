@@ -1,5 +1,40 @@
 # @omnesis/collector
 
+## 0.5.12
+
+### Patch Changes
+
+- @omnesis/config@0.5.12
+- @omnesis/core@0.5.12
+- @omnesis/gateway-client@0.5.12
+- @omnesis/provider-apple@0.5.12
+- @omnesis/provider-browser-history@0.5.12
+- @omnesis/provider-chrome@0.5.12
+- @omnesis/provider-claude-code@0.5.12
+- @omnesis/provider-codex@0.5.12
+- @omnesis/provider-coinbase@0.5.12
+- @omnesis/provider-enable-banking@0.5.12
+- @omnesis/provider-github@0.5.12
+- @omnesis/provider-google@0.5.12
+- @omnesis/provider-granola@0.5.12
+- @omnesis/provider-hermes@0.5.12
+- @omnesis/provider-imap@0.5.12
+- @omnesis/provider-local-files@0.5.12
+- @omnesis/provider-lunchflow@0.5.12
+- @omnesis/provider-notion@0.5.12
+- @omnesis/provider-obsidian@0.5.12
+- @omnesis/provider-openclaw@0.5.12
+- @omnesis/provider-outlook@0.5.12
+- @omnesis/provider-pi@0.5.12
+- @omnesis/provider-plaid@0.5.12
+- @omnesis/provider-screen-time@0.5.12
+- @omnesis/provider-strava@0.5.12
+- @omnesis/provider-things@0.5.12
+- @omnesis/provider-web@0.5.12
+- @omnesis/provider-whatsapp@0.5.12
+- @omnesis/source-sdk@0.5.12
+- @omnesis/types@0.5.12
+
 ## 0.5.11
 
 ### Patch Changes

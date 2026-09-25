@@ -1,5 +1,21 @@
 # omnesis
 
+## 0.5.12
+
+### Patch Changes
+
+- Updates the `hono` web framework to 4.13.8.
+  - @omnesis/agent-integration@0.5.12
+  - @omnesis/cli-shared@0.5.12
+  - @omnesis/collector@0.5.12
+  - @omnesis/config@0.5.12
+  - @omnesis/core@0.5.12
+  - @omnesis/eval@0.5.12
+  - @omnesis/gateway@0.5.12
+  - @omnesis/gateway-client@0.5.12
+  - @omnesis/source-sdk@0.5.12
+  - @omnesis/types@0.5.12
+
 ## 0.5.11
 
 ### Patch Changes

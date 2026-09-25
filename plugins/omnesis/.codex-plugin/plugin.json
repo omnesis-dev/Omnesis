@@ -1,6 +1,6 @@
 {
   "name": "omnesis",
-  "version": "0.5.11",
+  "version": "0.5.12",
   "description": "Connect a private Omnesis Gateway, then use its OAuth-protected Answer, Direct, and Notes capabilities.",
   "author": {
     "name": "Adrien Conrath",

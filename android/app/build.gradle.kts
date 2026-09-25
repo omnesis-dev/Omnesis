@@ -155,7 +155,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = 1
-        versionName = "0.5.11"
+        versionName = "0.5.12"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Firebase is configured at build time; no google-services.json or service
         // credential is checked into the repository. Gradle properties take
