@@ -22,6 +22,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   statSync,
   symlinkSync,
   writeFileSync,
@@ -1024,7 +1025,11 @@ describe("install.sh service registration", () => {
       const updated = runInstaller("update-recorded", [], env, { sourceDir: false });
       expect(updated.status, updated.output).toBe(0);
       expect(updates(updated)).toEqual(["update --yes"]);
-      expect(updated.output).toContain(`Checkout:  ${fixturePath("checkout-update-recorded")}`);
+      // The installer names the checkout by its resolved path (macOS keeps its
+      // temporary directory behind the /var -> /private/var link).
+      expect(updated.output).toContain(
+        `Checkout:  ${realpathSync(fixturePath("checkout-update-recorded"))}`,
+      );
       expect(checkoutGit("update-recorded", "config", "--get-all", "remote.origin.fetch")).toBe(
         "+refs/heads/main:refs/remotes/origin/main",
       );
@@ -1508,30 +1513,34 @@ describe("install.sh gateway URL", () => {
   // tailscaled issues certificates only to root or to the account named as this
   // machine's Tailscale operator. The gateway runs as the installing account and
   // renews the certificate itself, so the permission — not a one-off sudo — is
-  // what makes a tailnet certificate work past its first 90 days.
-  test("a certificate refused for want of the operator permission is taken once, then minted", () => {
-    installFakeSudo();
-    const { operatorFlag } = installDenyingTailscale("workstation.example-tailnet.ts.net");
-    const run = runInstaller("tailscale-operator", ["--embedder", EMBED_IDS[0]], {
-      OMNESIS_TEST_KEYRING: "ready",
-    });
+  // what makes a tailnet certificate work past its first 90 days. The installer
+  // takes it only on Linux, the one platform where tailscaled asks for it.
+  test.skipIf(process.platform !== "linux")(
+    "a certificate refused for want of the operator permission is taken once, then minted",
+    () => {
+      installFakeSudo();
+      const { operatorFlag } = installDenyingTailscale("workstation.example-tailnet.ts.net");
+      const run = runInstaller("tailscale-operator", ["--embedder", EMBED_IDS[0]], {
+        OMNESIS_TEST_KEYRING: "ready",
+      });
 
-    expect(run.status).toBe(0);
-    expect(run.output).toContain("asking for the Tailscale operator permission on this machine");
-    expect(run.output).toContain("nothing on your tailnet changed");
-    expect(run.output).toContain("Certificate installed");
-    // Taken for the account that runs the gateway, and taken exactly once.
-    const granted = run.calls.filter((call) => call.startsWith("sudo tailscale set --operator="));
-    expect(granted).toEqual([`sudo tailscale set --operator=${userInfo().username}`]);
-    expect(readFileSync(operatorFlag, "utf8")).toBe(userInfo().username);
-    const env = run.envFile();
-    expect(env).toContain("OMNESIS_TLS_CERT=");
-    expect(env).toContain("OMNESIS_GATEWAY_URL=https://workstation.example-tailnet.ts.net:7600");
-    expect(env).toContain(
-      "OMNESIS_PAIRING_SYSTEM_TRUST_ORIGIN=https://workstation.example-tailnet.ts.net:7600",
-    );
-    expect(run.output).not.toContain("Nothing on your tailnet was changed");
-  });
+      expect(run.status).toBe(0);
+      expect(run.output).toContain("asking for the Tailscale operator permission on this machine");
+      expect(run.output).toContain("nothing on your tailnet changed");
+      expect(run.output).toContain("Certificate installed");
+      // Taken for the account that runs the gateway, and taken exactly once.
+      const granted = run.calls.filter((call) => call.startsWith("sudo tailscale set --operator="));
+      expect(granted).toEqual([`sudo tailscale set --operator=${userInfo().username}`]);
+      expect(readFileSync(operatorFlag, "utf8")).toBe(userInfo().username);
+      const env = run.envFile();
+      expect(env).toContain("OMNESIS_TLS_CERT=");
+      expect(env).toContain("OMNESIS_GATEWAY_URL=https://workstation.example-tailnet.ts.net:7600");
+      expect(env).toContain(
+        "OMNESIS_PAIRING_SYSTEM_TRUST_ORIGIN=https://workstation.example-tailnet.ts.net:7600",
+      );
+      expect(run.output).not.toContain("Nothing on your tailnet was changed");
+    },
+  );
 
   test("a certificate refused for any other reason is reported, not worked around", () => {
     installFakeSudo();
@@ -1551,25 +1560,28 @@ describe("install.sh gateway URL", () => {
     expect(run.envFile()).not.toContain("OMNESIS_PAIRING_SYSTEM_TRUST_ORIGIN");
   });
 
-  test("without the privilege to take the permission, the installer names it and changes nothing", () => {
-    // No installFakeSudo(): the fixture's default `sudo` refuses, as it does for
-    // an account that cannot run it.
-    installDenyingTailscale("workstation.example-tailnet.ts.net");
-    const run = runInstaller("tailscale-no-sudo", ["--embedder", EMBED_IDS[0]], {
-      OMNESIS_TEST_KEYRING: "ready",
-    });
+  test.skipIf(process.platform !== "linux")(
+    "without the privilege to take the permission, the installer names it and changes nothing",
+    () => {
+      // No installFakeSudo(): the fixture's default `sudo` refuses, as it does for
+      // an account that cannot run it.
+      installDenyingTailscale("workstation.example-tailnet.ts.net");
+      const run = runInstaller("tailscale-no-sudo", ["--embedder", EMBED_IDS[0]], {
+        OMNESIS_TEST_KEYRING: "ready",
+      });
 
-    expect(run.status).toBe(0);
-    expect(run.output).toContain("Could not take the Tailscale operator permission");
-    // Whatever sudo itself said has to reach the operator. Hiding its stderr
-    // also hides its password prompt, and an installer waiting on a prompt
-    // nobody can see reads as a hang on any machine whose sudo asks for one.
-    expect(run.output).toContain("sudo: a password is required");
-    expect(run.output).toContain("tailscale cert failed: Access denied: cert access denied");
-    expect(run.output).toContain("Continuing with the self-signed cert");
-    expect(run.output).toContain("Nothing on your tailnet was changed");
-    expect(run.envFile()).not.toContain("tailscale.crt");
-  });
+      expect(run.status).toBe(0);
+      expect(run.output).toContain("Could not take the Tailscale operator permission");
+      // Whatever sudo itself said has to reach the operator. Hiding its stderr
+      // also hides its password prompt, and an installer waiting on a prompt
+      // nobody can see reads as a hang on any machine whose sudo asks for one.
+      expect(run.output).toContain("sudo: a password is required");
+      expect(run.output).toContain("tailscale cert failed: Access denied: cert access denied");
+      expect(run.output).toContain("Continuing with the self-signed cert");
+      expect(run.output).toContain("Nothing on your tailnet was changed");
+      expect(run.envFile()).not.toContain("tailscale.crt");
+    },
+  );
 
   test("a missing MagicDNS name removes stale system trust", () => {
     installAbsentTailscale();
