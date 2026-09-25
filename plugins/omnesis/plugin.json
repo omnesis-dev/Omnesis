@@ -1,0 +1,36 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "omnesis",
+  "version": "0.5.12",
+  "description": "Use a private Omnesis gateway from your agent: privacy-reviewed Answer, raw read-only Direct, and Notes capture, limited by the connection's access level.",
+  "author": {
+    "name": "Adrien Conrath",
+    "url": "https://omnesis.dev"
+  },
+  "homepage": "https://omnesis.dev",
+  "repository": "https://github.com/omnesis-dev/Omnesis",
+  "license": "AGPL-3.0-or-later",
+  "keywords": ["mcp", "knowledge-base", "personal-data", "local", "privacy"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Omnesis",
+        "shortDescription": "Connect and use your private Omnesis gateway",
+        "longDescription": "Guides the one-time connection to your own Omnesis gateway, then uses its privacy-reviewed Answer tools, raw read-only Direct tools, and note capture according to the access level you approved for the connection.",
+        "developerName": "Omnesis",
+        "category": "Productivity",
+        "capabilities": ["Read", "Write"],
+        "websiteURL": "https://omnesis.dev",
+        "privacyPolicyURL": "https://omnesis.dev/privacy",
+        "defaultPrompt": [
+          "Help me connect Omnesis to ChatGPT.",
+          "Ask Omnesis what's on my agenda next week.",
+          "Save a note to Omnesis."
+        ],
+        "brandColor": "#1F6FEB",
+        "composerIcon": "./assets/icon.png",
+        "logo": "./assets/icon.png"
+      }
+    }
+  }
+}

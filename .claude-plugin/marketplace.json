@@ -7,9 +7,8 @@
   "plugins": [
     {
       "name": "omnesis",
-      "displayName": "Omnesis",
       "source": "./plugins/omnesis-claude",
-      "description": "Connect Claude Code to one OAuth-protected Omnesis MCP server. The access level chosen at approval exposes Answer, Direct, or both.",
+      "description": "Connect Claude Code to your Omnesis gateway over one OAuth-protected MCP server. The access level you approve decides which of Answer, Direct and Notes it exposes.",
       "homepage": "https://omnesis.dev",
       "keywords": ["mcp", "knowledge-base", "personal-data", "local", "privacy"]
     }

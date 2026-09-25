@@ -1,5 +1,5 @@
 {
-  "name": "omnesis-openai",
+  "name": "omnesis",
   "interface": {
     "displayName": "Omnesis"
   },
@@ -11,10 +11,8 @@
         "path": "./plugins/omnesis"
       },
       "policy": {
-        "installation": "AVAILABLE",
-        "authentication": "ON_USE"
-      },
-      "category": "Productivity"
+        "installation": "AVAILABLE"
+      }
     }
   ]
 }

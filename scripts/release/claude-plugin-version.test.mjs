@@ -29,11 +29,13 @@ describe("Claude plugin release", () => {
     const pluginRoot = join(repoRoot, marketplace.plugins[0].source);
     expect(statSync(pluginRoot).isDirectory()).toBe(true);
     expect(statSync(join(pluginRoot, ".claude-plugin", "plugin.json")).isFile()).toBe(true);
-    expect(manifest).toMatchObject({
-      name: "omnesis",
-      mcpServers: "./.mcp.json",
-      skills: "./skills/",
-    });
+    // The host loads `.mcp.json` and `skills/` from the plugin root by
+    // default; naming them again in the manifest only loads them twice.
+    expect(manifest.name).toBe("omnesis");
+    expect(manifest).not.toHaveProperty("mcpServers");
+    expect(manifest).not.toHaveProperty("skills");
+    expect(statSync(join(pluginRoot, ".mcp.json")).isFile()).toBe(true);
+    expect(statSync(join(pluginRoot, "skills")).isDirectory()).toBe(true);
     expect(manifest.userConfig).toEqual({
       omnesis_mcp_url: {
         type: "string",

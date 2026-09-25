@@ -23,3 +23,4 @@ parallel rays. All assets derive from this single shape.
 - omnesis-mark.svg currentColor (universal; recolor via context)
 - omnesis-mark-tight.svg currentColor, tight viewBox (favicons / app icons)
 - omnesis-mark-{blue,blue-dark,white,black,orange,orange-dark}.svg color-baked
+- plugins/omnesis/assets/icon.png 512×512 PNG rendered from omnesis-mark-blue.svg, the agent-plugin listing icon

@@ -837,6 +837,27 @@ a:hover { text-decoration: underline; }
   cursor: pointer;
 }
 .access-copy-button:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+.access-client-setup .access-mcp-resource code {
+  overflow-wrap: break-word;
+  text-overflow: clip;
+  white-space: pre-wrap;
+}
+.access-client-setup summary {
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.access-client-setup summary:hover { color: var(--text-primary); }
+.access-client-setup ul {
+  display: grid;
+  gap: 12px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.access-client-setup li { display: grid; gap: 6px; min-width: 0; }
+.access-client-name { color: var(--text-primary); font-size: 12px; font-weight: 600; }
+.access-client-link { justify-self: start; font-size: 12px; text-decoration: none; }
 .access-code-input {
   width: 180px;
   font-family: var(--font-mono) !important;

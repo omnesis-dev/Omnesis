@@ -1,11 +1,11 @@
 ---
-name: connect-omnesis
-description: Connect ChatGPT to the user's private Omnesis Gateway. Use when the user asks to connect, configure, authenticate, reconnect, or troubleshoot Omnesis in ChatGPT, including the starter "Help me connect Omnesis to ChatGPT." Do not use this skill for Codex CLI setup.
+name: connect-omnesis-chatgpt
+description: Connect ChatGPT to the user's private Omnesis Gateway. Use when the user asks to connect, configure, authenticate, reconnect, or troubleshoot Omnesis in ChatGPT, including the starter "Help me connect Omnesis to ChatGPT." Do not use this skill for Codex CLI, VS Code, GitHub Copilot, or Cursor setup.
 ---
 
 # Connect Omnesis
 
-The plugin supplies operating guidance, but it cannot embed a different Gateway URL for every installation. ChatGPT must hold one separate remote MCP connection to the user's Gateway. Because ChatGPT connects from OpenAI's servers, that URL must be Internet-reachable HTTPS; a URL that resolves only inside a tailnet or other private network will not work and may produce no Gateway log entry. If the Gateway has no public address yet, point the user to https://omnesis.dev/docs/connect#tailscale-funnel, which publishes it with Tailscale Funnel and sets `gateway.publicBaseUrl`; the **Connect an agent** dialog appears only once that setting exists. Never give the user `codex mcp` commands from this skill, even if the model or internal runtime identifies itself as Codex. Never ask the user to paste a Portal token, OAuth access token, refresh token, client secret, or certificate private key into the conversation.
+The plugin supplies operating guidance, but it cannot embed a different Gateway URL for every installation. ChatGPT must hold one separate remote MCP connection to the user's Gateway. Because ChatGPT connects from OpenAI's servers, the supported setup is an Internet-reachable HTTPS URL; a URL that resolves only inside a tailnet or other private network will not work and may produce no Gateway log entry. OpenAI's Secure MCP Tunnel is not a route Omnesis supports, because the gateway's OAuth sign-in must also be reachable. If the Gateway has no public address yet, point the user to https://omnesis.dev/docs/connect#tailscale-funnel, which publishes it with Tailscale Funnel and sets `gateway.publicBaseUrl`; the **Connect an agent** dialog appears only once that setting exists. Never give the user `codex mcp` commands from this skill, even if the model or internal runtime identifies itself as Codex. Never ask the user to paste a Portal token, OAuth access token, refresh token, client secret, or certificate private key into the conversation.
 
 ## Check whether the connection already works
 

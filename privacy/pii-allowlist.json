@@ -3727,8 +3727,6 @@
         "packages/watch/src/validator/validate.test.ts",
         "packages/watch/universes/poc/_build/build.mjs",
         "plugins/omnesis-claude/.claude-plugin/plugin.json",
-        "plugins/omnesis-claude/skills/omnesis/SKILL.test.ts",
-        "plugins/omnesis/skills/omnesis/SKILL.test.ts",
         "scripts/check-parity.test.mjs",
         "scripts/codemod-core-imports.test.mjs",
         "scripts/dev-scripts-smoke.test.mjs",
@@ -3741,7 +3739,6 @@
         "scripts/release/install-sh-client-only.test.mjs",
         "scripts/release/install-sh-mirror.test.mjs",
         "scripts/release/install-sh-security.test.mjs",
-        "scripts/release/openai-plugin.test.mjs",
         "scripts/release/phantom-deps.test.mjs",
         "scripts/release/publish-policy.test.mjs",
         "scripts/release/seeded-state-artifact.test.mjs",
@@ -7604,11 +7601,6 @@
       "value": "Omnesis Briefs",
       "paths": ["ios/Sources/Omnesis/UI/PreviewMocks.swift"],
       "reason": "product feature name in an invented preview fixture, not a person"
-    },
-    {
-      "value": "Omnesis Direct",
-      "paths": ["plugins/omnesis-claude/skills/omnesis-direct/SKILL.test.ts"],
-      "reason": "public product capability name in a plugin fixture, not a person"
     },
     {
       "value": "Omnesis Gateway",

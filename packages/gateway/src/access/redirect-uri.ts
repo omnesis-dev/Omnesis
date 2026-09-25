@@ -5,7 +5,10 @@ const LOOPBACK_HOSTS = new Set(["127.0.0.1", "[::1]", "localhost"]);
 
 /**
  * Match registered redirects exactly, except for a native loopback listener's
- * operating-system-assigned port. Web redirects never receive this exception.
+ * operating-system-assigned port (RFC 9700 §2.1, RFC 8252 §7.3). The exception
+ * applies however the client registered: a Client ID Metadata Document takes
+ * its redirect rule from RFC 9700, exception included, just as dynamic
+ * registration does. Web redirects never receive it.
  */
 export function registeredRedirectMatches(registered: string, requested: string): boolean {
   if (registered === requested) return true;

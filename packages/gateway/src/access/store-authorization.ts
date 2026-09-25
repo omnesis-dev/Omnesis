@@ -202,9 +202,7 @@ export function preflightAuthorizationRequest(
   if (!client) return { ok: false, error: "invalid-client" };
   if (
     !client.redirectUris.some((registered) =>
-      /^https:/iu.test(input.clientId)
-        ? registered === input.redirectUri
-        : registeredRedirectMatches(registered, input.redirectUri),
+      registeredRedirectMatches(registered, input.redirectUri),
     ) ||
     !client.grantTypes.includes("authorization_code") ||
     !client.responseTypes.includes("code")

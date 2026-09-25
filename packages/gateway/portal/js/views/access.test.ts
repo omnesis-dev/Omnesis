@@ -1516,6 +1516,31 @@ describe("AccessView", () => {
     expect(router.replaceRoute).toHaveBeenCalledWith("/portal/settings/access");
   });
 
+  test("lists each common client's setup for the gateway's own MCP resource", async () => {
+    api.getAccessOverview.mockResolvedValue({ principals: [], oauth: OAUTH });
+    await mount({ connectOpen: true });
+
+    const setup = host.querySelector(".access-connect-dialog .access-client-setup");
+    expect(setup?.tagName).toBe("DETAILS");
+    const clients = [...(setup?.querySelectorAll("li") ?? [])].map((item) => item.getAttribute("data-client"));
+    expect(clients).toEqual([
+      "claude-code",
+      "claude-code-plugin",
+      "codex",
+      "gemini-cli",
+      "copilot-cli",
+      "vscode",
+      "cursor",
+      "hosted",
+    ]);
+    expect(setup?.querySelector("[data-client='claude-code'] code")?.textContent).toBe(
+      "claude mcp add --transport http --scope user omnesis https://gateway.example.org/mcp",
+    );
+    expect(setup?.querySelector("[data-client='vscode'] a")?.getAttribute("href")).toMatch(/^vscode:mcp\/install\?/u);
+    expect(setup?.querySelector("[data-client='hosted'] code")).toBeNull();
+    expect(setup?.querySelector("[data-client='hosted'] p")?.textContent).toMatch(/address above/u);
+  });
+
   test("offers connecting an agent only when the Gateway has usable OAuth URLs", async () => {
     await mount();
     expect(connectButton()).toBeUndefined();
