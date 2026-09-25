@@ -973,21 +973,34 @@
       .install-copy {
         flex: none;
         align-self: center;
-        padding: 5px 12px;
+        display: grid;
+        place-items: center;
+        width: 32px;
+        height: 32px;
+        padding: 0;
         border: 1px solid var(--border);
         border-radius: 8px;
         background: var(--bg-tertiary);
-        color: var(--text-primary);
-        font-family: var(--font-sans);
-        font-size: 12.5px;
-        font-weight: 600;
+        color: var(--text-secondary);
         cursor: pointer;
         transition:
           border-color 0.15s,
           color 0.15s;
       }
+      .install-copy svg {
+        width: 16px;
+        height: 16px;
+      }
+      .install-copy .icon-check,
+      .install-copy.is-copied .icon-copy {
+        display: none;
+      }
+      .install-copy.is-copied .icon-check {
+        display: block;
+      }
       .install-copy:hover {
         border-color: var(--accent);
+        color: var(--text-primary);
       }
       .install-copy.is-copied {
         border-color: var(--color-note);
@@ -995,32 +1008,6 @@
       }
       :root[data-theme="light"] .install-copy {
         background: #fff;
-      }
-      .install-foot {
-        margin-top: 12px;
-        font-size: 13px;
-        line-height: 1.55;
-        color: var(--text-muted);
-      }
-      .install-foot a,
-      .hero-note a {
-        color: var(--accent);
-        text-decoration: none;
-      }
-      .install-foot a:hover,
-      .hero-note a:hover {
-        text-decoration: underline;
-      }
-      .hero-note {
-        margin-top: 16px;
-        font-size: 13px;
-        color: var(--text-muted);
-      }
-      .hero-note svg {
-        width: 14px;
-        height: 14px;
-        vertical-align: -2px;
-        margin-right: 2px;
       }
       @media (max-width: 600px) {
         .install-pane {
@@ -2734,71 +2721,9 @@
         pointer-events: none;
       }
 
-      .cta-section .section-title {
-        max-width: 600px;
-        margin: 0 auto 16px;
-      }
-
-      .cta-section .section-label {
-        justify-content: center;
-      }
-
-      .cta-section .section-subtitle {
-        margin: 0 auto 36px;
-      }
-
-      .cta-actions {
-        display: flex;
-        gap: 12px;
-        justify-content: center;
-        flex-wrap: wrap;
-      }
-
-      .cta-btn {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        padding: 12px 22px;
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        background: var(--surface-raised);
-        color: var(--text-primary);
-        font-size: 15px;
-        font-weight: 600;
-        text-decoration: none;
-        transition:
-          border-color 0.2s,
-          background 0.2s,
-          transform 0.2s;
-      }
-
-      .cta-btn svg {
-        width: 17px;
-        height: 17px;
-      }
-
-      .cta-btn:hover {
-        border-color: var(--text-muted);
-        transform: translateY(-1px);
-      }
-
-      /* Same deep blue as the signup button, for AA contrast on dark. */
-      .cta-btn-primary {
-        background: #1f6feb;
-        border-color: #1f6feb;
-        color: #fff;
-      }
-
-      .cta-btn-primary:hover {
-        background: #388bfd;
-        border-color: #388bfd;
-      }
-
       .cta-signup {
         max-width: 440px;
-        margin: 72px auto 0;
-        padding-top: 40px;
-        border-top: 1px solid var(--border-subtle);
+        margin: 0 auto;
       }
 
       .cta-signup-title {
@@ -3432,10 +3357,7 @@
                   aria-labelledby="install-tab-agent"
                   data-pane="agent"
                 >
-                  <p class="install-lead">
-                    Paste this into Claude Code, Codex or any coding agent with a terminal on the
-                    computer where you want to start.
-                  </p>
+                  <p class="install-lead">Paste this into your agent</p>
                   <div class="install-code">
                     <span class="install-glyph" aria-hidden="true">&gt;</span>
                     <code class="install-text"
@@ -3443,13 +3365,32 @@
                       https://omnesis.dev/install-prompt.md and follow it.</code
                     >
                     <button class="install-copy" type="button" aria-label="Copy the install prompt">
-                      Copy
+                      <svg
+                        class="icon-copy"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                      >
+                        <rect x="8" y="8" width="14" height="14" rx="2" />
+                        <path d="M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2" /></svg
+                      ><svg
+                        class="icon-check"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M20 6 9 17l-5-5" />
+                      </svg>
                     </button>
                   </div>
-                  <p class="install-foot">
-                    The agent checks this machine, proposes a setup and walks you through each
-                    device one step at a time. <a href="/install-prompt.md">Read the prompt</a>
-                  </p>
                 </div>
                 <div
                   class="install-pane"
@@ -3468,29 +3409,35 @@
                       type="button"
                       aria-label="Copy the install command"
                     >
-                      Copy
+                      <svg
+                        class="icon-copy"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                      >
+                        <rect x="8" y="8" width="14" height="14" rx="2" />
+                        <path d="M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2" /></svg
+                      ><svg
+                        class="icon-check"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M20 6 9 17l-5-5" />
+                      </svg>
                     </button>
                   </div>
-                  <p class="install-foot">
-                    Installs the CLI, sets up TLS, registers the gateway and collector as services
-                    and downloads the embedding model.
-                    <a href="/install.sh">Read the script</a> &#183;
-                    <a href="/docs/install">Docker, source and options</a>
-                  </p>
                 </div>
               </div>
             </div>
-            <p class="hero-note">
-              Free and open source under AGPL-3.0 &#183; macOS or Linux &#183;
-              <a href="https://github.com/omnesis-dev/Omnesis">
-                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                  <path
-                    d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
-                  />
-                </svg>
-                View on GitHub</a
-              >
-            </p>
           </div>
         </section>
 
@@ -5944,26 +5891,6 @@
        ============================================================ -->
       <section class="cta-section" id="cta">
         <div class="container">
-          <div class="reveal">
-            <div class="section-label">Open source</div>
-            <h2 class="section-title">Read every line that touches your data</h2>
-            <p class="section-subtitle">
-              The gateway, collector, apps, browser extension and every source live in one
-              repository under AGPL-3.0. Audit it, run it, fix it, or build a source of your own.
-            </p>
-            <div class="cta-actions">
-              <a class="cta-btn cta-btn-primary" href="#install">Install Omnesis</a>
-              <a class="cta-btn" href="https://github.com/omnesis-dev/Omnesis">
-                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                  <path
-                    d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
-                  />
-                </svg>
-                View on GitHub
-              </a>
-              <a class="cta-btn" href="/docs/">Read the docs</a>
-            </div>
-          </div>
           <div class="cta-signup reveal">
             <p class="cta-signup-title">Release notes by email</p>
             <form
@@ -6603,12 +6530,8 @@
               sel.addRange(range);
               return;
             }
-            btn.textContent = "Copied";
             btn.classList.add("is-copied");
-            setTimeout(() => {
-              btn.textContent = "Copy";
-              btn.classList.remove("is-copied");
-            }, 1600);
+            setTimeout(() => btn.classList.remove("is-copied"), 1600);
           });
         });
       })();
