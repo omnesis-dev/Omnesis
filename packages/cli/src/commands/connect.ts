@@ -351,6 +351,25 @@ function hermesConfigNotificationSetting(configText: string): unknown {
   return display.background_process_notifications;
 }
 
+/**
+ * The Hermes notification modes that report every finished background
+ * process, successful or not. "concise" is Hermes's default since v0.21 (its
+ * installer writes it, and its config migration moves "all" to it): a
+ * one-line status instead of the output tail, delivered on the same
+ * completions as "all" and "result". "error" stays silent on success and
+ * "off" says nothing, so neither is accepted.
+ */
+const HERMES_COMPLETION_NOTIFICATION_MODES = ["concise", "all", "result"];
+
+function hermesNotificationRefusal(): CliError {
+  return new CliError(
+    `${c.red}Hermes background process notifications must be "concise", "all" or "result" ` +
+      `so a successful approval can wake the agent. Set display.background_process_notifications ` +
+      `or HERMES_BACKGROUND_NOTIFICATIONS accordingly before connecting.${c.reset}`,
+    EXIT_USER_ERROR,
+  );
+}
+
 export function assertHermesCompletionNotifications(
   configText: string,
   envText = "",
@@ -360,13 +379,8 @@ export function assertHermesCompletionNotifications(
   const fileOverride = dotenvSetting(envText, "HERMES_BACKGROUND_NOTIFICATIONS")?.trim();
   const configSetting = hermesConfigNotificationSetting(configText);
   for (const override of [runtimeOverride, fileOverride]) {
-    if (override && !["all", "result"].includes(override.toLowerCase())) {
-      throw new CliError(
-        `${c.red}Hermes background process notifications must be "all" or "result" so a ` +
-          `successful approval can wake the agent. Set display.background_process_notifications ` +
-          `or HERMES_BACKGROUND_NOTIFICATIONS accordingly before connecting.${c.reset}`,
-        EXIT_USER_ERROR,
-      );
+    if (override && !HERMES_COMPLETION_NOTIFICATION_MODES.includes(override.toLowerCase())) {
+      throw hermesNotificationRefusal();
     }
   }
   const envOverride = runtimeOverride || fileOverride;
@@ -374,16 +388,11 @@ export function assertHermesCompletionNotifications(
   const setting =
     configured === false
       ? "off"
-      : String(configured ?? "all")
+      : String(configured ?? "concise")
           .trim()
           .toLowerCase();
-  if (setting !== "all" && setting !== "result") {
-    throw new CliError(
-      `${c.red}Hermes background process notifications must be "all" or "result" so a ` +
-        `successful approval can wake the agent. Set display.background_process_notifications ` +
-        `or HERMES_BACKGROUND_NOTIFICATIONS accordingly before connecting.${c.reset}`,
-      EXIT_USER_ERROR,
-    );
+  if (!HERMES_COMPLETION_NOTIFICATION_MODES.includes(setting)) {
+    throw hermesNotificationRefusal();
   }
 }
 
