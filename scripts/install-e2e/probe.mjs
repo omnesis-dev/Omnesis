@@ -99,7 +99,7 @@ export async function takeSnapshot({ url, token, query, services, doctor, backup
     fleet: null,
   };
   if (query) {
-    const result = await postJson(url, "/search", token, { query, limit: 10 });
+    const result = await postJson(url, "/search", token, { text: query, limit: 10 });
     snapshot.search = { query, titles: (result.results ?? []).map((r) => r.title) };
   }
   if (fleet) {

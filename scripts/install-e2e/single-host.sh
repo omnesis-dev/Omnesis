@@ -73,7 +73,7 @@ endgroup
 
 group "Seed an invented vault"
 mint_probe_token
-COLLECTOR="$(collector_name "$GATEWAY_URL")" || die "the gateway lists no collector"
+COLLECTOR="$(live_collector_name "$GATEWAY_URL" 180)" || die "the gateway lists no connected collector"
 make_vault "$E2E_WORK/vault"
 SOURCE_ID="$(add_vault "$COLLECTOR" "$E2E_WORK/vault")"
 redacted "$OMNESIS" sources sync "$SOURCE_ID" --wait --timeout 300 || die "the vault did not sync"

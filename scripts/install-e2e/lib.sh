@@ -137,9 +137,18 @@ add_vault() {
   printf '%s\n' "$id"
 }
 
-# The name of the collector device the gateway knows, optionally excluding one.
-collector_name() {
-  local snapshot_file="$E2E_WORK/devices.json"
-  probe snapshot --url "$1" --token-file "$TOKEN_FILE" >"$snapshot_file"
-  json_get "$snapshot_file" "(j.devices.find((d) => d.kind === 'collector' && d.name !== '${2:-}') || {}).name"
+# The name of a collector the gateway lists as connected, waiting up to $2
+# seconds for one: the installer returns once the gateway is healthy, and its
+# collector connects moments later.
+live_collector_name() {
+  local url="$1" deadline=$(($(date +%s) + ${2:-120})) file="$E2E_WORK/devices.json" name
+  while :; do
+    if probe snapshot --url "$url" --token-file "$TOKEN_FILE" >"$file" 2>/dev/null &&
+      name="$(json_get "$file" "(j.devices.find((d) => d.kind === 'collector' && d.online) || {}).name")"; then
+      printf '%s\n' "$name"
+      return 0
+    fi
+    [ "$(date +%s)" -lt "$deadline" ] || return 1
+    sleep 3
+  done
 }

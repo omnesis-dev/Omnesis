@@ -134,17 +134,26 @@ describe("compareSnapshots", () => {
 /** A stand-in gateway that answers the routes the probe reads. */
 async function fakeGateway(routes) {
   const server = createServer((req, res) => {
-    const route = routes[`${req.method} ${req.url}`];
-    if (!route) {
-      res.writeHead(404).end();
-      return;
-    }
-    if (route.auth && req.headers.authorization !== "Bearer t0k") {
-      res.writeHead(401).end();
-      return;
-    }
-    const body = typeof route.body === "function" ? route.body() : route.body;
-    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(body));
+    let raw = "";
+    req.on("data", (chunk) => (raw += chunk));
+    req.on("end", () => {
+      const route = routes[`${req.method} ${req.url}`];
+      if (!route) {
+        res.writeHead(404).end();
+        return;
+      }
+      if (route.auth && req.headers.authorization !== "Bearer t0k") {
+        res.writeHead(401).end();
+        return;
+      }
+      const body =
+        typeof route.body === "function" ? route.body(raw ? JSON.parse(raw) : null) : route.body;
+      if (body === undefined) {
+        res.writeHead(400).end();
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(body));
+    });
   });
   await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
   return { server, url: `http://127.0.0.1:${server.address().port}` };
@@ -184,7 +193,14 @@ describe("gateway reads", () => {
           ],
         },
       },
-      "POST /search": { auth: true, body: { results: [{ title: "Harbor lantern checklist" }] } },
+      // The gateway's search contract: the query is `text`.
+      "POST /search": {
+        auth: true,
+        body: (req) =>
+          req?.text === "brindlewick"
+            ? { results: [{ title: "Harbor lantern checklist" }] }
+            : undefined,
+      },
       "GET /admin/fleet/update": {
         auth: true,
         body: {

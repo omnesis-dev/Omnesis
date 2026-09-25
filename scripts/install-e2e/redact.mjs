@@ -29,7 +29,7 @@ const RULES = [
   // Authorization headers and their JSON/env spellings.
   [/\b(Bearer)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 ***"],
   [
-    /("(?:token|accessToken|refreshToken|adminToken|deviceToken|pairingCode|code|recoveryCode)"\s*:\s*")[^"]*(")/g,
+    /("(?:token|accessToken|refreshToken|adminToken|deviceToken|pairingCode|recoveryCode)"\s*:\s*")[^"]*(")/g,
     "$1***$2",
   ],
   [/\b(OMNESIS_TOKEN|OMNESIS_ADMIN_TOKEN|TS_AUTHKEY|TS_OAUTH_SECRET)=\S+/g, "$1=***"],
