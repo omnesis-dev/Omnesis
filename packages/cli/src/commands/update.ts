@@ -56,7 +56,7 @@ import { readFileSync } from "node:fs";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { defineCommand } from "citty";
 import { resolveHarnessBinary } from "@omnesis/agent-integration";
@@ -177,6 +177,7 @@ import {
   continuationTarget,
   deferredBackupFor,
   handOverAfterApply,
+  installedCliCommand,
   installedPackageEntry,
   launchContinuation,
   orderForHandoff,
@@ -503,11 +504,12 @@ export interface UpdateFlowDeps {
   /** Newest published version for a dist-tag, for installs with no npm binary. */
   latestPublished?(distTag: string): Promise<string>;
   /**
-   * How to invoke this CLI again for the harness refresh. `process.argv[1]`
-   * is the TypeScript entry point on a source install and cannot be spawned,
-   * so this is the name the installer put on PATH.
+   * How to run the installed CLI for the harness refresh, read when the
+   * refresh runs so it is the build the update installed. By path: the
+   * launcher the installer puts in `~/.local/bin` is not on the PATH of an
+   * SSH command or a service.
    */
-  cliPath: string;
+  cliCommand(): CommandSpec;
   /** Host-wide update transaction, when this is an apply rather than a preview. */
   updateLock?: Pick<UpdateLock, "setProcessGroup" | "setStep" | "reclaim">;
   /**
@@ -939,7 +941,7 @@ async function refreshHarness(
   targetVersion: string | null,
   deps: UpdateFlowDeps,
 ): Promise<boolean> {
-  const spec = harnessRefreshSpec(harness, deps.cliPath);
+  const spec = harnessRefreshSpec(harness, deps.cliCommand());
   console.log(`${c.dim}$ ${formatCommandSpec(spec)}${c.reset}`);
   const result = await attempt(deps, spec);
   if (result.code !== 0) {
@@ -3104,7 +3106,26 @@ function hostUpdateDeps(ctx: HostUpdateContext): {
         return null;
       }
     },
-    cliPath: "omnesis",
+    cliCommand: () => {
+      const cli =
+        plan.kind === "docker"
+          ? null
+          : installedCliCommand(
+              plan.kind === "source"
+                ? { method: "source", rootDir: plan.rootDir }
+                : { method: "npm-global" },
+              {
+                execPath: process.execPath,
+                packageEntry: () => installedPackageEntry(process.argv[1] ?? ""),
+              },
+            );
+      if (!cli) return { command: "omnesis", args: [] };
+      // A source checkout's tsx runs `#!/usr/bin/env node`: find this Node.
+      const path = [dirname(process.execPath), process.env.PATH ?? ""]
+        .filter((entry) => entry.length > 0)
+        .join(delimiter);
+      return { ...cli, env: { PATH: path } };
+    },
   };
   return { deps, ensureTrust };
 }

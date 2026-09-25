@@ -1552,9 +1552,12 @@ export function dockerApplyPlan(
   };
 }
 
-/** `omnesis connect <harness> --refresh` — reinstall the plugin and skill. */
-export function harnessRefreshSpec(harness: Harness, cliPath: string): CommandSpec {
-  return { command: cliPath, args: ["connect", harness, "--refresh"] };
+/**
+ * `omnesis connect <harness> --refresh` — reinstall the plugin and skill,
+ * run by `cli`: the command that starts the installed CLI.
+ */
+export function harnessRefreshSpec(harness: Harness, cli: CommandSpec): CommandSpec {
+  return { ...cli, args: [...cli.args, "connect", harness, "--refresh"] };
 }
 
 /**

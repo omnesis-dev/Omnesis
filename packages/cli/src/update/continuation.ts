@@ -538,11 +538,33 @@ export interface ContinuationCommandContext {
 }
 
 /**
+ * The command that runs the CLI this installation holds now, before any
+ * arguments. Null when a package's entry cannot be found.
+ *
+ * A source checkout's CLI is its own tsx entry rather than the launcher on
+ * PATH, and a package's is the entry its manifest names now — so after an
+ * install this is the new build, and it is reached by path from a shell or
+ * service whose PATH has no `omnesis` on it.
+ */
+export function installedCliCommand(
+  install: { method: "source"; rootDir: string } | { method: "npm-global" },
+  ctx: Pick<ContinuationCommandContext, "execPath" | "packageEntry">,
+): CommandSpec | null {
+  if (install.method === "source") {
+    return {
+      command: join(install.rootDir, "node_modules", ".bin", "tsx"),
+      args: [join(install.rootDir, "packages", "cli", "src", "index.ts")],
+    };
+  }
+  const entry = ctx.packageEntry();
+  return entry ? { command: ctx.execPath, args: [entry] } : null;
+}
+
+/**
  * The command that runs the installed build's `omnesis update` on an offer,
  * with the lock id it adopts. Null when that build cannot be found.
  *
- * A source checkout's CLI is its own tsx entry rather than the launcher on
- * PATH, and a package's is the entry its manifest names now. A container
+ * A source checkout or package runs `installedCliCommand`. A container
  * install's is the updater service at the tag just recorded, run the way the
  * host wrapper runs it, with the same `OMNESIS_*` settings carried in.
  */
@@ -556,14 +578,9 @@ export function continuationCommand(
   const env = { [UPDATE_LOCK_ENV]: lockId };
   switch (subject.method) {
     case "source":
-      return {
-        command: join(subject.rootDir, "node_modules", ".bin", "tsx"),
-        args: [join(subject.rootDir, "packages", "cli", "src", "index.ts"), ...tail],
-        env,
-      };
     case "npm-global": {
-      const entry = ctx.packageEntry();
-      return entry ? { command: ctx.execPath, args: [entry, ...tail], env } : null;
+      const cli = installedCliCommand(subject, ctx);
+      return cli ? { command: cli.command, args: [...cli.args, ...tail], env } : null;
     }
     case "docker": {
       const forwarded: string[] = [];
