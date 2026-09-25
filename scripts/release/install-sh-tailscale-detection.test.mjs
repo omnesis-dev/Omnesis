@@ -79,4 +79,39 @@ describe("install.sh Tailscale CLI detection", () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  test("run_bounded passes a quick command's output and status through", () => {
+    const script = `${cliFunctions}\nrun_bounded 5 sh -c 'echo out; echo err >&2; exit 3'; echo "status=$?"`;
+    const output = execFileSync("sh", ["-c", script], { encoding: "utf8", stdio: "pipe" });
+    expect(output).toBe("out\nstatus=3\n");
+  });
+
+  test("a hung status CLI is abandoned at the bound instead of stalling detection", () => {
+    const home = mkdtempSync(join(tmpdir(), "omnesis-tailscale-detection-"));
+    try {
+      const bin = join(home, "bin");
+      mkdirSync(bin);
+      // exec: the hung process is the one the installer started, as the
+      // real CLI is; a wrapper shell's child would outlive the kill.
+      writeFileSync(join(bin, "tailscale"), "#!/bin/sh\nexec sleep 30\n");
+      chmodSync(join(bin, "tailscale"), 0o755);
+      const functions = cliFunctions.replaceAll(
+        "tailscale_cli_bounded 10 ",
+        "tailscale_cli_bounded 1 ",
+      );
+      const started = Date.now();
+      const output = execFileSync(
+        "sh",
+        ["-c", `set -eu\n${functions}\nPLATFORM=linux\nfind_tailscale_cli || echo "not ready"`],
+        {
+          encoding: "utf8",
+          env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` },
+        },
+      );
+      expect(output).toBe("not ready\n");
+      expect(Date.now() - started).toBeLessThan(10_000);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });
