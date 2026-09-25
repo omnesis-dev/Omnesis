@@ -219,6 +219,10 @@ jobs:
           audience: ${{ secrets.TS_AUDIENCE }}
           tags: tag:omnesis-ci
           hostname: ${{ env.NODE_NAME }}
+          # tailscaled keeps the certificates it issues under its state
+          # directory; with the default in-memory state `tailscale cert`
+          # has nowhere to put one.
+          statedir: ${{ runner.temp }}/tailscale-state
           # Quiet is load-bearing: the other modes print the tailnet's DNS
           # suffix, and this log is public.
           log-mode: quiet
