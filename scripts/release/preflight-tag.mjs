@@ -5,26 +5,36 @@ import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { checkProductVersion } from "./check-product-version.mjs";
-import { RERUN_COMMAND, fullCiVerdict } from "./ci-verdict.mjs";
+import { ActionsRunsError, readWorkflowRuns, runGh } from "./actions-runs.mjs";
+import { RERUN_COMMAND, formatVerdict, fullCiVerdict } from "./ci-verdict.mjs";
+import { OVERRIDE_FLAG, checkInstallE2eGate } from "./install-e2e-gate.mjs";
 
 const defaultRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-function runCommand(command) {
-  return (root, args) => {
-    const result = spawnSync(command, args, { cwd: root, encoding: "utf8" });
-    return { code: result.status ?? 1, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
-  };
+function runGit(root, args) {
+  const result = spawnSync("git", args, { cwd: root, encoding: "utf8" });
+  return { code: result.status ?? 1, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 }
 
-const runGit = runCommand("git");
-const runGh = runCommand("gh");
-
+/**
+ * Everything that must hold before `tag` is created on HEAD. Returns the
+ * verified commit and the lines to show the operator; throws the refusal.
+ *
+ * Two workflow verdicts are read from the Actions API. The exact commit must
+ * have a green `full-validation` run — release verification re-checks it, so
+ * nothing overrides it here. And the install/update lanes on `main` must not
+ * be red (`install-e2e-gate.mjs`); `allowFailedInstallE2e` overrides only that
+ * refusal, for an emergency release.
+ */
 export function preflightTag(
   root = defaultRoot,
   tag,
-  git = runGit,
-  checkVersion = checkProductVersion,
-  gh = runGh,
+  {
+    git = runGit,
+    checkVersion = checkProductVersion,
+    gh = runGh,
+    allowFailedInstallE2e = false,
+  } = {},
 ) {
   checkVersion(root, tag);
   const fetch = git(root, ["fetch", "origin", "main:refs/remotes/origin/main", "--tags"]);
@@ -48,21 +58,24 @@ export function preflightTag(
   // The release workflow re-checks this same verdict before publishing, but a
   // tag pushed without one burns a version number on a run that can only fail.
   // Refuse here, naming what to do instead.
-  const listing = gh(root, [
-    "api",
-    `repos/{owner}/{repo}/actions/workflows/full-validation.yml/runs?head_sha=${sha}&per_page=100`,
-  ]);
-  if (listing.code !== 0)
-    throw new Error(`Could not read the full-validation runs: ${listing.stderr.trim()}`);
   let runs;
   try {
-    runs = JSON.parse(listing.stdout).workflow_runs;
-  } catch {
-    throw new Error("Could not parse the full-validation runs");
+    runs = readWorkflowRuns(root, gh, "full-validation.yml", `head_sha=${sha}&per_page=100`);
+  } catch (error) {
+    if (error instanceof ActionsRunsError) {
+      throw new Error(`Could not read the full-validation runs: ${error.message}`, {
+        cause: error,
+      });
+    }
+    throw error;
   }
   const verdict = fullCiVerdict(runs, sha);
   if (!verdict.ok) throw new Error(releaseVerdictBlocker(tag, sha, verdict));
-  return sha;
+  const notes = [
+    formatVerdict(verdict),
+    ...checkInstallE2eGate(root, { allowFailed: allowFailedInstallE2e, gh }),
+  ];
+  return { sha, notes };
 }
 
 function releaseVerdictBlocker(tag, sha, verdict) {
@@ -83,8 +96,17 @@ function releaseVerdictBlocker(tag, sha, verdict) {
   );
 }
 
+// `node preflight-tag.mjs v<version> [--allow-failed-install-e2e]`
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const tag = process.argv[2];
-  const sha = preflightTag(defaultRoot, tag);
+  const [tag, ...flags] = process.argv.slice(2);
+  const unknown = flags.filter((flag) => flag !== OVERRIDE_FLAG);
+  if (!tag || unknown.length > 0) {
+    process.stderr.write(`Usage: preflight-tag.mjs v<version> [${OVERRIDE_FLAG}]\n`);
+    process.exit(2);
+  }
+  const { sha, notes } = preflightTag(defaultRoot, tag, {
+    allowFailedInstallE2e: flags.includes(OVERRIDE_FLAG),
+  });
+  for (const line of notes) process.stdout.write(`${line}\n`);
   process.stdout.write(`Release preflight passed: ${tag} -> ${sha}\n`);
 }

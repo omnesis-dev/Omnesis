@@ -288,11 +288,18 @@ already exists for the branch.
 
 **`tag`** runs the existing preflight — fetch origin, require a clean tree at
 exactly `origin/main`, rerun the version guard, refuse an existing local or
-remote tag, and refuse a commit with no green `full-validation` run from a push
-to `main` or a manual dispatch (the local enforcement of step 7 below: an
+remote tag, refuse a commit with no green `full-validation` run from a push to
+`main` or a manual dispatch (the local enforcement of step 7 below: an
 unvalidated commit would fail release verification and burn the version
 number; a run a later push cancelled is restarted with
-`gh workflow run full-validation.yml --ref main`) — and then creates the annotated tag on the verified commit. Pass
+`gh workflow run full-validation.yml --ref main`), and refuse while the
+install/update lanes on `main` are red (the newest nightly or full dispatch of
+`install-e2e.yml`, or a push run newer than it; see `docs/install-e2e.md`
+§ Release gate) — and then creates the annotated tag on the verified commit.
+`--allow-failed-install-e2e` overrides only the install/update refusal, for an
+emergency release, and prints the red run it overrode; nothing overrides the
+full-validation refusal, because release verification would refuse the tag
+anyway. Pass
 `--sign` to sign it with your configured release key. **It never pushes.** The
 push is what arms every downstream publication, so it stays one deliberate,
 separately typed command:
