@@ -4,8 +4,9 @@
 // Pre-launch access gate for omnesis.dev (Cloudflare Worker in front of the
 // static assets). Everything is public EXCEPT the pages listed in isGated(),
 // which sit behind HTTP Basic Auth until the repo goes public: the installer
-// clones the not-yet-public repository. The docs are public but unlisted —
-// no public page links them, and isUnlisted() keeps search engines out.
+// clones the not-yet-public repository. The docs and guided install prompt are
+// public but unlisted — no public page links them, and isUnlisted() keeps search
+// engines out.
 //
 // Temporary: delete this Worker and revert wrangler.jsonc (back to assets-only)
 // when the repo goes public.
@@ -53,7 +54,7 @@ export function isGated(pathname) {
 
 export function isUnlisted(pathname) {
   const p = normalizePathname(pathname);
-  return p === "/docs" || p.startsWith("/docs/");
+  return p === "/install-prompt.md" || p === "/docs" || p.startsWith("/docs/");
 }
 
 function normalizePathname(pathname) {

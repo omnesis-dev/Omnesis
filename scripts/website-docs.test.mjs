@@ -453,6 +453,15 @@ describe("website access gate", () => {
     expect(isGated(path)).toBe(true);
   });
 
+  it("serves the guided install prompt without authentication", async () => {
+    expect(isGated("/install-prompt.md")).toBe(false);
+    expect(isUnlisted("/install-prompt.md")).toBe(true);
+    const env = { ASSETS: { fetch: async () => new Response("prompt") } };
+    const response = await worker.fetch(new Request("https://omnesis.dev/install-prompt.md"), env);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
+  });
+
   it.each(["/docs", "/docs/", "/docs/install", "/docs/docs.css"])(
     "serves %s without a password but out of search engines",
     async (path) => {

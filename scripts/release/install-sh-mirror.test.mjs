@@ -22,3 +22,9 @@ test("website/install.sh mirrors scripts/install.sh exactly", () => {
   const mirror = readFileSync(join(repoRoot, "website", "install.sh"), "utf8");
   expect(mirror).toBe(canonical);
 });
+
+test("website/install-prompt.md mirrors scripts/install-prompt.md exactly", () => {
+  const canonical = readFileSync(join(repoRoot, "scripts", "install-prompt.md"), "utf8");
+  const mirror = readFileSync(join(repoRoot, "website", "install-prompt.md"), "utf8");
+  expect(mirror).toBe(canonical);
+});
