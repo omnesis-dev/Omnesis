@@ -2595,8 +2595,11 @@ find_tailscale_cli() {
   TS_PATH_CLI="$(command -v tailscale 2>/dev/null || true)"
   if [ -n "$TS_PATH_CLI" ] && tailscale_cli_ready "$TS_PATH_CLI" 0; then return 0; fi
   if [ "$PLATFORM" = darwin ]; then
-    if [ -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ] && \
-       tailscale_cli_ready /Applications/Tailscale.app/Contents/MacOS/Tailscale 1; then return 0; fi
+    # The installer's tests point this at a scratch directory, so a developer's
+    # own Tailscale is never asked for its tailnet, let alone a certificate.
+    TS_ROOT="${OMNESIS_TEST_TAILSCALE_ROOT:-}"
+    if [ -x "$TS_ROOT/Applications/Tailscale.app/Contents/MacOS/Tailscale" ] && \
+       tailscale_cli_ready "$TS_ROOT/Applications/Tailscale.app/Contents/MacOS/Tailscale" 1; then return 0; fi
     if [ -x "$HOME/Applications/Tailscale.app/Contents/MacOS/Tailscale" ] && \
        tailscale_cli_ready "$HOME/Applications/Tailscale.app/Contents/MacOS/Tailscale" 1; then return 0; fi
   fi
