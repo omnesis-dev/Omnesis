@@ -84,27 +84,22 @@ unscoped `omnesis` entry package, and its `.bin/omnesis` executable resolve into
 **this** worktree's `packages/*`. Re-run the script if the primary runs `npm
 install` mid-session (the shared third-party links can shift underneath you).
 
-## `actions/setup-node`'s `cache: npm` on a self-hosted runner
+## `actions/setup-node`'s `cache: npm` and the persistent-runner trap
 
-Don't add it. The workflows here run on long-lived self-hosted runners, where
-`~/.npm` is already on the machine between jobs — the cache action exists to
-carry one onto an _ephemeral_ host, and on a persistent one it does nothing but
-ship an ever-growing copy back and forth.
+The validation workflows run on ephemeral GitHub-hosted runners and declare
+`cache: npm`: each job starts on a clean machine, and restoring `~/.npm` keyed
+by the lockfile is what keeps `npm ci` quick there.
 
-It is not a harmless no-op. The cached tarball had reached **8.1 GB**; restoring
-it ran at 5.6 MB/s and died at 43% when the download's own token expired ten
-minutes in, and the step then spent another ten minutes giving up. That is
-**twenty minutes of a twenty-five-minute job**, on every job that declared it —
-which is why the `node` lane was cancelled at 25m18s and 25m19s on consecutive
-attempts, three minutes into its unit tests, while looking for all the world
-like a test problem.
+On a long-lived (self-hosted) runner the same line does harm. `~/.npm` already
+persists between jobs, so the action only ships an ever-growing copy back and
+forth: one such cache reached 8.1 GB, its restore died when the download's own
+token expired ten minutes in, and the step spent another ten minutes giving up
+— twenty minutes of a twenty-five-minute job, which looked for all the world
+like a test timeout.
 
-The tell that it was buying nothing: in the run where the restore failed
-outright, `npm ci` still finished in **27 seconds**, from the on-disk cache.
-
-If a job ever needs a warm npm cache on a _hosted_ runner, add it there and only
-there. And keep an eye on `~/.npm` itself, which grows without bound on a
-long-lived runner (46 GB on this box when this was found).
+Two jobs deliberately stay uncached: the harness-conformance lane, whose pinned
+third-party installs start clean, and the release workflow, which builds what it
+publishes from nothing restored.
 
 ## Pinned harness conformance
 

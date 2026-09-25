@@ -61,8 +61,8 @@ const EMBEDDER_URL = process.env.OMNESIS_TEST_EMBEDDER_URL ?? "http://localhost:
 const EMBEDDER_MODEL = process.env.OMNESIS_TEST_EMBEDDER_MODEL ?? "Qwen/Qwen3-Embedding-0.6B";
 
 // A CI runner must FAIL on an unreachable required dependency; a local dev box
-// may skip. (GitHub Actions sets CI/GITHUB_ACTIONS; self-hosted runners also
-// set RUNNER_NAME.)
+// may skip. (GitHub Actions sets CI, GITHUB_ACTIONS and RUNNER_NAME; CI serves
+// the embedder with `scripts/test-embedder.sh`.)
 const IS_CI = Boolean(process.env.CI || process.env.GITHUB_ACTIONS || process.env.RUNNER_NAME);
 
 // The target (new) model's dimension — deliberately different from the real

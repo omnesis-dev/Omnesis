@@ -173,8 +173,8 @@ topo_up() {
 # TLS, the keyring and the embedding model are switched off deliberately: the
 # security E2E lane already drills those against a real keyring, and this lane
 # is about roles, pairing and updates. Services are switched off because a
-# container has no user service manager; the native supervisors are smoke
-# tested on the self-hosted runners instead.
+# container has no user service manager; the security lane's hardened-systemd
+# scenario exercises a real systemd supervisor instead.
 install_on() {
   local host="$1"; shift
   on "$host" "sh /opt/install.sh --no-service --no-model --no-tls --no-keyring $*"

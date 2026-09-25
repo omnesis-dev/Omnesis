@@ -63,8 +63,8 @@ try {
 
   await page.goto(`${url}/portal/sources`, { waitUntil: "domcontentloaded" });
   // Wait for the synthetic sources to populate the table. Generous timeout:
-  // the self-hosted CI runner is a shared box, so gateway boot + first source
-  // sync can lag well past 25s under load and flake this screenshot smoke test.
+  // on a loaded CI runner, gateway boot + first source sync can lag well past
+  // 25s and flake this screenshot smoke test.
   await page.locator(".source-row-v2").first().waitFor({ state: "visible", timeout: 90000 });
   await page.waitForTimeout(1000);
 
