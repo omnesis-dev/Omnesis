@@ -17,6 +17,15 @@ export OMNESIS_SYNTH_UNIVERSE="${OMNESIS_SYNTH_UNIVERSE:-e2e-minimal}"
 URL="https://localhost:${OMNESIS_GATEWAY_PORT}"
 CONFIG_FILE="/tmp/omnesis-android-e2e-config.json"
 
+# Compile the test classes before the gateway boots, so the build does not
+# compete with the gateway's first indexing pass for a small machine's CPU.
+(
+  cd "$ROOT/android"
+  # shellcheck disable=SC1091
+  source scripts/android-env.sh
+  ./gradlew :core-transport:compileDebugUnitTestKotlin -PomnesisE2e
+)
+
 # Wipe previous state so each run is deterministic.
 if [[ -d "$OMNESIS_CONFIG_DIR" ]]; then
   "$ROOT/scripts/synth-gateway.sh" stop >/dev/null 2>&1 || true
@@ -56,6 +65,13 @@ for _ in $(seq 1 90); do
   sleep 1
 done
 
+# The first suite reads the source catalogue, which the gateway gathers from
+# its collector; wait until that answers too.
+for _ in $(seq 1 60); do
+  curl -skf -m 30 -H "Authorization: Bearer $TOKEN" "${URL}/admin/source-descriptors" >/dev/null && break
+  sleep 2
+done
+
 # The config carries the gateway admin token; create it owner-only from the
 # start (umask in a subshell, no world-readable window).
 (umask 077; cat > "$CONFIG_FILE" <<EOF
@@ -68,8 +84,8 @@ echo "→ Running Android live-gateway E2E (host JVM, real TLS pinning)…"
 cd "$ROOT/android"
 # shellcheck disable=SC1091
 source scripts/android-env.sh
-./gradlew :core-transport:testDebugUnitTest \
-  --tests 'dev.omnesis.android.transport.e2e.GatewayLiveE2ETest' \
-  -PomnesisE2e --rerun-tasks
+# `--rerun` re-executes only the test task; the compiled classes stay.
+./gradlew -PomnesisE2e :core-transport:testDebugUnitTest --rerun \
+  --tests 'dev.omnesis.android.transport.e2e.GatewayLiveE2ETest'
 
 echo "✓ Android live-gateway E2E complete."
