@@ -10,7 +10,7 @@
  * where available — Tailscale MagicDNS + tailnet IP). The first entry is
  * always the safest default (typically LAN IP on en0/en1).
  *
- * Tailscale shellout is macOS-only for now; Linux/Windows are tracked separately.
+ * Tailscale shellout covers macOS and Linux; Windows remains outside discovery.
  */
 
 import { BlockList, isIP } from "node:net";
@@ -18,6 +18,12 @@ import { hostname as osHostname, networkInterfaces, platform } from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createLogger } from "./logger.js";
+import {
+  tailscaleCliCandidates,
+  tailscaleCliEnv,
+  tailscaleIsRunningStatus,
+  type TailscaleCliCandidate,
+} from "./tailscale-cli.js";
 
 const execFileAsync = promisify(execFile);
 const log = createLogger("core:network-discovery");
@@ -249,10 +255,9 @@ export async function discoverNetworkIdentities(): Promise<NetworkIdentity[]> {
   // Tailscale. Prefer the CLI — it also gives us MagicDNS, the only identity
   // a `tailscale cert` certificate validates (the cert covers the MagicDNS
   // name, not a raw IP), so it's the address a paired device must use once the
-  // gateway is fronted by a Tailscale cert. Probed on macOS AND Linux (the CLI
-  // behaves identically); Windows is still TODO. If the CLI isn't
-  // installed, fall back to the utun* CGNAT addresses discovered above (macOS
-  // App Store Tailscale with the CLI opt-in disabled — a macOS interface name).
+  // gateway is fronted by a Tailscale cert. Probed on macOS and Linux; Windows
+  // is still TODO. If no connected CLI is available, fall back to the utun*
+  // CGNAT addresses discovered above on macOS.
   const os = platform();
   if (os === "darwin" || os === "linux") {
     const cliIdentities = await discoverTailscale();
@@ -282,37 +287,37 @@ function isTailscaleCgnat(ip: string): boolean {
 }
 
 /**
- * Shell out to the `tailscale` binary if it's on PATH. Returns empty
- * when Tailscale isn't installed, isn't logged in, or any other failure.
+ * Query each available Tailscale CLI until one reports a connected tailnet.
+ * Returns empty when no CLI is connected or status cannot be read.
  *
- * Failures are logged via the structured logger so operators get a
- * one-line answer when MagicDNS unexpectedly isn't surfaced in the
- * pairing picker. Pre-fix the bare `catch { return [] }` collapsed all
- * five failure modes (binary missing, not logged in, JSON parse, exec
- * timeout, permission denied) into silence — operators had no signal
- * beyond "the off-LAN entry isn't in the QR code." Now: `log.debug`
- * for the expected absence (binary not on PATH), `log.warn` for
- * everything else.
+ * Logs expected absence at debug level and execution failures at warn level,
+ * so an unexpected missing MagicDNS identity can be diagnosed.
  */
-async function discoverTailscale(): Promise<NetworkIdentity[]> {
-  let stdout: string;
-  try {
-    const result = await execFileAsync("tailscale", ["status", "--json"], {
-      timeout: 2000,
-    });
-    stdout = result.stdout;
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException)?.code;
-    if (code === "ENOENT") {
-      log.debug("tailscale CLI not on PATH; skipping MagicDNS discovery");
-    } else {
-      log.warn(
-        `tailscale status --json failed (${code ?? "unknown"}): ${err instanceof Error ? err.message : String(err)}`,
-      );
+export async function discoverTailscale(
+  candidates: TailscaleCliCandidate[] = tailscaleCliCandidates(),
+): Promise<NetworkIdentity[]> {
+  let lastError: unknown;
+  for (const candidate of candidates) {
+    try {
+      const result = await execFileAsync(candidate.file, ["status", "--json"], {
+        timeout: 2000,
+        env: tailscaleCliEnv(candidate),
+      });
+      if (!tailscaleIsRunningStatus(result.stdout)) continue;
+      return tailscaleIdentitiesFromStatus(result.stdout);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") lastError = err;
     }
-    return [];
   }
-  return tailscaleIdentitiesFromStatus(stdout);
+  if (lastError) {
+    const code = (lastError as NodeJS.ErrnoException)?.code;
+    log.warn(
+      `tailscale status --json failed (${code ?? "unknown"}): ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+    );
+  } else {
+    log.debug("no connected tailscale CLI; skipping MagicDNS discovery");
+  }
+  return [];
 }
 
 /**

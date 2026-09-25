@@ -284,7 +284,7 @@ export function installFakeTailscale(dnsName, certPem = "") {
     `#!/bin/sh
 case "$1" in
   status)
-    if [ "$2" = "--json" ]; then printf '{"Self":{"DNSName":"${dnsName}."}}\\n'; fi
+    if [ "$2" = "--json" ]; then printf '{"BackendState":"Running","Self":{"DNSName":"${dnsName}."}}\\n'; fi
     exit 0 ;;
   cert)
     # --cert-file <p> --key-file <p> <name>
@@ -327,7 +327,7 @@ export function installDenyingTailscale(dnsName, certPem = "", { reason = "" } =
     `#!/bin/sh
 case "$1" in
   status)
-    if [ "$2" = "--json" ]; then printf '{"Self":{"DNSName":"${dnsName}."}}\\n'; fi
+    if [ "$2" = "--json" ]; then printf '{"BackendState":"Running","Self":{"DNSName":"${dnsName}."}}\\n'; fi
     exit 0 ;;
   set)
     case "$2" in

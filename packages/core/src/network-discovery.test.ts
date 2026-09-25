@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { describe, test, expect } from "vitest";
 import {
+  discoverTailscale,
   realLanIpv4s,
   isVirtualInterface,
   safeNetworkInterfaces,
@@ -37,6 +41,33 @@ describe("localMdnsHostname", () => {
   ])("normalizes %s", (input, expected) => {
     expect(localMdnsHostname(input)).toBe(expected);
   });
+});
+
+test("network discovery falls through a logged-out CLI to the connected macOS app", async () => {
+  const home = mkdtempSync(join(tmpdir(), "omnesis-network-tailnet-"));
+  try {
+    const disconnected = join(home, "bin/tailscale");
+    const app = join(home, "Applications/Tailscale.app/Contents/MacOS/Tailscale");
+    mkdirSync(dirname(disconnected), { recursive: true });
+    mkdirSync(dirname(app), { recursive: true });
+    writeFileSync(disconnected, '#!/bin/sh\nprintf \'{"BackendState":"NeedsLogin"}\\n\'\n');
+    writeFileSync(
+      app,
+      '#!/bin/sh\n[ "$TAILSCALE_BE_CLI" = 1 ] || exit 1\nprintf \'{"BackendState":"Running","Self":{"DNSName":"gw.example.ts.net.","TailscaleIPs":["100.101.102.103"]}}\\n\'\n',
+    );
+    chmodSync(disconnected, 0o755);
+    chmodSync(app, 0o755);
+    const identities = await discoverTailscale([
+      { file: disconnected, bundledApp: false },
+      { file: app, bundledApp: true },
+    ]);
+    expect(identities.map((identity) => identity.address)).toEqual([
+      "gw.example.ts.net",
+      "100.101.102.103",
+    ]);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 describe("isCertificateIpAddress", () => {

@@ -104,7 +104,7 @@ function installFailingTailscale(dnsName) {
     `#!/bin/sh
 case "$1" in
   status)
-    if [ "$2" = "--json" ]; then printf '{"Self":{"DNSName":"${dnsName}."}}\\n'; fi
+    if [ "$2" = "--json" ]; then printf '{"BackendState":"Running","Self":{"DNSName":"${dnsName}."}}\\n'; fi
     exit 0 ;;
   cert) exit 1 ;;
 esac
@@ -119,7 +119,7 @@ function installTailscaleWithoutMagicDns() {
     `#!/bin/sh
 case "$1" in
   status)
-    if [ "$2" = "--json" ]; then printf '{"Self":{}}\\n'; fi
+    if [ "$2" = "--json" ]; then printf '{"BackendState":"Running","Self":{}}\\n'; fi
     exit 0 ;;
 esac
 exit 1

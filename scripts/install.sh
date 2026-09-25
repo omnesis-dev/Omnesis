@@ -2531,6 +2531,38 @@ append_env() {
   fi
 }
 
+tailscale_cli() {
+  if [ "${TAILSCALE_CLI_BUNDLED:-0}" = 1 ]; then
+    TAILSCALE_BE_CLI=1 "$TAILSCALE_CLI" "$@"
+  else
+    "$TAILSCALE_CLI" "$@"
+  fi
+}
+
+tailscale_cli_ready() {
+  TAILSCALE_CLI="$1"
+  TAILSCALE_CLI_BUNDLED="$2"
+  TS_BACKEND_STATE="$(tailscale_cli status --json 2>/dev/null | node -e '
+    let s = ""; process.stdin.on("data", (d) => (s += d));
+    process.stdin.on("end", () => {
+      try { process.stdout.write(JSON.parse(s).BackendState || ""); }
+      catch { /* unavailable */ }
+    });' 2>/dev/null || true)"
+  [ "$TS_BACKEND_STATE" = Running ]
+}
+
+find_tailscale_cli() {
+  TS_PATH_CLI="$(command -v tailscale 2>/dev/null || true)"
+  if [ -n "$TS_PATH_CLI" ] && tailscale_cli_ready "$TS_PATH_CLI" 0; then return 0; fi
+  if [ "$PLATFORM" = darwin ]; then
+    if [ -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ] && \
+       tailscale_cli_ready /Applications/Tailscale.app/Contents/MacOS/Tailscale 1; then return 0; fi
+    if [ -x "$HOME/Applications/Tailscale.app/Contents/MacOS/Tailscale" ] && \
+       tailscale_cli_ready "$HOME/Applications/Tailscale.app/Contents/MacOS/Tailscale" 1; then return 0; fi
+  fi
+  return 1
+}
+
 provision_tls() {
   PORTAL_HOST="localhost"
   [ "$WANT_TLS" = 1 ] || return 0
@@ -2648,8 +2680,8 @@ try {
     return 0
   fi
 
-  if command -v tailscale >/dev/null 2>&1 && tailscale status >/dev/null 2>&1; then
-    TS_NAME="$(tailscale status --json 2>/dev/null | node -e '
+  if find_tailscale_cli; then
+    TS_NAME="$(tailscale_cli status --json 2>/dev/null | node -e '
       let s = ""; process.stdin.on("data", (d) => (s += d));
       process.stdin.on("end", () => {
         try {
@@ -2719,7 +2751,7 @@ try {
 # operator's to resolve, and is reported rather than worked around.
 TS_CERT_ERROR=""
 mint_tailscale_cert() {
-  TS_CERT_ERROR="$(tailscale cert --cert-file "$1" --key-file "$2" "$3" 2>&1 >/dev/null)" && return 0
+  TS_CERT_ERROR="$(tailscale_cli cert --cert-file "$1" --key-file "$2" "$3" 2>&1 >/dev/null)" && return 0
   case "$TS_CERT_ERROR" in
     *"cert access denied"*) ;;
     *) return 1 ;;
@@ -2727,6 +2759,7 @@ mint_tailscale_cert() {
   # The dedicated-account gateway runs as an account this one does not choose
   # here, so the permission it needs is not this account's to take.
   [ "${WANT_HARDENED:-0}" = 0 ] || return 1
+  [ "$PLATFORM" = linux ] || return 1
   resolve_sudo || return 1
   TS_OPERATOR="$(id -un)"
   info "tailscaled will not issue a certificate to $TS_OPERATOR — asking for the Tailscale operator permission on this machine, which the gateway needs too (it renews the certificate as $TS_OPERATOR)..."
@@ -2737,7 +2770,7 @@ mint_tailscale_cert() {
     warn "Could not take the Tailscale operator permission on this machine."
     return 1
   }
-  TS_CERT_ERROR="$(tailscale cert --cert-file "$1" --key-file "$2" "$3" 2>&1 >/dev/null)" || return 1
+  TS_CERT_ERROR="$(tailscale_cli cert --cert-file "$1" --key-file "$2" "$3" 2>&1 >/dev/null)" || return 1
   info "Granted on this machine only — nothing on your tailnet changed."
   return 0
 }

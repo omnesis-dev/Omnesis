@@ -1,14 +1,53 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { describe, it, expect, vi } from "vitest";
 import {
+  defaultTlsProvisionEnv,
   mkcertGatewayUrl,
   mkcertNetworkAddresses,
   phoneRepairLines,
   provisionTls,
   type TlsProvisionEnv,
 } from "./tls-provision.js";
+
+describe("defaultTlsProvisionEnv", () => {
+  it("uses the connected macOS app for status, DNS, and certificate issuance", () => {
+    const home = mkdtempSync(join(tmpdir(), "omnesis-tailscale-cli-"));
+    try {
+      const cli = join(home, "Applications/Tailscale.app/Contents/MacOS/Tailscale");
+      const disconnected = join(home, "bin/tailscale");
+      mkdirSync(dirname(cli), { recursive: true });
+      mkdirSync(dirname(disconnected), { recursive: true });
+      writeFileSync(disconnected, '#!/bin/sh\nprintf \'{"BackendState":"NeedsLogin"}\\n\'\n');
+      writeFileSync(
+        cli,
+        '#!/bin/sh\n[ "$TAILSCALE_BE_CLI" = 1 ] || exit 1\ncase "$1" in\n  status) if [ "$2" = --json ]; then printf \'{"BackendState":"Running","Self":{"DNSName":"gw.example.ts.net."}}\\n\'; fi ;;\n  cert) printf "CERT" > "$3"; printf "KEY" > "$5" ;;\n  *) exit 1 ;;\nesac\n',
+      );
+      chmodSync(cli, 0o755);
+      chmodSync(disconnected, 0o755);
+      const env = defaultTlsProvisionEnv(
+        [
+          { file: disconnected, bundledApp: false },
+          { file: cli, bundledApp: true },
+        ],
+        home,
+      );
+      expect(env.hasTailscale()).toBe(true);
+      expect(env.tailscaleDnsName()).toBe("gw.example.ts.net");
+      const cert = join(home, "cert.pem");
+      const key = join(home, "key.pem");
+      env.runTailscaleCert("gw.example.ts.net", cert, key);
+      expect(readFileSync(cert, "utf8")).toBe("CERT");
+      expect(readFileSync(key, "utf8")).toBe("KEY");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
 
 /**
  * Build a fake host environment. Defaults to "nothing installed"; override per
