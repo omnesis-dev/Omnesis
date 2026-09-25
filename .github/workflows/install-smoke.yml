@@ -13,13 +13,12 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-# The package channel and the source checkout are tested in parallel. Each job
-# uses isolated directories and never touches the runner's live setup.
+# The package channel and the source checkout are tested in parallel, each on
+# its own GitHub-hosted runner and in isolated directories.
 jobs:
-  # Fork PRs must not run on self-hosted runners (arbitrary-code-execution risk). See the guard on each job.
   npm-global:
     name: package install + package update
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
       TEST_HOME: /tmp/omnesis-install-npm-${{ github.run_id }}
@@ -39,9 +38,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
-          # Deliberately no `cache: npm` — see docs/agent-gotchas.md. These
-          # runners are self-hosted, so `~/.npm` is already on the machine; the
-          # action only ships an ever-growing copy of it back and forth.
+          cache: npm
 
       - name: Install dependencies
         run: npm ci
@@ -237,13 +234,10 @@ jobs:
           docker rm -f verdaccio-${{ github.run_id }} || true
           rm -f /tmp/verdaccio-ci-${{ github.run_id }}.yml
           rm -rf "$TEST_HOME" "$TEST_HOME-auto"
-          # Restore bumped package.json files so the self-hosted runner's
-          # working tree stays clean.
-          git checkout -- . 2>/dev/null || true
 
   source:
     name: source install
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       TEST_HOME: /tmp/omnesis-install-source-${{ github.run_id }}
@@ -265,9 +259,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
-          # Deliberately no `cache: npm` — see docs/agent-gotchas.md. These
-          # runners are self-hosted, so `~/.npm` is already on the machine; the
-          # action only ships an ever-growing copy of it back and forth.
+          cache: npm
 
       - name: Create exact-revision source remote
         env:

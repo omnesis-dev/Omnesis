@@ -24,7 +24,7 @@ env:
 jobs:
   conformance:
     name: ${{ matrix.harness }}
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -46,7 +46,7 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24"
-          # No Actions npm cache on the persistent self-hosted runner.
+          # No Actions dependency cache: the pinned harness installs start clean.
 
       - name: Set up Python
         if: matrix.harness == 'hermes'

@@ -73,8 +73,8 @@ jobs:
           ' > "$RUNNER_TEMP/admit.json"
 
           # A losing state-branch push is recovered by the half-hour
-          # reconciliation trigger. Keep target code off self-hosted runners
-          # until that recovery has attached this exact run.
+          # reconciliation trigger. Keep target code from running until that
+          # recovery has attached this exact run.
           auth_header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$STATE_TOKEN" | base64 | tr -d '\n')"
           for attempt in $(seq 1 420); do
             git -C .ci-admission-state -c "http.${GITHUB_SERVER_URL}/.extraheader=$auth_header" \

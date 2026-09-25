@@ -1,0 +1,45 @@
+name: hosted-ci-trial
+# Temporary: exercises every full-validation lane on GitHub-hosted runners for
+# this branch. Removed before merge.
+on:
+  push:
+    branches: [ci/github-hosted]
+permissions:
+  contents: read
+jobs:
+  node:
+    uses: ./.github/workflows/ci.yml
+    with: { target_sha: "${{ github.sha }}" }
+  knip:
+    uses: ./.github/workflows/knip.yml
+    with: { target_sha: "${{ github.sha }}" }
+  swift:
+    uses: ./.github/workflows/swiftlint.yml
+    with: { target_sha: "${{ github.sha }}" }
+  ios:
+    uses: ./.github/workflows/ios.yml
+    with: { target_sha: "${{ github.sha }}" }
+  android:
+    uses: ./.github/workflows/android.yml
+    with: { target_sha: "${{ github.sha }}" }
+  docker-smoke:
+    uses: ./.github/workflows/docker-smoke.yml
+    with: { target_sha: "${{ github.sha }}" }
+  install-smoke:
+    uses: ./.github/workflows/install-smoke.yml
+    with: { target_sha: "${{ github.sha }}" }
+  topology:
+    uses: ./.github/workflows/topology-e2e.yml
+    with: { target_sha: "${{ github.sha }}" }
+  harness:
+    uses: ./.github/workflows/harness-conformance.yml
+    with: { target_sha: "${{ github.sha }}" }
+  docker-security:
+    uses: ./.github/workflows/docker-e2e.yml
+    with: { target_sha: "${{ github.sha }}" }
+  docker-image:
+    uses: ./.github/workflows/docker.yml
+    with: { target_sha: "${{ github.sha }}" }
+  security-static:
+    uses: ./.github/workflows/security-static.yml
+    with: { target_sha: "${{ github.sha }}" }

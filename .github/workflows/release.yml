@@ -45,7 +45,7 @@ jobs:
   # approved this exact commit. Nothing is built until both hold.
   # ------------------------------------------------------------------
   verify:
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -117,7 +117,7 @@ jobs:
   # ------------------------------------------------------------------
   packages:
     needs: verify
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
       contents: read
@@ -326,7 +326,7 @@ jobs:
   # ------------------------------------------------------------------
   images:
     needs: [verify, packages]
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
       contents: read
@@ -409,7 +409,7 @@ jobs:
   # ------------------------------------------------------------------
   github-release:
     needs: [verify, packages, images]
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: write

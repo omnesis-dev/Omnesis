@@ -31,7 +31,7 @@ jobs:
     # a macOS binary, and because --baseline support needs a recent SwiftLint
     # (added in 0.57.0). The Docker-based norio-nomura/action-swiftlint@3.2.1
     # bundles an older version that silently ignores the flag.
-    runs-on: [self-hosted, macOS]
+    runs-on: macos-latest
     timeout-minutes: 5
 
     steps:
@@ -79,7 +79,7 @@ jobs:
     # A macOS runner because SwiftFormat's `swiftformat.zip` release asset is a
     # macOS binary, and the format check is fast enough that a native runner
     # costs nothing.
-    runs-on: [self-hosted, macOS]
+    runs-on: macos-latest
     timeout-minutes: 5
 
     steps:

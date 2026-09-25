@@ -1411,8 +1411,8 @@ describe("android.yml CI workflow structure (C20)", () => {
     wf = parse(readFileSync(join(repoRoot, ".github/workflows/android.yml"), "utf8"));
   });
 
-  it("runs the build job on a capable self-hosted ARM macOS runner", () => {
-    expect(wf.jobs["build-and-test"]["runs-on"]).toEqual(["self-hosted", "macOS", "ARM64"]);
+  it("renders on the arm64 macOS platform that recorded the goldens", () => {
+    expect(wf.jobs["build-and-test"]["runs-on"]).toBe("macos-latest");
   });
 
   it("is admission-only and validates the caller's exact revision without a path sentinel", () => {
@@ -2009,18 +2009,41 @@ describe("full-validation workflow topology", () => {
     expect(ran).not.toMatch(/npm run test:unit(\s|$)/u);
     expect(ran).toContain("exec node scripts/run-check.mjs unit");
     expect(ran).toContain("python3 -B packages/agent-integration/hermes/test_adapter.py");
-    const onLinux = workflows.ci.jobs.node.steps.map((step) => step.run ?? "").join("\n");
+    const onLinux = workflows.ci.jobs.unit.steps.map((step) => step.run ?? "").join("\n");
     expect(onLinux).toContain("exec node scripts/run-check.mjs unit-all");
   });
 
-  it("keeps every pull-request job on a self-hosted runner fork-guarded", () => {
-    const forkGuard = "github.event.pull_request.head.repo.full_name == github.repository";
-    for (const [workflowName, workflow] of Object.entries(workflows)) {
-      if (!workflow.on?.pull_request) continue;
-      for (const [jobName, job] of Object.entries(workflow.jobs)) {
-        const labels = Array.isArray(job["runs-on"]) ? job["runs-on"] : [job["runs-on"]];
-        if (!labels.includes("self-hosted")) continue;
-        expect(job.if, `${workflowName}:${jobName} has no fork guard`).toContain(forkGuard);
+  it("shards the spawned-gateway suite and gives the embedder suites their server", () => {
+    const e2e = workflows.ci.jobs.e2e;
+    const shards = e2e.strategy.matrix.shard;
+    const lane = e2e.steps.find((step) => step.name === "lane [linux-e2e]").run;
+    expect(lane).toContain(`--shard=\${{ matrix.shard }}/${shards.length}`);
+    expect(shards).toEqual(shards.map((_, index) => index + 1));
+
+    const embedderSuites = [
+      "packages/collector/src/e2e/search-quality.e2e.test.ts",
+      "packages/collector/src/e2e/embedder-swap.e2e.test.ts",
+    ];
+    const embedder = workflows.ci.jobs["e2e-embedder"].steps;
+    const start = embedder.findIndex((step) => step.run === "scripts/test-embedder.sh start");
+    const run = embedder.findIndex((step) => step.name === "lane [embedder-e2e]");
+    expect(start).toBeGreaterThan(0);
+    expect(run).toBeGreaterThan(start);
+    for (const suite of embedderSuites) {
+      expect(lane).toContain(`--exclude=${suite}`);
+      expect(embedder[run].run).toContain(suite);
+    }
+  });
+
+  it("runs every job of every workflow on a GitHub-hosted runner", async () => {
+    const { parse } = await import("yaml");
+    const workflowDir = join(repoRoot, ".github/workflows");
+    const hosted = /^(ubuntu|macos|windows)-[\w.-]+$/u;
+    for (const filename of readdirSync(workflowDir).filter((name) => name.endsWith(".yml"))) {
+      const workflow = parse(readFileSync(join(workflowDir, filename), "utf8"));
+      for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
+        if (job.uses) continue;
+        expect(job["runs-on"], `${filename}:${jobName}`).toMatch(hosted);
       }
     }
   });
@@ -2076,7 +2099,7 @@ describe("external-harness conformance workflow", () => {
 
     const job = workflow.jobs.conformance;
     expect(job.if).toBeUndefined();
-    expect(job["runs-on"]).toEqual(["self-hosted", "Linux"]);
+    expect(job["runs-on"]).toBe("ubuntu-latest");
     expect(job.strategy["fail-fast"]).toBe(false);
     expect(job.strategy.matrix.harness).toEqual(["openclaw", "hermes"]);
     expect(job.name).toBe("${{ matrix.harness }}");
