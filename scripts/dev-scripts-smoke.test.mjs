@@ -2084,8 +2084,8 @@ describe("external-harness conformance workflow", () => {
   });
 
   it("pins both upstream harnesses and installs Hermes from its locked exact commit", () => {
-    expect(integrationPackage.devDependencies.openclaw).toBe("2026.7.1-2");
-    expect(packageLock.packages["node_modules/openclaw"].version).toBe("2026.7.1-2");
+    expect(integrationPackage.devDependencies.openclaw).toBe("2026.7.35");
+    expect(packageLock.packages["node_modules/openclaw"].version).toBe("2026.7.35");
     expect(workflow.env.HERMES_REPOSITORY).toBe("https://github.com/NousResearch/hermes-agent.git");
     expect(workflow.env.HERMES_COMMIT).toMatch(/^[0-9a-f]{40}$/u);
 

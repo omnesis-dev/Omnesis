@@ -93,7 +93,10 @@
     "brace-expansion@^2.0.0": "^2.1.4",
     "nanoid@^5.0.0": "^5.1.16",
     "qs": "^6.16.0",
-    "tar@^7.0.0": "^7.5.22"
+    "tar@^7.0.0": "^7.5.22",
+    "nx": {
+      "smol-toml": "^1.8.0"
+    }
   },
   "devDependencies": {
     "@changesets/cli": "^2.31.0",
