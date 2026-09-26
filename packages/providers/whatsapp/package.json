@@ -21,7 +21,7 @@
     "sharp": "^0.35.4"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.11"
+    "@types/better-sqlite3": "^9.6.0"
   },
   "files": [
     "dist"

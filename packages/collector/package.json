@@ -43,13 +43,13 @@
     "ical.js": "^2.2.1",
     "jszip": "^3.10.1",
     "linkedom": "^0.18.13",
-    "mammoth": "^1.12.2",
+    "mammoth": "^1.12.3",
     "pdf-parse": "^1.1.1",
     "postal-mime": "^2.7.4",
     "turndown": "^7.2.2",
     "unpdf": "^1.8.1",
     "word-extractor": "^1.0.4",
-    "zod": "^4.5.4"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@hono/node-server": "^1.13.0",
