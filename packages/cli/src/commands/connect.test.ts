@@ -509,7 +509,24 @@ describe("mergeOpenClawSkillEnv", () => {
           "",
           {},
         ),
-      ).toThrowError(/must be "all" or "result"/);
+      ).toThrowError(/must be "concise", "all" or "result"/);
+    },
+  );
+
+  it.each([
+    { config: "display:\n  background_process_notifications: concise\n", env: "", runtime: {} },
+    { config: "display:\n  background_process_notifications: result\n", env: "", runtime: {} },
+    { config: "", env: "", runtime: {} },
+    {
+      config: "display: { background_process_notifications: off }\n",
+      env: "",
+      runtime: { HERMES_BACKGROUND_NOTIFICATIONS: "Concise" },
+    },
+    { config: "", env: "HERMES_BACKGROUND_NOTIFICATIONS=concise\n", runtime: {} },
+  ])(
+    "accepts Hermes completion notifications that report every finished process: %o",
+    ({ config, env, runtime }) => {
+      expect(() => assertHermesCompletionNotifications(config, env, runtime)).not.toThrow();
     },
   );
 
@@ -520,7 +537,7 @@ describe("mergeOpenClawSkillEnv", () => {
         "HERMES_BACKGROUND_NOTIFICATIONS=error\n",
         {},
       ),
-    ).toThrowError(/must be "all" or "result"/);
+    ).toThrowError(/must be "concise", "all" or "result"/);
   });
 });
 
@@ -2069,10 +2086,11 @@ describe("connect credential wiring", () => {
   it("pairs Hermes, removes stale duplicate env values, and leaves OpenClaw config absent", async () => {
     const home = mkdtempSync(join(tmpdir(), "omnesis-hermes-"));
     tempHomes.push(home);
+    // "concise": what Hermes's own installer writes since v0.21.
     writeFileSync(
       join(home, "config.yaml"),
       "plugins:\n  enabled:\n    - fictional-weather\n    - omnesis-bridge\n" +
-        "display:\n  background_process_notifications: all\n",
+        "display:\n  background_process_notifications: concise\n",
     );
     const legacyPlugin = join(home, "plugins", "omnesis-bridge");
     mkdirSync(legacyPlugin, { recursive: true });
@@ -2368,7 +2386,7 @@ describe("connect credential wiring", () => {
           "gateway-url": ENV.OMNESIS_GATEWAY_URL,
           code: "PAIR-CODE",
         }),
-      ).rejects.toThrow(/must be "all" or "result"/);
+      ).rejects.toThrow(/must be "concise", "all" or "result"/);
 
       expect(redeemAgentIntegrationPairingCode).not.toHaveBeenCalled();
       expect(existsSync(skillFilePath("hermes", home))).toBe(false);
