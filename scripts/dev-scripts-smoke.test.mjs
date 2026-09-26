@@ -1760,15 +1760,16 @@ describe("full-validation workflow topology", () => {
     }
   });
 
-  it("boots the arm64 emulator with a host-native helper", () => {
-    const qemu = workflows.docker.jobs["build-and-smoke"].steps.find((step) =>
-      step.uses?.startsWith("docker/setup-qemu-action@"),
+  it("builds each image platform natively on a runner of its own architecture", () => {
+    const job = workflows.docker.jobs["build-and-smoke"];
+    expect(job["runs-on"]).toBe("${{ matrix.runner }}");
+    expect(job.strategy.matrix.include).toEqual([
+      { platform: "linux/amd64", runner: "ubuntu-latest" },
+      { platform: "linux/arm64", runner: "ubuntu-24.04-arm" },
+    ]);
+    expect(job.steps.some((step) => step.uses?.startsWith("docker/setup-qemu-action@"))).toBe(
+      false,
     );
-    expect(qemu).toMatchObject({
-      if: "matrix.platform == 'linux/arm64'",
-      env: { DOCKER_DEFAULT_PLATFORM: "linux/amd64" },
-      with: { platforms: "arm64" },
-    });
   });
 
   it("gives an emulated gateway the full bounded health window", () => {
