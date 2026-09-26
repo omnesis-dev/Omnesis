@@ -930,6 +930,36 @@ describe("install.sh service registration", () => {
       expect(updates(resumed)).toEqual(["update --yes --force"]);
     });
 
+    test("judges an interrupted update by its recorded checkout when --source-dir is a link to it", () => {
+      tagRelease("0.5.5");
+      const first = installFirst("update-linked", [
+        "--no-tls",
+        "--embedder",
+        EMBED_IDS[1],
+        "--version",
+        "0.5.5",
+      ]);
+      const statePath = join(first.home, ".config", "omnesis", "update-state.json");
+      const state = JSON.parse(readFileSync(statePath, "utf8"));
+      checkoutGit("update-linked", "checkout", "-q", "--detach", "v0.10.0");
+      writeFileSync(
+        statePath,
+        JSON.stringify({
+          ...state,
+          phase: "applying",
+          targetCommit: checkoutGit("update-linked", "rev-parse", "HEAD"),
+          lastCompletedCommit: state.commit,
+        }),
+      );
+      const linked = fixturePath("linked-checkout");
+      symlinkSync(fixturePath("checkout-update-linked"), linked);
+      const resumed = runInstaller("update-linked", ["--source-dir", linked], env, {
+        sourceDir: false,
+      });
+      expect(resumed.status, resumed.output).toBe(0);
+      expect(updates(resumed)).toEqual(["update --yes --force"]);
+    });
+
     test("a record the updater cannot use runs the full install", () => {
       const first = installFirst("update-bad-record");
       const statePath = join(first.home, ".config", "omnesis", "update-state.json");

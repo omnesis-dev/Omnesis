@@ -6164,7 +6164,11 @@ update_existing_install() {
   ensure_node
   ensure_git
   OMNESIS_BIN="$HOME/.local/bin/omnesis"
-  run_machine_update "$SOURCE_DIR"
+  # The recorded path, not the one this run named: update-state.json knows the
+  # checkout by it, so a --source-dir that reaches it through a link (macOS
+  # keeps its temporary directory behind /var -> /private/var) still finds its
+  # last completed build.
+  run_machine_update "$RECORDED_SOURCE_ROOT"
   print_update_banner
 }
 
