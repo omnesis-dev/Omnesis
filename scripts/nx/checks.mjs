@@ -268,6 +268,10 @@ export function hasVersionMetadata(files, selectedFiles) {
   );
 }
 
+export function workspaceProjects() {
+  return jsonCommand(nx, ["show", "projects", "--json"]);
+}
+
 export function buildPlan({ base = "origin/main", extraBundles = [], files: filesOverride } = {}) {
   const uncovered = uncoveredE2ETests();
   if (uncovered.length) {
@@ -290,7 +294,7 @@ export function buildPlan({ base = "origin/main", extraBundles = [], files: file
   if (selectedFiles.some(isTargetedTooling)) projects.push("omnesis-workspace");
   const unsupported = selectedFiles.filter((file) => !isKnown(file));
   const broad = unsupported.length > 0 || selectedFiles.some(isGlobal);
-  if (broad) projects = jsonCommand(nx, ["show", "projects", "--json"]);
+  if (broad) projects = workspaceProjects();
   const selectedBundles = new Set(
     broad ? [...allE2EBundles, ...allNativeBundles] : behavioralBundles(selectedFiles),
   );

@@ -1,7 +1,13 @@
 name: ci
 
 # full-validation.yml calls this reusable workflow with the exact revision it
-# validates.
+# validates, and with the scope its `scope` job decided (scripts/nx/ci-scope.mjs).
+# `full` — every push to main, every manual run, and any pull request the
+# affected plan cannot narrow — runs every lane below. `affected` — a narrow pull
+# request — runs the static floor (format and lint of the changed files, the fast
+# typecheck plus the affected projects' typechecks), the unit suites of the
+# affected Nx projects, and only the E2E files of the behavioral bundles the
+# change selects.
 #
 # Every job runs on a fresh GitHub-hosted runner and owns its whole machine, so
 # the lanes run side by side rather than queueing behind one another, and the
@@ -15,6 +21,41 @@ on:
         type: string
       run_macos:
         description: "Run the macOS lane; full-validation skips it on pull requests that don't touch what it covers"
+        required: false
+        type: boolean
+        default: true
+      scope:
+        description: "`full` runs every lane; `affected` runs the pull-request selection below"
+        required: false
+        type: string
+        default: full
+      projects:
+        description: "Comma-separated Nx projects whose unit and typecheck targets an `affected` run executes, or `all` for the whole-repository unit suite and typechecks"
+        required: false
+        type: string
+        default: ""
+      changed_files:
+        description: "JSON array of the changed paths an `affected` run formats and lints"
+        required: false
+        type: string
+        default: "[]"
+      e2e_matrix:
+        description: "JSON array of {shard, total, files} E2E shards; empty files shards the whole suite"
+        required: false
+        type: string
+        default: '[{"shard":1,"total":8,"files":""},{"shard":2,"total":8,"files":""},{"shard":3,"total":8,"files":""},{"shard":4,"total":8,"files":""},{"shard":5,"total":8,"files":""},{"shard":6,"total":8,"files":""},{"shard":7,"total":8,"files":""},{"shard":8,"total":8,"files":""}]'
+      run_unit:
+        description: "Run the unit job"
+        required: false
+        type: boolean
+        default: true
+      run_portal:
+        description: "Run the Playwright portal job"
+        required: false
+        type: boolean
+        default: true
+      run_embedder:
+        description: "Run the reference-embedder E2E job"
         required: false
         type: boolean
         default: true
@@ -57,7 +98,9 @@ jobs:
 
   # ------------------------------------------------------------------
   # node — the static lanes: audit, typecheck, lint, format, and the cheap
-  # structural validators. The unit suite runs beside it as its own job.
+  # structural validators. The unit suite runs beside it as its own job. An
+  # `affected` run replaces the whole-repository typecheck, lint and format with
+  # the fast typecheck, the affected projects' typechecks and the changed files.
   # ------------------------------------------------------------------
   node:
     needs: privacy
@@ -86,19 +129,50 @@ jobs:
         run: npm ci
 
       - name: lane [production-audit]
+        if: ${{ inputs.scope == 'full' }}
         run: npm run audit:prod
 
       - name: lane [linux-typecheck]
+        if: ${{ inputs.scope == 'full' || inputs.projects == 'all' }}
         run: exec node scripts/run-check.mjs typecheck
+
+      # Nx hashes each target's inputs itself, so this cache only carries earlier
+      # results of the same pull request forward; `full` runs never use it.
+      - name: Restore the Nx cache
+        if: ${{ inputs.scope == 'affected' }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .nx/cache
+          key: nx-${{ runner.os }}-node-${{ hashFiles('package-lock.json', 'nx.json') }}-${{ inputs.target_sha }}
+          restore-keys: nx-${{ runner.os }}-node-${{ hashFiles('package-lock.json', 'nx.json') }}-
+
+      - name: lane [typecheck-fast]
+        if: ${{ inputs.scope == 'affected' && inputs.projects != 'all' }}
+        run: npm run typecheck:fast
+
+      - name: lane [affected-typecheck]
+        if: ${{ inputs.scope == 'affected' && inputs.projects != '' && inputs.projects != 'all' }}
+        env:
+          NX_DAEMON: "false"
+          PROJECTS: ${{ inputs.projects }}
+        run: exec npx nx run-many --targets=nx-typecheck --projects="$PROJECTS" --parallel=1
+
+      - name: lane [changed-format-lint]
+        if: ${{ inputs.scope == 'affected' }}
+        env:
+          CHANGED_FILES: ${{ inputs.changed_files }}
+        run: exec node scripts/nx/ci-scope.mjs static
 
       # The suites, which the package tsconfigs exclude. A test file that is
       # never typechecked cannot notice a dependency it does not construct;
       # each config's exclusion list records which of its suites are not
       # covered yet.
       - name: lane [suite-typecheck]
+        if: ${{ inputs.scope == 'full' || inputs.projects == 'all' }}
         run: exec node scripts/run-check.mjs types-tests
 
       - name: lane [linux-lint]
+        if: ${{ inputs.scope == 'full' }}
         # Type-aware ESLint loads the whole TS program into one process; the
         # default ~2 GB Node heap is not enough. 6 GB leaves headroom on the
         # runner. Drop this once we shard lint by package.
@@ -107,6 +181,7 @@ jobs:
         run: exec node scripts/run-check.mjs lint
 
       - name: lane [format]
+        if: ${{ inputs.scope == 'full' }}
         run: npm run format:check
 
       - name: lane [universe-validation]
@@ -124,14 +199,19 @@ jobs:
         run: npm run parity:check
 
       - name: lane [extension-package]
+        if: ${{ inputs.scope == 'full' || inputs.projects == 'all' || contains(format(',{0},', inputs.projects), ',@omnesis/extension,') }}
         run: npm --prefix extension run package:store
 
   # ------------------------------------------------------------------
   # unit — every `*.test.ts` except `*.e2e.test.ts`, plus the gateway-spawning
   # script smoke tests and the OpenClaw and Hermes adapter suites (`unit-all`).
+  # An `affected` run executes the affected projects' Nx unit targets instead,
+  # with the smoke tests when the workspace scripts are affected and the adapter
+  # suites when agent-integration is.
   # ------------------------------------------------------------------
   unit:
     needs: privacy
+    if: ${{ inputs.run_unit }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -157,28 +237,58 @@ jobs:
         run: npm ci
 
       - name: lane [linux-unit]
+        if: ${{ inputs.scope == 'full' || inputs.projects == 'all' }}
         run: exec node scripts/run-check.mjs unit-all
         env:
           TZ: UTC
+
+      - name: Restore the Nx cache
+        if: ${{ inputs.scope == 'affected' }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .nx/cache
+          key: nx-${{ runner.os }}-unit-${{ hashFiles('package-lock.json', 'nx.json') }}-${{ inputs.target_sha }}
+          restore-keys: nx-${{ runner.os }}-unit-${{ hashFiles('package-lock.json', 'nx.json') }}-
+
+      - name: lane [affected-unit]
+        if: ${{ inputs.scope == 'affected' && inputs.projects != 'all' }}
+        env:
+          TZ: UTC
+          NX_DAEMON: "false"
+          PROJECTS: ${{ inputs.projects }}
+        run: |
+          npx nx run-many --targets=nx-unit --projects="$PROJECTS" --parallel=1
+          case ",$PROJECTS," in
+            *,@omnesis/agent-integration,*) npm run test:openclaw; npm run test:hermes ;;
+          esac
+          # The gateway-spawning script smoke tests cover the workspace scripts.
+          case ",$PROJECTS," in
+            *,omnesis-workspace,*) ;;
+            *) exit 0 ;;
+          esac
+          exec node scripts/run-check.mjs smoke
 
   # ------------------------------------------------------------------
   # e2e — the spawned-gateway suites, sharded across runners.
   #
   # Each file boots a real gateway subprocess. A `--shard` selection runs its
-  # files one at a time (see scripts/run-e2e.mjs), so every file — the
-  # timing-sensitive Brain Bench suites and the headless-Chromium extension
-  # suite included — has its runner to itself. The two suites that need the
-  # reference embedding server run in `e2e-embedder` below.
+  # files one at a time (see scripts/run-e2e.mjs), and an explicit file list
+  # runs with one worker, so every file — the timing-sensitive Brain Bench
+  # suites and the headless-Chromium extension suite included — has its runner
+  # to itself. A `full` run shards the whole suite; an `affected` run gets the
+  # selected files already split into shards, or no shard at all. The two
+  # suites that need the reference embedding server run in `e2e-embedder` below.
   # ------------------------------------------------------------------
   e2e:
     needs: privacy
-    name: e2e (shard ${{ matrix.shard }}/8)
+    if: ${{ inputs.e2e_matrix != '[]' }}
+    name: e2e (shard ${{ matrix.shard }}/${{ matrix.total }})
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        include: ${{ fromJSON(inputs.e2e_matrix) }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -212,13 +322,22 @@ jobs:
 
       - name: lane [linux-e2e]
         # Spawned-gateway suites under packages/*/src/**/*.e2e.test.ts.
-        run: >-
-          exec node scripts/run-check.mjs e2e
-          --shard=${{ matrix.shard }}/8
-          --exclude=packages/collector/src/e2e/search-quality.e2e.test.ts
-          --exclude=packages/collector/src/e2e/embedder-swap.e2e.test.ts
+        run: |
+          if [ -z "$FILES" ]; then
+            exec node scripts/run-check.mjs e2e \
+              --shard="$SHARD/$TOTAL" \
+              --exclude=packages/collector/src/e2e/search-quality.e2e.test.ts \
+              --exclude=packages/collector/src/e2e/embedder-swap.e2e.test.ts
+          fi
+          # One file at a time, as a whole-suite shard runs them.
+          export OMNESIS_E2E_WORKERS=1
+          read -ra files <<< "$FILES"
+          exec node scripts/run-check.mjs e2e "${files[@]}"
         env:
           TZ: UTC
+          SHARD: ${{ matrix.shard }}
+          TOTAL: ${{ matrix.total }}
+          FILES: ${{ matrix.files }}
 
   # ------------------------------------------------------------------
   # e2e-embedder — the semantic search suites against a real embedding model.
@@ -230,6 +349,7 @@ jobs:
   # ------------------------------------------------------------------
   e2e-embedder:
     needs: privacy
+    if: ${{ inputs.run_embedder }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -342,6 +462,7 @@ jobs:
   # ------------------------------------------------------------------
   portal-e2e:
     needs: privacy
+    if: ${{ inputs.run_portal }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
 

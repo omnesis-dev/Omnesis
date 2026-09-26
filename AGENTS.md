@@ -123,11 +123,19 @@ This rule applies to every part of the repo: iOS previews, snapshot tests, gatew
 
 ## Tests are mandatory
 
-- **CI runs the full suite on every pull request into `main` and every push to
+- **CI runs the lanes a pull request affects, and the full suite on every push to
   `main`**, on GitHub-hosted runners (`.github/workflows/full-validation.yml`);
-  a newer push to a pull request cancels its older run. On pull requests the
-  macOS lanes (iOS, SwiftLint, Android screenshots, Node on macOS) run only when
-  the change touches what they cover; `main` always runs everything. Before handoff, run the affected gate
+  a newer push to a pull request cancels its older run. A pull request's `scope`
+  job (`scripts/nx/ci-scope.mjs`) plans its merge commit with the same Nx affected
+  plan as `checks:plan`: the privacy scan, format and lint of the changed files,
+  the fast typecheck plus the affected projects' typechecks, and the affected
+  projects' unit suites always run; the E2E files of the selected bundles, the
+  Playwright portal lane and the embedder lane run when selected; the native,
+  install, Docker, harness and security lanes run when the change touches the
+  paths they cover. The lockfile, a package manifest, a root toolchain config, a
+  workflow, `packages/core`, the check runners and planner, or an unsupported path
+  run everything. `main` always runs everything, so a lane a pull request skipped
+  still reddens `main` if the change broke it. Before handoff, run the affected gate
   for the actual branch and working tree: `npm run checks:plan -- --base origin/main`,
   then `npm run checks:affected -- --base origin/main`. Nx selects package work
   through the dependency graph and adds declared behavioral E2E/native bundles.

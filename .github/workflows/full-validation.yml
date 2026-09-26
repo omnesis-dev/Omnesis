@@ -1,8 +1,12 @@
 name: full-validation
 
-# The whole validation suite, on GitHub-hosted runners, for every push to
-# `main`, every pull request into `main`, and any manual run
-# (`gh workflow run full-validation.yml --ref <branch-or-tag>`).
+# The validation suite, on GitHub-hosted runners, for every push to `main`,
+# every pull request into `main`, and any manual run
+# (`gh workflow run full-validation.yml --ref <branch-or-tag>`). Pushes to `main`
+# and manual runs execute every lane. A pull request executes the lanes its
+# change affects (see the `scope` job), so its cost scales with the change;
+# `main` then runs everything once the change lands, and a red `main` is fixed
+# forward.
 #
 # On a pull request, a newer push cancels the unfinished run before it. On
 # `main` at most one run executes at a time and only the newest waiting push
@@ -31,60 +35,80 @@ permissions:
   contents: read
 
 jobs:
-  # Which macOS lanes a pull request needs. GitHub gives the repository only a
-  # few macOS runners at a time, so a pull request runs the macOS lanes only
-  # when it touches what they cover; pushes to main and manual runs always run
-  # every lane, so nothing reaches main's verdict untested on macOS.
+  # Which lanes this run executes (scripts/nx/ci-scope.mjs). A push to main or
+  # a manual run executes every lane, so nothing reaches main's verdict
+  # untested. A pull request runs the Node lanes the Nx affected plan selects
+  # for its merge commit — the same plan as `npm run checks:plan` — and the
+  # native, install, Docker, harness and security lanes whose paths it touches.
+  # A shared input (lockfile, manifests, root configs, workflows, packages/core,
+  # the check runners), an unsupported path, or a planner failure runs
+  # everything. The macOS lanes stay path-scoped rather than graph-scoped:
+  # GitHub gives the repository only a few macOS runners at a time.
   scope:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      pull-requests: read
+    timeout-minutes: 15
     outputs:
-      apple: ${{ steps.scope.outputs.apple }}
-      android_render: ${{ steps.scope.outputs.android_render }}
+      scope: ${{ steps.scope.outputs.scope }}
+      projects: ${{ steps.scope.outputs.projects }}
+      changed_files: ${{ steps.scope.outputs.changed_files }}
+      e2e_matrix: ${{ steps.scope.outputs.e2e_matrix }}
+      unit: ${{ steps.scope.outputs.unit }}
+      portal: ${{ steps.scope.outputs.portal }}
+      embedder: ${{ steps.scope.outputs.embedder }}
       node_macos: ${{ steps.scope.outputs.node_macos }}
+      knip: ${{ steps.scope.outputs.knip }}
+      apple: ${{ steps.scope.outputs.apple }}
+      android: ${{ steps.scope.outputs.android }}
+      android_render: ${{ steps.scope.outputs.android_render }}
+      docker_image: ${{ steps.scope.outputs.docker_image }}
+      docker_smoke: ${{ steps.scope.outputs.docker_smoke }}
+      install_smoke: ${{ steps.scope.outputs.install_smoke }}
+      topology: ${{ steps.scope.outputs.topology }}
+      docker_security: ${{ steps.scope.outputs.docker_security }}
+      harness: ${{ steps.scope.outputs.harness }}
+      security_static: ${{ steps.scope.outputs.security_static }}
     steps:
+      # A pull request's revision is its merge commit, whose first parent is the
+      # base branch it merges into: the plan diffs the two.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: ${{ github.event_name == 'pull_request' && 'npm' || '' }}
+
+      # Nx and the bundle matcher only; nothing here builds or runs product code.
+      - name: Install planner dependencies
+        if: ${{ github.event_name == 'pull_request' }}
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
       - id: scope
         env:
-          GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
-          REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
-        run: |
-          if [ "$EVENT" != pull_request ]; then
-            { echo apple=true; echo android_render=true; echo node_macos=true; } >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          files="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')"
-          apple=false; android_render=false; node_macos=false
-          while IFS= read -r f; do
-            case "$f" in
-              .github/workflows/full-validation.yml)
-                apple=true; android_render=true; node_macos=true ;;
-              ios/*|.swiftlint*|.swiftformat*|.github/workflows/ios.yml|.github/workflows/swiftlint.yml|scripts/run-ios-e2e.sh|scripts/ios-*|scripts/synth-gateway.sh|evals/universes/e2e-minimal/*)
-                apple=true ;;
-            esac
-            case "$f" in
-              android/*|.github/workflows/android.yml)
-                android_render=true ;;
-            esac
-            case "$f" in
-              package.json|package-lock.json|.github/workflows/ci.yml|scripts/install.sh|website/install.sh|packages/cli/src/service/*|packages/cli/src/update/*|packages/providers/apple-*/*)
-                node_macos=true ;;
-            esac
-          done <<< "$files"
-          { echo "apple=$apple"; echo "android_render=$android_render"; echo "node_macos=$node_macos"; } >> "$GITHUB_OUTPUT"
-          echo "macOS lanes for this pull request: apple=$apple android_render=$android_render node_macos=$node_macos"
+        run: node scripts/nx/ci-scope.mjs
 
   node:
     needs: scope
     uses: ./.github/workflows/ci.yml
     with:
       target_sha: ${{ github.sha }}
+      scope: ${{ needs.scope.outputs.scope }}
+      projects: ${{ needs.scope.outputs.projects }}
+      changed_files: ${{ needs.scope.outputs.changed_files }}
+      e2e_matrix: ${{ needs.scope.outputs.e2e_matrix }}
+      run_unit: ${{ needs.scope.outputs.unit == 'true' }}
+      run_portal: ${{ needs.scope.outputs.portal == 'true' }}
+      run_embedder: ${{ needs.scope.outputs.embedder == 'true' }}
       run_macos: ${{ needs.scope.outputs.node_macos == 'true' }}
 
   knip:
+    needs: scope
+    if: ${{ needs.scope.outputs.knip == 'true' }}
     uses: ./.github/workflows/knip.yml
     with:
       target_sha: ${{ github.sha }}
@@ -105,48 +129,64 @@ jobs:
 
   android:
     needs: scope
+    if: ${{ needs.scope.outputs.android == 'true' }}
     uses: ./.github/workflows/android.yml
     with:
       target_sha: ${{ github.sha }}
       run_render: ${{ needs.scope.outputs.android_render == 'true' }}
 
   docker-smoke:
+    needs: scope
+    if: ${{ needs.scope.outputs.docker_smoke == 'true' }}
     uses: ./.github/workflows/docker-smoke.yml
     with:
       target_sha: ${{ github.sha }}
 
   install-smoke:
+    needs: scope
+    if: ${{ needs.scope.outputs.install_smoke == 'true' }}
     uses: ./.github/workflows/install-smoke.yml
     with:
       target_sha: ${{ github.sha }}
 
   topology:
+    needs: scope
+    if: ${{ needs.scope.outputs.topology == 'true' }}
     uses: ./.github/workflows/topology-e2e.yml
     with:
       target_sha: ${{ github.sha }}
 
   harness:
+    needs: scope
+    if: ${{ needs.scope.outputs.harness == 'true' }}
     uses: ./.github/workflows/harness-conformance.yml
     with:
       target_sha: ${{ github.sha }}
 
   docker-security:
+    needs: scope
+    if: ${{ needs.scope.outputs.docker_security == 'true' }}
     uses: ./.github/workflows/docker-e2e.yml
     with:
       target_sha: ${{ github.sha }}
 
   docker-image:
+    needs: scope
+    if: ${{ needs.scope.outputs.docker_image == 'true' }}
     uses: ./.github/workflows/docker.yml
     with:
       target_sha: ${{ github.sha }}
 
   security-static:
+    needs: scope
+    if: ${{ needs.scope.outputs.security_static == 'true' }}
     uses: ./.github/workflows/security-static.yml
     with:
       target_sha: ${{ github.sha }}
 
   # One result for the whole suite: green only when every lane succeeded. On a
-  # pull request, the Apple lanes may be skipped by design (see `scope`).
+  # pull request, a lane whose scope switch is off may be skipped by design;
+  # anywhere else, and for any lane the scope selected, a skip is a failure.
   verdict:
     if: ${{ !cancelled() }}
     needs:
@@ -174,12 +214,25 @@ jobs:
           node -e '
             const results = JSON.parse(process.env.RESULTS_JSON);
             const pr = process.env.EVENT === "pull_request";
-            const scopedOut = (id) => pr && ["swift", "ios"].includes(id) && results.scope.outputs.apple !== "true";
+            const switches = {
+              knip: "knip",
+              swift: "apple",
+              ios: "apple",
+              android: "android",
+              "docker-smoke": "docker_smoke",
+              "install-smoke": "install_smoke",
+              topology: "topology",
+              harness: "harness",
+              "docker-security": "docker_security",
+              "docker-image": "docker_image",
+              "security-static": "security_static",
+            };
+            const scopedOut = (id) => pr && id in switches && results.scope.outputs[switches[id]] === "false";
             const failed = Object.entries(results).filter(([id, {result}]) =>
               result !== "success" && !(result === "skipped" && scopedOut(id)));
             const lines = Object.entries(results).map(([id, value]) => `| ${id} | ${value.result} |`);
             require("fs").appendFileSync(process.env.GITHUB_STEP_SUMMARY,
-              ["## Full validation", "", "| Lane | Result |", "| --- | --- |", ...lines, ""].join("\n"));
+              ["## Full validation", "", `Scope: ${results.scope.outputs.scope ?? "unknown"}`, "", "| Lane | Result |", "| --- | --- |", ...lines, ""].join("\n"));
             if (failed.length) {
               console.error(`Lanes without success: ${failed.map(([id, value]) => `${id}=${value.result}`).join(", ")}`);
               process.exit(1);

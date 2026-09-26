@@ -1815,80 +1815,102 @@ describe("full-validation workflow topology", () => {
     expect(probe.run).not.toContain("json.load(sys.stdin)['devices']");
   });
 
-  describe("macOS lanes on pull requests", () => {
-    // Runs the scope step's script with a stand-in `gh` that lists the given files.
-    function scope(event, files) {
-      const dir = mkdtempSync(join(tmpdir(), "omnesis-scope-"));
-      try {
-        const gh = join(dir, "gh");
-        writeFileSync(gh, `#!/bin/sh\nprintf '%s\\n' ${files.map((f) => `'${f}'`).join(" ")}\n`);
-        chmodSync(gh, 0o755);
-        const output = join(dir, "out");
-        writeFileSync(output, "");
-        const step = workflows["full-validation"].jobs.scope.steps.find((s) => s.id === "scope");
-        execFileSync("bash", ["-c", step.run], {
-          env: {
-            PATH: `${dir}:${process.env.PATH}`,
-            EVENT: event,
-            REPO: "o/r",
-            PR: "1",
-            GITHUB_OUTPUT: output,
-          },
-          stdio: "ignore",
-        });
-        return Object.fromEntries(
-          readFileSync(output, "utf8")
-            .trim()
-            .split("\n")
-            .map((line) => line.split("=")),
-        );
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
-    }
-    const none = { apple: "false", android_render: "false", node_macos: "false" };
-    const all = { apple: "true", android_render: "true", node_macos: "true" };
+  describe("lane scope on pull requests", () => {
+    // Each gated lane job and the scope switch that runs it (scripts/nx/ci-scope.mjs).
+    const switches = {
+      knip: "knip",
+      swift: "apple",
+      ios: "apple",
+      android: "android",
+      "docker-smoke": "docker_smoke",
+      "install-smoke": "install_smoke",
+      topology: "topology",
+      harness: "harness",
+      "docker-security": "docker_security",
+      "docker-image": "docker_image",
+      "security-static": "security_static",
+    };
 
-    it("runs every macOS lane outside pull requests", () => {
-      expect(scope("push", [])).toEqual(all);
-      expect(scope("workflow_dispatch", [])).toEqual(all);
-    });
-
-    it("skips them for a pull request that touches none of their paths", () => {
-      expect(
-        scope("pull_request", ["packages/gateway/src/index.ts", "website/docs/index.html"]),
-      ).toEqual(none);
-    });
-
-    it("selects each lane by the paths it covers", () => {
-      expect(scope("pull_request", ["ios/Sources/Omnesis/App.swift"])).toEqual({
-        ...none,
-        apple: "true",
-      });
-      expect(scope("pull_request", ["android/app/build.gradle.kts"])).toEqual({
-        ...none,
-        android_render: "true",
-      });
-      expect(scope("pull_request", ["package-lock.json"])).toEqual({ ...none, node_macos: "true" });
-      expect(scope("pull_request", ["packages/cli/src/update/detect.ts"])).toEqual({
-        ...none,
-        node_macos: "true",
-      });
-      expect(scope("pull_request", [".github/workflows/full-validation.yml"])).toEqual(all);
-    });
-
-    it("wires the gates and lets the verdict accept only a scoped-out skip", () => {
+    it("gates every lane job on its scope switch and passes the Node selection to ci.yml", async () => {
+      const { LANES } = await import("./nx/ci-scope.mjs");
       const jobs = workflows["full-validation"].jobs;
-      expect(jobs.ios.if).toBe("${{ needs.scope.outputs.apple == 'true' }}");
-      expect(jobs.swift.if).toBe("${{ needs.scope.outputs.apple == 'true' }}");
-      expect(jobs.node.with.run_macos).toBe("${{ needs.scope.outputs.node_macos == 'true' }}");
+      for (const [job, key] of Object.entries(switches)) {
+        expect(jobs[job].needs, job).toBe("scope");
+        expect(jobs[job].if, job).toBe(`\${{ needs.scope.outputs.${key} == 'true' }}`);
+      }
+      const gatedHere = new Set(Object.values(switches));
+      const node = jobs.node.with;
+      expect(node).toMatchObject({
+        scope: "${{ needs.scope.outputs.scope }}",
+        projects: "${{ needs.scope.outputs.projects }}",
+        changed_files: "${{ needs.scope.outputs.changed_files }}",
+        e2e_matrix: "${{ needs.scope.outputs.e2e_matrix }}",
+        run_unit: "${{ needs.scope.outputs.unit == 'true' }}",
+        run_portal: "${{ needs.scope.outputs.portal == 'true' }}",
+        run_embedder: "${{ needs.scope.outputs.embedder == 'true' }}",
+        run_macos: "${{ needs.scope.outputs.node_macos == 'true' }}",
+      });
       expect(jobs.android.with.run_render).toBe(
         "${{ needs.scope.outputs.android_render == 'true' }}",
       );
-      expect(workflows.ci.jobs["node-macos"].if).toBe("${{ inputs.run_macos }}");
+      // Every switch the planner emits is consumed by a job, and every one is a job output.
+      const consumed = new Set([
+        ...gatedHere,
+        "unit",
+        "portal",
+        "embedder",
+        "node_macos",
+        "android_render",
+      ]);
+      expect([...consumed].sort()).toEqual([...LANES].sort());
+      for (const key of [...LANES, "scope", "projects", "changed_files", "e2e_matrix"])
+        expect(jobs.scope.outputs[key], key).toBe(`\${{ steps.scope.outputs.${key} }}`);
+      expect(jobs.scope.steps.find((step) => step.id === "scope").run).toBe(
+        "node scripts/nx/ci-scope.mjs",
+      );
+      const checkout = jobs.scope.steps.find((step) => step.uses?.startsWith("actions/checkout@"));
+      expect(checkout.with).toMatchObject({ ref: "${{ github.sha }}", "fetch-depth": 2 });
+    });
+
+    it("gates the ci.yml jobs and steps on the scope inputs", () => {
+      const ci = workflows.ci;
+      expect(ci.on.workflow_call.inputs.scope.default).toBe("full");
+      expect(ci.jobs.unit.if).toBe("${{ inputs.run_unit }}");
+      expect(ci.jobs["portal-e2e"].if).toBe("${{ inputs.run_portal }}");
+      expect(ci.jobs["e2e-embedder"].if).toBe("${{ inputs.run_embedder }}");
+      expect(ci.jobs["node-macos"].if).toBe("${{ inputs.run_macos }}");
+      expect(ci.jobs.e2e.if).toBe("${{ inputs.e2e_matrix != '[]' }}");
+      expect(ci.jobs.e2e.strategy.matrix.include).toBe("${{ fromJSON(inputs.e2e_matrix) }}");
       expect(workflows.android.jobs.render.if).toBe("${{ inputs.run_render }}");
-      expect(jobs.verdict.needs).toContain("scope");
-      expect(jobs.verdict.steps[0].run).toContain('result === "skipped" && scopedOut(id)');
+      const step = (job, name) => ci.jobs[job].steps.find((s) => s.name === name);
+      for (const name of ["lane [production-audit]", "lane [linux-lint]", "lane [format]"])
+        expect(step("node", name).if, name).toBe("${{ inputs.scope == 'full' }}");
+      for (const name of ["lane [linux-typecheck]", "lane [suite-typecheck]"])
+        expect(step("node", name).if, name).toBe(
+          "${{ inputs.scope == 'full' || inputs.projects == 'all' }}",
+        );
+      expect(step("unit", "lane [linux-unit]").if).toBe(
+        "${{ inputs.scope == 'full' || inputs.projects == 'all' }}",
+      );
+      expect(step("node", "lane [changed-format-lint]").run).toBe(
+        "exec node scripts/nx/ci-scope.mjs static",
+      );
+      expect(step("unit", "lane [affected-unit]").run).toContain(
+        'npx nx run-many --targets=nx-unit --projects="$PROJECTS"',
+      );
+      // The privacy scan and the cheap validators stay unconditional.
+      expect(ci.jobs.privacy.if).toBeUndefined();
+      for (const name of ["lane [universe-validation]", "lane [parity-validation]"])
+        expect(step("node", name).if, name).toBeUndefined();
+    });
+
+    it("lets the verdict accept a skip only for a lane the pull request scoped out", () => {
+      const run = workflows["full-validation"].jobs.verdict.steps[0].run;
+      expect(run).toContain('result === "skipped" && scopedOut(id)');
+      expect(run).toContain('const pr = process.env.EVENT === "pull_request";');
+      for (const [job, key] of Object.entries(switches))
+        expect(run).toContain(`${/^[a-z]+$/u.test(job) ? job : `"${job}"`}: "${key}"`);
+      expect(run).toContain('results.scope.outputs[switches[id]] === "false"');
     });
   });
 
@@ -2090,10 +2112,15 @@ describe("full-validation workflow topology", () => {
 
   it("shards the spawned-gateway suite and gives the embedder suites their server", () => {
     const e2e = workflows.ci.jobs.e2e;
-    const shards = e2e.strategy.matrix.shard;
+    const shards = JSON.parse(workflows.ci.on.workflow_call.inputs.e2e_matrix.default);
     const lane = e2e.steps.find((step) => step.name === "lane [linux-e2e]").run;
-    expect(lane).toContain(`--shard=\${{ matrix.shard }}/${shards.length}`);
-    expect(shards).toEqual(shards.map((_, index) => index + 1));
+    expect(lane).toContain('--shard="$SHARD/$TOTAL"');
+    expect(lane).toContain("export OMNESIS_E2E_WORKERS=1");
+    expect(lane).toContain('exec node scripts/run-check.mjs e2e "${files[@]}"');
+    expect(shards).toEqual(
+      shards.map((_, index) => ({ shard: index + 1, total: shards.length, files: "" })),
+    );
+    expect(shards).toHaveLength(8);
 
     const embedderSuites = [
       "packages/collector/src/e2e/search-quality.e2e.test.ts",

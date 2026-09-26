@@ -189,9 +189,10 @@ or update one in the same commit when you add or materially change a view.
          completed its manual validation list
 
 5. **Run the focused checks locally, then let CI run the rest.** Every pull
-   request into `main` and every push to `main` runs the full validation suite
-   (`.github/workflows/full-validation.yml`) on GitHub-hosted runners: Linux,
-   macOS, browser, iOS and Android, install, Docker, harness and security lanes.
+   request into `main` runs the validation lanes its change affects, and every
+   push to `main` runs the full suite (`.github/workflows/full-validation.yml`)
+   on GitHub-hosted runners: Linux, macOS, browser, iOS and Android, install,
+   Docker, harness and security lanes.
    A pull request from a fork runs once a maintainer approves it. A newer push
    to the same pull request cancels the older run. A failure on `main` is fixed
    forward, and a change that reddens it may be reverted.
