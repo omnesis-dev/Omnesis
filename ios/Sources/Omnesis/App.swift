@@ -668,6 +668,12 @@ public final class AppStore {
     @ObservationIgnored
     private let notificationPermissions: any NotificationPermissionCenter
 
+    /// The transport a queued self-revocation is sent over. Nil builds one
+    /// from the pending pairing's TLS mode; a test supplies its own so an
+    /// unpair never waits on a real connection.
+    @ObservationIgnored
+    private let revocationSession: (any URLSessionLike)?
+
     // MARK: - Forwarded reads from coordinators
 
     public var pairing: Pairing? {
@@ -1078,8 +1084,10 @@ public final class AppStore {
         localSourceActivator: LocalSourceActivator? = nil,
         localSourceOwner: LocalSourceOwnerRecord = LocalSourceOwnerRecord(),
         notificationWarningDefaults: KeyValueDefaults = UserDefaults.standard,
+        revocationSession: (any URLSessionLike)? = nil,
         loadPersistedPairing: Bool = true
     ) {
+        self.revocationSession = revocationSession
         self.localSourceActivator = localSourceActivator ?? LocalSourceActivator()
         self.localSourceOwner = localSourceOwner
         self.foregroundConversationStore = foregroundConversationStore
@@ -1787,7 +1795,9 @@ public final class AppStore {
     /// durable for the next foreground or process launch.
     func retryPendingDeviceRevocation() async {
         while let pending = pairingCoord.pendingRevocation() {
-            let session: URLSessionLike = if pending.tlsMode == .pinnedLeaf, let fingerprint = pending.fingerprint {
+            let session: URLSessionLike = if let revocationSession {
+                revocationSession
+            } else if pending.tlsMode == .pinnedLeaf, let fingerprint = pending.fingerprint {
                 PinnedSession(fingerprintHex: fingerprint).session
             } else {
                 URLSession.shared
