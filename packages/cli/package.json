@@ -7,7 +7,7 @@
     "omnesis": "src/index.ts"
   },
   "dependencies": {
-    "@clack/prompts": "^1.8.1",
+    "@clack/prompts": "^1.7.0",
     "@omnesis/agent-integration": "*",
     "@omnesis/cli-shared": "*",
     "@omnesis/collector": "*",
@@ -20,7 +20,7 @@
     "@omnesis/types": "*",
     "citty": "^0.2.2",
     "qrcode-terminal": "^0.12.0",
-    "yaml": "^2.9.1"
+    "yaml": "^2.9.0"
   },
   "files": [
     "dist"
