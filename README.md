@@ -119,6 +119,13 @@ omnesis sql "SELECT * FROM strava_activities LIMIT 5"
 - **What leaves your machines is listed, and each item is your choice:** your sources' own services, a daily release check that carries no identifier (switch it off with `omnesis config set /releaseCheck false`), content-free phone wake-ups, and any remote model you choose. See [What leaves your machines](https://omnesis.dev/docs/#outbound-connections).
 - **Every client is a device with its own scoped token**, and every external agent is a connection you approved with an access level you chose. Revoking either takes effect at once.
 
+**Use at your own risk.** You are responsible for securing the environment where you
+run Omnesis, including your devices, operating systems, networks, credentials, and
+backups. Omnesis cannot guarantee the security of your data on a compromised
+system. To the extent permitted by applicable law and subject to the [LICENSE](LICENSE),
+the authors and contributors disclaim liability for data loss, disclosure, or
+compromise caused by malicious actors, malware, viruses, or an insecure environment.
+
 ## How it works
 
 <p align="center">

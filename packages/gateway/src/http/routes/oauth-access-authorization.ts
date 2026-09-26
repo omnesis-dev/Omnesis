@@ -8,8 +8,9 @@ import { buildPage, clampLimit, scopeSatisfies, SCOPE_ADMIN, tryDeviceId } from 
 import {
   createServedByGatewayCheck,
   type CertificateProbe,
+  type ServedResource,
 } from "../../access/served-by-gateway.js";
-import { resolveOAuthUrls } from "../../access/oauth-urls.js";
+import { resolveOAuthOverviewUrls, resolveOAuthUrls } from "../../access/oauth-urls.js";
 import { ClientMetadataDocumentResolver } from "../../access/client-metadata-document.js";
 import { normalizeInteractiveOAuthScope } from "../../access/oauth-scopes.js";
 import { MCP_ACCESS_SCOPE, type AuthorizationRequestPortal } from "../../access/types.js";
@@ -72,6 +73,8 @@ export function mountOAuthAuthorizationRoutes(
   access: AccessService,
   options: {
     publicBaseUrl?: string;
+    /** Actual same-machine gateway origin advertised for local-only setup. */
+    loopbackBaseUrl?: string;
     mcpResourceUrls?: readonly string[];
     authorizationNotifier?: Pick<AccessAuthorizationNotifier, "targetDeviceIds" | "wakeQueued">;
     clientMetadataResolver?: Pick<ClientMetadataDocumentResolver, "resolve">;
@@ -89,6 +92,8 @@ export function mountOAuthAuthorizationRoutes(
     onDeviceLevelChanged?: () => void;
     /** SHA-256 fingerprint of the certificate this gateway serves right now. */
     tlsFingerprintSha256?: string | (() => string);
+    /** The port the gateway listens on, which tells its own listener from a proxy. */
+    listenPort?: number;
     /** Replaces the TLS connection that checks which certificate a resource presents (tests). */
     probeCertificate?: CertificateProbe;
   } = {},
@@ -345,21 +350,29 @@ export function mountOAuthAuthorizationRoutes(
       : options.tlsFingerprintSha256;
   const servedByGateway = createServedByGatewayCheck({
     fingerprint,
+    ...(options.listenPort !== undefined ? { listenPort: options.listenPort } : {}),
     ...(options.probeCertificate ? { probe: options.probeCertificate } : {}),
   });
   const accessOverview = async (requestUrl: string) => {
-    const urls = resolveOAuthUrls(requestUrl, options.publicBaseUrl, options.mcpResourceUrls);
+    const urls = resolveOAuthOverviewUrls(
+      requestUrl,
+      options.publicBaseUrl,
+      options.mcpResourceUrls,
+      options.loopbackBaseUrl,
+    );
     const served = urls
       ? await servedByGateway(urls.supportedResources)
-      : new Map<string, boolean>();
+      : new Map<string, ServedResource>();
     return {
       ...access.overview(),
       oauth: urls
         ? {
             resource: urls.resource,
+            ...(!options.publicBaseUrl ? { loopbackOnly: true } : {}),
             resources: urls.supportedResources.map((resource) => ({
               resource,
-              servedByGateway: served.get(resource) ?? false,
+              servedByGateway: served.get(resource)?.servedByGateway ?? false,
+              direct: served.get(resource)?.direct ?? false,
             })),
             tlsFingerprintSha256: fingerprint() ?? null,
           }

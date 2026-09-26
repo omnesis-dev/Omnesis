@@ -57,6 +57,7 @@ import { ExtensionPromoCard, shouldShowExtensionPromo } from "../components/exte
 import { IosPromoCard } from "../components/ios-promo.js";
 import { AndroidPromoCard } from "../components/android-promo.js";
 import { shouldShowMobilePromos } from "../components/mobile-promo.js";
+import { AgentPromoCard, useAgentPromoVisible } from "../components/agent-promo.js";
 import { ExpiringBanner, ReauthBanner } from "./reauth-banner.js";
 import { RemediationBanner } from "./remediation-banner.js";
 import { OverviewBar, PctBar, MigrationBar } from "../components/index-hero.js";
@@ -580,6 +581,7 @@ export function sourceMetaRefresh(rows, coveredSynced, resolves = sourceIconReso
 export function SourcesView() {
   const [sources, setSources] = useState([]);
   const [loading, setLoading] = useState(true);
+  const agentPromoVisible = useAgentPromoVisible();
   const [errors, dispatchError] = useReducer(sourcesErrorReducer, {
     refresh: null,
     action: null,
@@ -996,10 +998,11 @@ export function SourcesView() {
       ${indexStats && html`<${MigrationBar} versions=${indexStats.indexVersions} />`}
 
       ${!loading
-        && (shouldShowExtensionPromo({ sources }) || shouldShowMobilePromos({ sources }))
+        && (shouldShowExtensionPromo({ sources }) || shouldShowMobilePromos({ sources }) || agentPromoVisible)
         && html`<div class="sources-promo-row">
           ${shouldShowExtensionPromo({ sources }) && html`<${ExtensionPromoCard} />`}
           ${shouldShowMobilePromos({ sources }) && html`<${IosPromoCard} /><${AndroidPromoCard} />`}
+          ${agentPromoVisible && html`<${AgentPromoCard} />`}
         </div>`}
 
       ${showLegacyMigrationBanner(overall, sources) && html`

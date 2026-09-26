@@ -9,6 +9,7 @@ import dev.omnesis.android.designsystem.components.parseHexColor
 import dev.omnesis.android.transport.client.AdminClient
 import dev.omnesis.android.transport.dto.SerializedDescriptor
 import dev.omnesis.android.transport.dto.SourceMetaEntry
+import kotlinx.coroutines.CancellationException
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -56,8 +57,8 @@ class SourceCatalog @Inject constructor() {
         // The two halves stand on their own: the metadata carries every icon by
         // itself, and it must not be held hostage by a descriptor fetch that
         // depends on which collectors happen to be online.
-        val fetchedDescriptors = runCatching { descriptors() }.getOrNull()
-        val fetchedMeta = runCatching { meta() }.getOrNull()
+        val fetchedDescriptors = fetchOrNull(descriptors)
+        val fetchedMeta = fetchOrNull(meta)
         fetchedDescriptors?.let { descriptorsByType = it.associateBy { d -> d.typeId } }
         fetchedMeta?.let { metaByKey = it }
         // Once both halves have landed this session the catalog is whole; a
@@ -77,6 +78,15 @@ class SourceCatalog @Inject constructor() {
         descriptors: suspend () -> List<SerializedDescriptor>,
         meta: suspend () -> Map<String, SourceMetaEntry>,
     ): Boolean = loaded || load(descriptors, meta)
+
+    /** A failed half is null; a cancelled load stops here and writes nothing. */
+    private suspend fun <T> fetchOrNull(fetch: suspend () -> T): T? = try {
+        fetch()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        null
+    }
 
     fun clear() {
         descriptorsByType = emptyMap()

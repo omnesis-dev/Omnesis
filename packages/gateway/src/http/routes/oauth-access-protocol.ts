@@ -17,6 +17,8 @@ export function mountOAuthAccessProtocolRoutes(
   access: AccessService,
   options: {
     publicBaseUrl?: string;
+    /** Actual same-machine gateway origin advertised for local-only setup. */
+    loopbackBaseUrl?: string;
     mcpResourceUrls?: readonly string[];
     authorizationNotifier?: Pick<AccessAuthorizationNotifier, "targetDeviceIds" | "wakeQueued">;
     clientMetadataResolver?: Pick<ClientMetadataDocumentResolver, "resolve">;
@@ -26,6 +28,8 @@ export function mountOAuthAccessProtocolRoutes(
     onDeviceLevelChanged?: () => void;
     /** See `mountOAuthAuthorizationRoutes`. */
     tlsFingerprintSha256?: string | (() => string);
+    /** See `mountOAuthAuthorizationRoutes`. */
+    listenPort?: number;
     /** See `mountOAuthAuthorizationRoutes`. */
     probeCertificate?: CertificateProbe;
   } = {},

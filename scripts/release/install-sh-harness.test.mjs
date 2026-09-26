@@ -20,9 +20,9 @@
  * covered by hand.
  */
 
-import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   callStartingWith,
@@ -73,6 +73,15 @@ case "$1" in
     fi
     ;;
   connect)
+    if [ "$2" = --help ]; then
+      # What the real command's help lists. A CLI that predates the harness
+      # restart has no --no-restart among them until \`update\` has run.
+      echo "--gateway-url --code --trust-fingerprint --dir --print-home --skill-only --refresh"
+      if [ -z "\${OMNESIS_TEST_CONNECT_PREDATES_RESTART:-}" ] || [ -e "$OMNESIS_TEST_CALLS.updated" ]; then
+        echo "--restart --no-restart --yes"
+      fi
+      exit 0
+    fi
     case "$3" in
       --print-home)
         if [ -n "\${OMNESIS_TEST_PRINT_HOME_FAIL:-}" ]; then exit 1; fi
@@ -94,6 +103,9 @@ case "$1" in
         fi
         ;;
     esac
+    ;;
+  update)
+    if [ -z "\${OMNESIS_TEST_UPDATE_KEEPS_OLD_CLI:-}" ]; then : > "$OMNESIS_TEST_CALLS.updated"; fi
     ;;
   *) : ;;
 esac
@@ -183,31 +195,34 @@ describe("install.sh --openclaw / --hermes: the happy path", () => {
     ]);
 
     expect(run.status).toBe(0);
+    // With nobody to ask, connect is told to restart OpenClaw: the plugin it
+    // installs loads no other way.
     expect(callStartingWith(run.calls, "connect openclaw --gateway-url")).toBe(
       `connect openclaw --gateway-url ${GATEWAY_URL} --code ${PAIRING_CODE} ` +
-        `--trust-fingerprint sha256:${GATEWAY_FP}`,
+        `--trust-fingerprint sha256:${GATEWAY_FP} --yes`,
     );
     // A harness machine runs no local gateway, no collector, and no model.
     expect(run.calls.some((call) => call.startsWith("service install"))).toBe(false);
     expect(run.calls.some((call) => call.startsWith("model install"))).toBe(false);
     expect(run.output).toContain("OpenClaw is connected to Omnesis.");
-    expect(run.output).toContain("Restart the OpenClaw gateway");
+    expect(run.output).toContain("whether it reports the Omnesis skill ready");
+    expect(run.output).not.toContain("Restart the OpenClaw gateway");
     // The wait is announced, so ten silent minutes read as expected rather
     // than as a hang worth Ctrl-C'ing.
     expect(run.output).toContain("up to ten minutes");
   });
 
-  test("connects Hermes and names the restart its plugin loader needs", () => {
+  test("connects Hermes and leaves its restart to connect", () => {
     plantHermes("hermes");
     const run = runInstaller("hermes", ["--hermes", ...CODED]);
 
     expect(run.status).toBe(0);
     expect(callStartingWith(run.calls, "connect hermes --gateway-url")).toBe(
-      `connect hermes --gateway-url ${GATEWAY_URL} --code ${PAIRING_CODE}`,
+      `connect hermes --gateway-url ${GATEWAY_URL} --code ${PAIRING_CODE} --yes`,
     );
     expect(run.output).toContain("Hermes is connected to Omnesis.");
-    expect(run.output).toContain("Restart the Hermes gateway");
-    expect(run.output).toContain("new session");
+    expect(run.output).toContain("Hermes restarted with its plugin");
+    expect(run.output).not.toContain("Restart the Hermes gateway");
   });
 
   test("an OpenClaw home under OPENCLAW_STATE_DIR is found where the CLI looks", () => {
@@ -397,7 +412,7 @@ describe("install.sh --openclaw / --hermes: a second run", () => {
     expect(run.status).toBe(0);
     expect(run.output).toContain("already connected — refreshing");
     expect(callStartingWith(run.calls, "connect openclaw --refresh")).toBe(
-      "connect openclaw --refresh",
+      "connect openclaw --refresh --yes",
     );
     expect(run.output).toContain("OpenClaw is refreshed.");
     // A refresh reuses the recorded gateway, so nothing asks for a code.
@@ -414,7 +429,7 @@ describe("install.sh --openclaw / --hermes: a second run", () => {
     ]);
     expect(run.status).toBe(0);
     expect(callStartingWith(run.calls, "connect hermes --refresh")).toBe(
-      `connect hermes --refresh --trust-fingerprint sha256:${GATEWAY_FP}`,
+      `connect hermes --refresh --trust-fingerprint sha256:${GATEWAY_FP} --yes`,
     );
   });
 
@@ -425,7 +440,7 @@ describe("install.sh --openclaw / --hermes: a second run", () => {
     const run = runInstaller("resume-code", ["--openclaw", "--no-keyring", "--code", PAIRING_CODE]);
     expect(run.status).toBe(0);
     expect(run.output).toContain("is not used: the pending connect carries its own");
-    expect(run.calls).toContain("connect openclaw");
+    expect(run.calls).toContain("connect openclaw --yes");
   });
 
   test("a resume says the gateway it was handed is not the one it will dial", () => {
@@ -440,7 +455,7 @@ describe("install.sh --openclaw / --hermes: a second run", () => {
     ]);
     expect(run.status).toBe(0);
     expect(run.output).toContain("is not used: the pending connect names its own");
-    expect(run.calls).toContain("connect openclaw");
+    expect(run.calls).toContain("connect openclaw --yes");
   });
 
   test.skipIf(!HAS_PTY)("a code on its own means pair, not refresh", () => {
@@ -473,7 +488,7 @@ describe("install.sh --openclaw / --hermes: a second run", () => {
     const run = runInstaller("repair", ["--openclaw", ...CODED]);
     expect(run.status).toBe(0);
     expect(callStartingWith(run.calls, "connect openclaw --gateway-url")).toBe(
-      `connect openclaw --gateway-url ${GATEWAY_URL} --code ${PAIRING_CODE}`,
+      `connect openclaw --gateway-url ${GATEWAY_URL} --code ${PAIRING_CODE} --yes`,
     );
   });
 
@@ -487,7 +502,7 @@ describe("install.sh --openclaw / --hermes: a second run", () => {
     expect(run.status).toBe(0);
     expect(run.output).toContain("has an unfinished connect — resuming it");
     expect(callStartingWith(run.calls, "connect openclaw")).toBe("connect openclaw --print-home");
-    expect(run.calls).toContain("connect openclaw");
+    expect(run.calls).toContain("connect openclaw --yes");
     expect(run.output).not.toContain("Pairing code");
   });
 
@@ -500,7 +515,7 @@ describe("install.sh --openclaw / --hermes: a second run", () => {
     });
     const run = runInstaller("resume-recovery", ["--openclaw", "--no-keyring"]);
     expect(run.status).toBe(0);
-    expect(run.calls).toContain("connect openclaw");
+    expect(run.calls).toContain("connect openclaw --yes");
     expect(run.calls.some((call) => call.startsWith("connect openclaw --refresh"))).toBe(false);
   });
 
@@ -523,6 +538,215 @@ describe("install.sh --openclaw / --hermes: a second run", () => {
     expect(run.output).toContain("Connecting OpenClaw failed");
     expect(run.output).toContain("omnesis connect openclaw");
     expect(run.output).not.toContain("is connected to Omnesis");
+  });
+});
+
+describe("install.sh --openclaw / --hermes: a machine that already runs Omnesis", () => {
+  /** Register the user services `omnesis service install` would have written. */
+  function registerServices(home, names) {
+    for (const name of names) {
+      for (const path of [
+        join(home, ".config", "systemd", "user", `omnesis-${name}.service`),
+        join(home, "Library", "LaunchAgents", `dev.omnesis.${name}.plist`),
+      ]) {
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, "");
+      }
+    }
+  }
+
+  /**
+   * A collector machine this installer set up: a recorded checkout, the
+   * launcher at ~/.local/bin/omnesis, and a registered collector service.
+   */
+  function collectorMachine(name) {
+    const first = runInstaller(name, ["--client-only", "--no-keyring"]);
+    expect(first.status, first.output).toBe(0);
+    registerServices(first.home, ["collector"]);
+    return first;
+  }
+
+  /** Every file under `root` with its bytes, so a run that changes one is caught. */
+  function snapshotTree(root) {
+    if (!existsSync(root)) return {};
+    const files = {};
+    const visit = (dir) => {
+      for (const entry of readdirSync(dir)) {
+        const path = join(dir, entry);
+        if (statSync(path).isDirectory()) visit(path);
+        else files[path] = readFileSync(path, "utf8");
+      }
+    };
+    visit(root);
+    return files;
+  }
+
+  const checkoutHead = (name) =>
+    execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: fixturePath(`checkout-${name}`),
+      encoding: "utf8",
+    }).trim();
+
+  /** Calls that would rebuild, reinstall or re-seal what the machine runs. */
+  const reinstalls = (run) =>
+    run.calls.filter((call) => /^(npm ci|build |keyring |service install)/u.test(call));
+
+  test("connects with the CLI already there and leaves the install untouched", () => {
+    const first = collectorMachine("existing");
+    plantHarnessHome("existing", ".openclaw");
+    const before = {
+      head: checkoutHead("existing"),
+      wrapper: readFileSync(first.wrapper, "utf8"),
+      config: snapshotTree(first.configDir),
+      units: snapshotTree(join(first.home, ".config", "systemd")),
+    };
+
+    const run = runInstaller("existing", ["--openclaw", ...CODED]);
+
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain("This machine already runs Omnesis (the checkout at");
+    expect(run.output).toContain("and its collector service)");
+    expect(reinstalls(run)).toEqual([]);
+    expect(callStartingWith(run.calls, "connect openclaw --gateway-url")).toBe(
+      `connect openclaw --gateway-url ${GATEWAY_URL} --code ${PAIRING_CODE} --yes`,
+    );
+    expect(checkoutHead("existing")).toBe(before.head);
+    expect(readFileSync(first.wrapper, "utf8")).toBe(before.wrapper);
+    expect(snapshotTree(first.configDir)).toEqual(before.config);
+    expect(snapshotTree(join(first.home, ".config", "systemd"))).toEqual(before.units);
+    expect(run.output).toContain("OpenClaw is connected to Omnesis.");
+  });
+
+  test("an install this installer did not record is found by its registered service", () => {
+    // A service with an `omnesis` of its own and no recorded checkout — a
+    // package install, or one set up by hand. Nothing is cloned beside it.
+    const home = prepareHome("services-only");
+    registerServices(home, ["gateway", "collector"]);
+    mkdirSync(join(home, ".local", "bin"), { recursive: true });
+    writeExecutable(
+      join(home, ".local", "bin", "omnesis"),
+      `#!/bin/sh\nexec "${fixturePath("cli-shim.sh")}" entry "$@"\n`,
+    );
+    plantHermes("services-only");
+
+    const run = runInstaller("services-only", ["--hermes", ...CODED]);
+
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain("already runs Omnesis (its gateway and collector services)");
+    expect(reinstalls(run)).toEqual([]);
+    expect(existsSync(fixturePath("checkout-services-only"))).toBe(false);
+    expect(run.calls).toContain(
+      `connect hermes --gateway-url ${GATEWAY_URL} --code ${PAIRING_CODE} --yes`,
+    );
+  });
+
+  test("a registered service with no omnesis to connect with is refused, not reinstalled over", () => {
+    const home = prepareHome("no-cli");
+    registerServices(home, ["collector"]);
+    plantHarnessHome("no-cli", ".openclaw");
+
+    const run = runInstaller("no-cli", ["--openclaw", ...CODED]);
+
+    expect(run.status).toBe(1);
+    expect(run.output).toContain("no omnesis command was found");
+    expect(run.output).toContain("re-run this installer without --openclaw");
+    expect(existsSync(fixturePath("checkout-no-cli"))).toBe(false);
+    expect(run.calls).toEqual([]);
+  });
+
+  test("a dry run names the install it will use and changes nothing", () => {
+    collectorMachine("existing-dry");
+    plantHarnessHome("existing-dry", ".openclaw");
+    const run = runInstaller("existing-dry", ["--openclaw", "--dry-run", ...CODED]);
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain("using this machine's existing Omnesis");
+    expect(run.output).toContain("Delivery:  none; the CLI already installed here");
+    expect(run.calls).toEqual([]);
+  });
+
+  test("a CLI that predates this connect is not updated unasked; the run says to update", () => {
+    const first = collectorMachine("existing-old");
+    plantHarnessHome("existing-old", ".openclaw");
+    const head = checkoutHead("existing-old");
+
+    const run = runInstaller("existing-old", ["--openclaw", ...CODED], {
+      OMNESIS_TEST_CONNECT_PREDATES_RESTART: "1",
+    });
+
+    expect(run.status).toBe(1);
+    expect(run.output).toContain("predates the connect this role runs");
+    expect(run.output).toContain("omnesis update");
+    expect(run.calls.filter((call) => /^(update|connect openclaw --)/u.test(call))).toEqual([]);
+    expect(reinstalls(run)).toEqual([]);
+    expect(checkoutHead("existing-old")).toBe(head);
+    expect(existsSync(first.wrapper)).toBe(true);
+  });
+
+  test.skipIf(!HAS_PTY)(
+    "on a terminal, an old CLI is brought up to date by the machine's own updater first",
+    () => {
+      collectorMachine("existing-update");
+      plantHarnessHome("existing-update", ".openclaw");
+
+      const run = runInstallerOnTty("existing-update", ["--openclaw", ...CODED], ["y"], {
+        OMNESIS_TEST_CONNECT_PREDATES_RESTART: "1",
+      });
+
+      expect(run.status, run.output).toBe(0);
+      expect(run.calls.filter((call) => call.startsWith("update "))).toEqual(["update --yes"]);
+      expect(reinstalls(run)).toEqual([]);
+      const updateAt = run.calls.indexOf("update --yes");
+      const connectAt = run.calls.findIndex((call) =>
+        call.startsWith("connect openclaw --gateway-url"),
+      );
+      expect(updateAt).toBeGreaterThanOrEqual(0);
+      expect(connectAt).toBeGreaterThan(updateAt);
+    },
+  );
+
+  test.skipIf(!HAS_PTY)(
+    "that update ignores --version, which the run reported as choosing nothing",
+    () => {
+      collectorMachine("existing-pinned");
+      plantHarnessHome("existing-pinned", ".openclaw");
+
+      const run = runInstallerOnTty(
+        "existing-pinned",
+        ["--openclaw", "--version", "9.9.9", ...CODED],
+        ["y"],
+        { OMNESIS_TEST_CONNECT_PREDATES_RESTART: "1" },
+      );
+
+      expect(run.status, run.output).toBe(0);
+      expect(run.output).toContain("this run installs nothing");
+      expect(run.calls.filter((call) => call.startsWith("update "))).toEqual(["update --yes"]);
+    },
+  );
+
+  test.skipIf(!HAS_PTY)("declining that update changes nothing and connects nothing", () => {
+    collectorMachine("existing-decline");
+    plantHarnessHome("existing-decline", ".openclaw");
+
+    const run = runInstallerOnTty("existing-decline", ["--openclaw", ...CODED], ["n"], {
+      OMNESIS_TEST_CONNECT_PREDATES_RESTART: "1",
+    });
+
+    expect(run.status).not.toBe(0);
+    expect(run.output).toContain("Nothing was changed.");
+    expect(run.calls.filter((call) => /^(update|connect openclaw --)/u.test(call))).toEqual([]);
+  });
+
+  test("a fresh machine still gets the CLI installed before the connect", () => {
+    plantHarnessHome("fresh", ".openclaw");
+    const run = runInstaller("fresh", ["--openclaw", ...CODED]);
+    expect(run.status, run.output).toBe(0);
+    expect(run.calls).toContain("npm ci");
+    expect(existsSync(run.wrapper)).toBe(true);
+    expect(run.output).not.toContain("already runs Omnesis");
+    // The connect comes after the install that provides it.
+    expect(run.calls.indexOf("npm ci")).toBeLessThan(
+      run.calls.findIndex((call) => call.startsWith("connect openclaw --gateway-url")),
+    );
   });
 });
 
@@ -589,20 +813,26 @@ describe("install.sh --openclaw / --hermes: refused combinations", () => {
     );
   });
 
-  test("a harness host with no keyring is offered only the flag it can accept", () => {
-    // It keeps no Omnesis secret to seal, so the remedy must not name the
-    // passphrase flag the role above refuses.
-    plantHarnessHome("keyring-remedy", ".openclaw");
-    const run = runInstaller(
-      "keyring-remedy",
-      ["--openclaw", "--code", PAIRING_CODE, "--gateway-url", GATEWAY_URL],
-      { OMNESIS_TEST_KEYRING: "locked" },
-    );
-    expect(run.status).toBe(1);
-    expect(run.output).toContain("--no-keyring to install without encryption at rest");
-    expect(run.output).not.toContain("--keyring-passphrase-file <abs-path>");
-    expect(run.calls.some((call) => call.startsWith("connect openclaw --gateway-url"))).toBe(false);
-  });
+  test.each(["locked", "ready"])(
+    "a harness host never touches the keyring, whether one is usable (%s) or not",
+    (keyring) => {
+      // It keeps no Omnesis secret to seal. A keyring armed here would seal
+      // whatever else of Omnesis this account holds, and one that is not
+      // usable must not stop a connect that needs none.
+      plantHarnessHome(`keyring-${keyring}`, ".openclaw");
+      const run = runInstaller(
+        `keyring-${keyring}`,
+        ["--openclaw", "--code", PAIRING_CODE, "--gateway-url", GATEWAY_URL],
+        { OMNESIS_TEST_KEYRING: keyring },
+      );
+      expect(run.status, run.output).toBe(0);
+      expect(run.calls.filter((call) => call.startsWith("keyring"))).toEqual([]);
+      expect(run.output).not.toContain("no usable OS keyring");
+      expect(run.calls.some((call) => call.startsWith("connect openclaw --gateway-url"))).toBe(
+        true,
+      );
+    },
+  );
 });
 
 describe("install.sh --openclaw / --hermes: the script itself", () => {

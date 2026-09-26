@@ -1078,7 +1078,7 @@ a:hover { text-decoration: underline; }
 .consent-main .access-page-back { display: none; }
 
 /* One grouped list: each access level a full-width card, its connections
-   indented beneath its header. */
+   aligned beneath its header. */
 .access-list { display: grid; gap: 14px; }
 .access-level-group {
   border: 1px solid var(--border);
@@ -1086,20 +1086,13 @@ a:hover { text-decoration: underline; }
   background: var(--bg-secondary);
   overflow: hidden;
 }
-/* The level's facts sit in fixed-width slots, so the same fact lands in the
-   same place on every level down the page. The badge slot fits all three
-   capability badges, which always render. */
+/* The level title shares the header with its action menu. */
 .access-level-head {
   display: grid;
-  grid-template-columns: minmax(200px, 1fr) max-content 150px 1px 170px auto;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 10px 10px 8px;
+  grid-template-columns: minmax(0, 1fr);
+  padding: 10px 14px;
 }
 .access-level-title { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.access-level-title .access-count-cell { flex: 0 0 auto; }
-/* Separates what a level may reach from how its answers are released. */
-.access-head-divider { align-self: stretch; margin: 2px 0; background: var(--border); }
 .access-level-name {
   overflow: hidden;
   margin: 0;
@@ -1109,33 +1102,25 @@ a:hover { text-decoration: underline; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.access-privacy-cell { overflow: hidden; color: var(--text-secondary); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
-.access-privacy-cell a {
-  color: inherit;
-  text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
-  text-underline-offset: 2px;
+.access-level-terms { padding: 6px 14px 16px; }
+.access-level-terms .access-detail-grid dd { overflow-wrap: anywhere; }
+.access-level-terms .access-detail-grid { display: flex; flex-wrap: wrap; gap: 12px; }
+.access-level-terms .access-detail-grid > div {
+  flex: 0 1 220px;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
 }
-.access-privacy-cell a:hover { color: var(--text-primary); text-decoration-color: currentColor; }
-.access-level-terms { padding: 0 14px 10px 35px; }
-/* The connections under a level: an inner surface set in from the card's
-   edge, with a faint guide line down its left side tying them to the header
-   above. */
-.access-level-body { position: relative; margin: 0 10px 10px 30px; padding-left: 12px; }
-.access-level-body::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 10px;
-  left: 0;
-  width: 1px;
-  background: var(--border);
-}
+.access-level-terms .access-detail-grid > .access-term-answer { border-color: color-mix(in srgb, var(--success) 25%, var(--border-light)); }
+.access-level-terms .access-detail-grid > .access-term-direct { border-color: color-mix(in srgb, var(--danger) 25%, var(--border-light)); }
+.access-level-terms .access-detail-grid > .access-term-notes { border-color: color-mix(in srgb, var(--accent) 25%, var(--border-light)); }
+.access-level-terms .access-detail-grid > .access-term-unreviewed { border-color: color-mix(in srgb, var(--warning) 25%, var(--border-light)); }
+.access-level-body { margin: 0 14px 10px; }
 .access-level-empty {
   margin: 0;
-  padding: 9px 12px;
-  border: 1px dashed var(--border-light);
-  border-radius: 8px;
+  padding: 9px 0;
   color: var(--text-muted);
   font-size: 12px;
 }
@@ -1154,50 +1139,62 @@ a:hover { text-decoration: underline; }
 .access-device-icon { flex: none; color: var(--text-muted); }
 .access-connection-list {
   display: grid;
-  margin: 0;
+  gap: 8px;
+  margin: 0 0 0 12px;
   padding: 0;
   list-style: none;
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--bg-primary) 60%, var(--bg-secondary));
-  overflow: hidden;
 }
-.access-connection-item + .access-connection-item { border-top: 1px solid var(--border-light); }
-/* Fixed app and last-used columns, so they line up across every card. The
-   whole row is the disclosure; the chevron is where a keyboard finds it. */
+.access-connection-item {
+  padding: 8px 12px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--bg-primary) 60%, var(--bg-secondary));
+}
+/* Each action menu sits beside the title it belongs to. */
 .access-connection-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 200px 110px 32px;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: 10px;
   min-height: 36px;
-  padding: 3px 6px 3px 8px;
-  cursor: pointer;
+  padding: 3px 0;
 }
-.access-connection-row:hover { background: var(--overlay-hover); }
 .access-connection-row.is-inactive .access-connection-label,
 .access-connection-row.is-inactive .access-app-cell,
 .access-connection-row.is-inactive .access-used-cell { color: var(--text-muted); }
 .access-triad.is-inactive { filter: saturate(0.25); opacity: 0.75; }
-.access-row-actions { display: flex; justify-content: flex-end; }
-.access-app-cell { overflow: hidden; color: var(--text-secondary); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
-.access-cell-lead { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; min-width: 0; }
-/* The disclosure triangle: a hit target, not a glyph floating in the cell. */
-.access-expand {
-  appearance: none;
-  width: 20px;
-  height: 20px;
+.access-row-actions { display: inline-flex; flex: none; }
+.access-level-group .row-action-menu { flex: none; }
+.access-level-group .row-action-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0;
+  width: 22px;
+  height: 22px;
   padding: 0;
-  border: none;
-  border-radius: 4px;
-  background: none;
+  border-color: transparent;
+  background: transparent;
   color: var(--text-muted);
-  font-size: 10px;
-  line-height: 1;
-  cursor: pointer;
 }
-.access-expand:hover { background: var(--bg-tertiary); color: var(--text-primary); }
-.access-expand:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.access-level-group .row-action-trigger::after {
+  content: "";
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: -4px 0 currentColor, 4px 0 currentColor;
+}
+.access-level-group .row-action-trigger:hover,
+.access-level-group .row-action-trigger:focus-visible {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.access-agent-logo { display: inline-flex; flex: none; }
+.access-app-cell { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; vertical-align: middle; color: var(--text-secondary); font-size: 11.5px; }
+.access-app-label { min-width: 0; overflow-wrap: anywhere; }
+.access-connection-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; color: var(--text-secondary); font-size: 11.5px; }
+.access-connection-heading { display: grid; gap: 3px; min-width: 0; }
+.access-cell-lead { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; min-width: 0; }
 /* An agent's or a connection's name is one the client or the owner chose, so
    it reads as a name rather than as the opaque identifier the monospace face
    implies; the identifier itself lives in the detail. */
@@ -1243,14 +1240,8 @@ a:hover { text-decoration: underline; }
   cursor: pointer;
 }
 .access-copy:hover { color: var(--text-primary); }
-.access-used-cell,
-.access-count-cell {
-  color: var(--text-muted);
-  font-size: 11.5px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.access-reach-cell { color: var(--text-secondary); font-size: 11.5px; white-space: nowrap; }
+.access-used-cell { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.access-reach-cell { color: var(--text-secondary); font-size: 11.5px; }
 /* Unreviewed release is a state the owner chose, not a fault, so it is the
    warning colour. Danger stays with Direct, the capability that actually
    returns raw records — two reds on one row means neither is read as one. */
@@ -1265,25 +1256,21 @@ a:hover { text-decoration: underline; }
 .access-triad .access-badge { flex: 0 0 auto; }
 /* A capability this row does not hold keeps its slot and goes quiet. */
 .access-badge.is-off {
-  border-color: transparent;
+  border-color: var(--border);
   color: var(--text-muted);
   opacity: 0.35;
 }
 
-/* An expanded connection: a compact inset panel directly under its row, set
-   under the name rather than under the disclosure. */
+/* Connection facts share the card surface and align with the row above. */
 .access-connection-detail {
   display: grid;
   gap: 8px;
-  margin: 0 8px 8px 35px;
-  padding: 9px 12px;
-  border: 1px solid var(--border-light);
-  border-radius: 7px;
-  background: var(--bg-secondary);
+  margin: 0;
+  padding: 6px 0 0;
 }
 .access-connection-facts {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1.6fr) repeat(2, minmax(0, 1fr));
   gap: 8px 18px;
   margin: 0;
 }
@@ -1309,7 +1296,7 @@ a:hover { text-decoration: underline; }
   gap: 10px 24px;
   margin: 0;
 }
-.access-detail-grid dt { color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+.access-detail-grid dt { margin-bottom: 4px; }
 .access-detail-grid dd { margin: 2px 0 0; color: var(--text-secondary); font-size: 11.5px; }
 .access-detail-grid a { color: inherit; text-decoration: underline; }
 .access-revoked,
@@ -1794,18 +1781,10 @@ a:hover { text-decoration: underline; }
   .access-triad { gap: 4px; }
   .access-detail-grid { grid-template-columns: minmax(0, 1fr); }
   .access-pending-item { grid-template-columns: minmax(0, 1fr); }
-  /* A level's facts wrap under its name instead of holding fixed columns. */
-  .access-level-head { display: flex; flex-wrap: wrap; gap: 6px 12px; }
-  .access-level-title { flex: 1 1 100%; }
-  .access-head-divider { display: none; }
-  .access-level-terms { padding-left: 22px; }
-  .access-level-body { margin-left: 16px; }
-  /* A connection's app and last use take a second line under its name. */
-  .access-connection-row { grid-template-columns: minmax(0, 1fr) auto 32px; row-gap: 2px; }
-  .access-app-cell { grid-row: 2; grid-column: 1; padding-left: 27px; }
-  .access-used-cell { grid-row: 2; grid-column: 2; }
-  .access-row-actions { grid-row: 1; grid-column: 3; }
-  .access-connection-detail { margin-left: 12px; }
+  /* Level names wrap on narrow screens. */
+  .access-level-title { flex-wrap: wrap; }
+
+
   .access-connection-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .access-choice-option { grid-template-columns: auto minmax(0, 1fr); }
   .access-choice-option .access-triad { grid-column: 2; }
@@ -8271,6 +8250,19 @@ p.privacy-diff-note {
   cursor: pointer;
 }
 .ext-promo-open:hover { background: rgba(88, 166, 255, 0.24); }
+a.ext-promo-open { text-decoration: none; }
+
+/* The agent promo's mark: the connectable agents' logos, small and packed
+ * into a two-row cluster the height of the other cards' single mark. */
+.agent-promo-marks {
+  display: grid;
+  grid-template-columns: repeat(3, 16px);
+  gap: 3px;
+  flex: none;
+  color: var(--text-primary);
+}
+.agent-promo-marks img,
+.agent-promo-marks .provider-icon { display: block; width: 16px; height: 16px; object-fit: contain; }
 .ext-promo-pair { color: var(--text-link); font-size: 13px; }
 
 /* The promo's modal body: the full copy, optional numbered steps, then the
@@ -8307,6 +8299,12 @@ p.privacy-diff-note {
   .sources-promo-row > .ext-promo {
     flex: 0 1 calc((100% - 24px) / 3);
     max-width: calc((100% - 24px) / 3);
+  }
+}
+@media (min-width: 900px) {
+  .sources-promo-row:has(> .ext-promo:nth-child(4)) > .ext-promo {
+    flex-basis: calc((100% - 36px) / 4);
+    max-width: calc((100% - 36px) / 4);
   }
 }
 

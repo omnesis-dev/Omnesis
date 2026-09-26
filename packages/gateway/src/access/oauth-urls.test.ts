@@ -8,6 +8,7 @@ import {
   resolveMcpRequestResource,
   resolveOAuthMetadataPaths,
   resolveOAuthUrls,
+  resolveOAuthOverviewUrls,
 } from "./oauth-urls.js";
 
 describe("resolveOAuthUrls", () => {
@@ -112,5 +113,22 @@ describe("resolveOAuthUrls", () => {
         resources,
       ),
     ).toBe(resources[0]);
+  });
+});
+
+describe("local OAuth setup overview", () => {
+  test("advertises the actual loopback listener without enabling remote OAuth", () => {
+    const remote = "https://gateway.example.org/portal/api/access";
+    const local = "https://localhost:17600";
+    expect(resolveOAuthOverviewUrls(remote, undefined, undefined, local)?.resource).toBe(
+      `${local}/mcp`,
+    );
+    expect(resolveOAuthUrls(remote)).toBeNull();
+    expect(
+      resolveOAuthOverviewUrls(remote, undefined, undefined, "https://external.example.org"),
+    ).toBeNull();
+    expect(
+      resolveOAuthOverviewUrls(remote, "http://external.example.org", undefined, local),
+    ).toBeNull();
   });
 });

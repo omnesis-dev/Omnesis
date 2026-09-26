@@ -6,13 +6,12 @@
 //
 // An access level holds permissions; a connection — one approved agent
 // install — always uses exactly one level, so the list reads top-down the way
-// the relationship does. A level's header says what its permissions allow
-// (capabilities, source scope, Answer privacy) and how many connections share
-// them; its menu edits, renames or deletes it. Each connection row, indented
+// the relationship does. A level's header names it;
+// the terms below describe capabilities, source scope and Answer privacy.
+// Its menu edits, renames or deletes it. Each connection row
 // under that header, says which app signed in and when it was last used; its
-// menu renames it, moves it to another level, or removes it. A connection
-// expands to its ID and sign-in facts, a level to the terms its permissions
-// run under.
+// menu renames it, moves it to another level, or removes it. Connection
+// IDs, sign-in facts and permission terms are always visible.
 //
 // Every count here is of live connections — neither removed nor expired — the
 // rule the gateway counts a level's connections by and refuses a deletion by.
@@ -21,26 +20,22 @@ import { html } from "htm/preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { CopyIconButton } from "../../components/copy-button.js";
-import { CapabilityTriad } from "../../components/grant-builder.js";
 import { RowActionMenu } from "../../components/row-action-menu.js";
 import { timeAgo } from "../../lib/format.js";
 import { ExternalAgentGlyph } from "../audit/shared.js";
 import { KindIcon } from "../../lib/device-kind-icon.js";
 import { navigate } from "../../lib/router.js";
-import { rowActivateHandler } from "../../lib/table-row-click.js";
 import { LEVEL_NAME_TAKEN_MESSAGE, RenameField, levelNameTaken } from "./name-fields.js";
 import {
   accessRules,
-  connectionCountLabel,
-  deviceCountLabel,
   levelDevices,
   effectiveAccessState,
   isLiveConnection,
   liveConnectionCount,
-  overviewPolicies,
   timestamp,
 } from "./shared.js";
-import { AccessTerms, AnswerPrivacy, reachSummary } from "./terms.js";
+import { AgentIcon, agentIconForApp } from "./agent-brand.js";
+import { AccessTerms } from "./terms.js";
 
 /** An integration on the Devices page, opened and scrolled to, drawn with its kind's icon. */
 export function DeviceLink({ device }) {
@@ -55,7 +50,7 @@ export function DeviceLink({ device }) {
   ><${KindIcon} kind=${device.kind} size=${13} class="access-device-icon" />${device.name}</a>`;
 }
 
-/** An MCP connection on the Access page, opened and scrolled to. */
+/** An MCP connection on the Access page, focused and scrolled to. */
 export function ConnectionLink({ connection }) {
   const href = `/portal/settings/access?connection=${encodeURIComponent(connection.id)}`;
   return html`<a class="access-device-link" href=${href} onClick=${(event) => {
@@ -123,22 +118,12 @@ export function signInLabel(credential) {
 }
 
 /**
- * How many live connections a level's header reports, nothing when it lists
- * none, and how many integrations use it when any do.
- */
-function countText(count, listed, devices = 0) {
-  const connections = listed === 0 ? "" : count > 0 ? connectionCountLabel(count) : "No active connections";
-  return [connections, devices > 0 ? deviceCountLabel(devices) : ""].filter(Boolean).join(" · ");
-}
-
-/**
- * What an expanded connection shows, in labelled fields: its ID to copy, when
- * its current sign-in was made, when it was last used, and the app that signed
- * in. A connection holding several sign-ins lists each of them as well.
+ * What a connection shows, in labelled fields: its ID to copy, when
+ * its current sign-in was made and when it was last used. A connection
+ * holding several sign-ins lists each of them as well.
  */
 function ConnectionDetail({ entry, id }) {
   const signIns = newestFirst(entry.signIns);
-  const app = connectionApp(entry);
   return html`<div class="access-connection-detail" id=${id}>
     <dl class="access-connection-facts">
       <div class="access-fact-id">
@@ -155,7 +140,6 @@ function ConnectionDetail({ entry, id }) {
           : html`<span class="access-muted">${entry.hadSignIn ? "No active sign-in" : "No sign-in yet"}</span>`}</dd>
       </div>
       <div><dt>Last used</dt><dd>${timestamp(entry.lastUsedAt)}</dd></div>
-      <div><dt>App</dt><dd>${app ?? html`<span class="access-muted">—</span>`}</dd></div>
     </dl>
     ${signIns.length > 1
       ? html`<ul class="access-sign-ins" aria-label=${`Sign-ins of ${entry.name}`}>
@@ -172,28 +156,26 @@ function ConnectionDetail({ entry, id }) {
  * One connection.
  *
  * Renaming happens in the row: the name becomes a field and, whichever way the
- * field closes, focus returns to the row's disclosure so the keyboard is not
+ * field closes, focus returns to the row's action menu so the keyboard is not
  * dropped on the page. Expired access is not moved back to life from here; it
- * can still be renamed and removed. The row carries no column headings, so the
- * app and last-used cells say what they are to a screen reader.
+ * can still be renamed and removed. The app and last use are labelled
+ * beneath the connection name.
  */
 function ConnectionRow({ entry, actions }) {
-  const [open, setOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
-  const expandRef = useRef(null);
+  const actionsRef = useRef(null);
   useEffect(() => {
     if (new URLSearchParams(window.location?.search ?? "").get("connection") !== entry.id) return;
-    setOpen(true);
-    expandRef.current?.closest(".access-connection-item")?.scrollIntoView?.({ block: "center" });
-    expandRef.current?.focus();
+    actionsRef.current?.closest(".access-connection-item")?.scrollIntoView?.({ block: "center" });
+    actionsRef.current?.querySelector(".row-action-trigger")?.focus();
   }, [entry.id]);
   const closeRename = () => {
     setRenaming(false);
-    expandRef.current?.focus();
+    actionsRef.current?.querySelector(".row-action-trigger")?.focus();
   };
   const detailId = `access-connection-detail-${entry.grant.id}`;
-  const toggleFromCell = rowActivateHandler(() => setOpen((value) => !value));
   const app = connectionApp(entry);
+  const icon = agentIconForApp(app);
   const items = [
     { label: "Rename", onSelect: () => setRenaming(true) },
     ...(isLiveConnection(entry)
@@ -202,51 +184,34 @@ function ConnectionRow({ entry, actions }) {
     { label: "Remove", onSelect: () => actions.onRemove(entry), danger: true },
   ];
 
-  return html`<li class=${`access-connection-item${open ? " is-open" : ""}`}>
+  return html`<li class="access-connection-item">
     <div class=${`access-connection-row${entry.state === "active" ? "" : " is-inactive"}`}>
-      <div class="access-cell-lead" onClick=${toggleFromCell}>
-        <button
-          ref=${expandRef}
-          type="button"
-          class="access-expand"
-          aria-expanded=${open}
-          aria-controls=${open ? detailId : undefined}
-          aria-label=${`Details of ${entry.name}`}
-          onClick=${(event) => {
-            // The cell's own handler already ignores clicks that start on a
-            // control; stopping here keeps that true even if the chevron is
-            // ever moved into a cell that toggles on bare space.
-            event.stopPropagation();
-            setOpen((value) => !value);
-          }}
-        >${open ? "▾" : "▸"}</button>
-        ${renaming
-          ? html`<${RenameField}
-              id=${entry.grant.id}
-              name=${entry.name}
-              onSave=${async (name) => {
-                const saved = await actions.onRename(entry, name);
-                if (saved) closeRename();
-                return saved;
-              }}
-              onCancel=${closeRename}
-            />`
-          : html`<span class="access-connection-label">${entry.name}</span>`}
-        <${StateTag} state=${entry.state} />
-      </div>
-      <div class="access-app-cell" onClick=${toggleFromCell}>
-        <span class="sr-only">App: </span>${app ?? html`<span class="access-muted">—</span>`}
-      </div>
-      <div class="access-used-cell" onClick=${toggleFromCell}>
-        ${entry.lastUsedAt
-          ? html`<span class="sr-only">Last used </span>${timeAgo(entry.lastUsedAt)}`
-          : "Never used"}
-      </div>
-      <div class="access-row-actions">
-        <${RowActionMenu} items=${items} label=${`Actions for ${entry.name}`} />
+      <div class="access-connection-heading">
+        <div class="access-cell-lead">
+          ${renaming
+            ? html`<${RenameField}
+                id=${entry.grant.id}
+                name=${entry.name}
+                onSave=${async (name) => {
+                  const saved = await actions.onRename(entry, name);
+                  if (saved) closeRename();
+                  return saved;
+                }}
+                onCancel=${closeRename}
+              />`
+            : html`<span class="access-connection-label">${entry.name}</span>`}
+          <div class="access-row-actions" ref=${actionsRef}>
+            <${RowActionMenu} items=${items} label=${`Actions for ${entry.name}`} />
+          </div>
+          <${StateTag} state=${entry.state} />
+        </div>
+        <div class="access-connection-meta">
+          ${app ? html`<span class="access-app-cell">${icon ? html`<span class="access-agent-logo" aria-hidden="true"><${AgentIcon} icon=${icon} size=${14} /></span>` : null}<span class="access-app-label">Signed in from ${app}</span></span><span aria-hidden="true"> · </span>` : null}
+          <span class="access-used-cell">${entry.lastUsedAt ? `Last used ${timeAgo(entry.lastUsedAt)}` : "Never used"}</span>
+        </div>
       </div>
     </div>
-    ${open ? html`<${ConnectionDetail} entry=${entry} id=${detailId} />` : null}
+    <${ConnectionDetail} entry=${entry} id=${detailId} />
   </li>`;
 }
 
@@ -267,9 +232,7 @@ function ConnectionList({ connections, label, actions }) {
  */
 function LevelGroup({ level, levels, connections, overview, levelActions, connectionActions }) {
   const [renaming, setRenaming] = useState(false);
-  const [open, setOpen] = useState(false);
   const rules = accessRules(level, overview);
-  const reach = reachSummary(rules, overview);
   const titleId = `access-level-title-${level.id}`;
   const termsId = `access-level-terms-${level.id}`;
   const count = liveConnectionCount(level, connections);
@@ -296,14 +259,6 @@ function LevelGroup({ level, levels, connections, overview, levelActions, connec
   return html`<section class="access-level-group" aria-labelledby=${titleId}>
     <div class="access-level-head">
       <div class="access-level-title">
-        <button
-          type="button"
-          class="access-expand"
-          aria-expanded=${open}
-          aria-controls=${open ? termsId : undefined}
-          aria-label=${`Permissions of ${level.name}`}
-          onClick=${() => setOpen((value) => !value)}
-        >${open ? "▾" : "▸"}</button>
         ${renaming
           ? html`<${RenameField}
               id=${level.id}
@@ -318,21 +273,10 @@ function LevelGroup({ level, levels, connections, overview, levelActions, connec
             />`
           : null}
         <h3 id=${titleId} class=${`access-level-name${renaming ? " sr-only" : ""}`}>${level.name}</h3>
-        <span class="access-count-cell">${countText(count, connections.length, devices.length)}</span>
+        <${RowActionMenu} items=${items} label=${`Actions for ${level.name}`} />
       </div>
-      <${CapabilityTriad} rules=${rules} />
-      <span class="access-reach-cell"><span class="sr-only">Sources: </span>${reach ?? "—"}</span>
-      <span class="access-head-divider" aria-hidden="true"></span>
-      <span class=${`access-privacy-cell${rules.answer?.release.mode === "unreviewed" ? " access-unreviewed" : ""}`}>
-        <span class="sr-only">Answer privacy: </span>${rules.answer
-          ? html`<${AnswerPrivacy} rule=${rules.answer} policies=${overviewPolicies(overview)} />`
-          : "—"}
-      </span>
-      <${RowActionMenu} items=${items} label=${`Actions for ${level.name}`} />
     </div>
-    ${open
-      ? html`<div id=${termsId} class="access-level-terms"><${AccessTerms} rules=${rules} overview=${overview} /></div>`
-      : null}
+    <div id=${termsId} class="access-level-terms"><${AccessTerms} rules=${rules} overview=${overview} /></div>
     <div class="access-level-body">
       ${connections.length > 0
         ? html`<${ConnectionList} connections=${connections} label=${`Connections using ${level.name}`} actions=${connectionActions} />`
@@ -397,7 +341,6 @@ export function AccessList({ entries, levels, overview, levelActions, connection
           <div class="access-level-head">
             <div class="access-level-title">
               <h3 id="access-other-connections-title" class="access-level-name">Other connections</h3>
-              <span class="access-count-cell">${countText(others.filter(isLiveConnection).length, others.length)}</span>
             </div>
           </div>
           <div class="access-level-body">
