@@ -45,6 +45,7 @@ import {
   ensureGatewayTrust,
   isCertificateIpAddress,
   localMdnsHostname,
+  mkcertCliCandidates,
   safeNetworkInterfaces,
   TAILSCALE_STATUS_TIMEOUT_MS,
   tailscaleCliCandidates,
@@ -457,6 +458,7 @@ export function defaultTlsProvisionEnv(
   configDir: string = process.env.OMNESIS_CONFIG_DIR ?? DEFAULT_CONFIG_DIR,
 ): TlsProvisionEnv {
   let tailscaleCli: TailscaleCliCandidate | undefined;
+  let mkcertCli = "mkcert";
   return {
     configDir,
     existingCertPath: process.env.OMNESIS_TLS_CERT,
@@ -511,17 +513,22 @@ export function defaultTlsProvisionEnv(
       );
     },
     hasMkcert() {
-      try {
-        execFileSync("mkcert", ["-version"], { stdio: "ignore" });
-        return true;
-      } catch {
-        return false;
+      // The same candidates the gateway renews with: PATH, then Homebrew's.
+      for (const file of mkcertCliCandidates()) {
+        try {
+          execFileSync(file, ["-version"], { stdio: "ignore" });
+          mkcertCli = file;
+          return true;
+        } catch {
+          // Not this one.
+        }
       }
+      return false;
     },
     runMkcert(certPath, keyPath, names) {
       mkdirSync(join(configDir, "tls"), { recursive: true });
-      execFileSync("mkcert", ["-install"], { stdio: ["ignore", "ignore", "pipe"] });
-      execFileSync("mkcert", ["-cert-file", certPath, "-key-file", keyPath, ...names], {
+      execFileSync(mkcertCli, ["-install"], { stdio: ["ignore", "ignore", "pipe"] });
+      execFileSync(mkcertCli, ["-cert-file", certPath, "-key-file", keyPath, ...names], {
         stdio: ["ignore", "ignore", "pipe"],
       });
     },

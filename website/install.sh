@@ -2659,7 +2659,7 @@ find_tailscale_cli() {
   if [ "$PLATFORM" = darwin ]; then
     # The installer's tests point this at a scratch directory, so a developer's
     # own Tailscale is never asked for its tailnet, let alone a certificate.
-    TS_ROOT="${OMNESIS_TEST_TAILSCALE_ROOT:-}"
+    TS_ROOT="${OMNESIS_TEST_HOST_ROOT:-}"
     # Homebrew's CLI where PATH does not reach it (a non-login shell); the
     # gateway's launchd PATH gets the same fallback (tailscale-cli.ts).
     for TS_BREW_CLI in "$TS_ROOT/opt/homebrew/bin/tailscale" "$TS_ROOT/usr/local/bin/tailscale"; do
@@ -2674,12 +2674,27 @@ find_tailscale_cli() {
   return 1
 }
 
+# mkcert on PATH, else Homebrew's where PATH does not reach it; the gateway
+# renews through the same candidates (host-cli.ts).
+find_mkcert_cli() {
+  MKCERT_CLI="$(command -v mkcert 2>/dev/null || true)"
+  [ -z "$MKCERT_CLI" ] || return 0
+  [ "$PLATFORM" = darwin ] || return 1
+  for MKCERT_CLI in "${OMNESIS_TEST_HOST_ROOT:-}/opt/homebrew/bin/mkcert" \
+                    "${OMNESIS_TEST_HOST_ROOT:-}/usr/local/bin/mkcert"; do
+    case ":$PATH:" in *":${MKCERT_CLI%/*}:"*) continue ;; esac
+    [ -x "$MKCERT_CLI" ] && return 0
+  done
+  MKCERT_CLI=""
+  return 1
+}
+
 provision_tls() {
   PORTAL_HOST="localhost"
   [ "$WANT_TLS" = 1 ] || return 0
 
   if [ "$USE_MKCERT" = 1 ]; then
-    if command -v mkcert >/dev/null 2>&1; then
+    if find_mkcert_cli; then
       info "Provisioning a mkcert certificate (you may be prompted to trust the local CA)..."
       mkdir -p "$CONFIG_DIR/tls"
       HOST_VALUE="$(hostname -s 2>/dev/null || hostname)"
@@ -2699,7 +2714,7 @@ process.stdout.write(valid ? `${short}.local` : "omnesis.local");
          [ "$PREVIOUS_TLS_KEY" = "$CONFIG_DIR/tls/mkcert.key" ]; then
         MKCERT_ADDRESS_PREVIOUS="$(configured_remote_gateway_url || true)"
       fi
-      mkcert -install
+      "$MKCERT_CLI" -install
       # Node is already a hard installer dependency. Use an argv array so an
       # interface value can never become shell syntax, and degrade to the four
       # fixed names if this host cannot enumerate its interfaces.
@@ -2755,7 +2770,7 @@ try {
 } catch (error) {
   process.exit(typeof error.status === "number" && error.status > 0 ? error.status : 1);
 }
-' "$(command -v mkcert)" "$CONFIG_DIR/tls/mkcert.crt" "$CONFIG_DIR/tls/mkcert.key" "$HOSTLOCAL"
+' "$MKCERT_CLI" "$CONFIG_DIR/tls/mkcert.crt" "$CONFIG_DIR/tls/mkcert.key" "$HOSTLOCAL"
       set_env OMNESIS_TLS_CERT "$CONFIG_DIR/tls/mkcert.crt"
       set_env OMNESIS_TLS_KEY "$CONFIG_DIR/tls/mkcert.key"
       unset_env OMNESIS_PAIRING_SYSTEM_TRUST_ORIGIN
