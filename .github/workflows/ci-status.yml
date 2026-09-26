@@ -8,7 +8,8 @@ name: ci-status
 # a cancelled run as failing. This workflow runs after every full-validation
 # run completes and passes or fails exactly as the newest completed,
 # non-cancelled push run on `main` did. It checks out no code and reads the
-# Actions API only.
+# Actions API only. It has no concurrency group on purpose: a queued run that
+# a group replaced would itself be cancelled, and the badge would show that.
 on:
   workflow_run:
     workflows: [full-validation]
@@ -16,10 +17,6 @@ on:
 
 permissions:
   actions: read
-
-concurrency:
-  group: ci-status
-  cancel-in-progress: false
 
 jobs:
   main-verdict:
