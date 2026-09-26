@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync, randomUUID, sign } from "node:crypto";
 
 import Database from "better-sqlite3";
 import { Hono } from "hono";
@@ -9,6 +9,7 @@ import { DeviceId, Scope, TokenId, type DeviceRecord } from "@omnesis/types";
 import { DEFAULT_PRIVACY_POLICY_FAMILY_ID } from "@omnesis/types/privacy";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
+import { ClientAssertionVerifier } from "../../access/client-assertion.js";
 import { AccessService } from "../../access/service.js";
 import { createExecutionBinding } from "../../access/store.js";
 import { authorizeInteractiveAccess } from "../../access/test-utils.js";
@@ -117,6 +118,8 @@ describe("MCP OAuth access routes", () => {
       grant_types_supported: ["authorization_code", "refresh_token"],
       code_challenge_methods_supported: ["S256"],
       client_id_metadata_document_supported: true,
+      token_endpoint_auth_methods_supported: ["none", "client_secret_basic", "private_key_jwt"],
+      token_endpoint_auth_signing_alg_values_supported: ["RS256", "PS256", "ES256"],
     });
     const clientCredentials = await app.request(`${ORIGIN}/oauth/token`, {
       method: "POST",
@@ -189,6 +192,7 @@ describe("MCP OAuth access routes", () => {
         grantTypes: ["authorization_code", "refresh_token"],
         responseTypes: ["code"],
         tokenEndpointAuthMethod: "none" as const,
+        jwksUri: null,
         clientUri: "https://client.example.com",
       }),
     );
@@ -221,6 +225,7 @@ describe("MCP OAuth access routes", () => {
       grantTypes: ["authorization_code", "refresh_token"],
       responseTypes: ["code"],
       tokenEndpointAuthMethod: "none" as const,
+      jwksUri: null,
       clientUri: null,
     });
     const assignedPort = authorizationUrl(loopbackClientId, "state-cimd-port");
@@ -1781,3 +1786,271 @@ async function portalJson(path: string, body: unknown) {
   });
   return { response, body: await response.json() };
 }
+
+describe("a metadata-document client authenticating with private_key_jwt", () => {
+  const CLIENT_ID = "https://assistant.example.com/oauth/client.json";
+  const JWKS_URI = "https://assistant.example.com/oauth/jwks.json";
+  const TOKEN_ENDPOINT = `${ORIGIN}/oauth/token`;
+  const keys = generateKeyPairSync("rsa", { modulusLength: 2_048 });
+  const otherKeys = generateKeyPairSync("rsa", { modulusLength: 2_048 });
+
+  function signedAssertion(claims: Record<string, unknown> = {}, key = keys.privateKey): string {
+    const now = Math.floor(Date.now() / 1_000);
+    const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+    const signingInput = `${encode({ alg: "RS256", kid: "assistant-key-1", typ: "JWT" })}.${encode({
+      iss: CLIENT_ID,
+      sub: CLIENT_ID,
+      aud: TOKEN_ENDPOINT,
+      iat: now,
+      exp: now + 60,
+      jti: randomUUID(),
+      ...claims,
+    })}`;
+    return `${signingInput}.${sign("sha256", Buffer.from(signingInput), key).toString("base64url")}`;
+  }
+
+  function assertionFields(assertion = signedAssertion()) {
+    return {
+      client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+      client_assertion: assertion,
+    };
+  }
+
+  function post(
+    path: string,
+    fields: Record<string, string>,
+    headers: Record<string, string> = {},
+  ) {
+    return app.request(`${ORIGIN}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", ...headers },
+      body: new URLSearchParams(fields),
+    });
+  }
+
+  let jwksFetches: number;
+
+  beforeEach(() => {
+    jwksFetches = 0;
+    const resolve = vi.fn(
+      async (): Promise<OAuthClientMetadataDocument> => ({
+        clientId: CLIENT_ID,
+        clientName: "Example assistant",
+        redirectUris: [REDIRECT],
+        grantTypes: ["authorization_code", "refresh_token"],
+        responseTypes: ["code"],
+        tokenEndpointAuthMethod: "private_key_jwt",
+        jwksUri: JWKS_URI,
+        clientUri: "https://assistant.example.com/",
+      }),
+    );
+    const clientAssertionVerifier = new ClientAssertionVerifier({
+      now: Date.now,
+      resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+      fetch: async (url) => {
+        expect(url.href).toBe(JWKS_URI);
+        jwksFetches += 1;
+        return {
+          status: 200,
+          contentType: "application/json",
+          cacheControl: "public, max-age=300",
+          body: Buffer.from(
+            JSON.stringify({
+              keys: [
+                {
+                  ...keys.publicKey.export({ format: "jwk" }),
+                  kid: "assistant-key-1",
+                  use: "sig",
+                  alg: "RS256",
+                },
+              ],
+            }),
+          ),
+        };
+      },
+    });
+    app = createTestApp({ clientMetadataResolver: { resolve }, clientAssertionVerifier });
+  });
+
+  async function authorizationCode(state: string): Promise<string> {
+    const started = await app.request(authorizationUrl(CLIENT_ID, state));
+    expect(started.status).toBe(303);
+    const consentUrl = new URL(started.headers.get("location")!, ORIGIN);
+    const handle = consentUrl.searchParams.get("request")!;
+    const consent = await app.request(consentUrl);
+    const userCode = (await consent.text()).match(
+      /data-user-code>([A-Z2-9]{4}-[A-Z2-9]{4})</u,
+    )?.[1];
+    const lookup = await portalJson("/portal/api/access/authorizations/lookup", {
+      code: userCode,
+    });
+    const approvalId = (lookup.body as { request: { approvalId: string } }).request.approvalId;
+    const decided = await portalJson(`/portal/api/access/authorizations/${approvalId}/decision`, {
+      decision: "approve",
+      selection: {
+        kind: "new-principal",
+        principalName: "Fictional hosted assistant",
+        grantName: "Direct access",
+        rules: DIRECT_RULES,
+        credentialLabel: "Fictional hosted assistant",
+        expiresAt: null,
+      },
+    });
+    expect(decided.response.status).toBe(200);
+    const completed = await app.request(
+      `${ORIGIN}/oauth/authorize/complete?request=${encodeURIComponent(handle)}`,
+    );
+    return new URL(completed.headers.get("location")!).searchParams.get("code")!;
+  }
+
+  function codeExchange(code: string) {
+    return {
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: REDIRECT,
+      code_verifier: VERIFIER,
+      resource: RESOURCE,
+    };
+  }
+
+  test("registers the key set at authorize and exchanges, refreshes and revokes by assertion", async () => {
+    const code = await authorizationCode("state-key-client");
+    expect(
+      db
+        .prepare(
+          `SELECT token_endpoint_auth_method, client_secret_hash, jwks_uri
+           FROM oauth_clients WHERE client_id = ?`,
+        )
+        .get(CLIENT_ID),
+    ).toEqual({
+      token_endpoint_auth_method: "private_key_jwt",
+      client_secret_hash: null,
+      jwks_uri: JWKS_URI,
+    });
+
+    // Without any assertion the code is not spent: the client is refused first.
+    const unauthenticated = await post("/oauth/token", {
+      ...codeExchange(code),
+      client_id: CLIENT_ID,
+    });
+    expect(unauthenticated.status).toBe(401);
+    expect(await unauthenticated.json()).toMatchObject({ error: "invalid_client" });
+
+    const exchanged = await post("/oauth/token", {
+      ...codeExchange(code),
+      client_id: CLIENT_ID,
+      ...assertionFields(),
+    });
+    expect(exchanged.status).toBe(200);
+    const tokens = (await exchanged.json()) as { access_token: string; refresh_token: string };
+    expect(tokens.refresh_token).toBeTruthy();
+
+    // The issuer identifier is an accepted audience too, and client_id may be omitted.
+    const refreshed = await post("/oauth/token", {
+      grant_type: "refresh_token",
+      refresh_token: tokens.refresh_token,
+      ...assertionFields(signedAssertion({ aud: ORIGIN })),
+    });
+    expect(refreshed.status).toBe(200);
+    const next = (await refreshed.json()) as { access_token: string };
+    const lookupAccess = () =>
+      new AccessService(db, directWriteGate(db)).lookupAccessToken(next.access_token, RESOURCE);
+    expect(lookupAccess()).not.toBeNull();
+
+    const unauthenticatedRevoke = await post("/oauth/revoke", {
+      token: next.access_token,
+      client_id: CLIENT_ID,
+    });
+    expect(unauthenticatedRevoke.status).toBe(401);
+    expect(lookupAccess()).not.toBeNull();
+
+    const revoked = await post("/oauth/revoke", {
+      token: next.access_token,
+      client_id: CLIENT_ID,
+      ...assertionFields(signedAssertion({ aud: `${ORIGIN}/oauth/revoke` })),
+    });
+    expect(revoked.status).toBe(200);
+    expect(lookupAccess()).toBeNull();
+    // One key-set fetch served every assertion.
+    expect(jwksFetches).toBe(1);
+  });
+
+  test("refuses invalid, replayed, mismatched or doubled client authentication", async () => {
+    const code = await authorizationCode("state-key-client-refusals");
+    const refusals: [string, Record<string, string>, Record<string, string>?][] = [
+      [
+        "wrong audience",
+        assertionFields(signedAssertion({ aud: "https://elsewhere.example.org" })),
+      ],
+      ["another key", assertionFields(signedAssertion({}, otherKeys.privateKey))],
+      [
+        "missing assertion value",
+        { client_assertion_type: assertionFields().client_assertion_type },
+      ],
+      [
+        "unsupported assertion type",
+        { ...assertionFields(), client_assertion_type: "urn:example:unsupported" },
+      ],
+      [
+        "client_id that is not the assertion's",
+        { ...assertionFields(), client_id: "https://attacker.example.com/client.json" },
+      ],
+    ];
+    for (const [label, fields] of refusals) {
+      const response = await post("/oauth/token", { ...codeExchange(code), ...fields });
+      expect(response.status, label).toBe(401);
+      expect(await response.json(), label).toMatchObject({ error: "invalid_client" });
+    }
+
+    const doubled = await post(
+      "/oauth/token",
+      { ...codeExchange(code), ...assertionFields() },
+      { Authorization: `Basic ${Buffer.from(`${CLIENT_ID}:invented`).toString("base64")}` },
+    );
+    expect(doubled.status).toBe(400);
+    expect(await doubled.json()).toMatchObject({ error: "invalid_request" });
+
+    const once = assertionFields();
+    expect((await post("/oauth/token", { ...codeExchange(code), ...once })).status).toBe(200);
+    const replayed = await post("/oauth/token", { ...codeExchange(code), ...once });
+    expect(replayed.status).toBe(401);
+    expect(await replayed.json()).toMatchObject({ error: "invalid_client" });
+  });
+
+  test("a public client presenting an assertion is refused, and public clients are unaffected", async () => {
+    const registration = await registerClient();
+    const withAssertion = await post("/oauth/token", {
+      grant_type: "refresh_token",
+      refresh_token: "fictional-refresh-token",
+      client_id: registration.client_id,
+      ...assertionFields(
+        signedAssertion({ iss: registration.client_id, sub: registration.client_id }),
+      ),
+    });
+    expect(withAssertion.status).toBe(401);
+    expect(await withAssertion.json()).toMatchObject({ error: "invalid_client" });
+
+    const plain = await post("/oauth/token", {
+      grant_type: "refresh_token",
+      refresh_token: "fictional-refresh-token",
+      client_id: registration.client_id,
+    });
+    expect(plain.status).toBe(400);
+    expect(await plain.json()).toMatchObject({ error: "invalid_grant" });
+    expect(jwksFetches).toBe(0);
+  });
+
+  test("dynamic registration still refuses private_key_jwt", async () => {
+    const response = await app.request(`${ORIGIN}/oauth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_name: "Fictional key client",
+        redirect_uris: [REDIRECT],
+        token_endpoint_auth_method: "private_key_jwt",
+      }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "invalid_client_metadata" });
+  });
+});

@@ -5,12 +5,12 @@ import { once } from "node:events";
 import { createConnection, createServer, type AddressInfo } from "node:net";
 import { describe, expect, test, vi } from "vitest";
 
+import { ClientMetadataDocumentResolver } from "./client-metadata-document.js";
 import {
-  ClientMetadataDocumentResolver,
-  type ClientMetadataDocumentDependencies,
   type MetadataResponse,
   pinnedLookup,
-} from "./client-metadata-document.js";
+  type PublicFetchDependencies,
+} from "./public-json-fetch.js";
 
 const CLIENT_ID = "https://client.example.com/oauth/client.json";
 
@@ -37,10 +37,10 @@ function response(
   };
 }
 
-function dependencies(overrides: Partial<ClientMetadataDocumentDependencies> = {}) {
+function dependencies(overrides: Partial<PublicFetchDependencies> = {}) {
   let now = 1_000;
   const fetch = vi.fn(async () => response());
-  const value: ClientMetadataDocumentDependencies & { advance(ms: number): void } = {
+  const value: PublicFetchDependencies & { advance(ms: number): void } = {
     now: () => now,
     resolve: vi.fn(async () => [{ address: "93.184.216.34", family: 4 as const }]),
     fetch,
@@ -62,16 +62,44 @@ describe("ClientMetadataDocumentResolver", () => {
       clientName: "example assistant",
       tokenEndpointAuthMethod: "none",
     });
-    expect(deps.fetch).toHaveBeenCalledWith(new URL(CLIENT_ID), {
-      address: "93.184.216.34",
-      family: 4,
-    });
+    expect(deps.fetch).toHaveBeenCalledWith(
+      new URL(CLIENT_ID),
+      { address: "93.184.216.34", family: 4 },
+      5 * 1_024,
+    );
     await resolver.resolve(CLIENT_ID);
     expect(deps.fetch).toHaveBeenCalledTimes(1);
 
     deps.advance(5 * 60_000 + 1);
     await resolver.resolve(CLIENT_ID);
     expect(deps.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  test("accepts a private_key_jwt client that names its key set", async () => {
+    // Shaped like a hosted assistant's published document, with invented values.
+    const deps = dependencies({
+      fetch: vi.fn(async () =>
+        response({
+          client_uri: "https://client.example.com/",
+          redirect_uris: ["https://client.example.com/connector/oauth_redirect"],
+          token_endpoint_auth_method: "private_key_jwt",
+          token_endpoint_auth_methods_supported: ["none", "private_key_jwt"],
+          token_endpoint_auth_signing_alg: "RS256",
+          jwks_uri: "https://client.example.com/oauth/jwks.json",
+          logo_uri: "https://static.example.com/logo.png",
+        }),
+      ),
+    });
+    await expect(new ClientMetadataDocumentResolver(deps).resolve(CLIENT_ID)).resolves.toEqual({
+      clientId: CLIENT_ID,
+      clientName: "example assistant",
+      redirectUris: ["https://client.example.com/connector/oauth_redirect"],
+      grantTypes: ["authorization_code", "refresh_token"],
+      responseTypes: ["code"],
+      tokenEndpointAuthMethod: "private_key_jwt",
+      jwksUri: "https://client.example.com/oauth/jwks.json",
+      clientUri: "https://client.example.com/",
+    });
   });
 
   test("preserves the client identifier's exact string identity", async () => {
@@ -124,6 +152,25 @@ describe("ClientMetadataDocumentResolver", () => {
     ["invalid client URI", response({ client_uri: "https://user@client.example.com/" })],
     ["shared secret", response({ client_secret: "not-permitted" })],
     ["unsupported authentication", response({ token_endpoint_auth_method: "client_secret_basic" })],
+    [
+      "key authentication without a key set",
+      response({ token_endpoint_auth_method: "private_key_jwt" }),
+    ],
+    [
+      "unsupported signing algorithm",
+      response({
+        token_endpoint_auth_method: "private_key_jwt",
+        jwks_uri: "https://client.example.com/oauth/jwks.json",
+        token_endpoint_auth_signing_alg: "HS256",
+      }),
+    ],
+    [
+      "plain-HTTP key set",
+      response({
+        token_endpoint_auth_method: "private_key_jwt",
+        jwks_uri: "http://client.example.com/oauth/jwks.json",
+      }),
+    ],
   ])("does not accept or cache a %s response", async (_label, invalid) => {
     const deps = dependencies({ fetch: vi.fn(async () => invalid) });
     const resolver = new ClientMetadataDocumentResolver(deps);

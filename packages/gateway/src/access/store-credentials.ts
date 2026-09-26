@@ -11,6 +11,7 @@ import { parseStringArray } from "./store-rules.js";
 import type {
   AccessCapability,
   AccessGrantCapability,
+  OAuthClientCredentials,
   OAuthTokenSet,
   PrincipalAccessTokenInfo,
 } from "./types.js";
@@ -34,10 +35,10 @@ export function getRefreshTokenAudience(db: Db, refreshToken: string): string | 
 
 export function refreshPrincipalAccessToken(
   db: Db,
-  input: { refreshToken: string; clientId: string; clientSecret?: string; resource?: string },
+  input: OAuthClientCredentials & { refreshToken: string; clientId: string; resource?: string },
   now = Date.now(),
 ): AccessMutationResult<OAuthTokenSet> {
-  if (!oauthClientAuthenticates(db, input.clientId, input.clientSecret)) {
+  if (!oauthClientAuthenticates(db, input.clientId, input)) {
     return { ok: false, error: "invalid-client" };
   }
   return db.transaction((): AccessMutationResult<OAuthTokenSet> => {

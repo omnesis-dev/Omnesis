@@ -6,6 +6,7 @@ import { mountOAuthMetadataRoutes } from "./oauth-access-metadata.js";
 import { mountOAuthTokenRoutes } from "./oauth-access-token.js";
 import type { AccessService } from "../../access/service.js";
 import type { AccessAuthorizationNotifier } from "../../access/authorization-notifier.js";
+import type { ClientAssertionVerifier } from "../../access/client-assertion.js";
 import type { ClientMetadataDocumentResolver } from "../../access/client-metadata-document.js";
 import type { RouteApp } from "./types.js";
 
@@ -18,6 +19,7 @@ export function mountOAuthAccessProtocolRoutes(
     mcpResourceUrls?: readonly string[];
     authorizationNotifier?: Pick<AccessAuthorizationNotifier, "targetDeviceIds" | "wakeQueued">;
     clientMetadataResolver?: Pick<ClientMetadataDocumentResolver, "resolve">;
+    clientAssertionVerifier?: Pick<ClientAssertionVerifier, "verify">;
     onAuthorizationPending?: () => void;
     /** See `mountOAuthAuthorizationRoutes`. */
     onDeviceLevelChanged?: () => void;

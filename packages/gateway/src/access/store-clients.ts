@@ -7,6 +7,8 @@ import { hashSecret, secretHashMatches } from "./store-helpers.js";
 import { parseStringArray } from "./store-rules.js";
 import type { Db } from "../data/types.js";
 import type {
+  OAuthClientAuthMethod,
+  OAuthClientCredentials,
   OAuthClientMetadataDocument,
   OAuthClientRegistration,
   OAuthClientRegistrationInput,
@@ -28,6 +30,7 @@ export function registerOAuthClient(
     clientId,
     clientSecret,
     tokenEndpointAuthMethod,
+    jwksUri: null,
     createdAt: now,
   };
   db.prepare(
@@ -49,7 +52,11 @@ export function registerOAuthClient(
   return record;
 }
 
-/** Persist a validated Client ID Metadata Document under its URL identity. */
+/**
+ * Persist a validated Client ID Metadata Document under its URL identity.
+ * The document is authoritative on every refresh, including a change of
+ * authentication method or key-set location.
+ */
 export function upsertOAuthMetadataClient(
   db: Db,
   input: OAuthClientMetadataDocument,
@@ -58,15 +65,16 @@ export function upsertOAuthMetadataClient(
   db.prepare(
     `INSERT INTO oauth_clients (
        client_id, client_name, redirect_uris, grant_types, response_types,
-       token_endpoint_auth_method, client_secret_hash, client_uri, created_at
-     ) VALUES (?, ?, ?, ?, ?, 'none', NULL, ?, ?)
+       token_endpoint_auth_method, client_secret_hash, jwks_uri, client_uri, created_at
+     ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
      ON CONFLICT(client_id) DO UPDATE SET
        client_name = excluded.client_name,
        redirect_uris = excluded.redirect_uris,
        grant_types = excluded.grant_types,
        response_types = excluded.response_types,
-       token_endpoint_auth_method = 'none',
+       token_endpoint_auth_method = excluded.token_endpoint_auth_method,
        client_secret_hash = NULL,
+       jwks_uri = excluded.jwks_uri,
        client_uri = excluded.client_uri`,
   ).run(
     input.clientId,
@@ -74,6 +82,8 @@ export function upsertOAuthMetadataClient(
     JSON.stringify(input.redirectUris),
     JSON.stringify(input.grantTypes),
     JSON.stringify(input.responseTypes),
+    input.tokenEndpointAuthMethod,
+    input.jwksUri,
     input.clientUri,
     now,
   );
@@ -90,8 +100,9 @@ export function getOAuthClient(db: Db, clientId: string): OAuthClientRegistratio
         redirect_uris: string;
         grant_types: string;
         response_types: string;
-        token_endpoint_auth_method: "none" | "client_secret_basic";
+        token_endpoint_auth_method: OAuthClientAuthMethod;
         client_secret_hash: string | null;
+        jwks_uri: string | null;
         client_uri: string | null;
         created_at: number;
       }
@@ -110,33 +121,58 @@ export function getOAuthClient(db: Db, clientId: string): OAuthClientRegistratio
     responseTypes,
     tokenEndpointAuthMethod: row.token_endpoint_auth_method,
     clientSecret: null,
+    jwksUri: row.jwks_uri,
     clientUri: row.client_uri,
     createdAt: row.created_at,
   };
 }
 
+/**
+ * Whether the presented credentials are exactly the registered method's:
+ * no credential for a public client, the matching secret for
+ * `client_secret_basic`, and a verified assertion over the client's current
+ * key set for `private_key_jwt`. Presenting any other method fails.
+ */
 export function oauthClientAuthenticates(
   db: Db,
   clientId: string,
-  clientSecret: string | undefined,
+  credentials: OAuthClientCredentials,
 ): boolean {
   const row = db
     .prepare<
       [string],
       {
-        token_endpoint_auth_method: "none" | "client_secret_basic";
+        token_endpoint_auth_method: OAuthClientAuthMethod;
         client_secret_hash: string | null;
+        jwks_uri: string | null;
       }
     >(
-      `SELECT token_endpoint_auth_method, client_secret_hash
+      `SELECT token_endpoint_auth_method, client_secret_hash, jwks_uri
        FROM oauth_clients WHERE client_id = ?`,
     )
     .get(clientId);
   if (!row) return false;
-  if (row.token_endpoint_auth_method === "none") return clientSecret === undefined;
-  return Boolean(
-    clientSecret &&
-    row.client_secret_hash &&
-    secretHashMatches(row.client_secret_hash, clientSecret),
-  );
+  const { clientSecret, clientAssertion } = credentials;
+  switch (row.token_endpoint_auth_method) {
+    case "none":
+      return clientSecret === undefined && clientAssertion === undefined;
+    case "client_secret_basic":
+      return Boolean(
+        clientAssertion === undefined &&
+        clientSecret &&
+        row.client_secret_hash &&
+        secretHashMatches(row.client_secret_hash, clientSecret),
+      );
+    case "private_key_jwt":
+      return (
+        clientSecret === undefined &&
+        clientAssertion !== undefined &&
+        clientAssertion.method === "private_key_jwt" &&
+        clientAssertion.clientId === clientId &&
+        row.jwks_uri !== null &&
+        clientAssertion.jwksUri === row.jwks_uri
+      );
+    default:
+      return false;
+  }
 }

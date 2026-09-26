@@ -38,7 +38,7 @@ export function preflightOAuthTokenRevocation(
     .get(tokenHash, tokenHash);
   if (!row) return { ok: false, error: "not-found" };
   if (row.oauth_client_id !== input.clientId) return { ok: false, error: "invalid-client" };
-  if (!oauthClientAuthenticates(db, row.oauth_client_id, input.clientSecret)) {
+  if (!oauthClientAuthenticates(db, row.oauth_client_id, input)) {
     return { ok: false, error: "invalid-client" };
   }
   return { ok: true };
@@ -74,7 +74,7 @@ function preflightAuthorizationCode(
   input: Extract<OAuthTokenExchangeInput, { grantType: "authorization_code" }>,
   now: number,
 ): AccessMutationResult<null> {
-  if (!oauthClientAuthenticates(db, input.clientId, input.clientSecret)) {
+  if (!oauthClientAuthenticates(db, input.clientId, input)) {
     return { ok: false, error: "invalid-client" };
   }
   const row = db
@@ -108,7 +108,7 @@ function preflightRefreshToken(
   input: Extract<OAuthTokenExchangeInput, { grantType: "refresh_token" }>,
   now: number,
 ): AccessMutationResult<null> {
-  if (!oauthClientAuthenticates(db, input.clientId, input.clientSecret)) {
+  if (!oauthClientAuthenticates(db, input.clientId, input)) {
     return { ok: false, error: "invalid-client" };
   }
   const row = db
