@@ -7958,6 +7958,10 @@ p.privacy-diff-note {
 /* A revision is a content hash, not prose: monospace, so a reader can match
    its head against the value recorded on a grant. */
 .portal-table.access-policy-table small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-muted);
