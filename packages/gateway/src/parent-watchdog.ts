@@ -76,3 +76,46 @@ export function startParentWatchdogFromEnv(
   if (!Number.isInteger(parentPid)) return null;
   return startParentWatchdog({ parentPid, onParentGone });
 }
+
+export interface LauncherWatchdogOptions {
+  env: NodeJS.ProcessEnv;
+  /** Our parent when we started: the launcher the service manager ran. */
+  launcherPid: number;
+  /** Our parent now. Injected by tests; defaults to `process.ppid`. */
+  currentParentPid?: () => number;
+  intervalMs?: number;
+  /** Called once when the launcher is gone. */
+  onLauncherGone: () => void;
+}
+
+/**
+ * Leave when the launcher a service manager started us under goes away.
+ *
+ * A source install's service runs `tsx`, which runs the gateway as its child:
+ * launchd tracks tsx, not us. Should tsx die while we live, launchd counts the
+ * job as exited and starts a replacement, which waits on our config-dir lock,
+ * gives up, and is restarted again, for as long as we run. Every restart the
+ * operator or `omnesis update` asks for reaches only the replacement; this
+ * process keeps the lock and keeps serving the old build. Reparented, we are no
+ * longer the service's gateway, so we stop and let the replacement take over.
+ *
+ * Only for a service-managed gateway (the unit sets OMNESIS_SERVICE_MANAGER)
+ * that did not start as the manager's own child: a gateway the manager runs
+ * directly has pid 1 or the manager as its parent for life, and a gateway run
+ * by hand has no service to hand over to.
+ */
+export function startLauncherWatchdog(opts: LauncherWatchdogOptions): (() => void) | null {
+  const { env, launcherPid, intervalMs = 2_000, onLauncherGone } = opts;
+  if (!env.OMNESIS_SERVICE_MANAGER) return null;
+  if (!Number.isInteger(launcherPid) || launcherPid <= 1) return null;
+  const currentParentPid = opts.currentParentPid ?? ((): number => process.ppid);
+
+  const timer = setInterval(() => {
+    if (currentParentPid() === launcherPid) return;
+    clearInterval(timer);
+    onLauncherGone();
+  }, intervalMs);
+  timer.unref?.();
+
+  return () => clearInterval(timer);
+}

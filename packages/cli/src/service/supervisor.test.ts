@@ -19,13 +19,21 @@ import {
   LaunchdSupervisor,
   SystemdSupervisor,
   createSupervisor,
+  launchdPlistEnvValue,
   mapSystemdActiveState,
   parseLaunchctlPrint,
   type ExecResult,
   type ExecRunner,
+  type LaunchdDeps,
   type StreamRunner,
 } from "./supervisor.js";
-import { darwinLogsDir, launchdLogPaths, systemdWritablePaths } from "./units.js";
+import {
+  darwinLogsDir,
+  generateLaunchdPlist,
+  launchdLogPaths,
+  systemdWritablePaths,
+} from "./units.js";
+import type { GatewayLockHolder } from "@omnesis/core";
 import type { ServiceSpec } from "./types.js";
 
 const tempDirs: string[] = [];
@@ -362,7 +370,9 @@ describe("LaunchdSupervisor", () => {
 
   function make(
     responses: Array<{ prefix: string[]; result: Partial<ExecResult> }> = [],
-    deps: { stopTimeoutMs?: number } = {},
+    deps: Partial<
+      Pick<LaunchdDeps, "stopTimeoutMs" | "gatewayHolder" | "signal" | "orphanExitTimeoutMs">
+    > = {},
   ) {
     const home = makeHome();
     const replies = [...responses, NOT_LOADED];
@@ -528,6 +538,154 @@ describe("LaunchdSupervisor", () => {
       ["launchctl", "bootstrap", "gui/501", sup.unitPath("gateway")],
       ["launchctl", "kickstart", "-k", "gui/501/dev.omnesis.gateway"],
     ]);
+  });
+
+  describe("a gateway the job left behind", () => {
+    // The job's tsx launcher died and its gateway child did not: launchd
+    // reparented the gateway (ppid 1) and started a replacement (pid 4100)
+    // that waits on the orphan's config-dir lock.
+    const ORPHAN: GatewayLockHolder = {
+      pid: 3963,
+      processStart: "start-3963",
+      hostname: "mac.local",
+      startedAt: "2026-09-26T11:32:53.736Z",
+    };
+    const JOB_RUNNING = {
+      prefix: ["launchctl", "print"],
+      result: { code: 0, stdout: "state = running\npid = 4100\n" },
+    };
+    const psRow = (ppid: number, env: string) => ({
+      prefix: ["ps"],
+      result: {
+        code: 0,
+        stdout: `    ${ppid} /opt/homebrew/bin/node --require preflight.cjs index.ts gateway serve PATH=/usr/bin ${env} OMNESIS_SERVICE_MANAGER=launchd-user\n`,
+      },
+    });
+    const FROM_JOB = "XPC_SERVICE_NAME=dev.omnesis.gateway";
+
+    function withOrphan(
+      responses: Array<{ prefix: string[]; result: Partial<ExecResult> }>,
+      opts: { exitsOn?: NodeJS.Signals | null; orphanExitTimeoutMs?: number } = {},
+    ) {
+      let holder: GatewayLockHolder | null = null;
+      const signals: Array<[number, NodeJS.Signals]> = [];
+      const exitsOn = opts.exitsOn === undefined ? "SIGTERM" : opts.exitsOn;
+      const made = make(responses, {
+        gatewayHolder: () => holder,
+        signal: (pid, sig) => {
+          signals.push([pid, sig]);
+          if (sig === exitsOn) holder = null;
+        },
+        ...(opts.orphanExitTimeoutMs !== undefined
+          ? { orphanExitTimeoutMs: opts.orphanExitTimeoutMs }
+          : {}),
+      });
+      return {
+        ...made,
+        signals,
+        /** After install: the orphan holds the lock, and the job runs as pid 4100. */
+        orphanNow: (h: GatewayLockHolder = ORPHAN, jobRunning = true) => {
+          if (jobRunning) made.replies.unshift(JOB_RUNNING);
+          holder = h;
+        },
+      };
+    }
+
+    it("restart stops it before kickstarting the job", async () => {
+      const { home, sup, calls, signals, orphanNow } = withOrphan([psRow(1, FROM_JOB)]);
+      await sup.install(spec(home));
+      orphanNow();
+      calls.length = 0;
+      await sup.restart("gateway");
+      expect(signals).toEqual([[3963, "SIGTERM"]]);
+      expect(calls).toEqual([
+        ["launchctl", "print", "gui/501/dev.omnesis.gateway"],
+        ["ps", "-E", "-ww", "-o", "ppid=,command=", "-p", "3963"],
+        ["launchctl", "print", "gui/501/dev.omnesis.gateway"],
+        ["launchctl", "kickstart", "-k", "gui/501/dev.omnesis.gateway"],
+      ]);
+    });
+
+    it("stop stops it after unloading the job", async () => {
+      const { home, sup, signals, orphanNow } = withOrphan([psRow(1, FROM_JOB)]);
+      await sup.install(spec(home));
+      orphanNow(ORPHAN, false);
+      await sup.stop("gateway");
+      expect(signals).toEqual([[3963, "SIGTERM"]]);
+    });
+
+    it("SIGKILLs one that outlives the shutdown budget", async () => {
+      const { home, sup, signals, orphanNow } = withOrphan([psRow(1, FROM_JOB)], {
+        exitsOn: "SIGKILL",
+        orphanExitTimeoutMs: 0,
+      });
+      await sup.install(spec(home));
+      orphanNow();
+      await sup.restart("gateway");
+      expect(signals).toEqual([
+        [3963, "SIGTERM"],
+        [3963, "SIGKILL"],
+      ]);
+    });
+
+    it("reports one that survives SIGKILL instead of restarting beside it", async () => {
+      const { home, sup, calls, orphanNow } = withOrphan([psRow(1, FROM_JOB)], {
+        exitsOn: null,
+        orphanExitTimeoutMs: 0,
+      });
+      await sup.install(spec(home));
+      orphanNow();
+      calls.length = 0;
+      await expect(sup.restart("gateway")).rejects.toThrow(/PID 3963.*still holds/);
+      expect(calls.some((call) => call[1] === "kickstart")).toBe(false);
+    });
+
+    it("leaves the job's own gateway alone", async () => {
+      const { home, sup, calls, signals, orphanNow } = withOrphan([]);
+      await sup.install(spec(home));
+      orphanNow({ ...ORPHAN, pid: 4100 });
+      calls.length = 0;
+      await sup.restart("gateway");
+      expect(signals).toEqual([]);
+      expect(calls.some((call) => call[0] === "ps")).toBe(false);
+    });
+
+    it("leaves a gateway alone while the launcher that started it is alive", async () => {
+      // tsx under the job: the gateway's parent is the job's process.
+      const { home, sup, signals, orphanNow } = withOrphan([psRow(4100, FROM_JOB)]);
+      await sup.install(spec(home));
+      orphanNow();
+      await sup.restart("gateway");
+      expect(signals).toEqual([]);
+    });
+
+    it("leaves a gateway someone runs by hand alone", async () => {
+      const { home, sup, signals, orphanNow } = withOrphan([
+        psRow(1, "XPC_SERVICE_NAME=application.com.apple.Terminal.1234"),
+      ]);
+      await sup.install(spec(home));
+      orphanNow();
+      await sup.restart("gateway");
+      expect(signals).toEqual([]);
+    });
+
+    it("never looks for one behind the collector", async () => {
+      const { home, sup, calls, signals, orphanNow } = withOrphan([psRow(1, FROM_JOB)]);
+      await sup.install(spec(home, { component: "collector" }));
+      orphanNow();
+      calls.length = 0;
+      await sup.restart("collector");
+      expect(signals).toEqual([]);
+      expect(calls.some((call) => call[0] === "ps")).toBe(false);
+    });
+  });
+
+  it("reads a plist environment value back as generated, escapes and all", () => {
+    const home = makeHome();
+    const configDir = join(home, "a <b> & 'c' \"d\"");
+    const plist = generateLaunchdPlist(spec(home, { env: { OMNESIS_CONFIG_DIR: configDir } }));
+    expect(launchdPlistEnvValue(plist, "OMNESIS_CONFIG_DIR")).toBe(configDir);
+    expect(launchdPlistEnvValue(plist, "OMNESIS_MISSING")).toBeNull();
   });
 
   it("loadDefinition cannot load a plist without restarting the job, and says so", async () => {

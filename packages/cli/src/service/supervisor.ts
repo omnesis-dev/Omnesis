@@ -14,11 +14,16 @@
  */
 
 import { execFile, spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { dirname } from "node:path";
 import { CliError, EXIT_FAILURE, EXIT_USER_ERROR } from "@omnesis/cli-shared";
-import { atomicWriteFileSync, GATEWAY_EXIT_TIMEOUT_SECONDS } from "@omnesis/core";
+import {
+  atomicWriteFileSync,
+  GATEWAY_EXIT_TIMEOUT_SECONDS,
+  liveGatewayHolder,
+  type GatewayLockHolder,
+} from "@omnesis/core";
 import {
   systemdWritablePaths,
   darwinLogsDir,
@@ -168,6 +173,12 @@ export interface LaunchdDeps {
   sleep?: (ms: number) => Promise<void>;
   /** How long a stop waits for launchd to report the job gone. */
   stopTimeoutMs?: number;
+  /** The live gateway holding a config dir's lock. Tests substitute a fixture. */
+  gatewayHolder?: (configDir: string) => GatewayLockHolder | null;
+  /** Send a signal to a process. Tests substitute a recorder. */
+  signal?: (pid: number, signal: NodeJS.Signals) => void;
+  /** How long an orphaned gateway gets to shut down before SIGKILL. */
+  orphanExitTimeoutMs?: number;
 }
 
 /**
@@ -177,6 +188,18 @@ export interface LaunchdDeps {
  */
 const LAUNCHD_STOP_TIMEOUT_MS = GATEWAY_EXIT_TIMEOUT_SECONDS * 1000 + 30_000;
 const LAUNCHD_POLL_MS = 250;
+
+/** One `<key>` of a plist's EnvironmentVariables, as `generateLaunchdPlist` writes it. */
+export function launchdPlistEnvValue(plist: string, key: string): string | null {
+  const match = new RegExp(`<key>${key}</key>\\s*<string>([^<]*)</string>`).exec(plist);
+  if (!match) return null;
+  return match[1]
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
 
 /** Parse `launchctl print` output into a state + pid. */
 export function parseLaunchctlPrint(output: string): { state: ServiceState; pid: number | null } {
@@ -238,6 +261,9 @@ export class LaunchdSupervisor implements Supervisor {
 
   async start(component: ServiceComponent, instance?: string): Promise<void> {
     this.requireInstalled(component, instance);
+    // `kickstart -k` restarts the job's own process. A gateway this job left
+    // behind would keep the config dir from whatever it starts.
+    await this.stopOrphanedGateway(component, instance);
     // A stopped job is unloaded, so starting it means registering it again.
     if (!(await this.isLoaded(component, instance))) await this.bootstrap(component, instance);
     await this.kickstart(component, instance);
@@ -299,6 +325,91 @@ export class LaunchdSupervisor implements Supervisor {
         );
       }
       await sleep(LAUNCHD_POLL_MS);
+    }
+    // Unloading the job ends only the processes launchd still tracks for it.
+    await this.stopOrphanedGateway(component, instance);
+  }
+
+  /**
+   * Stop a gateway this job started that launchd no longer tracks.
+   *
+   * A source install's job runs `tsx`, whose child is the gateway. If tsx dies
+   * and the gateway does not, launchd reparents the gateway, counts the job as
+   * exited and starts a replacement. The replacement waits on the gateway's
+   * config-dir lock, gives up, and is restarted, while the orphan keeps the
+   * lock and keeps serving: `kickstart` and `bootout` reach only the job's
+   * current process, so a restart — including the one `omnesis update` makes —
+   * never reaches the process that is actually serving.
+   *
+   * The lock holder is stopped only when it is certainly that orphan: it holds
+   * this job's config dir, it is not the job's process, launchd is its parent
+   * (the launcher that started it is gone), and it carries this job's label in
+   * the environment launchd gave it. A gateway someone runs by hand has none of
+   * these and is left alone.
+   */
+  private async stopOrphanedGateway(component: ServiceComponent, instance?: string): Promise<void> {
+    if (component !== "gateway") return;
+    const configDir = this.configDirOf(component, instance);
+    if (configDir === null) return;
+    const holderOf = this.deps.gatewayHolder ?? liveGatewayHolder;
+    const holder = holderOf(configDir);
+    if (holder === null) return;
+    const job = await this.deps.exec("launchctl", ["print", this.target(component, instance)]);
+    if (job.code === 0 && parseLaunchctlPrint(job.stdout).pid === holder.pid) return;
+    const ps = await this.deps.exec("ps", [
+      "-E",
+      "-ww",
+      "-o",
+      "ppid=,command=",
+      "-p",
+      String(holder.pid),
+    ]);
+    const row = /^\s*(\d+)\s+(.*)$/s.exec(ps.stdout);
+    if (ps.code !== 0 || !row || Number(row[1]) !== 1) return;
+    const label = `XPC_SERVICE_NAME=${this.unitName(component, instance)}`;
+    if (!row[2].split(/\s+/).includes(label)) return;
+
+    const signal = this.deps.signal ?? ((pid, sig) => void process.kill(pid, sig));
+    const sleep =
+      this.deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    // Gone once the lock no longer names that same process — released on the
+    // way out, or left by a process that has exited. The lock's start time
+    // keeps a recycled PID from passing for the orphan.
+    const gone = (): boolean => holderOf(configDir)?.pid !== holder.pid;
+    // The same patience launchd gives the job's own process before SIGKILL.
+    const timeoutMs = this.deps.orphanExitTimeoutMs ?? GATEWAY_EXIT_TIMEOUT_SECONDS * 1000;
+    const deadline = Date.now() + timeoutMs;
+    try {
+      signal(holder.pid, "SIGTERM");
+    } catch {
+      return;
+    }
+    while (!gone()) {
+      if (Date.now() >= deadline) {
+        try {
+          signal(holder.pid, "SIGKILL");
+        } catch {
+          return;
+        }
+        const killDeadline = Date.now() + Math.min(5_000, timeoutMs);
+        while (!gone() && Date.now() < killDeadline) await sleep(LAUNCHD_POLL_MS);
+        if (gone()) return;
+        throw new CliError(
+          `A gateway (PID ${holder.pid}) left behind by ${this.unitName(component, instance)} still holds ${configDir} after SIGKILL.`,
+          EXIT_FAILURE,
+        );
+      }
+      await sleep(LAUNCHD_POLL_MS);
+    }
+  }
+
+  /** The config dir the job's plist points the daemon at, or null when unreadable. */
+  private configDirOf(component: ServiceComponent, instance?: string): string | null {
+    try {
+      const plist = readFileSync(this.unitPath(component, instance), "utf8");
+      return launchdPlistEnvValue(plist, "OMNESIS_CONFIG_DIR");
+    } catch {
+      return null;
     }
   }
 
