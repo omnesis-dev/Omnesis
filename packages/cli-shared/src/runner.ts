@@ -38,7 +38,9 @@ export interface RunCliOptions {
  * means tests can verify behaviour without forcibly exiting Node.
  *
  * Mapping:
- *   - clean return                     → `EXIT_OK`
+ *   - clean return                     → `EXIT_OK`, or the non-zero
+ *                                        `process.exitCode` the command set
+ *                                        after printing its own report
  *   - `throw new CliError(msg, code)`  → `code`, message printed to stderr
  *   - fetch connect-refused / DNS      → `EXIT_GATEWAY_DOWN` (with hint)
  *   - any other Error                  → `EXIT_FAILURE`, stack printed
@@ -59,7 +61,9 @@ export async function runCli(
 
   try {
     await fn();
-    return EXIT_OK;
+    // The caller's `process.exit(code)` would otherwise override it.
+    const exitCode = Number(process.exitCode ?? EXIT_OK);
+    return Number.isInteger(exitCode) && exitCode !== EXIT_OK ? exitCode : EXIT_OK;
   } catch (err) {
     if (err instanceof CliError) {
       if (err.message) stderr(err.message + "\n");

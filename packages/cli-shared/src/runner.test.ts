@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   CliError,
   EXIT_AUTH,
@@ -26,6 +26,10 @@ function harness(): { opts: Parameters<typeof runCli>[1]; captured: Captured } {
 }
 
 describe("runCli", () => {
+  afterEach(() => {
+    process.exitCode = undefined;
+  });
+
   it("returns EXIT_OK when fn resolves cleanly", async () => {
     const { opts, captured } = harness();
     const code = await runCli(async () => {
@@ -33,6 +37,27 @@ describe("runCli", () => {
     }, opts);
     expect(code).toBe(EXIT_OK);
     expect(captured.stderr).toEqual([]);
+  });
+
+  it("returns the exit status a command set on process.exitCode after a clean return", async () => {
+    // A command that prints its own report and then fails (e.g. `tls provision`
+    // finding no certificate path) must not be turned into a success by the
+    // caller's process.exit().
+    const { opts, captured } = harness();
+    const code = await runCli(async () => {
+      process.exitCode = EXIT_USER_ERROR;
+    }, opts);
+    expect(code).toBe(EXIT_USER_ERROR);
+    expect(captured.stderr).toEqual([]);
+  });
+
+  it("keeps a thrown CliError's code over process.exitCode", async () => {
+    const { opts } = harness();
+    const code = await runCli(async () => {
+      process.exitCode = EXIT_FAILURE;
+      throw new CliError("nope", EXIT_AUTH);
+    }, opts);
+    expect(code).toBe(EXIT_AUTH);
   });
 
   it("maps a CliError to its exitCode and prints the message", async () => {
