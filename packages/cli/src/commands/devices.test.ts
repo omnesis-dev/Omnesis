@@ -21,6 +21,7 @@ import { normalizeEmail, normalizePhone } from "@omnesis/core";
 import {
   AGENT_INTEGRATION_PROTOCOL_MIN_VERSION,
   AGENT_INTEGRATION_PROTOCOL_VERSION,
+  IntegrationHttpError,
 } from "@omnesis/agent-integration";
 import {
   DEVICE_HOSTED_SOURCE_TYPES,
@@ -56,10 +57,23 @@ import {
   parseSelfInfoField,
   pairInstructionLines,
   repairInstructionLines,
+  AgentPairingRefusedError,
   redeemAgentIntegrationPairingCode,
   redeemPairingCode,
 } from "./devices.js";
 import { buildPairQrPayload } from "./phone-pairing.js";
+
+// The pinned client parses a real certificate on construction; the refusal it
+// raises is what the pinned-path test needs, not a TLS handshake.
+const pinnedClient = vi.hoisted(() => ({ postJson: vi.fn() }));
+vi.mock("@omnesis/agent-integration", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@omnesis/agent-integration")>()),
+  PinnedGatewayHttpClient: class {
+    postJson(...args: unknown[]): Promise<unknown> {
+      return pinnedClient.postJson(...args) as Promise<unknown>;
+    }
+  },
+}));
 
 describe("device list connection labels", () => {
   it("describes WebSocket presence without declaring devices online or offline", () => {
@@ -306,13 +320,75 @@ describe("pairing response validation", () => {
     });
   });
 
-  it("directs a name collision into an explicitly bound repair ceremony", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status: 409 })));
-    await expect(
-      redeemAgentIntegrationPairingCode("http://127.0.0.1:7600", "PAIR-CODE", "openclaw", {
-        suggestedName: "omnesis-openclaw-a1b2c3d4e5f6",
+  it("presents the host's continuity credential and reports a reconnect", async () => {
+    const request = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ...VALID_AGENT_INTEGRATION_PAIRING, reconnected: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
       }),
-    ).rejects.toThrow(/--repair-device <device-id>/);
+    );
+    vi.stubGlobal("fetch", request);
+
+    const paired = await redeemAgentIntegrationPairingCode(
+      "http://127.0.0.1:7600",
+      "PAIR-CODE",
+      "openclaw",
+      {
+        suggestedName: "omnesis-openclaw-a1b2c3d4e5f6",
+        continuityCredential: "omn_fictional_saved_delivery",
+      },
+    );
+
+    expect(paired.reconnected).toBe(true);
+    const [, init] = request.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      continuityCredential: "omn_fictional_saved_delivery",
+    });
+  });
+
+  it("reads the refusal code on the pinned path the portal's commands take", async () => {
+    pinnedClient.postJson.mockRejectedValue(
+      new IntegrationHttpError(409, "refused", undefined, "AGENT_DEVICE_EXISTS"),
+    );
+    const attempt = redeemAgentIntegrationPairingCode(
+      "https://gateway.example.org:7600",
+      "PAIR-CODE",
+      "openclaw",
+      {
+        suggestedName: "omnesis-openclaw-a1b2c3d4e5f6",
+        tls: { caPem: "fictional", leafFingerprintSha256: "a".repeat(64) },
+      },
+    );
+    await expect(attempt).rejects.toBeInstanceOf(AgentPairingRefusedError);
+    await expect(attempt).rejects.toThrow(/choose "Reconnect"/u);
+  });
+
+  it.each([
+    [
+      "AGENT_DEVICE_EXISTS",
+      /this machine's own, omnesis-openclaw-a1b2c3d4e5f6 .* choose "Reconnect"/su,
+    ],
+    ["AGENT_DEVICE_ONLINE", /still connected, from this machine or another one/u],
+    ["AGENT_DEVICE_MISMATCH", /reconnects a different agent device/u],
+    ["AGENT_CREDENTIAL_STALE", /saved credentials were replaced while it reconnected/u],
+    ["CONFLICT", /Create a new pairing code in Settings → Access → Connect an agent → OpenClaw/u],
+  ])("turns a %s refusal into the portal step that resolves it", async (code, message) => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ error: "refused", code }), { status: 409 }),
+        ),
+    );
+    const attempt = redeemAgentIntegrationPairingCode(
+      "http://127.0.0.1:7600",
+      "PAIR-CODE",
+      "openclaw",
+      { suggestedName: "omnesis-openclaw-a1b2c3d4e5f6" },
+    );
+    await expect(attempt).rejects.toBeInstanceOf(AgentPairingRefusedError);
+    await expect(attempt).rejects.toThrow(message);
   });
 });
 

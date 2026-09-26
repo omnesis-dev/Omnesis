@@ -1344,13 +1344,9 @@ export interface WriteGate {
     idempotencyKey?: string;
   }): Promise<DevicePairingRedemption>;
   revokePairing(pairingCode: string): Promise<boolean>;
-  redeemAgentIntegrationPairing(input: {
-    pairingCode: string;
-    harness: "openclaw" | "hermes";
-    capabilities: DeviceCapability;
-    repairDeviceId?: DeviceId;
-    idempotencyKey?: string;
-  }): Promise<AgentIntegrationPairingResult>;
+  redeemAgentIntegrationPairing(
+    input: Parameters<typeof redeemAgentIntegrationPairing>[1],
+  ): Promise<AgentIntegrationPairingResult>;
   cleanupExpiredPairings(): Promise<number>;
 
   // ── tokens.ts ─────────────────────────────────────────────────────

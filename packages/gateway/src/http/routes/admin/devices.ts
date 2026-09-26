@@ -579,8 +579,10 @@ export function mountDeviceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
     // and cursor hangs off — survives the credential rotation. The target need
     // not be revoked: redeeming the code rotates whatever credentials the
     // device holds, which is how an operator replaces a lost or leaked one.
-    // Redemption still refuses a target holding a live socket, so the device
-    // has to be stopped or revoked first either way.
+    // Redemption still refuses a target holding a live socket unless the
+    // redeeming host proves, with a credential of that device, that it is the
+    // installation behind the socket; any other host has to wait for the
+    // device to stop or be revoked.
     //
     // Portal sessions are excluded: a portal login consumes its code through
     // its own path, which resolves the row by install identity and never

@@ -99,7 +99,9 @@ vi.mock("@omnesis/agent-integration", async (importOriginal) => {
     writeIntegrationCredentials: vi.fn(actual.writeIntegrationCredentials),
   };
 });
-vi.mock("./devices.js", () => ({
+vi.mock("./devices.js", async (importOriginal) => ({
+  AgentPairingRefusedError: (await importOriginal<typeof import("./devices.js")>())
+    .AgentPairingRefusedError,
   redeemAgentIntegrationPairingCode: vi.fn(),
 }));
 // The harness's own CLI — its restart and its skill report — is a seam here:
@@ -129,13 +131,14 @@ import {
   buildOpenClawSkill,
   type Harness,
 } from "../harness-skills.js";
-import { redeemAgentIntegrationPairingCode } from "./devices.js";
+import { AgentPairingRefusedError, redeemAgentIntegrationPairingCode } from "./devices.js";
 import { authorizeHarness } from "./connect-oauth.js";
 import { openClawCapabilityConsentSupport } from "./openclaw-capability-consent.js";
 import {
   assertHermesCompletionNotifications,
   assertOpenClawCompletionNotifications,
   connectCommand,
+  continuityCredentialFor,
   dotenvSetting,
   encodeDotenvValue,
   harnessHome,
@@ -1324,6 +1327,164 @@ describe("OpenClaw source artifact", () => {
       }
     },
   );
+});
+
+describe("reconnecting an already-connected installation", () => {
+  const SAVED_DELIVERY = `omn_${"e".repeat(32)}`;
+
+  function seedConnectedInstall(home: string, gatewayUrl: string, pin?: string): string {
+    const credentialsPath = join(home, "omnesis", "integration.json");
+    mkdirSync(dirname(credentialsPath), { recursive: true });
+    writeFileSync(
+      credentialsPath,
+      `${JSON.stringify({
+        gatewayUrl,
+        deliveryToken: SAVED_DELIVERY,
+        ingestionToken: `omn_${"f".repeat(32)}`,
+        managementToken: `omn_${"9".repeat(32)}`,
+        oauth: { redirectUri: "http://127.0.0.1/callback", clientInformation: {}, tokens: {} },
+        ...(pin ? { tls: { caPem: "fictional", leafFingerprintSha256: pin } } : {}),
+      })}\n`,
+      { mode: 0o600 },
+    );
+    return credentialsPath;
+  }
+
+  it("offers the saved credential only to the gateway that issued it", () => {
+    const home = mkdtempSync(join(tmpdir(), "omnesis-connect-continuity-"));
+    tempHomes.push(home);
+    const pin = "c".repeat(64);
+    const path = seedConnectedInstall(home, "https://gateway.example.org:7600/", pin);
+    const pinned = { caPem: "fictional", leafFingerprintSha256: pin };
+    const renewed = { caPem: "fictional", leafFingerprintSha256: "d".repeat(64) };
+    const unverified = { verifiedFingerprint: false };
+    const verified = { verifiedFingerprint: true };
+
+    // The pinned certificate identifies the gateway at any address.
+    expect(
+      continuityCredentialFor(path, "https://gateway-alt.example.org:7600", pinned, unverified),
+    ).toBe(SAVED_DELIVERY);
+    // A renewed certificate at the same address counts only once this run
+    // verified it against an explicit fingerprint.
+    expect(
+      continuityCredentialFor(path, "https://gateway.example.org:7600", renewed, verified),
+    ).toBe(SAVED_DELIVERY);
+    expect(
+      continuityCredentialFor(path, "https://gateway.example.org:7600", renewed, unverified),
+    ).toBeUndefined();
+    expect(
+      continuityCredentialFor(path, "https://other-gateway.example.org:7600", renewed, verified),
+    ).toBeUndefined();
+    writeFileSync(path, "not json\n");
+    expect(
+      continuityCredentialFor(path, "https://gateway.example.org:7600", pinned, verified),
+    ).toBeUndefined();
+    expect(
+      continuityCredentialFor(
+        join(home, "missing.json"),
+        "https://gateway.example.org:7600",
+        pinned,
+        verified,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("offers a legacy installation's delivery credential to its own unpinned gateway", () => {
+    const home = mkdtempSync(join(tmpdir(), "omnesis-connect-continuity-legacy-"));
+    tempHomes.push(home);
+    const path = join(home, "integration.json");
+    writeFileSync(
+      path,
+      JSON.stringify({
+        gatewayUrl: "http://127.0.0.1:7600",
+        deliveryToken: SAVED_DELIVERY,
+        ingestionToken: `omn_${"f".repeat(32)}`,
+      }),
+    );
+    expect(
+      continuityCredentialFor(path, "http://127.0.0.1:7600", undefined, {
+        verifiedFingerprint: false,
+      }),
+    ).toBe(SAVED_DELIVERY);
+  });
+
+  it("re-running the card's command reconnects the same device with its saved credential", async () => {
+    const home = mkdtempSync(join(tmpdir(), "omnesis-connect-reconnect-"));
+    tempHomes.push(home);
+    writeFileSync(join(home, "openclaw.json"), "{}\n");
+    seedConnectedInstall(home, ENV.OMNESIS_GATEWAY_URL);
+    (redeemAgentIntegrationPairingCode as Mock).mockResolvedValue({
+      ...PAIRING,
+      reconnected: true,
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await run({
+      harness: "openclaw",
+      dir: home,
+      "gateway-url": ENV.OMNESIS_GATEWAY_URL,
+      code: "PAIR-CODE",
+    });
+
+    expect(redeemAgentIntegrationPairingCode).toHaveBeenCalledWith(
+      ENV.OMNESIS_GATEWAY_URL,
+      "PAIR-CODE",
+      "openclaw",
+      expect.objectContaining({ continuityCredential: SAVED_DELIVERY }),
+    );
+    expect(
+      JSON.parse(readFileSync(join(home, "omnesis", "integration.json"), "utf8")),
+    ).toMatchObject({ deliveryToken: PAIRING.credentials.delivery.token });
+    expect(log.mock.calls.flat().join("\n")).toMatch(/Reconnected .*OpenClaw agent/u);
+  });
+
+  it("does not hand a different gateway this installation's credential", async () => {
+    const home = mkdtempSync(join(tmpdir(), "omnesis-connect-other-gateway-"));
+    tempHomes.push(home);
+    writeFileSync(join(home, "openclaw.json"), "{}\n");
+    seedConnectedInstall(home, "https://previous-gateway.example.org:7600", "b".repeat(64));
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await run({
+      harness: "openclaw",
+      dir: home,
+      "gateway-url": ENV.OMNESIS_GATEWAY_URL,
+      code: "PAIR-CODE",
+    });
+
+    const options = (redeemAgentIntegrationPairingCode as Mock).mock.calls[0][3] as {
+      continuityCredential?: string;
+    };
+    expect(options.continuityCredential).toBeUndefined();
+  });
+
+  it("a refused code does not pin the next run to it", async () => {
+    const home = mkdtempSync(join(tmpdir(), "omnesis-connect-refused-"));
+    tempHomes.push(home);
+    writeFileSync(join(home, "openclaw.json"), "{}\n");
+    (redeemAgentIntegrationPairingCode as Mock).mockRejectedValueOnce(
+      new AgentPairingRefusedError("fictional refusal", 2),
+    );
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await expect(
+      run({
+        harness: "openclaw",
+        dir: home,
+        "gateway-url": ENV.OMNESIS_GATEWAY_URL,
+        code: "REFUSED-CODE",
+      }),
+    ).rejects.toThrow(/fictional refusal/u);
+    expect(existsSync(join(home, "omnesis", "connect-redemption.json"))).toBe(false);
+
+    await run({
+      harness: "openclaw",
+      dir: home,
+      "gateway-url": ENV.OMNESIS_GATEWAY_URL,
+      code: "NEW-CODE",
+    });
+    expect((redeemAgentIntegrationPairingCode as Mock).mock.calls[1][1]).toBe("NEW-CODE");
+  });
 });
 
 describe("connect credential wiring", () => {

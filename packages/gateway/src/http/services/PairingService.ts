@@ -13,6 +13,7 @@ import {
 } from "@omnesis/types";
 import {
   findDeviceByName,
+  type AgentPairingConflictCode,
   getDevice,
   listDevices,
   peekPairing,
@@ -23,6 +24,7 @@ import {
   isStalePairingWriteError,
   type PairingGenerationFence,
 } from "../../data/pairing-generation-fence.js";
+import { lookupAgentPairingCredential } from "../../data/repositories/TokenRepository.js";
 import { HttpError } from "../errors.js";
 import type { WriteGate } from "../../write-gate.js";
 import type Database from "better-sqlite3";
@@ -44,6 +46,8 @@ export type PairingServiceResult =
   | {
       outcome: "paired-agent";
       device: DeviceRecord;
+      /** True when the pairing landed on an existing device rather than creating one. */
+      reconnected: boolean;
       credentials: {
         delivery: PairedCredential;
         ingestion: PairedCredential;
@@ -58,7 +62,7 @@ export type PairingServiceResult =
       scopes: Scope[];
     }
   | { outcome: "invalid"; error: string }
-  | { outcome: "conflict"; error: string };
+  | { outcome: "conflict"; error: string; code?: AgentPairingConflictCode };
 
 export interface PairingServiceDeps {
   db: Db;
@@ -73,6 +77,12 @@ export interface PairingServiceInput {
   pairingCode: string;
   capabilities?: DeviceCapability;
   agentIntegration?: { harness: "openclaw" | "hermes" };
+  /**
+   * A credential the redeeming agent host still holds for the device it is
+   * already connected as. Presenting it is how a harness reconnects to its own
+   * device without an explicitly bound repair code.
+   */
+  continuityCredential?: string;
   idempotencyKey?: string;
 }
 
@@ -144,7 +154,7 @@ export class PairingService {
     if (preview?.kind === "agent" || (!preview && input.agentIntegration && input.idempotencyKey)) {
       return this.redeemAgent(input, preview);
     }
-    if (input.agentIntegration) {
+    if (input.agentIntegration || input.continuityCredential) {
       return {
         outcome: "invalid",
         error: "agent integration identity requires an agent pairing code",
@@ -208,23 +218,36 @@ export class PairingService {
       };
     }
 
-    const repairTarget = pending?.repairDeviceId
-      ? getDevice(this.deps.db, pending.repairDeviceId)
-      : null;
-    if (pending?.repairDeviceId && !repairTarget) {
+    // A spent code is either a replay the writer answers from its receipt or
+    // invalid; either way there is nothing left to decide here.
+    const claimed = pending ? this.claimedAgentDevice(input.continuityCredential, identity) : null;
+    const bound = pending?.repairDeviceId ? getDevice(this.deps.db, pending.repairDeviceId) : null;
+    if (pending?.repairDeviceId && !bound) {
       return { outcome: "conflict", error: "The selected repair device no longer exists." };
     }
     if (
-      repairTarget &&
-      (repairTarget.kind !== "agent" ||
-        repairTarget.capabilities.agentIntegration?.harness !== identity.harness)
+      bound &&
+      (bound.kind !== "agent" || bound.capabilities.agentIntegration?.harness !== identity.harness)
     ) {
       return {
         outcome: "conflict",
         error: "The selected repair device belongs to a different agent integration.",
       };
     }
+    if (bound && claimed && claimed.device.id !== bound.id) {
+      return {
+        outcome: "conflict",
+        code: "AGENT_DEVICE_MISMATCH",
+        error: `This pairing code reconnects "${bound.name}", but this machine is connected as "${claimed.device.name}".`,
+      };
+    }
 
+    // The device this redemption lands on: the one the administrator bound the
+    // code to, or else the one this host proved it is already connected as. A
+    // suggested name alone never selects an existing device — it is
+    // caller-controlled, so it would let any holder of a fresh code take over
+    // whichever device carries that name.
+    const repairTarget = bound ?? claimed?.device ?? null;
     const resolvedName = pending
       ? (repairTarget?.name ?? resolveDeviceName(pending.name, "agent", capabilities))
       : null;
@@ -235,12 +258,17 @@ export class PairingService {
     if (!repairTarget && existing) {
       return {
         outcome: "conflict",
-        error: `Device name "${resolvedName}" already exists. Mint an explicit repair code for that device or pick a different name.`,
+        code: "AGENT_DEVICE_EXISTS",
+        error: `Device name "${resolvedName}" already exists. Reconnect it with a pairing code bound to that device, or pick a different name.`,
       };
     }
-    if (repairTarget && this.deps.wsServer?.isConnected(repairTarget.id)) {
+    // A live socket is refused only to a host that proved nothing: the proven
+    // holder is the very installation behind that socket, reinstalling itself,
+    // and its old sockets are evicted once the new credentials commit.
+    if (repairTarget && !claimed && this.deps.wsServer?.isConnected(repairTarget.id)) {
       return {
         outcome: "conflict",
+        code: "AGENT_DEVICE_ONLINE",
         error: `The agent device "${resolvedName}" is currently online and cannot be repaired.`,
       };
     }
@@ -251,8 +279,10 @@ export class PairingService {
       capabilities,
       ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
       ...(repairTarget ? { repairDeviceId: repairTarget.id } : {}),
+      ...(claimed ? { continuityTokenId: claimed.tokenId } : {}),
     });
     if (paired.outcome !== "paired") return paired;
+    const reconnected = paired.reconnected;
 
     // `disconnectDevice` removes authorization state synchronously. If an old
     // credential authenticated after the preflight check but before the
@@ -263,7 +293,7 @@ export class PairingService {
       await this.clearRemovedBestEffort([identity.harness]);
       this.deps.statusCache.bump();
       log.info(
-        `Agent integration paired: ${paired.device.name} (${identity.harness}) id=${paired.device.id}`,
+        `Agent integration ${reconnected ? "reconnected" : "paired"}: ${paired.device.name} (${identity.harness}) id=${paired.device.id}${claimed ? " by its own credential" : ""}`,
       );
     }
 
@@ -275,12 +305,40 @@ export class PairingService {
     return {
       outcome: "paired-agent",
       device: paired.device,
+      reconnected,
       credentials: {
         delivery: credential(paired.credentials.delivery),
         ingestion: credential(paired.credentials.ingestion),
         management: credential(paired.credentials.management),
       },
     };
+  }
+
+  /**
+   * The agent device a presented credential proves this host is connected as,
+   * or null when it proves nothing: absent, unknown, not one of the standing
+   * credentials agent pairing mints, or belonging to a device that is not this
+   * harness's agent. An unproven claim is not an error — the redemption simply
+   * proceeds as a host with no prior device.
+   */
+  private claimedAgentDevice(
+    credential: string | undefined,
+    identity: { harness: "openclaw" | "hermes" },
+  ): { device: DeviceRecord; tokenId: TokenId } | null {
+    if (!credential) return null;
+    const token = lookupAgentPairingCredential(this.deps.db, credential, identity.harness);
+    const device = token ? getDevice(this.deps.db, token.deviceId) : null;
+    if (
+      !token ||
+      !device ||
+      device.revokedAt !== null ||
+      device.kind !== "agent" ||
+      device.capabilities.agentIntegration?.harness !== identity.harness
+    ) {
+      log.warn(`Agent pairing presented a credential that proves no ${identity.harness} device`);
+      return null;
+    }
+    return { device, tokenId: token.id };
   }
 
   private async clearRemovedBestEffort(sourceTypes: readonly string[]): Promise<void> {

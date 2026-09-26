@@ -681,6 +681,8 @@ export interface RedeemedAgentIntegrationCredential {
 
 export interface RedeemedAgentIntegrationPairing {
   device: { id: DeviceId; name: string; kind: "agent" };
+  /** The pairing landed on the device this host was already connected as. */
+  reconnected: boolean;
   credentials: {
     delivery: RedeemedAgentIntegrationCredential;
     ingestion: RedeemedAgentIntegrationCredential;
@@ -830,6 +832,7 @@ export function parseRedeemedAgentIntegrationPairing(
   }
   return {
     device: { id, name, kind: "agent" },
+    reconnected: value.reconnected === true,
     credentials: {
       delivery: parseAgentCredential(value.credentials.delivery, ["subscriptions:receive"]),
       ingestion: parseAgentCredential(value.credentials.ingestion, [`write:${harness}`]),
@@ -982,9 +985,79 @@ export async function redeemPairingCode(
 }
 
 /**
+ * The gateway refused an agent pairing code without committing anything, so
+ * the connect attempt that carried it may be dropped and retried with a new
+ * code.
+ */
+export class AgentPairingRefusedError extends CliError {}
+
+const HARNESS_NAMES = { openclaw: "OpenClaw", hermes: "Hermes" } as const;
+
+/**
+ * What the operator does about a refused reconnect, keyed by the gateway's
+ * conflict code. Each answer leads to the portal's Connect an agent card,
+ * which can mint the code the situation needs.
+ */
+function agentPairingConflictMessage(
+  code: string | undefined,
+  harness: "openclaw" | "hermes",
+  suggestedName: string,
+): string {
+  const card = `Settings → Access → Connect an agent → ${HARNESS_NAMES[harness]} in the portal`;
+  switch (code) {
+    case "AGENT_DEVICE_EXISTS":
+      return (
+        `The gateway already has an agent device with the name this pairing asks for — ` +
+        `normally this machine's own, ${suggestedName} — and this machine holds no working ` +
+        `credential for it, so the gateway cannot tell it is the same installation. In ${card}, ` +
+        `choose "Reconnect" for that device, create a pairing code, and run the new command ` +
+        `here. The device keeps its watches and history.`
+      );
+    case "AGENT_DEVICE_ONLINE":
+      return (
+        `The agent device this pairing code reconnects is still connected, from this machine ` +
+        `or another one, and this machine holds no working credential for it. Stop ` +
+        `${HARNESS_NAMES[harness]} where it runs, or revoke that device, and run the command ` +
+        `again. To add this machine as a separate agent instead, choose "Connect another ` +
+        `machine" in ${card} and create a new pairing code.`
+      );
+    case "AGENT_DEVICE_MISMATCH":
+      return (
+        `This pairing code reconnects a different agent device than the one this machine is ` +
+        `connected as. In ${card}, choose "Reconnect" for the device this machine was paired ` +
+        `as, or "Connect another machine", and create a new pairing code.`
+      );
+    case "AGENT_CREDENTIAL_STALE":
+      return (
+        `This machine's saved credentials were replaced while it reconnected, most likely by ` +
+        `another connect run. Create a new pairing code in ${card} and run the command again.`
+      );
+    default:
+      return (
+        `The gateway refused this agent pairing. Create a new pairing code in ${card} and run ` +
+        `the command again.`
+      );
+  }
+}
+
+async function gatewayErrorCode(res: Response): Promise<string | undefined> {
+  try {
+    const body = (await res.json()) as unknown;
+    return isRecord(body) && typeof body.code === "string" ? body.code : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Exchange one agent-kind pairing code for three separated credentials.
  * The gateway returns all three from one pairing-code redemption; no broad
  * bootstrap token is ever written to the harness.
+ *
+ * `continuityCredential` is a credential this host still holds for the device
+ * it is already connected as. It proves the redemption reconnects that
+ * device, which then keeps its id — and every watch bound to it — while its
+ * credentials are replaced.
  */
 export async function redeemAgentIntegrationPairingCode(
   gatewayUrl: string,
@@ -994,6 +1067,7 @@ export async function redeemAgentIntegrationPairingCode(
     idempotencyKey?: string;
     maxConcurrentRuns?: number;
     suggestedName: string;
+    continuityCredential?: string;
     tls?: TlsTrust;
   },
 ): Promise<RedeemedAgentIntegrationPairing> {
@@ -1001,6 +1075,7 @@ export async function redeemAgentIntegrationPairingCode(
   const body = {
     pairingCode: code,
     ...(options.idempotencyKey ? { idempotencyKey: options.idempotencyKey } : {}),
+    ...(options.continuityCredential ? { continuityCredential: options.continuityCredential } : {}),
     agentIntegration: { harness },
     capabilities: {
       suggestedName: options.suggestedName,
@@ -1022,6 +1097,7 @@ export async function redeemAgentIntegrationPairingCode(
   }
   let responsePayload: unknown;
   let failureStatus: number | null = null;
+  let failureCode: string | undefined;
   try {
     if (options.tls) {
       responsePayload = await withSpinner("Provisioning agent integration", () =>
@@ -1037,10 +1113,12 @@ export async function redeemAgentIntegrationPairingCode(
       );
       failureStatus = res.ok ? null : res.status;
       if (res.ok) responsePayload = await res.json();
+      else failureCode = await gatewayErrorCode(res);
     }
   } catch (err) {
     if (err instanceof IntegrationHttpError) {
       failureStatus = err.status;
+      failureCode = err.code;
     } else if (isTlsCertError(err)) {
       throw new CliError(
         `${c.red}${pairingTlsFailure(
@@ -1072,17 +1150,15 @@ export async function redeemAgentIntegrationPairingCode(
     );
   }
   if (failureStatus === 400 || failureStatus === 404 || failureStatus === 410) {
-    throw new CliError(
+    throw new AgentPairingRefusedError(
       `${c.red}Invalid or expired agent pairing code. Mint a fresh code with ` +
         `\`omnesis devices pair --kind agent\` and redeem it within its TTL.${c.reset}`,
       EXIT_USER_ERROR,
     );
   }
   if (failureStatus === 409) {
-    throw new CliError(
-      `${c.red}Agent integration pairing conflicts with an existing device. List devices with ` +
-        `\`omnesis devices list\`, then mint an explicitly bound repair code with ` +
-        `\`omnesis devices pair --repair-device <device-id>\`.${c.reset}`,
+    throw new AgentPairingRefusedError(
+      `${c.red}${agentPairingConflictMessage(failureCode, harness, options.suggestedName)}${c.reset}`,
       EXIT_USER_ERROR,
     );
   }

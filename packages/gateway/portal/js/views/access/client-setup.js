@@ -101,6 +101,23 @@ export function harnessAddresses(oauth) {
     }));
 }
 
+/**
+ * The agent devices a managed integration's card can reconnect: the paired
+ * devices of that harness, most recently active first.
+ *
+ * @param {Array<{ id: string, kind: string, capabilities?: { agentIntegration?: { harness?: string } }, lastSeenAt?: number | null, pairedAt?: number }>} devices
+ * @param {string} harness
+ */
+export function reconnectableHarnessDevices(devices, harness) {
+  const activity = (device) => device.lastSeenAt ?? device.pairedAt ?? 0;
+  return devices
+    .filter(
+      (device) =>
+        device.kind === "agent" && device.capabilities?.agentIntegration?.harness === harness,
+    )
+    .sort((a, b) => activity(b) - activity(a));
+}
+
 function harnessCommands(harness, oauth, address, pairingCode) {
   const flags = [
     `--gateway-url ${shellQuote(address.gatewayUrl)}`,

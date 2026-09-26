@@ -10,9 +10,9 @@
 // configured, so `oauth` is always a live address here.
 
 import { html } from "htm/preact";
-import { useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 
-import { lookupAccessAuthorization, pairDevice } from "../../api.js";
+import { listDevices, lookupAccessAuthorization, pairDevice } from "../../api.js";
 import { CopyIconButton } from "../../components/copy-button.js";
 import { Modal } from "../../components/modal.js";
 import { navigate } from "../../lib/router.js";
@@ -21,6 +21,7 @@ import {
   PUBLISH_DOCS,
   agentSetups,
   harnessAddresses,
+  reconnectableHarnessDevices,
   isPrivateAddress,
   servesUntrustedCertificate,
   usesNonStandardPort,
@@ -98,15 +99,84 @@ function PublicAddressNotice({ agent, resource }) {
   </div>`;
 }
 
+/** No code yet; `target` is the device a minted code reconnects, or null. */
+const EMPTY_PAIRING = { code: null, expiresAt: null, target: null, busy: false, error: "" };
+
+/** The value of the choice that pairs a machine as a device of its own. */
+const ANOTHER_MACHINE = "another";
+
+/** A device's state, as the reconnect choice describes it. */
+function deviceState(device) {
+  if (device.revokedAt) return "revoked";
+  return device.online ? "connected now" : "offline";
+}
+
+/**
+ * When this gateway already has devices of the harness: whether the code is
+ * for one of them, or for another machine. A code bound to a device keeps its
+ * id — and every watch bound to it — and replaces its credentials wherever the
+ * command runs; an unbound one pairs a new device, unless the machine running
+ * it proves it is already one of these.
+ */
+function ReconnectChoice({ agentName, devices, target, onTarget, disabled }) {
+  return html`<fieldset class="access-agent-reconnect" disabled=${disabled}>
+    <legend>${agentName} is already connected to this gateway. What is this code for?</legend>
+    ${devices.map(
+      (device) => html`<label key=${device.id} class="access-agent-reconnect-option">
+        <input
+          type="radio"
+          name="access-agent-reconnect"
+          value=${device.id}
+          checked=${target === device.id}
+          onChange=${() => onTarget(device.id)}
+        />
+        <span>
+          <span><strong>Reconnect ${device.name}</strong> <span class="access-agent-reconnect-state">(${deviceState(device)})</span></span>
+          <small>Same device, new credentials: its watches and history stay, and its old credentials stop working. Run the command on that machine, or on the machine replacing it.</small>
+        </span>
+      </label>`,
+    )}
+    <label class="access-agent-reconnect-option">
+      <input
+        type="radio"
+        name="access-agent-reconnect"
+        value=${ANOTHER_MACHINE}
+        checked=${target === ANOTHER_MACHINE}
+        onChange=${() => onTarget(ANOTHER_MACHINE)}
+      />
+      <span>
+        <strong>Connect another machine</strong>
+        <small>A separate agent device, for a machine that is not connected yet.</small>
+      </span>
+    </label>
+  </fieldset>`;
+}
+
 /**
  * What a managed integration's machine needs before its commands: the address
- * it pairs against, when the gateway accepts more than one, and a pairing code
- * minted here so the commands carry it.
+ * it pairs against, when the gateway accepts more than one, which existing
+ * device the code reconnects, when there is one, and a pairing code minted
+ * here so the commands carry it.
  */
-function HarnessPairing({ addresses, addressIdx, setAddressIdx, pairing, onPair }) {
+function HarnessPairing({
+  agentName,
+  addresses,
+  addressIdx,
+  setAddressIdx,
+  devices,
+  devicesLoaded,
+  target,
+  onTarget,
+  pairing,
+  onPair,
+}) {
   const expires = pairing.code
     ? new Date(pairing.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     : null;
+  const choosing = devices.find((device) => device.id === target) ?? null;
+  // What the minted code does is what it was minted for, not the current choice.
+  const reconnects = devices.find((device) => device.id === pairing.target) ?? null;
+  const chosen = devicesLoaded && (devices.length === 0 || target !== null);
   return html`<div class="access-agent-pairing">
     ${addresses.length > 1 &&
     html`<label class="form-group">
@@ -127,13 +197,17 @@ function HarnessPairing({ addresses, addressIdx, setAddressIdx, pairing, onPair 
       </select>
       <small>Use the direct address when that machine is on your network. Wherever the address presents the gateway's own certificate, the command checks it.</small>
     </label>`}
+    ${devices.length > 0 &&
+    html`<${ReconnectChoice} agentName=${agentName} devices=${devices} target=${target} onTarget=${onTarget} disabled=${pairing.busy} />`}
     ${pairing.code
-      ? html`<p>Pairing code <code>${pairing.code}</code> is in the commands below. It works once and expires at ${expires}.</p>`
+      ? html`<p>
+          Pairing code <code>${pairing.code}</code> is in the commands below${reconnects ? html`${" "}and reconnects <strong>${reconnects.name}</strong>` : ""}. It works once and expires at ${expires}.
+        </p>`
       : html`<div class="access-agent-pair-action">
-          <button type="button" class="btn-secondary" onClick=${onPair} disabled=${pairing.busy}>
-            ${pairing.busy ? "Creating…" : "Create a pairing code"}
+          <button type="button" class="btn-secondary" onClick=${onPair} disabled=${pairing.busy || !chosen}>
+            ${pairing.busy ? "Creating…" : choosing ? `Create a code for ${choosing.name}` : "Create a pairing code"}
           </button>
-          <span>The command asks for one. Create it here and it is filled in.</span>
+          <span>${!devicesLoaded ? "Checking for connected devices…" : chosen ? "The command asks for one. Create it here and it is filled in." : "Choose what the code is for first."}</span>
         </div>`}
     ${pairing.error && html`<p class="access-error" role="alert">${pairing.error}</p>`}
   </div>`;
@@ -155,22 +229,68 @@ function AgentSetupPicker({ oauth }) {
   const [selectedId, setSelectedId] = useState(null);
   const [commandIdx, setCommandIdx] = useState(0);
   const [addressIdx, setAddressIdx] = useState(0);
-  const [pairing, setPairing] = useState({ code: null, expiresAt: null, busy: false, error: "" });
+  const [pairing, setPairing] = useState(EMPTY_PAIRING);
+  const [devices, setDevices] = useState({ loaded: false, items: [] });
+  const [target, setTarget] = useState(null);
+  // Bumped whenever the choice a code would be minted for changes, so a code
+  // still being minted for an earlier choice is dropped when it arrives.
+  const mintGeneration = useRef(0);
   const addresses = harnessAddresses(oauth);
   const harnessAddress = addresses[Math.min(addressIdx, addresses.length - 1)];
   const agents = agentSetups(oauth, { harnessAddress, pairingCode: pairing.code ?? undefined });
   const selected = agents.find((agent) => agent.id === selectedId) ?? null;
+  const pairsHarness = selected?.pairs ? selected.id : null;
+
+  // Which devices of the chosen harness a code could reconnect. The operator
+  // always chooses between them and another machine: a reconnect replaces the
+  // device's credentials wherever the command runs, so it is never assumed.
+  // A failure to read the list leaves the ordinary pairing, which a connected
+  // machine still reconnects through with its own credentials.
+  useEffect(() => {
+    mintGeneration.current += 1;
+    setDevices({ loaded: false, items: [] });
+    setTarget(null);
+    setPairing(EMPTY_PAIRING);
+    if (!pairsHarness) return undefined;
+    let current = true;
+    listDevices()
+      .then(({ items }) => {
+        if (current) {
+          setDevices({ loaded: true, items: reconnectableHarnessDevices(items, pairsHarness) });
+        }
+      })
+      .catch(() => {
+        if (current) setDevices({ loaded: true, items: [] });
+      });
+    return () => {
+      current = false;
+    };
+  }, [pairsHarness]);
+
+  function chooseTarget(next) {
+    mintGeneration.current += 1;
+    setTarget(next);
+    setPairing(EMPTY_PAIRING);
+  }
 
   async function createPairingCode() {
+    const generation = mintGeneration.current;
+    const repairDeviceId = target && target !== ANOTHER_MACHINE ? target : null;
     setPairing((current) => ({ ...current, busy: true, error: "" }));
     try {
-      const result = await pairDevice({ kind: "agent" });
-      setPairing({ code: result.pairingCode, expiresAt: result.expiresAt, busy: false, error: "" });
-    } catch (failure) {
+      const result = await pairDevice({ kind: "agent", ...(repairDeviceId ? { repairDeviceId } : {}) });
+      if (generation !== mintGeneration.current) return;
       setPairing({
-        code: null,
-        expiresAt: null,
+        code: result.pairingCode,
+        expiresAt: result.expiresAt,
+        target: repairDeviceId,
         busy: false,
+        error: "",
+      });
+    } catch (failure) {
+      if (generation !== mintGeneration.current) return;
+      setPairing({
+        ...EMPTY_PAIRING,
         error: errorMessage(failure, "The pairing code could not be created."),
       });
     }
@@ -205,9 +325,14 @@ function AgentSetupPicker({ oauth }) {
       ${selected.needsTrustedCertificate && servesUntrustedCertificate(oauth) && html`<${TrustedCertificateNotice} agent=${selected} />`}
       ${selected.pairs &&
       html`<${HarnessPairing}
+        agentName=${selected.name}
         addresses=${addresses}
         addressIdx=${addressIdx}
         setAddressIdx=${setAddressIdx}
+        devices=${devices.items}
+        devicesLoaded=${devices.loaded}
+        target=${target}
+        onTarget=${chooseTarget}
         pairing=${pairing}
         onPair=${createPairingCode}
       />`}

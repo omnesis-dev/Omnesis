@@ -25,13 +25,18 @@ import {
   type PushTransport,
   type Scope,
   type SourceId,
+  type TokenId,
 } from "@omnesis/types";
 import { devicesCapabilitiesCodec, devicePairingsScopesCodec } from "../json-columns.js";
 import { markPeopleGraphDirty } from "../DirtyMarks.js";
 import { putPairedIntegrationOnLevel } from "../../access/store-levels.js";
 import { extendUnanimousMemberConfigContracts } from "./SourceMemberConfigContractRepository.js";
 import { aliasWriter } from "./PersonAliasRepository.js";
-import { createToken, DeviceKindScopeError } from "./TokenRepository.js";
+import {
+  createToken,
+  DeviceKindScopeError,
+  isAgentPairingCredentialActive,
+} from "./TokenRepository.js";
 import type BetterSqlite3 from "better-sqlite3";
 
 type Db = BetterSqlite3.Database;
@@ -1507,11 +1512,36 @@ export type AgentIntegrationPairingResult =
       outcome: "paired";
       pending: PendingPairing;
       device: DeviceRecord;
+      /** The pairing landed on an existing device, keeping its id, rather than creating one. */
+      reconnected: boolean;
       credentials: AgentIntegrationPairingCredentials;
       replayed: boolean;
     }
   | { outcome: "invalid"; error: string }
-  | { outcome: "conflict"; error: string };
+  | { outcome: "conflict"; error: string; code?: AgentPairingConflictCode };
+
+/**
+ * Machine-readable reasons an agent pairing is refused, so the connecting CLI
+ * can say exactly what to do next rather than relay a generic conflict.
+ */
+export type AgentPairingConflictCode =
+  /** A device already carries this name and the host proved no claim to it. */
+  | "AGENT_DEVICE_EXISTS"
+  /** The code's bound device holds a live socket and the host proved no claim to it. */
+  | "AGENT_DEVICE_ONLINE"
+  /** The host holds another device's credential than the one the code is bound to. */
+  | "AGENT_DEVICE_MISMATCH"
+  /** The credential the host presented was rotated or revoked while it redeemed. */
+  | "AGENT_CREDENTIAL_STALE";
+
+class AgentPairingConflict extends Error {
+  constructor(
+    readonly code: AgentPairingConflictCode,
+    message: string,
+  ) {
+    super(message);
+  }
+}
 
 /**
  * Redeem an agent pairing, create/repair its device, apply staged identity,
@@ -1526,21 +1556,37 @@ export function redeemAgentIntegrationPairing(
     capabilities: DeviceCapability;
     /** High-entropy client key that makes a one-use redemption crash-recoverable. */
     idempotencyKey?: string;
-    /** Preflight-confirmed offline device eligible for in-place repair. */
+    /**
+     * The existing device this redemption lands on: the code's bound repair
+     * target, or the device whose live credential the redeeming host presented.
+     */
     repairDeviceId?: DeviceId;
+    /**
+     * The credential the redeeming host proved it holds for `repairDeviceId`.
+     * Only this proof lets a code minted without a bound target land on an
+     * existing device, and it is rechecked here so a credential revoked since
+     * the preflight proves nothing.
+     */
+    continuityTokenId?: TokenId;
   },
 ): AgentIntegrationPairingResult {
   try {
     return db.transaction(() => {
       const requestFingerprint = agentPairingRequestFingerprint(input);
       if (input.idempotencyKey) {
-        const receipt = readPairingReceipt<PairedAgentIntegration>(
+        const receipt = readPairingReceipt<SealedAgentIntegration>(
           db,
           input.pairingCode,
           input.idempotencyKey,
           requestFingerprint,
         );
-        if (receipt?.kind === "replay") return { ...receipt.result, replayed: true };
+        if (receipt?.kind === "replay") {
+          const sealed = receipt.result;
+          // Receipts sealed by an earlier gateway lack the flag; only a bound
+          // repair code could reconnect a device then.
+          const reconnected = sealed.reconnected ?? sealed.pending.repairDeviceId !== null;
+          return { ...sealed, reconnected, replayed: true };
+        }
         if (receipt) return { outcome: receipt.kind, error: receipt.error };
       }
       const pending = consumePairing(db, input.pairingCode, "agent");
@@ -1554,12 +1600,30 @@ export function redeemAgentIntegrationPairing(
         throw new Error("invalid agent integration pairing contract");
       }
 
-      if ((pending.repairDeviceId ?? undefined) !== input.repairDeviceId) {
+      if (pending.repairDeviceId && pending.repairDeviceId !== input.repairDeviceId) {
+        throw new Error("pairing repair target changed");
+      }
+      if (input.continuityTokenId) {
+        if (
+          !input.repairDeviceId ||
+          !isAgentPairingCredentialActive(
+            db,
+            input.continuityTokenId,
+            input.repairDeviceId,
+            input.harness,
+          )
+        ) {
+          throw new AgentPairingConflict(
+            "AGENT_CREDENTIAL_STALE",
+            "reconnect credential is no longer valid",
+          );
+        }
+      } else if (input.repairDeviceId && !pending.repairDeviceId) {
         throw new Error("pairing repair target changed");
       }
 
-      const repairTarget = pending.repairDeviceId ? getDevice(db, pending.repairDeviceId) : null;
-      if (pending.repairDeviceId && !repairTarget) {
+      const repairTarget = input.repairDeviceId ? getDevice(db, input.repairDeviceId) : null;
+      if (input.repairDeviceId && !repairTarget) {
         throw new Error("pairing repair target no longer exists");
       }
       if (
@@ -1585,16 +1649,22 @@ export function redeemAgentIntegrationPairing(
         });
       } else {
         if (existing) {
-          throw new Error(`device name conflict: ${name}`);
+          throw new AgentPairingConflict("AGENT_DEVICE_EXISTS", `device name conflict: ${name}`);
         }
         device = createDevice(db, { name, kind: "agent", capabilities: input.capabilities });
       }
-      db.prepare("UPDATE devices SET self_emails = ?, self_phones = ? WHERE id = ?").run(
-        JSON.stringify(pending.selfEmails),
-        JSON.stringify(pending.selfPhones),
-        device.id,
-      );
-      device = { ...device, selfEmails: pending.selfEmails, selfPhones: pending.selfPhones };
+      // A reconnect keeps the device's self identities unless its code stages
+      // new ones; a code minted for a fresh agent stages none.
+      if (!repairTarget || pending.selfEmails.length > 0 || pending.selfPhones.length > 0) {
+        db.prepare("UPDATE devices SET self_emails = ?, self_phones = ? WHERE id = ?").run(
+          JSON.stringify(pending.selfEmails),
+          JSON.stringify(pending.selfPhones),
+          device.id,
+        );
+        device = { ...device, selfEmails: pending.selfEmails, selfPhones: pending.selfPhones };
+      } else {
+        device = getDevice(db, device.id) ?? device;
+      }
 
       const ingestionScope = writeScope(SourceType(input.harness));
       const withScopes = (token: ReturnType<typeof createToken>, scopes: Scope[]) => ({
@@ -1620,7 +1690,14 @@ export function redeemAgentIntegrationPairing(
           [SCOPE_SUBSCRIPTIONS_MANAGE],
         ),
       };
-      const result = { outcome: "paired", pending, device, credentials, replayed: false } as const;
+      const result = {
+        outcome: "paired",
+        pending,
+        device,
+        reconnected: repairTarget !== null,
+        credentials,
+        replayed: false,
+      } as const;
       if (input.idempotencyKey) {
         writePairingReceipt(
           db,
@@ -1637,7 +1714,11 @@ export function redeemAgentIntegrationPairing(
     if (message === "invalid agent integration pairing contract") {
       return { outcome: "invalid", error: message };
     }
-    return { outcome: "conflict", error: message };
+    return {
+      outcome: "conflict",
+      error: message,
+      ...(error instanceof AgentPairingConflict ? { code: error.code } : {}),
+    };
   }
 }
 
@@ -1651,6 +1732,9 @@ export function cleanupExpiredPairings(db: Db): number {
 }
 
 type PairedAgentIntegration = Extract<AgentIntegrationPairingResult, { outcome: "paired" }>;
+type SealedAgentIntegration = Omit<PairedAgentIntegration, "reconnected"> & {
+  reconnected?: boolean;
+};
 
 function agentPairingRequestFingerprint(input: {
   harness: "openclaw" | "hermes";

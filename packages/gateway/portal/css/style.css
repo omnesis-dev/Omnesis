@@ -874,6 +874,13 @@ a:hover { text-decoration: underline; }
 .access-agent-pairing small { color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
 .access-agent-pair-action { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .access-agent-pair-action span { color: var(--text-secondary); font-size: 12px; }
+.access-agent-reconnect { display: grid; gap: 8px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.access-agent-reconnect legend { padding: 0; margin-bottom: 4px; font-size: 12px; color: var(--text-primary); }
+.access-agent-reconnect-option { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; line-height: 1.5; cursor: pointer; }
+.access-agent-reconnect-option input { margin-top: 3px; }
+.access-agent-reconnect-option > span { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.access-agent-reconnect-option strong { color: var(--text-primary); font-weight: 600; }
+.access-agent-reconnect-state { color: var(--text-secondary); }
 .access-agent-tabbed { display: grid; min-width: 0; }
 .access-agent-tabs { display: flex; gap: 4px; }
 .access-agent-tabs button {
