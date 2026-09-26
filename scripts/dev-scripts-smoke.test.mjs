@@ -2013,8 +2013,12 @@ describe("full-validation workflow topology", () => {
     const { parse } = await import("yaml");
     const status = parse(readFileSync(join(repoRoot, ".github/workflows/ci-status.yml"), "utf8"));
     expect(status.on).toEqual({
-      workflow_run: { workflows: ["full-validation"], types: ["completed"] },
+      workflow_run: { workflows: ["full-validation"], types: ["completed"], branches: ["main"] },
     });
+    // Replaced (cancelled) runs and pull-request runs never re-report the verdict.
+    const gate = status.jobs["main-verdict"].if;
+    expect(gate).toContain("github.event.workflow_run.conclusion != 'cancelled'");
+    expect(gate).toContain("github.event.workflow_run.event != 'pull_request'");
     expect(status.permissions).toEqual({ actions: "read" });
     const steps = status.jobs["main-verdict"].steps;
     expect(steps.some((step) => step.uses?.startsWith("actions/checkout@"))).toBe(false);
