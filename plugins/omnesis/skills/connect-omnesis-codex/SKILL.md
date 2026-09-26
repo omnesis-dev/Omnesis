@@ -11,7 +11,7 @@ Use the exact MCP resource copied from the **Connect an agent** dialog on the Om
 codex mcp add omnesis --url <MCP_RESOURCE> --oauth-resource <MCP_RESOURCE>
 ```
 
-This needs Codex 0.147 or later: earlier versions cannot complete the gateway's sign-in and stop with "Authorization server response missing required issuer". Check with `codex --version` and update Codex first if it is older.
+This needs Codex 0.147 or later: earlier versions cannot complete the gateway's sign-in and stop with "Authorization server response missing required issuer". Check with `codex --version` and update Codex first if it is older, with the tool it was installed with (for example `brew upgrade codex` or `npm install -g @openai/codex@latest`).
 
 Replace `<MCP_RESOURCE>` locally. Codex detects the gateway's OAuth support and opens the sign-in right away, requesting the scopes the gateway advertises, so no separate login command is needed. Complete the authorization and approve the connection in Omnesis, then start a new Codex thread so the authenticated tool catalogue loads. When this Codex installation was connected before and is signing in again, choose **Replace a connection** during approval so the old sign-in stops working instead of a second connection appearing.
 
