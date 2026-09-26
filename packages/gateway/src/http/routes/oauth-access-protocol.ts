@@ -27,6 +27,8 @@ export function mountOAuthAccessProtocolRoutes(
     /** See `mountOAuthAuthorizationRoutes`. */
     tlsFingerprintSha256?: string | (() => string);
     /** See `mountOAuthAuthorizationRoutes`. */
+    listenPort?: number;
+    /** See `mountOAuthAuthorizationRoutes`. */
     probeCertificate?: CertificateProbe;
   } = {},
 ): void {

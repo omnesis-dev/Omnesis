@@ -109,13 +109,13 @@ function HarnessPairing({ addresses, addressIdx, setAddressIdx, pairing, onPair 
         ${addresses.map(
           (address, index) => html`<option key=${address.gatewayUrl} value=${index}>
             ${address.gatewayUrl} —${" "}
-            ${address.servedByGateway
+            ${address.direct
               ? "direct to the gateway (recommended)"
               : "public address through a proxy, for machines outside your network"}
           </option>`,
         )}
       </select>
-      <small>Use the direct address when that machine is on your network. The command can then check the gateway's certificate.</small>
+      <small>Use the direct address when that machine is on your network. Wherever the address presents the gateway's own certificate, the command checks it.</small>
     </label>`}
     ${pairing.code
       ? html`<p>Pairing code <code>${pairing.code}</code> is in the commands below. It works once and expires at ${expires}.</p>`

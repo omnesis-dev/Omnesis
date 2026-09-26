@@ -155,19 +155,36 @@ describe("MCP OAuth access routes", () => {
     expect((await overview.json()).oauth).toEqual({
       resource: RESOURCE,
       resources: [
-        { resource: RESOURCE, servedByGateway: false },
-        { resource: "https://gateway.example.org:7600/mcp", servedByGateway: true },
-        { resource: "https://tailnet.example.net:7600/mcp", servedByGateway: false },
+        { resource: RESOURCE, servedByGateway: false, direct: false },
+        { resource: "https://gateway.example.org:7600/mcp", servedByGateway: true, direct: true },
+        { resource: "https://tailnet.example.net:7600/mcp", servedByGateway: false, direct: false },
       ],
       tlsFingerprintSha256: fingerprint,
     });
+
+    // A proxy that presents the same certificate on another port — Tailscale
+    // Funnel in front of a gateway on its Tailscale certificate — still lets a
+    // client check the fingerprint, and is not the gateway's own listener.
+    const behindFunnel = createTestApp({
+      mcpResourceUrls: ["https://gateway.example.org:7600/mcp"],
+      tlsFingerprintSha256: () => fingerprint,
+      listenPort: 7600,
+      probeCertificate: async () => fingerprint,
+    });
+    const funnelOverview = await behindFunnel.request(`${ORIGIN}/admin/access`, {
+      headers: { "X-Test-Portal": "yes" },
+    });
+    expect((await funnelOverview.json()).oauth.resources).toEqual([
+      { resource: RESOURCE, servedByGateway: true, direct: false },
+      { resource: "https://gateway.example.org:7600/mcp", servedByGateway: true, direct: true },
+    ]);
 
     const withoutCertificate = await app.request(`${ORIGIN}/portal/api/access`, {
       headers: { "X-Test-Portal": "yes" },
     });
     expect((await withoutCertificate.json()).oauth).toEqual({
       resource: RESOURCE,
-      resources: [{ resource: RESOURCE, servedByGateway: false }],
+      resources: [{ resource: RESOURCE, servedByGateway: false, direct: false }],
       tlsFingerprintSha256: null,
     });
   });

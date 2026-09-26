@@ -1634,8 +1634,8 @@ describe("AccessView", () => {
       oauth: {
         resource: "https://gateway.example.org/mcp",
         resources: [
-          { resource: "https://gateway.example.org/mcp", servedByGateway: false },
-          { resource: "https://gateway.example.org:7600/mcp", servedByGateway: true },
+          { resource: "https://gateway.example.org/mcp", servedByGateway: false, direct: false },
+          { resource: "https://gateway.example.org:7600/mcp", servedByGateway: true, direct: true },
         ],
         tlsFingerprintSha256: "ab".repeat(32),
       },
@@ -1680,6 +1680,41 @@ describe("AccessView", () => {
       address.dispatchEvent(new window.Event("change", { bubbles: true }));
     });
     expect(command()).toBe("omnesis connect openclaw --gateway-url https://gateway.example.org --code K7Q2-M9XD");
+  });
+
+  test("labels a proxy that serves the gateway's certificate as a proxy, and still pins it", async () => {
+    // A tailnet funnel on 443 in front of a gateway on its Tailscale
+    // certificate presents that same certificate.
+    api.getAccessOverview.mockResolvedValue({
+      principals: [],
+      oauth: {
+        resource: "https://gateway.example.org/mcp",
+        resources: [
+          { resource: "https://gateway.example.org/mcp", servedByGateway: true, direct: false },
+          { resource: "https://gateway.example.org:7600/mcp", servedByGateway: true, direct: true },
+        ],
+        tlsFingerprintSha256: "ab".repeat(32),
+      },
+    });
+    await mount({ connectOpen: true });
+    const openclaw = host.querySelector<HTMLButtonElement>("button[data-agent='openclaw']")!;
+    await act(async () => { openclaw.click(); });
+
+    const options = [...host.querySelectorAll("#access-agent-address option")].map((option) =>
+      option.textContent?.replace(/\s+/gu, " ").trim(),
+    );
+    expect(options).toEqual([
+      "https://gateway.example.org:7600 — direct to the gateway (recommended)",
+      "https://gateway.example.org — public address through a proxy, for machines outside your network",
+    ]);
+    const address = host.querySelector<HTMLSelectElement>("#access-agent-address")!;
+    await act(async () => {
+      address.querySelectorAll("option")[1]!.setAttribute("selected", "");
+      address.dispatchEvent(new window.Event("change", { bubbles: true }));
+    });
+    expect(host.querySelector(".access-agent-command code")?.textContent).toBe(
+      `curl -fsSL https://omnesis.dev/install.sh | sh -s -- --openclaw --gateway-url https://gateway.example.org --trust-fingerprint sha256:${"ab".repeat(32)}`,
+    );
   });
 
   test("offers connecting an agent only when the Gateway has usable OAuth URLs", async () => {
