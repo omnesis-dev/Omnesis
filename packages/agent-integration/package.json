@@ -36,7 +36,7 @@
   "devDependencies": {
     "@omnesis/types": "*",
     "@types/ws": "^8.18.1",
-    "openclaw": "2026.7.35"
+    "openclaw": "2026.9.2"
   },
   "files": [
     "dist",

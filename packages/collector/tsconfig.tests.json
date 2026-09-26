@@ -28,6 +28,7 @@
     "src/**/*.test.ts",
     "src/**/*.d.ts",
     "../gateway/src/**/*.d.ts",
+    "../agent-integration/src/**/*.d.ts",
     "../providers/*/src/**/*.d.ts",
     "../collector/src/**/*.d.ts"
   ],

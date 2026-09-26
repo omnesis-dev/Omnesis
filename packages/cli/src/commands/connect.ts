@@ -63,6 +63,10 @@ import {
 } from "../harness-restart.js";
 import { authorizeHarness } from "./connect-oauth.js";
 import { redeemAgentIntegrationPairingCode } from "./devices.js";
+import {
+  OPENCLAW_ACCEPT_CAPABILITIES_FLAG,
+  openClawCapabilityConsentSupport,
+} from "./openclaw-capability-consent.js";
 
 /** `~/`-expansion for user-supplied paths (flags are never shell-expanded). */
 function expandHome(path: string): string {
@@ -795,6 +799,19 @@ function runInstaller(command: string, args: string[], environment: NodeJS.Proce
   }
 }
 
+/**
+ * What `openclaw plugins uninstall omnesis-bridge` prints when OpenClaw knows
+ * of no such plugin: neither an install record nor a discovered plugin.
+ * Earlier releases name the plugin as not found; later ones say it has no
+ * tracked package install, which they report only when the id is in neither
+ * their plugin index nor their install records. The config's own references
+ * to it are removed beforehand by `retireLegacyOpenClawConfig`.
+ */
+const LEGACY_OPENCLAW_PLUGIN_ABSENT = new Set([
+  "Plugin not found: omnesis-bridge",
+  'Plugin "omnesis-bridge" is not associated with a tracked package install. Refresh the plugin registry, then reinstall the package or run openclaw doctor before retrying.',
+]);
+
 function retirePersistedLegacyOpenClawPlugin(environment: NodeJS.ProcessEnv): void {
   const result = spawnSync("openclaw", ["plugins", "uninstall", "omnesis-bridge", "--force"], {
     env: environment,
@@ -803,9 +820,10 @@ function retirePersistedLegacyOpenClawPlugin(environment: NodeJS.ProcessEnv): vo
   });
   if (!result.error && result.status === 0) return;
   // Fresh installs have no legacy record. OpenClaw reports that benign case
-  // as exit 1, so distinguish its exact diagnostic from a real registry or
-  // config failure. Node's color-environment warning is unrelated to the
-  // uninstall; remove only that known warning and its optional trace hint.
+  // as exit 1, so distinguish its exact diagnostic — one wording per release
+  // line — from a real registry or config failure. Node's color-environment
+  // warning is unrelated to the uninstall; remove only that known warning and
+  // its optional trace hint.
   const diagnostic = result.stderr?.replace(
     /^\(node:\d+\) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set\.\r?\n(?:\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\r?\n)?/gm,
     "",
@@ -813,7 +831,8 @@ function retirePersistedLegacyOpenClawPlugin(environment: NodeJS.ProcessEnv): vo
   if (
     !result.error &&
     result.status === 1 &&
-    diagnostic?.trim() === "Plugin not found: omnesis-bridge"
+    diagnostic !== undefined &&
+    LEGACY_OPENCLAW_PLUGIN_ABSENT.has(diagnostic.trim())
   ) {
     return;
   }
@@ -862,12 +881,33 @@ function prepareHarnessPlugin(
             // this migration install to discover current manifests.
             OPENCLAW_DISABLE_PERSISTED_PLUGIN_REGISTRY: "1",
           };
-          // Known bug: #112 — OpenClaw 2026.8.1+ refuses this install without capability consent.
+          // OpenClaw releases that gate installs on capability consent refuse
+          // the integration without it. Connecting OpenClaw to Omnesis is the
+          // operator's request for exactly this plugin, so the ceremony
+          // accepts its declared capabilities and says so.
+          const consent = openClawCapabilityConsentSupport(migrationEnvironment);
+          if (consent === "unknown") {
+            console.log(
+              "Could not ask OpenClaw whether it takes capability consent; installing without accepting capabilities.",
+            );
+          }
+          const acceptCapabilities = consent === "supported";
           runInstaller(
             "openclaw",
-            ["plugins", "install", "--force", `npm-pack:${artifact.archivePath}`],
+            [
+              "plugins",
+              "install",
+              "--force",
+              ...(acceptCapabilities ? [OPENCLAW_ACCEPT_CAPABILITIES_FLAG] : []),
+              `npm-pack:${artifact.archivePath}`,
+            ],
             migrationEnvironment,
           );
+          if (acceptCapabilities) {
+            console.log(
+              "Accepted the capabilities the Omnesis integration plugin declares to OpenClaw.",
+            );
+          }
           retirePersistedLegacyOpenClawPlugin(migrationEnvironment);
           // Rebuild without the bypass after removing the stale install
           // record, so subsequent normal OpenClaw processes see the new

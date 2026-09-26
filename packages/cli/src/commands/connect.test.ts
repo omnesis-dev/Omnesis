@@ -62,6 +62,13 @@ vi.mock("node:child_process", async (importOriginal) => {
     spawnSync: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
   };
 });
+// Whether the installed OpenClaw takes `--accept-capabilities` is probed by
+// running it; that probe has its own suite against fake binaries. Here it is a
+// seam so each test decides which kind of OpenClaw release it models.
+vi.mock("./openclaw-capability-consent.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./openclaw-capability-consent.js")>();
+  return { ...actual, openClawCapabilityConsentSupport: vi.fn(() => "unsupported") };
+});
 vi.mock("@omnesis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@omnesis/core")>();
   // Trust establishment reaches the network and the developer's own config
@@ -124,6 +131,7 @@ import {
 } from "../harness-skills.js";
 import { redeemAgentIntegrationPairingCode } from "./devices.js";
 import { authorizeHarness } from "./connect-oauth.js";
+import { openClawCapabilityConsentSupport } from "./openclaw-capability-consent.js";
 import {
   assertHermesCompletionNotifications,
   assertOpenClawCompletionNotifications,
@@ -987,6 +995,108 @@ describe("harness skill content", () => {
       caPem: ROTATED_CERT_PEM,
       leafFingerprintSha256: ROTATED_FINGERPRINT,
     });
+  });
+
+  it.each([
+    { refresh: false, label: "a first connect" },
+    { refresh: true, label: "a refresh" },
+  ])(
+    "accepts the plugin's capabilities on $label when OpenClaw gates installs on consent",
+    async ({ refresh }) => {
+      const home = mkdtempSync(join(tmpdir(), "omnesis-openclaw-consent-"));
+      tempHomes.push(home);
+      writeFileSync(join(home, "openclaw.json"), "{}\n");
+      if (refresh) seedRefreshableInstall(home, "openclaw");
+      (openClawCapabilityConsentSupport as Mock).mockReturnValueOnce("supported");
+      const logged: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((...parts: unknown[]) => {
+        logged.push(parts.join(" "));
+      });
+
+      await run(
+        refresh
+          ? { harness: "openclaw", dir: home, refresh: true }
+          : {
+              harness: "openclaw",
+              dir: home,
+              "gateway-url": ENV.OMNESIS_GATEWAY_URL,
+              code: "PAIR-CODE",
+            },
+      );
+
+      // Probed with the environment the install itself runs under.
+      expect(openClawCapabilityConsentSupport).toHaveBeenCalledWith(
+        expect.objectContaining({ OPENCLAW_STATE_DIR: home }),
+      );
+      expect(spawnSync).toHaveBeenCalledWith(
+        "openclaw",
+        [
+          "plugins",
+          "install",
+          "--force",
+          "--accept-capabilities",
+          expect.stringMatching(/^npm-pack:.*\.tgz$/),
+        ],
+        expect.anything(),
+      );
+      // Only the install takes the flag; the other plugin commands never do.
+      const others = (spawnSync as Mock).mock.calls.filter(
+        ([command, args]) => command === "openclaw" && Array.isArray(args) && args[1] !== "install",
+      );
+      expect(others.length).toBeGreaterThan(0);
+      for (const [, args] of others) expect(args).not.toContain("--accept-capabilities");
+      expect(logged).toContain(
+        "Accepted the capabilities the Omnesis integration plugin declares to OpenClaw.",
+      );
+    },
+  );
+
+  it.each([
+    { support: "unsupported", notice: undefined },
+    {
+      support: "unknown",
+      notice:
+        "Could not ask OpenClaw whether it takes capability consent; installing without accepting capabilities.",
+    },
+  ])("installs without the consent flag when support is $support", async ({ support, notice }) => {
+    const home = mkdtempSync(join(tmpdir(), "omnesis-openclaw-pre-consent-"));
+    tempHomes.push(home);
+    writeFileSync(join(home, "openclaw.json"), "{}\n");
+    seedRefreshableInstall(home, "openclaw");
+    (openClawCapabilityConsentSupport as Mock).mockReturnValueOnce(support);
+    const logged: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...parts: unknown[]) => {
+      logged.push(parts.join(" "));
+    });
+
+    await run({ harness: "openclaw", dir: home, refresh: true });
+
+    expect(openClawCapabilityConsentSupport).toHaveBeenCalledTimes(1);
+    const install = (spawnSync as Mock).mock.calls.find(
+      ([, args]) => Array.isArray(args) && args[1] === "install",
+    );
+    expect(install?.[1]).toEqual([
+      "plugins",
+      "install",
+      "--force",
+      expect.stringMatching(/^npm-pack:.*\.tgz$/),
+    ]);
+    expect(logged.join("\n")).not.toContain("Accepted the capabilities");
+    expect(logged.filter((line) => line.startsWith("Could not ask OpenClaw"))).toEqual(
+      notice === undefined ? [] : [notice],
+    );
+  });
+
+  it("never probes OpenClaw when connecting Hermes", async () => {
+    const home = mkdtempSync(join(tmpdir(), "omnesis-hermes-no-consent-probe-"));
+    tempHomes.push(home);
+    writeFileSync(join(home, "config.yaml"), "display:\n  background_process_notifications: all\n");
+    seedRefreshableInstall(home, "hermes");
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await run({ harness: "hermes", dir: home, refresh: true });
+
+    expect(openClawCapabilityConsentSupport).not.toHaveBeenCalled();
   });
 
   it("warns when the plugin about to be installed is a different version", async () => {
@@ -2044,9 +2154,17 @@ describe("connect credential wiring", () => {
     "(node:12345) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n" +
     "(Use `node --trace-warnings ...` to show where the warning was created)\n";
 
-  it.each(["", colorWarning])(
-    "accepts OpenClaw's no-legacy-record result with runtime output %j",
-    async (warning) => {
+  const untrackedLegacyPlugin =
+    'Plugin "omnesis-bridge" is not associated with a tracked package install. Refresh the plugin registry, then reinstall the package or run openclaw doctor before retrying.';
+
+  it.each([
+    { warning: "", absent: "Plugin not found: omnesis-bridge" },
+    { warning: colorWarning, absent: "Plugin not found: omnesis-bridge" },
+    { warning: "", absent: untrackedLegacyPlugin },
+    { warning: colorWarning, absent: untrackedLegacyPlugin },
+  ])(
+    "accepts OpenClaw's no-legacy-record result $absent with runtime output $warning",
+    async ({ warning, absent }) => {
       const home = mkdtempSync(join(tmpdir(), "omnesis-openclaw-fresh-registry-"));
       tempHomes.push(home);
       writeFileSync(join(home, "openclaw.json"), "{}\n");
@@ -2056,7 +2174,7 @@ describe("connect credential wiring", () => {
         .mockReturnValueOnce({
           status: 1,
           stdout: "",
-          stderr: `${warning}Plugin not found: omnesis-bridge\n`,
+          stderr: `${warning}${absent}\n`,
         })
         .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
       vi.spyOn(console, "log").mockImplementation(() => {});
@@ -2080,6 +2198,15 @@ describe("connect credential wiring", () => {
       stderr: `${colorWarning}Plugin not found: omnesis-bridge\nError: unable to write plugin registry\n`,
     },
     { status: 1, stderr: `${colorWarning}Plugin not found: unrelated-plugin\n` },
+    {
+      status: 1,
+      stderr: untrackedLegacyPlugin.replace("omnesis-bridge", "unrelated-plugin"),
+    },
+    {
+      status: 1,
+      stderr:
+        'Plugin "omnesis-bridge" has no authoritative package-owner metadata. Refresh the plugin registry, then reinstall the package or run openclaw doctor before retrying.',
+    },
     {
       status: 1,
       stderr:

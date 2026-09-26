@@ -1021,6 +1021,13 @@
           session picks the skill up.
         </p>
         <p>
+          OpenClaw releases that ask for consent before installing a plugin that declares
+          capabilities get it from <code>connect</code>: running the command is the request to
+          install the Omnesis plugin, so it accepts that plugin's declared capabilities and prints a
+          line saying so. A <a href="#harness-refresh">refresh</a> and
+          <code>omnesis update</code> do the same. Older OpenClaw releases have no such step.
+        </p>
+        <p>
           <code>connect</code> warns when the plugin it is about to install differs in version from
           the gateway. Omnesis versions all its parts together, so the usual cause is an agent
           machine that updates on its own schedule.
