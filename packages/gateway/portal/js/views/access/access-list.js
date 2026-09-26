@@ -18,12 +18,13 @@
 // rule the gateway counts a level's connections by and refuses a deletion by.
 
 import { html } from "htm/preact";
-import { useRef, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 
 import { CopyIconButton } from "../../components/copy-button.js";
 import { CapabilityTriad } from "../../components/grant-builder.js";
 import { RowActionMenu } from "../../components/row-action-menu.js";
 import { timeAgo } from "../../lib/format.js";
+import { ExternalAgentGlyph } from "../audit/shared.js";
 import { KindIcon } from "../../lib/device-kind-icon.js";
 import { navigate } from "../../lib/router.js";
 import { rowActivateHandler } from "../../lib/table-row-click.js";
@@ -42,13 +43,25 @@ import {
 import { AccessTerms, AnswerPrivacy, reachSummary } from "./terms.js";
 
 /** An integration on the Devices page, opened and scrolled to, drawn with its kind's icon. */
-function DeviceLink({ device }) {
+export function DeviceLink({ device }) {
   const href = `/portal/settings/devices?device=${encodeURIComponent(device.id)}`;
   return html`<a
     class="access-device-link"
     href=${href}
-    onClick=${(event) => { event.preventDefault(); navigate(href); }}
+    onClick=${(event) => {
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button > 0) return;
+      event.preventDefault(); navigate(href);
+    }}
   ><${KindIcon} kind=${device.kind} size=${13} class="access-device-icon" />${device.name}</a>`;
+}
+
+/** An MCP connection on the Access page, opened and scrolled to. */
+export function ConnectionLink({ connection }) {
+  const href = `/portal/settings/access?connection=${encodeURIComponent(connection.id)}`;
+  return html`<a class="access-device-link" href=${href} onClick=${(event) => {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button > 0) return;
+    event.preventDefault(); navigate(href);
+  }}><${ExternalAgentGlyph} />${connection.name}</a>`;
 }
 
 export function levelEditorPath(levelId) {
@@ -168,6 +181,12 @@ function ConnectionRow({ entry, actions }) {
   const [open, setOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const expandRef = useRef(null);
+  useEffect(() => {
+    if (new URLSearchParams(window.location?.search ?? "").get("connection") !== entry.id) return;
+    setOpen(true);
+    expandRef.current?.closest(".access-connection-item")?.scrollIntoView?.({ block: "center" });
+    expandRef.current?.focus();
+  }, [entry.id]);
   const closeRename = () => {
     setRenaming(false);
     expandRef.current?.focus();

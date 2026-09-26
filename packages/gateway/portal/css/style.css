@@ -7903,7 +7903,10 @@ p.privacy-diff-note {
    disconnected clusters, so the table stops at a width the eye can span; the
    name then takes what slack is left. */
 .access-policy-table { max-width: 860px; }
-.access-policy-actions { display: flex; align-items: center; gap: 8px; }
+.access-policy-users { margin: 6px 0 0; padding: 0; list-style: none; text-align: left; }
+.access-policy-users li + li { margin-top: 4px; }
+.access-policy-users .access-device-link { white-space: nowrap; }
+.access-policy-users .privacy-glyph { width: 13px; height: 13px; }
 .portal-table.access-policy-table th:first-child { width: 100%; }
 /* The revision and grant count sit level with the policy name they belong to.
    A name long enough to wrap centres them against it, which reads better than

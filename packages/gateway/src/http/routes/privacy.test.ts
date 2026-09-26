@@ -236,8 +236,12 @@ describe("privacy admin routes", () => {
       body: JSON.stringify({ name: "Unused policy", templateId: "balanced" }),
     });
     const created = await createdResponse.json();
-    db.exec("CREATE TABLE access_level_capabilities (policy_family_id TEXT)");
-    db.prepare("INSERT INTO access_level_capabilities VALUES (?)").run(created.familyId);
+    db.exec("CREATE TABLE access_levels (id TEXT PRIMARY KEY, revoked_at INTEGER)");
+    db.exec("CREATE TABLE access_level_capabilities (level_id TEXT, policy_family_id TEXT)");
+    db.exec("INSERT INTO access_levels VALUES ('test-level', NULL)");
+    db.prepare("INSERT INTO access_level_capabilities VALUES ('test-level', ?)").run(
+      created.familyId,
+    );
     const inUse = await app.request(`/admin/privacy/policies/${created.familyId}`, {
       method: "DELETE",
       headers: POLICY_MUTATION_HEADERS,
@@ -247,7 +251,7 @@ describe("privacy admin routes", () => {
       code: "policy_in_use",
       error: expect.stringContaining("access level"),
     });
-    db.exec("DELETE FROM access_level_capabilities");
+    db.exec("UPDATE access_levels SET revoked_at = 1 WHERE id = 'test-level'");
     const deleted = await app.request(`/admin/privacy/policies/${created.familyId}`, {
       method: "DELETE",
       headers: POLICY_MUTATION_HEADERS,

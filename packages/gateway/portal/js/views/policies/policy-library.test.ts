@@ -39,6 +39,21 @@ function rowFor(name: string): HTMLTableRowElement {
   return match;
 }
 
+async function policyMenuItem(name: string, action: string): Promise<HTMLButtonElement> {
+  const trigger = rowFor(name).querySelector(".row-action-trigger") as HTMLButtonElement;
+  trigger.getBoundingClientRect = () => ({ top: 0, bottom: 20, right: 20 } as DOMRect);
+  await act(async () => { trigger.dispatchEvent(new window.Event("click", { bubbles: true })); });
+  const item = [...rowFor(name).querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+    .find((button) => button.textContent?.trim().startsWith(action));
+  if (!item) throw new Error(`Missing policy action: ${action}`);
+  return item;
+}
+
+async function choosePolicyAction(name: string, action: string) {
+  const item = await policyMenuItem(name, action);
+  await act(async () => { item.dispatchEvent(new window.Event("click", { bubbles: true })); });
+}
+
 describe("PolicyLibrary", () => {
   let host: HTMLDivElement;
   let originalDocument: typeof globalThis.document | undefined;
@@ -91,13 +106,55 @@ describe("PolicyLibrary", () => {
     expect(rowFor("Default policy").querySelector(".portal-table-sub")).toBeNull();
   });
 
+  it("lists linked integration devices and MCP connections with the audit icons", async () => {
+    const rules = [{ capability: "answer", sources: { mode: "all", sourceIds: [] }, release: { mode: "reviewed", policyFamilyId: OTHER_ID } }];
+    const grant = { id: "grant-live", rules, revokedAt: null, expiresAt: null, credentials: [] };
+    await act(async () => render(h(PolicyLibrary, {
+      overview: { ...overview,
+        levels: [{ id: "level-review", name: "Review access", rules, devices: [{ id: "device-phone", name: "Phone integration", kind: "android" }] }],
+        principals: [
+          { id: "mcp-level", name: "Level reviewer", revokedAt: null, grants: [{ ...grant, levelId: "level-review" }] },
+          { id: "mcp-direct", name: "Direct reviewer", revokedAt: null, grants: [{ ...grant, id: "grant-direct" }] },
+          { id: "mcp-revoked", name: "Removed reviewer", revokedAt: 1, grants: [grant] },
+          { id: "mcp-expired", name: "Expired reviewer", revokedAt: null, grants: [{ ...grant, expiresAt: 1 }] },
+        ],
+      }, overviewReady: true, loading: false,
+    }), host));
+    const row = rowFor("Reviewer policy");
+    const connections = [...row.querySelectorAll('[aria-label="MCP connections"] a')];
+    expect(connections.map((link) => link.textContent)).toEqual(["Level reviewer", "Direct reviewer"]);
+    expect(connections.map((link) => link.getAttribute("href"))).toEqual([
+      "/portal/settings/access?connection=mcp-level", "/portal/settings/access?connection=mcp-direct",
+    ]);
+    expect(connections.every((link) => link.querySelector(".privacy-glyph--external"))).toBe(true);
+    const device = row.querySelector('[aria-label="Integration devices"] a')!;
+    expect(device.textContent).toBe("Phone integration");
+    expect(device.getAttribute("href")).toBe("/portal/settings/devices?device=device-phone");
+    expect(device.querySelector(".access-device-icon")).not.toBeNull();
+    expect(row.querySelectorAll(".access-policy-count")[0].textContent).toBe("2");
+    expect(row.querySelectorAll(".access-policy-count")[1].textContent).toBe("1");
+    await act(async () => { connections[0].dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true })); });
+    expect(router.navigate).toHaveBeenCalledWith("/portal/settings/access?connection=mcp-level");
+    router.navigate.mockClear();
+    const modified = new window.Event("click", { bubbles: true, cancelable: true });
+    Object.defineProperty(modified, "ctrlKey", { value: true });
+    await act(async () => { device.dispatchEvent(modified); });
+    expect(router.navigate).not.toHaveBeenCalled();
+    expect(modified.defaultPrevented).toBe(false);
+    await act(async () => { device.dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true })); });
+    expect(router.navigate).toHaveBeenCalledWith("/portal/settings/devices?device=device-phone");
+  });
+
   it("marks only the default policy", () => {
     expect(rowFor("Reviewer policy").querySelector(".portal-pill")).toBeNull();
   });
-  it("disables deletion of the default policy with an explanation", () => {
-    const button = rowFor("Default policy").querySelector('button[aria-label^="Delete"]');
-    expect(button?.hasAttribute("disabled")).toBe(true);
+  it("disables deletion of the default policy with an explanation", async () => {
+    const button = await policyMenuItem("Default policy", "Delete");
+    expect(button?.getAttribute("aria-disabled")).toBe("true");
     expect(button?.getAttribute("title")).toMatch(/default policy/i);
+    expect(button?.textContent).toBe("Delete");
+    expect(button?.querySelector(".row-action-item-hint")).toBeNull();
+    expect(button?.getAttribute("aria-label")).toMatch(/default policy/i);
   });
 
   it("disables referenced policies using the server's reason, even with no live connections", async () => {
@@ -105,8 +162,8 @@ describe("PolicyLibrary", () => {
       overview: { ...overview, policyFamilies: [{ id: OTHER_ID, name: "Reviewer policy", deletionBlockedReason: "Used by a revoked connection." }] },
       overviewReady: true, loading: false,
     }), host));
-    const button = rowFor("Reviewer policy").querySelector('button[aria-label^="Delete"]');
-    expect(button?.hasAttribute("disabled")).toBe(true);
+    const button = await policyMenuItem("Reviewer policy", "Delete");
+    expect(button?.getAttribute("aria-disabled")).toBe("true");
     expect(button?.getAttribute("title")).toBe("Used by a revoked connection.");
   });
 
@@ -115,16 +172,16 @@ describe("PolicyLibrary", () => {
       overview: { ...overview, policyFamilies: [{ id: OTHER_ID, name: "Reviewer policy" }] },
       overviewReady: true, loading: false,
     }), host));
-    const button = rowFor("Reviewer policy").querySelector('button[aria-label^="Delete"]');
-    expect(button?.hasAttribute("disabled")).toBe(true);
+    const button = await policyMenuItem("Reviewer policy", "Delete");
+    expect(button?.getAttribute("aria-disabled")).toBe("true");
     expect(button?.getAttribute("title")).toMatch(/usage could not be verified/i);
   });
 
   it("cancels confirmation without deleting", async () => {
-    await act(async () => rowFor("Reviewer policy").querySelector('button[aria-label^="Delete"]')?.dispatchEvent(new window.Event("click", { bubbles: true })));
+    await choosePolicyAction("Reviewer policy", "Delete");
     const cancel = host.querySelector('[role="dialog"] .btn-ghost');
     expect(cancel).not.toBeNull();
-    await act(async () => cancel?.dispatchEvent(new window.Event("click", { bubbles: true })));
+    await act(async () => { cancel?.dispatchEvent(new window.Event("click", { bubbles: true })); });
     expect(api.deleteNamedPrivacyPolicy).not.toHaveBeenCalled();
     expect(host.querySelector('[role="dialog"]')).toBeNull();
   });
@@ -134,7 +191,7 @@ describe("PolicyLibrary", () => {
     api.deleteNamedPrivacyPolicy.mockImplementation(() => new Promise<void>((resolve) => { complete = resolve; }));
     const onRefresh = vi.fn();
     await act(async () => render(h(PolicyLibrary, { overview, overviewReady: true, loading: false, onRefresh }), host));
-    await act(async () => rowFor("Reviewer policy").querySelector('button[aria-label^="Delete"]')?.dispatchEvent(new window.Event("click", { bubbles: true })));
+    await choosePolicyAction("Reviewer policy", "Delete");
     const confirm = [...host.querySelectorAll("button")].find((button) => button.textContent === "Delete policy");
     expect(confirm).not.toBeUndefined();
     await act(async () => {
@@ -153,10 +210,10 @@ describe("PolicyLibrary", () => {
     const onRefresh = vi.fn();
     api.deleteNamedPrivacyPolicy.mockResolvedValue({ ok: true });
     await act(async () => render(h(PolicyLibrary, { overview, overviewReady: true, loading: false, onRefresh }), host));
-    await act(async () => rowFor("Reviewer policy").querySelector('button[aria-label^="Delete"]')?.dispatchEvent(new window.Event("click", { bubbles: true })));
+    await choosePolicyAction("Reviewer policy", "Delete");
     expect(api.deleteNamedPrivacyPolicy).not.toHaveBeenCalled();
     const confirm = [...host.querySelectorAll("button")].find((button) => button.textContent === "Delete policy");
-    await act(async () => confirm?.dispatchEvent(new window.Event("click", { bubbles: true })));
+    await act(async () => { confirm?.dispatchEvent(new window.Event("click", { bubbles: true })); });
     expect(api.deleteNamedPrivacyPolicy).toHaveBeenCalledExactlyOnceWith(OTHER_ID);
     expect(onRefresh).toHaveBeenCalledTimes(1);
     expect(host.querySelector('[role="dialog"]')).toBeNull();
@@ -167,9 +224,9 @@ describe("PolicyLibrary", () => {
     const onRefresh = vi.fn();
     api.deleteNamedPrivacyPolicy.mockRejectedValue({ serverMessage: "This policy is now in use." });
     await act(async () => render(h(PolicyLibrary, { overview, overviewReady: true, loading: false, onRefresh }), host));
-    await act(async () => rowFor("Reviewer policy").querySelector('button[aria-label^="Delete"]')?.dispatchEvent(new window.Event("click", { bubbles: true })));
+    await choosePolicyAction("Reviewer policy", "Delete");
     const confirm = [...host.querySelectorAll("button")].find((button) => button.textContent === "Delete policy");
-    await act(async () => confirm?.dispatchEvent(new window.Event("click", { bubbles: true })));
+    await act(async () => { confirm?.dispatchEvent(new window.Event("click", { bubbles: true })); });
     expect(host.querySelector('[role="alert"]')?.textContent).toBe("This policy is now in use.");
     expect(onRefresh).toHaveBeenCalledTimes(1);
   });
@@ -178,12 +235,12 @@ describe("PolicyLibrary", () => {
     const onRefresh = vi.fn();
     api.renameNamedPrivacyPolicy.mockResolvedValue({ familyName: "Shared review" });
     await act(async () => render(h(PolicyLibrary, { overview, overviewReady: true, loading: false, onRefresh }), host));
-    await act(async () => rowFor("Default policy").querySelector('button[aria-label^="Rename"]')?.dispatchEvent(new window.Event("click", { bubbles: true })));
+    await choosePolicyAction("Default policy", "Rename");
     const input = host.querySelector("input") as HTMLInputElement;
     expect(input.value).toBe("Default policy");
     input.value = "  Shared review  ";
-    await act(async () => input.dispatchEvent(new window.Event("input", { bubbles: true })));
-    await act(async () => host.querySelector("form")?.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true })));
+    await act(async () => { input.dispatchEvent(new window.Event("input", { bubbles: true })); });
+    await act(async () => { host.querySelector("form")?.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true })); });
     expect(api.renameNamedPrivacyPolicy).toHaveBeenCalledExactlyOnceWith(DEFAULT_ID, "Shared review");
     expect(onRefresh).toHaveBeenCalledTimes(1);
     expect(api.deleteNamedPrivacyPolicy).not.toHaveBeenCalled();
@@ -191,22 +248,22 @@ describe("PolicyLibrary", () => {
   });
 
   it("cancels a rename without saving", async () => {
-    await act(async () => rowFor("Reviewer policy").querySelector('button[aria-label^="Rename"]')?.dispatchEvent(new window.Event("click", { bubbles: true })));
+    await choosePolicyAction("Reviewer policy", "Rename");
     const cancel = [...host.querySelectorAll('[role="dialog"] button')].find((button) => button.textContent === "Cancel");
     expect(cancel).not.toBeUndefined();
-    await act(async () => cancel?.dispatchEvent(new window.Event("click", { bubbles: true })));
+    await act(async () => { cancel?.dispatchEvent(new window.Event("click", { bubbles: true })); });
     expect(api.renameNamedPrivacyPolicy).not.toHaveBeenCalled();
     expect(host.querySelector('[role="dialog"]')).toBeNull();
   });
 
   it.each(["", "   ", "Reviewer policy", " Reviewer policy ", "a".repeat(121)])(
     "does not submit an invalid or unchanged name: %s", async (name) => {
-      await act(async () => rowFor("Reviewer policy").querySelector('button[aria-label^="Rename"]')?.dispatchEvent(new window.Event("click", { bubbles: true })));
+      await choosePolicyAction("Reviewer policy", "Rename");
       const input = host.querySelector("input") as HTMLInputElement;
       input.value = name;
-      await act(async () => input.dispatchEvent(new window.Event("input", { bubbles: true })));
+      await act(async () => { input.dispatchEvent(new window.Event("input", { bubbles: true })); });
       expect(host.querySelector('button[type="submit"]')?.hasAttribute("disabled")).toBe(true);
-      await act(async () => host.querySelector("form")?.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true })));
+      await act(async () => { host.querySelector("form")?.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true })); });
       expect(api.renameNamedPrivacyPolicy).not.toHaveBeenCalled();
       expect(host.querySelector("form")).not.toBeNull();
     },
@@ -220,12 +277,12 @@ describe("PolicyLibrary", () => {
       overview: { ...overview, policyFamilies: [{ id: OTHER_ID, name: "Reviewer policy", deletionBlockedReason: "Used by an access level." }] },
       overviewReady: true, loading: false, onRefresh,
     }), host));
-    const rename = rowFor("Reviewer policy").querySelector('button[aria-label^="Rename"]');
+    const rename = await policyMenuItem("Reviewer policy", "Rename");
     expect(rename?.hasAttribute("disabled")).toBe(false);
-    await act(async () => rename?.dispatchEvent(new window.Event("click", { bubbles: true })));
+    await act(async () => { rename?.dispatchEvent(new window.Event("click", { bubbles: true })); });
     const input = host.querySelector("input") as HTMLInputElement;
     input.value = "Shared review";
-    await act(async () => input.dispatchEvent(new window.Event("input", { bubbles: true })));
+    await act(async () => { input.dispatchEvent(new window.Event("input", { bubbles: true })); });
     const form = host.querySelector("form");
     await act(async () => {
       form?.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
@@ -242,11 +299,11 @@ describe("PolicyLibrary", () => {
 
   it("keeps a rejected rename open with the server explanation", async () => {
     api.renameNamedPrivacyPolicy.mockRejectedValue({ serverMessage: "A policy with this name already exists." });
-    await act(async () => rowFor("Reviewer policy").querySelector('button[aria-label^="Rename"]')?.dispatchEvent(new window.Event("click", { bubbles: true })));
+    await choosePolicyAction("Reviewer policy", "Rename");
     const input = host.querySelector("input") as HTMLInputElement;
     input.value = "Default policy";
-    await act(async () => input.dispatchEvent(new window.Event("input", { bubbles: true })));
-    await act(async () => host.querySelector("form")?.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true })));
+    await act(async () => { input.dispatchEvent(new window.Event("input", { bubbles: true })); });
+    await act(async () => { host.querySelector("form")?.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true })); });
     expect(host.querySelector('[role="alert"]')?.textContent).toBe("A policy with this name already exists.");
     expect(input.value).toBe("Default policy");
     expect(host.querySelector("form")).not.toBeNull();

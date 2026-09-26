@@ -11,6 +11,8 @@ import { html } from "htm/preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { createPrivacyPolicy, deleteNamedPrivacyPolicy, getPrivacyPolicyTemplates, renameNamedPrivacyPolicy } from "../../api.js";
+import { RowActionMenu } from "../../components/row-action-menu.js";
+import { ConnectionLink, DeviceLink } from "../access/access-list.js";
 import { ConfirmModal } from "../../components/confirm-modal.js";
 import { Modal } from "../../components/modal.js";
 import { policyFamilyId, policyFamilyName } from "../../components/grant-builder-state.js";
@@ -19,9 +21,17 @@ import { navigate } from "../../lib/router.js";
 import { rowActivateHandler } from "../../lib/table-row-click.js";
 import { ForkPolicyButton, PrivacyPolicyPane, affectedPolicyAccess } from "./policy.js";
 
-// A policy revision is a content hash. Only its head distinguishes one from
-// another at a glance, so the row shows that and keeps the full value in the
-// title for anyone matching it against a stored revision.
+function policyDeletionReason(policy, affected, overview) {
+  if (policy.deletionBlockedReason != null) return policy.deletionBlockedReason;
+  if (policyFamilyId(policy) === overview.defaultPolicyFamilyId) return "The default policy cannot be deleted.";
+  if (affected.levels.length || affected.connectionCount || affected.deviceCount) {
+    return "This policy is used by access levels, connections or integrations. Reassign them before deleting it.";
+  }
+  return Object.hasOwn(policy, "deletionBlockedReason")
+    ? "" : "Policy usage could not be verified. Refresh before deleting it.";
+}
+
+// A policy revision is a content hash: keep its full value on hover.
 export function shortRevision(revision) {
   return revision.length > 12 ? `${revision.slice(0, 12)}…` : revision;
 }
@@ -189,12 +199,16 @@ export function PolicyLibrary({ overview, overviewReady, loading, headingRef = n
                       const revision = policy.revision ?? policy.currentRevision ?? null;
                       const affected = affectedPolicyAccess(overview, id);
                       const governed = affected.connectionCount;
-                      const deletionReason = policy.deletionBlockedReason
-                        ?? (id === overview.defaultPolicyFamilyId ? "The default policy cannot be deleted."
-                          : affected.levels.length || affected.connectionCount || affected.deviceCount
-                            ? "This policy is used by access levels, connections or integrations. Reassign them before deleting it."
-                            : !Object.hasOwn(policy, "deletionBlockedReason")
-                              ? "Policy usage could not be verified. Refresh before deleting it." : "");
+                      const connections = [...affected.levels.flatMap((level) => level.connections), ...affected.connections];
+                      const devices = affected.levels.flatMap((level) => level.devices);
+                      const deletionReason = policyDeletionReason(policy, affected, overview);
+                      const items = [
+                        { label: "Rename", disabled: !id || deleteBusy || renameBusy,
+                          onSelect: () => { setRenameName(policyFamilyName(policy)); setRenameError(""); setRenaming(policy); } },
+                        { label: "Delete", danger: true, disabled: !id || Boolean(deletionReason) || deleteBusy || renameBusy,
+                          title: deletionReason || undefined,
+                          onSelect: () => { setDeleteError(""); setDeleting(policy); } },
+                      ];
                       const isDefault = id === overview.defaultPolicyFamilyId;
                       const openPolicy = () => navigate(policyEditorPath(id));
                       // A row whose policy has no id has nowhere to go, so it
@@ -223,17 +237,19 @@ export function PolicyLibrary({ overview, overviewReady, loading, headingRef = n
                         </td>
                         <td onClick=${openFromCell}><small title=${revision ?? undefined}
                           >${revision ? shortRevision(revision) : "None yet"}</small></td>
-                        <td class="portal-table-num" onClick=${openFromCell}>${governed}</td>
-                        <td class="portal-table-num" onClick=${openFromCell}>${affected.deviceCount}</td>
-                        <td><div class="access-policy-actions"><button type="button" class="btn-secondary" aria-label=${`Rename ${policyFamilyName(policy)}`}
-                          disabled=${!id || deleteBusy || renameBusy}
-                          onClick=${() => { setRenameName(policyFamilyName(policy)); setRenameError(""); setRenaming(policy); }}>Rename</button>
-                          <span title=${deletionReason || "Delete this unused policy"} aria-label=${deletionReason || undefined} tabindex=${deletionReason ? "0" : undefined}>
-                          <button type="button" class="btn-secondary" aria-label=${`Delete ${policyFamilyName(policy)}`}
-                            title=${deletionReason || "Delete this unused policy"}
-                            disabled=${!id || Boolean(deletionReason) || deleteBusy || renameBusy}
-                            onClick=${() => { setDeleteError(""); setDeleting(policy); }}>Delete</button>
-                        </span></div></td>
+                        <td class="portal-table-num" onClick=${openFromCell}>
+                          <span class="access-policy-count">${governed}</span>
+                          ${connections.length > 0 && html`<ul class="access-policy-users" aria-label="MCP connections">
+                            ${connections.map((connection, index) => html`<li key=${`${connection.id}-${index}`}><${ConnectionLink} connection=${connection} /></li>`)}
+                          </ul>`}
+                        </td>
+                        <td class="portal-table-num" onClick=${openFromCell}>
+                          <span class="access-policy-count">${affected.deviceCount}</span>
+                          ${devices.length > 0 && html`<ul class="access-policy-users" aria-label="Integration devices">
+                            ${devices.map((device) => html`<li key=${device.id}><${DeviceLink} device=${device} /></li>`)}
+                          </ul>`}
+                        </td>
+                        <td><${RowActionMenu} items=${items} label=${`Actions for ${policyFamilyName(policy)}`} /></td>
                       </tr>`;
                     })}
                   </tbody>

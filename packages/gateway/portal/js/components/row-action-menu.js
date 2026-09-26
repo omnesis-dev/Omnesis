@@ -13,9 +13,10 @@
  * The caller supplies items; this owns only the shell. `label` is what the
  * item reads, `onSelect` is what it does, `danger` tints it, `disabled`
  * greys it out, and `hint` is a short line under the label — the reason a
- * disabled item cannot be chosen, read as part of its name.
+ * disabled item cannot be chosen, read as part of its name. `title` provides
+ * the explanation as a tooltip without a visible hint.
  *
- * A disabled item with a hint is marked `aria-disabled` rather than disabled,
+ * A disabled item with an explanation is marked `aria-disabled` rather than disabled,
  * so it stays focusable and the arrow keys still reach it: a reason the
  * keyboard cannot land on is never read. Choosing it does nothing.
  */
@@ -51,7 +52,7 @@ function handleMenuKeyNav(event, onClose) {
 
 /**
  * @param {object} props
- * @param {Array<{label: string, onSelect: () => void, danger?: boolean, disabled?: boolean, hint?: string}>} props.items
+ * @param {Array<{label: string, onSelect: () => void, danger?: boolean, disabled?: boolean, hint?: string, title?: string}>} props.items
  * @param {string} [props.label="Actions"]  accessible name for the trigger.
  */
 export function RowActionMenu({ items, label = "Actions" }) {
@@ -133,11 +134,13 @@ export function RowActionMenu({ items, label = "Actions" }) {
         onKeyDown=${(e) => handleMenuKeyNav(e, () => setOpen(false))}
       >
         ${items.map((item) => {
-          const explained = Boolean(item.disabled && item.hint);
+          const explained = Boolean(item.disabled && (item.hint || item.title));
           return html`
             <button
               class=${`row-action-item${item.danger ? " danger" : ""}`}
               role="menuitem"
+              title=${item.title || item.hint || undefined}
+              aria-label=${item.disabled && item.title ? `${item.label}: ${item.title}` : undefined}
               onClick=${explained ? undefined : run(item.onSelect)}
               disabled=${item.disabled && !explained}
               aria-disabled=${explained ? "true" : undefined}

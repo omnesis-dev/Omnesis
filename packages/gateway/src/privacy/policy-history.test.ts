@@ -11,7 +11,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_PRIVACY_POLICY_FAMILY_ID } from "@omnesis/types/privacy";
 import { directWriteGate } from "../write-gate.js";
 import { normalizeGrantRules, validateGrantRuleReferences } from "../access/store-rules.js";
-import { createAccessTables } from "../access/store.js";
+import {
+  createAccessTables,
+  revokeAccessGrant,
+  revokeAccessPrincipal,
+  deleteAccessLevel,
+} from "../access/store.js";
 import {
   createPrivacyPolicyHistoryTables,
   privacyPolicyDeletionBlockedReason,
@@ -93,24 +98,64 @@ describe("privacy policy history", () => {
     });
   });
 
-  it.each(["access_grant_capabilities", "access_level_capabilities"])(
-    "blocks deletion when %s retains a policy reference",
-    async (table) => {
+  it.each(["grant", "principal", "level", "expired-grant"])(
+    "only blocks while a policy's %s access configuration remains unrevoked",
+    async (owner) => {
       const { db, store } = await fixture();
+      createAccessTables(db);
       const original = await store.get();
       const family = await store.createFamily({
         name: "Used policy",
         policy: original.policy,
         action: "template",
       });
-      // References count independently of the owner's expiry or revocation state.
-      db.exec(`CREATE TABLE ${table} (policy_family_id TEXT)`);
-      db.prepare(`INSERT INTO ${table} VALUES (?)`).run(family.familyId);
+      if (owner === "level") {
+        db.exec(
+          "INSERT INTO access_levels (id, name, created_at, updated_at) VALUES ('policy-level', 'Research access', 1, 1)",
+        );
+        db.prepare(
+          `INSERT INTO access_level_capabilities (level_id, capability, source_mode, source_ids, release_mode, policy_family_id) VALUES ('policy-level', 'answer', 'all', '[]', 'reviewed', ?)`,
+        ).run(family.familyId);
+      } else {
+        db.exec(`INSERT INTO access_principals (id, name, kind, created_at, updated_at) VALUES ('policy-principal', 'Fictional assistant', 'interactive', 1, 1);
+          INSERT INTO access_grants (id, principal_id, name, created_at, updated_at) VALUES ('policy-grant', 'policy-principal', 'Research access', 1, 1)`);
+        db.prepare(
+          `INSERT INTO access_grant_capabilities (grant_id, capability, source_mode, source_ids, release_mode, policy_family_id) VALUES ('policy-grant', 'answer', 'all', '[]', 'reviewed', ?)`,
+        ).run(family.familyId);
+        if (owner === "expired-grant")
+          db.exec("UPDATE access_grants SET expires_at = 1 WHERE id = 'policy-grant'");
+      }
       expect(privacyPolicyDeletionBlockedReason(db, family.familyId!)).toContain("used by");
       expect(await store.deleteFamily(family.familyId!)).toMatchObject({ outcome: "in-use" });
-      expect(await store.getFamily(family.familyId!)).not.toBeNull();
-      db.exec(`DELETE FROM ${table}`);
+      if (owner === "level")
+        expect(
+          deleteAccessLevel(db, { levelId: "policy-level", actorTokenId: "test-actor" }, 2),
+        ).toEqual({ ok: true, value: null });
+      else if (owner === "principal")
+        expect(revokeAccessPrincipal(db, "policy-principal", "test-actor", 2)).toBe(true);
+      else expect(revokeAccessGrant(db, "policy-grant", "test-actor", 2)).toBe(true);
+      expect(privacyPolicyDeletionBlockedReason(db, family.familyId!)).toBeNull();
+      expect(
+        listPrivacyPolicyFamilies(db).find((entry) => entry.id === family.familyId)
+          ?.deletionBlockedReason,
+      ).toBeNull();
       expect(await store.deleteFamily(family.familyId!)).toEqual({ outcome: "deleted" });
+      expect(() =>
+        validateGrantRuleReferences(
+          db,
+          normalizeGrantRules([
+            {
+              capability: "answer",
+              sources: { mode: "all", sourceIds: [] },
+              release: { mode: "reviewed", policyFamilyId: family.familyId! },
+            },
+          ]),
+        ),
+      ).toThrow("Invalid privacy policy family");
+      const table = owner === "level" ? "access_level_capabilities" : "access_grant_capabilities";
+      expect(
+        db.prepare(`SELECT 1 FROM ${table} WHERE policy_family_id = ?`).get(family.familyId),
+      ).toBeDefined();
     },
   );
 

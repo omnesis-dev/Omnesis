@@ -242,7 +242,7 @@ export type DeletePrivacyPolicyFamilyResult =
   | { outcome: "not-found" }
   | { outcome: "in-use"; message: string };
 
-/** All stored rules count, including expired and revoked access. */
+/** Retired access is history; unrevoked configurations, even expired ones, still use a policy. */
 export function privacyPolicyDeletionBlockedReason(
   db: Database.Database,
   familyId: string,
@@ -250,17 +250,27 @@ export function privacyPolicyDeletionBlockedReason(
   if (familyId === DEFAULT_PRIVACY_POLICY_FAMILY_ID) {
     return "The default policy cannot be deleted.";
   }
-  for (const [table, label] of [
-    ["access_grant_capabilities", "an access grant"],
-    ["access_level_capabilities", "an access level"],
+  for (const [table, label, query] of [
+    [
+      "access_grant_capabilities",
+      "an access grant",
+      `SELECT 1 FROM access_grant_capabilities c
+       JOIN access_grants g ON g.id = c.grant_id
+       JOIN access_principals p ON p.id = g.principal_id
+       WHERE c.policy_family_id = ? AND g.revoked_at IS NULL AND p.revoked_at IS NULL LIMIT 1`,
+    ],
+    [
+      "access_level_capabilities",
+      "an access level",
+      `SELECT 1 FROM access_level_capabilities c
+       JOIN access_levels l ON l.id = c.level_id
+       WHERE c.policy_family_id = ? AND l.revoked_at IS NULL LIMIT 1`,
+    ],
   ] as const) {
     const exists = db
       .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
       .get(table);
-    if (
-      exists &&
-      db.prepare(`SELECT 1 FROM ${table} WHERE policy_family_id = ? LIMIT 1`).get(familyId)
-    ) {
+    if (exists && db.prepare(query).get(familyId)) {
       return `This policy is used by ${label}. Remove its policy reference before deleting it.`;
     }
   }

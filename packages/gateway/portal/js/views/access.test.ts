@@ -602,6 +602,30 @@ describe("AccessView", () => {
     await act(async () => { await Promise.resolve(); });
   }
 
+  test("opens the MCP connection named by a deep link", async () => {
+    const priorLocation = window.location;
+    const scroll = vi.fn();
+    const proto = (window as unknown as { HTMLElement: { prototype: Record<string, unknown> } }).HTMLElement.prototype;
+    const priorScroll = proto.scrollIntoView;
+    Object.assign(window, { location: { search: "?connection=principal-laptop" } });
+    proto.scrollIntoView = scroll;
+    try {
+      api.getAccessOverview.mockResolvedValue(levelOverview);
+      await mount();
+      const rows = [...host.querySelectorAll(".access-connection-row")];
+      const requested = rows.find((row) => row.textContent?.includes("Fictional laptop"))!;
+      expect(requested.querySelector(".access-expand")?.getAttribute("aria-expanded")).toBe("true");
+      expect(requested.nextElementSibling?.classList.contains("access-connection-detail")).toBe(true);
+      expect(scroll).toHaveBeenCalledWith({ block: "center" });
+      for (const other of rows.filter((row) => row !== requested)) {
+        expect(other.querySelector(".access-expand")?.getAttribute("aria-expanded")).toBe("false");
+      }
+    } finally {
+      Object.assign(window, { location: priorLocation });
+      proto.scrollIntoView = priorScroll;
+    }
+  });
+
   test("lists each access level by name, then the connections that use it", async () => {
     api.getAccessOverview.mockResolvedValue(levelOverview);
     await mount();

@@ -139,9 +139,9 @@ describe("PoliciesView", () => {
     // the overview does not carry; revoked access no longer governs anything.
     const column = (name: string) => headers.indexOf(name);
     const connectionCounts = rows.map((row) =>
-      row.querySelectorAll("td")[column("Connections")]?.textContent?.trim());
+      row.querySelectorAll("td")[column("Connections")]?.querySelector(".access-policy-count")?.textContent?.trim());
     expect(connectionCounts).toEqual(["2", "0"]);
-    expect(rows.map((row) => row.querySelectorAll("td")[column("Integrations")]?.textContent?.trim()))
+    expect(rows.map((row) => row.querySelectorAll("td")[column("Integrations")]?.querySelector(".access-policy-count")?.textContent?.trim()))
       .toEqual(["0", "0"]);
     // The count is a bare figure, so the header carries what it counts.
     expect(host.querySelectorAll(".access-policy-table thead th")[column("Connections")]
