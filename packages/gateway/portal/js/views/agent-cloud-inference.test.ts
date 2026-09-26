@@ -25,7 +25,7 @@ describe("cloud inference recovery", () => {
     for (const action of eventFirst ? [echo, stamp] : [stamp, echo]) state = reducer(state, action);
     state = reducer(state, { kind: "agent.error", payload: { sessionId: "session-1", code: "remote_inference_disabled", message: "Cloud inference disabled" } });
     expect(state.deepResearch).toBe(false);
-    expect(state.turns.filter((turn) => turn.role === "user")).toHaveLength(1);
+    expect(state.turns.filter((turn: { role: string }) => turn.role === "user")).toHaveLength(1);
     expect(cloudInferenceRecovery(state)).toMatchObject({ message: "Research my notes", deepResearch: true });
   });
 
