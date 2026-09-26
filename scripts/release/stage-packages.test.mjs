@@ -170,11 +170,12 @@ describe("release package runtime assets", () => {
         distDir: isolatedDist,
       });
       const manifest = JSON.parse(readFileSync(join(staged, "package.json"), "utf8"));
-      expect(manifest.dependencies).toEqual({
-        "@modelcontextprotocol/client": "2.0.0",
-        ws: "^8.21.3",
-        zod: "^4.5.4",
-      });
+      expect(Object.keys(manifest.dependencies).sort()).toEqual([
+        "@modelcontextprotocol/client",
+        "ws",
+        "zod",
+      ]);
+      expect(manifest.dependencies).toEqual(entry.pkg.dependencies);
       expect(manifest.engines).toEqual({ node: ">=24.0.0" });
       expect(manifest.dependencies).not.toHaveProperty("@omnesis/core");
       const loaded = await import(`${join(staged, "openclaw-entry.mjs")}?smoke=${Date.now()}`);
