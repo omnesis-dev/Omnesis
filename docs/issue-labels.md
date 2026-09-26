@@ -30,3 +30,5 @@ Write a clear title and body. Add a state label only if one obviously applies
 (`good-first-issue`, `help-wanted`, …). Don't invent new label axes — if you think the
 repo needs richer labelling, raise it first rather than minting labels ad hoc, and keep
 this file and the GitHub label set in sync.
+
+This page is a scope-demo placeholder edit.
