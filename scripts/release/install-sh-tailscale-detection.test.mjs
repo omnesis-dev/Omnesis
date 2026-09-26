@@ -36,7 +36,13 @@ describe("install.sh Tailscale CLI detection", () => {
         ["-c", `${cliFunctions}\nPLATFORM=darwin\nfind_tailscale_cli && tailscale_cli status`],
         {
           encoding: "utf8",
-          env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` },
+          env: {
+            ...process.env,
+            HOME: home,
+            PATH: `${bin}:${process.env.PATH}`,
+            // Where /Applications is looked for: never the machine's own app.
+            OMNESIS_TEST_TAILSCALE_ROOT: join(home, "root"),
+          },
         },
       );
       expect(output).toBe("connected\n");
