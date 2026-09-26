@@ -134,6 +134,27 @@ describe("MCP OAuth access routes", () => {
     expect(await portalOverview.json()).toMatchObject({ oauth: { resource: RESOURCE } });
   });
 
+  test("offers local setup from a remote portal while keeping remote OAuth disabled", async () => {
+    const local = createTestApp({
+      publicBaseUrl: undefined,
+      loopbackBaseUrl: "https://localhost:17600",
+    });
+    const overview = await local.request(`${ORIGIN}/portal/api/access`, {
+      headers: { "X-Test-Portal": "yes" },
+    });
+    expect((await overview.json()).oauth).toMatchObject({
+      resource: "https://localhost:17600/mcp",
+      loopbackOnly: true,
+    });
+    const remoteDiscovery = await local.request(`${ORIGIN}/.well-known/oauth-authorization-server`);
+    expect(remoteDiscovery.status).toBe(503);
+    const localDiscovery = await local.request(
+      "https://localhost:17600/.well-known/oauth-authorization-server",
+    );
+    expect(localDiscovery.status).toBe(200);
+    expect((await localDiscovery.json()).issuer).toBe("https://localhost:17600");
+  });
+
   test("tells the portal which MCP resources present the gateway's own certificate", async () => {
     const fingerprint = "ab".repeat(32);
     const presented: Record<string, string | null> = {

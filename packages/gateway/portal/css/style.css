@@ -1086,20 +1086,16 @@ a:hover { text-decoration: underline; }
   background: var(--bg-secondary);
   overflow: hidden;
 }
-/* The level's facts sit in fixed-width slots, so the same fact lands in the
-   same place on every level down the page. The badge slot fits all three
-   capability badges, which always render. */
+/* The level title and count share the header with its action menu. */
 .access-level-head {
   display: grid;
-  grid-template-columns: minmax(200px, 1fr) max-content 150px 1px 170px auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
   padding: 10px 14px;
 }
 .access-level-title { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .access-level-title .access-count-cell { flex: 0 0 auto; }
-/* Separates what a level may reach from how its answers are released. */
-.access-head-divider { align-self: stretch; margin: 2px 0; background: var(--border); }
 .access-level-name {
   overflow: hidden;
   margin: 0;
@@ -1109,14 +1105,6 @@ a:hover { text-decoration: underline; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.access-privacy-cell { overflow: hidden; color: var(--text-secondary); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
-.access-privacy-cell a {
-  color: inherit;
-  text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
-  text-underline-offset: 2px;
-}
-.access-privacy-cell a:hover { color: var(--text-primary); text-decoration-color: currentColor; }
 .access-level-terms { padding: 0 14px 10px; }
 .access-level-body { margin: 0 14px 10px; }
 .access-level-empty {
@@ -1277,7 +1265,7 @@ a:hover { text-decoration: underline; }
   gap: 10px 24px;
   margin: 0;
 }
-.access-detail-grid dt { color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+.access-detail-grid dt { margin-bottom: 4px; }
 .access-detail-grid dd { margin: 2px 0 0; color: var(--text-secondary); font-size: 11.5px; }
 .access-detail-grid a { color: inherit; text-decoration: underline; }
 .access-revoked,
@@ -1764,9 +1752,7 @@ a:hover { text-decoration: underline; }
   .access-detail-grid { grid-template-columns: minmax(0, 1fr); }
   .access-pending-item { grid-template-columns: minmax(0, 1fr); }
   /* A level's facts wrap under its name instead of holding fixed columns. */
-  .access-level-head { display: flex; flex-wrap: wrap; gap: 6px 12px; }
-  .access-level-title { flex: 1 1 100%; }
-  .access-head-divider { display: none; }
+  .access-level-title { flex-wrap: wrap; }
 
 
   .access-connection-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }

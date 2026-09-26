@@ -6,9 +6,9 @@
 //
 // An access level holds permissions; a connection — one approved agent
 // install — always uses exactly one level, so the list reads top-down the way
-// the relationship does. A level's header says what its permissions allow
-// (capabilities, source scope, Answer privacy) and how many connections share
-// them; its menu edits, renames or deletes it. Each connection row
+// the relationship does. A level's header names it and counts its connections;
+// the terms below describe capabilities, source scope and Answer privacy.
+// Its menu edits, renames or deletes it. Each connection row
 // under that header, says which app signed in and when it was last used; its
 // menu renames it, moves it to another level, or removes it. Connection
 // IDs, sign-in facts and permission terms are always visible.
@@ -20,7 +20,6 @@ import { html } from "htm/preact";
 import { useRef, useState } from "preact/hooks";
 
 import { CopyIconButton } from "../../components/copy-button.js";
-import { CapabilityTriad } from "../../components/grant-builder.js";
 import { RowActionMenu } from "../../components/row-action-menu.js";
 import { timeAgo } from "../../lib/format.js";
 import { KindIcon } from "../../lib/device-kind-icon.js";
@@ -34,11 +33,10 @@ import {
   effectiveAccessState,
   isLiveConnection,
   liveConnectionCount,
-  overviewPolicies,
   timestamp,
 } from "./shared.js";
 import { AgentIcon, agentIconForApp } from "./agent-brand.js";
-import { AccessTerms, AnswerPrivacy, reachSummary } from "./terms.js";
+import { AccessTerms } from "./terms.js";
 
 /** An integration on the Devices page, opened and scrolled to, drawn with its kind's icon. */
 function DeviceLink({ device }) {
@@ -228,7 +226,6 @@ function ConnectionList({ connections, label, actions }) {
 function LevelGroup({ level, levels, connections, overview, levelActions, connectionActions }) {
   const [renaming, setRenaming] = useState(false);
   const rules = accessRules(level, overview);
-  const reach = reachSummary(rules, overview);
   const titleId = `access-level-title-${level.id}`;
   const termsId = `access-level-terms-${level.id}`;
   const count = liveConnectionCount(level, connections);
@@ -271,14 +268,6 @@ function LevelGroup({ level, levels, connections, overview, levelActions, connec
         <h3 id=${titleId} class=${`access-level-name${renaming ? " sr-only" : ""}`}>${level.name}</h3>
         <span class="access-count-cell">${countText(count, connections.length, devices.length)}</span>
       </div>
-      <${CapabilityTriad} rules=${rules} />
-      <span class="access-reach-cell"><span class="sr-only">Sources: </span>${reach ?? "—"}</span>
-      <span class="access-head-divider" aria-hidden="true"></span>
-      <span class=${`access-privacy-cell${rules.answer?.release.mode === "unreviewed" ? " access-unreviewed" : ""}`}>
-        <span class="sr-only">Answer privacy: </span>${rules.answer
-          ? html`<${AnswerPrivacy} rule=${rules.answer} policies=${overviewPolicies(overview)} />`
-          : "—"}
-      </span>
       <${RowActionMenu} items=${items} label=${`Actions for ${level.name}`} />
     </div>
     <div id=${termsId} class="access-level-terms"><${AccessTerms} rules=${rules} overview=${overview} /></div>

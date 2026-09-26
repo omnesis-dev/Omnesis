@@ -7,6 +7,7 @@
 // the same way wherever they are shown.
 
 import { html } from "htm/preact";
+import { CapabilityBadge } from "../../components/grant-builder.js";
 
 import {
   isSourceAllowed,
@@ -16,7 +17,7 @@ import {
 } from "../../components/grant-builder-state.js";
 import { policyEditorPath } from "../../lib/policy-path.js";
 import { navigate } from "../../lib/router.js";
-import { capabilityLabel, overviewPolicies } from "./shared.js";
+import { overviewPolicies } from "./shared.js";
 
 /**
  * The policy a reviewed capability runs under, as a link to its editor.
@@ -74,15 +75,6 @@ export function answerPrivacySummary(rule, policies) {
   return policy ? policyFamilyName(policy) : "Privacy policy";
 }
 
-/**
- * The same, where a named policy is a link to it: "No privacy review" stays
- * plain words, since there is no policy to open.
- */
-export function AnswerPrivacy({ rule, policies }) {
-  if (rule.release.mode === "unreviewed") return "No privacy review";
-  return policySummary(rule.release.policyFamilyId, policies);
-}
-
 /** The terms a set of permissions runs under, one line per capability it holds. */
 export function AccessTerms({ rules, overview }) {
   const lanes = ["answer", "direct"].filter((capability) => rules[capability]);
@@ -92,8 +84,9 @@ export function AccessTerms({ rules, overview }) {
       const rule = rules[capability];
       const retainedAllowed = retained.filter((source) => isSourceAllowed(rule, sourceId(source))).length;
       return html`<div key=${capability}>
-        <dt>${capabilityLabel(capability)}</dt>
+        <dt><${CapabilityBadge} capability=${capability} unreviewed=${capability === "answer" && rule.release.mode === "unreviewed"} /></dt>
         <dd>
+          <span class="access-reach-cell"><span class="sr-only">Sources: </span>${laneReach(rule, overview)}</span>${" · "}
           ${capability === "direct"
             ? "Raw access"
             : rule.release.mode === "unreviewed"
@@ -106,6 +99,6 @@ export function AccessTerms({ rules, overview }) {
         </dd>
       </div>`;
     })}
-    ${rules.notes ? html`<div><dt>${capabilityLabel("notes")}</dt><dd>Saves notes under the agent's name</dd></div>` : null}
+    ${rules.notes ? html`<div><dt><${CapabilityBadge} capability="notes" /></dt><dd>Saves notes under the agent's name</dd></div>` : null}
   </dl>`;
 }

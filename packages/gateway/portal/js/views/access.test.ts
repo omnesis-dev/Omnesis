@@ -396,6 +396,18 @@ describe("AccessView", () => {
     expect(empty.textContent).not.toMatch(/^Connect an agent to authorize/);
   });
 
+  test("offers the connect dialog for local-only setup and explains the same-machine limit", async () => {
+    api.getAccessOverview.mockResolvedValue({ principals: [], levels: [], oauth: {
+      resource: "https://localhost:17600/mcp", loopbackOnly: true,
+    } });
+    await mount();
+    expect(host.querySelector(".access-oauth-blocker")?.textContent).toContain("Local agents can connect");
+    await act(async () => { connectButton()!.click(); });
+    expect(host.querySelector(".access-connect-dialog")?.textContent).toContain("only for agents running on the gateway’s machine");
+    expect(host.querySelector(".access-mcp-resource code")?.textContent).toBe("https://localhost:17600/mcp");
+    expect(host.querySelector("button[data-agent='claude-code']")).not.toBeNull();
+  });
+
   test("keeps the connect dialog shut on a gateway without OAuth, however it was asked for", async () => {
     // The route asks for the dialog directly; step 1 has no address to show
     // and step 2 would take a code no gateway could have issued.
@@ -614,18 +626,20 @@ describe("AccessView", () => {
     expect(notes.querySelector(".access-count-cell")?.textContent).toBe("");
     expect(notes.querySelector(".access-level-empty")?.textContent).toBe("No connections use this access level yet.");
     expect(notes.querySelector(".access-connection-row")).toBeNull();
-    expect(notes.querySelector(".access-privacy-cell")?.textContent).toContain("—");
+    expect(notes.querySelector(".access-level-head .access-badge")).toBeNull();
+    expect(notes.querySelector(".access-level-terms .access-badge-notes")).not.toBeNull();
 
-    // The level's header row carries what its permissions allow.
+    // Permission details appear once beneath the level header.
+    expect(levelGroup("fictional research").querySelector(".access-level-head .access-badge")).toBeNull();
     const research = levelGroup("fictional research");
     expect(research.querySelector(".access-count-cell")?.textContent).toBe("2 connections");
-    expect(research.querySelector(".access-privacy-cell")?.textContent).toContain("Household");
+    expect(research.querySelector(".access-level-terms")?.textContent).toContain("Household");
     // The policy it names is a link to that policy.
-    const policyLink = research.querySelector(".access-privacy-cell a")!;
+    const policyLink = research.querySelector(".access-level-terms a")!;
     expect(policyLink.textContent).toBe("Household");
     expect(policyLink.getAttribute("href")).toBe("/portal/settings/policies/policy-a");
-    expect(research.querySelector(".access-level-head .access-badge-answer")?.getAttribute("class")).not.toContain("is-off");
-    expect(research.querySelector(".access-level-head .access-badge-direct")?.getAttribute("class")).toContain("is-off");
+    expect(research.querySelector(".access-level-terms .access-badge-answer")?.getAttribute("class")).not.toContain("is-off");
+    expect(research.querySelector(".access-level-terms .access-badge-direct")).toBeNull();
 
     // Its connections follow it, inside the card: by name, the app that signed
     // in, and when it was last used — with no column headings repeated per level.
@@ -780,10 +794,10 @@ describe("AccessView", () => {
 
     // An unreviewed Answer is named in words, in the header as well as on its badge.
     const raw = levelGroup("Fictional raw reads");
-    expect(raw.querySelector(".access-privacy-cell")?.textContent).toContain("No privacy review");
-    expect(raw.querySelector(".access-privacy-cell a")).toBeNull();
-    expect(raw.querySelector(".access-privacy-cell")?.getAttribute("class")).toContain("access-unreviewed");
-    const answer = raw.querySelector(".access-level-head .access-badge-answer")!;
+    expect(raw.querySelector(".access-level-terms")?.textContent).toContain("No privacy review");
+    expect(raw.querySelector(".access-level-terms a")).toBeNull();
+    expect(raw.querySelector(".access-level-terms .access-unreviewed")).not.toBeNull();
+    const answer = raw.querySelector(".access-level-terms .access-badge-answer")!;
     expect(answer.getAttribute("class")).toContain("is-unreviewed");
     expect(answer.textContent).toContain("released without privacy review");
     expect(raw.querySelector(".access-level-terms")?.textContent).toContain("Raw access");
@@ -1844,9 +1858,9 @@ describe("AccessView", () => {
       expect(router.replaceRoute).toHaveBeenCalledWith("/portal/settings/access");
       await act(async () => { render(h(AccessView, {}), host); });
       expect(host.textContent).toContain("Your update was not applied");
-      const head = levelGroup("fictional research").querySelector(".access-level-head")!;
+      const head = levelGroup("fictional research").querySelector(".access-level-terms")!;
       expect(head.querySelector(".access-badge-direct")?.getAttribute("class")).not.toContain("is-off");
-      expect(head.querySelector(".access-badge-answer")?.getAttribute("class")).toContain("is-off");
+      expect(head.querySelector(".access-badge-answer")).toBeNull();
     });
 
     test("says a level that is gone is no longer available", async () => {

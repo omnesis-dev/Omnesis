@@ -617,12 +617,24 @@ export function AccessView({
           : null}
       </header>
 
+      ${overviewReady && overview.oauth?.loopbackOnly
+        ? html`<div class="access-oauth-blocker" role="status">
+            <strong>Local agents can connect.</strong>
+            <span>Use Connect an agent for clients running on the gateway’s machine.
+              To connect from another machine, set <code>gateway.publicBaseUrl</code> on the${" "}
+              <a href=${configHref} onClick=${(event) => { event.preventDefault(); navigate(configHref); }}>Config tab</a>.
+              This can be a private network address; ChatGPT and Claude apps need an Internet-reachable address.
+            </span>
+          </div>`
+        : null}
+
       ${!overviewReady || overview.oauth
         ? null
         : html`<div class="access-oauth-blocker" role="status">
             <strong>OAuth is not available yet.</strong>
             <span>
-              Connecting an agent runs over OAuth, which needs the Gateway public URL.
+              Agents on the gateway’s machine can sign in over a loopback address.
+              Connecting from another machine needs a configured Gateway public URL.
               Set <code>gateway.publicBaseUrl</code> on the${" "}
               <a
                 href=${configHref}

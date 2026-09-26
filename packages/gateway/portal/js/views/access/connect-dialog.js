@@ -289,7 +289,9 @@ export function ConnectAgentDialog({ oauth, onClose }) {
       <${ConnectStep}
         number="1"
         title="Add this MCP server to the client"
-        caption="Paste it into ChatGPT, Claude, Codex, or another OAuth-capable client."
+        caption=${oauth.loopbackOnly
+          ? "This localhost address works only for agents running on the gateway’s machine. Hosted clients cannot reach it."
+          : "Paste it into ChatGPT, Claude, Codex, or another OAuth-capable client."}
       >
         <div class="access-mcp-resource">
           <code>${oauth.resource}</code>
