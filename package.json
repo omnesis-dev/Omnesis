@@ -121,7 +121,7 @@
     "tsx": "^4.19.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.18.0",
-    "vitest": "^4.1.6"
+    "vitest": "^5.0.1"
   },
   "nx": {
     "targets": {
