@@ -623,7 +623,7 @@ describe("AccessView", () => {
 
     // A level can exist with nobody on it, and says so rather than showing an empty table.
     const notes = levelGroup("Fictional notes");
-    expect(notes.querySelector(".access-count-cell")?.textContent).toBe("");
+    expect(notes.querySelector(".access-count-cell")).toBeNull();
     expect(notes.querySelector(".access-level-empty")?.textContent).toBe("No connections use this access level yet.");
     expect(notes.querySelector(".access-connection-row")).toBeNull();
     expect(notes.querySelector(".access-level-head .access-badge")).toBeNull();
@@ -632,7 +632,7 @@ describe("AccessView", () => {
     // Permission details appear once beneath the level header.
     expect(levelGroup("fictional research").querySelector(".access-level-head .access-badge")).toBeNull();
     const research = levelGroup("fictional research");
-    expect(research.querySelector(".access-count-cell")?.textContent).toBe("2 connections");
+    expect(research.querySelector(".access-count-cell")).toBeNull();
     expect(research.querySelector(".access-level-terms")?.textContent).toContain("Household");
     // The policy it names is a link to that policy.
     const policyLink = research.querySelector(".access-level-terms a")!;
@@ -834,7 +834,7 @@ describe("AccessView", () => {
     await mount();
 
     const research = levelGroup("fictional research");
-    expect(research.querySelector(".access-count-cell")?.textContent).toContain("1 integration");
+    expect(research.querySelector(".access-count-cell")).toBeNull();
     const deviceLink = research.querySelector<HTMLAnchorElement>(".access-level-devices a")!;
     expect(deviceLink.textContent).toBe("Studio voice");
     expect(deviceLink.querySelector("svg.access-device-icon")).not.toBeNull();
@@ -1027,12 +1027,12 @@ describe("AccessView", () => {
 
     // Where the gateway sent no count, the page counts by its rule: listed is not counted.
     const research = levelGroup("fictional research");
-    expect(research.querySelector(".access-count-cell")?.textContent).toBe("1 connection");
+    expect(research.querySelector(".access-count-cell")).toBeNull();
     expect(research.querySelectorAll(".access-connection-row")).toHaveLength(2);
 
     // A level only expired connections use has none active, and can be deleted.
     const notes = levelGroup("Fictional notes");
-    expect(notes.querySelector(".access-count-cell")?.textContent).toBe("No active connections");
+    expect(notes.querySelector(".access-count-cell")).toBeNull();
     expect(notes.querySelector(".access-level-empty")).toBeNull();
     const deletion = (await openMenu("Actions for Fictional notes")).find((item) => itemLabel(item) === "Delete")!;
     expect(deletion.getAttribute("aria-disabled")).toBeNull();

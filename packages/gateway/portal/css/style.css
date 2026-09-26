@@ -1095,7 +1095,6 @@ a:hover { text-decoration: underline; }
   padding: 10px 14px;
 }
 .access-level-title { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.access-level-title .access-count-cell { flex: 0 0 auto; }
 .access-level-name {
   overflow: hidden;
   margin: 0;
@@ -1204,12 +1203,7 @@ a:hover { text-decoration: underline; }
 }
 .access-copy:hover { color: var(--text-primary); }
 .access-used-cell,
-.access-count-cell {
-  color: var(--text-muted);
-  font-size: 11.5px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
+
 .access-reach-cell { color: var(--text-secondary); font-size: 11.5px; white-space: nowrap; }
 /* Unreviewed release is a state the owner chose, not a fault, so it is the
    warning colour. Danger stays with Direct, the capability that actually

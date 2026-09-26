@@ -6,7 +6,7 @@
 //
 // An access level holds permissions; a connection — one approved agent
 // install — always uses exactly one level, so the list reads top-down the way
-// the relationship does. A level's header names it and counts its connections;
+// the relationship does. A level's header names it;
 // the terms below describe capabilities, source scope and Answer privacy.
 // Its menu edits, renames or deletes it. Each connection row
 // under that header, says which app signed in and when it was last used; its
@@ -27,8 +27,6 @@ import { navigate } from "../../lib/router.js";
 import { LEVEL_NAME_TAKEN_MESSAGE, RenameField, levelNameTaken } from "./name-fields.js";
 import {
   accessRules,
-  connectionCountLabel,
-  deviceCountLabel,
   levelDevices,
   effectiveAccessState,
   isLiveConnection,
@@ -104,15 +102,6 @@ export function signInLabel(credential) {
     ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(credential.createdAt))
     : null;
   return [app ? `Signed in from ${app}` : "Signed in", day].filter(Boolean).join(" · ");
-}
-
-/**
- * How many live connections a level's header reports, nothing when it lists
- * none, and how many integrations use it when any do.
- */
-function countText(count, listed, devices = 0) {
-  const connections = listed === 0 ? "" : count > 0 ? connectionCountLabel(count) : "No active connections";
-  return [connections, devices > 0 ? deviceCountLabel(devices) : ""].filter(Boolean).join(" · ");
 }
 
 /**
@@ -266,7 +255,6 @@ function LevelGroup({ level, levels, connections, overview, levelActions, connec
             />`
           : null}
         <h3 id=${titleId} class=${`access-level-name${renaming ? " sr-only" : ""}`}>${level.name}</h3>
-        <span class="access-count-cell">${countText(count, connections.length, devices.length)}</span>
       </div>
       <${RowActionMenu} items=${items} label=${`Actions for ${level.name}`} />
     </div>
@@ -335,7 +323,6 @@ export function AccessList({ entries, levels, overview, levelActions, connection
           <div class="access-level-head">
             <div class="access-level-title">
               <h3 id="access-other-connections-title" class="access-level-name">Other connections</h3>
-              <span class="access-count-cell">${countText(others.filter(isLiveConnection).length, others.length)}</span>
             </div>
           </div>
           <div class="access-level-body">
