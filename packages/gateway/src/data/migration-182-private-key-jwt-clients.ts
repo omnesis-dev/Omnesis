@@ -1,0 +1,63 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Adrien Conrath
+
+import type { Db } from "./types.js";
+
+/**
+ * Let an OAuth client authenticate with a signed JWT (`private_key_jwt`,
+ * RFC 7523) against the key set its metadata document names. Such a client
+ * carries a `jwks_uri` and never a secret, and may pin the one algorithm it
+ * signs with; every other client carries neither. SQLite cannot alter a CHECK constraint in place, so the table
+ * is rebuilt; the caller owns the transaction and foreign-key handling.
+ */
+export function migrateV182PrivateKeyJwtClients(db: Db): void {
+  const columns = new Set(
+    db
+      .prepare<[string], { name: string }>("SELECT name FROM pragma_table_info(?)")
+      .all("oauth_clients")
+      .map((row) => row.name),
+  );
+  if (columns.size === 0 || columns.has("jwks_uri")) return;
+
+  db.exec(`
+    CREATE TABLE oauth_clients_next (
+      client_id TEXT PRIMARY KEY,
+      client_name TEXT NOT NULL,
+      redirect_uris TEXT NOT NULL,
+      grant_types TEXT NOT NULL,
+      response_types TEXT NOT NULL,
+      token_endpoint_auth_method TEXT NOT NULL
+        CHECK (token_endpoint_auth_method IN ('none', 'client_secret_basic', 'private_key_jwt')),
+      client_secret_hash TEXT,
+      client_uri TEXT,
+      created_at INTEGER NOT NULL,
+      jwks_uri TEXT,
+      token_endpoint_auth_signing_alg TEXT
+        CHECK (token_endpoint_auth_signing_alg IN ('RS256', 'PS256', 'ES256')),
+      CHECK (token_endpoint_auth_signing_alg IS NULL OR
+        token_endpoint_auth_method = 'private_key_jwt'),
+      CHECK (json_valid(redirect_uris) AND json_type(redirect_uris) = 'array'),
+      CHECK (json_valid(grant_types) AND json_type(grant_types) = 'array'),
+      CHECK (json_valid(response_types) AND json_type(response_types) = 'array'),
+      CHECK (
+        (token_endpoint_auth_method = 'none'
+          AND client_secret_hash IS NULL AND jwks_uri IS NULL) OR
+        (token_endpoint_auth_method = 'client_secret_basic'
+          AND client_secret_hash IS NOT NULL AND jwks_uri IS NULL) OR
+        (token_endpoint_auth_method = 'private_key_jwt'
+          AND client_secret_hash IS NULL AND jwks_uri IS NOT NULL)
+      )
+    );
+    INSERT INTO oauth_clients_next (
+      client_id, client_name, redirect_uris, grant_types, response_types,
+      token_endpoint_auth_method, client_secret_hash, client_uri, created_at, jwks_uri
+    )
+    SELECT client_id, client_name, redirect_uris, grant_types, response_types,
+           token_endpoint_auth_method, client_secret_hash, client_uri, created_at, NULL
+    FROM oauth_clients;
+    DROP TABLE oauth_clients;
+    ALTER TABLE oauth_clients_next RENAME TO oauth_clients;
+    CREATE INDEX idx_oauth_clients_created
+      ON oauth_clients(created_at, client_id);
+  `);
+}

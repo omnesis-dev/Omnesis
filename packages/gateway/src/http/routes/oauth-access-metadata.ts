@@ -7,6 +7,7 @@ import {
   resolveOAuthMetadataPaths,
   resolveOAuthUrls,
 } from "../../access/oauth-urls.js";
+import { SUPPORTED_CLIENT_ASSERTION_ALGORITHMS } from "../../access/client-assertion.js";
 import { OAUTH_OFFLINE_ACCESS_SCOPE } from "../../access/oauth-scopes.js";
 import { MCP_ACCESS_SCOPE } from "../../access/types.js";
 import { oauthRegistrationRateLimiter } from "../../rate-limit.js";
@@ -65,7 +66,18 @@ export function mountOAuthMetadataRoutes(
       response_types_supported: ["code"],
       grant_types_supported: ["authorization_code", "refresh_token"],
       code_challenge_methods_supported: ["S256"],
-      token_endpoint_auth_methods_supported: ["none", "client_secret_basic"],
+      // `private_key_jwt` is for clients identified by a metadata document
+      // that names their key set; dynamic registration offers the other two.
+      token_endpoint_auth_methods_supported: ["none", "client_secret_basic", "private_key_jwt"],
+      token_endpoint_auth_signing_alg_values_supported: [...SUPPORTED_CLIENT_ASSERTION_ALGORITHMS],
+      revocation_endpoint_auth_methods_supported: [
+        "none",
+        "client_secret_basic",
+        "private_key_jwt",
+      ],
+      revocation_endpoint_auth_signing_alg_values_supported: [
+        ...SUPPORTED_CLIENT_ASSERTION_ALGORITHMS,
+      ],
       scopes_supported: [MCP_ACCESS_SCOPE, OAUTH_OFFLINE_ACCESS_SCOPE],
       resource_indicators_supported: true,
       client_id_metadata_document_supported: true,

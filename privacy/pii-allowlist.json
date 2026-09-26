@@ -2026,13 +2026,16 @@
       "value": "10.0.0.0",
       "paths": [
         "packages/core/src/models/inference-url-policy.ts",
-        "packages/gateway/src/access/client-metadata-document.ts"
+        "packages/gateway/src/access/public-json-fetch.ts"
       ],
       "reason": "reviewed private-address range constant"
     },
     {
       "value": "10.0.0.8",
-      "paths": ["packages/gateway/src/access/client-metadata-document.test.ts"],
+      "paths": [
+        "packages/gateway/src/access/client-assertion.test.ts",
+        "packages/gateway/src/access/client-metadata-document.test.ts"
+      ],
       "reason": "invented private-address fixture for SSRF rejection"
     },
     {
@@ -2078,7 +2081,7 @@
       "value": "172.16.0.0",
       "paths": [
         "packages/core/src/models/inference-url-policy.ts",
-        "packages/gateway/src/access/client-metadata-document.ts"
+        "packages/gateway/src/access/public-json-fetch.ts"
       ],
       "reason": "reviewed private-address range constant"
     },
@@ -2095,7 +2098,7 @@
       "value": "192.168.0.0",
       "paths": [
         "packages/core/src/models/inference-url-policy.ts",
-        "packages/gateway/src/access/client-metadata-document.ts"
+        "packages/gateway/src/access/public-json-fetch.ts"
       ],
       "reason": "reviewed private-address range constant"
     },
@@ -2151,7 +2154,7 @@
       "paths": [
         "packages/core/src/models/inference-url-policy.ts",
         "packages/core/src/network-discovery.ts",
-        "packages/gateway/src/access/client-metadata-document.ts"
+        "packages/gateway/src/access/public-json-fetch.ts"
       ],
       "reason": "reviewed carrier-grade NAT range constant"
     },

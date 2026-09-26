@@ -574,7 +574,11 @@
           Clients register either with a Client ID Metadata Document, a small JSON file published at
           the client's HTTPS identifier, or through Dynamic Client Registration. Omnesis fetches a
           metadata document directly, refuses redirects and private-network destinations, and
-          validates its redirect URLs before showing the approval screen.
+          validates its redirect URLs before showing the approval screen. A metadata document may
+          name a JSON Web Key Set and ask to authenticate with <code>private_key_jwt</code>; the
+          client then signs a short-lived assertion for each token and revocation request, and
+          Omnesis verifies it against that key set, fetched under the same rules. Clients that use
+          Dynamic Client Registration authenticate as public clients or with a client secret.
         </p>
 
         <h3 id="tailscale-funnel">Publish the gateway with Tailscale Funnel</h3>
