@@ -37,6 +37,7 @@ describe("Brain Bench smoke", () => {
             docTitle: TRIGGER.title,
             plan: (ctx) => ({
               calls: [
+                call("list_tables", {}),
                 call("open_loop_search", { query: "autumn offsite deposit" }),
                 call("open_loop_create", {
                   title: "Send the deposit for the autumn offsite",
@@ -99,6 +100,13 @@ describe("Brain Bench smoke", () => {
     expect(calls[0]!.kind).toBe("data");
     expect(calls[0]!.flavour).toBe("data.created");
     expect(calls[0]!.subject).toBe(docId);
+
+    // Direct discovery never enters the canonical steward toolset.
+    const executed = await bench.obs.executedTools(runs[0]!.id);
+    expect(executed.find((step) => step.tool === "list_tables")?.result).toMatchObject({
+      kind: "error",
+      code: "unknown_tool",
+    });
   }, 120_000);
 
   test("the scripted plan left real rows behind, linked to each other", async () => {

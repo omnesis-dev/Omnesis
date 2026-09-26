@@ -308,9 +308,14 @@
           they share one source selection by default, and an advanced choice gives each its own.
         </p>
         <p>
-          A source-restricted Direct permission gets search, document fetch, URL lookup, and SQL
-          only. Analytics tables that several source accounts write to stay outside a
-          source-restricted access level, even when every contributing account is selected.
+          A source-restricted Direct permission gets search, document fetch, URL lookup, analytics
+          schema discovery, and SQL only. Call <code>list_tables</code> before
+          <code>run_sql</code> to discover permitted tables and their columns. Follow the returned
+          <code>nextOffset</code> with another call using that <code>offset</code> until it is null;
+          each page defaults to 20 tables, with an optional <code>limit</code> from 1 to 100.
+          Discovery returns only the current grant’s permitted schema, without row data. Analytics
+          tables that several source accounts write to stay outside a source-restricted access
+          level, even when every contributing account is selected.
         </p>
 
         <h3 id="notes">Notes</h3>

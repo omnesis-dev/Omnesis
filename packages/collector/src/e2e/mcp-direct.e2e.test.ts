@@ -20,15 +20,17 @@ const STABLE_DIRECT_TOOL_NAMES = [
   "lookup_people",
   "trace_connections",
   "run_sql",
+  "list_tables",
 ] as const;
 
 const DIRECT_TOOL_NAMES = [
-  ...STABLE_DIRECT_TOOL_NAMES,
+  ...STABLE_DIRECT_TOOL_NAMES.filter((name) => name !== "list_tables"),
   "temporal_query",
   "entity_context",
   "search_loops",
   "list_loops",
   "fetch_loop",
+  "list_tables",
 ] as const;
 
 describe("Direct MCP OAuth — synthetic-corpus gateway", () => {
@@ -150,7 +152,9 @@ describe("Direct MCP OAuth — synthetic-corpus gateway", () => {
       expect(authorized.client.getNegotiatedProtocolVersion()).toBe("2026-07-28");
       const instructions = authorized.client.getInstructions();
       expect(instructions).toContain("bypasses Omnesis privacy review");
-      expect(instructions).toContain("`apple_calendar_events`");
+      expect(instructions?.slice(0, 512)).toContain("list_tables");
+      expect(instructions?.slice(0, 512)).toContain("untrusted");
+      expect(instructions).not.toContain("`apple_calendar_events`");
       expect(instructions).not.toContain("john.smith@example.com");
 
       const listed = await authorized.client.listTools();
@@ -161,6 +165,37 @@ describe("Direct MCP OAuth — synthetic-corpus gateway", () => {
       expect(schemas.get("lookup_people")?.required).toContain("query");
       expect(schemas.get("trace_connections")?.required).toContain("seedIds");
       expect(schemas.get("run_sql")?.required).toContain("sql");
+      const firstPage = await authorized.client.callTool({
+        name: "list_tables",
+        arguments: { limit: 1 },
+      });
+      expect(firstPage.isError).not.toBe(true);
+      const discovery = firstPage.structuredContent as {
+        kind: string;
+        resultType: string;
+        data: {
+          tables: Array<{ tableName: string; columns: Array<{ name: string; type: string }> }>;
+          nextOffset: number | null;
+        };
+      };
+      expect(discovery.kind).toBe("structured");
+      expect(discovery.resultType).toBe("analytics.tables");
+      expect(discovery.data.tables).toHaveLength(1);
+      expect(discovery.data.tables[0]?.columns.length).toBeGreaterThan(0);
+      expect(discovery.data.nextOffset).toBe(1);
+      const nextPage = await authorized.client.callTool({
+        name: "list_tables",
+        arguments: { offset: discovery.data.nextOffset, limit: 1 },
+      });
+      expect(nextPage.isError).not.toBe(true);
+      expect(nextPage.structuredContent).toMatchObject({
+        kind: "structured",
+        resultType: "analytics.tables",
+      });
+      expect(nextPage.structuredContent).not.toEqual(firstPage.structuredContent);
+      expect(listed.tools.find((tool) => tool.name === "run_sql")?.description).toContain(
+        "list_tables",
+      );
 
       const searched = await authorized.client.callTool({
         name: "search_many",
@@ -388,6 +423,7 @@ describe("Direct MCP OAuth — synthetic-corpus gateway", () => {
         "fetch_many",
         "lookup_document_by_url",
         "run_sql",
+        "list_tables",
       ]);
       expect(authorized.client.getInstructions()).toContain(
         "restricted to selected source instances",
@@ -424,7 +460,7 @@ describe("Direct MCP OAuth — synthetic-corpus gateway", () => {
         (await authorized.client.listTools(undefined, { cacheMode: "refresh" })).tools.map(
           (tool) => tool.name,
         ),
-      ).toEqual(["search_many", "fetch_many", "lookup_document_by_url", "run_sql"]);
+      ).toEqual(["search_many", "fetch_many", "lookup_document_by_url", "run_sql", "list_tables"]);
       expect(authorized.provider.savedTokens?.access_token).not.toBe(firstAccessToken);
       expect(authorized.provider.savedClientInformation?.client_id).toBe(clientId);
       expect(authorized.provider.authorizationRedirects).toBe(1);
@@ -485,9 +521,8 @@ describe("Direct MCP OAuth — synthetic-corpus gateway", () => {
     // Both sides of the gate derive from one live catalog table, so
     // neither side can pass vacuously no matter how many analytics
     // sources the universe syncs: the allowlist grant names the table's
-    // own source, the denylist grant excludes exactly it. (The stable
-    // default universe's catalog is non-empty — the first test's
-    // `apple_calendar_events` assertion pins that.)
+    // own source, the denylist grant excludes exactly it. The catalog
+    // below must contain a real table before either grant is exercised.
     let allowed: AuthorizedMcpClient | undefined;
     let denied: AuthorizedMcpClient | undefined;
     try {
@@ -538,12 +573,35 @@ describe("Direct MCP OAuth — synthetic-corpus gateway", () => {
           "fetch_many",
           "lookup_document_by_url",
           "run_sql",
+          "list_tables",
         ]);
       }
       const allowedInstructions = allowed.client.getInstructions();
       expect(allowedInstructions).toContain("sql_not_permitted");
-      expect(allowedInstructions).toContain(`\`${table}\``);
+      expect(allowedInstructions).toContain("list_tables");
+      expect(allowedInstructions).not.toContain(`\`${table}\``);
       expect(denied.client.getInstructions()).not.toContain(`\`${table}\``);
+      const allowedDiscovery = await allowed.client.callTool({
+        name: "list_tables",
+        arguments: { limit: 100 },
+      });
+      const deniedDiscovery = await denied.client.callTool({
+        name: "list_tables",
+        arguments: { limit: 100 },
+      });
+      expect(allowedDiscovery.isError).not.toBe(true);
+      expect(deniedDiscovery.isError).not.toBe(true);
+      const allowedTables = (
+        allowedDiscovery.structuredContent as { data: { tables: Array<{ tableName: string }> } }
+      ).data.tables;
+      const deniedTables = (
+        deniedDiscovery.structuredContent as { data: { tables: Array<{ tableName: string }> } }
+      ).data.tables;
+      expect(allowedTables.map((entry) => entry.tableName)).toContain(table);
+      expect(deniedTables.map((entry) => entry.tableName)).not.toContain(table);
+      for (const entry of [...allowedTables, ...deniedTables]) {
+        expect(Object.keys(entry).sort()).toEqual(["columns", "tableName"]);
+      }
 
       // A table-less query carries no source surface and runs under both grants.
       for (const client of [allowed, denied]) {
@@ -565,6 +623,7 @@ describe("Direct MCP OAuth — synthetic-corpus gateway", () => {
         code: "sql_not_permitted",
       });
       expect(JSON.stringify(refused.structuredContent)).toContain(table);
+      expect(JSON.stringify(refused.structuredContent)).toContain("list_tables");
 
       // Schema introspection is refused naming the schema, not failed opaquely.
       const snooped = await runSql(denied.client, "SELECT * FROM information_schema.tables");

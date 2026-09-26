@@ -22,7 +22,7 @@ The privacy-reviewed Omnesis Answer capability remains a separate boundary even 
 ## Available read-only tools
 
 The live MCP tool list is authoritative. A source-restricted connection exposes only
-`search_many`, `fetch_many`, and `lookup_document_by_url`; do not assume that any tool listed
+`search_many`, `fetch_many`, `lookup_document_by_url`, `list_tables`, and `run_sql`; do not assume that any tool listed
 below is available, and adapt the retrieval plan to the tools the server actually exposes.
 
 - `search_many`: search several corpus queries in one call.
@@ -30,7 +30,8 @@ below is available, and adapt the retrieval plan to the tools the server actuall
 - `lookup_document_by_url`: resolve a known source URL to its Omnesis document.
 - `lookup_people`: find people in the user's records.
 - `trace_connections`: follow evidence links between records.
-- `run_sql`: query the read-only DuckDB analytics database, never operational SQLite.
+- `list_tables`: discover permitted analytics tables and columns; follow `nextOffset` with another call using `offset` until it is null.
+- `run_sql`: call `list_tables` first, then query the read-only DuckDB analytics database, never operational SQLite.
 - `temporal_query`: retrieve time-oriented context.
 - `entity_context`: retrieve context surrounding an entity.
 - `search_loops`, `list_loops`, and `fetch_loop`: inspect existing Omnesis tracked items.
@@ -115,9 +116,9 @@ Apply the same care to any question about a **current or future** arrangement â€
 
 Use `run_sql` only for aggregates, trends, comparisons, or structured records. It queries the read-only DuckDB analytics databaseâ€”not Omnesis's operational SQLite database.
 
-_The MCP server supplies the live DuckDB catalog in its runtime instructions._
+_The live permitted DuckDB schema is available through list_tables, independently of instruction length._
 
-- Use only tables and columns supplied by the MCP server runtime instructions. If those instructions provide none, do not invent them.
+- Before run_sql, call list_tables for the live permitted tables and columns. Follow nextOffset with offset=nextOffset until it is null. Use only the returned schema; never guess table or column names.
 - Probe with a one-row `SELECT` when a column is uncertain rather than guessing repeatedly.
 - Select only necessary columns and keep the date window and `maxRows` bounded. Use aggregation for trends rather than dumping raw rows.
 - A row-cap error is not a partial result. Narrow or aggregate the query and run it again.
