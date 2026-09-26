@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { createPrivacyPolicy, deleteNamedPrivacyPolicy, getPrivacyPolicyTemplates, renameNamedPrivacyPolicy } from "../../api.js";
 import { RowActionMenu } from "../../components/row-action-menu.js";
-import { ConnectionLink, DeviceLink } from "../access/access-list.js";
+import { ConnectionLink, DeviceLink, levelEditorPath } from "../access/access-list.js";
 import { ConfirmModal } from "../../components/confirm-modal.js";
 import { Modal } from "../../components/modal.js";
 import { policyFamilyId, policyFamilyName } from "../../components/grant-builder-state.js";
@@ -188,8 +188,7 @@ export function PolicyLibrary({ overview, overviewReady, loading, headingRef = n
                     <tr>
                       <th>Policy</th>
                       <th>Revision</th>
-                      <th class="portal-table-num" title="Live connections whose answers are reviewed under this policy — the blast radius of editing it">Connections</th>
-                      <th class="portal-table-num" title="Integrations on access levels reviewed under this policy">Integrations</th>
+                      <th>Used by</th>
                       <th>Actions</th>
                     </tr>
                   </thead>
@@ -198,9 +197,12 @@ export function PolicyLibrary({ overview, overviewReady, loading, headingRef = n
                       const id = policyFamilyId(policy);
                       const revision = policy.revision ?? policy.currentRevision ?? null;
                       const affected = affectedPolicyAccess(overview, id);
-                      const governed = affected.connectionCount;
-                      const connections = [...affected.levels.flatMap((level) => level.connections), ...affected.connections];
-                      const devices = affected.levels.flatMap((level) => level.devices);
+                      const connections = [...new Map(
+                        [...affected.levels.flatMap((level) => level.connections), ...affected.connections]
+                          .map((connection) => [connection.id, connection]),
+                      ).values()];
+                      const devices = [...new Map(affected.levels.flatMap((level) => level.devices)
+                        .map((device) => [device.id, device])).values()];
                       const deletionReason = policyDeletionReason(policy, affected, overview);
                       const items = [
                         { label: "Rename", disabled: !id || deleteBusy || renameBusy,
@@ -237,17 +239,18 @@ export function PolicyLibrary({ overview, overviewReady, loading, headingRef = n
                         </td>
                         <td onClick=${openFromCell}><small title=${revision ?? undefined}
                           >${revision ? shortRevision(revision) : "None yet"}</small></td>
-                        <td class="portal-table-num" onClick=${openFromCell}>
-                          <span class="access-policy-count">${governed}</span>
-                          ${connections.length > 0 && html`<ul class="access-policy-users" aria-label="MCP connections">
-                            ${connections.map((connection, index) => html`<li key=${`${connection.id}-${index}`}><${ConnectionLink} connection=${connection} /></li>`)}
-                          </ul>`}
-                        </td>
-                        <td class="portal-table-num" onClick=${openFromCell}>
-                          <span class="access-policy-count">${affected.deviceCount}</span>
-                          ${devices.length > 0 && html`<ul class="access-policy-users" aria-label="Integration devices">
-                            ${devices.map((device) => html`<li key=${device.id}><${DeviceLink} device=${device} /></li>`)}
-                          </ul>`}
+                        <td class="access-policy-usage" onClick=${openFromCell}>
+                          ${connections.length || devices.length || affected.levels.length
+                            ? html`<ul class="access-policy-users" aria-label="Used by">
+                                ${devices.map((device) => html`<li key=${`device-${device.id}`} title="Integration device"><${DeviceLink} device=${device} /></li>`)}
+                                ${connections.map((connection) => html`<li key=${`connection-${connection.id}`} title="MCP connection"><${ConnectionLink} connection=${connection} /></li>`)}
+                                ${!connections.length && !devices.length && affected.levels.map((level) => html`<li key=${`level-${level.id}`} title="Access level"><a
+                                  class="access-device-link" href=${levelEditorPath(level.id)} onClick=${(event) => {
+                                    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button > 0) return;
+                                    event.preventDefault(); navigate(levelEditorPath(level.id));
+                                  }}>${level.name}</a></li>`)}
+                              </ul>`
+                            : html`<span class="access-muted">${deletionReason && !isDefault ? "No active callers" : "Unused"}</span>`}
                         </td>
                         <td><${RowActionMenu} items=${items} label=${`Actions for ${policyFamilyName(policy)}`} /></td>
                       </tr>`;

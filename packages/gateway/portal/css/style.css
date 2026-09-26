@@ -7899,19 +7899,50 @@ p.privacy-diff-note {
 }
 .access-policies { display: flex; flex-direction: column; gap: 12px; }
 .access-policy-empty { margin: 0; color: var(--text-muted); font-size: 12px; }
-/* Three columns would stretch across the whole page and read as two
-   disconnected clusters, so the table stops at a width the eye can span; the
-   name then takes what slack is left. */
-.access-policy-table { max-width: 860px; }
-.access-policy-users { margin: 6px 0 0; padding: 0; list-style: none; text-align: left; }
-.access-policy-users li + li { margin-top: 4px; }
-.access-policy-users .access-device-link { white-space: nowrap; }
-.access-policy-users .privacy-glyph { width: 13px; height: 13px; }
-.portal-table.access-policy-table th:first-child { width: 100%; }
-/* The revision and grant count sit level with the policy name they belong to.
-   A name long enough to wrap centres them against it, which reads better than
-   pinning them to its first line. */
+/* Stable columns leave room for names while the usage links wrap together. */
+.access-policy-table { max-width: 960px; table-layout: fixed; }
+.portal-table.access-policy-table th:first-child { width: 29%; }
+.portal-table.access-policy-table th:nth-child(2) { width: 15%; }
+.portal-table.access-policy-table th:last-child { width: 60px; }
 .portal-table.access-policy-table td { vertical-align: middle; }
+.access-policy-users {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.access-policy-users li { min-width: 0; max-width: 100%; }
+.access-policy-users .access-device-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+.access-policy-users .access-device-link:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+.access-policy-users .access-device-icon,
+.access-policy-users .privacy-glyph { width: 13px; height: 13px; flex-shrink: 0; }
+@media (max-width: 600px) {
+  .portal-table.access-policy-table th:first-child { width: 30%; }
+  .portal-table.access-policy-table th:nth-child(2) { width: 18%; }
+  .portal-table.access-policy-table th:last-child { width: 44px; }
+  .access-policy-users .access-device-link { padding: 3px 6px; }
+}
 /* The whole row opens the policy, so the pointer must say so anywhere in it. */
 .access-policy-row { cursor: pointer; }
 .access-policy-row:hover > td { background: var(--overlay-hover); }

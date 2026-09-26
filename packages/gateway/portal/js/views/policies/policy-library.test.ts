@@ -90,7 +90,7 @@ describe("PolicyLibrary", () => {
     expect(router.navigate.mock.calls[0][0]).toContain(OTHER_ID);
   });
 
-  it("opens from the grant-count cell too", () => {
+  it("opens from bare space in the Used by cell too", () => {
     const countCell = rowFor("Default policy").querySelectorAll("td")[2];
     act(() => { countCell.dispatchEvent(new window.Event("click", { bubbles: true })); });
     expect(router.navigate).toHaveBeenCalledTimes(1);
@@ -121,18 +121,18 @@ describe("PolicyLibrary", () => {
       }, overviewReady: true, loading: false,
     }), host));
     const row = rowFor("Reviewer policy");
-    const connections = [...row.querySelectorAll('[aria-label="MCP connections"] a')];
+    const connections = [...row.querySelectorAll('li[title="MCP connection"] a')];
     expect(connections.map((link) => link.textContent)).toEqual(["Level reviewer", "Direct reviewer"]);
     expect(connections.map((link) => link.getAttribute("href"))).toEqual([
       "/portal/settings/access?connection=mcp-level", "/portal/settings/access?connection=mcp-direct",
     ]);
     expect(connections.every((link) => link.querySelector(".privacy-glyph--external"))).toBe(true);
-    const device = row.querySelector('[aria-label="Integration devices"] a')!;
+    const device = row.querySelector('li[title="Integration device"] a')!;
     expect(device.textContent).toBe("Phone integration");
     expect(device.getAttribute("href")).toBe("/portal/settings/devices?device=device-phone");
     expect(device.querySelector(".access-device-icon")).not.toBeNull();
-    expect(row.querySelectorAll(".access-policy-count")[0].textContent).toBe("2");
-    expect(row.querySelectorAll(".access-policy-count")[1].textContent).toBe("1");
+    expect(row.querySelectorAll(".access-policy-users li")).toHaveLength(3);
+    expect(row.querySelector(".access-policy-count")).toBeNull();
     await act(async () => { connections[0].dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true })); });
     expect(router.navigate).toHaveBeenCalledWith("/portal/settings/access?connection=mcp-level");
     router.navigate.mockClear();
@@ -143,6 +143,29 @@ describe("PolicyLibrary", () => {
     expect(modified.defaultPrevented).toBe(false);
     await act(async () => { device.dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true })); });
     expect(router.navigate).toHaveBeenCalledWith("/portal/settings/devices?device=device-phone");
+  });
+
+  it("shows an access-level link when no callers use the level yet", async () => {
+    const rules = [{ capability: "answer", sources: { mode: "all", sourceIds: [] }, release: { mode: "reviewed", policyFamilyId: OTHER_ID } }];
+    await act(async () => render(h(PolicyLibrary, {
+      overview: { ...overview, levels: [{ id: "level-review", name: "Review access", rules, devices: [] }] },
+      overviewReady: true, loading: false,
+    }), host));
+    const usage = rowFor("Reviewer policy").querySelector(".access-policy-usage")!;
+    const link = usage.querySelector("a")!;
+    expect(link.textContent).toBe("Review access");
+    expect(link.getAttribute("href")).toBe("/portal/settings/access/levels/level-review");
+    expect(usage.textContent).not.toContain("Unused");
+    await act(async () => { link.dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true })); });
+    expect(router.navigate).toHaveBeenCalledWith("/portal/settings/access/levels/level-review");
+  });
+
+  it("labels a policy with other saved references without claiming it is unused", async () => {
+    await act(async () => render(h(PolicyLibrary, {
+      overview: { ...overview, policyFamilies: [{ id: OTHER_ID, name: "Reviewer policy", deletionBlockedReason: "Referenced by saved settings." }] },
+      overviewReady: true, loading: false,
+    }), host));
+    expect(rowFor("Reviewer policy").querySelector(".access-policy-usage")?.textContent).toBe("No active callers");
   });
 
   it("marks only the default policy", () => {
