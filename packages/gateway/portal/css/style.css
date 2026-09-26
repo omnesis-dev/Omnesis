@@ -837,26 +837,33 @@ a:hover { text-decoration: underline; }
   cursor: pointer;
 }
 .access-copy-button:hover { background: var(--bg-tertiary); color: var(--text-primary); }
-.access-client-setup .access-mcp-resource code {
+.access-agent-setup { display: grid; gap: 10px; }
+.access-agent-setup-label { color: var(--text-secondary); font-size: 12px; }
+.backend-opt-grid.access-agent-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 560px) {
+  .backend-opt-grid.access-agent-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.access-agent-grid .backend-opt { gap: 4px; padding: 10px 12px; }
+.access-agent-grid .backend-opt.is-selected {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.access-agent-grid .backend-opt-icon img { display: block; width: 22px; height: 22px; object-fit: contain; }
+.access-agent-steps {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+}
+.access-agent-command { display: grid; gap: 6px; min-width: 0; }
+.access-agent-command > span { color: var(--text-primary); font-size: 12px; font-weight: 600; }
+.access-agent-steps .access-mcp-resource code {
   overflow-wrap: break-word;
   text-overflow: clip;
   white-space: pre-wrap;
 }
-.access-client-setup summary {
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-}
-.access-client-setup summary:hover { color: var(--text-primary); }
-.access-client-setup ul {
-  display: grid;
-  gap: 12px;
-  margin: 10px 0 0;
-  padding: 0;
-  list-style: none;
-}
-.access-client-setup li { display: grid; gap: 6px; min-width: 0; }
-.access-client-name { color: var(--text-primary); font-size: 12px; font-weight: 600; }
 .access-code-input {
   width: 180px;
   font-family: var(--font-mono) !important;

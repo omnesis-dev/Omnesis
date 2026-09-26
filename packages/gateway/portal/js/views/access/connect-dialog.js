@@ -14,10 +14,11 @@ import { useState } from "preact/hooks";
 
 import { lookupAccessAuthorization } from "../../api.js";
 import { CopyIconButton } from "../../components/copy-button.js";
+import { ProviderIcon } from "../../components/provider-icon.js";
 import { Modal } from "../../components/modal.js";
 import { navigate } from "../../lib/router.js";
 import { authorizationStatusNotice } from "./authorization.js";
-import { clientSetups } from "./client-setup.js";
+import { agentSetups } from "./client-setup.js";
 import { errorMessage } from "./shared.js";
 
 /**
@@ -35,27 +36,54 @@ function unusableCodeReason(request, now = Date.now()) {
   return authorizationStatusNotice(request.status);
 }
 
-function ClientSetupList({ resource }) {
-  return html`<details class="access-client-setup">
-    <summary>Commands for common agents</summary>
-    <ul>
-      ${clientSetups(resource).map(
-        (setup) => html`<li key=${setup.id} data-client=${setup.id}>
-          <span class="access-client-name">${setup.client}</span>
-          ${setup.kind === "command" &&
-          html`<div class="access-mcp-resource">
-                <code title=${setup.value}>${setup.value}</code>
-                <${CopyIconButton}
-                  text=${setup.value}
-                  class="access-copy-button"
-                  title=${`Copy command for ${setup.client}`}
-                />
-              </div>`}
-          <p>${setup.note}</p>
-        </li>`,
+function AgentIcon({ icon }) {
+  return icon.providerId
+    ? html`<${ProviderIcon} providerId=${icon.providerId} size=${22} />`
+    : html`<img src=${icon.src} alt="" width="22" height="22" />`;
+}
+
+/** A grid of common agents; choosing one shows only that agent's setup. */
+function AgentSetupPicker({ resource }) {
+  const [selectedId, setSelectedId] = useState(null);
+  const agents = agentSetups(resource);
+  const selected = agents.find((agent) => agent.id === selectedId) ?? null;
+  return html`<div class="access-agent-setup">
+    <p class="access-agent-setup-label">Setup for common agents</p>
+    <div class="backend-opt-grid access-agent-grid">
+      ${agents.map(
+        (agent) => html`<button
+          type="button"
+          key=${agent.id}
+          class="backend-opt ${agent.id === selectedId ? "is-selected" : ""}"
+          data-agent=${agent.id}
+          aria-pressed=${agent.id === selectedId ? "true" : "false"}
+          aria-controls="access-agent-steps"
+          onClick=${() => setSelectedId(agent.id === selectedId ? null : agent.id)}
+        >
+          <span class="backend-opt-icon"><${AgentIcon} icon=${agent.icon} /></span>
+          <span class="backend-opt-title">${agent.name}</span>
+          <span class="backend-opt-sub">${agent.subtitle}</span>
+        </button>`,
       )}
-    </ul>
-  </details>`;
+    </div>
+    ${selected &&
+    html`<div class="access-agent-steps" id="access-agent-steps" data-agent=${selected.id}>
+      ${selected.commands.map(
+        (command) => html`<div class="access-agent-command" key=${command.value}>
+          <span>${command.label}</span>
+          <div class="access-mcp-resource">
+            <code title=${command.value}>${command.value}</code>
+            <${CopyIconButton}
+              text=${command.value}
+              class="access-copy-button"
+              title=${`Copy command for ${selected.name}`}
+            />
+          </div>
+        </div>`,
+      )}
+      <p>${selected.note}</p>
+    </div>`}
+  </div>`;
 }
 
 function ConnectStep({ number, title, caption, children }) {
@@ -128,7 +156,7 @@ export function ConnectAgentDialog({ oauth, onClose }) {
             title="Copy MCP resource"
           />
         </div>
-        <${ClientSetupList} resource=${oauth.resource} />
+        <${AgentSetupPicker} resource=${oauth.resource} />
       <//>
       <${ConnectStep}
         number="2"

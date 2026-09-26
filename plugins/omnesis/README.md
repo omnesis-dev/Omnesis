@@ -2,7 +2,7 @@
 
 Teaches an agent how to use your own Omnesis gateway: privacy-reviewed **Answer**, raw read-only **Direct**, and **Notes** capture, each available only when the access level you approve for the connection includes it. It is a portable [agent-plugins.org](https://agent-plugins.org) 1.0 package for Codex and ChatGPT.
 
-The plugin carries guidance only. Each gateway has its own address, so you add the gateway's MCP server to your client separately; the portal's **Settings → Access → Connect an agent** dialog lists the command for each common agent with your address filled in. Claude Code has its own plugin in `plugins/omnesis-claude`, which declares the server too.
+The plugin carries guidance only. Each gateway has its own address, so you add the gateway's MCP server to your client separately; the portal's **Settings → Access → Connect an agent** dialog shows the setup for each common agent with your address filled in. Claude Code has its own plugin in `plugins/omnesis-claude`, which declares the server too.
 
 ## Skills
 

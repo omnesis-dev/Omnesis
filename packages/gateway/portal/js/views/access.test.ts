@@ -1516,28 +1516,41 @@ describe("AccessView", () => {
     expect(router.replaceRoute).toHaveBeenCalledWith("/portal/settings/access");
   });
 
-  test("lists each common client's setup for the gateway's own MCP resource", async () => {
+  test("shows one agent's setup at a time, chosen from a grid", async () => {
     api.getAccessOverview.mockResolvedValue({ principals: [], oauth: OAUTH });
     await mount({ connectOpen: true });
 
-    const setup = host.querySelector(".access-connect-dialog .access-client-setup");
-    expect(setup?.tagName).toBe("DETAILS");
-    const clients = [...(setup?.querySelectorAll("li") ?? [])].map((item) => item.getAttribute("data-client"));
-    expect(clients).toEqual([
+    const picker = host.querySelector(".access-connect-dialog .access-agent-setup")!;
+    const cards = [...picker.querySelectorAll<HTMLButtonElement>("button[data-agent]")];
+    expect(cards.map((card) => card.getAttribute("data-agent"))).toEqual([
       "claude-code",
-      "claude-code-plugin",
       "codex",
+      "chatgpt",
+      "claude-apps",
       "gemini-cli",
       "openclaw",
       "hermes",
-      "hosted",
     ]);
-    expect(setup?.querySelector("[data-client='claude-code'] code")?.textContent).toBe(
+    expect(cards.every((card) => card.getAttribute("aria-pressed") === "false")).toBe(true);
+    expect(picker.querySelector(".access-agent-steps")).toBeNull();
+
+    await act(async () => { cards[0]!.click(); });
+    let steps = picker.querySelector(".access-agent-steps");
+    expect(steps?.getAttribute("data-agent")).toBe("claude-code");
+    expect(cards[0]!.getAttribute("aria-pressed")).toBe("true");
+    expect(steps?.querySelector("code")?.textContent).toBe(
       "claude mcp add --transport http --scope user omnesis https://gateway.example.org/mcp",
     );
-    expect(setup?.querySelector("a")).toBeNull();
-    expect(setup?.querySelector("[data-client='hosted'] code")).toBeNull();
-    expect(setup?.querySelector("[data-client='hosted'] p")?.textContent).toMatch(/address above/u);
+
+    await act(async () => { cards[2]!.click(); });
+    steps = picker.querySelector(".access-agent-steps");
+    expect(steps?.getAttribute("data-agent")).toBe("chatgpt");
+    expect(cards[0]!.getAttribute("aria-pressed")).toBe("false");
+    expect(steps?.querySelector("code")).toBeNull();
+    expect(steps?.textContent).toMatch(/address above/u);
+
+    await act(async () => { cards[2]!.click(); });
+    expect(picker.querySelector(".access-agent-steps")).toBeNull();
   });
 
   test("offers connecting an agent only when the Gateway has usable OAuth URLs", async () => {
