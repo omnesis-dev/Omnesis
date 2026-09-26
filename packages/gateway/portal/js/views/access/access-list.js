@@ -8,11 +8,10 @@
 // install — always uses exactly one level, so the list reads top-down the way
 // the relationship does. A level's header says what its permissions allow
 // (capabilities, source scope, Answer privacy) and how many connections share
-// them; its menu edits, renames or deletes it. Each connection row, indented
+// them; its menu edits, renames or deletes it. Each connection row
 // under that header, says which app signed in and when it was last used; its
-// menu renames it, moves it to another level, or removes it. A connection
-// expands to its ID and sign-in facts, a level to the terms its permissions
-// run under.
+// menu renames it, moves it to another level, or removes it. Connection
+// IDs, sign-in facts and permission terms are always visible.
 //
 // Every count here is of live connections — neither removed nor expired — the
 // rule the gateway counts a level's connections by and refuses a deletion by.
@@ -26,7 +25,6 @@ import { RowActionMenu } from "../../components/row-action-menu.js";
 import { timeAgo } from "../../lib/format.js";
 import { KindIcon } from "../../lib/device-kind-icon.js";
 import { navigate } from "../../lib/router.js";
-import { rowActivateHandler } from "../../lib/table-row-click.js";
 import { LEVEL_NAME_TAKEN_MESSAGE, RenameField, levelNameTaken } from "./name-fields.js";
 import {
   accessRules,
@@ -119,7 +117,7 @@ function countText(count, listed, devices = 0) {
 }
 
 /**
- * What an expanded connection shows, in labelled fields: its ID to copy, when
+ * What a connection shows, in labelled fields: its ID to copy, when
  * its current sign-in was made, when it was last used, and the app that signed
  * in. A connection holding several sign-ins lists each of them as well.
  */
@@ -159,21 +157,19 @@ function ConnectionDetail({ entry, id }) {
  * One connection.
  *
  * Renaming happens in the row: the name becomes a field and, whichever way the
- * field closes, focus returns to the row's disclosure so the keyboard is not
+ * field closes, focus returns to the row's action menu so the keyboard is not
  * dropped on the page. Expired access is not moved back to life from here; it
  * can still be renamed and removed. The row carries no column headings, so the
  * app and last-used cells say what they are to a screen reader.
  */
 function ConnectionRow({ entry, actions }) {
-  const [open, setOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
-  const expandRef = useRef(null);
+  const actionsRef = useRef(null);
   const closeRename = () => {
     setRenaming(false);
-    expandRef.current?.focus();
+    actionsRef.current?.querySelector(".row-action-trigger")?.focus();
   };
   const detailId = `access-connection-detail-${entry.grant.id}`;
-  const toggleFromCell = rowActivateHandler(() => setOpen((value) => !value));
   const app = connectionApp(entry);
   const items = [
     { label: "Rename", onSelect: () => setRenaming(true) },
@@ -183,24 +179,9 @@ function ConnectionRow({ entry, actions }) {
     { label: "Remove", onSelect: () => actions.onRemove(entry), danger: true },
   ];
 
-  return html`<li class=${`access-connection-item${open ? " is-open" : ""}`}>
+  return html`<li class="access-connection-item">
     <div class=${`access-connection-row${entry.state === "active" ? "" : " is-inactive"}`}>
-      <div class="access-cell-lead" onClick=${toggleFromCell}>
-        <button
-          ref=${expandRef}
-          type="button"
-          class="access-expand"
-          aria-expanded=${open}
-          aria-controls=${open ? detailId : undefined}
-          aria-label=${`Details of ${entry.name}`}
-          onClick=${(event) => {
-            // The cell's own handler already ignores clicks that start on a
-            // control; stopping here keeps that true even if the chevron is
-            // ever moved into a cell that toggles on bare space.
-            event.stopPropagation();
-            setOpen((value) => !value);
-          }}
-        >${open ? "▾" : "▸"}</button>
+      <div class="access-cell-lead">
         ${renaming
           ? html`<${RenameField}
               id=${entry.grant.id}
@@ -215,19 +196,19 @@ function ConnectionRow({ entry, actions }) {
           : html`<span class="access-connection-label">${entry.name}</span>`}
         <${StateTag} state=${entry.state} />
       </div>
-      <div class="access-app-cell" onClick=${toggleFromCell}>
+      <div class="access-app-cell">
         <span class="sr-only">App: </span>${app ?? html`<span class="access-muted">—</span>`}
       </div>
-      <div class="access-used-cell" onClick=${toggleFromCell}>
+      <div class="access-used-cell">
         ${entry.lastUsedAt
           ? html`<span class="sr-only">Last used </span>${timeAgo(entry.lastUsedAt)}`
           : "Never used"}
       </div>
-      <div class="access-row-actions">
+      <div class="access-row-actions" ref=${actionsRef}>
         <${RowActionMenu} items=${items} label=${`Actions for ${entry.name}`} />
       </div>
     </div>
-    ${open ? html`<${ConnectionDetail} entry=${entry} id=${detailId} />` : null}
+    <${ConnectionDetail} entry=${entry} id=${detailId} />
   </li>`;
 }
 
@@ -248,7 +229,6 @@ function ConnectionList({ connections, label, actions }) {
  */
 function LevelGroup({ level, levels, connections, overview, levelActions, connectionActions }) {
   const [renaming, setRenaming] = useState(false);
-  const [open, setOpen] = useState(false);
   const rules = accessRules(level, overview);
   const reach = reachSummary(rules, overview);
   const titleId = `access-level-title-${level.id}`;
@@ -277,14 +257,6 @@ function LevelGroup({ level, levels, connections, overview, levelActions, connec
   return html`<section class="access-level-group" aria-labelledby=${titleId}>
     <div class="access-level-head">
       <div class="access-level-title">
-        <button
-          type="button"
-          class="access-expand"
-          aria-expanded=${open}
-          aria-controls=${open ? termsId : undefined}
-          aria-label=${`Permissions of ${level.name}`}
-          onClick=${() => setOpen((value) => !value)}
-        >${open ? "▾" : "▸"}</button>
         ${renaming
           ? html`<${RenameField}
               id=${level.id}
@@ -311,9 +283,7 @@ function LevelGroup({ level, levels, connections, overview, levelActions, connec
       </span>
       <${RowActionMenu} items=${items} label=${`Actions for ${level.name}`} />
     </div>
-    ${open
-      ? html`<div id=${termsId} class="access-level-terms"><${AccessTerms} rules=${rules} overview=${overview} /></div>`
-      : null}
+    <div id=${termsId} class="access-level-terms"><${AccessTerms} rules=${rules} overview=${overview} /></div>
     <div class="access-level-body">
       ${connections.length > 0
         ? html`<${ConnectionList} connections=${connections} label=${`Connections using ${level.name}`} actions=${connectionActions} />`
