@@ -100,6 +100,39 @@ trap cleanup EXIT
 trap 'exit 130' INT TERM
 
 # ── Gateway ────────────────────────────────────────────────────────────────
+
+# The apps search through POST /search, which answers only once documents are
+# embedded, so the gateway needs its embedding model. A machine that already
+# has one in ~/.config/omnesis/models lends it (synth-gateway.sh links it);
+# anywhere else it is downloaded once into OMNESIS_JOURNEY_MODEL_CACHE and
+# checked against its published digest.
+MODEL_FILE="nomic-embed-text-v1.5.Q8_0.gguf"
+MODEL_URL="https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/$MODEL_FILE"
+MODEL_SHA256="3e24342164b3d94991ba9692fdc0dd08e3fd7362e0aacc396a9a5c54a544c3b7"
+MODEL_CACHE="${OMNESIS_JOURNEY_MODEL_CACHE:-$HOME/.cache/omnesis-journeys}"
+
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 256 "$1" | cut -d' ' -f1
+  fi
+}
+
+if [[ ! -f "$HOME/.config/omnesis/models/$MODEL_FILE" ]]; then
+  mkdir -p "$MODEL_CACHE" "$OMNESIS_CONFIG_DIR/models"
+  if [[ ! -f "$MODEL_CACHE/$MODEL_FILE" || "$(sha256_of "$MODEL_CACHE/$MODEL_FILE")" != "$MODEL_SHA256" ]]; then
+    echo "→ Downloading the embedding model…"
+    curl -fsSL --retry 3 -o "$MODEL_CACHE/$MODEL_FILE.part" "$MODEL_URL"
+    if [[ "$(sha256_of "$MODEL_CACHE/$MODEL_FILE.part")" != "$MODEL_SHA256" ]]; then
+      echo "The downloaded $MODEL_FILE does not match its expected SHA-256." >&2
+      exit 1
+    fi
+    mv "$MODEL_CACHE/$MODEL_FILE.part" "$MODEL_CACHE/$MODEL_FILE"
+  fi
+  ln -sf "$MODEL_CACHE/$MODEL_FILE" "$OMNESIS_CONFIG_DIR/models/$MODEL_FILE"
+fi
+
 echo "→ Booting the synthetic gateway on $URL (universe default, replay agent)…"
 "$ROOT/scripts/start-demo-gateway.sh" start >"$ARTIFACTS/gateway-start.log" 2>&1 || {
   cat "$ARTIFACTS/gateway-start.log" >&2
@@ -111,11 +144,14 @@ FINGERPRINT="$(openssl x509 -in "$OMNESIS_CONFIG_DIR/tls/cert.pem" -noout -finge
   | cut -d= -f2 | tr -d ':' | tr 'A-F' 'a-f')"
 
 # The search journeys look for this invented document; the index is ready for
-# them once the gateway's own search returns it.
+# them once the gateway's own search returns it. Search reads a snapshot that
+# refreshes on a timer, so each check asks for a fresh one first.
 READY_DOCUMENT="Acme Q3 Planning"
 echo "→ Waiting for the corpus to be searchable…"
 ready=0
-for _ in $(seq 1 120); do
+for _ in $(seq 1 150); do
+  curl -sk -m 20 -X POST "$URL/admin/search-snapshot/refresh" \
+    -H "Authorization: Bearer $TOKEN" >/dev/null 2>&1 || true
   if curl -sk -m 20 -X POST "$URL/search" \
     -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
     -d "{\"text\":\"$READY_DOCUMENT\",\"limit\":10}" 2>/dev/null \
