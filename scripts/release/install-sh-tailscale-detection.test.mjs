@@ -57,6 +57,11 @@ describe("install.sh Tailscale CLI detection", () => {
     try {
       // PATH as a launchd job's: node's bin dir and the system's, no Homebrew bin.
       const brew = join(home, "opt/homebrew/bin");
+      const bin = join(home, "bin");
+      mkdirSync(bin);
+      // Shadow an installed system CLI so this fixture never queries the host.
+      writeFileSync(join(bin, "tailscale"), "#!/bin/sh\nexit 127\n");
+      chmodSync(join(bin, "tailscale"), 0o755);
       mkdirSync(brew, { recursive: true });
       writeFileSync(
         join(brew, "tailscale"),
@@ -69,7 +74,7 @@ describe("install.sh Tailscale CLI detection", () => {
         env: {
           ...process.env,
           HOME: home,
-          PATH: `${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
+          PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
           // Homebrew's prefixes, and /Applications, are looked for under here.
           OMNESIS_TEST_TAILSCALE_ROOT: home,
         },

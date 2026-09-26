@@ -233,7 +233,9 @@ describe("Notes MCP OAuth — synthetic-corpus gateway", () => {
       const independent = await other.client.callTool({ name: "add_note", arguments: args });
       expect(independent.isError).not.toBe(true);
       expect(independent.structuredContent).toMatchObject({ captureId: args.id });
-      expect(independent.structuredContent!.id).not.toBe(first.structuredContent!.id);
+      expect((independent.structuredContent as { id: string }).id).not.toBe(
+        (first.structuredContent as { id: string }).id,
+      );
       for (const surface of ["portal", "ios-app"]) {
         const native = await fetch(`${harness.gatewayUrl}/notes`, {
           method: "POST",
