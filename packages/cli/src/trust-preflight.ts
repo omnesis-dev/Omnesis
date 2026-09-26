@@ -39,7 +39,8 @@ const SUBCOMMAND_TRUST_EXEMPT = new Set([
   // The long form of `pair`, with the same target-of-its-own story.
   "devices redeem",
   // Provisioning mints on this host and only reaches the gateway best-effort
-  // afterwards; `trust` replaces the very copy the preflight would apply.
+  // afterwards, applying the saved copy itself without the preflight's probe;
+  // `trust` replaces the very copy the preflight would apply.
   "tls provision",
   "tls refresh",
   "tls trust",

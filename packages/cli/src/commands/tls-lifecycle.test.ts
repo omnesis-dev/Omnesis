@@ -243,6 +243,33 @@ describe("activateProvisionedMaterial", () => {
       }),
     ).toEqual({ activated: false, reason: "Gateway 404 /admin/tls/reload" });
   });
+
+  test("retries once on a connection the gateway dropped while the certificate was minted", async () => {
+    const path = "/srv/omnesis/tls/tailscale.crt";
+    const reset = () =>
+      Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
+    let calls = 0;
+    expect(
+      await activateProvisionedMaterial(path, {
+        reload: async () => {
+          calls += 1;
+          if (calls === 1) throw reset();
+          return snapshot();
+        },
+      }),
+    ).toEqual({ activated: true, fingerprintSha256: "ab".repeat(32) });
+    expect(calls).toBe(2);
+    calls = 0;
+    expect(
+      await activateProvisionedMaterial(path, {
+        reload: async () => {
+          calls += 1;
+          throw reset();
+        },
+      }),
+    ).toEqual({ activated: false, reason: "fetch failed" });
+    expect(calls).toBe(2);
+  });
 });
 
 afterEach(() => logSpy.mockClear());
