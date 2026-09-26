@@ -37,13 +37,11 @@ function unusableCodeReason(request, now = Date.now()) {
 
 function ClientSetupList({ resource }) {
   return html`<details class="access-client-setup">
-    <summary>Commands and install links for common clients</summary>
+    <summary>Commands for common agents</summary>
     <ul>
       ${clientSetups(resource).map(
         (setup) => html`<li key=${setup.id} data-client=${setup.id}>
           <span class="access-client-name">${setup.client}</span>
-          ${setup.kind === "link" &&
-          html`<a class="btn-secondary access-client-link" href=${setup.value}>Install in ${setup.client}</a>`}
           ${setup.kind === "command" &&
           html`<div class="access-mcp-resource">
                 <code title=${setup.value}>${setup.value}</code>

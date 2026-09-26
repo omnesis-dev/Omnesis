@@ -1,6 +1,6 @@
 ---
 name: connect-omnesis-chatgpt
-description: Connect ChatGPT to the user's private Omnesis Gateway. Use when the user asks to connect, configure, authenticate, reconnect, or troubleshoot Omnesis in ChatGPT, including the starter "Help me connect Omnesis to ChatGPT." Do not use this skill for Codex CLI, VS Code, GitHub Copilot, or Cursor setup.
+description: Connect ChatGPT to the user's private Omnesis Gateway. Use when the user asks to connect, configure, authenticate, reconnect, or troubleshoot Omnesis in ChatGPT, including the starter "Help me connect Omnesis to ChatGPT." Do not use this skill for Codex CLI setup.
 ---
 
 # Connect Omnesis

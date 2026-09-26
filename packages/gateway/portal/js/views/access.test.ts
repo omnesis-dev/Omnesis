@@ -1528,15 +1528,14 @@ describe("AccessView", () => {
       "claude-code-plugin",
       "codex",
       "gemini-cli",
-      "copilot-cli",
-      "vscode",
-      "cursor",
+      "openclaw",
+      "hermes",
       "hosted",
     ]);
     expect(setup?.querySelector("[data-client='claude-code'] code")?.textContent).toBe(
       "claude mcp add --transport http --scope user omnesis https://gateway.example.org/mcp",
     );
-    expect(setup?.querySelector("[data-client='vscode'] a")?.getAttribute("href")).toMatch(/^vscode:mcp\/install\?/u);
+    expect(setup?.querySelector("a")).toBeNull();
     expect(setup?.querySelector("[data-client='hosted'] code")).toBeNull();
     expect(setup?.querySelector("[data-client='hosted'] p")?.textContent).toMatch(/address above/u);
   });

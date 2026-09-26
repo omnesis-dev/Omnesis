@@ -522,10 +522,13 @@
               <td><a href="#chatgpt">ChatGPT</a></td>
             </tr>
             <tr>
-              <td>VS Code, GitHub Copilot, Cursor, Gemini CLI</td>
+              <td>Gemini CLI</td>
               <td>your machine</td>
-              <td>a configured HTTPS address its machine can reach; public for Gemini CLI</td>
-              <td><a href="#other-clients">Other clients</a></td>
+              <td>
+                a public HTTPS address, such as a
+                <a href="#tailscale-funnel">Tailscale Funnel</a> name
+              </td>
+              <td><a href="#other-clients">Gemini CLI and other clients</a></td>
             </tr>
             <tr>
               <td>OpenClaw, Hermes</td>
@@ -542,9 +545,9 @@
           environment variable) is the gateway's HTTPS address for MCP sign-in: the OAuth issuer
           every client remembers, so pick it once and keep it. Until it is set, the portal's
           <strong>Connect an agent</strong> button stays hidden and only loopback sign-ins work. A
-          client on your machine, such as Claude Code, Codex, GitHub Copilot, VS Code, Cursor,
-          OpenClaw or Hermes, can use this address or one listed in
-          <code>gateway.mcpResourceUrls</code>, as long as its machine can reach it.
+          client on your machine, such as Claude Code, Codex, OpenClaw or Hermes, can use this
+          address or one listed in <code>gateway.mcpResourceUrls</code>, as long as its machine can
+          reach it.
         </p>
         <p>
           Hosted connectors run on their provider's servers, so they can reach your gateway only at
@@ -856,22 +859,16 @@
           sign-in. The Claude plugin declares the connection itself.
         </div>
 
-        <h3 id="other-clients">VS Code, GitHub Copilot, Cursor, and Gemini CLI</h3>
+        <h3 id="other-clients">Gemini CLI and other clients</h3>
         <p>
-          These clients run on your machine and sign in to <code>/mcp</code> themselves. The
-          portal's <strong>Connect an agent</strong> dialog lists each one's command or install link
-          with your gateway's address filled in, under
-          <strong>Commands and install links for common clients</strong>. For example:
+          Gemini CLI runs on your machine and signs in to <code>/mcp</code> itself, but only to a
+          public HTTPS address or a loopback address on the same machine, so give it the
+          <a href="#tailscale-funnel">Tailscale Funnel</a> address or your own domain rather than a
+          tailnet name. Then run <code>/mcp auth omnesis</code> inside Gemini CLI to sign in.
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
           <div class="term-body">
-            <p>
-              <span class="t-prompt">❯</span>
-              <span class="t-cmd"
-                >copilot mcp add --transport http omnesis https://gateway.example.org/mcp</span
-              >
-            </p>
             <p>
               <span class="t-prompt">❯</span>
               <span class="t-cmd"
@@ -882,19 +879,10 @@
           </div>
         </div>
         <p>
-          Gemini CLI signs in only to a public HTTPS address or to a loopback address on the same
-          machine, so give it the <a href="#tailscale-funnel">Tailscale Funnel</a> address or your
-          own domain rather than a tailnet name. Run <code>/mcp auth omnesis</code> inside Gemini
-          CLI to sign in.
-        </p>
-        <p>
-          The repository also carries the same usage guidance as a plugin for GitHub Copilot CLI and
-          VS Code. In Copilot CLI, run
-          <code>copilot plugin marketplace add omnesis-dev/Omnesis</code> and
-          <code>copilot plugin install omnesis@omnesis</code>; in VS Code, add
-          <code>omnesis-dev/Omnesis</code> to the <code>chat.plugins.marketplaces</code> setting and
-          install <code>omnesis</code> from the plugin list. The plugin does not add the server; add
-          it as above.
+          Any other MCP client that supports remote HTTP servers with OAuth connects the same way:
+          give it the MCP URL and approve the sign-in in Omnesis. The portal's
+          <strong>Connect an agent</strong> dialog lists the command for each common agent with your
+          address filled in, under <strong>Commands for common agents</strong>.
         </p>
 
         <h2 id="openclaw-hermes">OpenClaw and Hermes</h2>

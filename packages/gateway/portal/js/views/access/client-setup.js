@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// How each common MCP client adds this gateway, with the MCP resource already
-// filled in: a command to paste into a terminal, a link that opens the client's
-// own install prompt, or, for clients configured in a web or desktop settings
-// page, a note pointing back at the address the dialog already shows. Sign-in
+// How each common agent adds this gateway, with its address already filled in:
+// a command to paste into a terminal or, for clients configured in a web or
+// desktop settings page, a note pointing back at the address the dialog
+// already shows. Sign-in
 // is always the client's own OAuth flow against the same resource, so nothing
 // here carries a credential.
 
@@ -15,22 +15,17 @@ function shellQuote(value) {
   return /^[A-Za-z0-9_./:@%+=,-]+$/u.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
-function base64(text) {
-  const bytes = new TextEncoder().encode(text);
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary);
-}
-
 /**
  * The per-client setup entries for one MCP resource, in the order the dialog
  * lists them.
  *
  * @param {string} resource - The gateway's MCP resource URL (ends in `/mcp`).
- * @returns {Array<{ id: string, client: string, kind: "command" | "link" | "note", value: string, note: string }>}
+ * @returns {Array<{ id: string, client: string, kind: "command" | "note", value: string, note: string }>}
  */
 export function clientSetups(resource) {
   const url = shellQuote(resource);
+  // The managed integrations pair against the gateway itself, not its MCP resource.
+  const gateway = shellQuote(resource.replace(/\/mcp$/u, ""));
   return [
     {
       id: "claude-code",
@@ -61,29 +56,18 @@ export function clientSetups(resource) {
       note: "Then run /mcp auth omnesis inside Gemini CLI. Gemini signs in only to a public HTTPS address or a loopback one, not a tailnet or LAN address.",
     },
     {
-      id: "copilot-cli",
-      client: "GitHub Copilot CLI",
+      id: "openclaw",
+      client: "OpenClaw",
       kind: "command",
-      value: `copilot mcp add --transport http ${SERVER_NAME} ${url}`,
-      note: "Then run /mcp auth omnesis inside Copilot CLI if it does not prompt on its own.",
+      value: `omnesis connect openclaw --gateway-url ${gateway}`,
+      note: "Run where OpenClaw runs, with the Omnesis CLI installed. It asks for a pairing code from Settings → Devices, then opens this sign-in. Restart OpenClaw afterwards.",
     },
     {
-      id: "vscode",
-      client: "VS Code",
-      kind: "link",
-      value: `vscode:mcp/install?${encodeURIComponent(
-        JSON.stringify({ name: SERVER_NAME, type: "http", url: resource }),
-      )}`,
-      note: "Opens VS Code's install prompt; it signs in when the server first starts.",
-    },
-    {
-      id: "cursor",
-      client: "Cursor",
-      kind: "link",
-      value: `cursor://anysphere.cursor-deeplink/mcp/install?name=${SERVER_NAME}&config=${encodeURIComponent(
-        base64(JSON.stringify({ url: resource })),
-      )}`,
-      note: "Opens Cursor's install prompt; sign in from its MCP settings.",
+      id: "hermes",
+      client: "Hermes",
+      kind: "command",
+      value: `omnesis connect hermes --gateway-url ${gateway}`,
+      note: "Run where Hermes runs, with the Omnesis CLI installed. It asks for a pairing code from Settings → Devices, then opens this sign-in. Restart Hermes afterwards.",
     },
     {
       id: "hosted",

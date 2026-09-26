@@ -857,7 +857,6 @@ a:hover { text-decoration: underline; }
 }
 .access-client-setup li { display: grid; gap: 6px; min-width: 0; }
 .access-client-name { color: var(--text-primary); font-size: 12px; font-weight: 600; }
-.access-client-link { justify-self: start; font-size: 12px; text-decoration: none; }
 .access-code-input {
   width: 180px;
   font-family: var(--font-mono) !important;

@@ -9,7 +9,7 @@ import { clientSetups as untypedClientSetups } from "./client-setup.js";
 interface ClientSetup {
   id: string;
   client: string;
-  kind: "command" | "link" | "note";
+  kind: "command" | "note";
   value: string;
   note: string;
 }
@@ -25,11 +25,13 @@ function setup(id: string, resource = RESOURCE) {
 
 describe("clientSetups", () => {
   test("gives every client the gateway's resource and nothing else to authenticate with", () => {
-    // Cursor's link carries the resource base64-encoded, and hosted clients are
-    // pointed at the address the dialog already shows; their own tests cover them.
-    const direct = clientSetups(RESOURCE).filter((candidate) => !["cursor", "hosted"].includes(candidate.id));
+    // Hosted clients are pointed at the address the dialog already shows, and
+    // the managed integrations pair against the gateway; their own tests cover them.
+    const direct = clientSetups(RESOURCE).filter(
+      (candidate) => !["hosted", "openclaw", "hermes"].includes(candidate.id),
+    );
     for (const entry of direct) {
-      expect(decodeURIComponent(entry.value)).toContain(RESOURCE);
+      expect(entry.value).toContain(RESOURCE);
       expect(entry.value).not.toMatch(/token|bearer|authorization:/iu);
     }
   });
@@ -45,7 +47,6 @@ describe("clientSetups", () => {
     expect(setup("codex").value).toBe(
       `codex mcp add omnesis --url ${RESOURCE} --oauth-resource ${RESOURCE}`,
     );
-    expect(setup("copilot-cli").value).toBe(`copilot mcp add --transport http omnesis ${RESOURCE}`);
     expect(setup("gemini-cli").value).toBe(
       `gemini mcp add --scope user --transport http omnesis ${RESOURCE}`,
     );
@@ -58,23 +59,29 @@ describe("clientSetups", () => {
     );
   });
 
-  test("encodes VS Code's install link as the documented JSON server configuration", () => {
-    const link = setup("vscode").value;
-    expect(link.startsWith("vscode:mcp/install?")).toBe(true);
-    expect(JSON.parse(decodeURIComponent(link.slice("vscode:mcp/install?".length)))).toEqual({
-      name: "omnesis",
-      type: "http",
-      url: RESOURCE,
-    });
+  test("pairs the managed integrations against the gateway, not its MCP resource", () => {
+    expect(setup("openclaw").value).toBe(
+      "omnesis connect openclaw --gateway-url https://gateway.example.org",
+    );
+    expect(setup("hermes").value).toBe(
+      "omnesis connect hermes --gateway-url https://gateway.example.org",
+    );
+    expect(setup("openclaw", "https://gateway.example.org/omnesis/mcp").value).toBe(
+      "omnesis connect openclaw --gateway-url https://gateway.example.org/omnesis",
+    );
   });
 
-  test("encodes Cursor's install link as base64 of the server's configuration", () => {
-    const link = new URL(setup("cursor").value);
-    expect(`${link.protocol}//${link.host}${link.pathname}`).toBe(
-      "cursor://anysphere.cursor-deeplink/mcp/install",
-    );
-    expect(link.searchParams.get("name")).toBe("omnesis");
-    expect(JSON.parse(atob(link.searchParams.get("config") ?? ""))).toEqual({ url: RESOURCE });
+  test("lists general agents only, every one a command or a note", () => {
+    expect(clientSetups(RESOURCE).map((entry) => entry.id)).toEqual([
+      "claude-code",
+      "claude-code-plugin",
+      "codex",
+      "gemini-cli",
+      "openclaw",
+      "hermes",
+      "hosted",
+    ]);
+    for (const entry of clientSetups(RESOURCE)) expect(["command", "note"]).toContain(entry.kind);
   });
 
   test("points hosted clients at the address the dialog shows", () => {
