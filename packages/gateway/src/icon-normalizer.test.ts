@@ -244,6 +244,18 @@ describe("normalizeIcon", () => {
     ).toBeNull();
   });
 
+  it("rasterizes each distinct SVG data URI once per process", async () => {
+    _resetIconNormalizerCache();
+    const first = await normalizeIcon(SAMPLE_SVG_DATA_URI);
+    const again = await normalizeIcon(SAMPLE_SVG_DATA_URI);
+    const inline = await normalizeIcon(`data:image/svg+xml,${encodeURIComponent(SAMPLE_SVG)}`);
+    expect(first).toMatch(/^data:image\/png;base64,/u);
+    expect(again).toBe(first);
+    expect(inline).toBe(first);
+    // The same bytes, however they were encoded, share one memo entry.
+    expect(_iconNormalizerCacheSize()).toBe(1);
+  });
+
   it("memoizes successful URL fetches per process", async () => {
     let calls = 0;
     const fetcher = (async () => {

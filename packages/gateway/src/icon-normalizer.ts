@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { createHash } from "node:crypto";
 import dns from "node:dns/promises";
 import http from "node:http";
 import https from "node:https";
@@ -165,7 +166,10 @@ async function normalizeDataUri(uri: string): Promise<string | null> {
       }
     }
     if (svgBytes.byteLength > SOURCE_ICON_MAX_BYTES) return null;
-    return rasterizeSvgToDataUri(svgBytes);
+    // Every descriptor listing re-reads the same few dozen source icons, and
+    // one worker rasterizes them in turn; keyed by content, each is drawn once.
+    const key = `svg:${createHash("sha256").update(svgBytes).digest("hex")}`;
+    return memoized(key, () => rasterizeSvgToDataUri(svgBytes));
   }
   return null;
 }
@@ -175,14 +179,21 @@ async function normalizeUrl(
   fetcher: typeof fetch,
   lookup: IconHostLookup,
 ): Promise<string | null> {
-  const cached = memoGet(url);
+  return memoized(url, () => fetchAndConvert(url, fetcher, lookup));
+}
+
+/**
+ * The memoised conversion for `key`. A conversion that yields null is dropped
+ * from the memo, so the next request for the same icon tries again.
+ */
+function memoized(key: string, convert: () => Promise<string | null>): Promise<string | null> {
+  const cached = memoGet(key);
   if (cached) return cached;
-  const promise = fetchAndConvert(url, fetcher, lookup);
-  memoSet(url, promise);
-  // If the fetch resolves to null, drop from cache so a future write retries.
+  const promise = convert();
+  memoSet(key, promise);
   promise
     .then((result) => {
-      if (result === null) memo.delete(url);
+      if (result === null) memo.delete(key);
     })
     .catch(() => {});
   return promise;
