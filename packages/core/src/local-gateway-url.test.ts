@@ -6,7 +6,11 @@ import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
 
-import { localGatewayRequestUrl, servedCertificateCoversLocalhost } from "./local-gateway-url.js";
+import {
+  localGatewayRequestUrl,
+  servedCertificateCoversHost,
+  servedCertificateCoversLocalhost,
+} from "./local-gateway-url.js";
 import type { GatewayLockHolder } from "./gateway-lock.js";
 
 // Throwaway self-signed certificates: one naming localhost and 127.0.0.1, one
@@ -51,6 +55,12 @@ const here = (): GatewayLockHolder => ({
   startedAt: "2026-09-15T00:00:00.000Z",
 });
 const covered = (): boolean => true;
+const TAILNET_HOST = "studio.example-tailnet.ts.net";
+/** A certificate naming only the tailnet host, as `omnesis tls provision` mints. */
+const tailnetOnly = (_configDir: string, host: string): boolean => host === TAILNET_HOST;
+const neverPinned = (host: string): void => {
+  throw new Error(`unexpected loopback pin for ${host}`);
+};
 
 describe("localGatewayRequestUrl", () => {
   // The address an install records for other machines (omnesis.local, a LAN
@@ -88,16 +98,55 @@ describe("localGatewayRequestUrl", () => {
   });
 
   // A tailnet certificate from `omnesis tls provision`, or an operator's own,
-  // names only its host: loopback would fail the certificate check.
-  test("a gateway serving a certificate without localhost keeps the recorded address", () => {
+  // names only its host: a localhost URL would fail the certificate check, and
+  // the name stops resolving while Tailscale is down. The URL is kept — so the
+  // certificate is verified against it — and the name resolves to loopback.
+  test("a gateway serving a certificate naming only the recorded host is reached by that name over loopback", () => {
+    const pinned: string[] = [];
     expect(
       localGatewayRequestUrl(
-        "https://studio.example-tailnet.ts.net:7600",
+        `https://${TAILNET_HOST}:7600`,
         "/cfg",
         () => here(),
-        () => false,
+        tailnetOnly,
+        (host) => pinned.push(host),
       ),
-    ).toBe("https://studio.example-tailnet.ts.net:7600");
+    ).toBe(`https://${TAILNET_HOST}:7600`);
+    expect(pinned).toEqual([TAILNET_HOST]);
+  });
+
+  test("a certificate naming neither localhost nor the recorded host leaves the address alone", () => {
+    expect(
+      localGatewayRequestUrl(
+        "https://omnesis.local:7600",
+        "/cfg",
+        () => here(),
+        tailnetOnly,
+        neverPinned,
+      ),
+    ).toBe("https://omnesis.local:7600");
+  });
+
+  test("the recorded host of a gateway on another machine is never resolved to loopback", () => {
+    const elsewhere = { ...here(), hostname: `${hostname()}-elsewhere` };
+    expect(
+      localGatewayRequestUrl(
+        `https://${TAILNET_HOST}:7600`,
+        "/cfg",
+        () => elsewhere,
+        tailnetOnly,
+        neverPinned,
+      ),
+    ).toBe(`https://${TAILNET_HOST}:7600`);
+    expect(
+      localGatewayRequestUrl(
+        `https://${TAILNET_HOST}:7600`,
+        "/cfg",
+        () => null,
+        tailnetOnly,
+        neverPinned,
+      ),
+    ).toBe(`https://${TAILNET_HOST}:7600`);
   });
 
   test("an address with no explicit port or with a path names a proxy in front of the gateway", () => {
@@ -152,6 +201,17 @@ describe("servedCertificateCoversLocalhost", () => {
     expect(servedCertificateCoversLocalhost(dir, env)).toBe(false);
     writeFileSync(cert, LOOPBACK_CERT);
     expect(servedCertificateCoversLocalhost(dir, env)).toBe(true);
+  });
+
+  test("a certificate is asked about the recorded host by name", () => {
+    const dir = configDir();
+    const cert = join(dir, "tls", "tailscale.crt");
+    const env = { OMNESIS_TLS_CERT: cert, OMNESIS_TLS_KEY: join(dir, "tls", "tailscale.key") };
+    writeFileSync(cert, TAILNET_CERT);
+    expect(servedCertificateCoversHost(dir, TAILNET_HOST, env)).toBe(true);
+    expect(servedCertificateCoversHost(dir, "other.example-tailnet.ts.net", env)).toBe(false);
+    // A self-signed certificate not minted yet names only localhost for sure.
+    expect(servedCertificateCoversHost(configDir(), TAILNET_HOST, {})).toBe(false);
   });
 
   test("a configured certificate that cannot be read does not count", () => {

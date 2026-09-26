@@ -1210,7 +1210,13 @@ export {
 } from "./sync-issues.js";
 
 export { createPrivateScratch, type PrivateScratch } from "./private-scratch.js";
-export { localGatewayRequestUrl, servedCertificateCoversLocalhost } from "./local-gateway-url.js";
+export {
+  localGatewayRequestUrl,
+  resolveHostToLoopback,
+  resolvesToLoopback,
+  servedCertificateCoversHost,
+  servedCertificateCoversLocalhost,
+} from "./local-gateway-url.js";
 export {
   TAILSCALE_STATUS_TIMEOUT_MS,
   tailscaleCliCandidates,
