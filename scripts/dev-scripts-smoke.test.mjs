@@ -1836,7 +1836,17 @@ describe("full-validation workflow topology", () => {
     const steps = workflows["security-static"].jobs.analyze.steps;
     const rules = steps.find((step) => step.name === "Fetch pinned static-analysis rules");
     const scan = steps.find((step) => step.name === "lane [security-static]");
-    expect(rules.run).toContain("63fbcca1826e787ca43282bf139ccec16745ad6551c87850b9ccee9ca9f98c0b");
+    expect(rules.env.RULES_COMMIT).toMatch(/^[0-9a-f]{40}$/u);
+    expect(rules.run).toContain('test "$(git -C "$checkout" rev-parse HEAD)" = "$RULES_COMMIT"');
+    expect(rules.run).toContain("scripts/security/semgrep-typescript-rules.txt");
+    const listed = readFileSync(
+      join(repoRoot, "scripts/security/semgrep-typescript-rules.txt"),
+      "utf8",
+    )
+      .split("\n")
+      .filter((line) => line && !line.startsWith("#"));
+    expect(listed.length).toBeGreaterThan(0);
+    for (const file of listed) expect(file).toMatch(/^[\w./-]+\.ya?ml$/u);
     expect(scan.run).toContain(
       "semgrep/semgrep@sha256:65dcd4408adda7c183a6b4550cb1e9b19f7f627a6fbb7e0559bd466bedc44d7b",
     );
