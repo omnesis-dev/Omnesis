@@ -21,6 +21,7 @@ import { randomUUID } from "node:crypto";
 
 import { createLogger } from "@omnesis/core";
 
+import { resolveMcpNoteId } from "./capture-id.js";
 import { dayKeyFor } from "./day.js";
 import { NotesDayUpserter, type NotesDayUpserterDeps } from "./upsert.js";
 import {
@@ -176,7 +177,11 @@ export function bootOmnesisNotes(deps: OmnesisNotesBootDeps): OmnesisNotesRuntim
       const capturedAt = new Date(input.capturedAt ?? receivedAt).toISOString();
       const entry: NoteEntry = {
         ...(input.captureContext ? { captureContext: input.captureContext } : {}),
-        id: input.id ?? randomUUID(),
+        id: input.id
+          ? audit
+            ? resolveMcpNoteId(deps.readDb, audit.principalId, input.id)
+            : input.id
+          : randomUUID(),
         day: dayKeyFor(capturedAt, input.capturedUtcOffsetSeconds),
         capturedAt,
         updatedAt: capturedAt,

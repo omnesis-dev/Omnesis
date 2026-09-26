@@ -320,7 +320,10 @@
           time and any context, and the day's note document names that connection as the entry's
           author, with you as its recipient. A note you capture yourself stays yours, and an agent
           never becomes a person in the people graph. A client can include a known capture time,
-          time zone, or location, and reuse a UUID <code>id</code> when it retries the same capture.
+          time zone, or location. It must supply a UUID <code>id</code> and reuse it on retries,
+          including after reconnecting to the same connection. The receipt echoes that UUID as
+          <code>captureId</code>; its <code>id</code> identifies the saved note and is a different
+          value. Captures from separate connections remain independent.
         </p>
 
         <h3 id="managing-access">Managing access levels and connections</h3>
