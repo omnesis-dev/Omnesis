@@ -118,12 +118,11 @@ function countText(count, listed, devices = 0) {
 
 /**
  * What a connection shows, in labelled fields: its ID to copy, when
- * its current sign-in was made, when it was last used, and the app that signed
- * in. A connection holding several sign-ins lists each of them as well.
+ * its current sign-in was made and when it was last used. A connection
+ * holding several sign-ins lists each of them as well.
  */
 function ConnectionDetail({ entry, id }) {
   const signIns = newestFirst(entry.signIns);
-  const app = connectionApp(entry);
   return html`<div class="access-connection-detail" id=${id}>
     <dl class="access-connection-facts">
       <div class="access-fact-id">
@@ -140,7 +139,6 @@ function ConnectionDetail({ entry, id }) {
           : html`<span class="access-muted">${entry.hadSignIn ? "No active sign-in" : "No sign-in yet"}</span>`}</dd>
       </div>
       <div><dt>Last used</dt><dd>${timestamp(entry.lastUsedAt)}</dd></div>
-      <div><dt>App</dt><dd>${app ?? html`<span class="access-muted">—</span>`}</dd></div>
     </dl>
     ${signIns.length > 1
       ? html`<ul class="access-sign-ins" aria-label=${`Sign-ins of ${entry.name}`}>
@@ -159,8 +157,8 @@ function ConnectionDetail({ entry, id }) {
  * Renaming happens in the row: the name becomes a field and, whichever way the
  * field closes, focus returns to the row's action menu so the keyboard is not
  * dropped on the page. Expired access is not moved back to life from here; it
- * can still be renamed and removed. The row carries no column headings, so the
- * app and last-used cells say what they are to a screen reader.
+ * can still be renamed and removed. The app and last use are labelled
+ * beneath the connection name.
  */
 function ConnectionRow({ entry, actions }) {
   const [renaming, setRenaming] = useState(false);
@@ -181,28 +179,26 @@ function ConnectionRow({ entry, actions }) {
 
   return html`<li class="access-connection-item">
     <div class=${`access-connection-row${entry.state === "active" ? "" : " is-inactive"}`}>
-      <div class="access-cell-lead">
-        ${renaming
-          ? html`<${RenameField}
-              id=${entry.grant.id}
-              name=${entry.name}
-              onSave=${async (name) => {
-                const saved = await actions.onRename(entry, name);
-                if (saved) closeRename();
-                return saved;
-              }}
-              onCancel=${closeRename}
-            />`
-          : html`<span class="access-connection-label">${entry.name}</span>`}
-        <${StateTag} state=${entry.state} />
-      </div>
-      <div class="access-app-cell">
-        <span class="sr-only">App: </span>${app ?? html`<span class="access-muted">—</span>`}
-      </div>
-      <div class="access-used-cell">
-        ${entry.lastUsedAt
-          ? html`<span class="sr-only">Last used </span>${timeAgo(entry.lastUsedAt)}`
-          : "Never used"}
+      <div class="access-connection-heading">
+        <div class="access-cell-lead">
+          ${renaming
+            ? html`<${RenameField}
+                id=${entry.grant.id}
+                name=${entry.name}
+                onSave=${async (name) => {
+                  const saved = await actions.onRename(entry, name);
+                  if (saved) closeRename();
+                  return saved;
+                }}
+                onCancel=${closeRename}
+              />`
+            : html`<span class="access-connection-label">${entry.name}</span>`}
+          <${StateTag} state=${entry.state} />
+        </div>
+        <div class="access-connection-meta">
+          ${app ? html`<span class="access-app-cell">Signed in from ${app}</span><span aria-hidden="true"> · </span>` : null}
+          <span class="access-used-cell">${entry.lastUsedAt ? `Last used ${timeAgo(entry.lastUsedAt)}` : "Never used"}</span>
+        </div>
       </div>
       <div class="access-row-actions" ref=${actionsRef}>
         <${RowActionMenu} items=${items} label=${`Actions for ${entry.name}`} />

@@ -634,7 +634,7 @@ describe("AccessView", () => {
     expect(rows.map((row) => row.querySelector(".access-connection-label")?.textContent))
       .toEqual(["Fictional desktop", "Fictional laptop"]);
     expect(rows.map((row) => row.querySelector(".access-app-cell")?.textContent))
-      .toEqual(["App: Fictional coding agent", "App: Fictional desktop app"]);
+      .toEqual(["Signed in from Fictional coding agent", "Signed in from Fictional desktop app"]);
     expect(rows.map((row) => row.querySelector(".access-used-cell")?.textContent))
       .toEqual(["Never used", `Last used ${timeAgo(1_757_000_000_000)}`]);
 
@@ -722,12 +722,13 @@ describe("AccessView", () => {
     await mount();
     const row = connectionRow("Fictional laptop");
     expect(host.querySelector(".access-expand")).toBeNull();
+    expect(row.querySelector(".access-connection-heading .access-connection-meta")?.textContent?.trim())
+      .toBe(`Signed in from Fictional desktop app · Last used ${timeAgo(1_757_000_000_000)}`);
     const panel = row.nextElementSibling!;
     expect(detailFacts(panel)).toEqual({
       "Connection ID": "principal-laptop",
       "Signed in": timestamp(1_756_000_000_000),
       "Last used": timestamp(1_757_000_000_000),
-      App: "Fictional desktop app",
     });
     expect(panel.querySelector(".access-fact-id button")?.getAttribute("title")).toBe("Copy connection ID");
     expect(panel.querySelector(".access-sign-ins")).toBeNull();
@@ -977,7 +978,7 @@ describe("AccessView", () => {
     expect([...panel.querySelectorAll(".access-sign-in")].map((item) => item.textContent?.trim()))
       .toEqual([`Signed in from fictional reader · ${day(1_756_500_000_000)}`, `Signed in · ${day(1_756_000_000_000)}`]);
     expect(detailFacts(panel)["Signed in"]).toBe(timestamp(1_756_500_000_000));
-    expect(detailFacts(panel).App).toBe("fictional reader");
+    expect(connectionRow("Fictional tablet").querySelector(".access-app-cell")?.textContent).toBe("Signed in from fictional reader");
   });
 
   test("counts only live connections: an expired one neither counts nor keeps its level from being deleted", async () => {
