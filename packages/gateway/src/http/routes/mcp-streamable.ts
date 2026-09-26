@@ -11,11 +11,7 @@ import { createLogger, readPackageVersion } from "@omnesis/core";
 import { tryDeviceId, type DeviceId } from "@omnesis/types";
 import { bodyLimit } from "hono/body-limit";
 
-import {
-  registerNotesMcpTool,
-  NOTES_MCP_INSTRUCTIONS,
-  scopedNoteId,
-} from "../../mcp/notes-server.js";
+import { registerNotesMcpTool, NOTES_MCP_INSTRUCTIONS } from "../../mcp/notes-server.js";
 import { notesRateLimiter } from "../../rate-limit.js";
 import {
   boundDirectAuditValue,
@@ -446,7 +442,6 @@ function createUnifiedHandler(deps: McpStreamableRoutesDeps): McpHttpHandler {
               const entry = await deps.notesRuntime!().capture(
                 {
                   ...input,
-                  ...(input.id ? { id: scopedNoteId(principalId, credentialId, input.id) } : {}),
                   surface: "mcp",
                   ...(activeExecutionDeviceId ? { deviceId: activeExecutionDeviceId } : {}),
                   captureContext: {
@@ -463,6 +458,7 @@ function createUnifiedHandler(deps: McpStreamableRoutesDeps): McpHttpHandler {
               );
               return {
                 id: entry.id,
+                captureId: input.id,
                 day: entry.day,
                 capturedAt: entry.capturedAt,
                 receivedAt: entry.receivedAt,

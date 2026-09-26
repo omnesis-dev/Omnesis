@@ -796,7 +796,11 @@ describe("gateway-hosted Streamable HTTP MCP", () => {
     closeables.push(runtime);
     const { client, transport } = await connect(app, notesToken);
     closeables.push(client, transport);
-    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(["add_note"]);
+    const tools = (await client.listTools()).tools;
+    expect(tools.map((tool) => tool.name)).toEqual(["add_note"]);
+    expect(tools[0]!.inputSchema.required).toContain("id");
+    expect(tools[0]!.annotations?.idempotentHint).toBe(true);
+    expect(client.getInstructions()).toContain("receipt echoes it as captureId");
     const result = await client.callTool({
       name: "add_note",
       arguments: {
@@ -813,6 +817,7 @@ describe("gateway-hosted Streamable HTTP MCP", () => {
     expect(result.isError).not.toBe(true);
     expect(result.structuredContent).toEqual({
       id: expect.any(String),
+      captureId: "10000000-0000-4000-8000-000000000001",
       day: "2026-07-14",
       capturedAt: "2026-07-14T12:00:00.000Z",
       receivedAt: "2026-07-14T12:00:01.000Z",
@@ -854,6 +859,7 @@ describe("gateway-hosted Streamable HTTP MCP", () => {
   });
 
   it.each([
+    { text: "Note", id: undefined },
     { text: " " },
     { text: "x".repeat(8193) },
     { text: "Note", principalName: "Forged" },
@@ -868,7 +874,10 @@ describe("gateway-hosted Streamable HTTP MCP", () => {
     closeables.push(runtime);
     const { client, transport } = await connect(app, notesToken);
     closeables.push(client, transport);
-    const result = await client.callTool({ name: "add_note", arguments: args });
+    const result = await client.callTool({
+      name: "add_note",
+      arguments: { id: "10000000-0000-4000-8000-000000000001", ...args },
+    });
     expect(result.isError).toBe(true);
     expect(capture).not.toHaveBeenCalled();
   });

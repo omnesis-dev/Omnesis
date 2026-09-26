@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import {
   authorizeMcpClient,
+  stageConnectionApproval,
   updateAccessGrant,
   type AuthorizedMcpClient,
   type TestGrantRule,
@@ -47,6 +48,13 @@ describe("Notes MCP OAuth — synthetic-corpus gateway", () => {
       const inventory = await authorized.client.listTools();
       expect(inventory.tools.map((tool) => tool.name)).toEqual(["add_note"]);
       expect(inventory.tools[0]?.annotations?.readOnlyHint).toBe(false);
+      expect(inventory.tools[0]?.annotations?.idempotentHint).toBe(true);
+      const missingId = await authorized.client.callTool({
+        name: "add_note",
+        arguments: { text: "Fictional capture missing its retry ID." },
+      });
+      expect(missingId.isError).toBe(true);
+      expect(noteCount("Fictional capture missing its retry ID.")).toBe(0);
       const args = {
         id: randomUUID(),
         text: "Remember to bring the fictional observatory membership card.",
@@ -61,12 +69,14 @@ describe("Notes MCP OAuth — synthetic-corpus gateway", () => {
       expect(result.isError).not.toBe(true);
       expect(result.structuredContent).toMatchObject({
         id: expect.any(String),
+        captureId: args.id,
         day: "2026-06-19",
         capturedAt: args.capturedAt,
         receivedAt: expect.any(String),
       });
       expect(JSON.stringify(result)).not.toContain(args.text);
       const receipt = result.structuredContent as { id: string; receivedAt: string };
+      expect(receipt.id).not.toBe(args.id);
       const stored = noteRow(receipt.id);
       expect(stored).toMatchObject({
         text: args.text,
@@ -145,8 +155,12 @@ describe("Notes MCP OAuth — synthetic-corpus gateway", () => {
       expect(authorized.provider.savedTokens?.access_token).not.toBe(firstToken);
       expect(authorized.provider.authorizationRedirects).toBe(1);
       const text = "The fictional workshop starts after lunch.";
-      const written = await authorized.client.callTool({ name: "add_note", arguments: { text } });
+      const written = await authorized.client.callTool({
+        name: "add_note",
+        arguments: { id: randomUUID(), text },
+      });
       expect(written.isError).not.toBe(true);
+      expect(written.structuredContent).toMatchObject({ captureId: expect.any(String) });
       expect(noteCount(text)).toBe(1);
       const receipt = written.structuredContent as { id: string };
       expect(JSON.parse(String(noteRow(receipt.id)!.capture_context))).toMatchObject({
@@ -173,6 +187,75 @@ describe("Notes MCP OAuth — synthetic-corpus gateway", () => {
       await closeAuthorized(authorized);
     }
   }, 60_000);
+
+  test("reconnect retries deduplicate while other connections and native captures stay isolated", async () => {
+    const original = await authorizeMcpClient(harness, {
+      principalName: "Fictional reconnecting notebook",
+      grantName: "Retry notes",
+      credentialLabel: "Fictional retry client",
+      capabilities: ["notes"],
+    });
+    let replacement: AuthorizedMcpClient | undefined;
+    let other: AuthorizedMcpClient | undefined;
+    try {
+      const args = { id: randomUUID(), text: "Prepare the fictional telescope checklist." };
+      const first = await original.client.callTool({ name: "add_note", arguments: args });
+      expect(first.isError).not.toBe(true);
+      const pending = await stageConnectionApproval(harness, {
+        clientName: "fictional replacement notebook",
+        redirectUrl: "http://localhost:17629/callback",
+      });
+      try {
+        replacement = await (
+          await pending.approve({
+            kind: "replace-connection",
+            connectionId: original.principalId,
+            expectedGrantRevision: original.grantRevision,
+          })
+        ).finish();
+      } finally {
+        await pending.close();
+      }
+      expect(replacement.principalId).toBe(original.principalId);
+      expect(replacement.credentialId).not.toBe(original.credentialId);
+      const retry = await replacement.client.callTool({ name: "add_note", arguments: args });
+      expect(retry.isError).not.toBe(true);
+      expect(retry.structuredContent).toEqual(first.structuredContent);
+      expect(noteCount(args.text)).toBe(1);
+
+      other = await authorizeMcpClient(harness, {
+        principalName: "Fictional separate notebook",
+        grantName: "Independent notes",
+        credentialLabel: "Fictional separate client",
+        capabilities: ["notes"],
+      });
+      expect(other.principalId).not.toBe(original.principalId);
+      const independent = await other.client.callTool({ name: "add_note", arguments: args });
+      expect(independent.isError).not.toBe(true);
+      expect(independent.structuredContent).toMatchObject({ captureId: args.id });
+      expect((independent.structuredContent as { id: string }).id).not.toBe(
+        (first.structuredContent as { id: string }).id,
+      );
+      for (const surface of ["portal", "ios-app"]) {
+        const native = await fetch(`${harness.gatewayUrl}/notes`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${harness.apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ ...args, surface }),
+        });
+        expect(native.status).toBe(201);
+        expect(await native.json()).toMatchObject({ id: args.id });
+      }
+      expect(noteCount(args.text)).toBe(3);
+      expect(noteRow(args.id)?.surface).toBe("portal");
+    } finally {
+      if (other) await closeAuthorized(other);
+      if (replacement) await closeAuthorized(replacement);
+      await closeAuthorized(original);
+    }
+  }, 90_000);
 
   function noteRow(id: string): Record<string, string | number | null> | undefined {
     const db = new Database(harness.getDbPath(), { readonly: true });
