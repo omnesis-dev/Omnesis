@@ -1411,8 +1411,13 @@ describe("android.yml CI workflow structure (C20)", () => {
     wf = parse(readFileSync(join(repoRoot, ".github/workflows/android.yml"), "utf8"));
   });
 
-  it("renders on the arm64 macOS platform that recorded the goldens", () => {
-    expect(wf.jobs["build-and-test"]["runs-on"]).toBe("macos-latest");
+  it("renders on the arm64 macOS platform that recorded the goldens, and builds on Linux", () => {
+    expect(wf.jobs.render["runs-on"]).toBe("macos-latest");
+    expect(wf.jobs["build-and-test"]["runs-on"]).toBe("ubuntu-latest");
+    const renderLanes = wf.jobs.render.steps
+      .map((s) => s.name)
+      .filter((n) => n?.startsWith("lane ["));
+    expect(renderLanes).toEqual(["lane [android-render]"]);
   });
 
   it("is admission-only and validates the caller's exact revision without a path sentinel", () => {
@@ -1431,7 +1436,7 @@ describe("android.yml CI workflow structure (C20)", () => {
   });
 
   it("bounds every Gradle phase without leaving a persistent daemon for the next phase", () => {
-    const steps = wf.jobs["build-and-test"].steps;
+    const steps = [...wf.jobs["build-and-test"].steps, ...wf.jobs.render.steps];
     for (const name of ["android-jvm", "android-policy", "android-build", "android-render"]) {
       const step = steps.find((s) => s.name === `lane [${name}]`);
       const commands = step.run
@@ -1489,7 +1494,7 @@ describe("android.yml CI workflow structure (C20)", () => {
   );
 
   it("runs the Roborazzi VERIFY task (compare against tracked goldens), not record", () => {
-    const steps = wf.jobs["build-and-test"].steps;
+    const steps = [...wf.jobs["build-and-test"].steps, ...wf.jobs.render.steps];
     const runs = steps.map((s) => s.run || "").join("\n");
     expect(runs).toContain("verifyRoborazziPlayDebug");
     // CI must NEVER record — recording would rewrite the baseline and catch no drift.
@@ -1504,12 +1509,13 @@ describe("android.yml CI workflow structure (C20)", () => {
   });
 
   it("fails loud (never skips) when the Android toolchain is unreachable", () => {
-    const steps = wf.jobs["build-and-test"].steps;
-    const verify = steps.find((s) => /toolchain/i.test(s.name || ""));
-    expect(verify, "android.yml has no toolchain-verify step").toBeTruthy();
-    // The step exits non-zero on a missing JDK/SDK — a required dependency, no skip.
-    expect(verify.run).toMatch(/exit 1/);
-    expect(verify.run).toMatch(/required dependency/i);
+    for (const job of ["build-and-test", "render"]) {
+      const verify = wf.jobs[job].steps.find((s) => /toolchain/i.test(s.name || ""));
+      expect(verify, `android.yml ${job} has no toolchain-verify step`).toBeTruthy();
+      // The step exits non-zero on a missing JDK/SDK — a required dependency, no skip.
+      expect(verify.run).toMatch(/exit 1/);
+      expect(verify.run).toMatch(/required dependency/i);
+    }
   });
 
   it("the tracked golden dir is committed and not gitignored", () => {
