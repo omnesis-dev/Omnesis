@@ -12,13 +12,13 @@
 import { html } from "htm/preact";
 import { useState } from "preact/hooks";
 
-import { lookupAccessAuthorization } from "../../api.js";
+import { lookupAccessAuthorization, pairDevice } from "../../api.js";
 import { CopyIconButton } from "../../components/copy-button.js";
 import { ProviderIcon } from "../../components/provider-icon.js";
 import { Modal } from "../../components/modal.js";
 import { navigate } from "../../lib/router.js";
 import { authorizationStatusNotice } from "./authorization.js";
-import { agentSetups } from "./client-setup.js";
+import { PUBLISH_DOCS, agentSetups, harnessAddresses, isPrivateAddress } from "./client-setup.js";
 import { errorMessage } from "./shared.js";
 
 /**
@@ -42,11 +42,90 @@ function AgentIcon({ icon }) {
     : html`<img src=${icon.src} alt="" width="22" height="22" />`;
 }
 
+function ExternalLink({ href, children }) {
+  return html`<a href=${href} target="_blank" rel="noopener noreferrer">${children}</a>`;
+}
+
+/**
+ * For an agent that reaches the gateway from the Internet: whether the
+ * address is plainly private, and where the docs explain publishing it.
+ */
+function PublicAddressNotice({ agent, resource }) {
+  const privateAddress = isPrivateAddress(resource);
+  return html`<div class=${`access-agent-public ${privateAddress ? "is-warning" : ""}`} role=${privateAddress ? "alert" : null}>
+    <p>
+      ${privateAddress
+        ? html`<strong>This address is private.</strong> ${agent.needsPublicAddress}, so it cannot reach this gateway until you publish it.`
+        : html`${agent.needsPublicAddress}, so the address above must be reachable from the Internet.`}
+    </p>
+    <p>
+      <${ExternalLink} href=${PUBLISH_DOCS.funnel}>Publish the gateway with Tailscale Funnel<//>${" or "}<${ExternalLink} href=${PUBLISH_DOCS.domain}>use a domain of your own<//>.
+    </p>
+  </div>`;
+}
+
+/**
+ * What a managed integration's machine needs before its commands: the address
+ * it pairs against, when the gateway accepts more than one, and a pairing code
+ * minted here so the commands carry it.
+ */
+function HarnessPairing({ addresses, addressIdx, setAddressIdx, pairing, onPair }) {
+  const expires = pairing.code
+    ? new Date(pairing.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : null;
+  return html`<div class="access-agent-pairing">
+    ${addresses.length > 1 &&
+    html`<label class="form-group">
+      <span>Address the agent machine connects to</span>
+      <select
+        id="access-agent-address"
+        value=${addressIdx}
+        onChange=${(event) => setAddressIdx(Number(event.currentTarget.value))}
+      >
+        ${addresses.map(
+          (address, index) => html`<option key=${address.gatewayUrl} value=${index}>
+            ${address.gatewayUrl}${address.servedByGateway ? "" : " (through a proxy)"}
+          </option>`,
+        )}
+      </select>
+    </label>`}
+    ${pairing.code
+      ? html`<p>Pairing code <code>${pairing.code}</code> is in the commands below. It works once and expires at ${expires}.</p>`
+      : html`<div class="access-agent-pair-action">
+          <button type="button" class="btn-secondary" onClick=${onPair} disabled=${pairing.busy}>
+            ${pairing.busy ? "Creating…" : "Create a pairing code"}
+          </button>
+          <span>Both commands ask for one. Create it here and it is filled in.</span>
+        </div>`}
+    ${pairing.error && html`<p class="access-error" role="alert">${pairing.error}</p>`}
+  </div>`;
+}
+
 /** A grid of common agents; choosing one shows only that agent's setup. */
-function AgentSetupPicker({ resource }) {
+function AgentSetupPicker({ oauth }) {
   const [selectedId, setSelectedId] = useState(null);
-  const agents = agentSetups(resource);
+  const [addressIdx, setAddressIdx] = useState(0);
+  const [pairing, setPairing] = useState({ code: null, expiresAt: null, busy: false, error: "" });
+  const addresses = harnessAddresses(oauth);
+  const harnessAddress = addresses[Math.min(addressIdx, addresses.length - 1)];
+  const agents = agentSetups(oauth, { harnessAddress, pairingCode: pairing.code ?? undefined });
   const selected = agents.find((agent) => agent.id === selectedId) ?? null;
+
+  async function createPairingCode() {
+    setPairing((current) => ({ ...current, busy: true, error: "" }));
+    try {
+      const result = await pairDevice({ kind: "agent" });
+      setPairing({ code: result.pairingCode, expiresAt: result.expiresAt, busy: false, error: "" });
+    } catch (failure) {
+      setPairing({
+        code: null,
+        expiresAt: null,
+        busy: false,
+        error: errorMessage(failure, "The pairing code could not be created."),
+      });
+    }
+  }
+
   return html`<div class="access-agent-setup">
     <p class="access-agent-setup-label">Setup for common agents</p>
     <div class="backend-opt-grid access-agent-grid">
@@ -68,8 +147,17 @@ function AgentSetupPicker({ resource }) {
     </div>
     ${selected &&
     html`<div class="access-agent-steps" id="access-agent-steps" data-agent=${selected.id}>
+      ${selected.needsPublicAddress && html`<${PublicAddressNotice} agent=${selected} resource=${oauth.resource} />`}
+      ${selected.pairs &&
+      html`<${HarnessPairing}
+        addresses=${addresses}
+        addressIdx=${addressIdx}
+        setAddressIdx=${setAddressIdx}
+        pairing=${pairing}
+        onPair=${createPairingCode}
+      />`}
       ${selected.commands.map(
-        (command) => html`<div class="access-agent-command" key=${command.value}>
+        (command) => html`<div class="access-agent-command" key=${command.label}>
           <span>${command.label}</span>
           <div class="access-mcp-resource">
             <code title=${command.value}>${command.value}</code>
@@ -82,6 +170,9 @@ function AgentSetupPicker({ resource }) {
         </div>`,
       )}
       <p>${selected.note}</p>
+      <p class="access-agent-docs">
+        <${ExternalLink} href=${selected.docs}>${selected.name} setup in the docs<//>
+      </p>
     </div>`}
   </div>`;
 }
@@ -156,7 +247,7 @@ export function ConnectAgentDialog({ oauth, onClose }) {
             title="Copy MCP resource"
           />
         </div>
-        <${AgentSetupPicker} resource=${oauth.resource} />
+        <${AgentSetupPicker} oauth=${oauth} />
       <//>
       <${ConnectStep}
         number="2"

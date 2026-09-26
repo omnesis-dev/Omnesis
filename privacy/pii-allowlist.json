@@ -2019,7 +2019,10 @@
     },
     {
       "value": "172.20.0.5",
-      "paths": ["packages/core/src/pairing-address.test.ts"],
+      "paths": [
+        "packages/core/src/pairing-address.test.ts",
+        "packages/gateway/portal/js/views/access/client-setup.test.ts"
+      ],
       "reason": "invented private-address fixture for the RFC 1918 172.16/12 range"
     },
     {
@@ -2044,6 +2047,7 @@
       "value": "10.0.0.5",
       "paths": [
         "packages/core/src/pairing-protocol.test.ts",
+        "packages/gateway/portal/js/views/access/client-setup.test.ts",
         "packages/gateway/src/server.test.ts"
       ],
       "reason": "reviewed existing fixture"
@@ -2117,6 +2121,8 @@
         "packages/core/src/mdns-discovery.test.ts",
         "packages/core/src/mdns-discovery.ts",
         "packages/core/src/pairing-address.test.ts",
+        "packages/gateway/portal/js/views/access.test.ts",
+        "packages/gateway/portal/js/views/access/client-setup.test.ts",
         "packages/gateway/src/http/services/PairingQrService.test.ts"
       ],
       "reason": "invented private-LAN fixture"
@@ -2140,6 +2146,7 @@
         "packages/collector/src/e2e/pairing-lifecycle.e2e.test.ts",
         "packages/core/src/network-discovery.test.ts",
         "packages/core/src/pairing-address.test.ts",
+        "packages/gateway/portal/js/views/access/client-setup.test.ts",
         "packages/gateway/portal/js/views/devices.test.ts",
         "packages/gateway/src/http/services/PairingQrService.test.ts",
         "packages/gateway/src/server.test.ts"

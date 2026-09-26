@@ -131,6 +131,39 @@ describe("MCP OAuth access routes", () => {
     expect(await portalOverview.json()).toMatchObject({ oauth: { resource: RESOURCE } });
   });
 
+  test("tells the portal which MCP resources the gateway serves itself, with its fingerprint", async () => {
+    const fingerprint = "ab".repeat(32);
+    const withAliases = createTestApp({
+      mcpResourceUrls: [
+        "https://gateway.example.org:7600/mcp",
+        "https://tailnet.example.net:7600/mcp",
+      ],
+      gatewayPort: 7600,
+      tlsFingerprintSha256: () => fingerprint,
+    });
+    const overview = await withAliases.request(`${ORIGIN}/admin/access`, {
+      headers: { "X-Test-Portal": "yes" },
+    });
+    expect((await overview.json()).oauth).toEqual({
+      resource: RESOURCE,
+      resources: [
+        { resource: RESOURCE, servedByGateway: false },
+        { resource: "https://gateway.example.org:7600/mcp", servedByGateway: true },
+        { resource: "https://tailnet.example.net:7600/mcp", servedByGateway: true },
+      ],
+      tlsFingerprintSha256: fingerprint,
+    });
+
+    const unknownPort = await app.request(`${ORIGIN}/portal/api/access`, {
+      headers: { "X-Test-Portal": "yes" },
+    });
+    expect((await unknownPort.json()).oauth).toEqual({
+      resource: RESOURCE,
+      resources: [{ resource: RESOURCE, servedByGateway: false }],
+      tlsFingerprintSha256: null,
+    });
+  });
+
   test("supports origin-first protected-resource discovery and public-client DCR", async () => {
     const protectedResource = await app.request(`${ORIGIN}/.well-known/oauth-protected-resource`);
     expect(protectedResource.status).toBe(200);

@@ -63,6 +63,13 @@ const ACCESS_AUDIT_CURSOR_SCOPE = "access-audit";
 const ACCESS_AUDIT_DEFAULT_LIMIT = 50;
 const ACCESS_AUDIT_MAX_LIMIT = 500;
 
+/** Whether a client dialling `resource` reaches this gateway's own listener. */
+function servedByGateway(resource: string, gatewayPort: number | undefined): boolean {
+  if (gatewayPort === undefined) return false;
+  const url = new URL(resource);
+  return Number(url.port || (url.protocol === "https:" ? 443 : 80)) === gatewayPort;
+}
+
 export function mountOAuthAuthorizationRoutes(
   app: RouteApp,
   access: AccessService,
@@ -83,6 +90,14 @@ export function mountOAuthAuthorizationRoutes(
      * for that refresh before it answers.
      */
     onDeviceLevelChanged?: () => void;
+    /**
+     * The port this gateway serves HTTPS on. An MCP resource on another port
+     * reaches the gateway through a proxy, such as Tailscale Funnel, that
+     * presents its own certificate.
+     */
+    gatewayPort?: number;
+    /** SHA-256 fingerprint of the certificate this gateway serves right now. */
+    tlsFingerprintSha256?: string | (() => string);
   } = {},
 ): void {
   const authorizationLimiter = oauthAuthorizationRateLimiter();
@@ -325,14 +340,31 @@ export function mountOAuthAuthorizationRoutes(
     reconnect: null,
     connection: access.getConnectionProposal(request),
   });
-  app.get("/portal/api/access", noStore, scope.admin(), (c) => {
-    const urls = resolveOAuthUrls(c.req.url, options.publicBaseUrl, options.mcpResourceUrls);
-    return c.json({ ...access.overview(), oauth: urls ? { resource: urls.resource } : null });
-  });
-  app.get("/admin/access", noStore, scope.admin(), (c) => {
-    const urls = resolveOAuthUrls(c.req.url, options.publicBaseUrl, options.mcpResourceUrls);
-    return c.json({ ...access.overview(), oauth: urls ? { resource: urls.resource } : null });
-  });
+  // Every MCP resource the gateway accepts, marked with whether the gateway
+  // serves it itself: only there does a client meet this gateway's own
+  // certificate, so only there can it check the fingerprint returned beside it.
+  const accessOverview = (requestUrl: string) => {
+    const urls = resolveOAuthUrls(requestUrl, options.publicBaseUrl, options.mcpResourceUrls);
+    const fingerprint =
+      typeof options.tlsFingerprintSha256 === "function"
+        ? options.tlsFingerprintSha256()
+        : options.tlsFingerprintSha256;
+    return {
+      ...access.overview(),
+      oauth: urls
+        ? {
+            resource: urls.resource,
+            resources: urls.supportedResources.map((resource) => ({
+              resource,
+              servedByGateway: servedByGateway(resource, options.gatewayPort),
+            })),
+            tlsFingerprintSha256: fingerprint ?? null,
+          }
+        : null,
+    };
+  };
+  app.get("/portal/api/access", noStore, scope.admin(), (c) => c.json(accessOverview(c.req.url)));
+  app.get("/admin/access", noStore, scope.admin(), (c) => c.json(accessOverview(c.req.url)));
   app.post(
     "/portal/api/access/authorizations/lookup",
     noStore,

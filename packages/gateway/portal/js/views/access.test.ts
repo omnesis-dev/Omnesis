@@ -14,6 +14,7 @@ const api = vi.hoisted(() => ({
   getAccessOverview: vi.fn(),
   lookupAccessAuthorization: vi.fn(),
   moveConnectionLevel: vi.fn(),
+  pairDevice: vi.fn(),
   renameAccessPrincipal: vi.fn(),
   revokeAccess: vi.fn(),
   updateAccessLevel: vi.fn(),
@@ -1551,6 +1552,67 @@ describe("AccessView", () => {
 
     await act(async () => { cards[2]!.click(); });
     expect(picker.querySelector(".access-agent-steps")).toBeNull();
+  });
+
+  test("points a hosted app at the publishing docs, and warns about a private address", async () => {
+    api.getAccessOverview.mockResolvedValue({
+      principals: [],
+      oauth: { resource: "https://192.168.1.20:7600/mcp" },
+    });
+    await mount({ connectOpen: true });
+    const chatgpt = host.querySelector<HTMLButtonElement>("button[data-agent='chatgpt']")!;
+    await act(async () => { chatgpt.click(); });
+
+    const notice = host.querySelector(".access-agent-public")!;
+    expect(notice.classList.contains("is-warning")).toBe(true);
+    expect(notice.textContent).toMatch(/This address is private/u);
+    expect(notice.textContent).toMatch(/Funnel or use a domain of your own/u);
+    expect([...notice.querySelectorAll("a")].map((link) => link.getAttribute("href"))).toEqual([
+      "https://omnesis.dev/docs/connect#tailscale-funnel",
+      "https://omnesis.dev/docs/setup#public-domain",
+    ]);
+    expect(host.querySelector(".access-agent-docs a")?.getAttribute("href")).toBe(
+      "https://omnesis.dev/docs/connect#chatgpt",
+    );
+  });
+
+  test("mints an agent pairing code into the integration's commands", async () => {
+    api.getAccessOverview.mockResolvedValue({
+      principals: [],
+      oauth: {
+        resource: "https://gateway.example.org/mcp",
+        resources: [
+          { resource: "https://gateway.example.org/mcp", servedByGateway: false },
+          { resource: "https://gateway.example.org:7600/mcp", servedByGateway: true },
+        ],
+        tlsFingerprintSha256: "ab".repeat(32),
+      },
+    });
+    api.pairDevice.mockResolvedValue({ pairingCode: "K7Q2-M9XD", expiresAt: Date.now() + 600_000 });
+    await mount({ connectOpen: true });
+    const openclaw = host.querySelector<HTMLButtonElement>("button[data-agent='openclaw']")!;
+    await act(async () => { openclaw.click(); });
+
+    const commands = () => [...host.querySelectorAll(".access-agent-command code")].map((code) => code.textContent);
+    expect(commands()[1]).toBe(
+      `omnesis connect openclaw --gateway-url https://gateway.example.org:7600 --trust-fingerprint sha256:${"ab".repeat(32)}`,
+    );
+    const create = [...host.querySelectorAll<HTMLButtonElement>(".access-agent-pair-action button")][0]!;
+    await act(async () => { create.click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(api.pairDevice).toHaveBeenCalledWith({ kind: "agent" });
+    expect(commands()).toEqual([
+      `curl -fsSL https://omnesis.dev/install.sh | sh -s -- --openclaw --gateway-url https://gateway.example.org:7600 --code K7Q2-M9XD --trust-fingerprint sha256:${"ab".repeat(32)}`,
+      `omnesis connect openclaw --gateway-url https://gateway.example.org:7600 --code K7Q2-M9XD --trust-fingerprint sha256:${"ab".repeat(32)}`,
+    ]);
+
+    const address = host.querySelector<HTMLSelectElement>("#access-agent-address")!;
+    // linkedom's <select>.value is read-only; select the option instead.
+    await act(async () => {
+      address.querySelectorAll("option")[1]!.setAttribute("selected", "");
+      address.dispatchEvent(new window.Event("change", { bubbles: true }));
+    });
+    expect(commands()[1]).toBe("omnesis connect openclaw --gateway-url https://gateway.example.org --code K7Q2-M9XD");
   });
 
   test("offers connecting an agent only when the Gateway has usable OAuth URLs", async () => {

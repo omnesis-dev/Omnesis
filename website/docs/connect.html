@@ -902,7 +902,11 @@
           line with its URL and certificate fingerprint. Mint the pairing code it asks for with
           <code>omnesis devices pair --kind agent</code>, or in the portal under
           <strong>Settings → Devices</strong>. The role refuses a machine that does not already have
-          OpenClaw or Hermes; it never installs them for you.
+          OpenClaw or Hermes; it never installs them for you. The portal writes this line for you:
+          under <strong>Settings → Access</strong>, open <strong>Connect an agent</strong>, choose
+          OpenClaw or Hermes, and create a pairing code there. The command it shows carries the
+          gateway's address, the code and, where the gateway serves that address itself, its
+          certificate fingerprint.
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>

@@ -19,6 +19,10 @@ export function mountOAuthAccessRoutes(
     /** See `mountOAuthAuthorizationRoutes`. */
     onDeviceLevelChanged?: () => void;
     onAuthorizationPending?: () => void;
+    /** See `mountOAuthAuthorizationRoutes`. */
+    gatewayPort?: number;
+    /** See `mountOAuthAuthorizationRoutes`. */
+    tlsFingerprintSha256?: string | (() => string);
   } = {},
 ): void {
   mountOAuthAccessProtocolRoutes(app, access, options);
