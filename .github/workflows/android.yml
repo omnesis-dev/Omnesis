@@ -9,6 +9,11 @@ on:
         description: "Exact 40-character source revision to validate"
         required: true
         type: string
+      run_render:
+        description: "Run the macOS screenshot lane; full-validation skips it on pull requests that don't touch android/"
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -97,6 +102,7 @@ jobs:
     # are rendered by Robolectric's native graphics on arm64 macOS, and a
     # render on Linux (x64 or arm64) rasterises text differently. The image
     # carries the Android SDK; JDK 17 comes from setup-java.
+    if: ${{ inputs.run_render }}
     runs-on: macos-latest
     timeout-minutes: 60
 

@@ -13,6 +13,11 @@ on:
         description: "Exact 40-character source revision to validate"
         required: true
         type: string
+      run_macos:
+        description: "Run the macOS lane; full-validation skips it on pull requests that don't touch what it covers"
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -285,6 +290,7 @@ jobs:
   # ------------------------------------------------------------------
   node-macos:
     needs: privacy
+    if: ${{ inputs.run_macos }}
     runs-on: macos-latest
     timeout-minutes: 120
 
