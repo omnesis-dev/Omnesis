@@ -40,12 +40,41 @@ describe("install.sh Tailscale CLI detection", () => {
             ...process.env,
             HOME: home,
             PATH: `${bin}:${process.env.PATH}`,
-            // Where /Applications is looked for: never the machine's own app.
+            // Where /Applications and Homebrew are looked for: never the
+            // machine's own Tailscale.
             OMNESIS_TEST_TAILSCALE_ROOT: join(home, "root"),
           },
         },
       );
       expect(output).toBe("connected\n");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("finds Homebrew's CLI by absolute path when PATH does not reach it", () => {
+    const home = mkdtempSync(join(tmpdir(), "omnesis-tailscale-detection-"));
+    try {
+      // PATH as a launchd job's: node's bin dir and the system's, no Homebrew bin.
+      const brew = join(home, "opt/homebrew/bin");
+      mkdirSync(brew, { recursive: true });
+      writeFileSync(
+        join(brew, "tailscale"),
+        '#!/bin/sh\n[ "$1" = status ] || exit 1\nif [ "$2" = --json ]; then printf \'{"BackendState":"Running"}\\n\'; else printf "brew\\n"; fi\n',
+      );
+      chmodSync(join(brew, "tailscale"), 0o755);
+      const detect = `${cliFunctions}\nPLATFORM=darwin\nfind_tailscale_cli && tailscale_cli status`;
+      const output = execFileSync("sh", ["-c", detect], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: home,
+          PATH: `${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
+          // Homebrew's prefixes, and /Applications, are looked for under here.
+          OMNESIS_TEST_TAILSCALE_ROOT: home,
+        },
+      });
+      expect(output).toBe("brew\n");
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

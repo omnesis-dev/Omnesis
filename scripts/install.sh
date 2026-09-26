@@ -2598,6 +2598,12 @@ find_tailscale_cli() {
     # The installer's tests point this at a scratch directory, so a developer's
     # own Tailscale is never asked for its tailnet, let alone a certificate.
     TS_ROOT="${OMNESIS_TEST_TAILSCALE_ROOT:-}"
+    # Homebrew's CLI where PATH does not reach it (a non-login shell); the
+    # gateway's launchd PATH gets the same fallback (tailscale-cli.ts).
+    for TS_BREW_CLI in "$TS_ROOT/opt/homebrew/bin/tailscale" "$TS_ROOT/usr/local/bin/tailscale"; do
+      case ":$PATH:" in *":${TS_BREW_CLI%/*}:"*) continue ;; esac
+      if [ -x "$TS_BREW_CLI" ] && tailscale_cli_ready "$TS_BREW_CLI" 0; then return 0; fi
+    done
     if [ -x "$TS_ROOT/Applications/Tailscale.app/Contents/MacOS/Tailscale" ] && \
        tailscale_cli_ready "$TS_ROOT/Applications/Tailscale.app/Contents/MacOS/Tailscale" 1; then return 0; fi
     if [ -x "$HOME/Applications/Tailscale.app/Contents/MacOS/Tailscale" ] && \
