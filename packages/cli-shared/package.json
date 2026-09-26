@@ -6,7 +6,7 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "dependencies": {
-    "@clack/prompts": "^1.7.0",
+    "@clack/prompts": "^1.8.1",
     "@omnesis/core": "*",
     "@omnesis/source-sdk": "*"
   },

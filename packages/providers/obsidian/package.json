@@ -9,7 +9,7 @@
     "@omnesis/source-sdk": "*",
     "@omnesis/types": "*",
     "picomatch": "^4.0.2",
-    "yaml": "^2.9.0"
+    "yaml": "^2.9.1"
   },
   "files": [
     "dist"
