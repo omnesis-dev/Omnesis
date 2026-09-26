@@ -848,10 +848,12 @@
           </div>
         </div>
         <p>
-          <code>codex mcp add</code> finds the gateway's sign-in and opens it straight away; approve
-          the connection in Omnesis, then start a new conversation. To sign in again later, run
-          <code>codex mcp login omnesis</code>. Refresh the guidance after updating Omnesis with
-          <code>codex plugin marketplace upgrade omnesis</code>.
+          Omnesis needs Codex 0.147 or later; earlier versions stop at the end of the sign-in with
+          <em>Authorization server response missing required issuer</em>. Check with
+          <code>codex --version</code>. <code>codex mcp add</code> finds the gateway's sign-in and
+          opens it straight away; approve the connection in Omnesis, then start a new conversation.
+          To sign in again later, run <code>codex mcp login omnesis</code>. Refresh the guidance
+          after updating Omnesis with <code>codex plugin marketplace upgrade omnesis</code>.
         </p>
         <div class="callout">
           <strong>For Codex, the plugin is guidance, not a connection.</strong> It teaches Codex how

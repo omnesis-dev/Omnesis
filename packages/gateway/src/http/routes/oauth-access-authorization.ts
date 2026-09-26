@@ -5,6 +5,10 @@ import { randomBytes } from "node:crypto";
 import { createLogger } from "@omnesis/core";
 import { buildPage, clampLimit, scopeSatisfies, SCOPE_ADMIN, tryDeviceId } from "@omnesis/types";
 
+import {
+  createServedByGatewayCheck,
+  type CertificateProbe,
+} from "../../access/served-by-gateway.js";
 import { resolveOAuthUrls } from "../../access/oauth-urls.js";
 import { ClientMetadataDocumentResolver } from "../../access/client-metadata-document.js";
 import { normalizeInteractiveOAuthScope } from "../../access/oauth-scopes.js";
@@ -63,13 +67,6 @@ const ACCESS_AUDIT_CURSOR_SCOPE = "access-audit";
 const ACCESS_AUDIT_DEFAULT_LIMIT = 50;
 const ACCESS_AUDIT_MAX_LIMIT = 500;
 
-/** Whether a client dialling `resource` reaches this gateway's own listener. */
-function servedByGateway(resource: string, gatewayPort: number | undefined): boolean {
-  if (gatewayPort === undefined) return false;
-  const url = new URL(resource);
-  return Number(url.port || (url.protocol === "https:" ? 443 : 80)) === gatewayPort;
-}
-
 export function mountOAuthAuthorizationRoutes(
   app: RouteApp,
   access: AccessService,
@@ -90,14 +87,10 @@ export function mountOAuthAuthorizationRoutes(
      * for that refresh before it answers.
      */
     onDeviceLevelChanged?: () => void;
-    /**
-     * The port this gateway serves HTTPS on. An MCP resource on another port
-     * reaches the gateway through a proxy, such as Tailscale Funnel, that
-     * presents its own certificate.
-     */
-    gatewayPort?: number;
     /** SHA-256 fingerprint of the certificate this gateway serves right now. */
     tlsFingerprintSha256?: string | (() => string);
+    /** Replaces the TLS connection that checks which certificate a resource presents (tests). */
+    probeCertificate?: CertificateProbe;
   } = {},
 ): void {
   const authorizationLimiter = oauthAuthorizationRateLimiter();
@@ -340,15 +333,22 @@ export function mountOAuthAuthorizationRoutes(
     reconnect: null,
     connection: access.getConnectionProposal(request),
   });
-  // Every MCP resource the gateway accepts, marked with whether the gateway
-  // serves it itself: only there does a client meet this gateway's own
-  // certificate, so only there can it check the fingerprint returned beside it.
-  const accessOverview = (requestUrl: string) => {
+  // Every MCP resource the gateway accepts, marked with whether a client there
+  // meets the gateway's own certificate: only then can it check the
+  // fingerprint returned beside it.
+  const fingerprint = () =>
+    typeof options.tlsFingerprintSha256 === "function"
+      ? options.tlsFingerprintSha256()
+      : options.tlsFingerprintSha256;
+  const servedByGateway = createServedByGatewayCheck({
+    fingerprint,
+    ...(options.probeCertificate ? { probe: options.probeCertificate } : {}),
+  });
+  const accessOverview = async (requestUrl: string) => {
     const urls = resolveOAuthUrls(requestUrl, options.publicBaseUrl, options.mcpResourceUrls);
-    const fingerprint =
-      typeof options.tlsFingerprintSha256 === "function"
-        ? options.tlsFingerprintSha256()
-        : options.tlsFingerprintSha256;
+    const served = urls
+      ? await servedByGateway(urls.supportedResources)
+      : new Map<string, boolean>();
     return {
       ...access.overview(),
       oauth: urls
@@ -356,15 +356,19 @@ export function mountOAuthAuthorizationRoutes(
             resource: urls.resource,
             resources: urls.supportedResources.map((resource) => ({
               resource,
-              servedByGateway: servedByGateway(resource, options.gatewayPort),
+              servedByGateway: served.get(resource) ?? false,
             })),
-            tlsFingerprintSha256: fingerprint ?? null,
+            tlsFingerprintSha256: fingerprint() ?? null,
           }
         : null,
     };
   };
-  app.get("/portal/api/access", noStore, scope.admin(), (c) => c.json(accessOverview(c.req.url)));
-  app.get("/admin/access", noStore, scope.admin(), (c) => c.json(accessOverview(c.req.url)));
+  app.get("/portal/api/access", noStore, scope.admin(), async (c) =>
+    c.json(await accessOverview(c.req.url)),
+  );
+  app.get("/admin/access", noStore, scope.admin(), async (c) =>
+    c.json(await accessOverview(c.req.url)),
+  );
   app.post(
     "/portal/api/access/authorizations/lookup",
     noStore,

@@ -1263,7 +1263,6 @@ export function createServer(
     authorizationNotifier: opts?.accessAuthorizationNotifier,
     onAuthorizationPending: opts?.accessCleanupWake,
     onDeviceLevelChanged: () => statusCache.bump(),
-    gatewayPort: opts?.port,
     tlsFingerprintSha256: opts?.tlsFingerprintSha256,
   });
   mountLegacyMcpCutoverRoute(app, {

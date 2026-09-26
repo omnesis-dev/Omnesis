@@ -32,6 +32,7 @@ interface AgentSetup {
   needsPublicAddress?: string;
   pairs?: boolean;
   alternatives?: boolean;
+  blocked?: boolean;
 }
 const agentSetups = (
   oauth: OAuth,
@@ -131,6 +132,22 @@ describe("agentSetups", () => {
     expect(commands("openclaw", oauth, { harnessAddress: proxied })[1]).toBe(
       "omnesis connect openclaw --gateway-url https://gateway.example.org",
     );
+  });
+
+  test("offers nothing that could fail when a public-address agent meets a private address", () => {
+    const privateOauth = { resource: "https://192.168.1.20:7600/mcp" };
+    for (const id of ["chatgpt", "claude-apps", "gemini-cli"]) {
+      expect(agent(id, privateOauth)).toMatchObject({ blocked: true, commands: [], note: "" });
+      expect(agent(id).blocked).toBeUndefined();
+    }
+    for (const id of ["claude-code", "codex", "openclaw", "hermes"]) {
+      expect(agent(id, privateOauth).blocked).toBeUndefined();
+      expect(agent(id, privateOauth).commands.length).toBeGreaterThan(0);
+    }
+  });
+
+  test("names the Codex version that completes the sign-in", () => {
+    expect(agent("codex").note).toMatch(/Codex 0\.147 or later/u);
   });
 
   test("quotes a value that a shell would otherwise split or expand", () => {

@@ -131,15 +131,20 @@ describe("MCP OAuth access routes", () => {
     expect(await portalOverview.json()).toMatchObject({ oauth: { resource: RESOURCE } });
   });
 
-  test("tells the portal which MCP resources the gateway serves itself, with its fingerprint", async () => {
+  test("tells the portal which MCP resources present the gateway's own certificate", async () => {
     const fingerprint = "ab".repeat(32);
+    const presented: Record<string, string | null> = {
+      [`${ORIGIN}/mcp`]: "cd".repeat(32),
+      "https://gateway.example.org:7600/mcp": fingerprint,
+      "https://tailnet.example.net:7600/mcp": null,
+    };
     const withAliases = createTestApp({
       mcpResourceUrls: [
         "https://gateway.example.org:7600/mcp",
         "https://tailnet.example.net:7600/mcp",
       ],
-      gatewayPort: 7600,
       tlsFingerprintSha256: () => fingerprint,
+      probeCertificate: async (resource) => presented[resource.toString()] ?? null,
     });
     const overview = await withAliases.request(`${ORIGIN}/admin/access`, {
       headers: { "X-Test-Portal": "yes" },
@@ -149,15 +154,15 @@ describe("MCP OAuth access routes", () => {
       resources: [
         { resource: RESOURCE, servedByGateway: false },
         { resource: "https://gateway.example.org:7600/mcp", servedByGateway: true },
-        { resource: "https://tailnet.example.net:7600/mcp", servedByGateway: true },
+        { resource: "https://tailnet.example.net:7600/mcp", servedByGateway: false },
       ],
       tlsFingerprintSha256: fingerprint,
     });
 
-    const unknownPort = await app.request(`${ORIGIN}/portal/api/access`, {
+    const withoutCertificate = await app.request(`${ORIGIN}/portal/api/access`, {
       headers: { "X-Test-Portal": "yes" },
     });
-    expect((await unknownPort.json()).oauth).toEqual({
+    expect((await withoutCertificate.json()).oauth).toEqual({
       resource: RESOURCE,
       resources: [{ resource: RESOURCE, servedByGateway: false }],
       tlsFingerprintSha256: null,

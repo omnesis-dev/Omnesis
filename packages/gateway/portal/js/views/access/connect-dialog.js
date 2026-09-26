@@ -42,6 +42,9 @@ function AgentIcon({ icon }) {
     : html`<img src=${icon.src} alt="" width="22" height="22" />`;
 }
 
+/** The warning mark on an agent card that cannot reach this gateway's address. */
+const WARNING_GLYPH = html`<svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><path d="M12 9v4M12 17h.01" /></svg>`;
+
 function ExternalLink({ href, children }) {
   return html`<a href=${href} target="_blank" rel="noopener noreferrer">${children}</a>`;
 }
@@ -84,10 +87,14 @@ function HarnessPairing({ addresses, addressIdx, setAddressIdx, pairing, onPair 
       >
         ${addresses.map(
           (address, index) => html`<option key=${address.gatewayUrl} value=${index}>
-            ${address.gatewayUrl}${address.servedByGateway ? "" : " (through a proxy)"}
+            ${address.gatewayUrl} —${" "}
+            ${address.servedByGateway
+              ? "direct to the gateway (recommended)"
+              : "public address through a proxy, for machines outside your network"}
           </option>`,
         )}
       </select>
+      <small>Use the direct address when that machine is on your network. The command can then check the gateway's certificate.</small>
     </label>`}
     ${pairing.code
       ? html`<p>Pairing code <code>${pairing.code}</code> is in the commands below. It works once and expires at ${expires}.</p>`
@@ -155,6 +162,8 @@ function AgentSetupPicker({ oauth }) {
           }}
         >
           <span class="backend-opt-icon"><${AgentIcon} icon=${agent.icon} /></span>
+          ${agent.blocked &&
+          html`<span class="access-agent-warning" role="img" aria-label="Needs a public address" title="Needs a public address">${WARNING_GLYPH}</span>`}
           <span class="backend-opt-title">${agent.name}</span>
           <span class="backend-opt-sub">${agent.subtitle}</span>
         </button>`,
@@ -192,7 +201,7 @@ function AgentSetupPicker({ oauth }) {
         : selected.commands.map(
             (command) => html`<${AgentCommand} key=${command.label} agent=${selected} command=${command} labelled />`,
           )}
-      <p>${selected.note}</p>
+      ${selected.note && html`<p>${selected.note}</p>`}
       <p class="access-agent-docs">
         <${ExternalLink} href=${selected.docs}>${selected.name} setup in the docs<//>
       </p>
@@ -274,8 +283,8 @@ export function ConnectAgentDialog({ oauth, onClose }) {
       <//>
       <${ConnectStep}
         number="2"
-        title="Enter the code the client shows"
-        caption="The client's authorization window shows a short code once it has registered."
+        title="If the sign-in page shows a code, enter it here"
+        caption="When the agent's sign-in opens in a browser already signed in to this portal, you approve it there and can skip this step. Otherwise the sign-in page shows a short code: enter it here or on your phone."
       >
         <form onSubmit=${lookup} aria-busy=${lookingUp ? "true" : "false"}>
           <label class="form-group">

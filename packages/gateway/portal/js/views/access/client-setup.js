@@ -98,7 +98,9 @@ function harnessCommands(harness, oauth, address, pairingCode) {
  *   gateway serves.
  * - `commands` may be empty for agents configured outside a terminal; with
  *   `alternatives`, they are ways to do the same thing and the user picks one.
- * - `needsPublicAddress` marks agents that reach the gateway from the Internet.
+ * - `needsPublicAddress` marks agents that reach the gateway from the Internet;
+ *   with a plainly private address such an agent is `blocked`, and has no
+ *   commands or instructions, because none of them could work.
  * - `pairs` marks the managed integrations, which pair the machine they run on
  *   as an agent device before signing in.
  *
@@ -108,7 +110,8 @@ function harnessCommands(harness, oauth, address, pairingCode) {
 export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
   const url = shellQuote(oauth.resource);
   const address = harnessAddress ?? harnessAddresses(oauth)[0];
-  return [
+  const privateAddress = isPrivateAddress(oauth.resource);
+  const agents = [
     {
       id: "claude-code",
       name: "Claude Code",
@@ -144,7 +147,7 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
             "codex plugin marketplace add omnesis-dev/Omnesis --sparse .agents/plugins --sparse plugins/omnesis && codex plugin add omnesis@omnesis",
         },
       ],
-      note: "Codex opens the sign-in right away when you add the server. The plugin carries guidance only, so it needs the server either way. Start a new thread afterwards.",
+      note: "Needs Codex 0.147 or later (check with codex --version). Codex opens the sign-in right away when you add the server. The plugin carries guidance only, so it needs the server either way. Start a new thread afterwards.",
       docs: `${DOCS}/connect#codex`,
     },
     {
@@ -205,4 +208,9 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
       docs: `${DOCS}/connect#harness-install`,
     },
   ];
+  return agents.map((agent) =>
+    agent.needsPublicAddress && privateAddress
+      ? { ...agent, blocked: true, commands: [], note: "" }
+      : agent,
+  );
 }

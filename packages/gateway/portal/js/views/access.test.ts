@@ -336,7 +336,12 @@ describe("AccessView", () => {
 
   // The header's own action, by the name a reader sees; the empty state
   // carries a second button of the same name.
+  /** The page's Connect an agent button: in the header, or in the empty state when nothing is listed. */
   function connectButton() {
+    return [...host.querySelectorAll<HTMLButtonElement>(".access-actions button, .access-empty button")]
+      .find((button) => button.textContent?.trim() === "Connect an agent");
+  }
+  function headerConnectButton() {
     return [...host.querySelectorAll<HTMLButtonElement>(".access-actions button")]
       .find((button) => button.textContent?.trim() === "Connect an agent");
   }
@@ -474,6 +479,13 @@ describe("AccessView", () => {
       ]),
     ],
   };
+
+  test("puts Connect an agent in the header once anything is listed", async () => {
+    api.getAccessOverview.mockResolvedValue({ ...levelOverview, oauth: OAUTH });
+    await mount();
+    expect(headerConnectButton()).toBeDefined();
+    expect(host.querySelector(".access-empty")).toBeNull();
+  });
 
   /** The same overview with the research level used by `names` alone, in that order. */
   function researchUsedBy(...names: string[]) {
@@ -1560,6 +1572,21 @@ describe("AccessView", () => {
       oauth: { resource: "https://192.168.1.20:7600/mcp" },
     });
     await mount({ connectOpen: true });
+    const warned = [...host.querySelectorAll("button[data-agent]")]
+      .filter((card) => card.querySelector(".access-agent-warning"))
+      .map((card) => card.getAttribute("data-agent"));
+    expect(warned).toEqual(["chatgpt", "claude-apps", "gemini-cli"]);
+    expect(host.querySelector("button[data-agent='chatgpt'] .access-agent-warning")?.getAttribute("aria-label")).toBe(
+      "Needs a public address",
+    );
+
+    const gemini = host.querySelector<HTMLButtonElement>("button[data-agent='gemini-cli']")!;
+    await act(async () => { gemini.click(); });
+    // A command that cannot reach a private address is not offered at all.
+    expect(host.querySelector(".access-agent-command")).toBeNull();
+    expect(host.querySelector(".access-agent-public")?.textContent).toMatch(/This address is private/u);
+    await act(async () => { gemini.click(); });
+
     const chatgpt = host.querySelector<HTMLButtonElement>("button[data-agent='chatgpt']")!;
     await act(async () => { chatgpt.click(); });
 
@@ -1614,6 +1641,13 @@ describe("AccessView", () => {
       `omnesis connect openclaw --gateway-url https://gateway.example.org:7600 --code K7Q2-M9XD --trust-fingerprint sha256:${"ab".repeat(32)}`,
     );
 
+    const options = [...host.querySelectorAll("#access-agent-address option")].map((option) =>
+      option.textContent?.replace(/\s+/gu, " ").trim(),
+    );
+    expect(options).toEqual([
+      "https://gateway.example.org:7600 — direct to the gateway (recommended)",
+      "https://gateway.example.org — public address through a proxy, for machines outside your network",
+    ]);
     const address = host.querySelector<HTMLSelectElement>("#access-agent-address")!;
     // linkedom's <select>.value is read-only; select the option instead.
     await act(async () => {
@@ -1632,6 +1666,8 @@ describe("AccessView", () => {
     await mount();
     expect(host.textContent).not.toContain("OAuth is not available yet");
     expect(host.querySelector(".access-empty .btn-primary")?.textContent).toBe("Connect an agent");
+    // The empty state carries the only Connect an agent button; the header does not repeat it.
+    expect(headerConnectButton()).toBeUndefined();
     // The MCP resource lives in the dialog, not on the page.
     expect(host.querySelector(".access-mcp-resource")).toBeNull();
     const connect = connectButton()!;
@@ -1640,6 +1676,9 @@ describe("AccessView", () => {
       "https://gateway.example.org/mcp",
     );
     expect(host.querySelectorAll(".access-connect-step")).toHaveLength(2);
+    expect(host.querySelectorAll(".access-connect-step h3")[1]?.textContent).toBe(
+      "If the sign-in page shows a code, enter it here",
+    );
     // Closing a dialog opened from the button leaves the route alone.
     const close = [...host.querySelectorAll("[role='dialog'] button")]
       .find((button) => button.textContent?.trim() === "Close") as HTMLButtonElement;
