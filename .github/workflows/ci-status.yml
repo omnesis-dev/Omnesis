@@ -1,0 +1,39 @@
+name: ci-status
+
+# The README badge's source: the verdict of the newest full-validation run on
+# `main` that actually finished.
+#
+# full-validation keeps at most one run of `main` executing and replaces an
+# older waiting run with the newest push, and GitHub's own badge reports such
+# a cancelled run as failing. This workflow runs after every full-validation
+# run completes and passes or fails exactly as the newest completed,
+# non-cancelled push run on `main` did. It checks out no code and reads the
+# Actions API only.
+on:
+  workflow_run:
+    workflows: [full-validation]
+    types: [completed]
+
+permissions:
+  actions: read
+
+concurrency:
+  group: ci-status
+  cancel-in-progress: false
+
+jobs:
+  main-verdict:
+    name: main verdict
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report the newest finished run on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/full-validation.yml/runs?branch=main&event=push&status=completed&per_page=50" \
+            --jq '[.workflow_runs[] | select(.conclusion != "cancelled" and .conclusion != "skipped" and .conclusion != "stale")] | sort_by(.created_at) | last | "\(.conclusion) \(.head_sha) \(.html_url)"')"
+          read -r conclusion sha url <<<"$latest"
+          echo "Newest finished run on main: ${conclusion} at ${sha} — ${url}"
+          [ "$conclusion" = success ]

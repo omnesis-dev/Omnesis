@@ -1864,7 +1864,8 @@ describe("full-validation workflow topology", () => {
       "${{ github.event_name == 'pull_request' }}",
     );
     expect(workflow.concurrency.group).toContain("github.event.pull_request.number");
-    expect(workflow.concurrency.group).toContain("format('push-{0}', github.run_id)");
+    expect(workflow.concurrency.group).toContain("github.ref");
+    expect(workflow.concurrency.group).not.toContain("run_id");
     expect(workflow.permissions).toEqual({ contents: "read" });
     const called = Object.values(workflow.jobs)
       .map((job) => job.uses)
@@ -1900,6 +1901,22 @@ describe("full-validation workflow topology", () => {
         expect(checkouts, `${filename}:${jobName} checks out pull_request_target code`).toEqual([]);
       }
     }
+  });
+
+  it("badges only finished runs of main", async () => {
+    const { parse } = await import("yaml");
+    const status = parse(readFileSync(join(repoRoot, ".github/workflows/ci-status.yml"), "utf8"));
+    expect(status.on).toEqual({
+      workflow_run: { workflows: ["full-validation"], types: ["completed"] },
+    });
+    expect(status.permissions).toEqual({ actions: "read" });
+    const steps = status.jobs["main-verdict"].steps;
+    expect(steps.some((step) => step.uses?.startsWith("actions/checkout@"))).toBe(false);
+    const run = steps.map((step) => step.run ?? "").join("\n");
+    expect(run).toContain("branch=main&event=push&status=completed");
+    expect(run).toContain('.conclusion != "cancelled"');
+    const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
+    expect(readme).toContain("actions/workflows/ci-status.yml/badge.svg?branch=main");
   });
 
   it("auto-merges only a validated Dependabot patch update, pinned to its head", async () => {
