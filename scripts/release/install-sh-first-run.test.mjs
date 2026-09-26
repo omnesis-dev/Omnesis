@@ -930,6 +930,36 @@ describe("install.sh service registration", () => {
       expect(updates(resumed)).toEqual(["update --yes --force"]);
     });
 
+    test("matches the recorded checkout however its path is spelled", () => {
+      // macOS resolves /var to /private/var, so the record can name the same
+      // checkout by another path; a symlink reproduces that on any system.
+      tagRelease("0.5.5");
+      const first = installFirst("update-spelled", [
+        "--no-tls",
+        "--embedder",
+        EMBED_IDS[1],
+        "--version",
+        "0.5.5",
+      ]);
+      const statePath = join(first.home, ".config", "omnesis", "update-state.json");
+      const state = JSON.parse(readFileSync(statePath, "utf8"));
+      const alias = fixturePath("checkout-update-spelled-alias");
+      symlinkSync(fixturePath("checkout-update-spelled"), alias);
+      checkoutGit("update-spelled", "checkout", "-q", "--detach", "v0.10.0");
+      writeFileSync(
+        statePath,
+        JSON.stringify({
+          ...state,
+          phase: "applying",
+          targetCommit: checkoutGit("update-spelled", "rev-parse", "HEAD"),
+          lastCompletedCommit: state.commit,
+        }),
+      );
+      const resumed = runInstaller("update-spelled", ["--source-dir", alias], env);
+      expect(resumed.status, resumed.output).toBe(0);
+      expect(updates(resumed)).toEqual(["update --yes --force"]);
+    });
+
     test("a record the updater cannot use runs the full install", () => {
       const first = installFirst("update-bad-record");
       const statePath = join(first.home, ".config", "omnesis", "update-state.json");

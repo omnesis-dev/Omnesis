@@ -1257,7 +1257,21 @@ const [path, rootDir, fallback] = process.argv.slice(1);
 let commit = fallback;
 try {
   const state = JSON.parse(fs.readFileSync(path, "utf8"));
-  if (state?.version === 1 && state?.method === "source" && state?.rootDir === rootDir) {
+  // The same checkout can be spelled two ways (macOS resolves /var to
+  // /private/var), so the record matches by the folder it names.
+  const real = (value) => {
+    try {
+      return fs.realpathSync(value);
+    } catch {
+      return value;
+    }
+  };
+  if (
+    state?.version === 1 &&
+    state?.method === "source" &&
+    typeof state?.rootDir === "string" &&
+    real(state.rootDir) === real(rootDir)
+  ) {
     const candidate = state.phase === "complete"
       ? state.commit
       : ["applying", "rolling-back"].includes(state.phase)
