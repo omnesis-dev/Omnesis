@@ -64,8 +64,8 @@ export interface ReadOnlyRetrievalPlaybookInput {
   fetchBatchLimit?: number;
   includeTemporal?: boolean;
   includeCognition?: boolean;
-  /** Generated static skills receive their live catalog from MCP at runtime. */
-  catalogMode?: "authoritative" | "runtime";
+  /** Direct clients discover their permitted schema through list_tables. */
+  catalogMode?: "authoritative" | "runtime" | "discovery";
 }
 
 export function renderReadOnlyRetrievalPlaybook(
@@ -105,7 +105,7 @@ Use free text plus operators when the request implies them:
 
 - \`from:NAME\`, \`to:NAME\`, and \`with:NAME\` narrow people roles.
 - \`after:DATE\` and \`before:DATE\` narrow time. Relative dates are resolved by the search parser against the gateway's clock in UTC, not the user's local day; prefer absolute \`YYYY-MM-DD\` boundaries when a day boundary matters.
-- \`source:TYPE\` narrows a configured source.${renderSourceTypes(sourceTypes, input.catalogMode === "runtime")}
+- \`source:TYPE\` narrows a configured source.${renderSourceTypes(sourceTypes, input.catalogMode === "runtime" || input.catalogMode === "discovery")}
 - \`type:TYPE\` narrows a document type. Common values include ${KNOWN_DOCUMENT_TYPES.map((type) => `\`${type}\``).join(", ")}; providers may advertise additional source-specific values, so do not treat this example list as exhaustive.
 
 If a precise search returns nothing, relax one constraint at a time and try other plausible sources before concluding the corpus is silent.
@@ -172,21 +172,25 @@ Apply the same care to any question about a **current or future** arrangement â€
 
 export function renderAnalyticsRetrievalGuidance(
   catalog: readonly RetrievalCatalogTable[],
-  catalogMode: "authoritative" | "runtime" = "authoritative",
+  catalogMode: "authoritative" | "runtime" | "discovery" = "authoritative",
 ): string {
   const catalogRule =
-    catalogMode === "runtime"
-      ? "- Use only tables and columns supplied by the MCP server runtime instructions. If those instructions provide none, do not invent them."
-      : "- Use only the live tables and columns above. If no tables are listed, do not invent them.";
+    catalogMode === "discovery"
+      ? "- Before run_sql, call list_tables for the live permitted tables and columns. Follow nextOffset with offset=nextOffset until it is null. Use only the returned schema; never guess table or column names."
+      : catalogMode === "runtime"
+        ? "- Use only tables and columns supplied by the MCP server runtime instructions. If those instructions provide none, do not invent them."
+        : "- Use only the live tables and columns above. If no tables are listed, do not invent them.";
   return `
 ## Read-only analytics
 
 Use \`run_sql\` only for aggregates, trends, comparisons, or structured records. It queries the read-only DuckDB analytics databaseâ€”not Omnesis's operational SQLite database.
 
 ${
-  catalogMode === "runtime" && catalog.length === 0
-    ? "_The MCP server supplies the live DuckDB catalog in its runtime instructions._"
-    : renderAnalyticsCatalog(catalog)
+  catalogMode === "discovery"
+    ? "_The live permitted DuckDB schema is available through list_tables, independently of instruction length._"
+    : catalogMode === "runtime" && catalog.length === 0
+      ? "_The MCP server supplies the live DuckDB catalog in its runtime instructions._"
+      : renderAnalyticsCatalog(catalog)
 }
 
 ${catalogRule}

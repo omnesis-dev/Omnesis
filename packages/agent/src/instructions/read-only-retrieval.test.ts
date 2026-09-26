@@ -150,3 +150,35 @@ describe("subject and ownership attribution", () => {
     expect(playbook).toContain("state the ambiguity instead of assigning it to the user");
   });
 });
+
+describe("Direct schema discovery guidance", () => {
+  it("uses the discovery tool rather than inline catalog entries", () => {
+    const playbook = renderReadOnlyRetrievalPlaybook({
+      catalogMode: "discovery",
+      catalog: [
+        {
+          tableName: "omitted_events",
+          columns: [{ name: "id", type: "VARCHAR" }],
+        },
+      ],
+    });
+    expect(playbook).toContain("Before run_sql, call list_tables");
+    expect(playbook).toContain("offset=nextOffset");
+    expect(playbook).not.toContain("omitted_events");
+    expect(playbook).not.toContain("If no tables are listed");
+  });
+
+  it("keeps default built-in guidance independent of the Direct-only tool", () => {
+    const playbook = renderReadOnlyRetrievalPlaybook({
+      catalog: [
+        {
+          tableName: "builtin_events",
+          columns: [{ name: "id", type: "VARCHAR" }],
+        },
+      ],
+    });
+    expect(playbook).toContain("builtin_events");
+    expect(playbook).toContain("Use only the live tables and columns above");
+    expect(playbook).not.toContain("list_tables");
+  });
+});
