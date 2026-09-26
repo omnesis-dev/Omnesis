@@ -161,11 +161,6 @@ export function readsAnySource(rule, sources) {
   return sources.some((source) => isSourceAllowed(rule, sourceId(source)));
 }
 
-/** A boundary that allows every source, including ones connected later. */
-export function allowEverySource(rule) {
-  return { ...rule, sources: { mode: "all", sourceIds: [] } };
-}
-
 /** What is wrong with Answer's release — the one fault no source card owns. */
 export function releaseError(state) {
   const answer = state?.answer;

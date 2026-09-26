@@ -411,11 +411,10 @@ describe("GrantBuilder", () => {
     expect(host.querySelectorAll("[role='alert']")).toHaveLength(1);
   });
 
-  it("offers every source in one click when a boundary reads nothing", async () => {
-    const onChange = vi.fn();
+  it("says so in the card when a boundary reads nothing", async () => {
     await act(async () => render(h(GrantBuilder, {
       value: { direct: { ...newGrantRule("direct"), sources: { mode: "denylist", sourceIds: ["github:work"] } } },
-      onChange,
+      onChange: vi.fn(),
       sources: [{ id: "github:work", name: "GitHub — Work" }],
       policies: [],
     }), host));
@@ -423,12 +422,6 @@ describe("GrantBuilder", () => {
     expect(host.querySelector(".grant-builder-boundary-error")?.textContent).toBe(
       "Direct would not be able to read any source.",
     );
-    const allowEvery = host.querySelector<HTMLButtonElement>(".grant-builder-allow-every")!;
-    expect(allowEvery.textContent).toBe("Allow every source, including new ones");
-    await act(async () => { allowEvery.click(); });
-    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
-      direct: expect.objectContaining({ sources: { mode: "all", sourceIds: [] } }),
-    }));
   });
 
   it("keeps Direct's consequence inside its own card rather than as a second banner", async () => {

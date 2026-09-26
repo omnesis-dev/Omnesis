@@ -7,7 +7,6 @@ import { describe, expect, it } from "vitest";
 import * as grantBuilderState from "./grant-builder-state.js";
 
 const {
-  allowEverySource,
   isSourceAllowed,
   newGrantRule,
   normalizeGrantRules,
@@ -160,8 +159,7 @@ describe("Grant Builder state", () => {
     // Without the known sources the shape alone looks fine; the list is what catches it.
     expect(validateGrantRules({ direct: noneNow })).toBeNull();
     expect(validateGrantRules({ direct: setSourceAllowed(noneNow, "github:work", true) }, known)).toBeNull();
-    expect(validateGrantRules({ direct: allowEverySource(noneNow) }, known)).toBeNull();
-    expect(allowEverySource(noneNow).sources).toEqual({ mode: "all", sourceIds: [] });
+    expect(validateGrantRules({ direct: setAllSourcesAllowed(noneNow, SOURCES, true) }, known)).toBeNull();
   });
 
   it("reports source selections that exceed the HTTP boundary", () => {
