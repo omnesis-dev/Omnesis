@@ -180,12 +180,12 @@ The complete upstream license is at
 
 The website footer bundles the X and Discord SVG marks, the portal's
 Sources page bundles the Android mark (`packages/gateway/portal/img/android-logo.svg`),
-and the portal's Connect an agent dialog bundles the Claude and Google Gemini marks
-(`packages/gateway/portal/img/agents/claude.svg`, `gemini.svg`), all from
+and the portal's Connect an agent dialog bundles the Claude mark
+(`packages/gateway/portal/img/agents/claude.svg`), all from
 [Simple Icons](https://github.com/simple-icons/simple-icons), released under
 [CC0-1.0](https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md).
 
-The Connect an agent dialog also bundles two agent icons under the MIT License.
+The Connect an agent dialog also bundles three agent icons under the MIT License.
 `packages/gateway/portal/img/agents/openclaw.svg` is the
 [OpenClaw](https://github.com/openclaw/openclaw) interface icon
 (`ui/public/favicon.svg`) with its animation removed:
@@ -215,6 +215,30 @@ The Connect an agent dialog also bundles two agent icons under the MIT License.
 (`assets/icon-master.svg`):
 
 > Copyright (c) 2025 Nous Research
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in
+> all copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
+
+`packages/gateway/portal/img/agents/antigravity.svg` is the Antigravity icon
+(`icons/antigravity-color.svg`) from [LobeHub Icons](https://github.com/lobehub/lobe-icons)
+(npm package `@lobehub/icons-static-svg` 1.95.1), with its sizing attributes removed:
+
+> Copyright (c) 2023 LobeHub
 >
 > Permission is hereby granted, free of charge, to any person obtaining a copy
 > of this software and associated documentation files (the "Software"), to deal

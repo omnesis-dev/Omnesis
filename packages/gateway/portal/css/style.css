@@ -865,9 +865,12 @@ a:hover { text-decoration: underline; }
 .access-agent-public.is-warning strong { color: var(--warning); }
 .access-agent-public p,
 .access-agent-pairing p,
+.access-agent-headless p,
 .access-agent-docs { margin: 0; font-size: 12px; line-height: 1.5; }
 .access-agent-public strong { color: var(--text-primary); }
 .access-agent-pairing { display: grid; gap: 8px; }
+.access-agent-headless { display: grid; gap: 8px; }
+.access-agent-headless strong { color: var(--text-primary); }
 .access-agent-pairing small { color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
 .access-agent-pair-action { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .access-agent-pair-action span { color: var(--text-secondary); font-size: 12px; }

@@ -10,6 +10,7 @@ import {
   agentSetups as untypedAgentSetups,
   harnessAddresses as untypedHarnessAddresses,
   isPrivateAddress as untypedIsPrivateAddress,
+  usesNonStandardPort as untypedUsesNonStandardPort,
   // @ts-expect-error — the portal is plain JS, no .d.ts ships alongside.
 } from "./client-setup.js";
 
@@ -22,14 +23,17 @@ interface Address {
   gatewayUrl: string;
   servedByGateway: boolean;
 }
+type NotePart = string | { code: string } | { href: string; text: string };
 interface AgentSetup {
   id: string;
   name: string;
   icon: { src?: string; providerId?: string };
   commands: Array<{ label: string; value: string }>;
-  note: string;
+  note: NotePart[];
+  headless?: { note: NotePart[]; command?: string };
   docs: string;
   needsPublicAddress?: string;
+  standardPortOnly?: string;
   pairs?: boolean;
   alternatives?: boolean;
   blocked?: boolean;
@@ -40,6 +44,9 @@ const agentSetups = (
 ): AgentSetup[] => untypedAgentSetups(oauth, pairing);
 const harnessAddresses = (oauth: OAuth): Address[] => untypedHarnessAddresses(oauth);
 const isPrivateAddress = (resource: string): boolean => untypedIsPrivateAddress(resource);
+const usesNonStandardPort = (resource: string): boolean => untypedUsesNonStandardPort(resource);
+const noteText = (parts: NotePart[]) =>
+  parts.map((part) => (typeof part === "string" ? part : "code" in part ? part.code : part.text)).join("");
 
 const RESOURCE = "https://gateway.example.org/mcp";
 const FINGERPRINT = "ab".repeat(32);
@@ -61,7 +68,7 @@ describe("agentSetups", () => {
       "codex",
       "chatgpt",
       "claude-apps",
-      "gemini-cli",
+      "antigravity",
       "openclaw",
       "hermes",
     ]);
@@ -80,9 +87,13 @@ describe("agentSetups", () => {
 
   test("builds the terminal commands each CLI documents", () => {
     expect(commands("claude-code")).toEqual([
-      `claude mcp add --transport http --scope user omnesis ${RESOURCE}`,
       "claude plugin marketplace add omnesis-dev/Omnesis --sparse .claude-plugin plugins/omnesis-claude" +
         ` && claude plugin install omnesis@omnesis --config omnesis_mcp_url=${RESOURCE}`,
+      `claude mcp add --transport http --scope user omnesis ${RESOURCE}`,
+    ]);
+    expect(agent("claude-code").commands.map((command) => command.label)).toEqual([
+      "Install the plugin (recommended)",
+      "Only add the server",
     ]);
     expect(commands("codex")).toEqual([
       `codex mcp add omnesis --url ${RESOURCE} --oauth-resource ${RESOURCE}`,
@@ -90,16 +101,14 @@ describe("agentSetups", () => {
         " && codex plugin add omnesis@omnesis",
     ]);
     expect(agent("codex").alternatives).toBeUndefined();
-    expect(commands("gemini-cli")).toEqual([
-      `gemini mcp add --scope user --transport http omnesis ${RESOURCE}`,
-    ]);
+    expect(commands("antigravity")).toEqual([`agy mcp add omnesis ${RESOURCE}`]);
   });
 
   test("marks the agents that need a public address", () => {
     const needsPublic = agentSetups({ resource: RESOURCE })
       .filter((entry) => entry.needsPublicAddress)
       .map((entry) => entry.id);
-    expect(needsPublic).toEqual(["chatgpt", "claude-apps", "gemini-cli"]);
+    expect(needsPublic).toEqual(["chatgpt", "claude-apps"]);
     expect(agent("chatgpt").commands).toEqual([]);
     expect(agent("claude-apps").commands).toEqual([]);
   });
@@ -136,23 +145,44 @@ describe("agentSetups", () => {
 
   test("offers nothing that could fail when a public-address agent meets a private address", () => {
     const privateOauth = { resource: "https://192.168.1.20:7600/mcp" };
-    for (const id of ["chatgpt", "claude-apps", "gemini-cli"]) {
-      expect(agent(id, privateOauth)).toMatchObject({ blocked: true, commands: [], note: "" });
+    for (const id of ["chatgpt", "claude-apps"]) {
+      expect(agent(id, privateOauth)).toMatchObject({ blocked: true, commands: [], note: [] });
       expect(agent(id).blocked).toBeUndefined();
     }
-    for (const id of ["claude-code", "codex", "openclaw", "hermes"]) {
+    for (const id of ["claude-code", "codex", "antigravity", "openclaw", "hermes"]) {
       expect(agent(id, privateOauth).blocked).toBeUndefined();
       expect(agent(id, privateOauth).commands.length).toBeGreaterThan(0);
     }
   });
 
+  test("blocks ChatGPT on an address off port 443, which it never dials", () => {
+    const funnelPort = { resource: "https://gateway.example.org:10000/mcp" };
+    expect(agent("chatgpt", funnelPort)).toMatchObject({ blocked: true, commands: [], note: [] });
+    expect(agent("claude-apps", funnelPort).blocked).toBeUndefined();
+    expect(agent("chatgpt", { resource: "https://gateway.example.org:443/mcp" }).blocked).toBeUndefined();
+  });
+
   test("names the Codex version that completes the sign-in", () => {
-    expect(agent("codex").note).toMatch(/Codex 0\.147 or later/u);
+    expect(noteText(agent("codex").note)).toMatch(/Codex 0\.147 or later/u);
+  });
+
+  test("links developer mode from the ChatGPT note", () => {
+    expect(agent("chatgpt").note).toContainEqual({
+      href: "https://developers.openai.com/api/docs/guides/developer-mode",
+      text: "developer mode",
+    });
+  });
+
+  test("tells the terminal agents how to sign in without a browser", () => {
+    expect(noteText(agent("claude-code").headless!.note)).toMatch(/paste the address/u);
+    expect(agent("codex").headless).toMatchObject({ command: "codex mcp login omnesis --no-browser" });
+    expect(noteText(agent("antigravity").note)).toMatch(/paste the code/u);
+    expect(agent("chatgpt").headless).toBeUndefined();
   });
 
   test("quotes a value that a shell would otherwise split or expand", () => {
     const odd = "https://gateway.example.org/mcp?x=1&y=$HOME it's";
-    expect(commands("claude-code", { resource: odd })[0]).toBe(
+    expect(commands("claude-code", { resource: odd })[1]).toBe(
       `claude mcp add --transport http --scope user omnesis 'https://gateway.example.org/mcp?x=1&y=$HOME it'\\''s'`,
     );
   });
@@ -186,6 +216,18 @@ describe("harnessAddresses", () => {
     expect(harnessAddresses({ resource: RESOURCE })).toEqual([
       { gatewayUrl: "https://gateway.example.org", servedByGateway: false },
     ]);
+  });
+});
+
+describe("usesNonStandardPort", () => {
+  test.each([
+    ["https://gateway.example.org/mcp", false],
+    ["https://gateway.example.org:443/mcp", false],
+    ["https://gateway.example.org:10000/mcp", true],
+    ["https://gateway.example.org:8443/mcp", true],
+    ["not a url", false],
+  ])("%s → %s", (resource, expected) => {
+    expect(usesNonStandardPort(resource)).toBe(expected);
   });
 });
 

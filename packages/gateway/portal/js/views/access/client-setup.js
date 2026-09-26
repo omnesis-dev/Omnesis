@@ -12,6 +12,7 @@ const SERVER_NAME = "omnesis";
 
 /** The gateway does not serve the docs; these are the published pages. */
 const DOCS = "https://omnesis.dev/docs";
+const DEVELOPER_MODE_GUIDE = "https://developers.openai.com/api/docs/guides/developer-mode";
 export const PUBLISH_DOCS = {
   funnel: `${DOCS}/connect#tailscale-funnel`,
   domain: `${DOCS}/setup#public-domain`,
@@ -57,6 +58,15 @@ export function isPrivateAddress(resource) {
   return false;
 }
 
+/** Whether an https address names a port other than 443. */
+export function usesNonStandardPort(resource) {
+  try {
+    return new URL(resource).port !== "";
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The addresses an agent machine can pair against: every MCP resource the
  * gateway accepts, without its `/mcp`. Ones the gateway serves itself come
@@ -98,9 +108,14 @@ function harnessCommands(harness, oauth, address, pairingCode) {
  *   gateway serves.
  * - `commands` may be empty for agents configured outside a terminal; with
  *   `alternatives`, they are ways to do the same thing and the user picks one.
- * - `needsPublicAddress` marks agents that reach the gateway from the Internet;
- *   with a plainly private address such an agent is `blocked`, and has no
- *   commands or instructions, because none of them could work.
+ * - `note` is a list of text parts: a string, `{ code }` for a command name,
+ *   or `{ href, text }` for a link. `headless`, when present, says how to
+ *   finish the sign-in on a machine without a browser, with an optional
+ *   command to run there.
+ * - `needsPublicAddress` marks agents that reach the gateway from the Internet,
+ *   and `standardPortOnly` those that only dial port 443. With an address such
+ *   an agent cannot reach, it is `blocked` and has no commands or
+ *   instructions, because none of them could work.
  * - `pairs` marks the managed integrations, which pair the machine they run on
  *   as an agent device before signing in.
  *
@@ -115,26 +130,33 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
     {
       id: "claude-code",
       name: "Claude Code",
-      subtitle: "Terminal",
       icon: { src: "/portal/img/agents/claude.svg" },
       commands: [
         {
-          label: "Add the server",
-          value: `claude mcp add --transport http --scope user ${SERVER_NAME} ${url}`,
-        },
-        {
-          label: "Install the plugin",
+          label: "Install the plugin (recommended)",
           value: `claude plugin marketplace add omnesis-dev/Omnesis --sparse .claude-plugin plugins/omnesis-claude && claude plugin install omnesis@omnesis --config omnesis_mcp_url=${url}`,
         },
+        {
+          label: "Only add the server",
+          value: `claude mcp add --transport http --scope user ${SERVER_NAME} ${url}`,
+        },
       ],
-      note: "The plugin adds the same server plus skills that teach Claude to use Omnesis; use one or the other. Then run /mcp, select omnesis and choose Authenticate.",
+      note: [
+        "Then run ",
+        { code: "/mcp" },
+        " in Claude Code, select omnesis and choose Authenticate. The plugin adds the same server plus skills that teach Claude to use Omnesis.",
+      ],
+      headless: {
+        note: [
+          "Claude Code prints a sign-in link. Open it on a device with a browser and approve, then paste the address that browser lands on into Claude Code, even if the page does not load.",
+        ],
+      },
       alternatives: true,
       docs: `${DOCS}/connect#claude-code`,
     },
     {
       id: "codex",
       name: "Codex",
-      subtitle: "Terminal",
       icon: { providerId: "openai" },
       commands: [
         {
@@ -147,51 +169,64 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
             "codex plugin marketplace add omnesis-dev/Omnesis --sparse .agents/plugins --sparse plugins/omnesis && codex plugin add omnesis@omnesis",
         },
       ],
-      note: "Needs Codex 0.147 or later: check with codex --version, and run codex update if it is older. Codex opens the sign-in right away when you add the server. The plugin carries guidance only, so it needs the server either way. Start a new thread afterwards.",
+      note: [
+        "Needs Codex 0.147 or later: check with ",
+        { code: "codex --version" },
+        " and run ",
+        { code: "codex update" },
+        " if it is older. Codex opens the sign-in as soon as you add the server. The plugin carries guidance only, so it needs the server either way. Start a new thread afterwards.",
+      ],
+      headless: {
+        note: [
+          "Adding the server starts a sign-in that cannot finish here. Once Codex says the server is added, press Ctrl+C and sign in with the command below: open the link it prints on a device with a browser, approve, then paste the address that browser lands on, even if the page does not load.",
+        ],
+        command: `codex mcp login ${SERVER_NAME} --no-browser`,
+      },
       docs: `${DOCS}/connect#codex`,
     },
     {
       id: "chatgpt",
       name: "ChatGPT",
-      subtitle: "Developer mode",
       icon: { providerId: "openai" },
       commands: [],
-      note: "In ChatGPT on the web, turn on developer mode and create an app for a remote MCP server with the address above and OAuth authentication.",
+      note: [
+        "In ChatGPT on the web, turn on ",
+        { href: DEVELOPER_MODE_GUIDE, text: "developer mode" },
+        " and create an app for a remote MCP server with the address above and OAuth authentication.",
+      ],
       needsPublicAddress: "ChatGPT connects from OpenAI's servers",
+      standardPortOnly: "ChatGPT connects only on the standard HTTPS port, 443",
       docs: `${DOCS}/connect#chatgpt`,
     },
     {
       id: "claude-apps",
       name: "Claude apps",
-      subtitle: "Connector",
       icon: { src: "/portal/img/agents/claude.svg" },
       commands: [],
-      note: "On claude.ai or in the Claude desktop app, open Customize → Connectors and add a custom connector with the address above.",
+      note: [
+        "On claude.ai or in the Claude desktop app, open Customize → Connectors and add a custom connector with the address above.",
+      ],
       needsPublicAddress: "Claude connects from Anthropic's servers",
       docs: `${DOCS}/connect#claude-desktop`,
     },
     {
-      id: "gemini-cli",
-      name: "Gemini CLI",
-      subtitle: "Terminal",
-      icon: { src: "/portal/img/agents/gemini.svg" },
-      commands: [
-        {
-          label: "Add the server",
-          value: `gemini mcp add --scope user --transport http ${SERVER_NAME} ${url}`,
-        },
+      id: "antigravity",
+      name: "Antigravity",
+      icon: { src: "/portal/img/agents/antigravity.svg" },
+      commands: [{ label: "Add the server", value: `agy mcp add ${SERVER_NAME} ${url}` }],
+      note: [
+        "Then run ",
+        { code: "/mcp" },
+        " in Antigravity CLI, select omnesis and choose Authenticate. Approve in the browser that opens, or open the link it prints on any device, then paste the code the sign-in page shows back into Antigravity.",
       ],
-      note: "Then run /mcp auth omnesis inside Gemini CLI.",
-      needsPublicAddress: "Gemini CLI signs in only to a public address",
-      docs: `${DOCS}/connect#other-clients`,
+      docs: `${DOCS}/connect#antigravity`,
     },
     {
       id: "openclaw",
       name: "OpenClaw",
-      subtitle: "Integration",
       icon: { src: "/portal/img/agents/openclaw.svg" },
       commands: harnessCommands("openclaw", oauth, address, pairingCode),
-      note: "Run it on the machine that runs OpenClaw, then restart OpenClaw.",
+      note: ["Run it on the machine that runs OpenClaw, then restart OpenClaw."],
       alternatives: true,
       pairs: true,
       docs: `${DOCS}/connect#harness-install`,
@@ -199,18 +234,18 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
     {
       id: "hermes",
       name: "Hermes",
-      subtitle: "Integration",
       icon: { src: "/portal/img/agents/hermes.png" },
       commands: harnessCommands("hermes", oauth, address, pairingCode),
-      note: "Run it on the machine that runs Hermes, then restart Hermes.",
+      note: ["Run it on the machine that runs Hermes, then restart Hermes."],
       alternatives: true,
       pairs: true,
       docs: `${DOCS}/connect#harness-install`,
     },
   ];
+  const nonStandardPort = usesNonStandardPort(oauth.resource);
   return agents.map((agent) =>
-    agent.needsPublicAddress && privateAddress
-      ? { ...agent, blocked: true, commands: [], note: "" }
+    (agent.needsPublicAddress && privateAddress) || (agent.standardPortOnly && nonStandardPort)
+      ? { ...agent, blocked: true, commands: [], note: [], headless: undefined }
       : agent,
   );
 }

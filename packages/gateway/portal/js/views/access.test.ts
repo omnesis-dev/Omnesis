@@ -1540,7 +1540,7 @@ describe("AccessView", () => {
       "codex",
       "chatgpt",
       "claude-apps",
-      "gemini-cli",
+      "antigravity",
       "openclaw",
       "hermes",
     ]);
@@ -1551,16 +1551,20 @@ describe("AccessView", () => {
     let steps = picker.querySelector(".access-agent-steps");
     expect(steps?.getAttribute("data-agent")).toBe("claude-code");
     expect(cards[0]!.getAttribute("aria-pressed")).toBe("true");
-    expect(steps?.querySelector("code")?.textContent).toBe(
-      "claude mcp add --transport http --scope user omnesis https://gateway.example.org/mcp",
+    expect(steps?.querySelector("[role='tab'][aria-selected='true']")?.textContent?.trim()).toBe(
+      "Install the plugin (recommended)",
     );
+    expect(steps?.querySelector(".access-mcp-resource code")?.textContent).toMatch(/^claude plugin marketplace add /u);
+    expect(steps?.querySelector(".access-agent-headless")?.textContent).toMatch(/No browser on this machine\?/u);
 
     await act(async () => { cards[2]!.click(); });
     steps = picker.querySelector(".access-agent-steps");
     expect(steps?.getAttribute("data-agent")).toBe("chatgpt");
     expect(cards[0]!.getAttribute("aria-pressed")).toBe("false");
-    expect(steps?.querySelector("code")).toBeNull();
+    expect(steps?.querySelector(".access-agent-command")).toBeNull();
     expect(steps?.textContent).toMatch(/address above/u);
+    expect(steps?.querySelector("p a[href='https://developers.openai.com/api/docs/guides/developer-mode']")?.textContent)
+      .toBe("developer mode");
 
     await act(async () => { cards[2]!.click(); });
     expect(picker.querySelector(".access-agent-steps")).toBeNull();
@@ -1575,17 +1579,17 @@ describe("AccessView", () => {
     const warned = [...host.querySelectorAll("button[data-agent]")]
       .filter((card) => card.querySelector(".access-agent-warning"))
       .map((card) => card.getAttribute("data-agent"));
-    expect(warned).toEqual(["chatgpt", "claude-apps", "gemini-cli"]);
+    expect(warned).toEqual(["chatgpt", "claude-apps"]);
     expect(host.querySelector("button[data-agent='chatgpt'] .access-agent-warning")?.getAttribute("aria-label")).toBe(
-      "Needs a public address",
+      "Cannot reach this address",
     );
 
-    const gemini = host.querySelector<HTMLButtonElement>("button[data-agent='gemini-cli']")!;
-    await act(async () => { gemini.click(); });
-    // A command that cannot reach a private address is not offered at all.
-    expect(host.querySelector(".access-agent-command")).toBeNull();
+    const claudeApps = host.querySelector<HTMLButtonElement>("button[data-agent='claude-apps']")!;
+    await act(async () => { claudeApps.click(); });
+    // Instructions that cannot reach a private address are not offered at all.
+    expect(host.querySelector(".access-agent-steps")?.textContent).not.toMatch(/Customize/u);
     expect(host.querySelector(".access-agent-public")?.textContent).toMatch(/This address is private/u);
-    await act(async () => { gemini.click(); });
+    await act(async () => { claudeApps.click(); });
 
     const chatgpt = host.querySelector<HTMLButtonElement>("button[data-agent='chatgpt']")!;
     await act(async () => { chatgpt.click(); });
@@ -1601,6 +1605,27 @@ describe("AccessView", () => {
     expect(host.querySelector(".access-agent-docs a")?.getAttribute("href")).toBe(
       "https://omnesis.dev/docs/connect#chatgpt",
     );
+  });
+
+  test("warns ChatGPT off an address that is not on port 443", async () => {
+    api.getAccessOverview.mockResolvedValue({
+      principals: [],
+      oauth: { resource: "https://gateway.example.org:10000/mcp" },
+    });
+    await mount({ connectOpen: true });
+    const warned = [...host.querySelectorAll("button[data-agent]")]
+      .filter((card) => card.querySelector(".access-agent-warning"))
+      .map((card) => card.getAttribute("data-agent"));
+    expect(warned).toEqual(["chatgpt"]);
+    expect(host.querySelector("button[data-agent] .backend-opt-sub")).toBeNull();
+
+    const chatgpt = host.querySelector<HTMLButtonElement>("button[data-agent='chatgpt']")!;
+    await act(async () => { chatgpt.click(); });
+    const notice = host.querySelector(".access-agent-public")!;
+    expect(notice.classList.contains("is-warning")).toBe(true);
+    expect(notice.textContent).toMatch(/This address uses port 10000\./u);
+    expect(notice.textContent).toMatch(/only on the standard HTTPS port, 443/u);
+    expect(host.querySelector(".access-agent-steps")?.textContent).not.toMatch(/developer mode/u);
   });
 
   test("mints an agent pairing code into the integration's commands", async () => {

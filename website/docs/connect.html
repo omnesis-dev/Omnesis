@@ -516,19 +516,16 @@
               <td>ChatGPT</td>
               <td>OpenAI's servers</td>
               <td>
-                a public HTTPS address, such as a
+                a public HTTPS address on port 443, such as a
                 <a href="#tailscale-funnel">Tailscale Funnel</a> name
               </td>
               <td><a href="#chatgpt">ChatGPT</a></td>
             </tr>
             <tr>
-              <td>Gemini CLI</td>
+              <td>Antigravity CLI</td>
               <td>your machine</td>
-              <td>
-                a public HTTPS address, such as a
-                <a href="#tailscale-funnel">Tailscale Funnel</a> name
-              </td>
-              <td><a href="#other-clients">Gemini CLI and other clients</a></td>
+              <td>a configured HTTPS address its machine can reach</td>
+              <td><a href="#antigravity">Antigravity</a></td>
             </tr>
             <tr>
               <td>OpenClaw, Hermes</td>
@@ -589,7 +586,7 @@
           them to the Tailscale daemon on the gateway machine, which terminates TLS and forwards
           each request to the gateway on <code>localhost</code>. Funnel listens only on ports 443,
           8443 and 10000, so the public address has no <code>:7600</code>; your own devices keep
-          dialling port 7600 as before.
+          dialling port 7600 as before. Publish on 443: ChatGPT connects only on that port.
         </p>
         <ol>
           <li>
@@ -718,32 +715,15 @@
 
         <h3 id="claude-code">Claude Code</h3>
         <p>
-          Choose one setup path: add the server by hand, or install the Claude plugin. Do not do
-          both, because the plugin declares the same connection.
-        </p>
-        <div class="term">
-          <div class="term-bar"><span></span><span></span><span></span></div>
-          <div class="term-body">
-            <p class="t-dim"># by hand</p>
-            <p>
-              <span class="t-prompt">❯</span>
-              <span class="t-cmd"
-                >claude mcp add --transport http --scope user omnesis
-                https://gateway.example.org/mcp</span
-              >
-            </p>
-          </div>
-        </div>
-        <p>
-          Then open Claude Code, run <code>/mcp</code>, select Omnesis, and complete the sign-in in
-          your browser.
+          Choose one setup path: install the Claude plugin, which is recommended, or only add the
+          server. Do not do both, because the plugin declares the same connection.
         </p>
         <p>
-          The Claude plugin declares the same HTTP connection and adds skills that teach Claude how
-          to use Answer, Direct, and Notes and how to set up or repair the connection. It asks for
-          your gateway's MCP URL (the HTTPS URL ending in <code>/mcp</code>), and it neither
-          launches an Omnesis process nor stores a gateway credential. <code>--sparse</code> checks
-          out only the plugin instead of the whole repository:
+          The Claude plugin declares the HTTP connection and adds skills that teach Claude how to
+          use Answer, Direct, and Notes and how to set up or repair the connection. It asks for your
+          gateway's MCP URL (the HTTPS URL ending in <code>/mcp</code>), and it neither launches an
+          Omnesis process nor stores a gateway credential. <code>--sparse</code> checks out only the
+          plugin instead of the whole repository:
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -764,12 +744,30 @@
             </p>
           </div>
         </div>
+        <p>To only add the server, without the skills:</p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >claude mcp add --transport http --scope user omnesis
+                https://gateway.example.org/mcp</span
+              >
+            </p>
+          </div>
+        </div>
         <p>
-          Installing from inside Claude Code asks for the URL instead, and
-          <code>/plugin configure omnesis@omnesis</code> changes it later; then sign in from
-          <code>/mcp</code>. Claude Code does not update plugins from other marketplaces on its own:
-          turn on auto-update for the <code>omnesis</code> marketplace under <code>/plugin</code>,
-          or run <code>claude plugin marketplace update omnesis</code> and
+          Either way, open Claude Code, run <code>/mcp</code>, select Omnesis, and complete the
+          sign-in in your browser. On a machine without a browser, see
+          <a href="#no-browser">Sign in without a browser</a>.
+        </p>
+        <p>
+          Installing the plugin from inside Claude Code asks for the URL instead, and
+          <code>/plugin configure omnesis@omnesis</code> changes it later. Claude Code does not
+          update plugins from other marketplaces on its own: turn on auto-update for the
+          <code>omnesis</code> marketplace under <code>/plugin</code>, or run
+          <code>claude plugin marketplace update omnesis</code> and
           <code>claude plugin update omnesis@omnesis</code> after updating Omnesis. Claude Code in
           VS Code and in the Claude desktop app cannot ask for the plugin's URL; set it from a
           terminal as above, or add the server by hand.
@@ -796,12 +794,17 @@
         <p>
           ChatGPT adds a custom MCP server as a developer-mode app. Developer mode is a feature of
           ChatGPT on the web, and whether your account can use it depends on your plan and, for a
-          workspace, its administrators. Publish the gateway first, with
+          workspace, its administrators. ChatGPT connects from OpenAI's servers and only on the
+          standard HTTPS port, 443, so publish the gateway there first, with
           <a href="#tailscale-funnel">Tailscale Funnel</a> or a
           <a href="/docs/setup#public-domain">domain of your own</a>, then:
         </p>
         <ol>
-          <li>In ChatGPT on the web, turn on developer mode in the settings.</li>
+          <li>
+            In ChatGPT on the web, turn on
+            <a href="https://developers.openai.com/api/docs/guides/developer-mode">developer mode</a
+            >.
+          </li>
           <li>
             Create an app for a remote MCP server. Enter the MCP URL shown under
             <strong>Settings → Access → Connect an agent</strong> in the portal, the public HTTPS
@@ -814,12 +817,8 @@
           <li>Enable the app in a new conversation.</li>
         </ol>
         <p>
-          ChatGPT's menu names change; OpenAI's
-          <a href="https://developers.openai.com/api/docs/guides/developer-mode"
-            >developer mode guide</a
-          >
-          has the current path. Keep one sign-in attempt open at a time; if several authorization
-          windows appear, close them all and start once more.
+          Keep one sign-in attempt open at a time; if several authorization windows appear, close
+          them all and start once more.
         </p>
 
         <h3 id="codex">Codex</h3>
@@ -853,8 +852,9 @@
           <code>codex --version</code> and, if it is older, run <code>codex update</code>, which
           updates Codex however it was installed. <code>codex mcp add</code> finds the gateway's
           sign-in and opens it straight away; approve the connection in Omnesis, then start a new
-          conversation. To sign in again later, run <code>codex mcp login omnesis</code>. Refresh
-          the guidance after updating Omnesis with
+          conversation. On a machine without a browser, see
+          <a href="#no-browser">Sign in without a browser</a>. To sign in again later, run
+          <code>codex mcp login omnesis</code>. Refresh the guidance after updating Omnesis with
           <code>codex plugin marketplace upgrade omnesis</code>.
         </p>
         <div class="callout">
@@ -863,25 +863,52 @@
           sign-in. The Claude plugin declares the connection itself.
         </div>
 
-        <h3 id="other-clients">Gemini CLI and other clients</h3>
+        <h3 id="no-browser">Sign in without a browser</h3>
         <p>
-          Gemini CLI runs on your machine and signs in to <code>/mcp</code> itself, but only to a
-          public HTTPS address or a loopback address on the same machine, so give it the
-          <a href="#tailscale-funnel">Tailscale Funnel</a> address or your own domain rather than a
-          tailnet name. Then run <code>/mcp auth omnesis</code> inside Gemini CLI to sign in.
+          On a machine with no browser, such as a server you reach over SSH, finish the sign-in from
+          another device. The agent prints a sign-in link; open it on a device with a browser and
+          approve the connection there. The browser then lands on a local address such as
+          <code>http://localhost:53682/callback?code=…</code>, which fails to load because the agent
+          is on the other machine. Copy that address from the address bar and paste it where the
+          agent asks for it.
         </p>
+        <ul>
+          <li>
+            <strong>Claude Code</strong> asks for the address by itself when it cannot open a
+            browser.
+          </li>
+          <li>
+            <strong>Antigravity</strong> always asks for a code instead, which the sign-in page
+            shows; see <a href="#antigravity">Antigravity</a>.
+          </li>
+          <li>
+            <strong>Codex</strong> asks for it only when signing in with <code>--no-browser</code>.
+            <code>codex mcp add</code> starts a sign-in it cannot finish there: once it says the
+            server is added, press Ctrl+C, then run
+            <code>codex mcp login omnesis --no-browser</code>.
+          </li>
+        </ul>
+
+        <h3 id="antigravity">Antigravity</h3>
+        <p>Add the server to Antigravity CLI:</p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
           <div class="term-body">
             <p>
               <span class="t-prompt">❯</span>
-              <span class="t-cmd"
-                >gemini mcp add --scope user --transport http omnesis
-                https://gateway.example.org/mcp</span
-              >
+              <span class="t-cmd">agy mcp add omnesis https://gateway.example.org/mcp</span>
             </p>
           </div>
         </div>
+        <p>
+          Then run <code>/mcp</code> inside Antigravity CLI, select <code>omnesis</code> and choose
+          <strong>Authenticate</strong>. Antigravity opens the sign-in in your browser and also
+          prints its link, so it works the same on a machine without a browser: open the link on any
+          device, <a href="#approving-a-connection">approve the connection</a> in Omnesis, and paste
+          the code the final page shows back into Antigravity.
+        </p>
+
+        <h3 id="other-clients">Other clients</h3>
         <p>
           Any other MCP client that supports remote HTTP servers with OAuth connects the same way:
           give it the MCP URL and approve the sign-in in Omnesis. The portal's

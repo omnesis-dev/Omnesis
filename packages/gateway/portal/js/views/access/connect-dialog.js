@@ -18,7 +18,13 @@ import { ProviderIcon } from "../../components/provider-icon.js";
 import { Modal } from "../../components/modal.js";
 import { navigate } from "../../lib/router.js";
 import { authorizationStatusNotice } from "./authorization.js";
-import { PUBLISH_DOCS, agentSetups, harnessAddresses, isPrivateAddress } from "./client-setup.js";
+import {
+  PUBLISH_DOCS,
+  agentSetups,
+  harnessAddresses,
+  isPrivateAddress,
+  usesNonStandardPort,
+} from "./client-setup.js";
 import { errorMessage } from "./shared.js";
 
 /**
@@ -49,17 +55,32 @@ function ExternalLink({ href, children }) {
   return html`<a href=${href} target="_blank" rel="noopener noreferrer">${children}</a>`;
 }
 
+/** A card's note: text parts, command names in code, and links. */
+function NoteText({ parts }) {
+  return parts.map((part) =>
+    typeof part === "string"
+      ? part
+      : part.href
+        ? html`<${ExternalLink} href=${part.href}>${part.text}<//>`
+        : html`<code>${part.code}</code>`,
+  );
+}
+
 /**
- * For an agent that reaches the gateway from the Internet: whether the
- * address is plainly private, and where the docs explain publishing it.
+ * For an agent that reaches the gateway from the Internet: whether it can
+ * reach this address at all, and where the docs explain publishing it.
  */
 function PublicAddressNotice({ agent, resource }) {
   const privateAddress = isPrivateAddress(resource);
-  return html`<div class=${`access-agent-public ${privateAddress ? "is-warning" : ""}`} role=${privateAddress ? "alert" : null}>
+  const wrongPort = !privateAddress && agent.standardPortOnly && usesNonStandardPort(resource);
+  const warning = privateAddress || wrongPort;
+  return html`<div class=${`access-agent-public ${warning ? "is-warning" : ""}`} role=${warning ? "alert" : null}>
     <p>
       ${privateAddress
         ? html`<strong>This address is private.</strong> ${agent.needsPublicAddress}, so it cannot reach this gateway until you publish it.`
-        : html`${agent.needsPublicAddress}, so the address above must be reachable from the Internet.`}
+        : wrongPort
+          ? html`<strong>This address uses port ${new URL(resource).port}.</strong> ${agent.standardPortOnly}, so it cannot reach this gateway there.`
+          : html`${agent.needsPublicAddress}, so the address above must be reachable from the Internet${agent.standardPortOnly ? " on port 443" : ""}.`}
     </p>
     <p>
       <${ExternalLink} href=${PUBLISH_DOCS.funnel}>Publish the gateway with Tailscale Funnel<//>${" or "}<${ExternalLink} href=${PUBLISH_DOCS.domain}>use a domain of your own<//>.
@@ -163,9 +184,8 @@ function AgentSetupPicker({ oauth }) {
         >
           <span class="backend-opt-icon"><${AgentIcon} icon=${agent.icon} /></span>
           ${agent.blocked &&
-          html`<span class="access-agent-warning" role="img" aria-label="Needs a public address" title="Needs a public address">${WARNING_GLYPH}</span>`}
+          html`<span class="access-agent-warning" role="img" aria-label="Cannot reach this address" title="Cannot reach this address">${WARNING_GLYPH}</span>`}
           <span class="backend-opt-title">${agent.name}</span>
-          <span class="backend-opt-sub">${agent.subtitle}</span>
         </button>`,
       )}
     </div>
@@ -201,7 +221,13 @@ function AgentSetupPicker({ oauth }) {
         : selected.commands.map(
             (command) => html`<${AgentCommand} key=${command.label} agent=${selected} command=${command} labelled />`,
           )}
-      ${selected.note && html`<p>${selected.note}</p>`}
+      ${selected.note.length > 0 && html`<p><${NoteText} parts=${selected.note} /></p>`}
+      ${selected.headless &&
+      html`<div class="access-agent-headless">
+        <p><strong>No browser on this machine?</strong> <${NoteText} parts=${selected.headless.note} /></p>
+        ${selected.headless.command &&
+        html`<${AgentCommand} agent=${selected} command=${{ label: "Sign in without a browser", value: selected.headless.command }} />`}
+      </div>`}
       <p class="access-agent-docs">
         <${ExternalLink} href=${selected.docs}>${selected.name} setup in the docs<//>
       </p>
