@@ -670,6 +670,7 @@ export function validateUniverse(universe: Universe): UniverseIssue[] {
       // the source fixtures (substring match). This catches the "agent
       // scenario references a doc that no source produces" class of bug.
       const allFixtureText = collectFixtureText(dir, manifest);
+      const fixtureValues = collectFixtureValues(dir, manifest);
       for (const file of jsonl) {
         const name = file.slice(0, -".jsonl".length);
 
@@ -748,7 +749,11 @@ export function validateUniverse(universe: Universe): UniverseIssue[] {
           const ids = placeholders["docExternalIds"];
           if (Array.isArray(ids)) {
             for (const id of ids) {
-              if (typeof id === "string" && id.length > 0 && !fixtureMentions(allFixtureText, id)) {
+              if (
+                typeof id === "string" &&
+                id.length > 0 &&
+                !fixtureMentions(allFixtureText, fixtureValues, id)
+              ) {
                 issues.push({
                   severity: "warn",
                   where: `agent-demos/${name}.meta.json`,
@@ -1107,6 +1112,34 @@ function collectFixtureText(dir: string, manifest: UniverseManifest): string {
 }
 
 /**
+ * Every scalar value in each source's fixture files — strings, and numbers in
+ * their string form — as one set per source.
+ */
+function collectFixtureValues(dir: string, manifest: UniverseManifest): Set<string>[] {
+  const sets: Set<string>[] = [];
+  for (const src of manifest.sources) {
+    const srcDir = join(dir, "sources", src.descriptorId);
+    if (!existsSync(srcDir)) continue;
+    const values = new Set<string>();
+    const visit = (node: unknown): void => {
+      if (typeof node === "string") values.add(node);
+      else if (typeof node === "number") values.add(String(node));
+      else if (Array.isArray(node)) node.forEach(visit);
+      else if (isPlainObject(node)) Object.values(node).forEach(visit);
+    };
+    for (const f of readdirSync(srcDir).filter((x) => x.endsWith(".json"))) {
+      try {
+        visit(JSON.parse(readFileSync(join(srcDir, f), "utf-8")));
+      } catch {
+        /* best-effort, as in collectFixtureText */
+      }
+    }
+    sets.push(values);
+  }
+  return sets;
+}
+
+/**
  * Returns true if `id` (a doc externalId from an agent-demo's meta.json)
  * has any plausible producer in the fixture text. Plain substring is the
  * baseline; we also strip common synth-provider prefixes that mint the
@@ -1119,8 +1152,23 @@ function collectFixtureText(dir: string, manifest: UniverseManifest): string {
  * `db-db_projects`) inside the fixture JSON. Reduces false-positive
  * warnings without losing signal for actually-missing IDs.
  */
-function fixtureMentions(allFixtureText: string, id: string): boolean {
+function fixtureMentions(
+  allFixtureText: string,
+  fixtureValues: ReadonlyArray<ReadonlySet<string>>,
+  id: string,
+): boolean {
   if (allFixtureText.includes(id)) return true;
+  // A composite id (`<account>:<transaction>`) is minted by joining fields of
+  // one record, so it never appears verbatim in a fixture. It has a producer
+  // when every segment is a value in the same source's fixtures.
+  const segments = id.split(":");
+  if (
+    segments.length > 1 &&
+    segments.every((segment) => segment.length > 0) &&
+    fixtureValues.some((values) => segments.every((segment) => values.has(segment)))
+  ) {
+    return true;
+  }
   const SYNTH_PREFIXES = ["db-", "row-"];
   for (const prefix of SYNTH_PREFIXES) {
     if (id.startsWith(prefix)) {

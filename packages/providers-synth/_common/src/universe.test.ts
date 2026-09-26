@@ -735,6 +735,51 @@ describe("universe validator", () => {
     });
   });
 
+  /**
+   * Some sources mint a document's external id by joining several fields of
+   * one record (`<account>:<transaction>`), so the id never appears verbatim
+   * in a fixture. It resolves when every segment is a value of one source's
+   * fixtures; an id with a segment no fixture carries still warns.
+   */
+  it("resolves composite placeholder ids and warns on a missing one", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "omnesis-universe-test-"));
+    try {
+      writeUniverseWithDemo(
+        tmp,
+        [
+          {
+            afterMs: 0,
+            event: {
+              type: "agent.message.end",
+              payload: { sessionId: "$SESSION", messageId: "$MSG", stopReason: "end_turn" },
+            },
+          },
+        ],
+        {
+          triggers: ["budget review"],
+          placeholders: {
+            docExternalIds: ["acct-demo:txn-001", "7702:txn-002", "acct-demo:txn-999"],
+          },
+        },
+      );
+      writeFileSync(
+        join(tmp, "sources", "gmail", "ledger.json"),
+        JSON.stringify([
+          { account_key: "acct-demo", transactions: [{ entry_reference: "txn-001" }] },
+          { account_id: 7702, transactions: [{ id: "txn-002" }] },
+        ]),
+      );
+      const warnings = validateUniverse(loadUniverse(tmp))
+        .filter((i) => i.severity === "warn")
+        .map((i) => i.message);
+      expect(warnings).toEqual([
+        "docExternalIds entry 'acct-demo:txn-999' not found in any source fixture (placeholder won't resolve at session-create)",
+      ]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("rejects a cassette declaring a role no replay backend is built for", () => {
     const tmp = mkdtempSync(join(tmpdir(), "omnesis-universe-test-"));
     try {
