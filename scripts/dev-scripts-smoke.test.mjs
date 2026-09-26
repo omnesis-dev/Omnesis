@@ -2141,6 +2141,32 @@ describe("full-validation workflow topology", () => {
     }
   });
 
+  it("installs dependencies against the running Node's own headers", async () => {
+    const { parse } = await import("yaml");
+    const workflowDir = join(repoRoot, ".github/workflows");
+    for (const filename of readdirSync(workflowDir).filter((name) => name.endsWith(".yml"))) {
+      const workflow = parse(readFileSync(join(workflowDir, filename), "utf8"));
+      for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
+        for (const step of job.steps ?? []) {
+          const lines = (step.run ?? "").split("\n").map((line) => line.trim());
+          // `--ignore-scripts` builds nothing, so it needs no headers.
+          for (const line of lines.filter((l) => /^(?:exec\s+)?npm ci(?:\s|$)/u.test(l)))
+            expect(line, `${filename}:${jobName}:${step.name}`).toContain("--ignore-scripts");
+        }
+      }
+    }
+    const dir = tmpDir("omnesis-npm-ci-");
+    writeFileSync(join(dir, "npm"), '#!/bin/sh\nprintf "%s|%s" "$npm_config_nodedir" "$*"\n');
+    chmodSync(join(dir, "npm"), 0o755);
+    const out = execFileSync(join(repoRoot, "scripts/ci/npm-ci.sh"), ["--no-audit"], {
+      env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
+      encoding: "utf8",
+    });
+    const [nodedir, args] = out.split("|");
+    expect(args).toBe("ci --no-audit");
+    expect(existsSync(join(nodedir, "include", "node", "common.gypi"))).toBe(true);
+  });
+
   it("runs every job of every workflow on a GitHub-hosted runner", async () => {
     const { parse } = await import("yaml");
     const workflowDir = join(repoRoot, ".github/workflows");
