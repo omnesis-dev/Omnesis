@@ -191,10 +191,20 @@ extension PairingPayloadError: LocalizedError {
 }
 
 extension PairingPayload {
+    /// A payload typed or pasted through the iOS keyboard arrives with its
+    /// double quotes curled by Smart Punctuation, which no JSON parser
+    /// accepts. A pairing payload never contains a typographic quote of its
+    /// own, so each is read as the straight quote it replaced.
+    static func straighteningQuotes(in raw: String) -> String {
+        raw.replacingOccurrences(of: "\u{201C}", with: "\"")
+            .replacingOccurrences(of: "\u{201D}", with: "\"")
+    }
+
     /// Decode a pairing payload from raw QR-decoded text. Trims whitespace,
-    /// validates invariants, and returns a tagged case.
+    /// straightens typographic quotes, validates invariants, and returns a
+    /// tagged case.
     public static func decode(from raw: String) throws -> PairingPayload {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = straighteningQuotes(in: raw).trimmingCharacters(in: .whitespacesAndNewlines)
         guard let data = trimmed.data(using: .utf8) else {
             throw PairingPayloadError.invalidJSON
         }

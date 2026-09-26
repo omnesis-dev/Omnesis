@@ -109,6 +109,7 @@ struct OnboardingView: View {
         }
         .buttonStyle(.borderedProminent)
         .controlSize(.large)
+        .accessibilityIdentifier("onboarding.pair")
     }
 }
 

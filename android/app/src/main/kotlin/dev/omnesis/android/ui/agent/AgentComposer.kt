@@ -228,7 +228,8 @@ fun AgentComposer(
                         keyboardActions = KeyboardActions(onSend = { submit() }),
                         modifier = Modifier
                             .focusRequester(focusRequester)
-                            .fillMaxWidth(),
+                            .fillMaxWidth()
+                            .testTag("agentComposer"),
                     )
                     if (text.isEmpty()) {
                         Text(
@@ -363,6 +364,7 @@ private fun ComposerTrailingButton(
             tint = if (canSend) colors.accent else colors.textMuted.copy(alpha = 0.4f),
             modifier = Modifier
                 .size(30.dp)
+                .testTag("agentSendButton")
                 .then(if (canSend) Modifier.noRippleClickable(onSend) else Modifier),
         )
     }

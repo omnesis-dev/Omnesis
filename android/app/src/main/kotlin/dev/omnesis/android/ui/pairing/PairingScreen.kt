@@ -46,6 +46,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -275,7 +276,7 @@ private fun ScannerOverlay(isPairing: Boolean, onShowManual: () -> Unit) {
             )
         }
         Spacer(Modifier.height(OmSpacing.md))
-        TextButton(onClick = onShowManual, enabled = !isPairing) {
+        TextButton(onClick = onShowManual, enabled = !isPairing, modifier = Modifier.testTag("pairing.manual")) {
             Text("Enter code manually", color = Color.White, fontWeight = FontWeight.SemiBold)
         }
     }
@@ -326,7 +327,7 @@ private fun CameraDeniedPane(
             Text("Allow camera", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
         }
         Spacer(Modifier.height(OmSpacing.sm))
-        TextButton(onClick = onShowManual) {
+        TextButton(onClick = onShowManual, modifier = Modifier.testTag("pairing.manual")) {
             Text("Enter code manually", color = c.accent)
         }
     }
@@ -371,13 +372,13 @@ private fun ManualPane(
             minLines = 2,
             maxLines = 4,
             textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().testTag("pairing.pasteJSON.field"),
         )
         Spacer(Modifier.height(OmSpacing.sm))
         Button(
             onClick = { onPairFromPayload(payload.trim()) },
             enabled = payload.isNotBlank() && !state.isPairing,
-            modifier = Modifier.fillMaxWidth().height(48.dp),
+            modifier = Modifier.fillMaxWidth().height(48.dp).testTag("pairing.pasteJSON.submit"),
             colors = ButtonDefaults.buttonColors(containerColor = c.accent, contentColor = Color.White),
         ) {
             Text("Pair from payload", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
@@ -572,7 +573,7 @@ fun PairingConfirmationSheet(
             Button(
                 onClick = onConfirm,
                 enabled = !pairing,
-                modifier = Modifier.weight(1f).height(48.dp),
+                modifier = Modifier.weight(1f).height(48.dp).testTag("pairing.confirm"),
                 shape = RoundedCornerShape(OmRadius.large),
                 colors = ButtonDefaults.buttonColors(containerColor = c.accent, contentColor = Color.White),
             ) { Text(if (pairing) "Pairing…" else "Pair") }

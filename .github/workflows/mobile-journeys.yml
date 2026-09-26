@@ -1,0 +1,193 @@
+name: mobile-journeys
+
+# Opens the iOS and Android apps and drives their main journeys — pairing,
+# search, opening a document, asking the agent — against a synthetic gateway,
+# the way a person does. `scripts/run-mobile-journeys.sh` does the work; see
+# docs/mobile-journeys.md.
+#
+# Every push to `main` runs both platforms, as does a manual run
+# (`gh workflow run mobile-journeys.yml --ref <branch>`). A pull request runs
+# the platform whose app, or whose shared journey machinery, it changes. The
+# iOS lane takes one macOS runner; the Android lane runs the emulator on Linux
+# with KVM. The lanes stay outside full-validation, so a simulator or emulator
+# flake cannot turn the README badge red; a journey that fails is retried once
+# before the lane fails.
+#
+# Pull requests — fork pull requests included, once a maintainer approves the
+# run — use the plain `pull_request` trigger: a read-only token and no secrets.
+# No job here reads a secret; the gateway token the tests use belongs to a
+# throwaway gateway the job itself boots.
+on:
+  push:
+    branches: [main, ci/mobile-ui-journeys]
+  pull_request:
+    branches: [main]
+    paths:
+      - "ios/**"
+      - "android/**"
+      - "scripts/run-mobile-journeys.sh"
+      - "scripts/start-demo-gateway.sh"
+      - "scripts/synth-gateway.sh"
+      - "evals/universes/default/**"
+      - ".github/workflows/mobile-journeys.yml"
+  workflow_dispatch:
+
+# A newer push to a pull request replaces its run. Runs on main are never
+# cancelled, so each finished run is a verdict on its commit.
+concurrency:
+  group: mobile-journeys-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.event_name, github.ref) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  changes:
+    # Which platforms a pull request touches. Pushes and manual runs skip this
+    # and run both.
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ios: ${{ steps.paths.outputs.ios }}
+      android: ${{ steps.paths.outputs.android }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - id: paths
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          files="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"
+          shared='^(scripts/(run-mobile-journeys|start-demo-gateway|synth-gateway)\.sh|evals/universes/default/|\.github/workflows/mobile-journeys\.yml)'
+          ios=false
+          android=false
+          if grep -Eq "^ios/|$shared" <<<"$files"; then ios=true; fi
+          if grep -Eq "^android/|$shared" <<<"$files"; then android=true; fi
+          echo "ios=$ios" >> "$GITHUB_OUTPUT"
+          echo "android=$android" >> "$GITHUB_OUTPUT"
+          echo "iOS journeys: $ios, Android journeys: $android"
+
+  ios:
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.ios == 'true') }}
+    # The project requires Xcode 26, the macOS 26 image's default, which
+    # carries the iPhone 17 simulator the journeys run on.
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Stub Local.xcconfig
+        # Local.xcconfig is gitignored (it carries a developer's signing team).
+        # A simulator build signs to run locally and needs no team.
+        run: |
+          if [ ! -f ios/Local.xcconfig ]; then
+            echo "DEVELOPMENT_TEAM = " > ios/Local.xcconfig
+          fi
+
+      - name: lane [ios-journeys]
+        env:
+          OMNESIS_JOURNEY_ARTIFACTS: ${{ runner.temp }}/mobile-journeys
+          OMNESIS_CONFIG_DIR: ${{ runner.temp }}/mobile-journeys-gateway
+        run: scripts/run-mobile-journeys.sh ios
+
+      - name: Upload journey artifacts
+        # The screen recording, xcresult bundle (screenshots of every failure),
+        # xcodebuild log and gateway logs. A failed upload must not mask the
+        # test result.
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ios-journeys
+          path: ${{ runner.temp }}/mobile-journeys/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  android:
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.android == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Enable KVM
+        # Hardware-accelerated emulation on the hosted Linux runner.
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the app and its journeys
+        # Built before the emulator boots so the two do not compete for the
+        # runner; the connected run then finds both APKs up to date.
+        working-directory: android
+        run: ./gradlew :app:assemblePlayDebug :app:assemblePlayDebugAndroidTest --no-daemon --max-workers=2
+
+      - name: lane [android-journeys]
+        env:
+          OMNESIS_JOURNEY_ARTIFACTS: ${{ runner.temp }}/mobile-journeys
+          OMNESIS_CONFIG_DIR: ${{ runner.temp }}/mobile-journeys-gateway
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          ram-size: 4096M
+          disk-size: 6000M
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
+          disable-animations: true
+          script: scripts/run-mobile-journeys.sh android
+
+      - name: Upload journey artifacts
+        # The screen recording, per-failure screenshots, JUnit reports, logcat
+        # and gateway logs. A failed upload must not mask the test result.
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: android-journeys
+          path: ${{ runner.temp }}/mobile-journeys/
+          if-no-files-found: ignore
+          retention-days: 14

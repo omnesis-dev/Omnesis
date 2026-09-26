@@ -395,7 +395,7 @@ fun AgentContent(
                     .padding(start = OmTheme.spacing.sm, end = 10.dp, top = 2.dp, bottom = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                GlassCircleButton(onClick = onOpenMenu, contentDescription = "Menu") {
+                GlassCircleButton(onClick = onOpenMenu, contentDescription = "Menu", modifier = Modifier.testTag("menu.toggle")) {
                     Icon(Icons.Outlined.Menu, contentDescription = null, tint = OmTheme.colors.textPrimary, modifier = Modifier.size(20.dp))
                 }
                 Spacer(Modifier.weight(1f))
@@ -674,11 +674,12 @@ private fun CapsuleIconButton(
 private fun GlassCircleButton(
     onClick: () -> Unit,
     contentDescription: String,
+    modifier: Modifier = Modifier,
     enabled: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     Box(
-        Modifier
+        modifier
             .size(46.dp)
             .clip(CircleShape)
             .background(landingPalette.composerFill)

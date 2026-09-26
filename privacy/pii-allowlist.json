@@ -2058,9 +2058,12 @@
       "paths": [
         "android/AGENTS.md",
         "android/CLAUDE.md",
+        "android/app/src/androidTest/kotlin/dev/omnesis/android/journeys/JourneyGateway.kt",
         "android/app/src/main/kotlin/dev/omnesis/android/MainActivity.kt",
         "android/core-pairing/src/test/kotlin/dev/omnesis/android/pairing/PairingPayloadTest.kt",
-        "android/core-transport/src/main/kotlin/dev/omnesis/android/transport/tls/LeafCertPinner.kt"
+        "android/core-transport/src/main/kotlin/dev/omnesis/android/transport/tls/LeafCertPinner.kt",
+        "docs/mobile-journeys.md",
+        "scripts/run-mobile-journeys.sh"
       ],
       "reason": "reviewed existing fixture"
     },

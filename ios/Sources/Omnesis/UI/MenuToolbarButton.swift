@@ -24,6 +24,7 @@ struct MenuToolbarButton: View {
                 .foregroundStyle(Theme.textPrimary)
         }
         .accessibilityLabel("Menu")
+        .accessibilityIdentifier("menu.toggle")
     }
 }
 #endif

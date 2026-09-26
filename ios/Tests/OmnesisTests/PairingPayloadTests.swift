@@ -39,6 +39,18 @@ final class PairingPayloadTests: XCTestCase {
         XCTAssertEqual(payload.tls, .pinnedLeaf(fingerprint: fingerprint))
     }
 
+    func testDecodeV4TypedWithSmartQuotes() throws {
+        let fingerprint = String(repeating: "b", count: 64)
+        let typed = "{\u{201C}v\u{201D}:4,\u{201C}gatewayUrl\u{201D}:\u{201C}https://gateway.example.com\u{201D},"
+            + "\u{201C}pairingCode\u{201D}:\u{201C}A1B2\u{201D},\u{201C}tls\u{201D}:{\u{201C}mode\u{201D}:"
+            + "\u{201C}pinned-leaf\u{201D},\u{201C}fingerprint\u{201D}:\u{201C}\(fingerprint)\u{201D}}}"
+        guard case .v4(let payload) = try PairingPayload.decode(from: typed) else {
+            return XCTFail("expected V4")
+        }
+        XCTAssertEqual(payload.gatewayUrl, "https://gateway.example.com")
+        XCTAssertEqual(payload.tls, .pinnedLeaf(fingerprint: fingerprint))
+    }
+
     func testV4SystemTrustRejectsHTTP() {
         let raw = #"{"v":4,"gatewayUrl":"http://public-gateway.example.com","pairingCode":"A1B2","tls":{"mode":"system"}}"#
         XCTAssertThrowsError(try PairingPayload.decode(from: raw)) { error in

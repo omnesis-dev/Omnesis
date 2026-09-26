@@ -157,6 +157,10 @@ android {
         versionCode = 1
         versionName = "0.5.13"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // The UI journeys (src/androidTest, run by scripts/run-mobile-journeys.sh)
+        // each start from a fresh install: the orchestrator runs every test in its
+        // own instrumentation and clears the app's data first.
+        testInstrumentationRunnerArguments["clearPackageData"] = "true"
         // Firebase is configured at build time; no google-services.json or service
         // credential is checked into the repository. Gradle properties take
         // precedence over environment variables with the same names.
@@ -198,6 +202,7 @@ android {
         buildConfig = true
     }
     testOptions {
+        execution = "ANDROIDX_TEST_ORCHESTRATOR"
         unitTests {
             isIncludeAndroidResources = true
             all {
@@ -283,6 +288,18 @@ dependencies {
     testImplementation(libs.hilt.android.testing)
     kspTest(libs.hilt.compiler)
     testImplementation(libs.okhttp.tls)
+
+    // UI journeys on an emulator against a synthetic gateway (scripts/run-mobile-journeys.sh).
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    androidTestImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.rules)
+    androidTestImplementation(libs.androidx.test.core.ktx)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.uiautomator)
+    androidTestUtil(libs.androidx.test.orchestrator)
+    androidTestUtil(libs.androidx.test.services)
 }
 
 androidComponents {

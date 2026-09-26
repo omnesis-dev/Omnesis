@@ -68,6 +68,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -174,6 +175,7 @@ fun MainMenuDrawer(
             // not among them and lives on the action bar instead.
             item {
                 MenuRow(
+                    id = "search",
                     icon = Icons.Outlined.Search,
                     label = "Search",
                     active = currentRoute == "search",
@@ -187,6 +189,7 @@ fun MainMenuDrawer(
             if (briefsMenuEntry != BriefsMenuEntry.HIDDEN) {
                 item {
                     MenuRow(
+                        id = "briefs",
                         icon = Icons.Outlined.Inbox,
                         label = "Briefs",
                         active = currentRoute == "briefs",
@@ -205,6 +208,7 @@ fun MainMenuDrawer(
             }
             item {
                 MenuRow(
+                    id = "sources",
                     icon = Icons.Outlined.GridView,
                     label = "Sources",
                     active = currentRoute == "sources",
@@ -213,6 +217,7 @@ fun MainMenuDrawer(
             }
             item {
                 MenuRow(
+                    id = "people",
                     icon = Icons.Outlined.People,
                     label = "People",
                     active = currentRoute == "people",
@@ -221,6 +226,7 @@ fun MainMenuDrawer(
             }
             item {
                 MenuRow(
+                    id = "tellOmnesis",
                     icon = Icons.Outlined.Mic,
                     label = "Tell Omnesis",
                     active = currentRoute?.startsWith("capture") == true,
@@ -240,6 +246,7 @@ fun MainMenuDrawer(
             if (experimental) {
                 item {
                     MenuRow(
+                        id = "watches",
                         icon = Icons.Outlined.Visibility,
                         label = "Watches",
                         active = currentRoute?.startsWith("watches") == true,
@@ -252,6 +259,7 @@ fun MainMenuDrawer(
             // decision nobody can reach is a decision that never gets made.
             item {
                 MenuRow(
+                    id = "audit",
                     icon = Icons.Outlined.Shield,
                     label = "Audit",
                     active = currentRoute?.startsWith("privacy") == true,
@@ -473,6 +481,8 @@ private data class MenuRowWarning(val description: String, val onClick: () -> Un
  */
 @Composable
 private fun MenuRow(
+    /** Names the destination for UI tests (`menu.<id>`); stable across label changes. */
+    id: String,
     icon: ImageVector,
     label: String,
     active: Boolean,
@@ -487,6 +497,7 @@ private fun MenuRow(
     Row(
         Modifier
             .fillMaxWidth()
+            .testTag("menu.$id")
             .background(if (active) colors.accent.copy(alpha = 0.14f) else Color.Transparent)
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 12.dp),
