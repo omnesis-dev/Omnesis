@@ -13,17 +13,20 @@ permissions:
 jobs:
   build-and-smoke:
     name: ${{ matrix.platform }} — build + boot + auth
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
 
     strategy:
       fail-fast: false
       matrix:
-        # linux/amd64 runs natively on the ubuntu-latest runner; linux/arm64
-        # is emulated via QEMU (~3-5x slower but catches arm64-specific
-        # native-module breakage on real Linux, not just our Apple Silicon
-        # devs). Add more here when we have a real ARM Linux deploy target.
-        platform: [linux/amd64, linux/arm64]
+        # Each platform builds and boots natively on a runner of its own
+        # architecture, which catches arm64-specific native-module breakage on
+        # real Linux without an emulator.
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
 
     env:
       DOCKER_DEFAULT_PLATFORM: ${{ matrix.platform }}
@@ -40,15 +43,6 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
-      - name: Set up QEMU for arm64
-        if: matrix.platform == 'linux/arm64'
-        env:
-          # The binfmt helper must run on the host before arm64 emulation exists.
-          DOCKER_DEFAULT_PLATFORM: linux/amd64
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
-        with:
-          platforms: arm64
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
@@ -80,7 +74,7 @@ jobs:
             echo "[$i] health=$state"
             if [ "$state" = "healthy" ]; then exit 0; fi
             # Docker can exhaust its initial health-check retries while a
-            # gateway is still booting under QEMU. Health is recoverable, so
+            # gateway is still booting on a slow runner. Health is recoverable, so
             # preserve the advertised 120-second readiness window.
             sleep 2
           done
