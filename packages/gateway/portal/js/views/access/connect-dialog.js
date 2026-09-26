@@ -172,7 +172,8 @@ function AgentSetupPicker({ oauth }) {
         onPair=${createPairingCode}
       />`}
       ${selected.alternatives
-        ? html`<div class="segmented access-agent-tabs" role="tablist" aria-label=${`Ways to connect ${selected.name}`}>
+        ? html`<div class="access-agent-tabbed">
+            <div class="access-agent-tabs" role="tablist" aria-label=${`Ways to connect ${selected.name}`}>
               ${selected.commands.map(
                 (command, index) => html`<button
                   type="button"
@@ -186,7 +187,8 @@ function AgentSetupPicker({ oauth }) {
                 </button>`,
               )}
             </div>
-            <${AgentCommand} agent=${selected} command=${selected.commands[commandIdx] ?? selected.commands[0]} />`
+            <${AgentCommand} agent=${selected} command=${selected.commands[commandIdx] ?? selected.commands[0]} />
+          </div>`
         : selected.commands.map(
             (command) => html`<${AgentCommand} key=${command.label} agent=${selected} command=${command} labelled />`,
           )}
