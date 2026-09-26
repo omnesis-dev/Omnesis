@@ -1864,7 +1864,7 @@ describe("full-validation workflow topology", () => {
       "${{ github.event_name == 'pull_request' }}",
     );
     expect(workflow.concurrency.group).toContain("github.event.pull_request.number");
-    expect(workflow.concurrency.group).toContain("github.ref");
+    expect(workflow.concurrency.group).toContain("format('push-{0}', github.run_id)");
     expect(workflow.permissions).toEqual({ contents: "read" });
     const called = Object.values(workflow.jobs)
       .map((job) => job.uses)
