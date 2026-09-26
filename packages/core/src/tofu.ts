@@ -5,6 +5,7 @@ import { connect as tlsConnect, getCACertificates, setDefaultCACertificates } fr
 import { createHash } from "node:crypto";
 import { createInterface } from "node:readline";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { isIP } from "node:net";
 import { join } from "node:path";
 import { createLogger } from "./logger.js";
 import { atomicWriteFileSync } from "./atomic-write.js";
@@ -90,7 +91,16 @@ export function fetchPeerCert(
     // TOFU must read the untrusted peer certificate before the operator accepts its fingerprint.
     const socket = tlsConnect(
       // nosemgrep: problem-based-packs.insecure-transport.js-node.bypass-tls-verification.bypass-tls-verification
-      { host, port, rejectUnauthorized: false, timeout: timeoutMs },
+      {
+        host,
+        port,
+        rejectUnauthorized: false,
+        timeout: timeoutMs,
+        // Name the host (SNI) as any TLS client does: a front that serves
+        // several names, such as Tailscale's serve and Funnel, refuses a
+        // handshake without one. An IP address is never sent as a name.
+        ...(isIP(host.replace(/^\[(.*)\]$/u, "$1")) === 0 ? { servername: host } : {}),
+      },
       () => {
         const cert = socket.getPeerCertificate();
         socket.destroy();
