@@ -1225,7 +1225,7 @@ a:hover { text-decoration: underline; }
 .access-triad .access-badge { flex: 0 0 auto; }
 /* A capability this row does not hold keeps its slot and goes quiet. */
 .access-badge.is-off {
-  border-color: transparent;
+  border-color: var(--border);
   color: var(--text-muted);
   opacity: 0.35;
 }

@@ -82,7 +82,7 @@ export function AccessTerms({ rules, overview }) {
   return html`<dl class="access-detail-grid">
     ${lanes.map((capability) => {
       const rule = rules[capability];
-      if (!rule) return html`<div key=${capability}><dt><${CapabilityBadge} capability=${capability} off=${true} /></dt><dd>Not granted</dd></div>`;
+      if (!rule) return html`<div key=${capability}><dt><${CapabilityBadge} capability=${capability} off=${true} /></dt><dd></dd></div>`;
       if (capability === "notes") return html`<div key=${capability}><dt><${CapabilityBadge} capability="notes" /></dt><dd>Saves notes under the agent's name</dd></div>`;
       const retainedAllowed = retained.filter((source) => isSourceAllowed(rule, sourceId(source))).length;
       return html`<div key=${capability}>

@@ -640,6 +640,7 @@ describe("AccessView", () => {
     expect(policyLink.getAttribute("href")).toBe("/portal/settings/policies/policy-a");
     expect(research.querySelector(".access-level-terms .access-badge-answer")?.getAttribute("class")).not.toContain("is-off");
     expect(research.querySelector(".access-level-terms .access-badge-direct")?.getAttribute("class")).toContain("is-off");
+    expect(research.querySelector(".access-level-terms")?.textContent).not.toContain("Not granted");
 
     // Its connections follow it, inside the card: by name, the app that signed
     // in, and when it was last used — with no column headings repeated per level.
