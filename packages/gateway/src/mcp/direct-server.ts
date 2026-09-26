@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { fromJsonSchema, type McpServer } from "@modelcontextprotocol/server";
+import { DIRECT_MCP_ESSENTIAL_INSTRUCTIONS } from "../agent/direct-instructions.js";
 import type { ToolResult } from "@omnesis/core";
 import type { DirectMcpToolManifest } from "../agent/direct-mcp.js";
 
@@ -17,6 +18,7 @@ export const DIRECT_TOOL_NAMES = [
   "search_loops",
   "list_loops",
   "fetch_loop",
+  "list_tables",
 ] as const;
 
 export const RESTRICTED_DIRECT_TOOL_NAMES = [
@@ -24,6 +26,7 @@ export const RESTRICTED_DIRECT_TOOL_NAMES = [
   "fetch_many",
   "lookup_document_by_url",
   "run_sql",
+  "list_tables",
 ] as const;
 
 export const STABLE_DIRECT_TOOL_NAMES = [
@@ -33,6 +36,7 @@ export const STABLE_DIRECT_TOOL_NAMES = [
   "lookup_people",
   "trace_connections",
   "run_sql",
+  "list_tables",
 ] as const;
 
 export const DIRECT_MCP_SUPPORTED_VERSIONS = ["2026-07-28", "2025-11-25"] as const;
@@ -45,7 +49,10 @@ export const DIRECT_MCP_PRIVACY_INSTRUCTIONS =
   "or held for approval. Direct tools are read-only, but read-only does not mean privacy-safe.";
 
 export function renderDirectMcpInstructions(retrievalInstructions: string): string {
-  return `${DIRECT_MCP_PRIVACY_INSTRUCTIONS}\n\n${retrievalInstructions}`;
+  const guidance = retrievalInstructions.startsWith(DIRECT_MCP_ESSENTIAL_INSTRUCTIONS)
+    ? retrievalInstructions.slice(DIRECT_MCP_ESSENTIAL_INSTRUCTIONS.length)
+    : retrievalInstructions;
+  return `${DIRECT_MCP_ESSENTIAL_INSTRUCTIONS}${DIRECT_MCP_PRIVACY_INSTRUCTIONS}\n\n${guidance}`;
 }
 
 const directToolNameSet = new Set<string>(DIRECT_TOOL_NAMES);

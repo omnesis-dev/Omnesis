@@ -18,7 +18,7 @@ export function renderOmnesisDirectSkill(): string {
     fetchBatchLimit: 2,
     includeTemporal: true,
     includeCognition: true,
-    catalogMode: "runtime",
+    catalogMode: "discovery",
   });
 
   return `---
@@ -45,7 +45,7 @@ The privacy-reviewed Omnesis Answer capability remains a separate boundary even 
 ## Available read-only tools
 
 The live MCP tool list is authoritative. A source-restricted connection exposes only
-\`search_many\`, \`fetch_many\`, and \`lookup_document_by_url\`; do not assume that any tool listed
+\`search_many\`, \`fetch_many\`, \`lookup_document_by_url\`, \`list_tables\`, and \`run_sql\`; do not assume that any tool listed
 below is available, and adapt the retrieval plan to the tools the server actually exposes.
 
 - \`search_many\`: search several corpus queries in one call.
@@ -53,7 +53,8 @@ below is available, and adapt the retrieval plan to the tools the server actuall
 - \`lookup_document_by_url\`: resolve a known source URL to its Omnesis document.
 - \`lookup_people\`: find people in the user's records.
 - \`trace_connections\`: follow evidence links between records.
-- \`run_sql\`: query the read-only DuckDB analytics database, never operational SQLite.
+- \`list_tables\`: discover permitted analytics tables and columns; follow \`nextOffset\` with another call using \`offset\` until it is null.
+- \`run_sql\`: call \`list_tables\` first, then query the read-only DuckDB analytics database, never operational SQLite.
 - \`temporal_query\`: retrieve time-oriented context.
 - \`entity_context\`: retrieve context surrounding an entity.
 - \`search_loops\`, \`list_loops\`, and \`fetch_loop\`: inspect existing Omnesis tracked items.

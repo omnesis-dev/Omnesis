@@ -5,7 +5,11 @@ import { createServer, type Server } from "node:tls";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 
 import { generateSelfSigned } from "../tls.js";
-import { createServedByGatewayCheck, probeServedCertificate } from "./served-by-gateway.js";
+import {
+  createServedByGatewayCheck,
+  probeServedCertificate,
+  type PresentedCertificate,
+} from "./served-by-gateway.js";
 import type { AddressInfo } from "node:net";
 
 describe("probeServedCertificate", () => {
@@ -23,9 +27,11 @@ describe("probeServedCertificate", () => {
   afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
 
   test("fingerprints the certificate a TLS client meets, trusted or not", async () => {
-    expect(await probeServedCertificate(new URL(`https://127.0.0.1:${port}/mcp`))).toBe(
+    // A self-signed certificate is seen and fingerprinted, and is not public.
+    expect(await probeServedCertificate(new URL(`https://127.0.0.1:${port}/mcp`))).toEqual({
       fingerprint,
-    );
+      publiclyTrusted: false,
+    });
   });
 
   test("answers null when nothing answers", async () => {
@@ -42,17 +48,23 @@ describe("createServedByGatewayCheck", () => {
   const DIRECT = "https://gateway.example.org:7600/mcp";
   const PROXIED = "https://gateway.example.org/mcp";
   const UNREACHABLE = "https://offline.example.org/mcp";
+  const SELF_SIGNED: PresentedCertificate = { fingerprint: OWN, publiclyTrusted: false };
 
   test("counts a resource as the gateway's only when it presents the gateway's certificate", async () => {
     const check = createServedByGatewayCheck({
       fingerprint: () => OWN.toUpperCase(),
       probe: async (resource) =>
-        ({ [DIRECT]: OWN, [PROXIED]: "cd".repeat(32) })[resource.toString()] ?? null,
+        (
+          ({
+            [DIRECT]: { fingerprint: OWN, publiclyTrusted: false },
+            [PROXIED]: { fingerprint: "cd".repeat(32), publiclyTrusted: true },
+          }) as Record<string, PresentedCertificate>
+        )[resource.toString()] ?? null,
     });
     expect(Object.fromEntries(await check([DIRECT, PROXIED, UNREACHABLE]))).toEqual({
-      [DIRECT]: { servedByGateway: true, direct: true },
-      [PROXIED]: { servedByGateway: false, direct: false },
-      [UNREACHABLE]: { servedByGateway: false, direct: false },
+      [DIRECT]: { servedByGateway: true, direct: true, publiclyTrusted: false },
+      [PROXIED]: { servedByGateway: false, direct: false, publiclyTrusted: true },
+      [UNREACHABLE]: { servedByGateway: false, direct: false, publiclyTrusted: false },
     });
   });
 
@@ -64,11 +76,11 @@ describe("createServedByGatewayCheck", () => {
     const check = createServedByGatewayCheck({
       fingerprint: () => OWN,
       listenPort: 7600,
-      probe: async () => OWN,
+      probe: async () => SELF_SIGNED,
     });
     expect(Object.fromEntries(await check([DIRECT, FUNNEL]))).toEqual({
-      [DIRECT]: { servedByGateway: true, direct: true },
-      [FUNNEL]: { servedByGateway: true, direct: false },
+      [DIRECT]: { servedByGateway: true, direct: true, publiclyTrusted: false },
+      [FUNNEL]: { servedByGateway: true, direct: false, publiclyTrusted: false },
     });
   });
 
@@ -76,15 +88,19 @@ describe("createServedByGatewayCheck", () => {
     const check = createServedByGatewayCheck({
       fingerprint: () => OWN,
       listenPort: 443,
-      probe: async () => OWN,
+      probe: async () => SELF_SIGNED,
     });
-    expect((await check([PROXIED])).get(PROXIED)).toEqual({ servedByGateway: true, direct: true });
+    expect((await check([PROXIED])).get(PROXIED)).toEqual({
+      servedByGateway: true,
+      direct: true,
+      publiclyTrusted: false,
+    });
   });
 
   test("reuses an answer briefly and probes again after the certificate changes or time passes", async () => {
     let own = OWN;
     let clock = 0;
-    const probe = vi.fn(async () => OWN);
+    const probe = vi.fn(async () => SELF_SIGNED);
     const check = createServedByGatewayCheck({ fingerprint: () => own, probe, now: () => clock });
 
     expect((await check([DIRECT])).get(DIRECT)?.servedByGateway).toBe(true);
@@ -101,9 +117,13 @@ describe("createServedByGatewayCheck", () => {
   });
 
   test("treats every resource as proxied when the gateway has no certificate to compare", async () => {
-    const probe = vi.fn(async () => OWN);
+    const probe = vi.fn(async () => SELF_SIGNED);
     const check = createServedByGatewayCheck({ fingerprint: () => undefined, probe });
-    expect((await check([DIRECT])).get(DIRECT)).toEqual({ servedByGateway: false, direct: false });
+    expect((await check([DIRECT])).get(DIRECT)).toEqual({
+      servedByGateway: false,
+      direct: false,
+      publiclyTrusted: false,
+    });
     expect(probe).not.toHaveBeenCalled();
   });
 });

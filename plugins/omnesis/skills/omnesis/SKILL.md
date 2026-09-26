@@ -46,7 +46,7 @@ For a retry of the same turn, reuse the same `requestId` and identical arguments
 
 When the user asks to save a note, remember something in Omnesis, or “tell Omnesis”, use `add_note` if the connection includes **Notes**. This saves to the same notes source as “Tell Omnesis” in the portal and mobile apps. Notes is an independent, append-only capability; it does not authorize reading, editing, or deleting notes or other corpus data.
 
-Send the user's intended note as `text` (up to 8,192 characters). Generate a UUID `id` for the capture and reuse that id and identical arguments on retries to avoid duplicates. Report success only after the tool confirms the saved entry. If Notes is unavailable, explain that the owner can enable it on the connection's access level in Omnesis.
+Send the user's intended note as `text` (up to 8,192 characters). Generate a UUID `id` for the capture and reuse that id and identical arguments on retries to avoid duplicates, including after reconnecting to the same connection. The receipt echoes your UUID as `captureId`; its `id` identifies the saved note and is a different value. Report success only after the tool confirms the saved entry. If Notes is unavailable, explain that the owner can enable it on the connection's access level in Omnesis.
 
 Include capture metadata only when available: `capturedAt`, the paired `capturedTimeZoneId` and `capturedUtcOffsetSeconds`, and paired `latitude` and `longitude` with optional `placeName`. Omit unknown values; do not infer a location from unrelated personal context. The gateway records the connection's name and identity, OAuth client, and receipt time automatically. Do not put credentials or tokens into the note.
 

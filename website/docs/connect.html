@@ -308,9 +308,14 @@
           they share one source selection by default, and an advanced choice gives each its own.
         </p>
         <p>
-          A source-restricted Direct permission gets search, document fetch, URL lookup, and SQL
-          only. Analytics tables that several source accounts write to stay outside a
-          source-restricted access level, even when every contributing account is selected.
+          A source-restricted Direct permission gets search, document fetch, URL lookup, analytics
+          schema discovery, and SQL only. Call <code>list_tables</code> before
+          <code>run_sql</code> to discover permitted tables and their columns. Follow the returned
+          <code>nextOffset</code> with another call using that <code>offset</code> until it is null;
+          each page defaults to 20 tables, with an optional <code>limit</code> from 1 to 100.
+          Discovery returns only the current grant’s permitted schema, without row data. Analytics
+          tables that several source accounts write to stay outside a source-restricted access
+          level, even when every contributing account is selected.
         </p>
 
         <h3 id="notes">Notes</h3>
@@ -320,7 +325,10 @@
           time and any context, and the day's note document names that connection as the entry's
           author, with you as its recipient. A note you capture yourself stays yours, and an agent
           never becomes a person in the people graph. A client can include a known capture time,
-          time zone, or location, and reuse a UUID <code>id</code> when it retries the same capture.
+          time zone, or location. It must supply a UUID <code>id</code> and reuse it on retries,
+          including after reconnecting to the same connection. The receipt echoes that UUID as
+          <code>captureId</code>; its <code>id</code> identifies the saved note and is a different
+          value. Captures from separate connections remain independent.
         </p>
 
         <h3 id="managing-access">Managing access levels and connections</h3>
@@ -724,6 +732,13 @@
         <p>
           Choose one setup path: install the Claude plugin, which is recommended, or only add the
           server. Do not do both, because the plugin declares the same connection.
+        </p>
+        <p>
+          Claude Code and Codex accept only a certificate a public authority issued, such as the
+          Tailscale certificate or one for a domain of your own. They cannot connect to a gateway
+          that serves its self-signed certificate; give the gateway one of those
+          <a href="/docs/setup#certificates">certificates</a> first. OpenClaw and Hermes pin the
+          gateway's fingerprint instead, so they connect either way.
         </p>
         <p>
           The Claude plugin declares the HTTP connection and adds skills that teach Claude how to

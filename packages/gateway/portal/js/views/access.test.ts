@@ -1590,7 +1590,7 @@ describe("AccessView", () => {
       .map((card) => card.getAttribute("data-agent"));
     expect(warned).toEqual(["chatgpt", "claude-apps"]);
     expect(host.querySelector("button[data-agent='chatgpt'] .access-agent-warning")?.getAttribute("aria-label")).toBe(
-      "Cannot reach this address",
+      "Cannot connect to this gateway",
     );
 
     const claudeApps = host.querySelector<HTMLButtonElement>("button[data-agent='claude-apps']")!;
@@ -1614,6 +1614,31 @@ describe("AccessView", () => {
     expect(host.querySelector(".access-agent-docs a")?.getAttribute("href")).toBe(
       "https://omnesis.dev/docs/connect#chatgpt",
     );
+  });
+
+  test("explains why the claude-code card cannot use a self-signed gateway, and how to fix it", async () => {
+    api.getAccessOverview.mockResolvedValue({
+      principals: [],
+      oauth: {
+        resource: "https://localhost:17600/mcp",
+        loopbackOnly: true,
+        resources: [
+          { resource: "https://localhost:17600/mcp", servedByGateway: true, direct: true, publiclyTrusted: false },
+        ],
+      },
+    });
+    await mount({ connectOpen: true });
+    const card = () => host.querySelector<HTMLButtonElement>("button[data-agent='claude-code']")!;
+    expect(card().querySelector(".access-agent-warning")).not.toBeNull();
+    await act(async () => { card().click(); });
+    await vi.waitFor(() => expect(host.querySelector(".access-agent-steps")).not.toBeNull());
+    expect(host.querySelector(".access-agent-command")).toBeNull();
+    const notice = host.querySelector(".access-agent-public")!;
+    expect(notice.textContent).toMatch(/This gateway's certificate is not publicly trusted\./u);
+    expect([...notice.querySelectorAll("a")].map((link) => link.getAttribute("href"))).toEqual([
+      "https://omnesis.dev/docs/setup#certificates",
+      "https://omnesis.dev/docs/setup#public-domain",
+    ]);
   });
 
   test("warns ChatGPT off an address that is not on port 443", async () => {

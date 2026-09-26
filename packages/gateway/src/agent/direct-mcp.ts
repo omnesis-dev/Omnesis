@@ -21,7 +21,6 @@ import {
   renderReadOnlyRetrievalPlaybook,
   zodToJsonSchema,
   type ReadOnlyRetrievalPlaybookInput,
-  type RetrievalCatalogTable,
   type ToolHandle,
   type ToolContext,
 } from "@omnesis/agent";
@@ -32,6 +31,8 @@ import { listSources } from "../data/repositories/SourceRepository.js";
 import { permittedSourceIds } from "../access/permitted-sources.js";
 import { createGatewayEntityContextPort } from "../domain/cognitive-graph/interactive-entity-context-port.js";
 import { createGatewayTemporalPort } from "../enrichment/temporal/interactive-temporal-port.js";
+import { createDirectListTablesTool } from "./direct-list-tables.js";
+import { DIRECT_MCP_ESSENTIAL_INSTRUCTIONS } from "./direct-instructions.js";
 import {
   createGatewayDocumentByUrlPort,
   createGatewayDocumentPort,
@@ -59,6 +60,7 @@ export const DIRECT_MCP_TOOL_NAMES = [
   "search_loops",
   "list_loops",
   "fetch_loop",
+  "list_tables",
 ] as const;
 
 export type DirectMcpToolName = (typeof DIRECT_MCP_TOOL_NAMES)[number];
@@ -71,6 +73,7 @@ export const STABLE_DIRECT_MCP_TOOL_NAMES = [
   "lookup_people",
   "trace_connections",
   "run_sql",
+  "list_tables",
 ] as const satisfies readonly DirectMcpToolName[];
 
 export const RESTRICTED_DIRECT_MCP_TOOL_NAMES = [
@@ -78,6 +81,7 @@ export const RESTRICTED_DIRECT_MCP_TOOL_NAMES = [
   "fetch_many",
   "lookup_document_by_url",
   "run_sql",
+  "list_tables",
 ] as const satisfies readonly DirectMcpToolName[];
 
 const RESTRICTED_DIRECT_MCP_TOOL_NAME_SET: ReadonlySet<string> = new Set(
@@ -213,6 +217,7 @@ export class DirectMcpService {
     private readonly scopedHandles?: (authorization: CorpusAuthorization) => readonly ToolHandle[],
   ) {
     const available = new Map(handles.map((handle) => [handle.name, handle]));
+    available.set("list_tables", this.listTablesHandle());
     const experimentalNames = DIRECT_MCP_TOOL_NAMES.filter(
       (name) =>
         !STABLE_DIRECT_MCP_TOOL_NAMES.includes(
@@ -240,8 +245,24 @@ export class DirectMcpService {
       const inputSchema = zodToJsonSchema(handle.schema) as Record<string, unknown>;
       if (name === "fetch_many") constrainFetchManyManifest(inputSchema);
       injectDirectGroupingParams(inputSchema);
-      return { name, description: handle.description, inputSchema };
+      return {
+        name,
+        description:
+          name === "run_sql"
+            ? "Call list_tables first to discover permitted tables and columns (follow nextOffset). " +
+              "Run a read-only DuckDB query for aggregates, trends, comparisons, or structured records. " +
+              "Use only discovered tables and columns; keep date windows and maxRows bounded. " +
+              "Operational SQLite, writes, file reads, and external access are unavailable."
+            : handle.description,
+        inputSchema,
+      };
     });
+  }
+
+  private listTablesHandle(authorization?: CorpusAuthorization): ToolHandle {
+    return createDirectListTablesTool(
+      async () => (await this.instructionContext(authorization)).catalog ?? [],
+    );
   }
 
   manifest(authorization?: CorpusAuthorization): readonly DirectMcpToolManifest[] {
@@ -258,30 +279,27 @@ export class DirectMcpService {
         : "";
       const head =
         "This grant is restricted to selected source instances. Only `search_many`, " +
-        "`fetch_many`, `lookup_document_by_url`, and `run_sql` are available. Source filters may narrow " +
+        "`fetch_many`, `lookup_document_by_url`, `list_tables`, and `run_sql` are available. Source filters may narrow " +
         "the grant but can never widen it. The person filters (`from:`, `by:`, `to:`, `with:`) " +
         "and tag filters (`tag:`, `#tag`) are not available to this grant; a query carrying one " +
         `is refused with an \`unsupported_filter\` error naming the token to remove.${sourceTypes} ` +
-        "`run_sql` reads only the permitted tables listed below — a query touching any other " +
+        "`run_sql` reads only the permitted tables returned by `list_tables` — a query touching any other " +
         "table, or calling a table function, is refused with a `sql_not_permitted` error naming it.";
-      const permittedCatalog: readonly RetrievalCatalogTable[] = (context.catalog ?? []).map(
-        (entry) => ({
-          tableName: entry.tableName,
-          columns: entry.columns.map((column) => ({ name: column.name, type: column.type })),
-        }),
-      );
-      const full = `${head}\n${renderAnalyticsRetrievalGuidance(permittedCatalog)}`;
+      const full = `${DIRECT_MCP_ESSENTIAL_INSTRUCTIONS}${head}\n${renderAnalyticsRetrievalGuidance([], "discovery")}`;
       if (Buffer.byteLength(full, "utf8") > MAX_DIRECT_MCP_INSTRUCTIONS_BYTES) {
         throw new Error("Direct MCP instructions exceeded the safe size limit");
       }
       return full;
     }
-    const instructions = renderReadOnlyRetrievalPlaybook({
-      ...(await this.instructionContext(authorization)),
-      fetchBatchLimit: MAX_DIRECT_MCP_FETCH_DOCUMENTS,
-      includeTemporal: this.byName.has("temporal_query"),
-      includeCognition: this.byName.has("entity_context"),
-    });
+    const instructions =
+      DIRECT_MCP_ESSENTIAL_INSTRUCTIONS +
+      renderReadOnlyRetrievalPlaybook({
+        sourceTypes: (await this.instructionContext(authorization)).sourceTypes,
+        catalogMode: "discovery",
+        fetchBatchLimit: MAX_DIRECT_MCP_FETCH_DOCUMENTS,
+        includeTemporal: this.byName.has("temporal_query"),
+        includeCognition: this.byName.has("entity_context"),
+      });
     if (Buffer.byteLength(instructions, "utf8") > MAX_DIRECT_MCP_INSTRUCTIONS_BYTES) {
       throw new Error("Direct MCP instructions exceeded the safe size limit");
     }
@@ -296,14 +314,17 @@ export class DirectMcpService {
     if (context.authorization?.restricted && !RESTRICTED_DIRECT_MCP_TOOL_NAME_SET.has(name)) {
       return { kind: "error", code: "tool_not_found", message: "Direct MCP tool not found" };
     }
-    const handle = context.authorization?.restricted
-      ? new Map(
-          (this.scopedHandles?.(context.authorization) ?? []).map((candidate) => [
-            candidate.name,
-            candidate,
-          ]),
-        ).get(name)
-      : this.byName.get(name);
+    const handle =
+      name === "list_tables"
+        ? this.listTablesHandle(context.authorization)
+        : context.authorization?.restricted
+          ? new Map(
+              (this.scopedHandles?.(context.authorization) ?? []).map((candidate) => [
+                candidate.name,
+                candidate,
+              ]),
+            ).get(name)
+          : this.byName.get(name);
     // The route validates the path first. Keep the service fail-closed too so
     // another future caller cannot widen the fixed surface by casting a name.
     if (!handle) {
@@ -326,7 +347,16 @@ export class DirectMcpService {
       ...(context.timeZone ? { timeZone: context.timeZone } : {}),
       ...(context.signal ? { abortSignal: context.signal } : {}),
     };
-    const result = sanitizeDirectToolResult(await handle.invoke(toolArgs, toolContext));
+    const rawResult = await handle.invoke(toolArgs, toolContext);
+    const result = sanitizeDirectToolResult(
+      rawResult.kind === "error" && rawResult.code === "sql_not_permitted"
+        ? {
+            ...rawResult,
+            message:
+              rawResult.message + " Call list_tables to discover permitted tables and columns.",
+          }
+        : rawResult,
+    );
     let serialized: string;
     try {
       serialized = JSON.stringify(result);
@@ -399,6 +429,7 @@ export function sanitizeDirectToolResult(result: ToolResult): ToolResult {
 
 const DIRECT_MCP_SAFE_ERROR_CODES = new Set([
   "invalid_args",
+  "catalog_failed",
   "not_found",
   "seed_not_found",
   "sql_over_cap",
@@ -444,6 +475,8 @@ function safeDirectToolErrorMessage(code: string): string {
       return "A requested connection seed was not found.";
     case "sql_over_cap":
       return "The SQL result exceeded the row limit. Narrow the query and retry.";
+    case "catalog_failed":
+      return "The analytics catalog could not be read.";
     case "sql_failed":
       return "The read-only SQL query failed.";
     case "sql_not_permitted":

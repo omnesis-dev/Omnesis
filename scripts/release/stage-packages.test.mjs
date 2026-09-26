@@ -35,7 +35,7 @@ describe("release package runtime assets", () => {
       from: "models-dev",
       to: "models-dev",
     });
-    const temp = mkdtempSync(join(repoRoot, ".models-dev-stage-test-"));
+    const temp = mkdtempSync(join(tmpdir(), "omnesis-models-dev-stage-test-"));
     try {
       const entry = listPublishablePackages().find(({ pkg }) => pkg.name === "@omnesis/gateway");
       expect(entry).toBeDefined();

@@ -23,6 +23,7 @@ import {
   harnessAddresses,
   reconnectableHarnessDevices,
   isPrivateAddress,
+  servesUntrustedCertificate,
   usesNonStandardPort,
 } from "./client-setup.js";
 import { AgentIcon } from "./agent-brand.js";
@@ -59,6 +60,21 @@ function NoteText({ parts }) {
         ? html`<${ExternalLink} href=${part.href}>${part.text}<//>`
         : html`<code>${part.code}</code>`,
   );
+}
+
+/**
+ * For an agent that only accepts a publicly issued certificate, where this
+ * gateway serves one it will not accept, and how to give the gateway one.
+ */
+function TrustedCertificateNotice({ agent }) {
+  return html`<div class="access-agent-public is-warning" role="alert">
+    <p>
+      <strong>This gateway's certificate is not publicly trusted.</strong> ${agent.needsTrustedCertificate}, so it cannot connect to this gateway with its self-signed certificate.
+    </p>
+    <p>
+      <${ExternalLink} href=${PUBLISH_DOCS.certificates}>Give the gateway a Tailscale certificate<//>${" or "}<${ExternalLink} href=${PUBLISH_DOCS.domain}>use a domain of your own<//>.
+    </p>
+  </div>`;
 }
 
 /**
@@ -298,7 +314,7 @@ function AgentSetupPicker({ oauth }) {
         >
           <span class="backend-opt-icon"><${AgentIcon} icon=${agent.icon} /></span>
           ${agent.blocked &&
-          html`<span class="access-agent-warning" role="img" aria-label="Cannot reach this address" title="Cannot reach this address">${WARNING_GLYPH}</span>`}
+          html`<span class="access-agent-warning" role="img" aria-label="Cannot connect to this gateway" title="Cannot connect to this gateway">${WARNING_GLYPH}</span>`}
           <span class="backend-opt-title">${agent.name}</span>
         </button>`,
       )}
@@ -306,6 +322,7 @@ function AgentSetupPicker({ oauth }) {
     ${selected &&
     html`<div class="access-agent-steps" id="access-agent-steps" data-agent=${selected.id}>
       ${selected.needsPublicAddress && html`<${PublicAddressNotice} agent=${selected} resource=${oauth.resource} />`}
+      ${selected.needsTrustedCertificate && servesUntrustedCertificate(oauth) && html`<${TrustedCertificateNotice} agent=${selected} />`}
       ${selected.pairs &&
       html`<${HarnessPairing}
         agentName=${selected.name}

@@ -21,7 +21,7 @@
  * the failing run is printed so the override is a decision, not an accident.
  */
 
-import { spawnSync } from "node:child_process";
+import { ActionsRunsError, readWorkflowRuns, runGh } from "./actions-runs.mjs";
 
 const WORKFLOW = "install-e2e.yml";
 export const OVERRIDE_FLAG = "--allow-failed-install-e2e";
@@ -75,37 +75,27 @@ export function installE2eVerdict(runs) {
   return { ok: true, ...describe(full) };
 }
 
-function runGh(root, args) {
-  const result = spawnSync("gh", args, { cwd: root, encoding: "utf8" });
-  return {
-    code: result.status ?? 1,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr || result.error?.message || "",
-  };
-}
-
-function unreadable(reason) {
+function unreadable(error) {
   return new Error(
-    `Could not read the install/update lane runs: ${reason}. ` +
+    `Could not read the install/update lane runs: ${error.message}. ` +
       `Retry, or pass ${OVERRIDE_FLAG} to release without that evidence.`,
+    { cause: error },
   );
 }
 
 /** The completed runs on main of one event, newest first. */
 function readRuns(root, gh, event) {
-  const listing = gh(root, [
-    "api",
-    `repos/{owner}/{repo}/actions/workflows/${WORKFLOW}/runs?branch=main&event=${event}&status=completed&per_page=30`,
-  ]);
-  if (listing.code !== 0) throw unreadable(listing.stderr.trim() || `gh exited ${listing.code}`);
-  let runs;
   try {
-    runs = JSON.parse(listing.stdout).workflow_runs;
-  } catch {
-    throw unreadable("the answer was not JSON");
+    return readWorkflowRuns(
+      root,
+      gh,
+      WORKFLOW,
+      `branch=main&event=${event}&status=completed&per_page=30`,
+    );
+  } catch (error) {
+    if (error instanceof ActionsRunsError) throw unreadable(error);
+    throw error;
   }
-  if (!Array.isArray(runs)) throw unreadable("the answer carried no run list");
-  return runs;
 }
 
 /**

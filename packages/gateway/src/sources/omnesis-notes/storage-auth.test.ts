@@ -5,7 +5,9 @@ import Database from "better-sqlite3";
 import { beforeEach, afterEach, expect, test } from "vitest";
 import { MIGRATIONS } from "../../data/migrations.js";
 import { runSchemaSetup } from "../../data/schema.js";
-import { scopedNoteId } from "../../mcp/notes-server.js";
+import { directWriteGate } from "../../write-gate.js";
+import { bootOmnesisNotes } from "./wiring.js";
+import { scopedNoteId } from "./capture-id.js";
 import { getNoteEntry, insertNoteEntry, type NoteEntry } from "./storage.js";
 
 const NOW = Date.now();
@@ -76,19 +78,97 @@ test("rolls back a successful authorization audit when note insertion fails", ()
   expect(db.prepare("SELECT count(*) AS n FROM access_audit_events").get()).toEqual({ n: 0 });
 });
 
-test("isolates client retry IDs from other principals, credentials and native captures", () => {
+test("isolates client retry IDs from other principals and native captures", () => {
   const id = "10000000-0000-4000-8000-000000000001";
-  const scoped = scopedNoteId("principal-1", "credential-1", id);
-  expect(scopedNoteId("principal-1", "credential-1", id)).toBe(scoped);
-  expect(
-    new Set([
-      id,
-      scoped,
-      scopedNoteId("principal-2", "credential-1", id),
-      scopedNoteId("principal-1", "credential-2", id),
-    ]).size,
-  ).toBe(4);
+  const scoped = scopedNoteId("principal-1", id);
+  expect(scopedNoteId("principal-1", id)).toBe(scoped);
+  expect(new Set([id, scoped, scopedNoteId("principal-2", id)]).size).toBe(3);
 });
+
+test("concurrent MCP retries deduplicate across credentials and retain the first receipt", async () => {
+  await withRuntime(async (runtime) => {
+    const input = {
+      id: "10000000-0000-4000-8000-000000000001",
+      text: entry.text,
+      surface: "mcp",
+      captureContext: entry.captureContext!,
+    };
+    const captures = await Promise.all([
+      runtime.capture(input, activeAuditInput()),
+      runtime.capture(input, activeAuditInput()),
+    ]);
+    expect(captures[0]).toEqual(captures[1]);
+    expect(captures[0]!.id).not.toBe(input.id);
+    const replacementAudit = replaceCredential();
+    const retry = await runtime.capture(
+      {
+        ...input,
+        captureContext: { ...input.captureContext, credentialId: replacementAudit.credentialId },
+      },
+      replacementAudit,
+    );
+    expect(retry).toEqual(captures[0]);
+    expect(db.prepare("SELECT count(*) AS n FROM note_entries").get()).toEqual({ n: 1 });
+  });
+});
+
+test("legacy MCP retries after reconnect preserve the stored ID, text, provenance and receipt", async () => {
+  // Frozen credential-scoped ID for principal-1 / credential-1 and the capture UUID below.
+  const legacy = { ...entry, id: "d27c618d-16e5-895e-a5a1-193058f1ac20" };
+  insertNoteEntry(db, legacy, activeAuditInput());
+  const replacementAudit = replaceCredential();
+  await withRuntime(async (runtime) => {
+    const input = {
+      id: "10000000-0000-4000-8000-000000000001",
+      text: "Changed retry",
+      surface: "mcp",
+      captureContext: { ...entry.captureContext!, credentialId: replacementAudit.credentialId },
+    };
+    expect(await runtime.capture(input, replacementAudit)).toEqual(legacy);
+    expect(db.prepare("SELECT count(*) AS n FROM note_entries").get()).toEqual({ n: 1 });
+    expect(
+      db
+        .prepare(
+          "SELECT count(*) AS n FROM access_audit_events WHERE event_type = 'mcp-tool-invoked'",
+        )
+        .get(),
+    ).toEqual({ n: 2 });
+    db.exec("UPDATE oauth_access_tokens SET revoked_at = 1");
+    await expect(runtime.capture(input, replacementAudit)).rejects.toThrow("authorization");
+    expect(getNoteEntry(db, legacy.id)).toEqual(legacy);
+  });
+});
+
+function replaceCredential() {
+  db.exec(`
+    UPDATE principal_credentials SET revoked_at = 1 WHERE id = 'credential-1';
+    UPDATE oauth_access_tokens SET revoked_at = 1 WHERE id = 'access-1';
+    INSERT INTO principal_credentials
+      (id, grant_id, oauth_client_id, kind, status, label, created_at)
+    VALUES ('credential-2', 'grant-1', 'client-1', 'interactive', 'active', 'Fictional replacement', ${NOW});
+    INSERT INTO oauth_access_tokens
+      (id, credential_id, token_hash, audience, scope, grant_revision, created_at, expires_at)
+    VALUES ('access-2', 'credential-2', 'fictional-new-hash', 'https://gateway.example/mcp',
+      'omnesis:access', 1, ${NOW}, ${NOW + 60_000});
+  `);
+  return { ...activeAuditInput(), accessTokenId: "access-2", credentialId: "credential-2" };
+}
+
+async function withRuntime(work: (runtime: ReturnType<typeof bootOmnesisNotes>) => Promise<void>) {
+  const runtime = bootOmnesisNotes({
+    writeGate: directWriteGate(db),
+    readDb: db,
+    ingest: async () => {},
+    deleteByIds: async () => {},
+    debounceMs: 0,
+  });
+  try {
+    await work(runtime);
+  } finally {
+    await runtime.flushAll();
+    runtime.dispose();
+  }
+}
 
 function seedActiveAuthority(): void {
   db.exec(`

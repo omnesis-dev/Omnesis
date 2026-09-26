@@ -48,6 +48,7 @@ import {
   releasePrRefusal,
   resolveTargetVersion,
 } from "./plan.mjs";
+import { OVERRIDE_FLAG as ALLOW_FAILED_INSTALL_E2E } from "./install-e2e-gate.mjs";
 import { preflightTag } from "./preflight-tag.mjs";
 import { syncPluginVersions } from "./sync-plugin-versions.mjs";
 
@@ -260,7 +261,7 @@ function commandPr({ dryRun }) {
  * to the operator: the push is what arms every downstream publication, so it
  * stays one deliberate, separately typed command.
  */
-function commandTag({ requestedVersion, dryRun, sign }) {
+function commandTag({ requestedVersion, dryRun, sign, allowFailedInstallE2e }) {
   const version = requestedVersion ?? readProductVersion(repoRoot);
   assertStrictSemver(version);
   const tag = `v${version}`;
@@ -281,11 +282,12 @@ function commandTag({ requestedVersion, dryRun, sign }) {
   }
 
   if (dryRun) {
-    console.log(formatTagDryRun({ tag, version, sign }));
+    console.log(formatTagDryRun({ tag, version, sign, allowFailedInstallE2e }));
     return 0;
   }
 
-  const sha = preflightTag(repoRoot, tag);
+  const { sha, notes } = preflightTag(repoRoot, tag, { allowFailedInstallE2e });
+  for (const line of notes) console.log(line);
   run("git", ["tag", sign ? "-s" : "-a", tag, "-m", `Omnesis ${version}`, sha]);
   console.log(`Created ${sign ? "signed " : ""}annotated tag ${tag} at ${sha}.`);
   if (!sign) {
@@ -385,12 +387,13 @@ const SUBCOMMANDS = {
 
 export function parseArgs(argv) {
   const [subcommand, ...rest] = argv;
-  const options = { dryRun: false, sign: false };
+  const options = { dryRun: false, sign: false, allowFailedInstallE2e: false };
   const positional = [];
   for (let index = 0; index < rest.length; index++) {
     const arg = rest[index];
     if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--sign") options.sign = true;
+    else if (arg === ALLOW_FAILED_INSTALL_E2E) options.allowFailedInstallE2e = true;
     else if (arg === "--registry" || arg === "--store-versions") {
       const value = rest[++index];
       if (value === undefined || value.startsWith("--")) {
@@ -417,6 +420,7 @@ function usage() {
     "",
     "  --dry-run           print what would happen; change nothing",
     "  --sign              (tag) sign the tag with your configured release key",
+    `  ${ALLOW_FAILED_INSTALL_E2E}  (tag) release although the install/update lanes are red`,
     "  --registry <url>    (status) query this registry instead of the default",
     "  --store-versions    (status) JSON object of store versions from a wrapper",
     "",
