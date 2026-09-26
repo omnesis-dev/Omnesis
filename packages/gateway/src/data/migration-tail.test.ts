@@ -57,7 +57,7 @@ const TAIL_VERSIONS = Array.from(
  * `windBack` to undo; its input is planted by the test that replays it, and
  * it is named here on the same terms as the rest.
  */
-const WOUND_BACK = [172, 173, 174, 175, 176, 177, 178, 179, 180, 181];
+const WOUND_BACK = [172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182];
 
 let dir: string;
 let dbPath: string;
@@ -111,6 +111,45 @@ function windBack(db: Db): void {
     .all()
     .some((row) => row.name === "access_level_id");
   if (pairingsHaveAccessLevel) db.exec("ALTER TABLE device_pairings DROP COLUMN access_level_id");
+  const oauthClientsHaveJwks = db
+    .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('oauth_clients')")
+    .all()
+    .some((row) => row.name === "jwks_uri");
+  if (oauthClientsHaveJwks) {
+    // Migration 182 rebuilt `oauth_clients` to admit private_key_jwt clients;
+    // rebuild it back to the shape migration 154 left, under the same pragmas.
+    const fkWasOn =
+      (db.prepare<[], { foreign_keys: number }>("PRAGMA foreign_keys").get()?.foreign_keys ?? 0) ===
+      1;
+    db.exec("PRAGMA foreign_keys = OFF");
+    db.exec("PRAGMA legacy_alter_table = ON");
+    db.exec(`
+      CREATE TABLE oauth_clients_before_tail (
+        client_id TEXT PRIMARY KEY,
+        client_name TEXT NOT NULL,
+        redirect_uris TEXT NOT NULL,
+        grant_types TEXT NOT NULL,
+        response_types TEXT NOT NULL,
+        token_endpoint_auth_method TEXT NOT NULL
+          CHECK (token_endpoint_auth_method IN ('none', 'client_secret_basic')),
+        client_secret_hash TEXT,
+        client_uri TEXT,
+        created_at INTEGER NOT NULL,
+        CHECK (json_valid(redirect_uris) AND json_type(redirect_uris) = 'array'),
+        CHECK (json_valid(grant_types) AND json_type(grant_types) = 'array'),
+        CHECK (json_valid(response_types) AND json_type(response_types) = 'array'),
+        CHECK (
+          (token_endpoint_auth_method = 'none' AND client_secret_hash IS NULL) OR
+          (token_endpoint_auth_method = 'client_secret_basic' AND client_secret_hash IS NOT NULL)
+        )
+      );
+      DROP TABLE oauth_clients;
+      ALTER TABLE oauth_clients_before_tail RENAME TO oauth_clients;
+      CREATE INDEX idx_oauth_clients_created ON oauth_clients(created_at, client_id);
+    `);
+    db.exec("PRAGMA legacy_alter_table = OFF");
+    if (fkWasOn) db.exec("PRAGMA foreign_keys = ON");
+  }
   db.exec(`DELETE FROM schema_migrations WHERE version > ${BEFORE_TAIL}`);
   db.exec(`PRAGMA user_version = ${BEFORE_TAIL}`);
 }
