@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+// Scope demo placeholder comment.
 import { portalDeviceName, portalInstallId } from "./lib/storage.js";
 import { NOTES_HISTORY_PAGE_SIZE } from "./lib/notes.js";
 
