@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { createHmac, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
+import { constants, createHmac, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
 import { describe, expect, test, vi } from "vitest";
 
 import { ClientAssertionVerifier, unverifiedAssertionSubject } from "./client-assertion.js";
@@ -87,6 +87,12 @@ function assertion(
       key: options.key ?? ec.privateKey,
       dsaEncoding: "ieee-p1363",
     });
+  } else if (alg === "PS256") {
+    signature = sign("sha256", Buffer.from(signingInput), {
+      key: options.key ?? rsa.privateKey,
+      padding: constants.RSA_PKCS1_PSS_PADDING,
+      saltLength: constants.RSA_PSS_SALTLEN_DIGEST,
+    });
   } else {
     signature = sign("sha256", Buffer.from(signingInput), options.key ?? rsa.privateKey);
   }
@@ -128,6 +134,15 @@ describe("ClientAssertionVerifier", () => {
         EXPECTED,
       ),
     ).resolves.toMatchObject({ clientId: CLIENT_ID });
+  });
+
+  test("accepts PS256 from a key set entry that also carries private members", async () => {
+    const { verifier } = verifierWith([
+      { ...rsa.privateKey.export({ format: "jwk" }), kid: "rsa-1", use: "sig" },
+    ]);
+    await expect(verifier.verify(assertion({ alg: "PS256" }), EXPECTED)).resolves.toMatchObject({
+      clientId: CLIENT_ID,
+    });
   });
 
   test("uses the only key when the header names none", async () => {

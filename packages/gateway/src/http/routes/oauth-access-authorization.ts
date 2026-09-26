@@ -174,7 +174,7 @@ export function mountOAuthAuthorizationRoutes(
         });
       } catch (error) {
         log.warn(
-          `Client metadata for ${query.client_id} could not be verified: ${error instanceof Error ? error.message : String(error)}`,
+          `Client metadata for ${JSON.stringify(query.client_id)} could not be verified: ${error instanceof Error ? error.message : String(error)}`,
         );
         return oauthError(c, 400, "invalid_client", "Client metadata could not be verified.");
       }

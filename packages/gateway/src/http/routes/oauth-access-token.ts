@@ -26,12 +26,10 @@ import {
 } from "./oauth-access-shared.js";
 import type { MiddlewareHandler } from "hono";
 import type { AccessService } from "../../access/service.js";
-import type { OAuthClientCredentials } from "../../access/types.js";
+import type { OAuthClientAuthMethod, OAuthClientCredentials } from "../../access/types.js";
 import type { AppEnv, RouteApp } from "./types.js";
 
 const log = createLogger("gateway:http:oauth-access");
-
-type ClientAuthMethod = "none" | "client_secret_basic" | "private_key_jwt";
 
 /**
  * The one client-authentication method a token or revocation request used.
@@ -41,13 +39,13 @@ type ClientAuthMethod = "none" | "client_secret_basic" | "private_key_jwt";
 type ClientAuthentication =
   | {
       ok: true;
-      method: ClientAuthMethod;
+      method: OAuthClientAuthMethod;
       clientId: string | undefined;
       credentials: OAuthClientCredentials;
     }
   | {
       ok: false;
-      method: ClientAuthMethod | "unknown";
+      method: OAuthClientAuthMethod | "unknown";
       error: "invalid_client" | "invalid_request";
       reason: string;
     };
