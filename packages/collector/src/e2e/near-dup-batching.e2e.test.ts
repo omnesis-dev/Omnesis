@@ -682,39 +682,7 @@ describe("Near-duplicate batching and DF generations (e2e-minimal universe)", ()
     ).toEqual({ lost: "", gained: "" });
   }, 420_000);
 
-  /**
-   * Skipped: it fails, and it fails because the product is wrong.
-   *
-   * A document's sixteen band hashes are a function of the DF table it was
-   * signed against — `IdfSketcher.weightOf` feeds `idfWeight(df, totalDocs)`
-   * into the weighted MinHash (`packages/near-dupes/src/algo/sketcher.ts:102`)
-   * — but `near_dup_lsh_buckets` is keyed by algorithm version alone and
-   * records nothing about which build produced the row
-   * (`packages/gateway/src/data/schema.ts:863`). Nothing re-signs a document
-   * when the table is rebuilt: `nearDupDfRefreshTask` publishes the new
-   * generation, drops the cached table and returns
-   * (`packages/gateway/src/scheduler/tasks/backfill-tasks.ts:1394`), and the
-   * one helper that would carry a re-sign watermark,
-   * `applySweepWatermark` (`packages/gateway/src/near-dupes/NearDupWriterOps.ts`),
-   * has no caller anywhere in the repo even though `sweepPeriodMs` and
-   * `sweepChunkSize` are configurable. Since `fetchNearDupCandidates`
-   * (`packages/gateway/src/near-dupes/NearDupComputeService.ts:474`) reads
-   * only that table, a document signed before a rebuild and one signed after
-   * are never offered to each other, whatever the gate would have said.
-   *
-   * Observed on a real gateway: two documents whose `content` strings are
-   * identical, signed under generation 1 (total_docs 30) and generation 2
-   * (total_docs 121), agreed on 2 of their 16 bands. The control in the same
-   * test — two byte-identical documents signed under ONE table in two
-   * different compute ticks — is linked, so the gate and the persisted-bucket
-   * path both work; only the generation drift is missing.
-   *
-   * Fixing it is a product decision, not a restoration. The correct fix folds
-   * the DF generation into the bucket key and re-signs on every rebuild, and
-   * the re-sign is the whole corpus; the alternatives are re-signing lazily
-   * on read, or rebuilding the table far less often and accepting the drift.
-   * The assertion below states the promise; the operator picks the price.
-   */
+  // Known bug: #189 — buckets signed under different DF generations are never compared.
   test.skip("byte-identical documents are near-duplicates of each other whichever DF build signed them", async () => {
     const subject: FixtureDoc = {
       externalId: "e2e-neardup-subject-early",
