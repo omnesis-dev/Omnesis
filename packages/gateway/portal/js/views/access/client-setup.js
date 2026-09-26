@@ -18,6 +18,7 @@ const DEVELOPER_MODE_GUIDE = "https://developers.openai.com/api/docs/guides/deve
 export const PUBLISH_DOCS = {
   funnel: `${DOCS}/connect#tailscale-funnel`,
   domain: `${DOCS}/setup#public-domain`,
+  certificates: `${DOCS}/setup#certificates`,
 };
 
 /** POSIX-shell single quoting, so a value can never split a pasted command. */
@@ -67,6 +68,16 @@ export function usesNonStandardPort(resource) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Whether the gateway's main address serves a certificate agents do not trust
+ * out of the box. Only an explicit answer counts: a gateway that does not say
+ * leaves every agent's setup in place.
+ */
+export function servesUntrustedCertificate(oauth) {
+  const main = oauth.resources?.find((entry) => entry.resource === oauth.resource);
+  return main?.publiclyTrusted === false;
 }
 
 /**
@@ -122,6 +133,9 @@ function harnessCommands(harness, oauth, address, pairingCode) {
  *   and `standardPortOnly` those that only dial port 443. With an address such
  *   an agent cannot reach, it is `blocked` and has no commands or
  *   instructions, because none of them could work.
+ * - `needsTrustedCertificate` marks agents that only accept a certificate a
+ *   public authority issued. Where the gateway's address serves one it does
+ *   not, such as its self-signed certificate, the agent is `blocked` too.
  * - `pairs` marks the managed integrations, which pair the machine they run on
  *   as an agent device before signing in.
  *
@@ -132,6 +146,7 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
   const url = shellQuote(oauth.resource);
   const address = harnessAddress ?? harnessAddresses(oauth)[0];
   const privateAddress = isPrivateAddress(oauth.resource);
+  const untrustedCertificate = servesUntrustedCertificate(oauth);
   const agents = [
     {
       id: "claude-code",
@@ -158,6 +173,7 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
         ],
       },
       alternatives: true,
+      needsTrustedCertificate: "Claude Code only accepts a certificate a public authority issued",
       docs: `${DOCS}/connect#claude-code`,
     },
     {
@@ -188,6 +204,7 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
         ],
         command: `codex mcp login ${SERVER_NAME} --no-browser`,
       },
+      needsTrustedCertificate: "Codex only accepts a certificate a public authority issued",
       docs: `${DOCS}/connect#codex`,
     },
     {
@@ -250,8 +267,10 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
   ];
   const nonStandardPort = usesNonStandardPort(oauth.resource);
   return agents.map((agent) =>
-    (agent.needsPublicAddress && privateAddress) || (agent.standardPortOnly && nonStandardPort)
-      ? { ...agent, blocked: true, commands: [], note: [], headless: undefined }
+    (agent.needsPublicAddress && privateAddress) ||
+    (agent.standardPortOnly && nonStandardPort) ||
+    (agent.needsTrustedCertificate && untrustedCertificate)
+      ? { ...agent, blocked: true, commands: [], alternatives: false, note: [], headless: undefined }
       : agent,
   );
 }

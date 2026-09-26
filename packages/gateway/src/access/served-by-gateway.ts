@@ -3,13 +3,22 @@
 
 import { createHash } from "node:crypto";
 import { isIP } from "node:net";
-import { connect } from "node:tls";
+import { connect, rootCertificates } from "node:tls";
 
-/**
- * SHA-256 fingerprint (lowercase hex) of the certificate a TLS client meets at
- * `resource`, or null when it cannot be reached in time.
- */
-export type CertificateProbe = (resource: URL) => Promise<string | null>;
+/** The certificate a TLS client meets at a resource. */
+export interface PresentedCertificate {
+  /** SHA-256 fingerprint, lowercase hex. */
+  fingerprint: string;
+  /**
+   * It verifies for the resource's name against the public certificate
+   * authorities an agent trusts out of the box, as a Let's Encrypt
+   * certificate does and a self-signed one does not.
+   */
+  publiclyTrusted: boolean;
+}
+
+/** What a TLS client meets at `resource`, or null when it cannot be reached in time. */
+export type CertificateProbe = (resource: URL) => Promise<PresentedCertificate | null>;
 
 const PROBE_TIMEOUT_MS = 2_000;
 const CACHE_TTL_MS = 60_000;
@@ -23,17 +32,27 @@ export const probeServedCertificate: CertificateProbe = (resource) =>
       port: Number(resource.port || 443),
       // The point is to see whichever certificate answers, trusted or not.
       rejectUnauthorized: false,
+      // Judged against the bundled public roots only, so a certificate this
+      // process was told to trust does not pass for a public one.
+      ca: [...rootCertificates],
       ...(isIP(host) === 0 ? { servername: host } : {}),
     });
-    const finish = (fingerprint: string | null) => {
+    const finish = (presented: PresentedCertificate | null) => {
       socket.destroy();
-      resolve(fingerprint);
+      resolve(presented);
     };
     socket.setTimeout(PROBE_TIMEOUT_MS, () => finish(null));
     socket.once("error", () => finish(null));
     socket.once("secureConnect", () => {
       const raw = socket.getPeerCertificate().raw;
-      finish(raw ? createHash("sha256").update(raw).digest("hex") : null);
+      finish(
+        raw
+          ? {
+              fingerprint: createHash("sha256").update(raw).digest("hex"),
+              publiclyTrusted: socket.authorized,
+            }
+          : null,
+      );
     });
   });
 
@@ -52,6 +71,12 @@ export interface ServedResource {
    * certificate without being direct.
    */
   direct: boolean;
+  /**
+   * Its certificate is one agents trust without being told to. An agent that
+   * cannot be given another certificate to trust, such as Claude Code with a
+   * self-signed one, cannot connect where this is false.
+   */
+  publiclyTrusted: boolean;
 }
 
 /** The port a resource URL is dialled on, spelled out or implied by its scheme. */
@@ -79,27 +104,33 @@ export function createServedByGatewayCheck(options: {
 }): (resources: readonly string[]) => Promise<Map<string, ServedResource>> {
   const probe = options.probe ?? probeServedCertificate;
   const now = options.now ?? Date.now;
-  const cache = new Map<string, { fingerprint: string; servedByGateway: boolean; at: number }>();
-  const served = async (resource: string, own: string): Promise<boolean> => {
+  type Answer = { servedByGateway: boolean; publiclyTrusted: boolean };
+  const cache = new Map<string, Answer & { fingerprint: string; at: number }>();
+  const served = async (resource: string, own: string): Promise<Answer> => {
     const cached = cache.get(resource);
     if (cached && cached.fingerprint === own && now() - cached.at < CACHE_TTL_MS) {
-      return cached.servedByGateway;
+      return cached;
     }
     const presented = await probe(new URL(resource)).catch(() => null);
-    const servedByGateway = presented?.toLowerCase() === own;
-    cache.set(resource, { fingerprint: own, servedByGateway, at: now() });
-    return servedByGateway;
+    const answer = {
+      servedByGateway: presented?.fingerprint.toLowerCase() === own,
+      publiclyTrusted: presented?.publiclyTrusted ?? false,
+    };
+    cache.set(resource, { ...answer, fingerprint: own, at: now() });
+    return answer;
   };
   return async (resources) => {
     const own = options.fingerprint()?.toLowerCase();
     const results = new Map<string, ServedResource>();
     await Promise.all(
       resources.map(async (resource) => {
-        const servedByGateway = own ? await served(resource, own) : false;
+        const { servedByGateway, publiclyTrusted } = own
+          ? await served(resource, own)
+          : { servedByGateway: false, publiclyTrusted: false };
         const direct =
           servedByGateway &&
           (options.listenPort === undefined || resourcePort(resource) === options.listenPort);
-        results.set(resource, { servedByGateway, direct });
+        results.set(resource, { servedByGateway, direct, publiclyTrusted });
       }),
     );
     return results;

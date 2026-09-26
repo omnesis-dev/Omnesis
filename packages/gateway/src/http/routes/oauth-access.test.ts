@@ -157,9 +157,9 @@ describe("MCP OAuth access routes", () => {
 
   test("tells the portal which MCP resources present the gateway's own certificate", async () => {
     const fingerprint = "ab".repeat(32);
-    const presented: Record<string, string | null> = {
-      [`${ORIGIN}/mcp`]: "cd".repeat(32),
-      "https://gateway.example.org:7600/mcp": fingerprint,
+    const presented: Record<string, { fingerprint: string; publiclyTrusted: boolean } | null> = {
+      [`${ORIGIN}/mcp`]: { fingerprint: "cd".repeat(32), publiclyTrusted: true },
+      "https://gateway.example.org:7600/mcp": { fingerprint, publiclyTrusted: false },
       "https://tailnet.example.net:7600/mcp": null,
     };
     const withAliases = createTestApp({
@@ -176,9 +176,19 @@ describe("MCP OAuth access routes", () => {
     expect((await overview.json()).oauth).toEqual({
       resource: RESOURCE,
       resources: [
-        { resource: RESOURCE, servedByGateway: false, direct: false },
-        { resource: "https://gateway.example.org:7600/mcp", servedByGateway: true, direct: true },
-        { resource: "https://tailnet.example.net:7600/mcp", servedByGateway: false, direct: false },
+        { resource: RESOURCE, servedByGateway: false, direct: false, publiclyTrusted: true },
+        {
+          resource: "https://gateway.example.org:7600/mcp",
+          servedByGateway: true,
+          direct: true,
+          publiclyTrusted: false,
+        },
+        {
+          resource: "https://tailnet.example.net:7600/mcp",
+          servedByGateway: false,
+          direct: false,
+          publiclyTrusted: false,
+        },
       ],
       tlsFingerprintSha256: fingerprint,
     });
@@ -190,14 +200,19 @@ describe("MCP OAuth access routes", () => {
       mcpResourceUrls: ["https://gateway.example.org:7600/mcp"],
       tlsFingerprintSha256: () => fingerprint,
       listenPort: 7600,
-      probeCertificate: async () => fingerprint,
+      probeCertificate: async () => ({ fingerprint, publiclyTrusted: true }),
     });
     const funnelOverview = await behindFunnel.request(`${ORIGIN}/admin/access`, {
       headers: { "X-Test-Portal": "yes" },
     });
     expect((await funnelOverview.json()).oauth.resources).toEqual([
-      { resource: RESOURCE, servedByGateway: true, direct: false },
-      { resource: "https://gateway.example.org:7600/mcp", servedByGateway: true, direct: true },
+      { resource: RESOURCE, servedByGateway: true, direct: false, publiclyTrusted: true },
+      {
+        resource: "https://gateway.example.org:7600/mcp",
+        servedByGateway: true,
+        direct: true,
+        publiclyTrusted: true,
+      },
     ]);
 
     const withoutCertificate = await app.request(`${ORIGIN}/portal/api/access`, {
@@ -205,7 +220,9 @@ describe("MCP OAuth access routes", () => {
     });
     expect((await withoutCertificate.json()).oauth).toEqual({
       resource: RESOURCE,
-      resources: [{ resource: RESOURCE, servedByGateway: false, direct: false }],
+      resources: [
+        { resource: RESOURCE, servedByGateway: false, direct: false, publiclyTrusted: false },
+      ],
       tlsFingerprintSha256: null,
     });
   });

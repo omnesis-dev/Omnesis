@@ -22,7 +22,7 @@ import {
 
 interface OAuth {
   resource: string;
-  resources?: Array<{ resource: string; servedByGateway: boolean; direct: boolean }>;
+  resources?: Array<{ resource: string; publiclyTrusted?: boolean; servedByGateway: boolean; direct: boolean }>;
   tlsFingerprintSha256?: string | null;
 }
 interface Address {
@@ -40,6 +40,7 @@ interface AgentSetup {
   headless?: { note: NotePart[]; command?: string };
   docs: string;
   needsPublicAddress?: string;
+  needsTrustedCertificate?: string;
   standardPortOnly?: string;
   pairs?: boolean;
   alternatives?: boolean;
@@ -165,6 +166,28 @@ describe("agentSetups", () => {
       expect(agent(id, privateOauth).blocked).toBeUndefined();
       expect(agent(id, privateOauth).commands.length).toBeGreaterThan(0);
     }
+  });
+
+  test("blocks the agents that need a publicly trusted certificate on a self-signed gateway", () => {
+    const selfSigned = {
+      resource: RESOURCE,
+      resources: [{ resource: RESOURCE, servedByGateway: true, direct: true, publiclyTrusted: false }],
+    };
+    for (const id of ["claude-code", "codex"]) {
+      expect(agent(id, selfSigned)).toMatchObject({ blocked: true, commands: [], note: [] });
+      expect(agent(id, selfSigned).needsTrustedCertificate).toMatch(/public authority/u);
+    }
+    // Pinning the fingerprint is how the managed integrations trust it.
+    for (const id of ["openclaw", "hermes", "antigravity"]) {
+      expect(agent(id, selfSigned).blocked).toBeUndefined();
+    }
+    const trusted = {
+      ...selfSigned,
+      resources: [{ ...selfSigned.resources[0]!, publiclyTrusted: true }],
+    };
+    expect(agent("claude-code", trusted).blocked).toBeUndefined();
+    // A gateway that does not report trust leaves the setup in place.
+    expect(agent("claude-code", { resource: RESOURCE }).blocked).toBeUndefined();
   });
 
   test("blocks ChatGPT on an address off port 443, which it never dials", () => {

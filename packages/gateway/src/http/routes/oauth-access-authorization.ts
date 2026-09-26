@@ -373,6 +373,7 @@ export function mountOAuthAuthorizationRoutes(
               resource,
               servedByGateway: served.get(resource)?.servedByGateway ?? false,
               direct: served.get(resource)?.direct ?? false,
+              publiclyTrusted: served.get(resource)?.publiclyTrusted ?? false,
             })),
             tlsFingerprintSha256: fingerprint() ?? null,
           }
