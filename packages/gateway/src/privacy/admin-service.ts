@@ -86,7 +86,15 @@ export interface PrivacyAdminServiceDeps {
   db: Database.Database;
   policyStore: Pick<
     PrivacyPolicyStore,
-    "get" | "update" | "revert" | "getFamily" | "createFamily" | "updateFamily" | "restoreFamily"
+    | "get"
+    | "update"
+    | "revert"
+    | "getFamily"
+    | "createFamily"
+    | "updateFamily"
+    | "restoreFamily"
+    | "deleteFamily"
+    | "renameFamily"
   >;
   writeGate: Pick<
     WriteGate,
@@ -124,6 +132,14 @@ export class PrivacyAdminService {
 
   getPolicyFamily(familyId: string): Promise<PrivacyPolicyDocument | null> {
     return this.deps.policyStore.getFamily(familyId);
+  }
+
+  renamePolicyFamily(familyId: string, name: string) {
+    return this.deps.policyStore.renameFamily(familyId, name);
+  }
+
+  deletePolicyFamily(familyId: string) {
+    return this.deps.policyStore.deleteFamily(familyId);
   }
 
   async createPolicyFamily(input: {

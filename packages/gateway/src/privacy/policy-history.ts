@@ -237,6 +237,107 @@ export function commitPrivacyPolicy(
   })();
 }
 
+export type DeletePrivacyPolicyFamilyResult =
+  | { outcome: "deleted" }
+  | { outcome: "not-found" }
+  | { outcome: "in-use"; message: string };
+
+/** Retired access is history; unrevoked configurations, even expired ones, still use a policy. */
+export function privacyPolicyDeletionBlockedReason(
+  db: Database.Database,
+  familyId: string,
+): string | null {
+  if (familyId === DEFAULT_PRIVACY_POLICY_FAMILY_ID) {
+    return "The default policy cannot be deleted.";
+  }
+  for (const [table, label, query] of [
+    [
+      "access_grant_capabilities",
+      "an access grant",
+      `SELECT 1 FROM access_grant_capabilities c
+       JOIN access_grants g ON g.id = c.grant_id
+       JOIN access_principals p ON p.id = g.principal_id
+       WHERE c.policy_family_id = ? AND g.revoked_at IS NULL AND p.revoked_at IS NULL LIMIT 1`,
+    ],
+    [
+      "access_level_capabilities",
+      "an access level",
+      `SELECT 1 FROM access_level_capabilities c
+       JOIN access_levels l ON l.id = c.level_id
+       WHERE c.policy_family_id = ? AND l.revoked_at IS NULL LIMIT 1`,
+    ],
+  ] as const) {
+    const exists = db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .get(table);
+    if (exists && db.prepare(query).get(familyId)) {
+      return `This policy is used by ${label}. Remove its policy reference before deleting it.`;
+    }
+  }
+  return null;
+}
+
+/** Archive the library entry, retaining immutable versions and review provenance. */
+export function deletePrivacyPolicyFamily(
+  db: Database.Database,
+  familyId: string,
+  now: number,
+): DeletePrivacyPolicyFamilyResult {
+  return db.transaction((): DeletePrivacyPolicyFamilyResult => {
+    if (
+      !db
+        .prepare("SELECT 1 FROM privacy_policy_families WHERE id = ? AND archived_at IS NULL")
+        .get(familyId)
+    ) {
+      return { outcome: "not-found" };
+    }
+    const message = privacyPolicyDeletionBlockedReason(db, familyId);
+    if (message) return { outcome: "in-use", message };
+    db.prepare(
+      "UPDATE privacy_policy_families SET archived_at = ?, updated_at = ?, name_key = ? WHERE id = ?",
+    ).run(now, now, `\0archived:${familyId}`, familyId);
+    return { outcome: "deleted" };
+  })();
+}
+
+export type RenamePrivacyPolicyFamilyResult =
+  | { outcome: "renamed"; name: string }
+  | { outcome: "not-found" }
+  | { outcome: "name-taken" }
+  | { outcome: "invalid" };
+
+/** Rename the library entry without republishing its rules or altering references. */
+export function renamePrivacyPolicyFamily(
+  db: Database.Database,
+  familyId: string,
+  inputName: string,
+  now: number,
+): RenamePrivacyPolicyFamilyResult {
+  const name = inputName.trim();
+  if (!name || name.length > 120 || name.includes("\0")) return { outcome: "invalid" };
+  return db.transaction((): RenamePrivacyPolicyFamilyResult => {
+    if (
+      !db
+        .prepare("SELECT 1 FROM privacy_policy_families WHERE id = ? AND archived_at IS NULL")
+        .get(familyId)
+    ) {
+      return { outcome: "not-found" };
+    }
+    const nameKey = name.toLowerCase();
+    if (
+      db
+        .prepare("SELECT 1 FROM privacy_policy_families WHERE name_key = ? AND id != ?")
+        .get(nameKey, familyId)
+    ) {
+      return { outcome: "name-taken" };
+    }
+    db.prepare(
+      "UPDATE privacy_policy_families SET name = ?, name_key = ?, updated_at = ? WHERE id = ?",
+    ).run(name, nameKey, now, familyId);
+    return { outcome: "renamed", name };
+  })();
+}
+
 export function listPrivacyPolicyFamilies(db: Database.Database): PrivacyPolicyFamilySummary[] {
   const hasAccessTables =
     db
@@ -262,6 +363,7 @@ export function listPrivacyPolicyFamilies(db: Database.Database): PrivacyPolicyF
          JOIN privacy_policy_state s ON s.family_id = f.id
          JOIN privacy_policy_versions v
            ON v.family_id = s.family_id AND v.generation = s.generation
+        WHERE f.archived_at IS NULL
         ORDER BY f.created_at, f.id`,
     )
     .all();
@@ -294,6 +396,7 @@ export function listPrivacyPolicyFamilies(db: Database.Database): PrivacyPolicyF
     updatedAt: row.updated_at,
     archivedAt: row.archived_at,
     affectedGrantIds: grantsByFamily.get(row.id) ?? [],
+    deletionBlockedReason: privacyPolicyDeletionBlockedReason(db, row.id),
   }));
 }
 

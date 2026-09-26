@@ -484,6 +484,7 @@ export interface AccessOverview {
     id: string;
     name: string;
     revision: string;
+    deletionBlockedReason?: string | null;
   }>;
   defaultPolicyFamilyId?: string;
   /** Transitional alias for clients built against the first V2 draft. */

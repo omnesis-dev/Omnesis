@@ -17,6 +17,7 @@ import {
   currentPrivacyPolicyVersion,
   currentPrivacyPolicyState,
   type CommitPrivacyPolicyInput,
+  type RenamePrivacyPolicyFamilyResult,
 } from "./policy-history.js";
 import type Database from "better-sqlite3";
 import type { WriteGate } from "../write-gate.js";
@@ -272,7 +273,13 @@ export class PrivacyPolicyStore {
     configDir: string,
     private readonly history?: {
       db: Database.Database;
-      writeGate: Pick<WriteGate, "commitPrivacyPolicy" | "markPrivacyPolicyMirrorSynced">;
+      writeGate: Pick<
+        WriteGate,
+        | "commitPrivacyPolicy"
+        | "markPrivacyPolicyMirrorSynced"
+        | "deletePrivacyPolicyFamily"
+        | "renamePrivacyPolicyFamily"
+      >;
       now?: () => number;
       revisionGen?: () => string;
       mirrorWrite?: (path: string, policy: string) => Promise<void>;
@@ -313,7 +320,7 @@ export class PrivacyPolicyStore {
         throw new PrivacyPolicyValidationError("Privacy policy history is not available.");
       }
       const name = input.name.trim();
-      if (!name || name.length > 120) {
+      if (!name || name.length > 120 || name.includes("\0")) {
         throw new PrivacyPolicyValidationError("Privacy policy name is invalid.");
       }
       if (
@@ -336,6 +343,39 @@ export class PrivacyPolicyStore {
     });
   }
 
+  renameFamily(
+    familyId: string,
+    name: string,
+  ): Promise<
+    | Exclude<RenamePrivacyPolicyFamilyResult, { outcome: "renamed" }>
+    | { outcome: "renamed"; document: PrivacyPolicyDocument }
+  > {
+    return this.serialized(async () => {
+      if (!this.history) return { outcome: "not-found" };
+      // The default family may not yet have its first immutable snapshot.
+      if (familyId === DEFAULT_PRIVACY_POLICY_FAMILY_ID) await this.readOrCreate();
+      const result = await this.history.writeGate.renamePrivacyPolicyFamily(
+        familyId,
+        name,
+        this.now(),
+      );
+      if (result.outcome !== "renamed") return result;
+      const version = currentPrivacyPolicyVersion(this.history.db, familyId);
+      if (!version) return { outcome: "not-found" };
+      return {
+        outcome: "renamed",
+        document: this.document({ ...version, familyName: result.name }),
+      };
+    });
+  }
+
+  deleteFamily(familyId: string) {
+    return this.serialized(async () => {
+      if (!this.history) return { outcome: "not-found" } as const;
+      return this.history.writeGate.deletePrivacyPolicyFamily(familyId, this.now());
+    });
+  }
+
   updateFamily(
     familyId: string,
     expectedRevision: string,
@@ -344,6 +384,10 @@ export class PrivacyPolicyStore {
     if (familyId === DEFAULT_PRIVACY_POLICY_FAMILY_ID) return this.update(expectedRevision, mutate);
     return this.serialized(async () => {
       if (!this.history) return null;
+      const family = this.history.db
+        .prepare("SELECT 1 FROM privacy_policy_families WHERE id = ? AND archived_at IS NULL")
+        .get(familyId);
+      if (!family) return null;
       const current = currentPrivacyPolicyVersion(this.history!.db, familyId);
       if (!current) return null;
       if (current.revision !== expectedRevision) {
@@ -374,6 +418,13 @@ export class PrivacyPolicyStore {
       return this.revert(expectedRevision, source.policy, generation);
     }
     return this.serialized(async () => {
+      if (
+        !this.history!.db.prepare(
+          "SELECT 1 FROM privacy_policy_families WHERE id = ? AND archived_at IS NULL",
+        ).get(familyId)
+      ) {
+        throw new PrivacyPolicyValidationError("Privacy policy family not found.");
+      }
       validatePolicy(source.policy);
       return this.writeFamily(familyId, source.policy, expectedRevision, "restore", {
         originRevision: source.revision,

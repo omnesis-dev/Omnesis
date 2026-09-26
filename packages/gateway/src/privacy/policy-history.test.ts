@@ -10,9 +10,16 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { DEFAULT_PRIVACY_POLICY_FAMILY_ID } from "@omnesis/types/privacy";
 import { directWriteGate } from "../write-gate.js";
-import { createAccessTables } from "../access/store.js";
+import { normalizeGrantRules, validateGrantRuleReferences } from "../access/store-rules.js";
+import {
+  createAccessTables,
+  revokeAccessGrant,
+  revokeAccessPrincipal,
+  deleteAccessLevel,
+} from "../access/store.js";
 import {
   createPrivacyPolicyHistoryTables,
+  privacyPolicyDeletionBlockedReason,
   listPrivacyPolicyFamilies,
   listPrivacyPolicyVersions,
   privacyPolicyFamilyVersion,
@@ -44,6 +51,187 @@ async function fixture() {
 }
 
 describe("privacy policy history", () => {
+  it("removes an unused family from the library while retaining its history", async () => {
+    const { db, store } = await fixture();
+    const original = await store.get();
+    const family = await store.createFamily({
+      name: "Unused policy",
+      policy: original.policy,
+      action: "fork",
+      originRevision: original.revision,
+    });
+    expect(privacyPolicyDeletionBlockedReason(db, family.familyId!)).toBeNull();
+    expect(await store.deleteFamily(family.familyId!)).toEqual({ outcome: "deleted" });
+    expect(await store.getFamily(family.familyId!)).toBeNull();
+    expect(listPrivacyPolicyFamilies(db).map((entry) => entry.id)).not.toContain(family.familyId);
+    expect(privacyPolicyFamilyVersion(db, family.familyId!, 1)?.revision).toBe(family.revision);
+    expect(
+      await store.runFamilyIfRevision(family.familyId!, family.revision, async () => true),
+    ).toBeNull();
+    expect(await store.deleteFamily(family.familyId!)).toEqual({ outcome: "not-found" });
+    expect(
+      await store.updateFamily(family.familyId!, family.revision, () => original.policy),
+    ).toBeNull();
+    await expect(store.restoreFamily(family.familyId!, family.revision, family)).rejects.toThrow(
+      "not found",
+    );
+    expect(() =>
+      validateGrantRuleReferences(
+        db,
+        normalizeGrantRules([
+          {
+            capability: "answer",
+            sources: { mode: "all", sourceIds: [] },
+            release: { mode: "reviewed", policyFamilyId: family.familyId! },
+          },
+        ]),
+      ),
+    ).toThrow("Invalid privacy policy family");
+    const replacement = await store.createFamily({
+      name: "Unused policy",
+      policy: original.policy,
+      action: "template",
+    });
+    expect(replacement.familyId).not.toBe(family.familyId);
+    expect(await store.deleteFamily(DEFAULT_PRIVACY_POLICY_FAMILY_ID)).toMatchObject({
+      outcome: "in-use",
+    });
+  });
+
+  it.each(["grant", "principal", "level", "expired-grant"])(
+    "only blocks while a policy's %s access configuration remains unrevoked",
+    async (owner) => {
+      const { db, store } = await fixture();
+      createAccessTables(db);
+      const original = await store.get();
+      const family = await store.createFamily({
+        name: "Used policy",
+        policy: original.policy,
+        action: "template",
+      });
+      if (owner === "level") {
+        db.exec(
+          "INSERT INTO access_levels (id, name, created_at, updated_at) VALUES ('policy-level', 'Research access', 1, 1)",
+        );
+        db.prepare(
+          `INSERT INTO access_level_capabilities (level_id, capability, source_mode, source_ids, release_mode, policy_family_id) VALUES ('policy-level', 'answer', 'all', '[]', 'reviewed', ?)`,
+        ).run(family.familyId);
+      } else {
+        db.exec(`INSERT INTO access_principals (id, name, kind, created_at, updated_at) VALUES ('policy-principal', 'Fictional assistant', 'interactive', 1, 1);
+          INSERT INTO access_grants (id, principal_id, name, created_at, updated_at) VALUES ('policy-grant', 'policy-principal', 'Research access', 1, 1)`);
+        db.prepare(
+          `INSERT INTO access_grant_capabilities (grant_id, capability, source_mode, source_ids, release_mode, policy_family_id) VALUES ('policy-grant', 'answer', 'all', '[]', 'reviewed', ?)`,
+        ).run(family.familyId);
+        if (owner === "expired-grant")
+          db.exec("UPDATE access_grants SET expires_at = 1 WHERE id = 'policy-grant'");
+      }
+      expect(privacyPolicyDeletionBlockedReason(db, family.familyId!)).toContain("used by");
+      expect(await store.deleteFamily(family.familyId!)).toMatchObject({ outcome: "in-use" });
+      if (owner === "level")
+        expect(
+          deleteAccessLevel(db, { levelId: "policy-level", actorTokenId: "test-actor" }, 2),
+        ).toEqual({ ok: true, value: null });
+      else if (owner === "principal")
+        expect(revokeAccessPrincipal(db, "policy-principal", "test-actor", 2)).toBe(true);
+      else expect(revokeAccessGrant(db, "policy-grant", "test-actor", 2)).toBe(true);
+      expect(privacyPolicyDeletionBlockedReason(db, family.familyId!)).toBeNull();
+      expect(
+        listPrivacyPolicyFamilies(db).find((entry) => entry.id === family.familyId)
+          ?.deletionBlockedReason,
+      ).toBeNull();
+      expect(await store.deleteFamily(family.familyId!)).toEqual({ outcome: "deleted" });
+      expect(() =>
+        validateGrantRuleReferences(
+          db,
+          normalizeGrantRules([
+            {
+              capability: "answer",
+              sources: { mode: "all", sourceIds: [] },
+              release: { mode: "reviewed", policyFamilyId: family.familyId! },
+            },
+          ]),
+        ),
+      ).toThrow("Invalid privacy policy family");
+      const table = owner === "level" ? "access_level_capabilities" : "access_grant_capabilities";
+      expect(
+        db.prepare(`SELECT 1 FROM ${table} WHERE policy_family_id = ?`).get(family.familyId),
+      ).toBeDefined();
+    },
+  );
+
+  it("renames the default and referenced policies without republishing or changing rules", async () => {
+    const { db, store } = await fixture();
+    createAccessTables(db);
+    const original = await store.get();
+    const renamed = await store.renameFamily(
+      DEFAULT_PRIVACY_POLICY_FAMILY_ID,
+      "  Personal rules  ",
+    );
+    expect(renamed).toMatchObject({
+      outcome: "renamed",
+      document: {
+        familyName: "Personal rules",
+        revision: original.revision,
+        generation: original.generation,
+      },
+    });
+    expect((await store.get()).familyName).toBe("Personal rules");
+    expect((await store.getFamily(DEFAULT_PRIVACY_POLICY_FAMILY_ID))?.familyName).toBe(
+      "Personal rules",
+    );
+    db.exec(`
+      INSERT INTO access_principals (id, name, kind, created_at, updated_at) VALUES ('rename-principal', 'Fictional agent', 'interactive', 1, 1);
+      INSERT INTO access_grants (id, principal_id, name, revision, created_at, updated_at) VALUES ('rename-grant', 'rename-principal', 'Answer access', 7, 1, 1);
+    `);
+    db.prepare(
+      `INSERT INTO access_grant_capabilities (grant_id, capability, source_mode, source_ids, release_mode, policy_family_id) VALUES ('rename-grant', 'answer', 'all', '[]', 'reviewed', ?)`,
+    ).run(DEFAULT_PRIVACY_POLICY_FAMILY_ID);
+    expect(
+      await store.renameFamily(DEFAULT_PRIVACY_POLICY_FAMILY_ID, "Renamed while used"),
+    ).toMatchObject({ outcome: "renamed" });
+    expect(
+      db.prepare("SELECT revision FROM access_grants WHERE id = 'rename-grant'").get(),
+    ).toEqual({ revision: 7 });
+    expect(listPrivacyPolicyVersions(db, { limit: 10 })).toHaveLength(1);
+    expect(
+      db
+        .prepare(
+          "SELECT policy_family_id FROM access_grant_capabilities WHERE grant_id = 'rename-grant'",
+        )
+        .get(),
+    ).toEqual({ policy_family_id: DEFAULT_PRIVACY_POLICY_FAMILY_ID });
+  });
+
+  it("validates renames, rejects duplicate names, and permits names released by deletion", async () => {
+    const { db, store } = await fixture();
+    const original = await store.get();
+    const family = await store.createFamily({
+      name: "Policy beta",
+      policy: original.policy,
+      action: "template",
+    });
+    expect(await store.renameFamily(family.familyId!, " policy BETA ")).toMatchObject({
+      outcome: "renamed",
+      document: { familyName: "policy BETA", revision: family.revision },
+    });
+    expect(await store.renameFamily(DEFAULT_PRIVACY_POLICY_FAMILY_ID, "POLICY beta")).toEqual({
+      outcome: "name-taken",
+    });
+    for (const name of [" ", "x".repeat(121), "Bad\0name"]) {
+      expect(await store.renameFamily(family.familyId!, name)).toEqual({ outcome: "invalid" });
+    }
+    expect((await store.getFamily(family.familyId!))?.revision).toBe(family.revision);
+    expect(await store.renameFamily("missing", "New name")).toEqual({ outcome: "not-found" });
+    await store.deleteFamily(family.familyId!);
+    expect(await store.renameFamily(family.familyId!, "Archived rules")).toEqual({
+      outcome: "not-found",
+    });
+    expect(await store.renameFamily(DEFAULT_PRIVACY_POLICY_FAMILY_ID, "Policy beta")).toMatchObject(
+      { outcome: "renamed" },
+    );
+    expect(listPrivacyPolicyFamilies(db)[0].name).toBe("Policy beta");
+  });
+
   it("bootstraps the existing revision, then assigns a unique revision to every change", async () => {
     const { db, store } = await fixture();
     const first = await store.get();

@@ -81,7 +81,7 @@ const policyFamilyRestoreBody = z
     expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
   })
   .strict();
-const policyFamilyUpdateBody = z
+const policyFamilyEditBody = z
   .object({
     policy: z.string().min(1).max(64_000),
     beforeVersion: z.number().int().positive().optional(),
@@ -96,6 +96,17 @@ const policyFamilyUpdateBody = z
       Number(body.beforeVersion !== undefined) + Number(body.expectedRevision !== undefined) === 1,
     { message: "exactly one of beforeVersion or expectedRevision is required" },
   );
+const policyFamilyRenameBody = z
+  .object({
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .max(120)
+      .refine((name) => !name.includes("\0"), "name must not contain NUL characters"),
+  })
+  .strict();
+const policyFamilyUpdateBody = z.union([policyFamilyRenameBody, policyFamilyEditBody]);
 const policyFamilyForkBody = z.object({ name: z.string().trim().min(1).max(120) }).strict();
 
 export function mountPrivacyRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
@@ -133,6 +144,15 @@ export function mountPrivacyRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
     },
   );
 
+  app.delete("/admin/privacy/policies/:familyId", noStore, scope.portalAdmin(), async (c) => {
+    const result = await requireDeps().deletePolicyFamily(
+      requiredPolicyFamilyId(c.req.param("familyId")),
+    );
+    if (result.outcome === "not-found") throw new NotFoundError("Privacy policy family not found.");
+    if (result.outcome === "in-use") throw new HttpError(409, "policy_in_use", result.message);
+    return c.body(null, 204);
+  });
+
   app.get("/admin/privacy/policies/:familyId", noStore, scope.admin(), async (c) => {
     const familyId = requiredPolicyFamilyId(c.req.param("familyId"));
     const policy = await requireDeps().getPolicyFamily(familyId);
@@ -148,6 +168,25 @@ export function mountPrivacyRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
     async (c) => {
       const familyId = requiredPolicyFamilyId(c.req.param("familyId"));
       const body = c.req.valid("json");
+      if ("name" in body) {
+        const result = await requireDeps().renamePolicyFamily(familyId, body.name);
+        switch (result.outcome) {
+          case "renamed":
+            return c.json(result.document);
+          case "not-found":
+            throw new NotFoundError("Privacy policy family not found.");
+          case "name-taken":
+            throw new HttpError(
+              409,
+              "POLICY_NAME_TAKEN",
+              "A privacy policy with this name already exists.",
+            );
+          case "invalid":
+            throw new BadRequestError("Privacy policy name is invalid.");
+          default:
+            return assertNever(result);
+        }
+      }
       return c.json(
         written(
           await requireDeps().putPolicyFamily(familyId, body.policy, {

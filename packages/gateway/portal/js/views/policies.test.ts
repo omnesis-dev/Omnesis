@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
   createPrivacyPolicy: vi.fn(),
+  deleteNamedPrivacyPolicy: vi.fn(),
+  renameNamedPrivacyPolicy: vi.fn(),
   getPrivacyPolicyTemplates: vi.fn(),
   getAccessOverview: vi.fn(),
   forkPrivacyPolicy: vi.fn(),
@@ -82,7 +84,7 @@ describe("PoliciesView", () => {
     defaultPolicyFamilyId: "policy-a",
     policyFamilies: [
       { id: "policy-a", name: "Household", revision: LONG_REVISION },
-      { id: "policy-b", name: "Work safe", revision: "r1" },
+      { id: "policy-b", name: "Work safe", revision: "r1", deletionBlockedReason: null },
     ],
     principals: [{
       id: "principal-1",
@@ -116,7 +118,7 @@ describe("PoliciesView", () => {
       .find((item) => item.textContent?.trim() === "New policy") as HTMLButtonElement;
   }
 
-  test("lists the policies a level can name, counting the live connections each reviews", async () => {
+  test("lists the policies a level can name with the live connections each reviews", async () => {
     api.getAccessOverview.mockResolvedValue(policyOverview);
     await mount();
 
@@ -129,21 +131,16 @@ describe("PoliciesView", () => {
 
     const headers = [...host.querySelectorAll(".access-policy-table thead th")]
       .map((cell) => cell.textContent?.trim());
-    expect(headers).toEqual(["Policy", "Revision", "Connections", "Integrations"]);
+    expect(headers).toEqual(["Policy", "Revision", "Used by", "Actions"]);
 
     const rows = [...host.querySelectorAll(".access-policy-table tbody tr")];
     expect(rows.map((row) => row.querySelector("a")?.textContent)).toEqual(["Household", "Work safe"]);
-    // The count comes from the connections in the overview, not from a field
-    // the overview does not carry; revoked access no longer governs anything.
     const column = (name: string) => headers.indexOf(name);
-    const connectionCounts = rows.map((row) =>
-      row.querySelectorAll("td")[column("Connections")]?.textContent?.trim());
-    expect(connectionCounts).toEqual(["2", "0"]);
-    expect(rows.map((row) => row.querySelectorAll("td")[column("Integrations")]?.textContent?.trim()))
-      .toEqual(["0", "0"]);
-    // The count is a bare figure, so the header carries what it counts.
-    expect(host.querySelectorAll(".access-policy-table thead th")[column("Connections")]
-      ?.getAttribute("title")).toMatch(/blast radius/i);
+    const usage = rows.map((row) => row.querySelectorAll("td")[column("Used by")]);
+    // A connection with multiple reviewed grants is listed once, and revoked access is absent.
+    expect([...usage[0].querySelectorAll("a")].map((link) => link.textContent))
+      .toEqual(["Fictional research assistant"]);
+    expect(usage[1].textContent?.trim()).toBe("Unused");
     // A revision is a content hash: the column shows its head and keeps the
     // whole value where a reader matching it against a grant can find it.
     const revision = rows[0].querySelectorAll("td")[column("Revision")].querySelector("small");

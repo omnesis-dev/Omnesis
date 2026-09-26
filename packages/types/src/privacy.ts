@@ -243,6 +243,7 @@ export interface PrivacyPolicyTemplate {
 }
 
 export interface PrivacyPolicyFamilySummary {
+  deletionBlockedReason?: string | null;
   id: string;
   name: string;
   currentRevision: string;

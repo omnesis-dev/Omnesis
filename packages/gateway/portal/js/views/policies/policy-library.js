@@ -8,9 +8,12 @@
 // way an access level does on the Access tab.
 
 import { html } from "htm/preact";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 
-import { createPrivacyPolicy, getPrivacyPolicyTemplates } from "../../api.js";
+import { createPrivacyPolicy, deleteNamedPrivacyPolicy, getPrivacyPolicyTemplates, renameNamedPrivacyPolicy } from "../../api.js";
+import { RowActionMenu } from "../../components/row-action-menu.js";
+import { ConnectionLink, DeviceLink, levelEditorPath } from "../access/access-list.js";
+import { ConfirmModal } from "../../components/confirm-modal.js";
 import { Modal } from "../../components/modal.js";
 import { policyFamilyId, policyFamilyName } from "../../components/grant-builder-state.js";
 import { policyEditorPath } from "../../lib/policy-path.js";
@@ -18,9 +21,17 @@ import { navigate } from "../../lib/router.js";
 import { rowActivateHandler } from "../../lib/table-row-click.js";
 import { ForkPolicyButton, PrivacyPolicyPane, affectedPolicyAccess } from "./policy.js";
 
-// A policy revision is a content hash. Only its head distinguishes one from
-// another at a glance, so the row shows that and keeps the full value in the
-// title for anyone matching it against a stored revision.
+function policyDeletionReason(policy, affected, overview) {
+  if (policy.deletionBlockedReason != null) return policy.deletionBlockedReason;
+  if (policyFamilyId(policy) === overview.defaultPolicyFamilyId) return "The default policy cannot be deleted.";
+  if (affected.levels.length || affected.connectionCount || affected.deviceCount) {
+    return "This policy is used by access levels, connections or integrations. Reassign them before deleting it.";
+  }
+  return Object.hasOwn(policy, "deletionBlockedReason")
+    ? "" : "Policy usage could not be verified. Refresh before deleting it.";
+}
+
+// A policy revision is a content hash: keep its full value on hover.
 export function shortRevision(revision) {
   return revision.length > 12 ? `${revision.slice(0, 12)}…` : revision;
 }
@@ -62,7 +73,16 @@ export function PolicyEditorPage({ policyId, policyName = null, onClose, heading
  * `headingRef` is the tab's heading, for focus to land on when the editor
  * page closes.
  */
-export function PolicyLibrary({ overview, overviewReady, loading, headingRef = null }) {
+export function PolicyLibrary({ overview, overviewReady, loading, headingRef = null, onRefresh }) {
+  const [renaming, setRenaming] = useState(null);
+  const [renameName, setRenameName] = useState("");
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [renameError, setRenameError] = useState("");
+  const renamePending = useRef(false);
+  const [deleting, setDeleting] = useState(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const deletePending = useRef(false);
+  const [deleteError, setDeleteError] = useState("");
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [templateId, setTemplateId] = useState("");
@@ -102,10 +122,51 @@ export function PolicyLibrary({ overview, overviewReady, loading, headingRef = n
     }
   }
 
+  const trimmedRenameName = renameName.trim();
+  const renameValid = Boolean(renaming && trimmedRenameName && trimmedRenameName.length <= 120
+    && trimmedRenameName !== policyFamilyName(renaming));
+
+  async function rename() {
+    if (!renameValid || renamePending.current) return;
+    renamePending.current = true;
+    setRenameBusy(true);
+    setRenameError("");
+    try {
+      await renameNamedPrivacyPolicy(policyFamilyId(renaming), trimmedRenameName);
+      setRenaming(null);
+      await onRefresh?.();
+    } catch (failure) {
+      setRenameError(failure?.serverMessage || "This policy could not be renamed.");
+    } finally {
+      renamePending.current = false;
+      setRenameBusy(false);
+    }
+  }
+
+  async function remove() {
+    if (!deleting || deletePending.current) return;
+    deletePending.current = true;
+    setDeleteBusy(true);
+    setDeleteError("");
+    try {
+      await deleteNamedPrivacyPolicy(policyFamilyId(deleting));
+      setDeleting(null);
+      await onRefresh?.();
+    } catch (failure) {
+      setDeleting(null);
+      setDeleteError(failure?.serverMessage || "This policy could not be deleted.");
+      await onRefresh?.();
+    } finally {
+      deletePending.current = false;
+      setDeleteBusy(false);
+    }
+  }
+
   const policies = overview.policyFamilies ?? overview.privacyPolicies ?? [];
 
   return html`
     <section class="access-policies">
+      ${deleteError && html`<p class="access-error" role="alert">${deleteError}</p>`}
       <div class="access-list-header">
         <div>
           <h2 ref=${headingRef} tabIndex="-1">Policies</h2>
@@ -127,8 +188,8 @@ export function PolicyLibrary({ overview, overviewReady, loading, headingRef = n
                     <tr>
                       <th>Policy</th>
                       <th>Revision</th>
-                      <th class="portal-table-num" title="Live connections whose answers are reviewed under this policy — the blast radius of editing it">Connections</th>
-                      <th class="portal-table-num" title="Integrations on access levels reviewed under this policy">Integrations</th>
+                      <th>Used by</th>
+                      <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -136,7 +197,20 @@ export function PolicyLibrary({ overview, overviewReady, loading, headingRef = n
                       const id = policyFamilyId(policy);
                       const revision = policy.revision ?? policy.currentRevision ?? null;
                       const affected = affectedPolicyAccess(overview, id);
-                      const governed = affected.connectionCount;
+                      const connections = [...new Map(
+                        [...affected.levels.flatMap((level) => level.connections), ...affected.connections]
+                          .map((connection) => [connection.id, connection]),
+                      ).values()];
+                      const devices = [...new Map(affected.levels.flatMap((level) => level.devices)
+                        .map((device) => [device.id, device])).values()];
+                      const deletionReason = policyDeletionReason(policy, affected, overview);
+                      const items = [
+                        { label: "Rename", disabled: !id || deleteBusy || renameBusy,
+                          onSelect: () => { setRenameName(policyFamilyName(policy)); setRenameError(""); setRenaming(policy); } },
+                        { label: "Delete", danger: true, disabled: !id || Boolean(deletionReason) || deleteBusy || renameBusy,
+                          title: deletionReason || undefined,
+                          onSelect: () => { setDeleteError(""); setDeleting(policy); } },
+                      ];
                       const isDefault = id === overview.defaultPolicyFamilyId;
                       const openPolicy = () => navigate(policyEditorPath(id));
                       // A row whose policy has no id has nowhere to go, so it
@@ -165,8 +239,20 @@ export function PolicyLibrary({ overview, overviewReady, loading, headingRef = n
                         </td>
                         <td onClick=${openFromCell}><small title=${revision ?? undefined}
                           >${revision ? shortRevision(revision) : "None yet"}</small></td>
-                        <td class="portal-table-num" onClick=${openFromCell}>${governed}</td>
-                        <td class="portal-table-num" onClick=${openFromCell}>${affected.deviceCount}</td>
+                        <td class="access-policy-usage" onClick=${openFromCell}>
+                          ${connections.length || devices.length || affected.levels.length
+                            ? html`<ul class="access-policy-users" aria-label="Used by">
+                                ${devices.map((device) => html`<li key=${`device-${device.id}`} title="Integration device"><${DeviceLink} device=${device} /></li>`)}
+                                ${connections.map((connection) => html`<li key=${`connection-${connection.id}`} title="MCP connection"><${ConnectionLink} connection=${connection} /></li>`)}
+                                ${!connections.length && !devices.length && affected.levels.map((level) => html`<li key=${`level-${level.id}`} title="Access level"><a
+                                  class="access-device-link" href=${levelEditorPath(level.id)} onClick=${(event) => {
+                                    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button > 0) return;
+                                    event.preventDefault(); navigate(levelEditorPath(level.id));
+                                  }}>${level.name}</a></li>`)}
+                              </ul>`
+                            : html`<span class="access-muted">${deletionReason && !isDefault ? "No active callers" : "Unused"}</span>`}
+                        </td>
+                        <td><${RowActionMenu} items=${items} label=${`Actions for ${policyFamilyName(policy)}`} /></td>
                       </tr>`;
                     })}
                   </tbody>
@@ -176,6 +262,30 @@ export function PolicyLibrary({ overview, overviewReady, loading, headingRef = n
                 No privacy policy exists yet. An access level cannot release reviewed answers until one does.
               </p>`}
 
+      <${Modal} open=${Boolean(renaming)} title="Rename policy" size="sm"
+        onClose=${renameBusy ? () => {} : () => setRenaming(null)}>
+        <form class="privacy-policy-create" onSubmit=${(event) => { event.preventDefault(); rename(); }}>
+          <label class="form-group"><span>Name</span><input maxlength="120" value=${renameName}
+            disabled=${renameBusy} onInput=${(event) => setRenameName(event.currentTarget.value)} /></label>
+          <p>Renaming keeps this policy's rules, history and access assignments.</p>
+          ${renameError && html`<p class="access-error" role="alert">${renameError}</p>`}
+          <div class="access-request-actions">
+            <button type="button" class="btn-secondary" disabled=${renameBusy} onClick=${() => setRenaming(null)}>Cancel</button>
+            <button type="submit" class="btn-primary" disabled=${renameBusy || !renameValid}>${renameBusy ? "Renaming…" : "Save name"}</button>
+          </div>
+        </form>
+      </${Modal}>
+      <${ConfirmModal}
+        open=${Boolean(deleting)}
+        title=${`Delete ${deleting ? policyFamilyName(deleting) : "policy"}?`}
+        body="This removes the policy from the library. Version history and existing audit records are retained."
+        confirmLabel=${deleteBusy ? "Deleting…" : "Delete policy"}
+        destructive
+        confirmDisabled=${deleteBusy}
+        cancelDisabled=${deleteBusy}
+        onConfirm=${remove}
+        onCancel=${() => setDeleting(null)}
+      />
       <${Modal} open=${creating} title="Create policy" size="sm" onClose=${busy ? () => {} : () => setCreating(false)}>
         <div class="privacy-policy-create">
           <label class="form-group"><span>Name</span><input maxlength="120" value=${name}
