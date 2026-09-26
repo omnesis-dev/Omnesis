@@ -1815,6 +1815,83 @@ describe("full-validation workflow topology", () => {
     expect(probe.run).not.toContain("json.load(sys.stdin)['devices']");
   });
 
+  describe("macOS lanes on pull requests", () => {
+    // Runs the scope step's script with a stand-in `gh` that lists the given files.
+    function scope(event, files) {
+      const dir = mkdtempSync(join(tmpdir(), "omnesis-scope-"));
+      try {
+        const gh = join(dir, "gh");
+        writeFileSync(gh, `#!/bin/sh\nprintf '%s\\n' ${files.map((f) => `'${f}'`).join(" ")}\n`);
+        chmodSync(gh, 0o755);
+        const output = join(dir, "out");
+        writeFileSync(output, "");
+        const step = workflows["full-validation"].jobs.scope.steps.find((s) => s.id === "scope");
+        execFileSync("bash", ["-c", step.run], {
+          env: {
+            PATH: `${dir}:${process.env.PATH}`,
+            EVENT: event,
+            REPO: "o/r",
+            PR: "1",
+            GITHUB_OUTPUT: output,
+          },
+          stdio: "ignore",
+        });
+        return Object.fromEntries(
+          readFileSync(output, "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => line.split("=")),
+        );
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+    const none = { apple: "false", android_render: "false", node_macos: "false" };
+    const all = { apple: "true", android_render: "true", node_macos: "true" };
+
+    it("runs every macOS lane outside pull requests", () => {
+      expect(scope("push", [])).toEqual(all);
+      expect(scope("workflow_dispatch", [])).toEqual(all);
+    });
+
+    it("skips them for a pull request that touches none of their paths", () => {
+      expect(
+        scope("pull_request", ["packages/gateway/src/index.ts", "website/docs/index.html"]),
+      ).toEqual(none);
+    });
+
+    it("selects each lane by the paths it covers", () => {
+      expect(scope("pull_request", ["ios/Sources/Omnesis/App.swift"])).toEqual({
+        ...none,
+        apple: "true",
+      });
+      expect(scope("pull_request", ["android/app/build.gradle.kts"])).toEqual({
+        ...none,
+        android_render: "true",
+      });
+      expect(scope("pull_request", ["package-lock.json"])).toEqual({ ...none, node_macos: "true" });
+      expect(scope("pull_request", ["packages/cli/src/update/detect.ts"])).toEqual({
+        ...none,
+        node_macos: "true",
+      });
+      expect(scope("pull_request", [".github/workflows/full-validation.yml"])).toEqual(all);
+    });
+
+    it("wires the gates and lets the verdict accept only a scoped-out skip", () => {
+      const jobs = workflows["full-validation"].jobs;
+      expect(jobs.ios.if).toBe("${{ needs.scope.outputs.apple == 'true' }}");
+      expect(jobs.swift.if).toBe("${{ needs.scope.outputs.apple == 'true' }}");
+      expect(jobs.node.with.run_macos).toBe("${{ needs.scope.outputs.node_macos == 'true' }}");
+      expect(jobs.android.with.run_render).toBe(
+        "${{ needs.scope.outputs.android_render == 'true' }}",
+      );
+      expect(workflows.ci.jobs["node-macos"].if).toBe("${{ inputs.run_macos }}");
+      expect(workflows.android.jobs.render.if).toBe("${{ inputs.run_render }}");
+      expect(jobs.verdict.needs).toContain("scope");
+      expect(jobs.verdict.steps[0].run).toContain('result === "skipped" && scopedOut(id)');
+    });
+  });
+
   it("keeps live gateway tests out of the standalone iOS unit lane", () => {
     const unit = workflows.ios.jobs["build-and-test"].steps.find(
       (step) => step.name === "lane [ios-test]",
@@ -1881,7 +1958,7 @@ describe("full-validation workflow topology", () => {
       expect(called).toContain(`./.github/workflows/${name}.yml`);
     }
     for (const job of Object.values(workflow.jobs)) {
-      if (job.uses) expect(job.with).toEqual({ target_sha: "${{ github.sha }}" });
+      if (job.uses) expect(job.with.target_sha).toBe("${{ github.sha }}");
     }
     expect(workflow.jobs.verdict.if).toContain("!cancelled()");
     expect([...workflow.jobs.verdict.needs].sort()).toEqual(
@@ -2115,8 +2192,8 @@ describe("external-harness conformance workflow", () => {
   });
 
   it("pins both upstream harnesses and installs Hermes from its locked exact commit", () => {
-    expect(integrationPackage.devDependencies.openclaw).toBe("2026.7.35");
-    expect(packageLock.packages["node_modules/openclaw"].version).toBe("2026.7.35");
+    expect(integrationPackage.devDependencies.openclaw).toBe("2026.9.2");
+    expect(packageLock.packages["node_modules/openclaw"].version).toBe("2026.9.2");
     expect(workflow.env.HERMES_REPOSITORY).toBe("https://github.com/NousResearch/hermes-agent.git");
     expect(workflow.env.HERMES_COMMIT).toMatch(/^[0-9a-f]{40}$/u);
 

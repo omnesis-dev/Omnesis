@@ -83,6 +83,15 @@ certificate fingerprint, a pairing code, phase markers, and an `abort` key
 either side posts when it fails, so the other stops waiting at once. Every
 wait is time-boxed.
 
+The two jobs of a lane rarely get runners at the same time: hosted macOS
+runners can be queued for hours behind other workflows while Linux ones start
+at once. So each job first waits, before it installs anything or joins the
+tailnet, until its partner job is running (`scripts/install-e2e/partner.mjs`
+reads the run's jobs through the Actions API), for up to four hours. A partner
+that ended without ever running fails the job at once. The nightly run and a
+dispatch of every lane share a concurrency group, so two full runs never
+overlap.
+
 ## Public logs
 
 Actions logs and artifacts of this repository are public. The lane never
