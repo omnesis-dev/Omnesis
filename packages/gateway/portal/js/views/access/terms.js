@@ -83,9 +83,9 @@ export function AccessTerms({ rules, overview }) {
     ${lanes.map((capability) => {
       const rule = rules[capability];
       if (!rule) return html`<div key=${capability}><dt><${CapabilityBadge} capability=${capability} off=${true} /></dt><dd></dd></div>`;
-      if (capability === "notes") return html`<div key=${capability}><dt><${CapabilityBadge} capability="notes" /></dt><dd>Saves notes under the agent's name</dd></div>`;
+      if (capability === "notes") return html`<div key=${capability} class="access-term-notes"><dt><${CapabilityBadge} capability="notes" /></dt><dd>Saves notes under the agent's name</dd></div>`;
       const retainedAllowed = retained.filter((source) => isSourceAllowed(rule, sourceId(source))).length;
-      return html`<div key=${capability}>
+      return html`<div key=${capability} class=${`access-term-${capability}${capability === "answer" && rule.release.mode === "unreviewed" ? " access-term-unreviewed" : ""}`}>
         <dt><${CapabilityBadge} capability=${capability} unreviewed=${capability === "answer" && rule.release.mode === "unreviewed"} /></dt>
         <dd>
           <span class="access-reach-cell"><span class="sr-only">Sources: </span>${laneReach(rule, overview)}</span>${" · "}

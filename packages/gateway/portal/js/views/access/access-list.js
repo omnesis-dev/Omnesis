@@ -182,15 +182,15 @@ function ConnectionRow({ entry, actions }) {
                 onCancel=${closeRename}
               />`
             : html`<span class="access-connection-label">${entry.name}</span>`}
+          <div class="access-row-actions" ref=${actionsRef}>
+            <${RowActionMenu} items=${items} label=${`Actions for ${entry.name}`} />
+          </div>
           <${StateTag} state=${entry.state} />
         </div>
         <div class="access-connection-meta">
           ${app ? html`<span class="access-app-cell">${icon ? html`<span class="access-agent-logo" aria-hidden="true"><${AgentIcon} icon=${icon} size=${14} /></span>` : null}<span class="access-app-label">Signed in from ${app}</span></span><span aria-hidden="true"> · </span>` : null}
           <span class="access-used-cell">${entry.lastUsedAt ? `Last used ${timeAgo(entry.lastUsedAt)}` : "Never used"}</span>
         </div>
-      </div>
-      <div class="access-row-actions" ref=${actionsRef}>
-        <${RowActionMenu} items=${items} label=${`Actions for ${entry.name}`} />
       </div>
     </div>
     <${ConnectionDetail} entry=${entry} id=${detailId} />
@@ -255,8 +255,8 @@ function LevelGroup({ level, levels, connections, overview, levelActions, connec
             />`
           : null}
         <h3 id=${titleId} class=${`access-level-name${renaming ? " sr-only" : ""}`}>${level.name}</h3>
+        <${RowActionMenu} items=${items} label=${`Actions for ${level.name}`} />
       </div>
-      <${RowActionMenu} items=${items} label=${`Actions for ${level.name}`} />
     </div>
     <div id=${termsId} class="access-level-terms"><${AccessTerms} rules=${rules} overview=${overview} /></div>
     <div class="access-level-body">

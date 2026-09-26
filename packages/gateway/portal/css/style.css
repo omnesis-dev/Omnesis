@@ -513,6 +513,10 @@ a:hover { text-decoration: underline; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0;
   width: 22px;
   height: 22px;
   padding: 0;
@@ -1089,9 +1093,7 @@ a:hover { text-decoration: underline; }
 /* The level title shares the header with its action menu. */
 .access-level-head {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
   padding: 10px 14px;
 }
 .access-level-title { display: flex; align-items: center; gap: 7px; min-width: 0; }
@@ -1115,6 +1117,10 @@ a:hover { text-decoration: underline; }
   border: 1px solid var(--border-light);
   border-radius: 6px;
 }
+.access-level-terms .access-detail-grid > .access-term-answer { border-color: color-mix(in srgb, var(--success) 25%, var(--border-light)); }
+.access-level-terms .access-detail-grid > .access-term-direct { border-color: color-mix(in srgb, var(--danger) 25%, var(--border-light)); }
+.access-level-terms .access-detail-grid > .access-term-notes { border-color: color-mix(in srgb, var(--accent) 25%, var(--border-light)); }
+.access-level-terms .access-detail-grid > .access-term-unreviewed { border-color: color-mix(in srgb, var(--warning) 25%, var(--border-light)); }
 .access-level-body { margin: 0 14px 10px; }
 .access-level-empty {
   margin: 0;
@@ -1147,10 +1153,10 @@ a:hover { text-decoration: underline; }
   border-radius: 7px;
   background: color-mix(in srgb, var(--bg-primary) 60%, var(--bg-secondary));
 }
-/* The connection heading and its metadata share one column beside actions. */
+/* Each action menu sits beside the title it belongs to. */
 .access-connection-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 32px;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: 10px;
   min-height: 36px;
@@ -1160,11 +1166,33 @@ a:hover { text-decoration: underline; }
 .access-connection-row.is-inactive .access-app-cell,
 .access-connection-row.is-inactive .access-used-cell { color: var(--text-muted); }
 .access-triad.is-inactive { filter: saturate(0.25); opacity: 0.75; }
-.access-row-actions { display: flex; justify-content: flex-end; }
+.access-row-actions { display: inline-flex; flex: none; }
+.access-level-group .row-action-menu { flex: none; }
+.access-level-group .row-action-trigger {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+}
+.access-level-group .row-action-trigger::after {
+  content: "";
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: -4px 0 currentColor, 4px 0 currentColor;
+}
+.access-level-group .row-action-trigger:hover,
+.access-level-group .row-action-trigger:focus-visible {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
 .access-agent-logo { display: inline-flex; flex: none; }
 .access-app-cell { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; vertical-align: middle; color: var(--text-secondary); font-size: 11.5px; }
 .access-app-label { min-width: 0; overflow-wrap: anywhere; }
-.access-connection-meta { color: var(--text-secondary); font-size: 11.5px; }
+.access-connection-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; color: var(--text-secondary); font-size: 11.5px; }
 .access-connection-heading { display: grid; gap: 3px; min-width: 0; }
 .access-cell-lead { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; min-width: 0; }
 /* An agent's or a connection's name is one the client or the owner chose, so
