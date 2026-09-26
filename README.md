@@ -61,7 +61,7 @@ Omnesis runs on **macOS** and **Linux**. Windows is not supported. Install it on
 curl -fsSL https://omnesis.dev/install.sh | sh
 ```
 
-The installer checks for Node 24 and installs it if needed, installs the newest stable release, sets up TLS, registers the gateway and a collector as background services, and downloads an embedding model. It asks at most a few questions, such as which embedding model to use. To run Omnesis in containers instead, with no Node on the host, use `curl -fsSL https://omnesis.dev/install.sh | sh -s -- --docker`. [Install](https://omnesis.dev/docs/install) covers the requirements, every flag, Docker, and uninstalling.
+The installer checks for Node 24 and installs it if needed, installs the newest stable release, sets up TLS, registers the gateway and a collector as background services, and downloads an embedding model. It asks at most a few questions, such as which embedding model to use. [Install](https://omnesis.dev/docs/install) covers the requirements, every flag, and uninstalling.
 
 Then add a source and open the portal:
 
