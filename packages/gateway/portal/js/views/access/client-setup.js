@@ -135,11 +135,11 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
       icon: { providerId: "openai" },
       commands: [
         {
-          label: "Add the server",
+          label: "1) Add the server",
           value: `codex mcp add ${SERVER_NAME} --url ${url} --oauth-resource ${url}`,
         },
         {
-          label: "Recommended: add the skills that teach Codex to use Omnesis",
+          label: "2) Recommended: add the skills that teach Codex to use Omnesis",
           value:
             "codex plugin marketplace add omnesis-dev/Omnesis --sparse .agents/plugins --sparse plugins/omnesis && codex plugin add omnesis@omnesis",
         },
