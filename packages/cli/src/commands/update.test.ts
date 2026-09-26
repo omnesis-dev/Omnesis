@@ -270,7 +270,7 @@ function makeDeps(
     backup: vi.fn(() => Promise.resolve()),
     restartService: vi.fn((_component: ServiceComponent) => Promise.resolve()),
     awaitHealth: vi.fn(() => Promise.resolve()),
-    cliPath: "/usr/local/bin/omnesis",
+    cliCommand: () => ({ command: "/usr/local/bin/omnesis", args: [] }),
     resolveHarness: () => null,
     ...overrides,
   };
@@ -1384,6 +1384,32 @@ describe("executing a host's plan", () => {
       "openclaw gateway restart",
     ]);
     expect(approve).toHaveBeenCalledOnce();
+  });
+
+  test("the refresh runs the installed CLI by path, read once the build is in place", async () => {
+    const runner = fakeRunner([...successfulUpdate, clean, clean]);
+    const tsx = "/opt/omnesis/node_modules/.bin/tsx";
+    const entry = "/opt/omnesis/packages/cli/src/index.ts";
+    let readAfter: string[] = [];
+    const cliCommand = vi.fn(() => {
+      readAfter = executed(runner);
+      return { command: tsx, args: [entry], env: { PATH: "/opt/node/bin" } };
+    });
+    await source(
+      makeDeps(runner, {
+        roles: hostRoles({
+          harnesses: [{ harness: "hermes", home: "/h", needsAuthorization: false }],
+        }),
+        cliCommand,
+      }),
+    );
+    expect(readAfter.at(-1)).toBe("npm run build");
+    const refresh = runner.calls.find((call) => call.spec.args.includes("--refresh"));
+    expect(refresh?.spec).toEqual({
+      command: tsx,
+      args: [entry, "connect", "hermes", "--refresh"],
+      env: { PATH: "/opt/node/bin" },
+    });
   });
 
   test("declining the harness restart leaves the update done and says what to run", async () => {

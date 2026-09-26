@@ -28,6 +28,7 @@ import {
   ContinuationRefused,
   continuationTarget,
   deferredBackupFor,
+  installedCliCommand,
   installedPackageEntry,
   launchContinuation,
   orderForHandoff,
@@ -399,6 +400,20 @@ describe("finding the installed build", () => {
     packageEntry: () => "/usr/lib/node_modules/omnesis/dist/index.js",
     interactive: true,
     ...over,
+  });
+
+  test("the installed CLI is reached by path: a checkout's tsx entry, a package's manifest entry", () => {
+    expect(installedCliCommand({ method: "source", rootDir: "/opt/omnesis" }, ctx())).toEqual({
+      command: "/opt/omnesis/node_modules/.bin/tsx",
+      args: ["/opt/omnesis/packages/cli/src/index.ts"],
+    });
+    expect(installedCliCommand({ method: "npm-global" }, ctx())).toEqual({
+      command: "/usr/bin/node",
+      args: ["/usr/lib/node_modules/omnesis/dist/index.js"],
+    });
+    expect(installedCliCommand({ method: "npm-global" }, ctx({ packageEntry: () => null }))).toBe(
+      null,
+    );
   });
 
   test("a checkout runs its own tsx entry, with the lock id to adopt", () => {

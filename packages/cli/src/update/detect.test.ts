@@ -1782,9 +1782,11 @@ describe("apply plans", () => {
   });
 
   test("the harness steps name the harness's own commands", () => {
-    expect(formatCommandSpec(harnessRefreshSpec("openclaw", "/usr/local/bin/omnesis"))).toBe(
-      "/usr/local/bin/omnesis connect openclaw --refresh",
-    );
+    expect(
+      formatCommandSpec(
+        harnessRefreshSpec("openclaw", { command: "/usr/local/bin/omnesis", args: [] }),
+      ),
+    ).toBe("/usr/local/bin/omnesis connect openclaw --refresh");
     expect(formatCommandSpec(harnessRestartSpec("hermes"))).toBe("hermes gateway restart");
   });
 });
