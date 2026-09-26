@@ -4,7 +4,15 @@
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  resolve: {
+    dedupe: ["preact", "htm"],
+  },
   test: {
+    // DOM tests need Preact's renderer and hooks on one module graph. Inline
+    // their imports so native dependency loading cannot split hook state.
+    server: {
+      deps: { inline: ["preact", "htm"] },
+    },
     globals: false,
     // Fork pool gives each test file a fresh process — important for the
     // many suites that open unique per-test SQLite paths and hold native

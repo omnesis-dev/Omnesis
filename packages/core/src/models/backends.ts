@@ -199,6 +199,7 @@ export interface ResolvedHttp extends ResolvedBase {
   allowRemoteInference: boolean;
   available: boolean;
   reason?: string;
+  reasonCode?: "remote_inference_disabled";
 }
 
 /**
@@ -287,6 +288,7 @@ export interface BackendStatus {
   models?: string[];
   /** Why the last probe wasn't fully `ok` (e.g. `"HTTP 500"`); set for `reachable`/`unreachable`. */
   reason?: string;
+  reasonCode?: "remote_inference_disabled";
   /**
    * Capability roles each candidate model can serve, keyed by model id —
    * covering both probed models and any provider-preset known-models for

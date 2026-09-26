@@ -13105,6 +13105,15 @@ div.source-activity-popover-link:hover {
 
 .backends-detail { display: flex; flex-direction: column; gap: 28px; max-width: 760px; }
 .detail-section { display: flex; flex-direction: column; gap: 10px; }
+.models-cloud-control { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-muted); }
+.models-cloud-control h2 { margin: 0 4px 0 0; font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.models-cloud-switch { position: relative; flex: 0 0 auto; width: 42px; height: 24px; padding: 2px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg-tertiary); cursor: pointer; transition: background 150ms ease; }
+.models-cloud-switch-thumb { display: block; width: 18px; height: 18px; border-radius: 50%; background: var(--text-muted); transition: transform 150ms ease, background 150ms ease; }
+.models-cloud-switch[aria-checked="true"] { background: var(--accent); border-color: var(--accent); }
+.models-cloud-switch[aria-checked="true"] .models-cloud-switch-thumb { transform: translateX(18px); background: #fff; }
+.models-cloud-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.models-cloud-switch:disabled { opacity: 0.6; cursor: wait; }
+@media (prefers-reduced-motion: reduce) { .models-cloud-switch, .models-cloud-switch-thumb { transition: none; } }
 .detail-section-head { display: flex; justify-content: space-between; align-items: center; }
 .detail-section-head h2 { margin: 0; font-size: 14px; font-weight: 600; }
 .detail-sub { margin: 0; font-size: 12px; color: var(--text-muted); }
@@ -13668,6 +13677,15 @@ div.source-activity-popover-link:hover {
   border-radius: var(--radius-sm, 4px);
   background: rgba(248, 81, 73, 0.08);
 }
+.agent-cloud-inference {
+  margin: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--bg-secondary);
+}
+.agent-cloud-inference p { margin: 8px 0 12px; color: var(--text-muted); }
+.agent-cloud-inference .btn-secondary { margin-left: 8px; }
 .agent-action-error {
   display: flex;
   align-items: center;

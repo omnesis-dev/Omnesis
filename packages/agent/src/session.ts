@@ -21,6 +21,7 @@
 
 import {
   createLogger,
+  InferenceUrlPolicyError,
   type AgentEvent,
   type AgentMessageEndEvent,
   type AgentTerminalFailure,
@@ -531,7 +532,10 @@ export class AgentSession {
               payload: {
                 sessionId: this.sessionId,
                 messageId: turn.messageId,
-                code: "internal_error",
+                code:
+                  err instanceof InferenceUrlPolicyError && err.code === "remote_inference_disabled"
+                    ? err.code
+                    : "internal_error",
                 message,
               },
             },

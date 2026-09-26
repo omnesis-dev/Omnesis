@@ -1079,10 +1079,16 @@ export class AgentLifecycle {
       ? this.makeAnswerService(agentService, maxToolIterations)
       : undefined;
     this.routeDeps.disabledReason = agentDisabledReason;
+    this.routeDeps.disabledCode = cloudBlockedByEgress
+      ? "remote_inference_disabled"
+      : agentResolved.kind === "http"
+        ? agentResolved.reasonCode
+        : undefined;
     this.routeDeps.agentConfig = {
       backend: inferenceRegistry.resolve("agent").kind,
       enabled: !!agentService,
       disabledReason: agentDisabledReason,
+      disabledCode: this.routeDeps.disabledCode,
     };
   }
 
@@ -1287,10 +1293,17 @@ export class AgentLifecycle {
       ? this.makeAnswerService(newService, maxToolIterations)
       : undefined;
     this.routeDeps.disabledReason = newReason;
+    this.routeDeps.disabledCode =
+      (resolved.kind === "anthropic" || resolved.kind === "codex") && !resolved.allowRemoteInference
+        ? "remote_inference_disabled"
+        : resolved.kind === "http"
+          ? resolved.reasonCode
+          : undefined;
     this.routeDeps.agentConfig = {
       backend: resolved.kind,
       enabled: !!newService,
       disabledReason: newReason,
+      disabledCode: this.routeDeps.disabledCode,
     };
 
     this.deps.wsEventHandler.attachAgentService(newService);

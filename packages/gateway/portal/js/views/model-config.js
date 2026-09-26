@@ -18,6 +18,8 @@
 import { html } from "htm/preact";
 import { useEffect, useState } from "preact/hooks";
 import { getRecentModels } from "../api.js";
+import { CloudInferenceConsentModal } from "../components/cloud-inference-consent.js";
+import { isLoopbackInferenceUrl } from "../lib/cloud-inference.js";
 import { Modal } from "../components/modal.js";
 import { ProviderIcon } from "../components/provider-icon.js";
 import { filterBackendModels } from "../lib/backend-model-filter.js";
@@ -170,20 +172,6 @@ export function CodexRuntimePanel({ overview, update, loginPending = false, swit
   `;
 }
 
-function isLoopbackInferenceUrl(raw) {
-  try {
-    const parsed = new URL(raw);
-    const hostname = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
-    if (hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "::1") {
-      return true;
-    }
-    const parts = hostname.split(".").map((p) => Number.parseInt(p, 10));
-    return parts.length === 4 && parts.every((p) => Number.isInteger(p)) && parts[0] === 127;
-  } catch {
-    return true;
-  }
-}
-
 // ── Backend option grid ─────────────────────────────────────────────────────
 
 function BackendOptionCard({ providerId, fallbackGlyph, title, subtitle, muted, onClick }) {
@@ -279,18 +267,24 @@ function HttpBackendForm({ preset, submit, onSuccess, onBack, allowRemoteInferen
   const [url, setUrl] = useState(preset?.defaultUrl ?? "");
   const [apiKey, setApiKey] = useState("");
   const [apiPathPrefix] = useState(preset?.apiPathPrefix ?? "");
-  const [remoteApproved, setRemoteApproved] = useState(false);
+  const [showConsent, setShowConsent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
 
   const nameValid = name.trim() && !RESERVED_BACKEND_NAMES.includes(name.trim()) && !name.includes("/");
   const needsRemoteApproval =
     url.trim() && !allowRemoteInference && !isLoopbackInferenceUrl(url.trim());
-  const canAdd = nameValid && url.trim() && !busy && (!needsRemoteApproval || remoteApproved);
+  const canAdd = nameValid && url.trim() && !busy;
 
   const onSubmit = async (e) => {
     e.preventDefault();
-    if (!canAdd) return;
+    if (!canAdd || showConsent) return;
+    if (needsRemoteApproval) { setShowConsent(true); return; }
+    await addBackend(false);
+  };
+
+  const addBackend = async (enableRemote) => {
+    setShowConsent(false);
     setBusy(true);
     setErr(null);
     const res = await submit(
@@ -298,7 +292,7 @@ function HttpBackendForm({ preset, submit, onSuccess, onBack, allowRemoteInferen
       url.trim(),
       apiKey.trim() || undefined,
       apiPathPrefix || undefined,
-      needsRemoteApproval && remoteApproved,
+      enableRemote,
     );
     if (res && res.ok === false) {
       setErr(res.error ?? "Failed to add backend.");
@@ -327,14 +321,13 @@ function HttpBackendForm({ preset, submit, onSuccess, onBack, allowRemoteInferen
         <input class="field-input" type="password" placeholder="Leave blank for a keyless local server" value=${apiKey} onInput=${(e) => setApiKey(e.target.value)} />
       </label>
       ${apiPathPrefix ? html`<p class="field-note">API path prefix: <code>${apiPathPrefix}</code></p>` : null}
-      ${needsRemoteApproval
-        ? html`<label class="field-check backend-remote-warning">
-            <input type="checkbox" checked=${remoteApproved} onChange=${(e) => setRemoteApproved(e.currentTarget.checked)} />
-            <span>
-              Allow remote HTTP inference. Omnesis may send document chunks, search queries, agent prompts/tool context, OCR images, and this API key to this backend. Metadata, link-local, multicast, and unspecified addresses stay blocked.
-            </span>
-          </label>`
-        : null}
+      ${needsRemoteApproval ? html`<p class="field-note">Adding this remote backend requires permission for cloud inference. You will be asked to confirm before it is saved. The API key is sent to this backend.</p>` : null}
+      <${CloudInferenceConsentModal}
+        open=${showConsent}
+        providerLabel=${url.trim()}
+        onConfirm=${() => addBackend(true)}
+        onCancel=${() => setShowConsent(false)}
+      />
       ${err ? html`<div class="modal-error">${err}</div>` : null}
       <div class="modal-actions">
         <button type="button" class="btn-secondary" onClick=${onBack}>Back</button>

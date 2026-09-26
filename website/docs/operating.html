@@ -529,12 +529,22 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
         </ul>
         <div class="callout warn">
           <p>
-            By default inference stays on this machine: an HTTP backend that resolves to a remote
-            address is not used until you set <code>inference.allowRemoteInference: true</code> (or
-            pass <code>--allow-remote</code> to <code>backend add</code>). Enabling it sends
-            document chunks, search queries and agent context to that backend.
+            By default inference stays on this machine: cloud backends, including Anthropic and
+            Codex, and HTTP backends that resolve to remote addresses require your permission. In
+            the portal, turn on <strong>Allow cloud inference</strong> under
+            <strong>Settings → Models</strong> and confirm. Choosing a cloud model while this
+            setting is off also asks for confirmation before saving the assignment. The permission
+            applies to all configured remote inference backends on this gateway. Depending on their
+            roles, they receive messages, conversation context, relevant Omnesis data, tool results,
+            document chunks, search queries, or images.
           </p>
         </div>
+        <p>
+          Turn off <strong>Allow cloud inference</strong> in the same place to disable it. Changes
+          take effect without restarting the gateway. From the CLI, set
+          <code>inference.allowRemoteInference: true</code>, or pass <code>--allow-remote</code> to
+          <code>backend add</code>.
+        </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
           <div class="term-body">
