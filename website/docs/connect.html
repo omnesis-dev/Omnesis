@@ -726,6 +726,13 @@
           server. Do not do both, because the plugin declares the same connection.
         </p>
         <p>
+          Claude Code and Codex accept only a certificate a public authority issued, such as the
+          Tailscale certificate or one for a domain of your own. They cannot connect to a gateway
+          that serves its self-signed certificate; give the gateway one of those
+          <a href="/docs/setup#certificates">certificates</a> first. OpenClaw and Hermes pin the
+          gateway's fingerprint instead, so they connect either way.
+        </p>
+        <p>
           The Claude plugin declares the HTTP connection and adds skills that teach Claude how to
           use Answer, Direct, and Notes and how to set up or repair the connection. It asks for your
           gateway's MCP URL (the HTTPS URL ending in <code>/mcp</code>), and it neither launches an
