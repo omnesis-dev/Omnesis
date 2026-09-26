@@ -117,10 +117,30 @@ CONFIG_FILE=/tmp/omnesis-ios-e2e-config.json
 import json, sys
 json.dump({'gatewayURL': '$URL', 'apiToken': '$TOKEN'}, sys.stdout)
 " > "$CONFIG_FILE")
-trap 'cleanup; rm -f "'"$CONFIG_FILE"'"' EXIT INT TERM
+RESULT_DIR="$(mktemp -d)"
+trap 'cleanup; rm -f "'"$CONFIG_FILE"'"; rm -rf "'"$RESULT_DIR"'"' EXIT INT TERM
 
 xcodebuild test \
   -project Omnesis.xcodeproj \
   -scheme Omnesis \
   -destination "$DEST" \
+  -resultBundlePath "$RESULT_DIR/live.xcresult" \
   -only-testing:OmnesisTests/GatewayLiveE2ETests
+
+# A missing config file makes every test throw XCTSkip, which xcodebuild
+# reports as TEST SUCCEEDED. The lane passes only when every test in the class
+# ran against the gateway.
+xcrun xcresulttool get test-results summary --path "$RESULT_DIR/live.xcresult" \
+  >"$RESULT_DIR/summary.json"
+python3 - "$RESULT_DIR/summary.json" Tests/OmnesisTests/GatewayLiveE2ETests.swift <<'PY'
+import json, re, sys
+summary_path, source = sys.argv[1:3]
+expected = len(re.findall(r"^\s*func test\w*\(", open(source).read(), re.M))
+summary = json.load(open(summary_path))
+total, passed = summary["totalTestCount"], summary["passedTests"]
+skipped, failed = summary["skippedTests"], summary["failedTests"]
+print(f"GatewayLiveE2ETests: {total} run, {passed} passed, {skipped} skipped, {failed} failed; the class declares {expected}")
+if expected == 0 or total != expected or passed != expected:
+    sys.exit("✗ iOS live-gateway E2E did not run every test against the gateway.")
+PY
+echo "✓ iOS live-gateway E2E complete."

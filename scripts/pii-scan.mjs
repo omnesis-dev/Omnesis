@@ -506,12 +506,34 @@ function runAll() {
     .split("\n")
     .filter(Boolean);
   const files = tracked.filter((f) => !isGeneratedOrBinaryPath(f));
+  // A scan that read nothing must not pass as a clean one: an empty file list
+  // or a tracked file it could not read fails the run. A tracked file deleted
+  // from the working tree has nothing to scan.
+  if (files.length === 0) {
+    process.stderr.write("pii-scan: git ls-files listed no files to scan\n");
+    process.exit(2);
+  }
   const findings = [];
+  const unreadable = [];
+  let scanned = 0;
   for (const f of files) {
-    const text = safeRead(join(REPO_ROOT, f));
+    let text;
+    try {
+      text = readFileSync(join(REPO_ROOT, f), "utf8");
+    } catch (error) {
+      if (error.code !== "ENOENT") unreadable.push(`${f} (${error.code ?? error.message})`);
+      continue;
+    }
+    scanned++;
     if (text.includes("\0")) continue;
     findings.push(...scanText(text, { path: f, scanNames: pathScansNames(f), allowSets }));
   }
+  if (unreadable.length) {
+    process.stderr.write(`pii-scan: could not read ${unreadable.length} tracked file(s):\n`);
+    for (const entry of unreadable) process.stderr.write(`  ${entry}\n`);
+    process.exit(2);
+  }
+  process.stdout.write(`pii-scan: scanned ${scanned} tracked files\n`);
   const trackedSet = new Set(tracked);
   findings.push(
     ...staleAllowlistEntries(loadAllowlist(), (p) =>

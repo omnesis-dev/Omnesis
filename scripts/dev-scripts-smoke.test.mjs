@@ -1896,8 +1896,10 @@ describe("full-validation workflow topology", () => {
         "exec node scripts/nx/ci-scope.mjs static",
       );
       expect(step("unit", "lane [affected-unit]").run).toContain(
-        'npx nx run-many --targets=nx-unit --projects="$PROJECTS"',
+        'npx nx run-many --targets=nx-unit --projects="$PROJECTS" --parallel=1 --output-style=static',
       );
+      // A green affected lane shows the suites it ran; Nx folds that away by default.
+      expect(step("node", "lane [affected-typecheck]").run).toContain("--output-style=static");
       // The privacy scan and the cheap validators stay unconditional.
       expect(ci.jobs.privacy.if).toBeUndefined();
       for (const name of ["lane [universe-validation]", "lane [parity-validation]"])
@@ -2023,7 +2025,11 @@ describe("full-validation workflow topology", () => {
     const steps = status.jobs["main-verdict"].steps;
     expect(steps.some((step) => step.uses?.startsWith("actions/checkout@"))).toBe(false);
     const run = steps.map((step) => step.run ?? "").join("\n");
-    expect(run).toContain("branch=main&event=push&status=completed");
+    expect(run).toContain("branch=main&status=completed");
+    // A dispatched run of main counts — the Dependabot auto-merge validates the
+    // main it merged that way — and a pull request whose branch is named main
+    // does not.
+    expect(run).toContain('.event == "push" or .event == "workflow_dispatch"');
     expect(run).toContain('.conclusion != "cancelled"');
     const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
     expect(readme).toContain("actions/workflows/ci-status.yml/badge.svg?branch=main");

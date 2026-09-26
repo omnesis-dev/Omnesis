@@ -96,8 +96,26 @@ echo "→ Running Android live-gateway E2E (host JVM, real TLS pinning)…"
 cd "$ROOT/android"
 # shellcheck disable=SC1091
 source scripts/android-env.sh
+TEST_CLASS=dev.omnesis.android.transport.e2e.GatewayLiveE2ETest
+TEST_SOURCE=core-transport/src/test/kotlin/${TEST_CLASS//.//}.kt
+RESULT_XML=core-transport/build/test-results/testDebugUnitTest/TEST-$TEST_CLASS.xml
+rm -f "$RESULT_XML"
 # `--rerun` re-executes only the test task; the compiled classes stay.
-./gradlew -PomnesisE2e :core-transport:testDebugUnitTest --rerun \
-  --tests 'dev.omnesis.android.transport.e2e.GatewayLiveE2ETest'
+./gradlew -PomnesisE2e :core-transport:testDebugUnitTest --rerun --tests "$TEST_CLASS"
+
+# Every test assumes the gateway config, and a failed assumption is a skip that
+# Gradle reports as success. The lane passes only when every test in the class
+# ran against the gateway.
+python3 - "$RESULT_XML" "$TEST_SOURCE" <<'PY'
+import re, sys, xml.etree.ElementTree as ET
+result_xml, source = sys.argv[1:3]
+expected = len(re.findall(r"^\s*@Test\b", open(source).read(), re.M))
+suite = ET.parse(result_xml).getroot()
+tests, skipped = int(suite.get("tests")), int(suite.get("skipped"))
+failed = int(suite.get("failures")) + int(suite.get("errors"))
+print(f"GatewayLiveE2ETest: {tests} run, {skipped} skipped, {failed} failed; the class declares {expected}")
+if expected == 0 or tests != expected or skipped or failed:
+    sys.exit("✗ Android live-gateway E2E did not run every test against the gateway.")
+PY
 
 echo "✓ Android live-gateway E2E complete."

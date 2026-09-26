@@ -68,5 +68,18 @@ subprojects {
         tasks
             .matching { it.name.startsWith("recordRoborazzi") || it.name.startsWith("verifyRoborazzi") }
             .configureEach { finalizedBy(assertCaptured) }
+
+        // The committed goldens are what a verify run compares against, but the
+        // plugin only declares its own build output directory as a test input.
+        // Without this, a change to a golden alone leaves the test task's build
+        // cache key unchanged, and a verify replays the cached verdict against
+        // the previous goldens.
+        tasks.withType<Test>().configureEach {
+            inputs
+                .dir("src/test/roborazzi")
+                .optional()
+                .withPropertyName("roborazziGoldens")
+                .withPathSensitivity(PathSensitivity.RELATIVE)
+        }
     }
 }

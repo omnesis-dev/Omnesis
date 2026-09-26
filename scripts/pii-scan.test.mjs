@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { execFileSync, spawnSync } from "node:child_process";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, expect } from "vitest";
 import {
   scanText,
@@ -506,5 +510,64 @@ describe("extractBodyFiles", () => {
   });
   it("pulls -F field=@file paths", () => {
     expect(extractBodyFiles("gh api x -F body=@/tmp/b.txt")).toEqual(["/tmp/b.txt"]);
+  });
+});
+
+describe("--all", () => {
+  // Runs a copy of the scanner inside a throwaway repository, which is the
+  // root it scans.
+  function scanRepo(setup) {
+    const root = mkdtempSync(join(tmpdir(), "pii-scan-all-"));
+    try {
+      mkdirSync(join(root, "scripts"));
+      copyFileSync(new URL("./pii-scan.mjs", import.meta.url), join(root, "scripts/pii-scan.mjs"));
+      const git = (...args) => execFileSync("git", args, { cwd: root, stdio: "ignore" });
+      git("init", "-q");
+      setup(root, git);
+      const result = spawnSync(process.execPath, ["scripts/pii-scan.mjs", "--all"], {
+        cwd: root,
+        encoding: "utf8",
+        env: { ...process.env, HOME: root, OMNESIS_PII_SKIP: "" },
+      });
+      return { status: result.status, out: result.stdout + result.stderr };
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  it("passes a clean tree and says how many files it read", () => {
+    const { status, out } = scanRepo((root, git) => {
+      writeFileSync(join(root, "notes.md"), "Nothing personal here.\n");
+      git("add", "-A");
+    });
+    expect(out).toContain("scanned 1 tracked files");
+    expect(status).toBe(0);
+  });
+
+  it("fails when it lists nothing to scan", () => {
+    const { status, out } = scanRepo(() => {});
+    expect(out).toContain("listed no files to scan");
+    expect(status).toBe(2);
+  });
+
+  it("fails when a tracked file cannot be read", () => {
+    const { status, out } = scanRepo((root, git) => {
+      mkdirSync(join(root, "dir"));
+      writeFileSync(join(root, "dir/a.md"), "fine\n");
+      symlinkSync("dir", join(root, "link.md"));
+      git("add", "-A");
+    });
+    expect(out).toContain("could not read 1 tracked file(s)");
+    expect(out).toContain("link.md (EISDIR)");
+    expect(status).toBe(2);
+  });
+
+  it("skips a tracked file deleted from the working tree", () => {
+    const { status } = scanRepo((root, git) => {
+      writeFileSync(join(root, "gone.md"), "soon deleted\n");
+      git("add", "-A");
+      rmSync(join(root, "gone.md"));
+    });
+    expect(status).toBe(0);
   });
 });

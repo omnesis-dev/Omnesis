@@ -7,7 +7,9 @@ name: ci-status
 # older waiting run with the newest push, and GitHub's own badge reports such
 # a cancelled run as failing. This workflow runs after every full-validation
 # run completes and passes or fails exactly as the newest completed,
-# non-cancelled push run on `main` did. It checks out no code and reads the
+# non-cancelled run of `main` did — a push, or a manual run: the Dependabot
+# auto-merge validates the main it merged with a dispatch, because a push made
+# with a workflow's token starts no workflow. It checks out no code and reads the
 # Actions API only. It has no concurrency group on purpose: a queued run that
 # a group replaced would itself be cancelled, and the badge would show that.
 #
@@ -39,8 +41,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/full-validation.yml/runs?branch=main&event=push&status=completed&per_page=50" \
-            --jq '[.workflow_runs[] | select(.conclusion != "cancelled" and .conclusion != "skipped" and .conclusion != "stale")] | sort_by(.created_at) | last | "\(.conclusion) \(.head_sha) \(.html_url)"')"
+          # `branch=main` also matches a pull request whose head branch is
+          # named main, so the event is filtered too.
+          latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/full-validation.yml/runs?branch=main&status=completed&per_page=100" \
+            --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch") | select(.conclusion != "cancelled" and .conclusion != "skipped" and .conclusion != "stale")] | sort_by(.created_at) | last | "\(.conclusion) \(.head_sha) \(.html_url)"')"
           read -r conclusion sha url <<<"$latest"
+          [ "$conclusion" != null ] || { echo "::error::No finished run of main was found."; exit 1; }
           echo "Newest finished run on main: ${conclusion} at ${sha} — ${url}"
           [ "$conclusion" = success ]
