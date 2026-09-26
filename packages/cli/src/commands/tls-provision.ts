@@ -728,6 +728,14 @@ async function runProvisionCommand(opts: TlsProvisionOptions): Promise<void> {
     for (const line of phoneRepairLines(before.previous, activation, before.phones)) {
       process.stdout.write(`${line}\n`);
     }
+    // Loaded here: it pulls in the service manager, which `tls status` never needs.
+    const { reconnectLocalCollector } = await import("./tls-local-collector.js");
+    const url = result.envWritten.OMNESIS_GATEWAY_URL;
+    for (const line of await reconnectLocalCollector(
+      url !== undefined && url !== env.existingGatewayUrl,
+    )) {
+      process.stdout.write(`${line}\n`);
+    }
   }
   if (result.exitCode !== 0) {
     process.exitCode = result.exitCode;
