@@ -2162,14 +2162,19 @@ describe("full-validation workflow topology", () => {
       }
     }
     const dir = tmpDir("omnesis-npm-ci-");
-    writeFileSync(join(dir, "npm"), '#!/bin/sh\nprintf "%s|%s" "$npm_config_nodedir" "$*"\n');
+    writeFileSync(
+      join(dir, "npm"),
+      '#!/bin/sh\nprintf "%s|%s|%s" "$npm_package_config_node_gyp_nodedir" "$npm_config_nodedir" "$*"\n',
+    );
     chmodSync(join(dir, "npm"), 0o755);
     const out = execFileSync(join(repoRoot, "scripts/ci/npm-ci.sh"), ["--no-audit"], {
-      env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
+      env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, npm_config_nodedir: "" },
       encoding: "utf8",
     });
-    const [nodedir, args] = out.split("|");
+    const [nodedir, npmConfigNodedir, args] = out.split("|");
     expect(args).toBe("ci --no-audit");
+    // npm 11 warns about `npm_config_nodedir`, which is not an npm option.
+    expect(npmConfigNodedir).toBe("");
     expect(existsSync(join(nodedir, "include", "node", "common.gypi"))).toBe(true);
   });
 

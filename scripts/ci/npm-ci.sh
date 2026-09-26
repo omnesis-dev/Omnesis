@@ -8,7 +8,12 @@
 # in parallel: one build can read the headers while another is still writing
 # them, and fails on a half-written common.gypi. Node's release builds ship
 # those headers under <prefix>/include/node.
+#
+# node-gyp reads its options from `npm_package_config_node_gyp_<option>`, which
+# npm passes through to install scripts untouched. The older
+# `npm_config_nodedir` also reaches node-gyp, but npm 11 warns that it is not an
+# npm option and will stop accepting it.
 set -eu
-npm_config_nodedir="$(node -p 'require("node:path").resolve(process.execPath, "../..")')"
-export npm_config_nodedir
+npm_package_config_node_gyp_nodedir="$(node -p 'require("node:path").resolve(process.execPath, "../..")')"
+export npm_package_config_node_gyp_nodedir
 exec npm ci "$@"
