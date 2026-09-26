@@ -915,19 +915,33 @@ describe("install.sh service registration", () => {
       ]);
       const statePath = join(first.home, ".config", "omnesis", "update-state.json");
       const state = JSON.parse(readFileSync(statePath, "utf8"));
-      checkoutGit("update-interrupted", "checkout", "-q", "--detach", "v0.10.0");
-      writeFileSync(
-        statePath,
-        JSON.stringify({
-          ...state,
-          phase: "applying",
-          targetCommit: checkoutGit("update-interrupted", "rev-parse", "HEAD"),
-          lastCompletedCommit: state.commit,
-        }),
-      );
+      const interrupt = () => {
+        checkoutGit("update-interrupted", "checkout", "-q", "--detach", "v0.10.0");
+        writeFileSync(
+          statePath,
+          JSON.stringify({
+            ...state,
+            phase: "applying",
+            targetCommit: checkoutGit("update-interrupted", "rev-parse", "HEAD"),
+            lastCompletedCommit: state.commit,
+          }),
+        );
+      };
+      interrupt();
       const resumed = runInstaller("update-interrupted", [], env);
       expect(resumed.status, resumed.output).toBe(0);
       expect(updates(resumed)).toEqual(["update --yes --force"]);
+      // The record holds the checkout's physical path. A run that names the
+      // checkout through a symlink, as a macOS temporary directory under /var
+      // is, reads the same record.
+      interrupt();
+      const linked = fixturePath("linked-checkout");
+      symlinkSync(fixturePath("checkout-update-interrupted"), linked);
+      const viaLink = runInstaller("update-interrupted", ["--source-dir", linked], env, {
+        sourceDir: false,
+      });
+      expect(viaLink.status, viaLink.output).toBe(0);
+      expect(updates(viaLink)).toEqual(["update --yes --force"]);
     });
 
     test("matches the recorded checkout however its path is spelled", () => {

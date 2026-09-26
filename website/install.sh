@@ -6178,7 +6178,7 @@ update_existing_install() {
   ensure_node
   ensure_git
   OMNESIS_BIN="$HOME/.local/bin/omnesis"
-  run_machine_update "$SOURCE_DIR"
+  run_machine_update "$RECORDED_SOURCE_ROOT"
   print_update_banner
 }
 
