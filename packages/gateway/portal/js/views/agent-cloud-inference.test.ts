@@ -2,7 +2,9 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, expect, it, vi } from "vitest";
+// @ts-expect-error — portal modules are plain JS without sibling declarations.
 import { cloudInferenceRecovery, enableCloudInferenceForAgent } from "./agent-cloud-inference.js";
+// @ts-expect-error — portal modules are plain JS without sibling declarations.
 import { reducer, initialState } from "./agent-reducer.js";
 
 const user = { id: "user-1", role: "user", parts: [{ kind: "text", text: "Summarize my notes" }] };
