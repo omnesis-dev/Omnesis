@@ -15,6 +15,7 @@ const apiMocks = vi.hoisted(() => ({
   getAdminSyncStatus: vi.fn(async () => ({ items: [] })),
   getOverallStatus: vi.fn(async () => ({})),
   getIndexStats: vi.fn(async () => null),
+  getAccessOverview: vi.fn(async (): Promise<Record<string, unknown>> => ({ principals: [] })),
   listDevices: vi.fn(async () => ({ items: [] })),
   triggerSourceSync: vi.fn(),
   joinSourceMember: vi.fn(),
@@ -181,5 +182,20 @@ describe("SourcesView phone-app promos", () => {
     expect(row.textContent).toContain("Get the iPhone app");
     expect(row.textContent).toContain("Get the Android app");
     expect(row.textContent).not.toContain("Install the Chrome extension");
+  });
+
+  test("the agent card closes the row while no agent is connected", async () => {
+    apiMocks.getAccessOverview.mockResolvedValue({
+      oauth: { resource: "https://gateway.example.org/mcp" },
+      principals: [{ id: "old", revokedAt: 1 }],
+    });
+    await act(async () => {
+      render(h(SourcesView, {}), host);
+    });
+    await vi.waitFor(() => expect(host.querySelector(".agent-promo")).not.toBeNull());
+    const row = host.querySelector(".sources-promo-row") as HTMLElement;
+    const cards = [...row.children].filter((el) => el.classList.contains("ext-promo"));
+    expect(cards).toHaveLength(4);
+    expect(cards[3].textContent).toContain("Connect your favorite agent");
   });
 });
