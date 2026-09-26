@@ -62,11 +62,11 @@ license for each is listed below.
 
 | Bundle file                  | Upstream package           | Version | License               | Copyright holder                                                                                                                                       |
 | ---------------------------- | -------------------------- | ------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `codemirror-state.js`        | `@codemirror/state`        | 6.7.1   | MIT                   | Copyright (C) 2018-2021 by Marijn Haverbeke and others                                                                                                 |
-| `codemirror-view.js`         | `@codemirror/view`         | 6.43.9  | MIT                   | Copyright (C) 2018-2021 by Marijn Haverbeke and others                                                                                                 |
+| `codemirror-state.js`        | `@codemirror/state`        | 6.7.6   | MIT                   | Copyright (C) 2018-2021 by Marijn Haverbeke and others                                                                                                 |
+| `codemirror-view.js`         | `@codemirror/view`         | 6.43.13 | MIT                   | Copyright (C) 2018-2021 by Marijn Haverbeke and others                                                                                                 |
 | `codemirror-language.js`     | `@codemirror/language`     | 6.12.4  | MIT                   | Copyright (C) 2018-2021 by Marijn Haverbeke and others                                                                                                 |
-| `codemirror-commands.js`     | `@codemirror/commands`     | 6.11.0  | MIT                   | Copyright (C) 2018-2021 by Marijn Haverbeke and others                                                                                                 |
-| `codemirror-search.js`       | `@codemirror/search`       | 6.7.1   | MIT                   | Copyright (C) 2018-2021 by Marijn Haverbeke and others                                                                                                 |
+| `codemirror-commands.js`     | `@codemirror/commands`     | 6.11.1  | MIT                   | Copyright (C) 2018-2021 by Marijn Haverbeke and others                                                                                                 |
+| `codemirror-search.js`       | `@codemirror/search`       | 6.7.2   | MIT                   | Copyright (C) 2018-2021 by Marijn Haverbeke and others                                                                                                 |
 | `codemirror-autocomplete.js` | `@codemirror/autocomplete` | 6.20.3  | MIT                   | Copyright (C) 2018-2021 by Marijn Haverbeke and others                                                                                                 |
 | `codemirror-lint.js`         | `@codemirror/lint`         | 6.9.7   | MIT                   | Copyright (C) 2018-2021 by Marijn Haverbeke and others                                                                                                 |
 | `codemirror-lang-json.js`    | `@codemirror/lang-json`    | 6.0.2   | MIT                   | Copyright (C) 2018-2021 by Marijn Haverbeke and others                                                                                                 |
@@ -76,15 +76,15 @@ license for each is listed below.
 | `lezer-lr.js`                | `@lezer/lr`                | 1.4.10  | MIT                   | Copyright (C) 2018 by Marijn Haverbeke and others                                                                                                      |
 | `lezer-json.js`              | `@lezer/json`              | 1.0.3   | MIT                   | Copyright (C) 2020 by Marijn Haverbeke, Arun Srinivasan, and others                                                                                    |
 | `crelt.js`                   | `crelt`                    | 1.0.7   | MIT                   | Copyright (C) 2020 by Marijn Haverbeke                                                                                                                 |
-| `style-mod.js`               | `style-mod`                | 4.1.3   | MIT                   | Copyright (C) 2018 by Marijn Haverbeke and others                                                                                                      |
+| `style-mod.js`               | `style-mod`                | 4.1.4   | MIT                   | Copyright (C) 2018 by Marijn Haverbeke and others                                                                                                      |
 | `w3c-keyname.js`             | `w3c-keyname`              | 2.2.8   | MIT                   | Copyright (C) 2016 by Marijn Haverbeke and others                                                                                                      |
-| `marked.js`                  | `marked`                   | 18.0.11 | MIT                   | Copyright (c) 2018+ MarkedJS (https://github.com/markedjs/); Copyright (c) 2011-2018 Christopher Jeffrey (https://github.com/chjj/)                    |
+| `marked.js`                  | `marked`                   | 18.0.14 | MIT                   | Copyright (c) 2018+ MarkedJS (https://github.com/markedjs/); Copyright (c) 2011-2018 Christopher Jeffrey (https://github.com/chjj/)                    |
 | `preact.js`                  | `preact`                   | 10.29.8 | MIT                   | Copyright (c) 2015-present Jason Miller                                                                                                                |
 | `preact-hooks.js`            | `preact` (`preact/hooks`)  | 10.29.8 | MIT                   | Copyright (c) 2015-present Jason Miller                                                                                                                |
 | `htm-preact.js`              | `htm` (`htm/preact`)       | 3.1.1   | Apache-2.0            | Copyright (c) Jason Miller and htm contributors                                                                                                        |
 | `qrcode.js`                  | `qrcode` (node-qrcode)     | 1.5.4   | MIT                   | Copyright (c) 2012 Ryan Day                                                                                                                            |
-| `sql-formatter.js`           | `sql-formatter`            | 15.8.2  | MIT                   | Copyright (c) 2016-2020 ZeroTurnaround LLC; 2020-2021 George Leslie-Waksman and other contributors; 2021-Present inferrinizzard and other contributors |
-| `dompurify.js`               | `dompurify`                | 3.4.14  | MPL-2.0 OR Apache-2.0 | Copyright (c) Dr.-Ing. Mario Heiderich, Cure53 and other contributors                                                                                  |
+| `sql-formatter.js`           | `sql-formatter`            | 15.9.0  | MIT                   | Copyright (c) 2016-2020 ZeroTurnaround LLC; 2020-2021 George Leslie-Waksman and other contributors; 2021-Present inferrinizzard and other contributors |
+| `dompurify.js`               | `dompurify`                | 3.4.16  | MPL-2.0 OR Apache-2.0 | Copyright (c) Dr.-Ing. Mario Heiderich, Cure53 and other contributors                                                                                  |
 
 ### Full license text pointers
 
@@ -101,7 +101,9 @@ license for each is listed below.
 - **`dompurify`** — dual-licensed **MPL-2.0 OR Apache-2.0**; a redistributor may
   elect either. <https://github.com/cure53/DOMPurify>. The original bundled
   license header is preserved verbatim alongside the bundle at
-  `packages/gateway/portal/vendor/dompurify.js.LEGAL.txt`.
+  `packages/gateway/portal/vendor/dompurify.js.LEGAL.txt`, together with the
+  MIT header of the Babel `regenerator-runtime` helper DOMPurify's own build
+  inlines.
 
 The MIT, Apache-2.0, and MPL-2.0 license texts are the standard, unmodified texts
 available from <https://spdx.org/licenses/> (`MIT`, `Apache-2.0`, `MPL-2.0`).
