@@ -183,6 +183,46 @@ describe("createHostMinter", () => {
     expect(calls[0]!.slice(5)).toEqual(["--", ...names]);
   });
 
+  test("an mkcert off the gateway's PATH is found in Homebrew's bin directory", async () => {
+    const calls: string[] = [];
+    const minter = createHostMinter({
+      mkcertCandidates: ["mkcert", "/opt/homebrew/bin/mkcert"],
+      run: async (file, args) => {
+        calls.push(file);
+        if (file === "mkcert")
+          throw Object.assign(new Error("spawn mkcert ENOENT"), { code: "ENOENT" });
+        writeFileSync(args[1]!, "MK-CERT");
+        writeFileSync(args[3]!, "MK-KEY");
+      },
+    });
+    expect(await minter.mint("mkcert", ["localhost"], signal())).toEqual({
+      cert: "MK-CERT",
+      key: "MK-KEY",
+    });
+    expect(calls).toEqual(["mkcert", "/opt/homebrew/bin/mkcert"]);
+  });
+
+  test("an mkcert that runs and fails is the reason; none at all names where it looked", async () => {
+    const failing = createHostMinter({
+      mkcertCandidates: ["mkcert", "/opt/homebrew/bin/mkcert"],
+      run: async () => {
+        throw new Error("`mkcert -cert-file` failed: ERROR: failed to read the CA key");
+      },
+    });
+    await expect(failing.mint("mkcert", ["localhost"], signal())).rejects.toThrow(
+      /failed to read the CA key/u,
+    );
+    const absent = createHostMinter({
+      mkcertCandidates: ["mkcert", "/opt/homebrew/bin/mkcert"],
+      run: async () => {
+        throw Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" });
+      },
+    });
+    await expect(absent.mint("mkcert", ["localhost"], signal())).rejects.toThrow(
+      /^no mkcert the gateway can run: tried `mkcert`, `\/opt\/homebrew\/bin\/mkcert`/u,
+    );
+  });
+
   test("a tier with nothing to renew, or a binary that fails, throws with the reason", async () => {
     const minter = createHostMinter({
       run: async () => {

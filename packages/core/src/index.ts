@@ -1217,6 +1217,7 @@ export {
   servedCertificateCoversHost,
   servedCertificateCoversLocalhost,
 } from "./local-gateway-url.js";
+export { homebrewCliPaths, mkcertCliCandidates } from "./host-cli.js";
 export {
   TAILSCALE_STATUS_TIMEOUT_MS,
   tailscaleCliCandidates,

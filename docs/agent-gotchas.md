@@ -149,9 +149,11 @@ coverage and `npm run checks:full` for an explicit uncached full run. Missing Gi
 history, unsupported paths and global toolchain inputs widen visibly rather than
 producing an empty green plan.
 
-CI does not run this affected selection. `.github/workflows/full-validation.yml`
-runs the whole suite on GitHub-hosted runners for every push to `main` and every
-pull request into it. A newer push to a pull request cancels its older run; on
+CI runs this affected selection on pull requests: the `scope` job of
+`.github/workflows/full-validation.yml` (`scripts/nx/ci-scope.mjs`) plans the
+pull request's merge commit and runs only the lanes it selects, widening to the
+whole suite on the same conservative fallbacks. Every push to `main` runs the
+whole suite on GitHub-hosted runners. A newer push to a pull request cancels its older run; on
 `main` one run executes at a time and a newer push replaces a waiting one; the
 README badge reads `ci-status.yml`, which reports the newest run that finished. The release workflow accepts a tag only when a push or manual run of
 that workflow passed at the exact tagged commit.

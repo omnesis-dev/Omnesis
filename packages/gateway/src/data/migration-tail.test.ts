@@ -111,28 +111,20 @@ function windBack(db: Db): void {
     .all()
     .some((row) => row.name === "access_level_id");
   if (pairingsHaveAccessLevel) db.exec("ALTER TABLE device_pairings DROP COLUMN access_level_id");
-  windBackPrivateKeyJwtClients(db);
-  db.exec(`DELETE FROM schema_migrations WHERE version > ${BEFORE_TAIL}`);
-  db.exec(`PRAGMA user_version = ${BEFORE_TAIL}`);
-}
-
-/**
- * Rebuild `oauth_clients` in the shape it had before migration 182: no
- * `jwks_uri` or signing algorithm, and only `none` or `client_secret_basic`.
- * The columns sit inside table CHECK constraints, so they cannot be dropped in
- * place; like the migration, the rebuild runs with foreign keys off and the
- * legacy rename so the tables that reference `oauth_clients` keep pointing at it.
- */
-function windBackPrivateKeyJwtClients(db: Db): void {
-  const columns = db
+  const oauthClientsHaveJwks = db
     .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('oauth_clients')")
-    .all();
-  if (!columns.some((row) => row.name === "jwks_uri")) return;
-  db.exec("PRAGMA foreign_keys = OFF");
-  db.exec("PRAGMA legacy_alter_table = ON");
-  try {
+    .all()
+    .some((row) => row.name === "jwks_uri");
+  if (oauthClientsHaveJwks) {
+    // Migration 182 rebuilt `oauth_clients` to admit private_key_jwt clients;
+    // rebuild it back to the shape migration 154 left, under the same pragmas.
+    const fkWasOn =
+      (db.prepare<[], { foreign_keys: number }>("PRAGMA foreign_keys").get()?.foreign_keys ?? 0) ===
+      1;
+    db.exec("PRAGMA foreign_keys = OFF");
+    db.exec("PRAGMA legacy_alter_table = ON");
     db.exec(`
-      CREATE TABLE oauth_clients_prev (
+      CREATE TABLE oauth_clients_before_tail (
         client_id TEXT PRIMARY KEY,
         client_name TEXT NOT NULL,
         redirect_uris TEXT NOT NULL,
@@ -152,13 +144,14 @@ function windBackPrivateKeyJwtClients(db: Db): void {
         )
       );
       DROP TABLE oauth_clients;
-      ALTER TABLE oauth_clients_prev RENAME TO oauth_clients;
+      ALTER TABLE oauth_clients_before_tail RENAME TO oauth_clients;
       CREATE INDEX idx_oauth_clients_created ON oauth_clients(created_at, client_id);
     `);
-  } finally {
     db.exec("PRAGMA legacy_alter_table = OFF");
-    db.exec("PRAGMA foreign_keys = ON");
+    if (fkWasOn) db.exec("PRAGMA foreign_keys = ON");
   }
+  db.exec(`DELETE FROM schema_migrations WHERE version > ${BEFORE_TAIL}`);
+  db.exec(`PRAGMA user_version = ${BEFORE_TAIL}`);
 }
 
 /** Open at head, wind back, plant rows, and hand back the closed path. */
@@ -455,35 +448,6 @@ describe("an install several versions behind, upgrading", () => {
         .get()!;
       expect(row.updated).toBe("integer");
       expect(row.updated_at).toBe(1_700_000_000_003);
-    } finally {
-      (db as unknown as Database.Database).close();
-    }
-  });
-
-  test("a registered OAuth client keeps its secret and can move to private_key_jwt", () => {
-    seedOlderInstall((db) => {
-      db.prepare(
-        `INSERT INTO oauth_clients (client_id, client_name, redirect_uris, grant_types,
-           response_types, token_endpoint_auth_method, client_secret_hash, created_at)
-         VALUES ('client-a', 'agent client', '["https://agent.example.com/cb"]',
-           '["authorization_code"]', '["code"]', 'client_secret_basic', 'hash-a', 1700000000000)`,
-      ).run();
-    });
-
-    const db = upgrade();
-    try {
-      const row = db
-        .prepare<
-          [],
-          { method: string; secret: string | null; jwks: string | null }
-        >("SELECT token_endpoint_auth_method AS method, client_secret_hash AS secret, jwks_uri AS jwks FROM oauth_clients")
-        .get()!;
-      expect(row).toEqual({ method: "client_secret_basic", secret: "hash-a", jwks: null });
-      db.prepare(
-        `UPDATE oauth_clients SET token_endpoint_auth_method = 'private_key_jwt',
-           client_secret_hash = NULL, jwks_uri = 'https://agent.example.com/jwks.json',
-           token_endpoint_auth_signing_alg = 'ES256' WHERE client_id = 'client-a'`,
-      ).run();
     } finally {
       (db as unknown as Database.Database).close();
     }

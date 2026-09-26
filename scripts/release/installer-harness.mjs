@@ -493,9 +493,10 @@ function installerEnv(home, extra) {
     SHELL: "/bin/zsh",
     OMNESIS_REPO_URL: fixture,
     OMNESIS_TEST_CALLS: join(home, "cli-calls.log"),
-    // macOS's system-wide Tailscale.app, looked for here instead: a developer's
-    // own connected app would otherwise be found, and mint real certificates.
-    OMNESIS_TEST_TAILSCALE_ROOT: join(home, "tailscale-root"),
+    // macOS's system-wide Tailscale.app and Homebrew's prefixes, looked for
+    // here instead: a developer's own connected app would otherwise be found
+    // and mint real certificates, and their own mkcert would issue them.
+    OMNESIS_TEST_HOST_ROOT: join(home, "host-root"),
     ...extra,
   };
 }

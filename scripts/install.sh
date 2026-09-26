@@ -1257,7 +1257,21 @@ const [path, rootDir, fallback] = process.argv.slice(1);
 let commit = fallback;
 try {
   const state = JSON.parse(fs.readFileSync(path, "utf8"));
-  if (state?.version === 1 && state?.method === "source" && state?.rootDir === rootDir) {
+  // The same checkout can be spelled two ways (macOS resolves /var to
+  // /private/var), so the record matches by the folder it names.
+  const real = (value) => {
+    try {
+      return fs.realpathSync(value);
+    } catch {
+      return value;
+    }
+  };
+  if (
+    state?.version === 1 &&
+    state?.method === "source" &&
+    typeof state?.rootDir === "string" &&
+    real(state.rootDir) === real(rootDir)
+  ) {
     const candidate = state.phase === "complete"
       ? state.commit
       : ["applying", "rolling-back"].includes(state.phase)
@@ -2516,6 +2530,109 @@ try {
   fi
 }
 
+# A gateway that moves to another port strands every device paired with it:
+# each one stored the old address, and a remote collector's service unit
+# carries its URL and dials it for good. Nothing on this machine can re-point
+# them, so the move names them before anything changes, and the banner says
+# what brings each back. Read while the gateway still answers where its
+# clients know it, with the CLI this run just installed.
+PORT_MOVE_FROM=""
+PORT_MOVE_DEVICES=""
+PORT_MOVE_DEVICES_READ=0
+note_port_move() {
+  [ "$GATEWAY_PORT_EXPLICIT" = 1 ] || return 0
+  [ "$WANT_HARDENED" = 0 ] || return 0
+  registered_before_run gateway || return 0
+  PORT_MOVE_FROM="$(dotenv_value OMNESIS_GATEWAY_PORT || printf '7600')"
+  if [ "$PORT_MOVE_FROM" = "$GATEWAY_PORT" ]; then
+    PORT_MOVE_FROM=""
+    return 0
+  fi
+  # This machine's own collector follows the move with the rest of this run.
+  LOCAL_COLLECTOR_NAME="$(node -e '
+try {
+  const j = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+  if (typeof j.deviceName === "string") process.stdout.write(j.deviceName);
+} catch { /* no collector has run here */ }
+' "$CONFIG_DIR/collector-pairing-state.json" 2>/dev/null || true)"
+  if DEVICES_JSON="$("$OMNESIS_BIN" devices list --json </dev/null 2>/dev/null)" &&
+     PORT_MOVE_DEVICES="$(printf '%s' "$DEVICES_JSON" | node -e '
+let s = "";
+process.stdin.on("data", (d) => (s += d));
+process.stdin.on("end", () => {
+  const { items } = JSON.parse(s);
+  if (!Array.isArray(items)) process.exit(1);
+  // A name is the operator'"'"'s text and lands on their terminal.
+  const field = (v) => String(v).replace(/[\x00-\x1f\x7f]/g, " ");
+  for (const d of items) {
+    // A CLI token and a portal session reach the gateway by whatever URL
+    // they are handed next; a revoked device is not coming back by itself.
+    if (!d || d.revokedAt != null || d.kind === "cli" || d.kind === "portal") continue;
+    if (d.kind === "collector" && d.name === process.argv[1]) continue;
+    process.stdout.write(`${field(d.id)}\t${field(d.kind)}\t${field(d.name)}\n`);
+  }
+});' "$LOCAL_COLLECTOR_NAME" 2>/dev/null)"; then
+    PORT_MOVE_DEVICES_READ=1
+  fi
+  if [ "$PORT_MOVE_DEVICES_READ" = 0 ]; then
+    warn "Moving the gateway from port $PORT_MOVE_FROM to $GATEWAY_PORT. Its paired devices could not be listed; any collector, agent, phone or browser paired on another machine keeps dialling port $PORT_MOVE_FROM until it is pointed at $GATEWAY_PORT."
+  elif [ -n "$PORT_MOVE_DEVICES" ]; then
+    warn "Moving the gateway from port $PORT_MOVE_FROM to $GATEWAY_PORT. These paired devices keep dialling port $PORT_MOVE_FROM until each is pointed at $GATEWAY_PORT:"
+    printf '%s\n' "$PORT_MOVE_DEVICES" | while IFS="$(printf '\t')" read -r DEVICE_ID DEVICE_KIND DEVICE_NAME; do
+      warn "  $DEVICE_NAME ($DEVICE_KIND, $DEVICE_ID)"
+    done
+    warn "What to run for each is printed when the install finishes."
+  fi
+}
+
+# The banner's half of note_port_move: for each stranded device, the command
+# that points it at the new port. A collector's unit is re-registered by the
+# installer on that machine, so it gets the installer line; a repair code keeps
+# its device id, sources and cursors. Every other kind is re-pointed by the
+# steps `omnesis devices repair` prints for it.
+print_port_move_lines() {
+  [ -n "$PORT_MOVE_FROM" ] || return 0
+  [ "$PORT_MOVE_DEVICES_READ" = 0 ] || [ -n "$PORT_MOVE_DEVICES" ] || return 0
+  MOVE_URL="$(banner_gateway_url)"
+  MOVE_FP="$(cert_fingerprint "$(banner_cert_path)" || true)"
+  echo ""
+  printf '\033[1;33mPoint paired devices at port %s\033[0m — they still dial port %s:\n' "$GATEWAY_PORT" "$PORT_MOVE_FROM"
+  if [ "$PORT_MOVE_DEVICES_READ" = 0 ]; then
+    echo ""
+    echo "  The device list could not be read. See it with: omnesis devices list"
+    echo "  Then, for each device on another machine: omnesis devices repair <device> --gateway-url $MOVE_URL"
+    echo "  and follow what it prints; a collector's machine re-runs this installer with"
+    echo "  --collector --gateway-url $MOVE_URL --code <repair code>."
+    echo ""
+    return 0
+  fi
+  printf '%s\n' "$PORT_MOVE_DEVICES" | while IFS="$(printf '\t')" read -r DEVICE_ID DEVICE_KIND DEVICE_NAME; do
+    echo ""
+    if [ "$DEVICE_KIND" = collector ]; then
+      echo "  Collector $DEVICE_NAME — mint a repair code here, then re-run the installer on its machine:"
+      echo ""
+      echo "    omnesis devices repair $DEVICE_ID"
+      echo ""
+      if [ -n "$MOVE_FP" ]; then
+        echo "    curl -fsSL https://omnesis.dev/install.sh | sh -s -- --collector \\"
+        echo "      --gateway-url $MOVE_URL \\"
+        echo "      --trust-fingerprint sha256:$MOVE_FP \\"
+      else
+        echo "    curl -fsSL https://omnesis.dev/install.sh | sh -s -- --collector \\"
+        echo "      --gateway-url $MOVE_URL \\"
+      fi
+      echo "      --code <repair code>"
+    else
+      echo "  $DEVICE_NAME ($DEVICE_KIND) — mint a repair code here and follow what it prints:"
+      echo ""
+      echo "    omnesis devices repair $DEVICE_ID --gateway-url $MOVE_URL"
+    fi
+  done
+  echo ""
+  echo "  (Use the name each machine already reaches this gateway by, on port $GATEWAY_PORT.)"
+  echo ""
+}
+
 custom_tls_configured() {
   # Automatic Tailscale detection may renew or replace certificates this
   # installer owns, but it must not seize an operator-managed cert/key pair.
@@ -2659,7 +2776,7 @@ find_tailscale_cli() {
   if [ "$PLATFORM" = darwin ]; then
     # The installer's tests point this at a scratch directory, so a developer's
     # own Tailscale is never asked for its tailnet, let alone a certificate.
-    TS_ROOT="${OMNESIS_TEST_TAILSCALE_ROOT:-}"
+    TS_ROOT="${OMNESIS_TEST_HOST_ROOT:-}"
     # Homebrew's CLI where PATH does not reach it (a non-login shell); the
     # gateway's launchd PATH gets the same fallback (tailscale-cli.ts).
     for TS_BREW_CLI in "$TS_ROOT/opt/homebrew/bin/tailscale" "$TS_ROOT/usr/local/bin/tailscale"; do
@@ -2674,12 +2791,27 @@ find_tailscale_cli() {
   return 1
 }
 
+# mkcert on PATH, else Homebrew's where PATH does not reach it; the gateway
+# renews through the same candidates (host-cli.ts).
+find_mkcert_cli() {
+  MKCERT_CLI="$(command -v mkcert 2>/dev/null || true)"
+  [ -z "$MKCERT_CLI" ] || return 0
+  [ "$PLATFORM" = darwin ] || return 1
+  for MKCERT_CLI in "${OMNESIS_TEST_HOST_ROOT:-}/opt/homebrew/bin/mkcert" \
+                    "${OMNESIS_TEST_HOST_ROOT:-}/usr/local/bin/mkcert"; do
+    case ":$PATH:" in *":${MKCERT_CLI%/*}:"*) continue ;; esac
+    [ -x "$MKCERT_CLI" ] && return 0
+  done
+  MKCERT_CLI=""
+  return 1
+}
+
 provision_tls() {
   PORTAL_HOST="localhost"
   [ "$WANT_TLS" = 1 ] || return 0
 
   if [ "$USE_MKCERT" = 1 ]; then
-    if command -v mkcert >/dev/null 2>&1; then
+    if find_mkcert_cli; then
       info "Provisioning a mkcert certificate (you may be prompted to trust the local CA)..."
       mkdir -p "$CONFIG_DIR/tls"
       HOST_VALUE="$(hostname -s 2>/dev/null || hostname)"
@@ -2699,7 +2831,7 @@ process.stdout.write(valid ? `${short}.local` : "omnesis.local");
          [ "$PREVIOUS_TLS_KEY" = "$CONFIG_DIR/tls/mkcert.key" ]; then
         MKCERT_ADDRESS_PREVIOUS="$(configured_remote_gateway_url || true)"
       fi
-      mkcert -install
+      "$MKCERT_CLI" -install
       # Node is already a hard installer dependency. Use an argv array so an
       # interface value can never become shell syntax, and degrade to the four
       # fixed names if this host cannot enumerate its interfaces.
@@ -2755,7 +2887,7 @@ try {
 } catch (error) {
   process.exit(typeof error.status === "number" && error.status > 0 ? error.status : 1);
 }
-' "$(command -v mkcert)" "$CONFIG_DIR/tls/mkcert.crt" "$CONFIG_DIR/tls/mkcert.key" "$HOSTLOCAL"
+' "$MKCERT_CLI" "$CONFIG_DIR/tls/mkcert.crt" "$CONFIG_DIR/tls/mkcert.key" "$HOSTLOCAL"
       set_env OMNESIS_TLS_CERT "$CONFIG_DIR/tls/mkcert.crt"
       set_env OMNESIS_TLS_KEY "$CONFIG_DIR/tls/mkcert.key"
       unset_env OMNESIS_PAIRING_SYSTEM_TRUST_ORIGIN
@@ -5732,6 +5864,7 @@ print_banner() {
   print_phone_lines
   print_browser_lines
   print_second_machine_lines
+  print_port_move_lines
   echo "  Manage services:  omnesis service status|logs|restart"
   echo "  Update later:     omnesis update"
   print_path_hints
@@ -6045,7 +6178,7 @@ update_existing_install() {
   ensure_node
   ensure_git
   OMNESIS_BIN="$HOME/.local/bin/omnesis"
-  run_machine_update "$SOURCE_DIR"
+  run_machine_update "$RECORDED_SOURCE_ROOT"
   print_update_banner
 }
 
@@ -6396,6 +6529,7 @@ main() {
     print_client_banner
     return 0
   fi
+  note_port_move
   if [ "$GATEWAY_PORT_EXPLICIT" = 1 ]; then
     set_env OMNESIS_GATEWAY_PORT "$GATEWAY_PORT"
   elif SAVED_GATEWAY_PORT="$(dotenv_value OMNESIS_GATEWAY_PORT)"; then

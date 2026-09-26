@@ -190,6 +190,7 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
         ],
       },
       alternatives: true,
+      // See #168 — planned: a per-install local CA so this agent can trust a self-signed gateway.
       needsTrustedCertificate: "Claude Code only accepts a certificate a public authority issued",
       docs: `${DOCS}/connect#claude-code`,
     },

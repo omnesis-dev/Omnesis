@@ -274,13 +274,13 @@
                 <td>
                   Install Tailscale and join your tailnet with <code>tailscale up</code> on Linux or
                   through the Tailscale app on macOS. In the tailnet's admin console, enable
-                  MagicDNS and HTTPS certificates. On Linux, the installer may ask to make your
-                  account the machine's Tailscale operator (<code
-                    >sudo tailscale set --operator</code
-                  >), because only root or the operator can get certificates and the gateway renews
-                  as your account. On macOS, Omnesis can use Homebrew's <code>tailscale</code> or
-                  the app's bundled CLI even when they are not on your PATH or the gateway
-                  service's. Omnesis never joins a network or changes tailnet settings.
+                  MagicDNS and HTTPS certificates. On Linux, the installer and
+                  <code>omnesis tls provision</code> may ask to make your account the machine's
+                  Tailscale operator (<code>sudo tailscale set --operator</code>), because only root
+                  or the operator can get certificates and the gateway renews as your account. On
+                  macOS, Omnesis can use Homebrew's <code>tailscale</code> or the app's bundled CLI
+                  even when they are not on your PATH or the gateway service's. Omnesis never joins
+                  a network or changes tailnet settings.
                 </td>
               </tr>
               <tr>
@@ -1138,6 +1138,16 @@ omnesis.example.com {
           A repair code names its device, so redeeming it on the wrong machine cannot take over a
           different device. The collector on the gateway host needs no repair code: as described
           above, it registers itself again on its next start.
+        </p>
+        <p>
+          A collector's service keeps the gateway address it was installed with. When the gateway
+          has moved to another host or port, redeem the repair code by re-running the installer on
+          that machine instead, which registers the service on the new address:
+          <code
+            >curl -fsSL https://omnesis.dev/install.sh | sh -s -- --collector --gateway-url
+            &lt;new-url&gt; --code &lt;code&gt;</code
+          >. A re-run of the gateway's installer with <code>--port</code> prints this line for every
+          collector it leaves behind.
         </p>
         <p>With everything paired, continue with <a href="/docs/search">Search</a>.</p>
         <nav class="docs-pager" aria-label="Pages">

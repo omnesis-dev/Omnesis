@@ -36,15 +36,17 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { isIP } from "node:net";
-import { hostname as osHostname } from "node:os";
+import { hostname as osHostname, userInfo } from "node:os";
 import { join } from "node:path";
 
 import { defineCommand } from "citty";
 import {
   DEFAULT_CONFIG_DIR,
   ensureGatewayTrust,
+  HARDENED_UNIT_PATH,
   isCertificateIpAddress,
   localMdnsHostname,
+  mkcertCliCandidates,
   safeNetworkInterfaces,
   TAILSCALE_STATUS_TIMEOUT_MS,
   tailscaleCliCandidates,
@@ -102,6 +104,13 @@ export interface TlsProvisionEnv {
    * turns that into a graceful "needs HTTPS enabled / perms" message).
    */
   runTailscaleCert(dnsName: string, certPath: string, keyPath: string): void;
+  /**
+   * Make this account the machine's Tailscale operator (`tailscale set
+   * --operator`, through sudo or doas), after tailscaled refused it a
+   * certificate. False when that could not be done without a prompt nobody
+   * can answer, or was refused. Linux only; absent means never.
+   */
+  takeTailscaleOperator?(): boolean;
   /** Is the `mkcert` binary present? */
   hasMkcert(): boolean;
   /** Run `mkcert -install` then issue a cert covering the given names. Throws on failure. */
@@ -251,11 +260,7 @@ export function provisionTls(
           `A Tailscale certificate already exists at ${certPath}.`,
           "Re-run with --force / --refresh to re-mint it.",
         );
-        const updates = {
-          OMNESIS_TLS_CERT: certPath,
-          OMNESIS_TLS_KEY: keyPath,
-          OMNESIS_GATEWAY_URL: trustedUrl,
-        };
+        const updates = tailscaleEnvUpdates(certPath, keyPath, trustedUrl);
         if (!options.dryRun) writeEnv(updates);
         return {
           tier: "tailscale",
@@ -283,7 +288,11 @@ export function provisionTls(
       }
 
       try {
-        env.runTailscaleCert(dnsName, certPath, keyPath);
+        if (runTailscaleCertAsOperator(env, dnsName, certPath, keyPath)) {
+          messages.push(
+            "Made this account the Tailscale operator on this machine only — nothing on your tailnet changed.",
+          );
+        }
       } catch (err) {
         messages.push(
           `tailscale cert failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -306,11 +315,7 @@ export function provisionTls(
         };
       }
 
-      const updates = {
-        OMNESIS_TLS_CERT: certPath,
-        OMNESIS_TLS_KEY: keyPath,
-        OMNESIS_GATEWAY_URL: trustedUrl,
-      };
+      const updates = tailscaleEnvUpdates(certPath, keyPath, trustedUrl);
       writeEnv(updates);
       messages.push(
         `Minted a Tailscale certificate for ${dnsName}.`,
@@ -448,6 +453,63 @@ export function provisionTls(
 }
 
 /**
+ * What a Tailscale certificate wires into `.env`, as the installer does: the
+ * pair, the MagicDNS URL every local client now uses (the certificate covers
+ * only that name), and that origin as one phones verify through their own
+ * system trust, which the gateway's pairing plan reads.
+ */
+function tailscaleEnvUpdates(
+  certPath: string,
+  keyPath: string,
+  trustedUrl: string,
+): Record<string, string> {
+  return {
+    OMNESIS_TLS_CERT: certPath,
+    OMNESIS_TLS_KEY: keyPath,
+    OMNESIS_GATEWAY_URL: trustedUrl,
+    OMNESIS_PAIRING_SYSTEM_TRUST_ORIGIN: new URL(trustedUrl).origin,
+  };
+}
+
+/**
+ * `tailscale cert`, taking the Tailscale operator permission once when
+ * tailscaled refuses this account for lack of it — the installer's
+ * `mint_tailscale_cert`. tailscaled answers an account that is neither root
+ * nor the machine's operator with "Access denied: cert access denied". The
+ * permission is local to this machine and changes nothing on the tailnet, and
+ * the gateway runs as this account and renews the certificate itself, so a
+ * certificate minted once as root would be one nothing can renew. Any other
+ * failure is the operator's to resolve and is thrown as it came. Returns
+ * whether the permission was taken.
+ */
+function runTailscaleCertAsOperator(
+  env: TlsProvisionEnv,
+  dnsName: string,
+  certPath: string,
+  keyPath: string,
+): boolean {
+  try {
+    env.runTailscaleCert(dnsName, certPath, keyPath);
+    return false;
+  } catch (err) {
+    const refused = err instanceof Error && err.message.includes("cert access denied");
+    if (!refused || env.platform !== "linux" || !env.takeTailscaleOperator?.()) throw err;
+  }
+  env.runTailscaleCert(dnsName, certPath, keyPath);
+  return true;
+}
+
+/** Whether a command is on PATH, for choosing sudo or doas. */
+function commandExists(command: string): boolean {
+  try {
+    execFileSync("sh", ["-c", 'command -v "$1"', "sh", command], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Wire the real host environment. `tailscale status --json`'s `Self.DNSName`
  * gives the MagicDNS name (mirroring the installer); cert issuance shells out
  * to the same binaries the installer uses.
@@ -457,6 +519,7 @@ export function defaultTlsProvisionEnv(
   configDir: string = process.env.OMNESIS_CONFIG_DIR ?? DEFAULT_CONFIG_DIR,
 ): TlsProvisionEnv {
   let tailscaleCli: TailscaleCliCandidate | undefined;
+  let mkcertCli = "mkcert";
   return {
     configDir,
     existingCertPath: process.env.OMNESIS_TLS_CERT,
@@ -510,18 +573,54 @@ export function defaultTlsProvisionEnv(
         },
       );
     },
-    hasMkcert() {
+    takeTailscaleOperator() {
+      if (!tailscaleCli || process.platform !== "linux") return false;
+      // A hardened gateway runs as its own account, which is the one that needs
+      // the permission; it is not this account's to take.
+      if (existsSync(HARDENED_UNIT_PATH)) return false;
+      const operator = userInfo().username;
+      const root = process.getuid?.() === 0;
+      const sudo = root ? "" : ["sudo", "doas"].find(commandExists);
+      if (sudo === undefined) return false;
+      process.stdout.write(
+        `tailscaled will not issue a certificate to ${operator} — asking for the Tailscale operator permission on this machine, which the gateway needs too (it renews the certificate as ${operator})...\n`,
+      );
+      const set = [tailscaleCli.file, "set", `--operator=${operator}`];
+      // Like the installer: a password prompt only where someone can answer it,
+      // otherwise only a sudo that needs none. The prompt and any refusal stay
+      // on the terminal, so a waiting sudo never looks like a hang.
+      const prompts = !root && process.stdin.isTTY === true;
+      const [file, ...args] = root ? set : [sudo, ...(prompts ? [] : ["-n"]), ...set];
       try {
-        execFileSync("mkcert", ["-version"], { stdio: "ignore" });
+        execFileSync(file!, args, {
+          stdio: ["inherit", "ignore", "inherit"],
+          // Bounded like every other Tailscale call, except while sudo may be
+          // waiting for someone to type a password.
+          ...(prompts ? {} : { timeout: TAILSCALE_STATUS_TIMEOUT_MS }),
+          env: tailscaleCliEnv(tailscaleCli),
+        });
         return true;
       } catch {
         return false;
       }
     },
+    hasMkcert() {
+      // The same candidates the gateway renews with: PATH, then Homebrew's.
+      for (const file of mkcertCliCandidates()) {
+        try {
+          execFileSync(file, ["-version"], { stdio: "ignore" });
+          mkcertCli = file;
+          return true;
+        } catch {
+          // Not this one.
+        }
+      }
+      return false;
+    },
     runMkcert(certPath, keyPath, names) {
       mkdirSync(join(configDir, "tls"), { recursive: true });
-      execFileSync("mkcert", ["-install"], { stdio: ["ignore", "ignore", "pipe"] });
-      execFileSync("mkcert", ["-cert-file", certPath, "-key-file", keyPath, ...names], {
+      execFileSync(mkcertCli, ["-install"], { stdio: ["ignore", "ignore", "pipe"] });
+      execFileSync(mkcertCli, ["-cert-file", certPath, "-key-file", keyPath, ...names], {
         stdio: ["ignore", "ignore", "pipe"],
       });
     },

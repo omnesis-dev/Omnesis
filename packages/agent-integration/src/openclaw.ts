@@ -2064,6 +2064,7 @@ export function registerOpenClawIntegration(api: OfficialOpenClawPluginApi): voi
   }
   // Keep the integration's runtime surface deliberately narrow while making
   // the installed OpenClaw SDK the compile-time registration contract.
+  // See #175 — Direct and Notes are not exposed even when the grant includes them.
   const integrationApi = api as unknown as OpenClawIntegrationApi;
   const service = new OpenClawIntegrationService(integrationApi, openClawServiceSlot);
   integrationApi.registerTool((context) => service.ordinaryAnswerToolForContext(context), {

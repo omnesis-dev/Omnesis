@@ -278,6 +278,12 @@ case "$1" in
       fi
     fi
     ;;
+  devices)
+    if [ "$2 \${3:-}" = "list --json" ]; then
+      [ -n "\${OMNESIS_TEST_DEVICES_JSON:-}" ] || exit 1
+      printf '%s' "$OMNESIS_TEST_DEVICES_JSON"
+    fi
+    ;;
   service)
     case "$2" in
       status)
@@ -909,17 +915,61 @@ describe("install.sh service registration", () => {
       ]);
       const statePath = join(first.home, ".config", "omnesis", "update-state.json");
       const state = JSON.parse(readFileSync(statePath, "utf8"));
-      checkoutGit("update-interrupted", "checkout", "-q", "--detach", "v0.10.0");
+      const interrupt = () => {
+        checkoutGit("update-interrupted", "checkout", "-q", "--detach", "v0.10.0");
+        writeFileSync(
+          statePath,
+          JSON.stringify({
+            ...state,
+            phase: "applying",
+            targetCommit: checkoutGit("update-interrupted", "rev-parse", "HEAD"),
+            lastCompletedCommit: state.commit,
+          }),
+        );
+      };
+      interrupt();
+      const resumed = runInstaller("update-interrupted", [], env);
+      expect(resumed.status, resumed.output).toBe(0);
+      expect(updates(resumed)).toEqual(["update --yes --force"]);
+      // The record holds the checkout's physical path. A run that names the
+      // checkout through a symlink, as a macOS temporary directory under /var
+      // is, reads the same record.
+      interrupt();
+      const linked = fixturePath("linked-checkout");
+      symlinkSync(fixturePath("checkout-update-interrupted"), linked);
+      const viaLink = runInstaller("update-interrupted", ["--source-dir", linked], env, {
+        sourceDir: false,
+      });
+      expect(viaLink.status, viaLink.output).toBe(0);
+      expect(updates(viaLink)).toEqual(["update --yes --force"]);
+    });
+
+    test("matches the recorded checkout however its path is spelled", () => {
+      // macOS resolves /var to /private/var, so the record can name the same
+      // checkout by another path; a symlink reproduces that on any system.
+      tagRelease("0.5.5");
+      const first = installFirst("update-spelled", [
+        "--no-tls",
+        "--embedder",
+        EMBED_IDS[1],
+        "--version",
+        "0.5.5",
+      ]);
+      const statePath = join(first.home, ".config", "omnesis", "update-state.json");
+      const state = JSON.parse(readFileSync(statePath, "utf8"));
+      const alias = fixturePath("checkout-update-spelled-alias");
+      symlinkSync(fixturePath("checkout-update-spelled"), alias);
+      checkoutGit("update-spelled", "checkout", "-q", "--detach", "v0.10.0");
       writeFileSync(
         statePath,
         JSON.stringify({
           ...state,
           phase: "applying",
-          targetCommit: checkoutGit("update-interrupted", "rev-parse", "HEAD"),
+          targetCommit: checkoutGit("update-spelled", "rev-parse", "HEAD"),
           lastCompletedCommit: state.commit,
         }),
       );
-      const resumed = runInstaller("update-interrupted", [], env);
+      const resumed = runInstaller("update-spelled", ["--source-dir", alias], env);
       expect(resumed.status, resumed.output).toBe(0);
       expect(updates(resumed)).toEqual(["update --yes --force"]);
     });
@@ -1078,6 +1128,107 @@ describe("install.sh service registration", () => {
       expect(full.calls.some((c) => c.startsWith("service install"))).toBe(true);
       expect(full.output).toContain("Restarting the gateway on its refreshed service definition");
       expect(restarts(full)).toEqual(["service restart gateway", "service restart collector"]);
+    });
+
+    // Every device paired on another machine stored the old port, and a
+    // remote collector's unit carries it: moving the gateway strands them
+    // unless the operator is told which, and what points each at the new one.
+    describe("--port moving a gateway with paired devices", () => {
+      const device = (id, kind, name, extra = {}) => ({
+        id: `00000000-0000-4000-8000-00000000000${id}`,
+        kind,
+        name,
+        revokedAt: null,
+        online: false,
+        ...extra,
+      });
+      const devices = {
+        items: [
+          device(1, "cli", "bootstrap"),
+          device(2, "collector", "studio-northstar-collector", { online: true }),
+          device(3, "collector", "riverside-collector", { online: true }),
+          device(4, "collector", "retired-collector", { revokedAt: 1 }),
+          device(5, "portal", "portal-session"),
+          device(6, "ios", "Maya's iPhone"),
+        ],
+      };
+      const moveArgs = ["--no-tls", "--no-model", "--port", "7601", "--version", "0.9.0"];
+      const installWithCollector = (name) => {
+        const first = installFirst(name);
+        writeFileSync(
+          join(first.configDir, "collector-pairing-state.json"),
+          JSON.stringify({ state: "paired", deviceName: "studio-northstar-collector" }),
+        );
+        return first;
+      };
+
+      test("names each one before the move, and the banner says how to bring it back", () => {
+        installWithCollector("port-move");
+        const moved = runInstaller("port-move", moveArgs, {
+          ...env,
+          OMNESIS_TEST_DEVICES_JSON: JSON.stringify(devices),
+        });
+        expect(moved.status, moved.output).toBe(0);
+        const out = moved.output;
+        // Read while the gateway still answers on its old port.
+        expect(moved.calls.indexOf("devices list --json")).toBeLessThan(
+          moved.calls.findIndex((c) => c.startsWith("service install")),
+        );
+        expect(out).toContain(
+          "Moving the gateway from port 7600 to 7601. These paired devices keep dialling port 7600",
+        );
+        expect(out).toContain(`riverside-collector (collector, ${devices.items[2].id})`);
+        expect(out).toContain(`Maya's iPhone (ios, ${devices.items[5].id})`);
+        // Not this machine's own collector, which follows; not a CLI token, a
+        // portal session, or a device already revoked.
+        for (const name of [
+          "bootstrap",
+          "studio-northstar-collector",
+          "retired-collector",
+          "portal-session",
+        ]) {
+          expect(out).not.toContain(`${name} (`);
+          expect(out).not.toContain(`Collector ${name}`);
+        }
+        expect(out).toContain("Point paired devices at port 7601");
+        expect(out).toContain("Collector riverside-collector");
+        expect(out).toContain(`omnesis devices repair ${devices.items[2].id}\n`);
+        expect(out).toMatch(
+          /sh -s -- --collector \\\n\s+--gateway-url https:\/\/[^\s]+:7601 \\\n(\s+--trust-fingerprint sha256:[0-9a-f]{64} \\\n)?\s+--code <repair code>/,
+        );
+        expect(out).toMatch(
+          new RegExp(
+            `omnesis devices repair ${devices.items[5].id} --gateway-url https://\\S+:7601`,
+          ),
+        );
+      });
+
+      test("says so when the device list cannot be read", () => {
+        installWithCollector("port-move-unread");
+        const moved = runInstaller("port-move-unread", moveArgs, env);
+        expect(moved.status, moved.output).toBe(0);
+        expect(moved.output).toContain("Its paired devices could not be listed");
+        expect(moved.output).toContain("omnesis devices repair <device> --gateway-url");
+      });
+
+      test("says nothing when no other device is paired, or the port does not change", () => {
+        installWithCollector("port-move-alone");
+        const alone = runInstaller("port-move-alone", moveArgs, {
+          ...env,
+          OMNESIS_TEST_DEVICES_JSON: JSON.stringify({ items: devices.items.slice(0, 2) }),
+        });
+        expect(alone.status, alone.output).toBe(0);
+        expect(alone.output).not.toContain("Moving the gateway");
+        expect(alone.output).not.toContain("Point paired devices");
+
+        const again = runInstaller("port-move-alone", moveArgs, {
+          ...env,
+          OMNESIS_TEST_DEVICES_JSON: JSON.stringify(devices),
+        });
+        expect(again.status, again.output).toBe(0);
+        expect(again.calls).not.toContain("devices list --json");
+        expect(again.output).not.toContain("Point paired devices");
+      });
     });
   });
 

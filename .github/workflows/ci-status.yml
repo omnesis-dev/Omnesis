@@ -10,10 +10,16 @@ name: ci-status
 # non-cancelled push run on `main` did. It checks out no code and reads the
 # Actions API only. It has no concurrency group on purpose: a queued run that
 # a group replaced would itself be cancelled, and the badge would show that.
+#
+# It reacts only to full-validation runs of `main` that actually finished:
+# pull-request runs and replaced (cancelled) runs of `main` never change the
+# verdict, and re-reporting an unchanged red verdict on each of them would
+# send the pusher a failure email every time.
 on:
   workflow_run:
     workflows: [full-validation]
     types: [completed]
+    branches: [main]
 
 permissions:
   actions: read
@@ -21,6 +27,10 @@ permissions:
 jobs:
   main-verdict:
     name: main verdict
+    if: >-
+      github.event.workflow_run.event != 'pull_request'
+      && github.event.workflow_run.conclusion != 'cancelled'
+      && github.event.workflow_run.conclusion != 'skipped'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

@@ -50,7 +50,7 @@ describe("install.sh Tailscale CLI detection", () => {
             PATH: `${bin}:${process.env.PATH}`,
             // Where /Applications and Homebrew are looked for: never the
             // machine's own Tailscale.
-            OMNESIS_TEST_TAILSCALE_ROOT: join(home, "root"),
+            OMNESIS_TEST_HOST_ROOT: join(home, "root"),
           },
         },
       );
@@ -82,7 +82,7 @@ describe("install.sh Tailscale CLI detection", () => {
           HOME: home,
           PATH: bin,
           // Homebrew's prefixes, and /Applications, are looked for under here.
-          OMNESIS_TEST_TAILSCALE_ROOT: home,
+          OMNESIS_TEST_HOST_ROOT: home,
         },
       });
       expect(output).toBe("brew\n");
@@ -121,6 +121,37 @@ describe("install.sh Tailscale CLI detection", () => {
       );
       expect(output).toBe("not ready\n");
       expect(Date.now() - started).toBeLessThan(10_000);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("finds Homebrew's mkcert by absolute path when PATH does not reach it", () => {
+    const home = mkdtempSync(join(tmpdir(), "omnesis-mkcert-detection-"));
+    try {
+      const brew = join(home, "opt/homebrew/bin");
+      mkdirSync(brew, { recursive: true });
+      writeFileSync(join(brew, "mkcert"), "#!/bin/sh\nexit 0\n");
+      chmodSync(join(brew, "mkcert"), 0o755);
+      const run = (platform) =>
+        execFileSync(
+          "sh",
+          [
+            "-c",
+            `${cliFunctions}\nPLATFORM=${platform}\nfind_mkcert_cli && echo "$MKCERT_CLI" || echo none`,
+          ],
+          {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              HOME: home,
+              PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+              OMNESIS_TEST_HOST_ROOT: home,
+            },
+          },
+        );
+      expect(run("darwin")).toBe(`${join(brew, "mkcert")}\n`);
+      expect(run("linux")).toBe("none\n");
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

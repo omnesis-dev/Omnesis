@@ -150,6 +150,7 @@ export class NativeAnswerMcpClient {
     signal?: AbortSignal,
     options?: GatewayRequestOptions,
   ): Promise<T> {
+    // See #175 — only Answer is bridged; Direct and Notes tools are not.
     if (path !== "/mcp") {
       throw new Error("native Answer MCP client accepts only /mcp");
     }
