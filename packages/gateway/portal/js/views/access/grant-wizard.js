@@ -58,7 +58,7 @@ export function GrantWizard({
 }) {
   const stepHeadingRef = useRef(null);
   const initialStep = useRef(true);
-  const ruleError = validateGrantRules(rules);
+  const ruleError = validateGrantRules(rules, sources);
 
   // Focus follows the step so a keyboard move forward lands on the new
   // heading rather than staying where the pressed button used to be. The first

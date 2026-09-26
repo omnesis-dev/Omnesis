@@ -82,7 +82,7 @@ export function LevelEditorPage({ level, connections, overview, onSaved, onConfl
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const inFlightRef = useRef(false);
-  const validationError = validateGrantRules(value);
+  const validationError = validateGrantRules(value, sources);
 
   useEffect(() => { headingRef?.current?.focus(); }, []);
 
@@ -174,7 +174,7 @@ export function NewLevelPage({ overview, onCreated, onClose, headingRef }) {
   // A name a listed level already has is refused while it is typed; the
   // gateway's own refusal stays the backstop for a level created meanwhile.
   const taken = levelNameTaken(name, overview.levels ?? []);
-  const ready = validAccessName(name) && !taken && !validateGrantRules(value);
+  const ready = validAccessName(name) && !taken && !validateGrantRules(value, sources);
 
   useEffect(() => { headingRef?.current?.focus(); }, []);
 

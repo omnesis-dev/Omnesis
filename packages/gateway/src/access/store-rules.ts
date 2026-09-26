@@ -256,7 +256,36 @@ export function validateGrantRuleReferences(
         .get(sourceId);
       if (!source && !retainedSourceIds.has(sourceId)) throw new Error("Invalid source rule.");
     }
+    if (rule.capability !== "notes" && !readsAnySource(db, rule, retainedSourceIds)) {
+      throw new Error("The rule allows no connected source.");
+    }
   }
+}
+
+/**
+ * Whether a read rule allows at least one source: one connected now, or one
+ * the rule keeps naming while it is temporarily unavailable. A rule that
+ * names every source away, such as a denylist of all of them, would approve a
+ * connection that can read nothing, so it is refused.
+ */
+function readsAnySource(
+  db: Db,
+  rule: Readonly<StoredGrantRules[number]>,
+  retainedSourceIds: ReadonlySet<string>,
+): boolean {
+  if (rule.sourceMode === "all") return true;
+  const connected = db
+    .prepare<[], { id: string }>("SELECT id FROM sources")
+    .all()
+    .map((row) => row.id);
+  const listed = new Set(rule.sourceIds);
+  if (rule.sourceMode === "allowlist") {
+    return (
+      rule.sourceIds.some((id) => retainedSourceIds.has(id)) ||
+      connected.some((id) => listed.has(id))
+    );
+  }
+  return connected.some((id) => !listed.has(id));
 }
 
 function validStoredRule(

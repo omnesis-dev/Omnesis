@@ -310,3 +310,35 @@ describe("resolving what a device is answered from", () => {
     });
   });
 });
+
+describe("rules that can read nothing", () => {
+  const rulesFor = (sources: AccessGrantRuleInput["sources"]): AccessGrantRuleInput[] => [
+    { capability: "direct", sources },
+  ];
+
+  test("a read rule that names every connected source away is refused", () => {
+    const create = (name: string, sources: AccessGrantRuleInput["sources"]) =>
+      createAccessLevel(db, { name, rules: rulesFor(sources), actorTokenId: ACTOR }, NOW);
+    expect(create("Everything denied", { mode: "denylist", sourceIds: ["src-notes"] })).toEqual({
+      ok: false,
+      error: "invalid-selection",
+    });
+    expect(create("One allowed", { mode: "allowlist", sourceIds: ["src-notes"] }).ok).toBe(true);
+    expect(create("All sources", { mode: "all", sourceIds: [] }).ok).toBe(true);
+  });
+
+  test("with no source connected, a rule that admits every source is still kept", () => {
+    db.prepare("DELETE FROM sources").run();
+    expect(
+      createAccessLevel(
+        db,
+        {
+          name: "Future only",
+          rules: rulesFor({ mode: "all", sourceIds: [] }),
+          actorTokenId: ACTOR,
+        },
+        NOW,
+      ).ok,
+    ).toBe(true);
+  });
+});

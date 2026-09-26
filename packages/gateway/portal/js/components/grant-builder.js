@@ -16,6 +16,7 @@ import {
   setAllSourcesAllowed,
   setFutureSourcesAllowed,
   setSourceAllowed,
+  allowEverySource,
   sourceBoundaryError,
   sourceId,
   sourceLabel,
@@ -92,7 +93,7 @@ export function SourceBoundary({ capability, label, rule, sources, disabled, onC
   const futureAllowed = rule.sources.mode !== "allowlist";
   const allowed = ids.filter((id) => isSourceAllowed(rule, id)).length;
   const title = label ?? `${capabilityName(capability)} sources`;
-  const error = sourceBoundaryError(rule, sourceScopeName(capability));
+  const error = sourceBoundaryError(rule, sourceScopeName(capability), sources);
 
   return html`<fieldset class="grant-builder-boundary" disabled=${disabled}>
     <legend>${title}</legend>
@@ -128,7 +129,11 @@ export function SourceBoundary({ capability, label, rule, sources, disabled, onC
           ${visibleSources.length === 0 && html`<p class="grant-builder-empty">No sources match that search.</p>`}
         </div>
       `}
-    ${error && html`<p class="access-field-error grant-builder-boundary-error" role="alert">${error}</p>`}
+    ${error && html`<div class="grant-builder-boundary-problem">
+      <p class="access-field-error grant-builder-boundary-error" role="alert">${error}</p>
+      ${rule.sources.mode !== "all" && html`<button type="button" class="btn-tiny grant-builder-allow-every"
+        onClick=${() => onChange(allowEverySource(rule))}>Allow every source, including new ones</button>`}
+    </div>`}
     <fieldset class="grant-builder-future" disabled=${disabled}>
       <legend>When you connect a new source</legend>
       <label>
@@ -346,7 +351,7 @@ export function EffectiveAccessSummary({ rules, sources, policies, heading = "Ef
 
 export function GrantBuilder({ value, onChange, sources = [], policies = [], disabled = false, requiresAnswer = false, idPrefix = "grant-builder" }) {
   const [linkSources, setLinkSources] = useState(rulesShareSources(value));
-  const error = validateGrantRules(value);
+  const error = validateGrantRules(value, sources);
   return html`<div class="grant-builder" data-valid=${error ? "false" : "true"}>
     <${CapabilityPicker} value=${value} onChange=${onChange} policies=${policies} disabled=${disabled}
       requiresAnswer=${requiresAnswer} />
