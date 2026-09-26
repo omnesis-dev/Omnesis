@@ -59,6 +59,9 @@ describe("portal conversation list — unread", () => {
   let host: HTMLElement;
   let originalDocument: typeof globalThis.document | undefined;
   let originalWindow: typeof globalThis.window | undefined;
+  // Vitest clears mock calls before each test, so the marks the first render
+  // sent are captured here, where that render happens.
+  let firstRenderMarks: unknown[][] = [];
 
   beforeAll(async () => {
     originalDocument = globalThis.document;
@@ -76,6 +79,7 @@ describe("portal conversation list — unread", () => {
     await vi.waitFor(() =>
       expect(host.querySelectorAll(".sidebar-convo-row").length).toBeGreaterThan(0),
     );
+    firstRenderMarks = apiFetch.mock.calls.filter(([path]) => String(path).includes("/seen"));
   });
 
   afterAll(() => {
@@ -125,11 +129,8 @@ describe("portal conversation list — unread", () => {
   });
 
   test("tells the gateway the open conversation is on screen", () => {
-    const marks = apiFetch.mock.calls.filter(([path]) =>
-      String(path).includes("/seen"),
-    );
-    expect(marks.length).toBeGreaterThan(0);
-    const [path, init] = marks[0] as [string, { method: string; body: string }];
+    expect(firstRenderMarks.length).toBeGreaterThan(0);
+    const [path, init] = firstRenderMarks[0] as [string, { method: string; body: string }];
     expect(path).toBe("/agent/conversations/conv-open/seen");
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body)).toEqual({ viewing: true });

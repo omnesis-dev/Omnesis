@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@omnesis/types": "*",
-    "zod": "^4.5.4"
+    "zod": "^4.6.5"
   },
   "files": [
     "dist"
