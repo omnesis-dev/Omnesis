@@ -155,7 +155,9 @@ jobs:
         env:
           NX_DAEMON: "false"
           PROJECTS: ${{ inputs.projects }}
-        run: exec npx nx run-many --targets=nx-typecheck --projects="$PROJECTS" --parallel=1
+        # Static output: Nx otherwise folds a successful task's output away, and
+        # the log would not show which typechecks ran.
+        run: exec npx nx run-many --targets=nx-typecheck --projects="$PROJECTS" --parallel=1 --output-style=static
 
       - name: lane [changed-format-lint]
         if: ${{ inputs.scope == 'affected' }}
@@ -256,8 +258,10 @@ jobs:
           TZ: UTC
           NX_DAEMON: "false"
           PROJECTS: ${{ inputs.projects }}
+        # Static output: Nx otherwise folds a successful task's output away, and
+        # the log would not show which suites ran or how many tests passed.
         run: |
-          npx nx run-many --targets=nx-unit --projects="$PROJECTS" --parallel=1
+          npx nx run-many --targets=nx-unit --projects="$PROJECTS" --parallel=1 --output-style=static
           case ",$PROJECTS," in
             *,@omnesis/agent-integration,*) npm run test:openclaw; npm run test:hermes ;;
           esac

@@ -101,10 +101,14 @@ jobs:
             echo "Bootstrap token missing under /var/lib/omnesis/token"
             exit 1
           fi
+          # The log is public; the token is a throwaway container's, but a
+          # credential is still masked before later steps echo their env.
+          echo "::add-mask::$token"
           echo "TOKEN=$token" >> "$GITHUB_ENV"
 
       - name: List tokens via HTTP
         run: |
+          set -o pipefail
           curl -sfk -H "Authorization: Bearer ${TOKEN}" https://localhost:17600/admin/tokens | tee /tmp/list.json
           grep -q '"bootstrap"' /tmp/list.json || { echo "list /admin/tokens missing the bootstrap token"; exit 1; }
 
