@@ -8,6 +8,7 @@ import type { AccessAuthorizationNotifier } from "../../access/authorization-not
 import type { ClientAssertionVerifier } from "../../access/client-assertion.js";
 import type { ClientMetadataDocumentResolver } from "../../access/client-metadata-document.js";
 import type { RouteApp } from "./types.js";
+import type { CertificateProbe } from "../../access/served-by-gateway.js";
 
 export function mountOAuthAccessRoutes(
   app: RouteApp,
@@ -21,6 +22,10 @@ export function mountOAuthAccessRoutes(
     /** See `mountOAuthAuthorizationRoutes`. */
     onDeviceLevelChanged?: () => void;
     onAuthorizationPending?: () => void;
+    /** See `mountOAuthAuthorizationRoutes`. */
+    tlsFingerprintSha256?: string | (() => string);
+    /** See `mountOAuthAuthorizationRoutes`. */
+    probeCertificate?: CertificateProbe;
   } = {},
 ): void {
   mountOAuthAccessProtocolRoutes(app, access, options);

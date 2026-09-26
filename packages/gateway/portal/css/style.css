@@ -837,27 +837,74 @@ a:hover { text-decoration: underline; }
   cursor: pointer;
 }
 .access-copy-button:hover { background: var(--bg-tertiary); color: var(--text-primary); }
-.access-client-setup .access-mcp-resource code {
+.access-agent-setup { display: grid; gap: 10px; }
+.access-agent-setup-label { color: var(--text-secondary); font-size: 12px; }
+.backend-opt-grid.access-agent-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 560px) {
+  .backend-opt-grid.access-agent-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.access-agent-grid .backend-opt { position: relative; gap: 4px; padding: 10px 12px; }
+.access-agent-warning {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  color: var(--warning);
+}
+.access-agent-grid .backend-opt.is-selected {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.access-agent-grid .backend-opt-icon img { display: block; width: 22px; height: 22px; object-fit: contain; }
+.access-agent-steps {
+  display: grid;
+  gap: 12px;
+  padding-top: 4px;
+}
+.access-agent-public { display: grid; gap: 4px; }
+.access-agent-public.is-warning strong { color: var(--warning); }
+.access-agent-public p,
+.access-agent-pairing p,
+.access-agent-headless p,
+.access-agent-docs { margin: 0; font-size: 12px; line-height: 1.5; }
+.access-agent-public strong { color: var(--text-primary); }
+.access-agent-pairing { display: grid; gap: 8px; }
+.access-agent-headless { display: grid; gap: 8px; }
+.access-agent-headless strong { color: var(--text-primary); }
+.access-agent-pairing small { color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.access-agent-pair-action { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.access-agent-pair-action span { color: var(--text-secondary); font-size: 12px; }
+.access-agent-tabbed { display: grid; min-width: 0; }
+.access-agent-tabs { display: flex; gap: 4px; }
+.access-agent-tabs button {
+  position: relative;
+  margin-bottom: -1px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.access-agent-tabs button:hover { color: var(--text-primary); }
+.access-agent-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.access-agent-tabs button.active {
+  z-index: 1;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.access-agent-tabbed .access-mcp-resource { border-top-left-radius: 0; }
+.access-agent-command { display: grid; gap: 6px; min-width: 0; }
+.access-agent-command > span { color: var(--text-primary); font-size: 12px; font-weight: 600; }
+.access-agent-steps .access-mcp-resource code {
   overflow-wrap: break-word;
   text-overflow: clip;
   white-space: pre-wrap;
 }
-.access-client-setup summary {
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-}
-.access-client-setup summary:hover { color: var(--text-primary); }
-.access-client-setup ul {
-  display: grid;
-  gap: 12px;
-  margin: 10px 0 0;
-  padding: 0;
-  list-style: none;
-}
-.access-client-setup li { display: grid; gap: 6px; min-width: 0; }
-.access-client-name { color: var(--text-primary); font-size: 12px; font-weight: 600; }
-.access-client-link { justify-self: start; font-size: 12px; text-decoration: none; }
 .access-code-input {
   width: 180px;
   font-family: var(--font-mono) !important;

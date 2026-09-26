@@ -76,7 +76,6 @@ describe("portable Omnesis plugin", () => {
     expect(directories).toEqual([
       "connect-omnesis-chatgpt",
       "connect-omnesis-codex",
-      "connect-omnesis-editor",
       "omnesis",
       "omnesis-direct",
     ]);
@@ -100,17 +99,15 @@ describe("portable Omnesis plugin", () => {
         policy: { installation: "AVAILABLE" },
       },
     ]);
-    // Copilot CLI and VS Code read .github/plugin/ before .claude-plugin/, and
-    // Cursor reads .cursor-plugin/, so none of them loads the Claude plugin,
-    // whose MCP URL only its own host can fill in.
-    for (const path of [".github/plugin/marketplace.json", ".cursor-plugin/marketplace.json"]) {
-      const marketplace = readJson(path);
-      expect(marketplace.name).toBe("omnesis");
-      expect(marketplace.owner.name).toBeTruthy();
-      expect(marketplace.plugins.map((plugin) => [plugin.name, plugin.source])).toEqual([
-        ["omnesis", `./${PLUGIN}`],
-      ]);
-    }
+    // Copilot CLI and VS Code read .github/plugin/ before .claude-plugin/, so
+    // they load this plugin instead of the Claude plugin, whose MCP URL only
+    // its own host can fill in.
+    const github = readJson(".github/plugin/marketplace.json");
+    expect(github.name).toBe("omnesis");
+    expect(github.owner.name).toBeTruthy();
+    expect(github.plugins.map((plugin) => [plugin.name, plugin.source])).toEqual([
+      ["omnesis", `./${PLUGIN}`],
+    ]);
     expect(statSync(join(repoRoot, PLUGIN, "plugin.json")).isFile()).toBe(true);
   });
 });

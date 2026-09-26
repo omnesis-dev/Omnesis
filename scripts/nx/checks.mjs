@@ -78,7 +78,7 @@ function isKnown(file) {
     return parts.length > 2 && existsSync(join(root, "package.json"));
   }
   return (
-    /^(?:extension|ios|android|scripts|e2e|evals|integrations|plugins|website|docs|bench|privacy|assets|patches|\.github|\.claude|\.claude-plugin|\.cursor-plugin|\.agents|\.changeset)\//.test(
+    /^(?:extension|ios|android|scripts|e2e|evals|integrations|plugins|website|docs|bench|privacy|assets|patches|\.github|\.claude|\.claude-plugin|\.agents|\.changeset)\//.test(
       file,
     ) ||
     /^(?:AGENTS|CLAUDE|README|CONTRIBUTING|ARCHITECTURE|SECURITY|SUPPORT|CODE_OF_CONDUCT|CHANGELOG|CLA|LICENSE|THIRD_PARTY_NOTICES|TRADEMARKS)\.md$/.test(
@@ -318,7 +318,7 @@ export function buildPlan({ base = "origin/main", extraBundles = [], files: file
     ((projects.includes("omnesis-workspace") &&
       selectedFiles.some((file) => !/^(?:packages|extension)\//.test(file))) ||
       selectedFiles.some((file) =>
-        /^(?:scripts|e2e|evals|integrations|plugins|skills|website|privacy|assets|patches|bench|\.claude-plugin|\.cursor-plugin|\.agents\/plugins|\.github\/plugin)\//.test(
+        /^(?:scripts|e2e|evals|integrations|plugins|skills|website|privacy|assets|patches|bench|\.claude-plugin|\.agents\/plugins|\.github\/plugin)\//.test(
           file,
         ),
       ))

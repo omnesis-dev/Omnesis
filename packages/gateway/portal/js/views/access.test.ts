@@ -14,6 +14,7 @@ const api = vi.hoisted(() => ({
   getAccessOverview: vi.fn(),
   lookupAccessAuthorization: vi.fn(),
   moveConnectionLevel: vi.fn(),
+  pairDevice: vi.fn(),
   renameAccessPrincipal: vi.fn(),
   revokeAccess: vi.fn(),
   updateAccessLevel: vi.fn(),
@@ -335,7 +336,12 @@ describe("AccessView", () => {
 
   // The header's own action, by the name a reader sees; the empty state
   // carries a second button of the same name.
+  /** The page's Connect an agent button: in the header, or in the empty state when nothing is listed. */
   function connectButton() {
+    return [...host.querySelectorAll<HTMLButtonElement>(".access-actions button, .access-empty button")]
+      .find((button) => button.textContent?.trim() === "Connect an agent");
+  }
+  function headerConnectButton() {
     return [...host.querySelectorAll<HTMLButtonElement>(".access-actions button")]
       .find((button) => button.textContent?.trim() === "Connect an agent");
   }
@@ -473,6 +479,13 @@ describe("AccessView", () => {
       ]),
     ],
   };
+
+  test("puts Connect an agent in the header once anything is listed", async () => {
+    api.getAccessOverview.mockResolvedValue({ ...levelOverview, oauth: OAUTH });
+    await mount();
+    expect(headerConnectButton()).toBeDefined();
+    expect(host.querySelector(".access-empty")).toBeNull();
+  });
 
   /** The same overview with the research level used by `names` alone, in that order. */
   function researchUsedBy(...names: string[]) {
@@ -1516,29 +1529,157 @@ describe("AccessView", () => {
     expect(router.replaceRoute).toHaveBeenCalledWith("/portal/settings/access");
   });
 
-  test("lists each common client's setup for the gateway's own MCP resource", async () => {
+  test("shows one agent's setup at a time, chosen from a grid", async () => {
     api.getAccessOverview.mockResolvedValue({ principals: [], oauth: OAUTH });
     await mount({ connectOpen: true });
 
-    const setup = host.querySelector(".access-connect-dialog .access-client-setup");
-    expect(setup?.tagName).toBe("DETAILS");
-    const clients = [...(setup?.querySelectorAll("li") ?? [])].map((item) => item.getAttribute("data-client"));
-    expect(clients).toEqual([
+    const picker = host.querySelector(".access-connect-dialog .access-agent-setup")!;
+    const cards = [...picker.querySelectorAll<HTMLButtonElement>("button[data-agent]")];
+    expect(cards.map((card) => card.getAttribute("data-agent"))).toEqual([
       "claude-code",
-      "claude-code-plugin",
       "codex",
-      "gemini-cli",
-      "copilot-cli",
-      "vscode",
-      "cursor",
-      "hosted",
+      "chatgpt",
+      "claude-apps",
+      "antigravity",
+      "openclaw",
+      "hermes",
     ]);
-    expect(setup?.querySelector("[data-client='claude-code'] code")?.textContent).toBe(
-      "claude mcp add --transport http --scope user omnesis https://gateway.example.org/mcp",
+    expect(cards.every((card) => card.getAttribute("aria-pressed") === "false")).toBe(true);
+    expect(picker.querySelector(".access-agent-steps")).toBeNull();
+
+    await act(async () => { cards[0]!.click(); });
+    let steps = picker.querySelector(".access-agent-steps");
+    expect(steps?.getAttribute("data-agent")).toBe("claude-code");
+    expect(cards[0]!.getAttribute("aria-pressed")).toBe("true");
+    expect(steps?.querySelector("[role='tab'][aria-selected='true']")?.textContent?.trim()).toBe(
+      "Install the plugin (recommended)",
     );
-    expect(setup?.querySelector("[data-client='vscode'] a")?.getAttribute("href")).toMatch(/^vscode:mcp\/install\?/u);
-    expect(setup?.querySelector("[data-client='hosted'] code")).toBeNull();
-    expect(setup?.querySelector("[data-client='hosted'] p")?.textContent).toMatch(/address above/u);
+    expect(steps?.querySelector(".access-mcp-resource code")?.textContent).toMatch(/^claude plugin marketplace add /u);
+    expect(steps?.querySelector(".access-agent-headless")?.textContent).toMatch(/No browser on this machine\?/u);
+
+    await act(async () => { cards[2]!.click(); });
+    steps = picker.querySelector(".access-agent-steps");
+    expect(steps?.getAttribute("data-agent")).toBe("chatgpt");
+    expect(cards[0]!.getAttribute("aria-pressed")).toBe("false");
+    expect(steps?.querySelector(".access-agent-command")).toBeNull();
+    expect(steps?.textContent).toMatch(/address above/u);
+    expect(steps?.querySelector("p a[href='https://developers.openai.com/api/docs/guides/developer-mode']")?.textContent)
+      .toBe("developer mode");
+
+    await act(async () => { cards[2]!.click(); });
+    expect(picker.querySelector(".access-agent-steps")).toBeNull();
+  });
+
+  test("points a hosted app at the publishing docs, and warns about a private address", async () => {
+    api.getAccessOverview.mockResolvedValue({
+      principals: [],
+      oauth: { resource: "https://192.168.1.20:7600/mcp" },
+    });
+    await mount({ connectOpen: true });
+    const warned = [...host.querySelectorAll("button[data-agent]")]
+      .filter((card) => card.querySelector(".access-agent-warning"))
+      .map((card) => card.getAttribute("data-agent"));
+    expect(warned).toEqual(["chatgpt", "claude-apps"]);
+    expect(host.querySelector("button[data-agent='chatgpt'] .access-agent-warning")?.getAttribute("aria-label")).toBe(
+      "Cannot reach this address",
+    );
+
+    const claudeApps = host.querySelector<HTMLButtonElement>("button[data-agent='claude-apps']")!;
+    await act(async () => { claudeApps.click(); });
+    // Instructions that cannot reach a private address are not offered at all.
+    expect(host.querySelector(".access-agent-steps")?.textContent).not.toMatch(/Customize/u);
+    expect(host.querySelector(".access-agent-public")?.textContent).toMatch(/This address is private/u);
+    await act(async () => { claudeApps.click(); });
+
+    const chatgpt = host.querySelector<HTMLButtonElement>("button[data-agent='chatgpt']")!;
+    await act(async () => { chatgpt.click(); });
+
+    const notice = host.querySelector(".access-agent-public")!;
+    expect(notice.classList.contains("is-warning")).toBe(true);
+    expect(notice.textContent).toMatch(/This address is private/u);
+    expect(notice.textContent).toMatch(/Funnel or use a domain of your own/u);
+    expect([...notice.querySelectorAll("a")].map((link) => link.getAttribute("href"))).toEqual([
+      "https://omnesis.dev/docs/connect#tailscale-funnel",
+      "https://omnesis.dev/docs/setup#public-domain",
+    ]);
+    expect(host.querySelector(".access-agent-docs a")?.getAttribute("href")).toBe(
+      "https://omnesis.dev/docs/connect#chatgpt",
+    );
+  });
+
+  test("warns ChatGPT off an address that is not on port 443", async () => {
+    api.getAccessOverview.mockResolvedValue({
+      principals: [],
+      oauth: { resource: "https://gateway.example.org:10000/mcp" },
+    });
+    await mount({ connectOpen: true });
+    const warned = [...host.querySelectorAll("button[data-agent]")]
+      .filter((card) => card.querySelector(".access-agent-warning"))
+      .map((card) => card.getAttribute("data-agent"));
+    expect(warned).toEqual(["chatgpt"]);
+    expect(host.querySelector("button[data-agent] .backend-opt-sub")).toBeNull();
+
+    const chatgpt = host.querySelector<HTMLButtonElement>("button[data-agent='chatgpt']")!;
+    await act(async () => { chatgpt.click(); });
+    const notice = host.querySelector(".access-agent-public")!;
+    expect(notice.classList.contains("is-warning")).toBe(true);
+    expect(notice.textContent).toMatch(/This address uses port 10000\./u);
+    expect(notice.textContent).toMatch(/only on the standard HTTPS port, 443/u);
+    expect(host.querySelector(".access-agent-steps")?.textContent).not.toMatch(/developer mode/u);
+  });
+
+  test("mints an agent pairing code into the integration's commands", async () => {
+    api.getAccessOverview.mockResolvedValue({
+      principals: [],
+      oauth: {
+        resource: "https://gateway.example.org/mcp",
+        resources: [
+          { resource: "https://gateway.example.org/mcp", servedByGateway: false },
+          { resource: "https://gateway.example.org:7600/mcp", servedByGateway: true },
+        ],
+        tlsFingerprintSha256: "ab".repeat(32),
+      },
+    });
+    api.pairDevice.mockResolvedValue({ pairingCode: "K7Q2-M9XD", expiresAt: Date.now() + 600_000 });
+    await mount({ connectOpen: true });
+    const openclaw = host.querySelector<HTMLButtonElement>("button[data-agent='openclaw']")!;
+    await act(async () => { openclaw.click(); });
+
+    const command = () => host.querySelector(".access-agent-command code")?.textContent;
+    const tabs = () => [...host.querySelectorAll<HTMLButtonElement>(".access-agent-tabs [role='tab']")];
+    expect(tabs().map((tab) => tab.textContent?.trim())).toEqual(["Omnesis not installed", "Omnesis CLI installed"]);
+    expect(host.querySelectorAll(".access-agent-command")).toHaveLength(1);
+    expect(command()).toBe(
+      `curl -fsSL https://omnesis.dev/install.sh | sh -s -- --openclaw --gateway-url https://gateway.example.org:7600 --trust-fingerprint sha256:${"ab".repeat(32)}`,
+    );
+
+    const create = [...host.querySelectorAll<HTMLButtonElement>(".access-agent-pair-action button")][0]!;
+    await act(async () => { create.click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(api.pairDevice).toHaveBeenCalledWith({ kind: "agent" });
+    expect(command()).toBe(
+      `curl -fsSL https://omnesis.dev/install.sh | sh -s -- --openclaw --gateway-url https://gateway.example.org:7600 --code K7Q2-M9XD --trust-fingerprint sha256:${"ab".repeat(32)}`,
+    );
+    await act(async () => { tabs()[1]!.click(); });
+    expect(tabs()[1]!.getAttribute("aria-selected")).toBe("true");
+    expect(command()).toBe(
+      `omnesis connect openclaw --gateway-url https://gateway.example.org:7600 --code K7Q2-M9XD --trust-fingerprint sha256:${"ab".repeat(32)}`,
+    );
+
+    const options = [...host.querySelectorAll("#access-agent-address option")].map((option) =>
+      option.textContent?.replace(/\s+/gu, " ").trim(),
+    );
+    expect(options).toEqual([
+      "https://gateway.example.org:7600 — direct to the gateway (recommended)",
+      "https://gateway.example.org — public address through a proxy, for machines outside your network",
+    ]);
+    const address = host.querySelector<HTMLSelectElement>("#access-agent-address")!;
+    // linkedom's <select>.value is read-only; select the option instead.
+    await act(async () => {
+      address.querySelectorAll("option")[1]!.setAttribute("selected", "");
+      address.dispatchEvent(new window.Event("change", { bubbles: true }));
+    });
+    expect(command()).toBe("omnesis connect openclaw --gateway-url https://gateway.example.org --code K7Q2-M9XD");
   });
 
   test("offers connecting an agent only when the Gateway has usable OAuth URLs", async () => {
@@ -1550,6 +1691,8 @@ describe("AccessView", () => {
     await mount();
     expect(host.textContent).not.toContain("OAuth is not available yet");
     expect(host.querySelector(".access-empty .btn-primary")?.textContent).toBe("Connect an agent");
+    // The empty state carries the only Connect an agent button; the header does not repeat it.
+    expect(headerConnectButton()).toBeUndefined();
     // The MCP resource lives in the dialog, not on the page.
     expect(host.querySelector(".access-mcp-resource")).toBeNull();
     const connect = connectButton()!;
@@ -1558,6 +1701,9 @@ describe("AccessView", () => {
       "https://gateway.example.org/mcp",
     );
     expect(host.querySelectorAll(".access-connect-step")).toHaveLength(2);
+    expect(host.querySelectorAll(".access-connect-step h3")[1]?.textContent).toBe(
+      "If the sign-in page shows a code, enter it here",
+    );
     // Closing a dialog opened from the button leaves the route alone.
     const close = [...host.querySelectorAll("[role='dialog'] button")]
       .find((button) => button.textContent?.trim() === "Close") as HTMLButtonElement;

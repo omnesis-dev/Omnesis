@@ -330,6 +330,14 @@ function LevelGroup({ level, levels, connections, overview, levelActions, connec
 }
 
 /**
+ * Whether the page has nothing to list, so the list shows its empty state and
+ * that state's own Connect an agent button.
+ */
+export function accessListIsEmpty(entries, levels) {
+  return entries.length === 0 && levels.length === 0;
+}
+
+/**
  * Every access level with its connections, by level name.
  *
  * `onConnect` opens the connect dialog from the empty state; it is null when
@@ -343,7 +351,7 @@ function LevelGroup({ level, levels, connections, overview, levelActions, connec
  * was taken.
  */
 export function AccessList({ entries, levels, overview, levelActions, connectionActions, onConnect = null }) {
-  if (entries.length === 0 && levels.length === 0) {
+  if (accessListIsEmpty(entries, levels)) {
     return html`
       <div class="access-empty">
         <strong>No agent has access yet</strong>

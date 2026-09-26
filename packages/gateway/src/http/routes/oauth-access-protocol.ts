@@ -9,6 +9,7 @@ import type { AccessAuthorizationNotifier } from "../../access/authorization-not
 import type { ClientAssertionVerifier } from "../../access/client-assertion.js";
 import type { ClientMetadataDocumentResolver } from "../../access/client-metadata-document.js";
 import type { RouteApp } from "./types.js";
+import type { CertificateProbe } from "../../access/served-by-gateway.js";
 
 /** Compose focused OAuth protocol collaborators behind the stable access façade. */
 export function mountOAuthAccessProtocolRoutes(
@@ -23,6 +24,10 @@ export function mountOAuthAccessProtocolRoutes(
     onAuthorizationPending?: () => void;
     /** See `mountOAuthAuthorizationRoutes`. */
     onDeviceLevelChanged?: () => void;
+    /** See `mountOAuthAuthorizationRoutes`. */
+    tlsFingerprintSha256?: string | (() => string);
+    /** See `mountOAuthAuthorizationRoutes`. */
+    probeCertificate?: CertificateProbe;
   } = {},
 ): void {
   mountOAuthMetadataRoutes(app, access, options);
