@@ -37,6 +37,7 @@ import {
   overviewPolicies,
   timestamp,
 } from "./shared.js";
+import { AgentIcon, agentIconForApp } from "./agent-brand.js";
 import { AccessTerms, AnswerPrivacy, reachSummary } from "./terms.js";
 
 /** An integration on the Devices page, opened and scrolled to, drawn with its kind's icon. */
@@ -169,6 +170,7 @@ function ConnectionRow({ entry, actions }) {
   };
   const detailId = `access-connection-detail-${entry.grant.id}`;
   const app = connectionApp(entry);
+  const icon = agentIconForApp(app);
   const items = [
     { label: "Rename", onSelect: () => setRenaming(true) },
     ...(isLiveConnection(entry)
@@ -196,7 +198,7 @@ function ConnectionRow({ entry, actions }) {
           <${StateTag} state=${entry.state} />
         </div>
         <div class="access-connection-meta">
-          ${app ? html`<span class="access-app-cell">Signed in from ${app}</span><span aria-hidden="true"> · </span>` : null}
+          ${app ? html`<span class="access-app-cell">${icon ? html`<span class="access-agent-logo" aria-hidden="true"><${AgentIcon} icon=${icon} size=${14} /></span>` : null}<span class="access-app-label">Signed in from ${app}</span></span><span aria-hidden="true"> · </span>` : null}
           <span class="access-used-cell">${entry.lastUsedAt ? `Last used ${timeAgo(entry.lastUsedAt)}` : "Never used"}</span>
         </div>
       </div>

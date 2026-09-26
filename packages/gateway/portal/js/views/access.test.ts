@@ -739,6 +739,20 @@ describe("AccessView", () => {
     expect(row.querySelector("input")).not.toBeNull();
   });
 
+  test("puts a recognized app logo beside its sign-in label, independently of renamed connections", async () => {
+    api.getAccessOverview.mockResolvedValue({
+      ...levelOverview,
+      principals: [connectionOf("principal-logo", "Fictional reader", "level-research", [reviewedAnswer()], [
+        signIn("cred-logo", "Fictional reader", { clientName: "ChatGPT" }),
+      ])],
+    });
+    await mount();
+    const app = connectionRow("Fictional reader").querySelector(".access-app-cell")!;
+    expect(app.textContent).toBe("Signed in from ChatGPT");
+    expect(app.querySelector(".access-agent-logo .provider-icon")?.getAttribute("style")).toContain("/model-logos/openai.svg");
+    expect(app.querySelector(".access-agent-logo")?.getAttribute("aria-hidden")).toBe("true");
+  });
+
   test("always shows the terms its permissions run under, linking the policy by name", async () => {
     api.getAccessOverview.mockResolvedValue({
       ...levelOverview,

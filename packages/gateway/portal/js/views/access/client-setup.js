@@ -8,6 +8,8 @@
 // the address the dialog already shows. Sign-in is always the agent's own
 // OAuth flow, so nothing here carries a credential.
 
+import { AGENT_ICONS } from "./agent-brand.js";
+
 const SERVER_NAME = "omnesis";
 
 /** The gateway does not serve the docs; these are the published pages. */
@@ -130,7 +132,7 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
     {
       id: "claude-code",
       name: "Claude Code",
-      icon: { src: "/portal/img/agents/claude.svg" },
+      icon: AGENT_ICONS["claude-code"],
       commands: [
         {
           label: "Install the plugin (recommended)",
@@ -157,7 +159,7 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
     {
       id: "codex",
       name: "Codex",
-      icon: { providerId: "openai" },
+      icon: AGENT_ICONS["codex"],
       commands: [
         {
           label: "1) Add the server",
@@ -187,7 +189,7 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
     {
       id: "chatgpt",
       name: "ChatGPT",
-      icon: { providerId: "openai" },
+      icon: AGENT_ICONS["chatgpt"],
       commands: [],
       note: [
         "In ChatGPT on the web, turn on ",
@@ -201,7 +203,7 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
     {
       id: "claude-apps",
       name: "Claude apps",
-      icon: { src: "/portal/img/agents/claude.svg" },
+      icon: AGENT_ICONS["claude-apps"],
       commands: [],
       note: [
         "On claude.ai or in the Claude desktop app, open Customize → Connectors and add a custom connector with the address above.",
@@ -212,7 +214,7 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
     {
       id: "antigravity",
       name: "Antigravity",
-      icon: { src: "/portal/img/agents/antigravity.svg" },
+      icon: AGENT_ICONS["antigravity"],
       commands: [{ label: "Add the server", value: `agy mcp add ${SERVER_NAME} ${url}` }],
       note: [
         "Then run ",
@@ -224,7 +226,7 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
     {
       id: "openclaw",
       name: "OpenClaw",
-      icon: { src: "/portal/img/agents/openclaw.svg" },
+      icon: AGENT_ICONS["openclaw"],
       commands: harnessCommands("openclaw", oauth, address, pairingCode),
       note: ["Run it on the machine that runs OpenClaw, then restart OpenClaw."],
       alternatives: true,
@@ -234,7 +236,7 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
     {
       id: "hermes",
       name: "Hermes",
-      icon: { src: "/portal/img/agents/hermes.png" },
+      icon: AGENT_ICONS["hermes"],
       commands: harnessCommands("hermes", oauth, address, pairingCode),
       note: ["Run it on the machine that runs Hermes, then restart Hermes."],
       alternatives: true,

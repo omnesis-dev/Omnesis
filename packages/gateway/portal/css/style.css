@@ -1164,7 +1164,9 @@ a:hover { text-decoration: underline; }
 .access-connection-row.is-inactive .access-used-cell { color: var(--text-muted); }
 .access-triad.is-inactive { filter: saturate(0.25); opacity: 0.75; }
 .access-row-actions { display: flex; justify-content: flex-end; }
-.access-app-cell { overflow: hidden; color: var(--text-secondary); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.access-agent-logo { display: inline-flex; flex: none; }
+.access-app-cell { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; vertical-align: middle; color: var(--text-secondary); font-size: 11.5px; }
+.access-app-label { min-width: 0; overflow-wrap: anywhere; }
 .access-connection-meta { color: var(--text-secondary); font-size: 11.5px; }
 .access-connection-heading { display: grid; gap: 3px; min-width: 0; }
 .access-cell-lead { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; min-width: 0; }
@@ -1244,8 +1246,8 @@ a:hover { text-decoration: underline; }
 .access-connection-detail {
   display: grid;
   gap: 8px;
-  margin: 0 0 8px;
-  padding: 9px 0;
+  margin: 0;
+  padding: 6px 0 0;
 }
 .access-connection-facts {
   display: grid;

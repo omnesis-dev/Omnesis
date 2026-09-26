@@ -14,7 +14,6 @@ import { useState } from "preact/hooks";
 
 import { lookupAccessAuthorization, pairDevice } from "../../api.js";
 import { CopyIconButton } from "../../components/copy-button.js";
-import { ProviderIcon } from "../../components/provider-icon.js";
 import { Modal } from "../../components/modal.js";
 import { navigate } from "../../lib/router.js";
 import { authorizationStatusNotice } from "./authorization.js";
@@ -25,6 +24,7 @@ import {
   isPrivateAddress,
   usesNonStandardPort,
 } from "./client-setup.js";
+import { AgentIcon } from "./agent-brand.js";
 import { errorMessage } from "./shared.js";
 
 /**
@@ -40,12 +40,6 @@ function unusableCodeReason(request, now = Date.now()) {
     return "That code expired. The client can request a new one.";
   }
   return authorizationStatusNotice(request.status);
-}
-
-function AgentIcon({ icon }) {
-  return icon.providerId
-    ? html`<${ProviderIcon} providerId=${icon.providerId} size=${22} />`
-    : html`<img src=${icon.src} alt="" width="22" height="22" />`;
 }
 
 /** The warning mark on an agent card that cannot reach this gateway's address. */
