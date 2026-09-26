@@ -639,7 +639,7 @@ describe("AccessView", () => {
     expect(policyLink.textContent).toBe("Household");
     expect(policyLink.getAttribute("href")).toBe("/portal/settings/policies/policy-a");
     expect(research.querySelector(".access-level-terms .access-badge-answer")?.getAttribute("class")).not.toContain("is-off");
-    expect(research.querySelector(".access-level-terms .access-badge-direct")).toBeNull();
+    expect(research.querySelector(".access-level-terms .access-badge-direct")?.getAttribute("class")).toContain("is-off");
 
     // Its connections follow it, inside the card: by name, the app that signed
     // in, and when it was last used — with no column headings repeated per level.
@@ -792,7 +792,7 @@ describe("AccessView", () => {
     await act(async () => { link.dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true })); });
     expect(router.navigate).toHaveBeenCalledWith("/portal/settings/policies/policy-a");
 
-    // An unreviewed Answer is named in words, in the header as well as on its badge.
+    // An unreviewed Answer is named in words beside its badge.
     const raw = levelGroup("Fictional raw reads");
     expect(raw.querySelector(".access-level-terms")?.textContent).toContain("No privacy review");
     expect(raw.querySelector(".access-level-terms a")).toBeNull();
@@ -1860,7 +1860,7 @@ describe("AccessView", () => {
       expect(host.textContent).toContain("Your update was not applied");
       const head = levelGroup("fictional research").querySelector(".access-level-terms")!;
       expect(head.querySelector(".access-badge-direct")?.getAttribute("class")).not.toContain("is-off");
-      expect(head.querySelector(".access-badge-answer")).toBeNull();
+      expect(head.querySelector(".access-badge-answer")?.getAttribute("class")).toContain("is-off");
     });
 
     test("says a level that is gone is no longer available", async () => {

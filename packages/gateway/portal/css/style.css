@@ -1265,7 +1265,7 @@ a:hover { text-decoration: underline; }
   gap: 10px 24px;
   margin: 0;
 }
-.access-detail-grid dt { margin-bottom: 4px; }
+.access-detail-grid dt { padding: 4px 0; margin-bottom: 4px; }
 .access-detail-grid dd { margin: 2px 0 0; color: var(--text-secondary); font-size: 11.5px; }
 .access-detail-grid a { color: inherit; text-decoration: underline; }
 .access-revoked,
@@ -1751,7 +1751,7 @@ a:hover { text-decoration: underline; }
   .access-triad { gap: 4px; }
   .access-detail-grid { grid-template-columns: minmax(0, 1fr); }
   .access-pending-item { grid-template-columns: minmax(0, 1fr); }
-  /* A level's facts wrap under its name instead of holding fixed columns. */
+  /* Level names and connection counts wrap on narrow screens. */
   .access-level-title { flex-wrap: wrap; }
 
 

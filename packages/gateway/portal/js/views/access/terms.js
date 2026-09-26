@@ -75,13 +75,15 @@ export function answerPrivacySummary(rule, policies) {
   return policy ? policyFamilyName(policy) : "Privacy policy";
 }
 
-/** The terms a set of permissions runs under, one line per capability it holds. */
+/** The terms a set of permissions runs under, one line per capability, including withheld permissions. */
 export function AccessTerms({ rules, overview }) {
-  const lanes = ["answer", "direct"].filter((capability) => rules[capability]);
+  const lanes = ["answer", "direct", "notes"];
   const retained = (overview.sources ?? []).filter((source) => source.available === false);
   return html`<dl class="access-detail-grid">
     ${lanes.map((capability) => {
       const rule = rules[capability];
+      if (!rule) return html`<div key=${capability}><dt><${CapabilityBadge} capability=${capability} off=${true} /></dt><dd>Not granted</dd></div>`;
+      if (capability === "notes") return html`<div key=${capability}><dt><${CapabilityBadge} capability="notes" /></dt><dd>Saves notes under the agent's name</dd></div>`;
       const retainedAllowed = retained.filter((source) => isSourceAllowed(rule, sourceId(source))).length;
       return html`<div key=${capability}>
         <dt><${CapabilityBadge} capability=${capability} unreviewed=${capability === "answer" && rule.release.mode === "unreviewed"} /></dt>
@@ -99,6 +101,5 @@ export function AccessTerms({ rules, overview }) {
         </dd>
       </div>`;
     })}
-    ${rules.notes ? html`<div><dt><${CapabilityBadge} capability="notes" /></dt><dd>Saves notes under the agent's name</dd></div>` : null}
   </dl>`;
 }
