@@ -1139,6 +1139,16 @@ omnesis.example.com {
           different device. The collector on the gateway host needs no repair code: as described
           above, it registers itself again on its next start.
         </p>
+        <p>
+          A collector's service keeps the gateway address it was installed with. When the gateway
+          has moved to another host or port, redeem the repair code by re-running the installer on
+          that machine instead, which registers the service on the new address:
+          <code
+            >curl -fsSL https://omnesis.dev/install.sh | sh -s -- --collector --gateway-url
+            &lt;new-url&gt; --code &lt;code&gt;</code
+          >. A re-run of the gateway's installer with <code>--port</code> prints this line for every
+          collector it leaves behind.
+        </p>
         <p>With everything paired, continue with <a href="/docs/search">Search</a>.</p>
         <nav class="docs-pager" aria-label="Pages">
           <a href="/docs/install"
