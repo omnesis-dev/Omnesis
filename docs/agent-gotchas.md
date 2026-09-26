@@ -152,7 +152,8 @@ producing an empty green plan.
 CI does not run this affected selection. `.github/workflows/full-validation.yml`
 runs the whole suite on GitHub-hosted runners for every push to `main` and every
 pull request into it. A newer push to a pull request cancels its older run; on
-`main` every push gets its own run, never cancelled. The release workflow accepts a tag only when a push or manual run of
+`main` one run executes at a time and a newer push replaces a waiting one; the
+README badge reads `ci-status.yml`, which reports the newest run that finished. The release workflow accepts a tag only when a push or manual run of
 that workflow passed at the exact tagged commit.
 
 A scheduler is optional: without one, these commands run locally with bounded
