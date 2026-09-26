@@ -135,9 +135,11 @@ export function sourceScopeName(capability) {
 
 /**
  * What is wrong with one source boundary, worded for the card that owns it.
- * `scope` names the capabilities that boundary governs.
+ * `scope` names the capabilities that boundary governs; `sources` are the
+ * sources the gateway knows, so a boundary that allows none of them is
+ * caught however it was reached.
  */
-export function sourceBoundaryError(rule, scope) {
+export function sourceBoundaryError(rule, scope, sources = []) {
   if (!rule) return null;
   if (!SOURCE_MODES.includes(rule.sources.mode)) return "Choose how future sources are handled.";
   if (uniqueSorted(rule.sources.sourceIds).length > MAX_SOURCE_IDS) {
@@ -146,7 +148,22 @@ export function sourceBoundaryError(rule, scope) {
   if (rule.sources.mode === "allowlist" && rule.sources.sourceIds.length === 0) {
     return `Select at least one source for ${scope}.`;
   }
+  if (!readsAnySource(rule, sources)) return `${scope} would not be able to read any source.`;
   return null;
+}
+
+/**
+ * Whether a boundary allows at least one known source. With no source known
+ * yet, only an empty allowlist reads nothing, and that has its own message.
+ */
+export function readsAnySource(rule, sources) {
+  if (rule.sources.mode === "all" || sources.length === 0) return true;
+  return sources.some((source) => isSourceAllowed(rule, sourceId(source)));
+}
+
+/** A boundary that allows every source, including ones connected later. */
+export function allowEverySource(rule) {
+  return { ...rule, sources: { mode: "all", sourceIds: [] } };
 }
 
 /** What is wrong with Answer's release — the one fault no source card owns. */
@@ -159,17 +176,17 @@ export function releaseError(state) {
   return null;
 }
 
-export function validateGrantRules(state) {
+export function validateGrantRules(state, sources = []) {
   const rules = serializeGrantRules(state);
   if (rules.length === 0) return NO_CAPABILITY_MESSAGE;
   // One boundary or two. When Answer and Direct hold the same list the owner
   // edits it once, so an empty one is a single fault named for both.
   if (state.answer && state.direct && rulesShareSources(state)) {
-    const shared = sourceBoundaryError(state.answer, sourceScopeName("shared"));
+    const shared = sourceBoundaryError(state.answer, sourceScopeName("shared"), sources);
     if (shared) return shared;
   } else {
     for (const rule of rules) {
-      const error = sourceBoundaryError(state[rule.capability], sourceScopeName(rule.capability));
+      const error = sourceBoundaryError(state[rule.capability], sourceScopeName(rule.capability), sources);
       if (error) return error;
     }
   }

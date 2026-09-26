@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import * as grantBuilderState from "./grant-builder-state.js";
 
 const {
+  allowEverySource,
   isSourceAllowed,
   newGrantRule,
   normalizeGrantRules,
@@ -146,6 +147,21 @@ describe("Grant Builder state", () => {
       },
       direct: { ...newGrantRule("direct"), sources: empty },
     })).toBe("Select at least one source for Direct.");
+  });
+
+  it("refuses a boundary that allows none of the known sources, however it was reached", () => {
+    const known = SOURCES.map((id) => ({ id }));
+    // Nothing ticked, then "Allow it automatically": every current source is listed away.
+    const noneNow = setFutureSourcesAllowed(newGrantRule("direct"), true, SOURCES);
+    expect(noneNow.sources).toEqual({ mode: "denylist", sourceIds: SOURCES });
+    expect(validateGrantRules({ direct: noneNow }, known)).toBe(
+      "Direct would not be able to read any source.",
+    );
+    // Without the known sources the shape alone looks fine; the list is what catches it.
+    expect(validateGrantRules({ direct: noneNow })).toBeNull();
+    expect(validateGrantRules({ direct: setSourceAllowed(noneNow, "github:work", true) }, known)).toBeNull();
+    expect(validateGrantRules({ direct: allowEverySource(noneNow) }, known)).toBeNull();
+    expect(allowEverySource(noneNow).sources).toEqual({ mode: "all", sourceIds: [] });
   });
 
   it("reports source selections that exceed the HTTP boundary", () => {

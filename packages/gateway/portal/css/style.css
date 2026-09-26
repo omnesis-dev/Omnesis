@@ -1586,7 +1586,8 @@ a:hover { text-decoration: underline; }
 .grant-builder-guidance { margin: 0 0 11px; color: var(--text-muted); font-size: 12px; }
 /* A boundary's refusal sits with the list that earns it, not at the foot of
    the step, so the owner reads it where the fix is. */
-.grant-builder-boundary-error { margin: 11px 0 0; }
+.grant-builder-boundary-problem { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 11px 0 0; }
+.grant-builder-boundary-error { margin: 0; }
 .grant-builder-source-tools {
   display: grid;
   grid-template-columns: minmax(180px, 1fr) auto auto;
@@ -8232,6 +8233,19 @@ p.privacy-diff-note {
   cursor: pointer;
 }
 .ext-promo-open:hover { background: rgba(88, 166, 255, 0.24); }
+a.ext-promo-open { text-decoration: none; }
+
+/* The agent promo's mark: the connectable agents' logos, small and packed
+ * into a two-row cluster the height of the other cards' single mark. */
+.agent-promo-marks {
+  display: grid;
+  grid-template-columns: repeat(3, 16px);
+  gap: 3px;
+  flex: none;
+  color: var(--text-primary);
+}
+.agent-promo-marks img,
+.agent-promo-marks .provider-icon { display: block; width: 16px; height: 16px; object-fit: contain; }
 .ext-promo-pair { color: var(--text-link); font-size: 13px; }
 
 /* The promo's modal body: the full copy, optional numbered steps, then the
@@ -8268,6 +8282,12 @@ p.privacy-diff-note {
   .sources-promo-row > .ext-promo {
     flex: 0 1 calc((100% - 24px) / 3);
     max-width: calc((100% - 24px) / 3);
+  }
+}
+@media (min-width: 900px) {
+  .sources-promo-row:has(> .ext-promo:nth-child(4)) > .ext-promo {
+    flex-basis: calc((100% - 36px) / 4);
+    max-width: calc((100% - 36px) / 4);
   }
 }
 
