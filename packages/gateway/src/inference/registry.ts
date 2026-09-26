@@ -17,6 +17,7 @@ import {
   parseConfigSecretRef,
   readConfigSecretRefSync,
   fetchWithInferenceUrlPolicy,
+  InferenceUrlPolicyError,
   CAPABILITY_ROLES,
   type Manifest,
   type CapabilityRole,
@@ -559,9 +560,13 @@ export class InferenceRegistry {
       return { status, models: [], reason };
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
+      const reasonCode =
+        err instanceof InferenceUrlPolicyError && err.code === "remote_inference_disabled"
+          ? err.code
+          : undefined;
       const lagMs = lag.worstMs();
       const holds = this.consecutiveHolds.get(key) ?? 0;
-      if (lagMs > LOOP_LAG_STARVATION_MS && holds < MAX_CONSECUTIVE_HOLDS) {
+      if (!reasonCode && lagMs > LOOP_LAG_STARVATION_MS && holds < MAX_CONSECUTIVE_HOLDS) {
         // The loop fell far enough behind during this probe that the failure
         // describes this process. Keep whatever the backend last actually
         // demonstrated — condemning it here is how a busy gateway takes a
@@ -590,6 +595,7 @@ export class InferenceRegistry {
         status: "unreachable",
         hasApiKey,
         reason,
+        reasonCode,
       };
       log.warn(`HTTP backend "${key}" unreachable: ${reason}`);
       return { status: "unreachable", models: [], reason };
@@ -1018,6 +1024,7 @@ export class InferenceRegistry {
       allowRemoteInference: this.allowRemoteInference,
       available,
       reason,
+      reasonCode: entry.status.reasonCode,
     };
   }
 

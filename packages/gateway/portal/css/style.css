@@ -13668,6 +13668,15 @@ div.source-activity-popover-link:hover {
   border-radius: var(--radius-sm, 4px);
   background: rgba(248, 81, 73, 0.08);
 }
+.agent-cloud-inference {
+  margin: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--bg-secondary);
+}
+.agent-cloud-inference p { margin: 8px 0 12px; color: var(--text-muted); }
+.agent-cloud-inference .btn-secondary { margin-left: 8px; }
 .agent-action-error {
   display: flex;
   align-items: center;

@@ -26,6 +26,7 @@ import { createHash } from "node:crypto";
 import {
   BACKGROUND_RATE_LIMIT_PATIENCE,
   createLogger,
+  InferenceUrlPolicyError,
   experimentalVisible,
   makeEvent,
   type AgentConversationTerminalFailure,
@@ -2518,7 +2519,10 @@ export class AgentService {
         const event = makeEvent("agent.error", {
           sessionId,
           messageId: started.messageId,
-          code: "send_failed",
+          code:
+            err instanceof InferenceUrlPolicyError && err.code === "remote_inference_disabled"
+              ? err.code
+              : "send_failed",
           message: rawMessage,
         });
         this.emit(event);
@@ -2817,7 +2821,10 @@ export class AgentService {
           makeEvent("agent.error", {
             sessionId,
             messageId,
-            code: "send_failed",
+            code:
+              err instanceof InferenceUrlPolicyError && err.code === "remote_inference_disabled"
+                ? err.code
+                : "send_failed",
             message: "Deep Research couldn't finish. Please try again.",
           }),
         );

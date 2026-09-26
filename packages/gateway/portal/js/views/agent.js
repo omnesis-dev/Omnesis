@@ -50,6 +50,7 @@ import {
 } from "../lib/agent-return-policy.js";
 import { renderMarkdown } from "../lib/markdown.js";
 import { getAgentModel } from "../api.js";
+import { AgentCloudInferenceRecovery, cloudInferenceRecovery } from "./agent-cloud-inference.js";
 import { ProviderIcon } from "../components/provider-icon.js";
 
 export function loadPersistedConversation(client, id) {
@@ -930,7 +931,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
         });
         dispatch({
           kind: "agent.error",
-          payload: { code: "send_failed", message: err.message ?? String(err) },
+          payload: { code: err?.code === "remote_inference_disabled" ? err.code : "send_failed", message: err.message ?? String(err) },
         });
         return;
       } finally {
@@ -1000,7 +1001,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
         dispatch({
           kind: "agent.error",
           payload: {
-            code: "send_failed",
+            code: err?.code === "remote_inference_disabled" ? err.code : "send_failed",
             message: err.message ?? String(err),
           },
         });
@@ -1034,11 +1035,25 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
     `;
   }
 
+  const cloudRecovery = cloudInferenceRecovery(state);
   const isHero = state.turns.length === 0 && !state.terminalFailure;
   return html`
     <div class=${`agent-page${isHero ? " agent-page-hero" : ""}`}>
       <div class=${`agent-layout${isHero ? " agent-layout-hero" : ""}`}>
         <section class="agent-main">
+          ${cloudRecovery ? html`<${AgentCloudInferenceRecovery}
+            key=${`${state.sessionId ?? "pending"}:${cloudRecovery.key}`}
+            recovery=${cloudRecovery}
+            model=${agentModel}
+            busy=${state.busy}
+            getConfig=${() => clientRef.current.getConfig()}
+            onEnabled=${(config) => {
+              configPromiseRef.current = Promise.resolve(config);
+              dispatch({ kind: "agent-unconfigured", config });
+              if (!state.sessionId && !state.turns.length) void createFreshSession();
+            }}
+            onRetry=${send}
+          />` : null}
           ${agentModel && agentModel.configured && agentModel.modelName
             ? html`
               <div class="agent-model-header">

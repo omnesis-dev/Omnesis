@@ -3,10 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 
+import { InferenceUrlPolicyError, type AgentEvent, type DocRef } from "@omnesis/core";
 import { AgentSession } from "./session.js";
 import { ReplayBackend, type ReplayFixture } from "./replay-backend.js";
 import type { ChatBackend, TurnInput } from "./backend.js";
-import type { AgentEvent, DocRef } from "@omnesis/core";
 
 function fx(events: AgentEvent[]): ReplayFixture {
   return { entries: events.map((event) => ({ afterMs: 0, event })) };
@@ -1227,6 +1227,45 @@ describe("AgentSession", () => {
         ],
       },
     ]);
+  });
+
+  it("preserves missing remote permission in terminal errors and transcript failure", async () => {
+    const failure = new InferenceUrlPolicyError(
+      "https://203.0.113.10",
+      "Cloud inference disabled",
+      "remote_inference_disabled",
+    );
+    const backend: ChatBackend = {
+      name: "http",
+      model: "example-model",
+      runTurn(): AsyncIterable<AgentEvent> {
+        throw failure;
+      },
+    };
+    const session = new AgentSession({
+      sessionId: "S",
+      backend,
+      tools: [],
+      systemPrompt: "",
+      idGen: () => "M",
+    });
+    const captured: AgentEvent[] = [];
+    session.subscribe((event) => captured.push(event));
+    await expect(session.send("hi").completion).rejects.toBe(failure);
+    expect(captured).toContainEqual(
+      expect.objectContaining({
+        type: "agent.error",
+        payload: expect.objectContaining({ code: "remote_inference_disabled" }),
+      }),
+    );
+    expect(captured).toContainEqual(
+      expect.objectContaining({
+        type: "agent.message.end",
+        payload: expect.objectContaining({
+          failure: expect.objectContaining({ code: "remote_inference_disabled" }),
+        }),
+      }),
+    );
   });
 
   it("surfaces a mid-stream iterator throw as agent.error + terminal end, then rejects completion", async () => {

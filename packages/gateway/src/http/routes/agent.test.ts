@@ -192,6 +192,7 @@ function buildDisabledApp(
     backend: "off" | "anthropic" | "replay";
     enabled: boolean;
     disabledReason?: string;
+    disabledCode?: "remote_inference_disabled";
   },
   conversationReader?: ConversationReader,
 ): Hono<AppEnv> {
@@ -214,6 +215,7 @@ function buildDisabledApp(
     agentService: undefined,
     conversationReader,
     disabledReason: reason,
+    disabledCode: agentConfig?.disabledCode,
     agentConfig,
   });
   return app;
@@ -1966,6 +1968,7 @@ describe("GET /admin/agent/config", () => {
     expect(body.backend).toBe("anthropic");
     expect(body.enabled).toBe(true);
     expect(body.disabledReason).toBeNull();
+    expect(body.disabledCode).toBeNull();
   });
 
   test("returns disabled reason when agent is off", async () => {
@@ -1980,6 +1983,7 @@ describe("GET /admin/agent/config", () => {
     expect(body.backend).toBe("off");
     expect(body.enabled).toBe(false);
     expect(body.disabledReason).toBe("Agent harness disabled.");
+    expect(body.disabledCode).toBeNull();
   });
 
   test("defaults to off when no agentConfig provided", async () => {
@@ -2013,5 +2017,29 @@ describe("wiring the caller resolver", () => {
   test("carries the rest of the deps through untouched", () => {
     const deps = withCallerResolver({ disabledReason: "off" }, resolver);
     expect(deps.disabledReason).toBe("off");
+  });
+});
+
+test("remote inference disabled is actionable in config and session creation", async () => {
+  const app = buildDisabledApp("Cloud inference is disabled.", {
+    backend: "anthropic",
+    enabled: false,
+    disabledReason: "Cloud inference is disabled.",
+    disabledCode: "remote_inference_disabled",
+  });
+  const config = await app.request("/admin/agent/config");
+  await expect(config.json()).resolves.toMatchObject({
+    enabled: false,
+    disabledCode: "remote_inference_disabled",
+  });
+  const create = await app.request("/agent/sessions", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  expect(create.status).toBe(503);
+  await expect(create.json()).resolves.toMatchObject({
+    code: "remote_inference_disabled",
+    error: "Cloud inference is disabled.",
   });
 });

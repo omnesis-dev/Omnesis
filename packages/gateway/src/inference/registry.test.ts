@@ -1288,6 +1288,7 @@ describe("InferenceRegistry.probeBackend", () => {
     try {
       reg.loadConfig({
         inference: {
+          assignments: { agent: "remote/example-model" },
           backends: {
             remote: { type: "http", url: "https://203.0.113.10" },
           },
@@ -1296,6 +1297,11 @@ describe("InferenceRegistry.probeBackend", () => {
       const result = await reg.probeBackend("remote");
       expect(result.status).toBe("unreachable");
       expect(result.reason).toMatch(/allowRemoteInference=true/);
+      expect(reg.resolve("agent")).toMatchObject({
+        kind: "http",
+        available: false,
+        reasonCode: "remote_inference_disabled",
+      });
       expect(fetchSpy).not.toHaveBeenCalled();
     } finally {
       globalThis.fetch = originalFetch;

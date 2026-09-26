@@ -38,6 +38,9 @@ export class InferenceUrlPolicyError extends Error {
   constructor(
     public readonly url: string,
     public readonly reason: string,
+    public readonly code:
+      | "remote_inference_disabled"
+      | "inference_url_blocked" = "inference_url_blocked",
   ) {
     super(`Inference URL policy refused ${url}: ${reason}`);
     this.name = "InferenceUrlPolicyError";
@@ -165,6 +168,7 @@ function assertAddressClassAllowed(
     throw new InferenceUrlPolicyError(
       rawUrl,
       `address ${address} is ${addressClass}; set inference.allowRemoteInference=true to use non-loopback HTTP inference`,
+      "remote_inference_disabled",
     );
   }
 }

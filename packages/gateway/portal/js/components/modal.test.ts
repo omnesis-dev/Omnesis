@@ -55,6 +55,26 @@ describe("Modal", () => {
     ];
   }
 
+  test("leaves Escape and Tab to a confirmation above the panel", async () => {
+    const onClose = vi.fn();
+    await act(async () => {
+      render(h(Modal, { open: true, title: "Add backend", onClose }, body()), host);
+    });
+    const confirmation = document.createElement("div");
+    confirmation.className = "confirm-modal-backdrop";
+    document.body.appendChild(confirmation);
+    try {
+      const escape = new window.Event("keydown", { bubbles: true });
+      Object.defineProperty(escape, "key", { value: "Escape" });
+      window.dispatchEvent(escape);
+      const tab = new window.Event("keydown", { bubbles: true, cancelable: true });
+      Object.defineProperty(tab, "key", { value: "Tab" });
+      window.dispatchEvent(tab);
+      expect(onClose).not.toHaveBeenCalled();
+      expect(tab.defaultPrevented).toBe(false);
+    } finally { confirmation.remove(); }
+  });
+
   test("opens on the first control in the body, not on the ✕ that closes it", async () => {
     await act(async () => {
       render(h(Modal, { open: true, title: "Connect an agent", onClose: () => {} }, body()), host);
