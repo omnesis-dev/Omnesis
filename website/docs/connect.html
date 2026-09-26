@@ -1045,6 +1045,37 @@
           Devices page.
         </p>
 
+        <h3 id="harness-reconnect">Reconnect or reinstall</h3>
+        <p>
+          A machine that is connected and only needs a newer plugin uses
+          <a href="#harness-refresh">a refresh</a>, which spends no pairing code. To pair it again,
+          for example after reinstalling the harness over its existing Omnesis files, run the
+          command from the Connect an agent card with a new pairing code. The machine proves it is
+          the same installation with the credentials it already holds, so the gateway keeps the same
+          agent device: its watches, conversations, and access stay bound to it. The device gets new
+          credentials and its old ones stop working. The command offers those credentials only to
+          the gateway that issued them, recognized by the certificate the machine pinned, or by its
+          address when this run verified the certificate against <code>--trust-fingerprint</code>,
+          as the card's commands do.
+        </p>
+        <p>
+          When OpenClaw or Hermes is already connected, the card asks what the code is for.
+          <em>Reconnect</em> binds the code to that device and replaces its credentials on whichever
+          machine runs the command. Use it when the machine's saved Omnesis files are gone, when the
+          device was revoked, or to move the device to a replacement machine. A code bound to a
+          device that is still connected is refused unless the machine running it holds that
+          device's credentials; otherwise stop the harness where it runs, or revoke the device,
+          first. <em>Connect another machine</em> pairs a separate device. A bound code comes from
+          the command line as well:
+          <code>omnesis devices pair --kind agent --repair-device &lt;device-id&gt;</code>.
+        </p>
+        <p>
+          An unbound code never takes over an existing device without those credentials. A machine
+          that kept its Omnesis identity but lost its credentials is refused, and the command names
+          the card's <em>Reconnect</em> choice. A machine with no Omnesis files left pairs as a new
+          device; to keep the old one, create the code with <em>Reconnect</em> instead.
+        </p>
+
         <h3 id="harness-access">Pairing and corpus access</h3>
         <p>
           The installed plugin renews its sign-in on its own, on start and on a timer. Renewal

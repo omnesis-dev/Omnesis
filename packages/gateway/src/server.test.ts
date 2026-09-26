@@ -2727,6 +2727,56 @@ describe("device management endpoints", () => {
     }
   });
 
+  test("an agent host reconnects over HTTP by presenting its own credential", async () => {
+    const capabilities = {
+      suggestedName: "fictional-openclaw-reconnect",
+      agentIntegration: {
+        harness: "openclaw",
+        deliveryProtocolMin: 3,
+        deliveryProtocolMax: 3,
+        maxConcurrentRuns: 2,
+        watchPrivacyPolicyVersion: 1,
+      },
+    };
+    const mintCode = async () => {
+      const mint = await req("/admin/devices/pair", {
+        method: "POST",
+        body: JSON.stringify({ kind: "agent" }),
+      });
+      return ((await mint.json()) as { pairingCode: string }).pairingCode;
+    };
+    const redeem = (pairingCode: string, continuityCredential?: string) =>
+      app.request("/devices/pair", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pairingCode,
+          agentIntegration: { harness: "openclaw" },
+          capabilities,
+          ...(continuityCredential ? { continuityCredential } : {}),
+        }),
+      });
+
+    const first = (await (await redeem(await mintCode())).json()) as {
+      device: { id: string };
+      reconnected: boolean;
+      credentials: { delivery: { token: string } };
+    };
+    expect(first.reconnected).toBe(false);
+
+    const refused = await redeem(await mintCode());
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ code: "AGENT_DEVICE_EXISTS" });
+
+    const again = await redeem(await mintCode(), first.credentials.delivery.token);
+    expect(again.status).toBe(200);
+    expect(await again.json()).toMatchObject({
+      device: { id: first.device.id },
+      reconnected: true,
+    });
+    expect(lookupToken(db, first.credentials.delivery.token)).toBeNull();
+  });
+
   test("admin can bind an agent repair code to one exact existing device", async () => {
     const previous = process.env.OMNESIS_EXPERIMENTAL;
     process.env.OMNESIS_EXPERIMENTAL = "1";

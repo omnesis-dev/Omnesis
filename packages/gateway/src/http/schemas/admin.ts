@@ -399,6 +399,11 @@ export const consumePairingBody = z.object({
     })
     .strict()
     .optional(),
+  /**
+   * A credential the redeeming agent host still holds for the device it is
+   * already connected as; proves the redemption reconnects that device.
+   */
+  continuityCredential: z.string().min(1).max(512).optional(),
 });
 export type ConsumePairingBody = z.infer<typeof consumePairingBody>;
 

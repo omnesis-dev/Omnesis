@@ -11,6 +11,8 @@ import { loadIntegrationCredentials } from "@omnesis/agent-integration";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
+import { createSubscription } from "@omnesis/gateway/src/subscriptions/store-mutations.js";
+
 import { enrollManagedIntegration } from "./managed-integration-enrollment.js";
 import { SyntheticE2EHarness } from "./synth-harness.js";
 
@@ -53,6 +55,144 @@ describe("managed agent integration enrollment — spawned gateway", () => {
   test("connects, installs, authorizes, and cold-restarts the Hermes adapter", async () => {
     await exerciseManagedIntegration("hermes");
   }, 180_000);
+
+  test("re-running connect on a connected OpenClaw machine keeps its device and its watches", async () => {
+    const home = mkdtempSync(join(tmpdir(), "omnesis-openclaw-reconnect-e2e-"));
+    const cliConfig = mkdtempSync(join(tmpdir(), "omnesis-openclaw-reconnect-cli-e2e-"));
+    const fakeBin = mkdtempSync(join(tmpdir(), "omnesis-openclaw-reconnect-bin-e2e-"));
+    try {
+      prepareHarnessHome("openclaw", home, fakeBin);
+      const enroll = () =>
+        enrollManagedIntegration({
+          harness: "openclaw",
+          repositoryRoot,
+          gatewayUrl: harness.gatewayUrl,
+          portalApiKey: harness.apiKey,
+          gatewayDbPath: harness.getDbPath(),
+          home,
+          fakeBin,
+          cliConfigDir: cliConfig,
+          // The portal card's code: unbound, so only the machine's own saved
+          // credential can land it on the existing device.
+          createPairingCode: async () =>
+            (
+              await harness.gatewayJson<{ pairingCode: string }>("/admin/devices/pair", {
+                method: "POST",
+                body: JSON.stringify({ kind: "agent" }),
+              })
+            ).pairingCode,
+        });
+
+      const credentialsPath = join(home, "omnesis", "integration.json");
+      const first = await enroll();
+      const oldDelivery = loadIntegrationCredentials(credentialsPath).deliveryToken;
+      const deviceId = accessIdentity(first.authorizationRequestId).executionDeviceId;
+      const tokensBefore = tokenIds(deviceId);
+      await harness.restartGateway(() => {
+        withDb(false, (db) => {
+          expect(createSubscription(db, fictionalSubscription(deviceId)).outcome).toBe("created");
+        });
+      });
+      const watchBefore = subscriptionRow();
+      const devicesBefore = agentDeviceCount();
+
+      const second = await enroll();
+
+      expect(second.connectOutput).toMatch(/Reconnected/u);
+      expect(accessIdentity(second.authorizationRequestId).executionDeviceId).toBe(deviceId);
+      expect(agentDeviceCount()).toBe(devicesBefore);
+      const tokensAfter = tokenIds(deviceId);
+      expect(tokensAfter).toHaveLength(3);
+      expect(tokensAfter.filter((id) => tokensBefore.includes(id))).toEqual([]);
+      expect(subscriptionRow()).toEqual(watchBefore);
+      expect(watchBefore).toMatchObject({ integration_device_id: deviceId });
+      // The machine now holds the new credentials, and the old ones are dead.
+      const whoami = (token: string) =>
+        fetch(`${harness.gatewayUrl}/whoami`, { headers: { Authorization: `Bearer ${token}` } });
+      const newDelivery = loadIntegrationCredentials(credentialsPath).deliveryToken;
+      expect(newDelivery).not.toBe(oldDelivery);
+      // A delivery credential is known to the gateway but not allowed to read
+      // /whoami (403); an unknown credential is not authenticated at all (401).
+      expect((await whoami(newDelivery)).status).toBe(403);
+      expect((await whoami(oldDelivery)).status).toBe(401);
+
+      // A machine that kept its identity but lost its credentials cannot take
+      // the device over with an unbound code, and is told what to choose.
+      rmSync(credentialsPath, { force: true });
+      const refused = await enroll().then(
+        () => null,
+        (error: unknown) => (error instanceof Error ? error.message : String(error)),
+      );
+      expect(refused).toMatch(/choose "Reconnect"/u);
+      expect(agentDeviceCount()).toBe(devicesBefore);
+      expect(tokenIds(deviceId)).toEqual(tokensAfter);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cliConfig, { recursive: true, force: true });
+      rmSync(fakeBin, { recursive: true, force: true });
+    }
+  }, 300_000);
+
+  function tokenIds(deviceId: string): string[] {
+    return withDb(true, (db) =>
+      (
+        db.prepare("SELECT id FROM tokens WHERE device_id = ?").all(deviceId) as Array<{
+          id: string;
+        }>
+      ).map((row) => row.id),
+    );
+  }
+
+  function agentDeviceCount(): number {
+    return withDb(
+      true,
+      (db) =>
+        (
+          db.prepare("SELECT COUNT(*) AS count FROM devices WHERE kind = 'agent'").get() as {
+            count: number;
+          }
+        ).count,
+    );
+  }
+
+  function subscriptionRow() {
+    return withDb(true, (db) =>
+      db
+        .prepare("SELECT integration_device_id, status FROM subscriptions WHERE id = ?")
+        .get("sub_fictional_reconnect_e2e"),
+    );
+  }
+
+  function fictionalSubscription(deviceId: string): Parameters<typeof createSubscription>[1] {
+    const now = Date.now();
+    return {
+      id: "sub_fictional_reconnect_e2e",
+      approvalId: "sapp_fictional_reconnect_e2e",
+      workflowId: "wf_fictional_reconnect_e2e",
+      integrationDeviceId: deviceId,
+      ownerId: `device:${deviceId}`,
+      clientRequestId: "request-fictional-reconnect-e2e",
+      requestFingerprint: "fingerprint-fictional-reconnect-e2e",
+      condition: { kind: "natural-language", description: "when a fictional memo is created" },
+      reaction: { kind: "agent-workflow", instruction: "Summarize the fictional memo." },
+      interpretation: { summary: "A fictional memo is created", pushDetail: "existence" },
+      compiledPlan: {
+        version: 1,
+        events: ["created"],
+        predicate: { kind: "title-equals", value: "Fictional memo" },
+      },
+      compilerVersion: "test-v1",
+      privacyCategories: ["documents"],
+      policyRevision: "policy-a",
+      createdAt: now,
+      expiresAt: now + 86_400_000,
+      approvalExpiresAt: now + 3_600_000,
+      workflowName: "Fictional reconnect workflow",
+      workflowPurpose: "Summarize the fictional memo.",
+      createWorkflow: true,
+      workflowExpiresAt: now + 86_400_000,
+    };
+  }
 
   async function exerciseManagedIntegration(harnessName: "openclaw" | "hermes") {
     const home = mkdtempSync(join(tmpdir(), `omnesis-${harnessName}-connect-e2e-`));

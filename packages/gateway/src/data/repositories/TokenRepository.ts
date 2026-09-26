@@ -10,7 +10,11 @@ import {
   DeviceId,
   SCOPE_ADMIN,
   SCOPE_READ,
+  SCOPE_SUBSCRIPTIONS_MANAGE,
+  SCOPE_SUBSCRIPTIONS_RECEIVE,
   SCOPE_WRITE_ALL,
+  SourceType,
+  writeScope,
   missingHostedWriteScopes,
   isDeviceKind,
   scopesAllowedForDeviceKind,
@@ -203,6 +207,66 @@ export function lookupToken(db: Db, rawToken: string): ValidatedToken | null {
     deviceId: DeviceId(row.device_id),
     scopes: parseTokenScopes(row.scopes, row.id),
   };
+}
+
+/**
+ * The grants of the three standing credentials an agent pairing mints for a
+ * harness: delivery, transcript ingestion, and subscription management.
+ */
+export function agentPairingScopes(harness: "openclaw" | "hermes"): Scope[] {
+  return [SCOPE_SUBSCRIPTIONS_RECEIVE, writeScope(SourceType(harness)), SCOPE_SUBSCRIPTIONS_MANAGE];
+}
+
+/** One of an agent pairing's standing credentials: never expires, carries exactly one pairing grant. */
+function isAgentPairingCredential(
+  row: { scopes: string; expires_at: number | null; id: string },
+  harness: "openclaw" | "hermes",
+): boolean {
+  const scopes = parseTokenScopes(row.scopes, row.id);
+  return (
+    row.expires_at === null &&
+    scopes.length === 1 &&
+    agentPairingScopes(harness).includes(scopes[0]!)
+  );
+}
+
+/**
+ * Resolve a raw secret to the agent pairing credential it is, or null.
+ *
+ * Only the standing credentials agent pairing minted qualify. An agent device
+ * also holds short-lived tokens minted for each run it performs, and those are
+ * handed to the run itself, which handles untrusted content — so they never
+ * prove that the holder is the installation the device was paired as.
+ */
+export function lookupAgentPairingCredential(
+  db: Db,
+  rawToken: string,
+  harness: "openclaw" | "hermes",
+): { id: TokenId; deviceId: DeviceId } | null {
+  const row = db
+    .prepare<
+      [string],
+      { id: string; device_id: string; scopes: string; expires_at: number | null }
+    >("SELECT id, device_id, scopes, expires_at FROM tokens WHERE token_hash = ?")
+    .get(hashToken(rawToken));
+  if (!row || !isAgentPairingCredential(row, harness)) return null;
+  return { id: TokenId(row.id), deviceId: DeviceId(row.device_id) };
+}
+
+/** Whether a credential found by {@link lookupAgentPairingCredential} still stands. */
+export function isAgentPairingCredentialActive(
+  db: Db,
+  tokenId: TokenId,
+  deviceId: DeviceId,
+  harness: "openclaw" | "hermes",
+): boolean {
+  const row = db
+    .prepare<
+      [string, string],
+      { id: string; scopes: string; expires_at: number | null }
+    >("SELECT id, scopes, expires_at FROM tokens WHERE id = ? AND device_id = ?")
+    .get(tokenId, deviceId);
+  return !!row && isAgentPairingCredential(row, harness);
 }
 
 /**

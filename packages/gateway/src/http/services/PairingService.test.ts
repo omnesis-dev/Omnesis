@@ -7,11 +7,13 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { makeCommand, PROTOCOL_VERSION, type WsResponse } from "@omnesis/core";
 import {
   SCOPE_READ,
+  SCOPE_SUBSCRIPTIONS_ANSWER,
   SCOPE_SUBSCRIPTIONS_MANAGE,
   SCOPE_SUBSCRIPTIONS_RECEIVE,
   SourceType,
   writeScope,
   type DeviceCapability,
+  type DeviceId,
 } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
 import {
@@ -444,5 +446,328 @@ describe("PairingService", () => {
     expect(lateHelloError).toBe("invalid_token");
     expect(lateSocketClosed).toBe(true);
     expect(wsServer.isConnected(existing.id)).toBe(false);
+  });
+
+  describe("reconnecting an agent host by its own credential", () => {
+    async function pairFirst(service = makeService()) {
+      const code = createPairing(db, { kind: "agent", scopes: [SCOPE_SUBSCRIPTIONS_RECEIVE] });
+      const first = await service.redeem({
+        pairingCode: code.pairingCode,
+        capabilities: openClawCapabilities,
+        agentIntegration: { harness: "openclaw" },
+      });
+      if (first.outcome !== "paired-agent") throw new Error("expected paired-agent");
+      return first;
+    }
+
+    function freshCode(opts: { repairDeviceId?: DeviceId; name?: string } = {}) {
+      return createPairing(db, {
+        kind: "agent",
+        scopes: [SCOPE_SUBSCRIPTIONS_RECEIVE],
+        ...opts,
+      }).pairingCode;
+    }
+
+    function subscriptionFor(deviceId: DeviceId): CreateSubscriptionMutation {
+      return {
+        id: "sub_fictional_reconnect",
+        approvalId: "sapp_fictional_reconnect",
+        workflowId: "wf_fictional_reconnect",
+        integrationDeviceId: deviceId,
+        ownerId: `device:${deviceId}`,
+        clientRequestId: "request-fictional-reconnect",
+        requestFingerprint: "fingerprint-fictional-reconnect",
+        condition: { kind: "natural-language", description: "when a fictional memo is created" },
+        reaction: { kind: "agent-workflow", instruction: "Summarize the fictional memo." },
+        interpretation: { summary: "A fictional memo is created", pushDetail: "existence" },
+        compiledPlan: {
+          version: 1,
+          events: ["created"],
+          predicate: { kind: "title-equals", value: "Fictional memo" },
+        },
+        compilerVersion: "test-v1",
+        privacyCategories: ["documents"],
+        policyRevision: "policy-a",
+        createdAt: 100,
+        expiresAt: 10_000,
+        approvalExpiresAt: 2_000,
+        workflowName: "Fictional reconnect workflow",
+        workflowPurpose: "Summarize the fictional memo.",
+        createWorkflow: true,
+        workflowExpiresAt: 10_000,
+      };
+    }
+
+    test("an unbound code keeps the device id, its subscriptions, and rotates every credential", async () => {
+      const first = await pairFirst();
+      expect(createSubscription(db, subscriptionFor(first.device.id)).outcome).toBe("created");
+      const oldTokens = Object.values(first.credentials).map((entry) => entry.token);
+      const disconnectDevice = vi.fn();
+      // The installation being reinstalled is the one holding the live socket.
+      const service = makeService({
+        wsServer: { isConnected: () => true, disconnectDevice },
+      });
+
+      const reconnected = await service.redeem({
+        pairingCode: freshCode(),
+        capabilities: openClawCapabilities,
+        agentIntegration: { harness: "openclaw" },
+        continuityCredential: first.credentials.delivery.token,
+      });
+
+      expect(reconnected).toMatchObject({ outcome: "paired-agent", reconnected: true });
+      if (reconnected.outcome !== "paired-agent") throw new Error("expected paired-agent");
+      expect(reconnected.device.id).toBe(first.device.id);
+      expect(reconnected.device.name).toBe(first.device.name);
+      for (const token of oldTokens) expect(lookupToken(db, token)).toBeNull();
+      expect(lookupToken(db, reconnected.credentials.management.token)?.deviceId).toBe(
+        first.device.id,
+      );
+      expect(listTokens(db, first.device.id)).toHaveLength(3);
+      expect(disconnectDevice).toHaveBeenCalledWith(first.device.id);
+      expect(
+        db
+          .prepare<
+            [string],
+            { integration_device_id: string }
+          >("SELECT integration_device_id FROM subscriptions WHERE id = ?")
+          .get("sub_fictional_reconnect")?.integration_device_id,
+      ).toBe(first.device.id);
+      expect(
+        db.prepare("SELECT COUNT(*) AS count FROM devices WHERE kind = 'agent'").get(),
+      ).toEqual({ count: 1 });
+    });
+
+    test("an admin-named code reconnects under the device's own name", async () => {
+      const first = await pairFirst();
+      const reconnected = await makeService().redeem({
+        pairingCode: freshCode({ name: "Fictional renamed integration" }),
+        capabilities: openClawCapabilities,
+        agentIntegration: { harness: "openclaw" },
+        continuityCredential: first.credentials.management.token,
+      });
+      expect(reconnected).toMatchObject({
+        outcome: "paired-agent",
+        reconnected: true,
+        device: { id: first.device.id, name: first.device.name },
+      });
+    });
+
+    test("a replayed reconnect returns the same credentials after the old ones are gone", async () => {
+      const first = await pairFirst();
+      const service = makeService();
+      const request = {
+        pairingCode: freshCode(),
+        capabilities: openClawCapabilities,
+        agentIntegration: { harness: "openclaw" as const },
+        continuityCredential: first.credentials.delivery.token,
+        idempotencyKey: "r".repeat(43),
+      };
+      const reconnected = await service.redeem(request);
+      expect(reconnected).toMatchObject({ outcome: "paired-agent", reconnected: true });
+      // The presented credential was revoked by the reconnect itself; the lost
+      // response is still recovered from the receipt.
+      expect(await service.redeem(request)).toEqual(reconnected);
+    });
+
+    test("another host with no credential cannot take over the device by its name", async () => {
+      const first = await pairFirst();
+      const code = freshCode();
+      const result = await makeService().redeem({
+        pairingCode: code,
+        capabilities: openClawCapabilities,
+        agentIntegration: { harness: "openclaw" },
+      });
+      expect(result).toMatchObject({ outcome: "conflict", code: "AGENT_DEVICE_EXISTS" });
+      expect(peekPairing(db, code)).not.toBeNull();
+      expect(lookupToken(db, first.credentials.delivery.token)?.deviceId).toBe(first.device.id);
+    });
+
+    test("an unknown or foreign credential proves nothing", async () => {
+      const first = await pairFirst();
+      const hermes = createDevice(db, {
+        name: "fictional-hermes",
+        kind: "agent",
+        capabilities: {
+          suggestedName: "fictional-hermes",
+          agentIntegration: { ...openClawCapabilities.agentIntegration!, harness: "hermes" },
+        },
+      });
+      const hermesToken = createToken(db, hermes.id, [SCOPE_SUBSCRIPTIONS_RECEIVE], "hermes");
+      const cli = createDevice(db, { name: "fictional-cli", kind: "cli" });
+      const cliToken = createToken(db, cli.id, [SCOPE_READ], "cli");
+      for (const credential of ["omn_fictional_unknown", hermesToken.token, cliToken.token]) {
+        const code = freshCode();
+        const result = await makeService().redeem({
+          pairingCode: code,
+          capabilities: openClawCapabilities,
+          agentIntegration: { harness: "openclaw" },
+          continuityCredential: credential,
+        });
+        expect(result).toMatchObject({ outcome: "conflict", code: "AGENT_DEVICE_EXISTS" });
+        expect(peekPairing(db, code)).not.toBeNull();
+      }
+      expect(lookupToken(db, first.credentials.delivery.token)?.deviceId).toBe(first.device.id);
+      expect(lookupToken(db, hermesToken.token)?.deviceId).toBe(hermes.id);
+    });
+
+    test("a different machine with its own identity gets its own device", async () => {
+      const first = await pairFirst();
+      const second = await makeService().redeem({
+        pairingCode: freshCode(),
+        capabilities: { ...openClawCapabilities, suggestedName: "fictional-openclaw-second" },
+        agentIntegration: { harness: "openclaw" },
+      });
+      expect(second).toMatchObject({ outcome: "paired-agent", reconnected: false });
+      if (second.outcome !== "paired-agent") throw new Error("expected paired-agent");
+      expect(second.device.id).not.toBe(first.device.id);
+      expect(lookupToken(db, first.credentials.delivery.token)?.deviceId).toBe(first.device.id);
+    });
+
+    test("a code bound to one device refuses a host connected as another", async () => {
+      const first = await pairFirst();
+      const other = await makeService().redeem({
+        pairingCode: freshCode(),
+        capabilities: { ...openClawCapabilities, suggestedName: "fictional-openclaw-other" },
+        agentIntegration: { harness: "openclaw" },
+      });
+      if (other.outcome !== "paired-agent") throw new Error("expected paired-agent");
+      const code = freshCode({ repairDeviceId: first.device.id });
+      const result = await makeService().redeem({
+        pairingCode: code,
+        capabilities: openClawCapabilities,
+        agentIntegration: { harness: "openclaw" },
+        continuityCredential: other.credentials.delivery.token,
+      });
+      expect(result).toMatchObject({ outcome: "conflict", code: "AGENT_DEVICE_MISMATCH" });
+      expect(peekPairing(db, code)).not.toBeNull();
+      expect(lookupToken(db, first.credentials.delivery.token)?.deviceId).toBe(first.device.id);
+      expect(lookupToken(db, other.credentials.delivery.token)?.deviceId).toBe(other.device.id);
+    });
+
+    test("a bound code repairs an online device only for the host that holds its credential", async () => {
+      const first = await pairFirst();
+      const online = makeService({
+        wsServer: { isConnected: () => true, disconnectDevice: vi.fn() },
+      });
+      const code = freshCode({ repairDeviceId: first.device.id });
+      expect(
+        await online.redeem({
+          pairingCode: code,
+          capabilities: openClawCapabilities,
+          agentIntegration: { harness: "openclaw" },
+        }),
+      ).toMatchObject({ outcome: "conflict", code: "AGENT_DEVICE_ONLINE" });
+
+      const repaired = await online.redeem({
+        pairingCode: code,
+        capabilities: openClawCapabilities,
+        agentIntegration: { harness: "openclaw" },
+        continuityCredential: first.credentials.ingestion.token,
+      });
+      expect(repaired).toMatchObject({
+        outcome: "paired-agent",
+        reconnected: true,
+        device: { id: first.device.id },
+      });
+    });
+
+    test("a bound repair code still works for a host that lost its credentials", async () => {
+      const first = await pairFirst();
+      const repaired = await makeService().redeem({
+        pairingCode: freshCode({ repairDeviceId: first.device.id }),
+        capabilities: { ...openClawCapabilities, suggestedName: "fictional-openclaw-reinstall" },
+        agentIntegration: { harness: "openclaw" },
+      });
+      expect(repaired).toMatchObject({
+        outcome: "paired-agent",
+        reconnected: true,
+        device: { id: first.device.id, name: first.device.name },
+      });
+      expect(lookupToken(db, first.credentials.delivery.token)).toBeNull();
+    });
+
+    test("a credential revoked before the writer commits proves nothing", async () => {
+      const first = await pairFirst();
+      const baseWriteGate = directWriteGate(db);
+      const racingWriteGate: WriteGate = {
+        ...baseWriteGate,
+        redeemAgentIntegrationPairing: async (input) => {
+          db.prepare("DELETE FROM tokens WHERE device_id = ?").run(first.device.id);
+          return baseWriteGate.redeemAgentIntegrationPairing(input);
+        },
+      };
+      const code = freshCode();
+      const result = await makeService({ writeGate: racingWriteGate }).redeem({
+        pairingCode: code,
+        capabilities: openClawCapabilities,
+        agentIntegration: { harness: "openclaw" },
+        continuityCredential: first.credentials.delivery.token,
+      });
+      expect(result).toMatchObject({ outcome: "conflict", code: "AGENT_CREDENTIAL_STALE" });
+      expect(peekPairing(db, code)).not.toBeNull();
+    });
+
+    test("a per-run or expiring token of the device proves nothing", async () => {
+      const first = await pairFirst();
+      // An agent run is handed short-lived tokens of its device; they live in
+      // a runtime that handles untrusted content, so they cannot rotate the
+      // device's standing credentials.
+      const perRun = createToken(
+        db,
+        first.device.id,
+        [SCOPE_SUBSCRIPTIONS_ANSWER],
+        "fictional-run-answer",
+        { ttlMs: 60_000 },
+      );
+      const expiringDelivery = createToken(
+        db,
+        first.device.id,
+        [SCOPE_SUBSCRIPTIONS_RECEIVE],
+        "fictional-expiring-delivery",
+        { ttlMs: 60_000 },
+      );
+      for (const credential of [perRun.token, expiringDelivery.token]) {
+        const code = freshCode();
+        const result = await makeService().redeem({
+          pairingCode: code,
+          capabilities: openClawCapabilities,
+          agentIntegration: { harness: "openclaw" },
+          continuityCredential: credential,
+        });
+        expect(result).toMatchObject({ outcome: "conflict", code: "AGENT_DEVICE_EXISTS" });
+        expect(peekPairing(db, code)).not.toBeNull();
+      }
+      expect(lookupToken(db, first.credentials.delivery.token)?.deviceId).toBe(first.device.id);
+    });
+
+    test("a reconnect keeps the device's self identities when its code stages none", async () => {
+      const first = await pairFirst();
+      db.prepare("UPDATE devices SET self_emails = ? WHERE id = ?").run(
+        JSON.stringify(["maya.reeves@example.com"]),
+        first.device.id,
+      );
+      const reconnected = await makeService().redeem({
+        pairingCode: freshCode(),
+        capabilities: openClawCapabilities,
+        agentIntegration: { harness: "openclaw" },
+        continuityCredential: first.credentials.delivery.token,
+      });
+      expect(reconnected).toMatchObject({
+        outcome: "paired-agent",
+        device: { selfEmails: ["maya.reeves@example.com"] },
+      });
+    });
+
+    test("a continuity credential is refused on a code for another device kind", async () => {
+      const first = await pairFirst();
+      const code = createPairing(db, { name: "fictional-cli", kind: "cli", scopes: [SCOPE_READ] });
+      expect(
+        await makeService().redeem({
+          pairingCode: code.pairingCode,
+          continuityCredential: first.credentials.delivery.token,
+        }),
+      ).toMatchObject({ outcome: "invalid" });
+    });
   });
 });

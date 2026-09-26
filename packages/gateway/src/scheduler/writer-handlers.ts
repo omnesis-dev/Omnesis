@@ -1084,13 +1084,7 @@ export const writerHandlers = {
   "devices.revokePairing": (db: Db, pairingCode: string) => revokePairing(db, pairingCode),
   "devices.redeemAgentIntegrationPairing": (
     db: Db,
-    input: {
-      pairingCode: string;
-      harness: "openclaw" | "hermes";
-      capabilities: DeviceCapability;
-      repairDeviceId?: DeviceId;
-      idempotencyKey?: string;
-    },
+    input: Parameters<typeof redeemAgentIntegrationPairing>[1],
   ) => redeemAgentIntegrationPairing(db, input),
   "devices.cleanupExpiredPairings": (db: Db) => cleanupExpiredPairings(db),
 

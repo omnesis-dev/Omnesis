@@ -3,7 +3,7 @@
 
 import { scope } from "../../scope.js";
 import { validateJson } from "../../validate.js";
-import { BadRequestError, ConflictError } from "../../errors.js";
+import { BadRequestError, ConflictError, HttpError } from "../../errors.js";
 import { consumePairingBody } from "../../schemas/index.js";
 import { pairingRateLimiter } from "../../../rate-limit.js";
 import { clientIp, log, type AdminRoutesDeps } from "./internals.js";
@@ -35,21 +35,28 @@ export function mountPairingRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
         "Retry-After": "60",
       });
     }
-    const { pairingCode, capabilities, agentIntegration, idempotencyKey } = c.req.valid("json");
+    const { pairingCode, capabilities, agentIntegration, continuityCredential, idempotencyKey } =
+      c.req.valid("json");
     const result = await deps.pairingService.redeem({
       pairingCode,
       ...(capabilities ? { capabilities } : {}),
       ...(agentIntegration ? { agentIntegration } : {}),
+      ...(continuityCredential ? { continuityCredential } : {}),
       ...(idempotencyKey ? { idempotencyKey } : {}),
     });
     if (result.outcome === "invalid") {
       log.warn(`Failed pairing attempt from ${ip}: ${result.error}`);
       throw new BadRequestError(result.error);
     }
-    if (result.outcome === "conflict") throw new ConflictError(result.error);
+    if (result.outcome === "conflict") {
+      throw result.code
+        ? new HttpError(409, result.code, result.error)
+        : new ConflictError(result.error);
+    }
     if (result.outcome === "paired-agent") {
       return c.json({
         device: result.device,
+        reconnected: result.reconnected,
         credentials: result.credentials,
       });
     }

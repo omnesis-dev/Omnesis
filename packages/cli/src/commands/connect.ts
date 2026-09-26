@@ -32,6 +32,7 @@ import {
 import {
   IntegrationHttpError,
   loadIntegrationCredentials,
+  loadOperationalIntegrationCredentials,
   PinnedGatewayHttpClient,
   resolveHarnessBinary,
   upgradeLegacyIntegrationCredentials,
@@ -62,7 +63,7 @@ import {
   type HarnessInvocation,
 } from "../harness-restart.js";
 import { authorizeHarness } from "./connect-oauth.js";
-import { redeemAgentIntegrationPairingCode } from "./devices.js";
+import { AgentPairingRefusedError, redeemAgentIntegrationPairingCode } from "./devices.js";
 
 /** `~/`-expansion for user-supplied paths (flags are never shell-expanded). */
 function expandHome(path: string): string {
@@ -559,9 +560,10 @@ function parseIntegrationIdentity(raw: string, harness: Harness): IntegrationIde
 }
 
 /**
- * A stable, non-secret suggested name for fresh unnamed pairings. Repairs are
- * never selected by this caller-controlled value; the administrator must bind
- * the pairing code to an exact existing device when minting it.
+ * A stable, non-secret suggested name for fresh unnamed pairings. An existing
+ * device is never selected by this caller-controlled value: a reconnect lands
+ * on one only through a credential this host holds for it, or through a code
+ * the administrator bound to it.
  */
 export function loadOrCreateIntegrationIdentity(
   home: string,
@@ -1089,6 +1091,46 @@ export async function buildTlsTrust(
     applyCaTrustInProcess(certPath);
   }
   return trust;
+}
+
+/**
+ * The credential this installation still holds for the agent device it is
+ * connected as, when the gateway being paired with is the one that issued it.
+ *
+ * Presenting it lets a re-run of connect reconnect that device — same id, same
+ * watches — instead of colliding with it. It is offered only to the gateway it
+ * came from: one presenting the certificate the installation pinned, or one at
+ * the same address whose certificate this run verified against an explicit
+ * fingerprint. An address alone is not enough once a certificate was pinned,
+ * because the certificate now answering there may have been trusted on sight.
+ */
+export function continuityCredentialFor(
+  credentialsPath: string,
+  gatewayUrl: string,
+  tls: TlsTrust | undefined,
+  options: { verifiedFingerprint: boolean },
+): string | undefined {
+  if (!existsSync(credentialsPath)) return undefined;
+  let saved: ReturnType<typeof loadOperationalIntegrationCredentials>;
+  try {
+    saved = loadOperationalIntegrationCredentials(credentialsPath);
+  } catch {
+    // An unreadable record proves nothing; the pairing proceeds as a new host.
+    return undefined;
+  }
+  const savedPin = saved.tls?.leafFingerprintSha256;
+  if (savedPin !== undefined && savedPin === tls?.leafFingerprintSha256) {
+    return saved.deliveryToken;
+  }
+  let sameAddress: boolean;
+  try {
+    sameAddress = normalizeHarnessGatewayUrl(saved.gatewayUrl) === gatewayUrl;
+  } catch {
+    sameAddress = false;
+  }
+  return sameAddress && (savedPin === undefined || options.verifiedFingerprint)
+    ? saved.deliveryToken
+    : undefined;
 }
 
 interface ConnectRecovery {
@@ -1762,17 +1804,20 @@ export const connectCommand = defineCommand({
         try {
           let pairing: Awaited<ReturnType<typeof redeemAgentIntegrationPairingCode>>;
           try {
+            const continuityCredential = continuityCredentialFor(credentialsPath, gatewayUrl, tls, {
+              verifiedFingerprint: pin !== undefined && tls?.leafFingerprintSha256 === pin,
+            });
             pairing = await redeemAgentIntegrationPairingCode(gatewayUrl, code, harness, {
               idempotencyKey: redemptionJournal.idempotencyKey,
               maxConcurrentRuns,
               suggestedName: identity.suggestedName,
+              ...(continuityCredential ? { continuityCredential } : {}),
               ...(tls ? { tls } : {}),
             });
           } catch (error) {
-            if (
-              error instanceof Error &&
-              /Invalid or expired agent pairing code/u.test(error.message)
-            ) {
+            // Nothing was committed, so the journal would only pin the next
+            // run to the code that was just refused.
+            if (error instanceof AgentPairingRefusedError) {
               rmSync(connectRedemptionPath(home), { force: true });
             }
             throw error;
@@ -1839,8 +1884,11 @@ export const connectCommand = defineCommand({
             );
           }
           console.log(
-            `Paired ${c.bold}${pairing.device.name}${c.reset} as an operational agent device ` +
-              `and authorized its separate MCP connection.`,
+            pairing.reconnected
+              ? `Reconnected ${c.bold}${pairing.device.name}${c.reset} with fresh credentials; ` +
+                  `its previous ones no longer work, and its watches and history stay with it.`
+              : `Paired ${c.bold}${pairing.device.name}${c.reset} as an operational agent device ` +
+                  `and authorized its separate MCP connection.`,
           );
         } finally {
           prepared.cleanup();

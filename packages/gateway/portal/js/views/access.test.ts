@@ -12,6 +12,7 @@ const api = vi.hoisted(() => ({
   deleteAccessLevel: vi.fn(),
   getAccessAuthorization: vi.fn(),
   getAccessOverview: vi.fn(),
+  listDevices: vi.fn(),
   lookupAccessAuthorization: vi.fn(),
   moveConnectionLevel: vi.fn(),
   pairDevice: vi.fn(),
@@ -305,6 +306,7 @@ describe("AccessView", () => {
     vi.clearAllMocks();
     api.getAccessOverview.mockResolvedValue(EMPTY_OVERVIEW);
     api.getAccessAuthorization.mockResolvedValue({ request: null });
+    api.listDevices.mockResolvedValue({ items: [] });
     originalDocument = globalThis.document;
     originalWindow = globalThis.window;
     const parsed = parseHTML("<html><body><main id='root'></main></body></html>");
@@ -1687,6 +1689,130 @@ describe("AccessView", () => {
       address.dispatchEvent(new window.Event("change", { bubbles: true }));
     });
     expect(command()).toBe("omnesis connect openclaw --gateway-url https://gateway.example.org --code K7Q2-M9XD");
+  });
+
+  describe("reconnecting a harness that is already connected", () => {
+    const openClawDevice = (id: string, name: string, extra: Record<string, unknown> = {}) => ({
+      id,
+      name,
+      kind: "agent",
+      capabilities: { agentIntegration: { harness: "openclaw" } },
+      pairedAt: 1_000,
+      lastSeenAt: 2_000,
+      revokedAt: null,
+      online: false,
+      ...extra,
+    });
+    const radios = () => [...host.querySelectorAll<HTMLInputElement>("input[name='access-agent-reconnect']")];
+    const createButton = () => host.querySelector<HTMLButtonElement>(".access-agent-pair-action button")!;
+    // linkedom keeps a radio's checked state as its attribute.
+    const isChecked = (radio: HTMLInputElement) => radio.checked === true || radio.hasAttribute("checked");
+
+    async function openOpenClaw() {
+      api.getAccessOverview.mockResolvedValue({ principals: [], oauth: OAUTH });
+      await mount({ connectOpen: true });
+      const openclaw = host.querySelector<HTMLButtonElement>("button[data-agent='openclaw']")!;
+      await act(async () => { openclaw.click(); });
+      await act(async () => { await Promise.resolve(); });
+    }
+
+    test("a code is bound to the device the operator chose to reconnect", async () => {
+      api.listDevices.mockResolvedValue({
+        items: [
+          openClawDevice("dev-openclaw", "omnesis-openclaw-0a1b2c3d4e5f", { online: true }),
+          { ...openClawDevice("dev-hermes", "omnesis-hermes-0a1b2c3d4e5f"), capabilities: { agentIntegration: { harness: "hermes" } } },
+          { id: "dev-cli", name: "fictional-laptop", kind: "cli", capabilities: {} },
+        ],
+      });
+      api.pairDevice.mockResolvedValue({ pairingCode: "R3C0-NN3C", expiresAt: Date.now() + 600_000 });
+      await openOpenClaw();
+
+      const legend = host.querySelector(".access-agent-reconnect legend")?.textContent;
+      expect(legend).toBe("OpenClaw is already connected to this gateway. What is this code for?");
+      expect(radios().map((radio) => radio.value)).toEqual(["dev-openclaw", "another"]);
+      // A reconnect replaces the device's credentials, so it is never assumed.
+      expect(radios().some(isChecked)).toBe(false);
+      expect(createButton().disabled).toBe(true);
+      expect(host.querySelector(".access-agent-reconnect")?.textContent).toContain(
+        "Reconnect omnesis-openclaw-0a1b2c3d4e5f (connected now)",
+      );
+
+      await act(async () => {
+        radios()[0]!.dispatchEvent(new window.Event("change", { bubbles: true }));
+      });
+      expect(radios().map(isChecked)).toEqual([true, false]);
+      expect(createButton().textContent?.trim()).toBe("Create a code for omnesis-openclaw-0a1b2c3d4e5f");
+      await act(async () => { createButton().click(); });
+      await act(async () => { await Promise.resolve(); });
+      expect(api.pairDevice).toHaveBeenCalledWith({ kind: "agent", repairDeviceId: "dev-openclaw" });
+      expect(host.querySelector(".access-agent-pairing p")?.textContent?.replace(/\s+/gu, " ")).toContain(
+        "reconnects omnesis-openclaw-0a1b2c3d4e5f",
+      );
+      expect(host.querySelector(".access-agent-command code")?.textContent).toContain("--code R3C0-NN3C");
+
+      // Choosing another machine drops the bound code; the next one is unbound.
+      await act(async () => {
+        radios()[1]!.dispatchEvent(new window.Event("change", { bubbles: true }));
+      });
+      expect(radios().map(isChecked)).toEqual([false, true]);
+      expect(host.querySelector(".access-agent-command code")?.textContent).not.toContain("--code");
+      await act(async () => { createButton().click(); });
+      await act(async () => { await Promise.resolve(); });
+      expect(api.pairDevice).toHaveBeenLastCalledWith({ kind: "agent" });
+      expect(host.querySelector(".access-agent-pairing p")?.textContent).not.toContain("reconnects");
+    });
+
+    test("a code still being minted for an earlier choice is dropped", async () => {
+      api.listDevices.mockResolvedValue({
+        items: [openClawDevice("dev-openclaw", "omnesis-openclaw-0a1b2c3d4e5f")],
+      });
+      let resolveMint!: (value: { pairingCode: string; expiresAt: number }) => void;
+      api.pairDevice.mockReturnValue(new Promise((resolve) => { resolveMint = resolve; }));
+      await openOpenClaw();
+      await act(async () => {
+        radios()[0]!.dispatchEvent(new window.Event("change", { bubbles: true }));
+      });
+      await act(async () => { createButton().click(); });
+      expect(host.querySelector(".access-agent-reconnect")?.hasAttribute("disabled")).toBe(true);
+
+      // The choice cannot change mid-mint from the page; switching agents can.
+      const hermes = host.querySelector<HTMLButtonElement>("button[data-agent='hermes']")!;
+      await act(async () => { hermes.click(); });
+      await act(async () => {
+        resolveMint({ pairingCode: "ST4L-EC0D", expiresAt: Date.now() + 600_000 });
+        await Promise.resolve();
+      });
+      expect(host.querySelector(".access-agent-command code")?.textContent).not.toContain("ST4L-EC0D");
+    });
+
+    test("with several devices, the operator chooses before a code is created", async () => {
+      api.listDevices.mockResolvedValue({
+        items: [
+          openClawDevice("dev-older", "omnesis-openclaw-111111111111", { lastSeenAt: 1_500 }),
+          openClawDevice("dev-revoked", "omnesis-openclaw-222222222222", { lastSeenAt: 3_000, revokedAt: 3_500 }),
+        ],
+      });
+      await openOpenClaw();
+
+      expect(radios().map((radio) => radio.value)).toEqual(["dev-revoked", "dev-older", "another"]);
+      expect(radios().some(isChecked)).toBe(false);
+      expect(host.querySelector(".access-agent-reconnect")?.textContent).toContain("(revoked)");
+      expect(createButton().disabled).toBe(true);
+      expect(host.querySelector(".access-agent-pair-action span")?.textContent).toBe(
+        "Choose what the code is for first.",
+      );
+    });
+
+    test("a gateway without the harness, or whose device list fails, pairs as before", async () => {
+      api.listDevices.mockRejectedValue(new Error("fictional outage"));
+      api.pairDevice.mockResolvedValue({ pairingCode: "N3W0-C0DE", expiresAt: Date.now() + 600_000 });
+      await openOpenClaw();
+
+      expect(host.querySelector(".access-agent-reconnect")).toBeNull();
+      await act(async () => { createButton().click(); });
+      await act(async () => { await Promise.resolve(); });
+      expect(api.pairDevice).toHaveBeenCalledWith({ kind: "agent" });
+    });
   });
 
   test("labels a proxy that serves the gateway's certificate as a proxy, and still pins it", async () => {
