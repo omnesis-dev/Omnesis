@@ -558,29 +558,32 @@ class SessionManager @Inject constructor(
             },
         )
         session = built
-        scope.launch { sourceCatalog.load(built.admin) }
-        // Probe the gateway's status so the drawer + composer can gate
-        // experimental and developer surfaces. Best-effort: a failed/old-gateway
-        // probe leaves them `false`, keeping those surfaces hidden. The
-        // `session === built` guard drops a probe that resolves after a newer
-        // rebuild replaced the session, so a slow status read can't light gated
-        // surfaces against a gateway we have since re-paired away from.
-        scope.launch {
-            probeStatus(built)
-        }
-        scope.launch {
-            pushRegistrationMutex.withLock {
-                retryPushRegistrationForSession(
-                    captured = built,
-                    isCurrent = { session === it },
-                    ensureClaimCredential = ::ensurePushClaimCredential,
-                    refreshPlan = ::refreshPushPlan,
-                    registerCarrierToken = { current, plan -> registerFcmToken(current, plan = plan) },
-                )
-            }
-            drainPendingNotifications(maxItems = NOTIFICATION_DRAIN_LIMIT)
-        }
+        // Everything the session starts is a child of its job, so a rebuild cancels the
+        // launch reads still in flight along with the loops: none of them reaches the
+        // gateway, or writes its reply into shared state, after the session ends.
         sessionJob = scope.launch {
+            launch { sourceCatalog.load(built.admin) }
+            // Probe the gateway's status so the drawer + composer can gate
+            // experimental and developer surfaces. Best-effort: a failed/old-gateway
+            // probe leaves them `false`, keeping those surfaces hidden. The
+            // `session === built` guard drops a probe that resolves after a newer
+            // rebuild replaced the session, so a slow status read can't light gated
+            // surfaces against a gateway we have since re-paired away from.
+            launch {
+                probeStatus(built)
+            }
+            launch {
+                pushRegistrationMutex.withLock {
+                    retryPushRegistrationForSession(
+                        captured = built,
+                        isCurrent = { session === it },
+                        ensureClaimCredential = ::ensurePushClaimCredential,
+                        refreshPlan = ::refreshPushPlan,
+                        registerCarrierToken = { current, plan -> registerFcmToken(current, plan = plan) },
+                    )
+                }
+                drainPendingNotifications(maxItems = NOTIFICATION_DRAIN_LIMIT)
+            }
             suspend fun reconcileRemovals() {
                 try {
                     sourceRemovalReconciler.reconcile {

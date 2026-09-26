@@ -4,6 +4,7 @@
 package dev.omnesis.android.sources
 
 import dev.omnesis.android.transport.dto.SerializedDescriptor
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -28,6 +29,26 @@ class SourceCatalogTest {
         assertFalse(catalog.load({ throw IOException("401") }, { throw IOException("401") }))
         assertTrue(catalog.isLoaded)
         assertEquals("Gmail", catalog.label("gmail:example"))
+    }
+
+    @Test
+    fun `a load cancelled with its session writes nothing and asks no more`() = runTest {
+        // A rebuild cancels the old session's load after clearing the catalog;
+        // what the old gateway sent must not land in the cleared one.
+        val catalog = SourceCatalog()
+        var metaFetches = 0
+        val cancelled = runCatching {
+            catalog.load({ throw CancellationException("session ended") }, { metaFetches += 1; emptyMap() })
+        }.exceptionOrNull()
+        assertTrue(cancelled is CancellationException)
+        assertEquals(0, metaFetches)
+
+        val late = runCatching {
+            catalog.load({ listOf(descriptor("gmail")) }, { throw CancellationException("session ended") })
+        }.exceptionOrNull()
+        assertTrue(late is CancellationException)
+        assertFalse(catalog.isLoaded)
+        assertEquals("gmail", catalog.label("gmail:example"))
     }
 
     @Test
