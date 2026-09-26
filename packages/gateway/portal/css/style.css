@@ -1140,11 +1140,16 @@ a:hover { text-decoration: underline; }
 .access-device-icon { flex: none; color: var(--text-muted); }
 .access-connection-list {
   display: grid;
+  gap: 8px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
-.access-connection-item + .access-connection-item { border-top: 1px solid var(--border-light); }
+.access-connection-item {
+  padding: 8px 12px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--bg-primary) 60%, var(--bg-secondary));
+}
 /* Fixed app and last-used columns line up across every card. */
 .access-connection-row {
   display: grid;
