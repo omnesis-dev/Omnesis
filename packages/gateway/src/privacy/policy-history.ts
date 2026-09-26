@@ -290,6 +290,44 @@ export function deletePrivacyPolicyFamily(
   })();
 }
 
+export type RenamePrivacyPolicyFamilyResult =
+  | { outcome: "renamed"; name: string }
+  | { outcome: "not-found" }
+  | { outcome: "name-taken" }
+  | { outcome: "invalid" };
+
+/** Rename the library entry without republishing its rules or altering references. */
+export function renamePrivacyPolicyFamily(
+  db: Database.Database,
+  familyId: string,
+  inputName: string,
+  now: number,
+): RenamePrivacyPolicyFamilyResult {
+  const name = inputName.trim();
+  if (!name || name.length > 120 || name.includes("\0")) return { outcome: "invalid" };
+  return db.transaction((): RenamePrivacyPolicyFamilyResult => {
+    if (
+      !db
+        .prepare("SELECT 1 FROM privacy_policy_families WHERE id = ? AND archived_at IS NULL")
+        .get(familyId)
+    ) {
+      return { outcome: "not-found" };
+    }
+    const nameKey = name.toLowerCase();
+    if (
+      db
+        .prepare("SELECT 1 FROM privacy_policy_families WHERE name_key = ? AND id != ?")
+        .get(nameKey, familyId)
+    ) {
+      return { outcome: "name-taken" };
+    }
+    db.prepare(
+      "UPDATE privacy_policy_families SET name = ?, name_key = ?, updated_at = ? WHERE id = ?",
+    ).run(name, nameKey, now, familyId);
+    return { outcome: "renamed", name };
+  })();
+}
+
 export function listPrivacyPolicyFamilies(db: Database.Database): PrivacyPolicyFamilySummary[] {
   const hasAccessTables =
     db

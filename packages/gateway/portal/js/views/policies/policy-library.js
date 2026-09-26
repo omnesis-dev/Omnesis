@@ -10,7 +10,7 @@
 import { html } from "htm/preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 
-import { createPrivacyPolicy, deleteNamedPrivacyPolicy, getPrivacyPolicyTemplates } from "../../api.js";
+import { createPrivacyPolicy, deleteNamedPrivacyPolicy, getPrivacyPolicyTemplates, renameNamedPrivacyPolicy } from "../../api.js";
 import { ConfirmModal } from "../../components/confirm-modal.js";
 import { Modal } from "../../components/modal.js";
 import { policyFamilyId, policyFamilyName } from "../../components/grant-builder-state.js";
@@ -64,6 +64,11 @@ export function PolicyEditorPage({ policyId, policyName = null, onClose, heading
  * page closes.
  */
 export function PolicyLibrary({ overview, overviewReady, loading, headingRef = null, onRefresh }) {
+  const [renaming, setRenaming] = useState(null);
+  const [renameName, setRenameName] = useState("");
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [renameError, setRenameError] = useState("");
+  const renamePending = useRef(false);
   const [deleting, setDeleting] = useState(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const deletePending = useRef(false);
@@ -104,6 +109,27 @@ export function PolicyLibrary({ overview, overviewReady, loading, headingRef = n
       setError(failure?.serverMessage || "This policy could not be created.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  const trimmedRenameName = renameName.trim();
+  const renameValid = Boolean(renaming && trimmedRenameName && trimmedRenameName.length <= 120
+    && trimmedRenameName !== policyFamilyName(renaming));
+
+  async function rename() {
+    if (!renameValid || renamePending.current) return;
+    renamePending.current = true;
+    setRenameBusy(true);
+    setRenameError("");
+    try {
+      await renameNamedPrivacyPolicy(policyFamilyId(renaming), trimmedRenameName);
+      setRenaming(null);
+      await onRefresh?.();
+    } catch (failure) {
+      setRenameError(failure?.serverMessage || "This policy could not be renamed.");
+    } finally {
+      renamePending.current = false;
+      setRenameBusy(false);
     }
   }
 
@@ -199,12 +225,15 @@ export function PolicyLibrary({ overview, overviewReady, loading, headingRef = n
                           >${revision ? shortRevision(revision) : "None yet"}</small></td>
                         <td class="portal-table-num" onClick=${openFromCell}>${governed}</td>
                         <td class="portal-table-num" onClick=${openFromCell}>${affected.deviceCount}</td>
-                        <td><span title=${deletionReason || "Delete this unused policy"} aria-label=${deletionReason || undefined} tabindex=${deletionReason ? "0" : undefined}>
+                        <td><div class="access-policy-actions"><button type="button" class="btn-secondary" aria-label=${`Rename ${policyFamilyName(policy)}`}
+                          disabled=${!id || deleteBusy || renameBusy}
+                          onClick=${() => { setRenameName(policyFamilyName(policy)); setRenameError(""); setRenaming(policy); }}>Rename</button>
+                          <span title=${deletionReason || "Delete this unused policy"} aria-label=${deletionReason || undefined} tabindex=${deletionReason ? "0" : undefined}>
                           <button type="button" class="btn-secondary" aria-label=${`Delete ${policyFamilyName(policy)}`}
                             title=${deletionReason || "Delete this unused policy"}
-                            disabled=${!id || Boolean(deletionReason) || deleteBusy}
+                            disabled=${!id || Boolean(deletionReason) || deleteBusy || renameBusy}
                             onClick=${() => { setDeleteError(""); setDeleting(policy); }}>Delete</button>
-                        </span></td>
+                        </span></div></td>
                       </tr>`;
                     })}
                   </tbody>
@@ -214,6 +243,19 @@ export function PolicyLibrary({ overview, overviewReady, loading, headingRef = n
                 No privacy policy exists yet. An access level cannot release reviewed answers until one does.
               </p>`}
 
+      <${Modal} open=${Boolean(renaming)} title="Rename policy" size="sm"
+        onClose=${renameBusy ? () => {} : () => setRenaming(null)}>
+        <form class="privacy-policy-create" onSubmit=${(event) => { event.preventDefault(); rename(); }}>
+          <label class="form-group"><span>Name</span><input maxlength="120" value=${renameName}
+            disabled=${renameBusy} onInput=${(event) => setRenameName(event.currentTarget.value)} /></label>
+          <p>Renaming keeps this policy's rules, history and access assignments.</p>
+          ${renameError && html`<p class="access-error" role="alert">${renameError}</p>`}
+          <div class="access-request-actions">
+            <button type="button" class="btn-secondary" disabled=${renameBusy} onClick=${() => setRenaming(null)}>Cancel</button>
+            <button type="submit" class="btn-primary" disabled=${renameBusy || !renameValid}>${renameBusy ? "Renaming…" : "Save name"}</button>
+          </div>
+        </form>
+      </${Modal}>
       <${ConfirmModal}
         open=${Boolean(deleting)}
         title=${`Delete ${deleting ? policyFamilyName(deleting) : "policy"}?`}

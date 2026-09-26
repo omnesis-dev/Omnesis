@@ -70,6 +70,40 @@ describe("writeGateFromScheduler", () => {
     cleanupDb(dbPath);
   });
 
+  test("policy rename and deletion run through the registered writer operations", async () => {
+    const gate = writeGateFromScheduler(scheduler);
+    const familyId = randomUUID();
+    await gate.commitPrivacyPolicy({
+      familyId,
+      familyName: "Scheduler policy",
+      policy: "# Fictional policy\n",
+      digest: "a".repeat(64),
+      revision: "b".repeat(64),
+      expectedRevision: null,
+      action: "template",
+      revertedFromGeneration: null,
+      createdAt: 1,
+    });
+    expect(await gate.renamePrivacyPolicyFamily(familyId, " Renamed scheduler policy ", 2)).toEqual(
+      { outcome: "renamed", name: "Renamed scheduler policy" },
+    );
+    const db = new Database(dbPath);
+    try {
+      expect(
+        db.prepare("SELECT name FROM privacy_policy_families WHERE id = ?").get(familyId),
+      ).toEqual({ name: "Renamed scheduler policy" });
+      expect(
+        db.prepare("SELECT revision FROM privacy_policy_state WHERE family_id = ?").get(familyId),
+      ).toEqual({ revision: "b".repeat(64) });
+    } finally {
+      db.close();
+    }
+    expect(await gate.deletePrivacyPolicyFamily(familyId, 3)).toEqual({ outcome: "deleted" });
+    expect(await gate.renamePrivacyPolicyFamily(familyId, "Archived policy", 4)).toEqual({
+      outcome: "not-found",
+    });
+  });
+
   test("every WriteOps entry has a matching handler in writerHandlers / writerYieldableHandlers", () => {
     // The TS layer (`WRITE_OP_DEFS[].name: WriterOpName`) catches drift
     // at compile time, but a belt-and-suspenders runtime check matters

@@ -186,6 +186,48 @@ describe("privacy admin routes", () => {
     });
   });
 
+  it("renames policies and validates names without changing their revisions", async () => {
+    const initial = await (await app.request("/admin/privacy/policy")).json();
+    const rename = async (familyId: string, name: string) =>
+      app.request(`/admin/privacy/policies/${familyId}`, {
+        method: "PATCH",
+        headers: POLICY_MUTATION_HEADERS,
+        body: JSON.stringify({ name }),
+      });
+    const renamed = await rename(initial.familyId, "  Personal rules  ");
+    expect(renamed.status).toBe(200);
+    expect(await renamed.json()).toMatchObject({
+      familyName: "Personal rules",
+      revision: initial.revision,
+      familyVersion: initial.familyVersion,
+    });
+    expect(await (await app.request("/admin/privacy/policy")).json()).toMatchObject({
+      familyName: "Personal rules",
+    });
+    const created = await (
+      await app.request("/admin/privacy/policies", {
+        method: "POST",
+        headers: POLICY_MUTATION_HEADERS,
+        body: JSON.stringify({ name: "Research rules", templateId: "balanced" }),
+      })
+    ).json();
+    expect((await rename(created.familyId, "PERSONAL rules")).status).toBe(409);
+    for (const name of [" ", "x".repeat(121), "Bad\0name"])
+      expect((await rename(created.familyId, name)).status).toBe(400);
+    expect((await rename("not-a-uuid", "New name")).status).toBe(400);
+    const noCsrf = await app.request(`/admin/privacy/policies/${created.familyId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "New name" }),
+    });
+    expect(noCsrf.status).toBe(403);
+    await app.request(`/admin/privacy/policies/${created.familyId}`, {
+      method: "DELETE",
+      headers: POLICY_MUTATION_HEADERS,
+    });
+    expect((await rename(created.familyId, "Archived name")).status).toBe(404);
+  });
+
   it("deletes an unused named policy and protects the default policy", async () => {
     await app.request("/admin/privacy/policy");
     const createdResponse = await app.request("/admin/privacy/policies", {
@@ -377,6 +419,12 @@ describe("privacy admin routes", () => {
       headers: { "X-Omnesis-CSRF": PORTAL_CSRF_TOKEN },
     });
     expect(deleted.status).toBe(403);
+    const renamed = await bearerApp.request(`/admin/privacy/policies/${PORTAL_DEVICE_ID}`, {
+      method: "PATCH",
+      headers: POLICY_MUTATION_HEADERS,
+      body: JSON.stringify({ name: "New name" }),
+    });
+    expect(renamed.status).toBe(403);
   });
 
   it("removes the legacy standing-watch endpoint", async () => {

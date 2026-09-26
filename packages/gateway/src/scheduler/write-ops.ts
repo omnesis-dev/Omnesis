@@ -461,6 +461,8 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "privacy.conversationDelete", priority: "user" },
   { name: "privacy.directSessionDelete", priority: "user" },
   { name: "privacy.policyCommit", priority: "user" },
+  { name: "privacy.policyDelete", priority: "user" },
+  { name: "privacy.policyRename", priority: "user" },
   { name: "privacy.policyMirrorSynced", priority: "user" },
   { name: "privacy.completionsClaim", priority: "background" },
   { name: "privacy.completionAuthorize", priority: "background" },

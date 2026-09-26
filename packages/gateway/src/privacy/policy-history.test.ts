@@ -114,6 +114,79 @@ describe("privacy policy history", () => {
     },
   );
 
+  it("renames the default and referenced policies without republishing or changing rules", async () => {
+    const { db, store } = await fixture();
+    createAccessTables(db);
+    const original = await store.get();
+    const renamed = await store.renameFamily(
+      DEFAULT_PRIVACY_POLICY_FAMILY_ID,
+      "  Personal rules  ",
+    );
+    expect(renamed).toMatchObject({
+      outcome: "renamed",
+      document: {
+        familyName: "Personal rules",
+        revision: original.revision,
+        generation: original.generation,
+      },
+    });
+    expect((await store.get()).familyName).toBe("Personal rules");
+    expect((await store.getFamily(DEFAULT_PRIVACY_POLICY_FAMILY_ID))?.familyName).toBe(
+      "Personal rules",
+    );
+    db.exec(`
+      INSERT INTO access_principals (id, name, kind, created_at, updated_at) VALUES ('rename-principal', 'Fictional agent', 'interactive', 1, 1);
+      INSERT INTO access_grants (id, principal_id, name, revision, created_at, updated_at) VALUES ('rename-grant', 'rename-principal', 'Answer access', 7, 1, 1);
+    `);
+    db.prepare(
+      `INSERT INTO access_grant_capabilities (grant_id, capability, source_mode, source_ids, release_mode, policy_family_id) VALUES ('rename-grant', 'answer', 'all', '[]', 'reviewed', ?)`,
+    ).run(DEFAULT_PRIVACY_POLICY_FAMILY_ID);
+    expect(
+      await store.renameFamily(DEFAULT_PRIVACY_POLICY_FAMILY_ID, "Renamed while used"),
+    ).toMatchObject({ outcome: "renamed" });
+    expect(
+      db.prepare("SELECT revision FROM access_grants WHERE id = 'rename-grant'").get(),
+    ).toEqual({ revision: 7 });
+    expect(listPrivacyPolicyVersions(db, { limit: 10 })).toHaveLength(1);
+    expect(
+      db
+        .prepare(
+          "SELECT policy_family_id FROM access_grant_capabilities WHERE grant_id = 'rename-grant'",
+        )
+        .get(),
+    ).toEqual({ policy_family_id: DEFAULT_PRIVACY_POLICY_FAMILY_ID });
+  });
+
+  it("validates renames, rejects duplicate names, and permits names released by deletion", async () => {
+    const { db, store } = await fixture();
+    const original = await store.get();
+    const family = await store.createFamily({
+      name: "Policy beta",
+      policy: original.policy,
+      action: "template",
+    });
+    expect(await store.renameFamily(family.familyId!, " policy BETA ")).toMatchObject({
+      outcome: "renamed",
+      document: { familyName: "policy BETA", revision: family.revision },
+    });
+    expect(await store.renameFamily(DEFAULT_PRIVACY_POLICY_FAMILY_ID, "POLICY beta")).toEqual({
+      outcome: "name-taken",
+    });
+    for (const name of [" ", "x".repeat(121), "Bad\0name"]) {
+      expect(await store.renameFamily(family.familyId!, name)).toEqual({ outcome: "invalid" });
+    }
+    expect((await store.getFamily(family.familyId!))?.revision).toBe(family.revision);
+    expect(await store.renameFamily("missing", "New name")).toEqual({ outcome: "not-found" });
+    await store.deleteFamily(family.familyId!);
+    expect(await store.renameFamily(family.familyId!, "Archived rules")).toEqual({
+      outcome: "not-found",
+    });
+    expect(await store.renameFamily(DEFAULT_PRIVACY_POLICY_FAMILY_ID, "Policy beta")).toMatchObject(
+      { outcome: "renamed" },
+    );
+    expect(listPrivacyPolicyFamilies(db)[0].name).toBe("Policy beta");
+  });
+
   it("bootstraps the existing revision, then assigns a unique revision to every change", async () => {
     const { db, store } = await fixture();
     const first = await store.get();

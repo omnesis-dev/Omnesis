@@ -94,6 +94,7 @@ export interface PrivacyAdminServiceDeps {
     | "updateFamily"
     | "restoreFamily"
     | "deleteFamily"
+    | "renameFamily"
   >;
   writeGate: Pick<
     WriteGate,
@@ -131,6 +132,10 @@ export class PrivacyAdminService {
 
   getPolicyFamily(familyId: string): Promise<PrivacyPolicyDocument | null> {
     return this.deps.policyStore.getFamily(familyId);
+  }
+
+  renamePolicyFamily(familyId: string, name: string) {
+    return this.deps.policyStore.renameFamily(familyId, name);
   }
 
   deletePolicyFamily(familyId: string) {

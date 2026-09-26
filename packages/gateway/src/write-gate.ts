@@ -310,6 +310,8 @@ import type { AnswerResponse } from "@omnesis/types/privacy";
 import {
   commitPrivacyPolicy,
   deletePrivacyPolicyFamily,
+  renamePrivacyPolicyFamily,
+  type RenamePrivacyPolicyFamilyResult,
   type DeletePrivacyPolicyFamilyResult,
   markPrivacyPolicyMirrorSynced,
   type CommitPrivacyPolicyInput,
@@ -1787,6 +1789,11 @@ export interface WriteGate {
     familyId: string,
     now: number,
   ): Promise<DeletePrivacyPolicyFamilyResult>;
+  renamePrivacyPolicyFamily(
+    familyId: string,
+    name: string,
+    now: number,
+  ): Promise<RenamePrivacyPolicyFamilyResult>;
   markPrivacyPolicyMirrorSynced(generation: number, digest: string): Promise<boolean>;
   claimAnswerCompletionDeliveries(
     input: ClaimAnswerCompletionDeliveriesInput,
@@ -2549,6 +2556,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     deletePrivacyConversation: (input) => call("privacy.conversationDelete", [input]),
     commitPrivacyPolicy: (input) => call("privacy.policyCommit", [input]),
     deletePrivacyPolicyFamily: (familyId, now) => call("privacy.policyDelete", [familyId, now]),
+    renamePrivacyPolicyFamily: (familyId, name, now) =>
+      call("privacy.policyRename", [familyId, name, now]),
     markPrivacyPolicyMirrorSynced: (generation, digest) =>
       call("privacy.policyMirrorSynced", [generation, digest]),
     claimAnswerCompletionDeliveries: (input) => call("privacy.completionsClaim", [input]),
@@ -3193,6 +3202,8 @@ export function directWriteGate(db: Db): WriteGate {
     commitPrivacyPolicy: async (input) => commitPrivacyPolicy(db, input),
     deletePrivacyPolicyFamily: async (familyId, now) =>
       deletePrivacyPolicyFamily(db, familyId, now),
+    renamePrivacyPolicyFamily: async (familyId, name, now) =>
+      renamePrivacyPolicyFamily(db, familyId, name, now),
     markPrivacyPolicyMirrorSynced: async (generation, digest) =>
       markPrivacyPolicyMirrorSynced(db, generation, digest),
     claimAnswerCompletionDeliveries: async (input) => claimAnswerCompletionDeliveries(db, input),

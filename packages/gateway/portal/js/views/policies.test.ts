@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 const api = vi.hoisted(() => ({
   createPrivacyPolicy: vi.fn(),
   deleteNamedPrivacyPolicy: vi.fn(),
+  renameNamedPrivacyPolicy: vi.fn(),
   getPrivacyPolicyTemplates: vi.fn(),
   getAccessOverview: vi.fn(),
   forkPrivacyPolicy: vi.fn(),
