@@ -1105,7 +1105,11 @@ a:hover { text-decoration: underline; }
   white-space: nowrap;
 }
 .access-level-terms { padding: 6px 14px 16px; }
+.access-level-terms .access-detail-grid { display: flex; flex-wrap: wrap; gap: 12px; }
 .access-level-terms .access-detail-grid > div {
+  flex: 0 1 220px;
+  min-width: 0;
+  box-sizing: border-box;
   padding: 10px 12px;
   border: 1px solid var(--border-light);
   border-radius: 6px;
@@ -1208,7 +1212,7 @@ a:hover { text-decoration: underline; }
 }
 .access-copy:hover { color: var(--text-primary); }
 .access-used-cell { color: var(--text-muted); font-variant-numeric: tabular-nums; }
-.access-reach-cell { color: var(--text-secondary); font-size: 11.5px; white-space: nowrap; }
+.access-reach-cell { color: var(--text-secondary); font-size: 11.5px; }
 /* Unreviewed release is a state the owner chose, not a fault, so it is the
    warning colour. Danger stays with Direct, the capability that actually
    returns raw records — two reds on one row means neither is read as one. */
