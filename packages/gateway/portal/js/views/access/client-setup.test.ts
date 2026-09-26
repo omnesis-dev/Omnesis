@@ -176,7 +176,7 @@ describe("agentSetups", () => {
   test("tells the terminal agents how to sign in without a browser", () => {
     expect(noteText(agent("claude-code").headless!.note)).toMatch(/paste the address/u);
     expect(agent("codex").headless).toMatchObject({ command: "codex mcp login omnesis --no-browser" });
-    expect(noteText(agent("antigravity").note)).toMatch(/paste the code/u);
+    expect(noteText(agent("antigravity").note)).toMatch(/Antigravity page with an authorization code/u);
     expect(agent("chatgpt").headless).toBeUndefined();
   });
 

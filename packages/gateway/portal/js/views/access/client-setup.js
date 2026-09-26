@@ -217,7 +217,7 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
       note: [
         "Then run ",
         { code: "/mcp" },
-        " in Antigravity CLI, select omnesis and choose Authenticate. Approve in the browser that opens, or open the link it prints on any device, then paste the code the sign-in page shows back into Antigravity.",
+        " in Antigravity CLI, select omnesis and choose Authenticate, then approve in the browser that opens, or open the link it prints on any device. After you approve, the browser opens an Antigravity page with an authorization code: copy it and paste it into Antigravity.",
       ],
       docs: `${DOCS}/connect#antigravity`,
     },
