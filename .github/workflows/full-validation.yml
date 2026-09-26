@@ -31,10 +31,58 @@ permissions:
   contents: read
 
 jobs:
+  # Which macOS lanes a pull request needs. GitHub gives the repository only a
+  # few macOS runners at a time, so a pull request runs the macOS lanes only
+  # when it touches what they cover; pushes to main and manual runs always run
+  # every lane, so nothing reaches main's verdict untested on macOS.
+  scope:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pull-requests: read
+    outputs:
+      apple: ${{ steps.scope.outputs.apple }}
+      android_render: ${{ steps.scope.outputs.android_render }}
+      node_macos: ${{ steps.scope.outputs.node_macos }}
+    steps:
+      - id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            { echo apple=true; echo android_render=true; echo node_macos=true; } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')"
+          apple=false; android_render=false; node_macos=false
+          while IFS= read -r f; do
+            case "$f" in
+              .github/workflows/full-validation.yml)
+                apple=true; android_render=true; node_macos=true ;;
+              ios/*|.swiftlint*|.swiftformat*|.github/workflows/ios.yml|.github/workflows/swiftlint.yml|scripts/run-ios-e2e.sh|scripts/ios-*|scripts/synth-gateway.sh|evals/universes/e2e-minimal/*)
+                apple=true ;;
+            esac
+            case "$f" in
+              android/*|.github/workflows/android.yml)
+                android_render=true ;;
+            esac
+            case "$f" in
+              package.json|package-lock.json|.github/workflows/ci.yml|scripts/install.sh|website/install.sh|packages/cli/src/service/*|packages/cli/src/update/*|packages/providers/apple-*/*)
+                node_macos=true ;;
+            esac
+          done <<< "$files"
+          { echo "apple=$apple"; echo "android_render=$android_render"; echo "node_macos=$node_macos"; } >> "$GITHUB_OUTPUT"
+          echo "macOS lanes for this pull request: apple=$apple android_render=$android_render node_macos=$node_macos"
+
   node:
+    needs: scope
     uses: ./.github/workflows/ci.yml
     with:
       target_sha: ${{ github.sha }}
+      run_macos: ${{ needs.scope.outputs.node_macos == 'true' }}
 
   knip:
     uses: ./.github/workflows/knip.yml
@@ -42,19 +90,25 @@ jobs:
       target_sha: ${{ github.sha }}
 
   swift:
+    needs: scope
+    if: ${{ needs.scope.outputs.apple == 'true' }}
     uses: ./.github/workflows/swiftlint.yml
     with:
       target_sha: ${{ github.sha }}
 
   ios:
+    needs: scope
+    if: ${{ needs.scope.outputs.apple == 'true' }}
     uses: ./.github/workflows/ios.yml
     with:
       target_sha: ${{ github.sha }}
 
   android:
+    needs: scope
     uses: ./.github/workflows/android.yml
     with:
       target_sha: ${{ github.sha }}
+      run_render: ${{ needs.scope.outputs.android_render == 'true' }}
 
   docker-smoke:
     uses: ./.github/workflows/docker-smoke.yml
@@ -91,10 +145,12 @@ jobs:
     with:
       target_sha: ${{ github.sha }}
 
-  # One result for the whole suite: green only when every lane succeeded.
+  # One result for the whole suite: green only when every lane succeeded. On a
+  # pull request, the Apple lanes may be skipped by design (see `scope`).
   verdict:
     if: ${{ !cancelled() }}
     needs:
+      - scope
       - node
       - knip
       - swift
@@ -113,10 +169,14 @@ jobs:
       - name: Aggregate lanes
         env:
           RESULTS_JSON: ${{ toJSON(needs) }}
+          EVENT: ${{ github.event_name }}
         run: |
           node -e '
             const results = JSON.parse(process.env.RESULTS_JSON);
-            const failed = Object.entries(results).filter(([, {result}]) => result !== "success");
+            const pr = process.env.EVENT === "pull_request";
+            const scopedOut = (id) => pr && ["swift", "ios"].includes(id) && results.scope.outputs.apple !== "true";
+            const failed = Object.entries(results).filter(([id, {result}]) =>
+              result !== "success" && !(result === "skipped" && scopedOut(id)));
             const lines = Object.entries(results).map(([id, value]) => `| ${id} | ${value.result} |`);
             require("fs").appendFileSync(process.env.GITHUB_STEP_SUMMARY,
               ["## Full validation", "", "| Lane | Result |", "| --- | --- |", ...lines, ""].join("\n"));
