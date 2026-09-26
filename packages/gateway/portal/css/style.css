@@ -1086,7 +1086,7 @@ a:hover { text-decoration: underline; }
   background: var(--bg-secondary);
   overflow: hidden;
 }
-/* The level title and count share the header with its action menu. */
+/* The level title shares the header with its action menu. */
 .access-level-head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1105,6 +1105,7 @@ a:hover { text-decoration: underline; }
   white-space: nowrap;
 }
 .access-level-terms { padding: 6px 14px 16px; }
+.access-level-terms .access-detail-grid dd { overflow-wrap: anywhere; }
 .access-level-terms .access-detail-grid { display: flex; flex-wrap: wrap; gap: 12px; }
 .access-level-terms .access-detail-grid > div {
   flex: 0 1 220px;
@@ -1753,7 +1754,7 @@ a:hover { text-decoration: underline; }
   .access-triad { gap: 4px; }
   .access-detail-grid { grid-template-columns: minmax(0, 1fr); }
   .access-pending-item { grid-template-columns: minmax(0, 1fr); }
-  /* Level names and connection counts wrap on narrow screens. */
+  /* Level names wrap on narrow screens. */
   .access-level-title { flex-wrap: wrap; }
 
 
