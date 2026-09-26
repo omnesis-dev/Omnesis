@@ -387,10 +387,12 @@
           On a machine with less than about 5 GB of memory in total (or a container limited to
           less), a source build (which needs at least 3 GB for itself and about 2 GB beside it)
           stops this account's collector while it builds and starts it again afterwards; the gateway
-          keeps serving. If the build is still killed, the update says the machine most likely ran
-          out of memory and rolls back. Stop the collector and gateway (<code
-            >omnesis service stop collector</code
-          >, <code>omnesis service stop gateway</code>), add swap or free memory, and run
+          keeps serving. If the system stops the gateway for memory instead, it stays down until the
+          build is in place, and the update's own restart brings it up on the new release, however
+          often its service manager had tried to start it meanwhile. If the build is still killed,
+          the update says the machine most likely ran out of memory and rolls back. Stop the
+          collector and gateway (<code>omnesis service stop collector</code>,
+          <code>omnesis service stop gateway</code>), add swap or free memory, and run
           <code>omnesis update</code> again.
         </p>
         <p>

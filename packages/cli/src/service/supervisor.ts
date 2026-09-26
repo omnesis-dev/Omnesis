@@ -593,6 +593,7 @@ export class SystemdSupervisor implements Supervisor {
 
   async start(component: ServiceComponent, instance?: string): Promise<void> {
     this.requireInstalled(component, instance);
+    await this.clearStartLimit(component, instance);
     await this.systemctl(["start", this.unitName(component, instance)]);
   }
 
@@ -603,12 +604,14 @@ export class SystemdSupervisor implements Supervisor {
 
   async restart(component: ServiceComponent, instance?: string): Promise<void> {
     this.requireInstalled(component, instance);
+    await this.clearStartLimit(component, instance);
     await this.systemctl(["restart", this.unitName(component, instance)]);
   }
 
   async reload(component: ServiceComponent, instance?: string): Promise<void> {
     this.requireInstalled(component, instance);
     await this.systemctl(["daemon-reload"]);
+    await this.clearStartLimit(component, instance);
     await this.systemctl(["restart", this.unitName(component, instance)]);
   }
 
@@ -682,6 +685,26 @@ export class SystemdSupervisor implements Supervisor {
       return `Services stop when you log out. Run 'loginctl enable-linger ${this.deps.username}' to keep them running.`;
     }
     return null;
+  }
+
+  /**
+   * Forget the unit's recent failures, and with them its start-rate count, so
+   * the start that follows is judged on its own. With Restart=on-failure a
+   * daemon that keeps exiting is started again every RestartSec, and each of
+   * those starts counts against the unit's start limit (five in ten seconds
+   * by default); once a start lands past it systemd refuses it — "Start
+   * request repeated too quickly" — and keeps refusing until the interval
+   * passes. A gateway the kernel killed for memory during an update's build
+   * crash-loops exactly so while the source launcher refuses to start it
+   * mid-update, and the update's own restart, arriving at a moment the loop
+   * had spent the allowance, was refused and rolled the update back. A start
+   * asked for explicitly is not a crash loop. Best effort: an older systemd
+   * or a unit it has not loaded fails this harmlessly, and the start reports.
+   */
+  private async clearStartLimit(component: ServiceComponent, instance?: string): Promise<void> {
+    await this.deps
+      .exec("systemctl", ["--user", "reset-failed", this.unitName(component, instance)])
+      .catch(() => undefined);
   }
 
   private requireInstalled(component: ServiceComponent, instance?: string): void {

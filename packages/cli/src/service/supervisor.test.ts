@@ -180,6 +180,7 @@ describe("SystemdSupervisor", () => {
     await sup.reload("gateway");
     expect(calls).toEqual([
       ["systemctl", "--user", "daemon-reload"],
+      ["systemctl", "--user", "reset-failed", "omnesis-gateway.service"],
       ["systemctl", "--user", "restart", "omnesis-gateway.service"],
     ]);
   });
@@ -262,10 +263,58 @@ describe("SystemdSupervisor", () => {
     await sup.stop("gateway");
     await sup.restart("gateway");
     expect(calls).toEqual([
+      ["systemctl", "--user", "reset-failed", "omnesis-gateway.service"],
       ["systemctl", "--user", "start", "omnesis-gateway.service"],
       ["systemctl", "--user", "stop", "omnesis-gateway.service"],
+      ["systemctl", "--user", "reset-failed", "omnesis-gateway.service"],
       ["systemctl", "--user", "restart", "omnesis-gateway.service"],
     ]);
+  });
+
+  it("clears a crash loop's spent start limit before a start it was asked for", async () => {
+    // A gateway killed for memory during an update's build is restarted by
+    // Restart=on-failure every two seconds and refused each time by the source
+    // launcher until the update finishes. Those starts spend the unit's start
+    // limit, and systemd then refuses the update's own restart ("Start request
+    // repeated too quickly") — which rolled a whole update back. reset-failed
+    // forgets that count, so it runs before every start this supervisor asks for.
+    const { home, sup, calls } = make();
+    await sup.install(spec(home, { instance: "staging" }));
+    calls.length = 0;
+    await sup.reload("gateway", "staging");
+    expect(calls).toEqual([
+      ["systemctl", "--user", "daemon-reload"],
+      ["systemctl", "--user", "reset-failed", "omnesis-gateway-staging.service"],
+      ["systemctl", "--user", "restart", "omnesis-gateway-staging.service"],
+    ]);
+  });
+
+  it("still starts the unit when reset-failed itself fails", async () => {
+    const { home, sup, calls } = make([
+      {
+        prefix: ["systemctl", "--user", "reset-failed"],
+        result: { code: 1, stderr: "Unit omnesis-gateway.service not loaded." },
+      },
+    ]);
+    await sup.install(spec(home));
+    calls.length = 0;
+    await expect(sup.restart("gateway")).resolves.toBeUndefined();
+    await expect(sup.start("gateway")).resolves.toBeUndefined();
+    expect(calls.map((call) => call[2])).toEqual([
+      "reset-failed",
+      "restart",
+      "reset-failed",
+      "start",
+    ]);
+  });
+
+  it("does not clear anything before a stop or a status", async () => {
+    const { home, sup, calls } = make();
+    await sup.install(spec(home));
+    calls.length = 0;
+    await sup.stop("gateway");
+    await sup.status("gateway");
+    expect(calls.some((call) => call.includes("reset-failed"))).toBe(false);
   });
 
   it("start on a missing unit is a user error", async () => {
