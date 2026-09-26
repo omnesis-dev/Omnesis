@@ -154,11 +154,13 @@ try {
   const actualTools = Array.isArray(inspection.plugin?.toolNames)
     ? [...inspection.plugin.toolNames].sort()
     : [];
+  // OpenClaw loads plugins for `inspect --runtime` in tool-discovery mode, in
+  // which the integration registers its tools only. Its transcript hook and
+  // service are registered in full mode, which the gateway run below covers:
+  // only the started service creates the integration's state database.
   if (
     inspection.plugin?.status !== "loaded" ||
     JSON.stringify(actualTools) !== JSON.stringify(expectedTools) ||
-    !inspection.plugin.hookNames?.includes("omnesis-transcript-ingestion-nudge") ||
-    !inspection.plugin.services?.includes("omnesis-integration") ||
     inspection.diagnostics?.length
   ) {
     throw new Error(`OpenClaw runtime inspection rejected Omnesis:\n${JSON.stringify(inspection)}`);
