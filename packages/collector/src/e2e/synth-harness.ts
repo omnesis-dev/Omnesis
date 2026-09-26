@@ -1078,11 +1078,12 @@ export class SyntheticE2EHarness {
   }
 
   /**
-   * Force the gateway's search snapshot to advance to the WAL head. The
-   * pipeline reads from a long-running `BEGIN` snapshot on `index.db` that
-   * normally refreshes every 10 minutes — without this nudge, chunks
-   * indexed *after* gateway boot are invisible to BM25 + vector search.
-   * Call after sync if your test queries `/search`.
+   * Force the gateway's search snapshot to advance to the WAL head. A gateway
+   * with search workers disabled reads from a long-running `BEGIN` snapshot on
+   * `index.db` that normally refreshes every 10 minutes — without this nudge,
+   * chunks indexed *after* gateway boot are invisible to its BM25 + vector
+   * search. With workers on, search reads the current index and this is a
+   * no-op. Call after sync if your test queries `/search`.
    */
   async refreshSearchSnapshot(): Promise<void> {
     const res = await fetch(`${this.gatewayUrl}/admin/search-snapshot/refresh`, {

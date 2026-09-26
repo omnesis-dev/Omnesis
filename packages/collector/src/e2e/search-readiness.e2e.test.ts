@@ -45,15 +45,16 @@
  *     raced, and the freeze is verified on both edges from the very column the
  *     drip stamps.
  *
- *   - **The lane that serves a query decides what it can see.** The pipeline's
- *     delegate-or-fallback gate documents the fallback as byte-identical over
- *     "the same `index.db` handle". The handles are not the same: the worker's
- *     is opened read-only with no held transaction and takes a fresh snapshot
- *     per statement, while the main thread reads a handle anchored in a `BEGIN`
- *     that advances only on the configured refresh cadence. The last test
- *     drives both lanes over the same corpus and pins the asymmetry, so a
- *     change on either side — a snapshot for the worker, a live handle for main
- *     — has to come past this file.
+ *   - **The pool setting decides what search can see.** A search worker's
+ *     handle is opened read-only with no held transaction and takes a fresh
+ *     snapshot per statement. With the pool on, the main-thread fallback reads
+ *     the current index too (`search-load-soak.e2e.test.ts` drives both paths
+ *     side by side and requires them to agree); with the pool off, main is the
+ *     only lane and reads a handle anchored in a `BEGIN` that advances only on
+ *     the configured refresh cadence. The last test drives both settings over
+ *     the same corpus and pins the difference, so a change on either side — a
+ *     snapshot for the pool, a live handle at concurrency 0 — has to come past
+ *     this file.
  *
  * Every wait terminates on an observed row, counter, status field or log line
  * read straight from the gateway's own stores; nothing waits on elapsed time.
@@ -364,15 +365,6 @@ describe("Search readiness: the pool, the semantic clock, attribution lag, and t
       60_000,
       "the people drip to attribute the attribution fixture",
     );
-
-    // Advance the boot snapshot once, so BOTH lanes can see the two long-lived
-    // documents. Without this the main-thread lane reads a `BEGIN` anchored
-    // before either existed, and every search assertion in this file would
-    // silently depend on the worker pool having readied — turning a pool fault
-    // into "search returned nothing" instead of a named failure. It costs one
-    // `COMMIT; BEGIN;`, and it does not cost the last test its
-    // `refreshCount === 0` assertion: that boot opens a fresh handle.
-    await harness.refreshSearchSnapshot();
   }, 300_000);
 
   afterAll(async () => {
@@ -620,7 +612,7 @@ describe("Search readiness: the pool, the semantic clock, attribution lag, and t
     expect(hitIds(await search(`Northmoor with:${PRIYA.email}`))).toContain(documentId);
   }, 240_000);
 
-  test("candidate generation on a worker sees the WAL head while the main-thread lane serves the boot snapshot", async () => {
+  test("candidate generation on a worker sees the WAL head while a pool-less main thread serves the boot snapshot", async () => {
     // ── Lane A: the pool is on, and it reads the WAL head ──────────────────
     //
     // The worker's handle is opened read-only with no held transaction, so
@@ -694,15 +686,11 @@ describe("Search readiness: the pool, the semantic clock, attribution lag, and t
     expect(status.refreshCount, "this boot's snapshot handle has never advanced").toBe(0);
     expect(chunkRows(laneBDocId).length).toBeGreaterThan(0);
 
-    // The shipped contract, pinned as it is rather than as the pipeline's
-    // doc comment describes it. `candidateGen` calls the main-thread fallback
-    // "byte-identical because it is the same function over the same `index.db`
-    // + usearch read handle"; it is not the same handle. The worker's is
-    // unpinned (lane A above found its document with no refresh); main's is
-    // anchored in a `BEGIN` taken at boot, so a document indexed afterwards is
-    // invisible until the snapshot advances — for the whole post-restart boot
-    // window, on every saturation fallback, while a crashed worker is respawned,
-    // and always at concurrency 0. The day either side changes, this reddens.
+    // The shipped contract at concurrency 0. The worker's handle is unpinned
+    // (lane A above found its document with no refresh); with no pool, main's
+    // handle is anchored in a `BEGIN` taken at boot, so a document indexed
+    // afterwards is invisible until the snapshot advances. The day either side
+    // changes, this reddens.
     expect(hitIds(beforeRefresh)).not.toContain(laneBDocId);
     expect(hitIds(afterRefresh)).toContain(laneBDocId);
   }, 300_000);

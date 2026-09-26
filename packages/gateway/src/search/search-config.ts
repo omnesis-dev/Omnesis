@@ -179,9 +179,12 @@ export interface SearchConfig {
    * `BEGIN` transaction so the per-connection page cache isn't
    * invalidated by concurrent indexer writes. The snapshot is
    * advanced periodically (`refreshIntervalMs`); fresh writes become
-   * visible to search within that window.
+   * visible to search within that window. It applies only while the
+   * main thread is the sole search path (search-worker concurrency 0):
+   * the workers read the current index, so their main-thread fallback
+   * does too.
    *
-   *   - `enabled`: opt-in, default `false`.
+   *   - `enabled`: default `true`.
    *   - `refreshIntervalMs`: how often to `COMMIT; BEGIN;` on the
    *     handle. Default 600000 (10 min). Smaller = fresher results
    *     but more cache churn; larger = stale-er search reads.
