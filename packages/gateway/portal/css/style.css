@@ -513,10 +513,6 @@ a:hover { text-decoration: underline; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0;
   width: 22px;
   height: 22px;
   padding: 0;
@@ -1169,6 +1165,10 @@ a:hover { text-decoration: underline; }
 .access-row-actions { display: inline-flex; flex: none; }
 .access-level-group .row-action-menu { flex: none; }
 .access-level-group .row-action-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0;
   width: 22px;
   height: 22px;
   padding: 0;
