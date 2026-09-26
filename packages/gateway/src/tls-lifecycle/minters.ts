@@ -17,6 +17,7 @@ import { promisify } from "node:util";
 
 import {
   assertNever,
+  mkcertCliCandidates,
   TAILSCALE_STATUS_TIMEOUT_MS,
   tailscaleCliCandidates,
   tailscaleCliEnv,
@@ -38,6 +39,7 @@ export interface HostMinterDeps {
     env?: NodeJS.ProcessEnv,
   ) => Promise<string | void>;
   tailscaleCandidates?: TailscaleCliCandidate[];
+  mkcertCandidates?: string[];
   /** How long each `tailscale status --json` may take. */
   tailscaleStatusTimeoutMs?: number;
   selfSigned?: () => TlsPem;
@@ -124,6 +126,34 @@ function tailscaleUnavailable(failures: TailscaleCliFailure[]): Error {
   );
 }
 
+/**
+ * Re-issue through the first mkcert the gateway can run: the one on its PATH,
+ * else Homebrew's, which a launchd PATH does not reach on Apple Silicon.
+ */
+async function mintWithMkcert(
+  candidates: readonly string[],
+  names: readonly string[],
+  run: NonNullable<HostMinterDeps["run"]>,
+  signal: AbortSignal,
+): Promise<TlsPem> {
+  for (const file of candidates) {
+    try {
+      return await mintWithBinary(
+        file,
+        (certPath, keyPath) => ["-cert-file", certPath, "-key-file", keyPath, "--", ...names],
+        run,
+        signal,
+      );
+    } catch (err) {
+      if (!isMissingBinary(err)) throw err;
+    }
+  }
+  const tried = candidates.map((file) => `\`${file}\``).join(", ");
+  throw new Error(
+    `no mkcert the gateway can run: tried ${tried || "none"} (the gateway's PATH is ${process.env.PATH ?? "unset"})`,
+  );
+}
+
 export function createHostMinter(deps: HostMinterDeps = {}): TlsMinter {
   const run = deps.run ?? runBinary;
   const selfSigned = deps.selfSigned ?? generateSelfSigned;
@@ -190,12 +220,7 @@ export function createHostMinter(deps: HostMinterDeps = {}): TlsMinter {
         case "mkcert":
           if (names.length === 0)
             throw new Error("the current certificate carries no names to renew");
-          return mintWithBinary(
-            "mkcert",
-            (certPath, keyPath) => ["-cert-file", certPath, "-key-file", keyPath, "--", ...names],
-            run,
-            signal,
-          );
+          return mintWithMkcert(deps.mkcertCandidates ?? mkcertCliCandidates(), names, run, signal);
         default:
           return assertNever(ownership);
       }
