@@ -1105,7 +1105,7 @@ a:hover { text-decoration: underline; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.access-level-terms { padding: 0 14px 10px; }
+.access-level-terms { padding: 6px 14px 16px; }
 .access-level-body { margin: 0 14px 10px; }
 .access-level-empty {
   margin: 0;
@@ -1265,7 +1265,7 @@ a:hover { text-decoration: underline; }
   gap: 10px 24px;
   margin: 0;
 }
-.access-detail-grid dt { padding: 4px 0; margin-bottom: 4px; }
+.access-detail-grid dt { margin-bottom: 4px; }
 .access-detail-grid dd { margin: 2px 0 0; color: var(--text-secondary); font-size: 11.5px; }
 .access-detail-grid a { color: inherit; text-decoration: underline; }
 .access-revoked,
