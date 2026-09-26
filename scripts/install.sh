@@ -2579,10 +2579,47 @@ tailscale_cli() {
   fi
 }
 
+# Run a command for at most $1 seconds: macOS has no timeout(1). The command
+# runs in the background (so "$@" must be a program, not a shell function, for
+# the kill to reach it) and a watchdog kills it when the time is up; the
+# watchdog's own output goes nowhere, so a caller reading the command's output
+# through a pipe is not held open by it.
+run_bounded() {
+  RB_LIMIT="$1"
+  shift
+  "$@" &
+  RB_PID=$!
+  (
+    trap 'kill "${RB_SLEEP:-}" 2>/dev/null; exit 0' TERM
+    sleep "$RB_LIMIT" &
+    RB_SLEEP=$!
+    wait "$RB_SLEEP" && kill "$RB_PID" 2>/dev/null
+  ) </dev/null >/dev/null 2>&1 &
+  RB_WATCHDOG=$!
+  RB_STATUS=0
+  wait "$RB_PID" || RB_STATUS=$?
+  kill "$RB_WATCHDOG" 2>/dev/null || true
+  wait "$RB_WATCHDOG" 2>/dev/null || true
+  if [ "$RB_STATUS" = 143 ]; then echo "no answer within ${RB_LIMIT}s" >&2; fi
+  return "$RB_STATUS"
+}
+
+# tailscale_cli, bounded to $1 seconds: a CLI that hangs (a wedged daemon, an
+# app waiting on its GUI) must not stall the installer.
+tailscale_cli_bounded() {
+  TS_LIMIT="$1"
+  shift
+  if [ "${TAILSCALE_CLI_BUNDLED:-0}" = 1 ]; then
+    run_bounded "$TS_LIMIT" env TAILSCALE_BE_CLI=1 "$TAILSCALE_CLI" "$@"
+  else
+    run_bounded "$TS_LIMIT" "$TAILSCALE_CLI" "$@"
+  fi
+}
+
 tailscale_cli_ready() {
   TAILSCALE_CLI="$1"
   TAILSCALE_CLI_BUNDLED="$2"
-  TS_BACKEND_STATE="$(tailscale_cli status --json 2>/dev/null | node -e '
+  TS_BACKEND_STATE="$(tailscale_cli_bounded 10 status --json 2>/dev/null | node -e '
     let s = ""; process.stdin.on("data", (d) => (s += d));
     process.stdin.on("end", () => {
       try { process.stdout.write(JSON.parse(s).BackendState || ""); }
@@ -2730,7 +2767,7 @@ try {
   fi
 
   if find_tailscale_cli; then
-    TS_NAME="$(tailscale_cli status --json 2>/dev/null | node -e '
+    TS_NAME="$(tailscale_cli_bounded 10 status --json 2>/dev/null | node -e '
       let s = ""; process.stdin.on("data", (d) => (s += d));
       process.stdin.on("end", () => {
         try {
@@ -2798,9 +2835,11 @@ try {
 # certificate itself before it expires, so minting once through `sudo` would
 # leave a certificate that nothing can renew. Any other failure is the
 # operator's to resolve, and is reported rather than worked around.
+# `tailscale cert` orders from Let's Encrypt, which takes seconds, so its bound
+# is generous: it only keeps a hung daemon from stalling the install for good.
 TS_CERT_ERROR=""
 mint_tailscale_cert() {
-  TS_CERT_ERROR="$(tailscale_cli cert --cert-file "$1" --key-file "$2" "$3" 2>&1 >/dev/null)" && return 0
+  TS_CERT_ERROR="$(tailscale_cli_bounded 300 cert --cert-file "$1" --key-file "$2" "$3" 2>&1 >/dev/null)" && return 0
   case "$TS_CERT_ERROR" in
     *"cert access denied"*) ;;
     *) return 1 ;;
@@ -2819,7 +2858,7 @@ mint_tailscale_cert() {
     warn "Could not take the Tailscale operator permission on this machine."
     return 1
   }
-  TS_CERT_ERROR="$(tailscale_cli cert --cert-file "$1" --key-file "$2" "$3" 2>&1 >/dev/null)" || return 1
+  TS_CERT_ERROR="$(tailscale_cli_bounded 300 cert --cert-file "$1" --key-file "$2" "$3" 2>&1 >/dev/null)" || return 1
   info "Granted on this machine only — nothing on your tailnet changed."
   return 0
 }

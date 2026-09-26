@@ -17,6 +17,7 @@ import { promisify } from "node:util";
 
 import {
   assertNever,
+  TAILSCALE_STATUS_TIMEOUT_MS,
   tailscaleCliCandidates,
   tailscaleCliEnv,
   tailscaleIsRunningStatus,
@@ -37,6 +38,8 @@ export interface HostMinterDeps {
     env?: NodeJS.ProcessEnv,
   ) => Promise<string | void>;
   tailscaleCandidates?: TailscaleCliCandidate[];
+  /** How long each `tailscale status --json` may take. */
+  tailscaleStatusTimeoutMs?: number;
   selfSigned?: () => TlsPem;
 }
 
@@ -53,6 +56,9 @@ async function runBinary(
     const detail = err as NodeJS.ErrnoException & { stderr?: string };
     if (detail.code === "ENOENT") {
       throw new Error(`\`${file}\` is not installed or not on the gateway's PATH`, { cause: err });
+    }
+    if (signal.aborted && (signal.reason as Error | undefined)?.name === "TimeoutError") {
+      throw new Error(`\`${file} ${args[0] ?? ""}\` did not answer in time`, { cause: err });
     }
     const stderr = detail.stderr?.trim();
     throw new Error(`\`${file} ${args[0] ?? ""}\` failed${stderr ? `: ${stderr}` : ""}`, {
@@ -121,6 +127,7 @@ function tailscaleUnavailable(failures: TailscaleCliFailure[]): Error {
 export function createHostMinter(deps: HostMinterDeps = {}): TlsMinter {
   const run = deps.run ?? runBinary;
   const selfSigned = deps.selfSigned ?? generateSelfSigned;
+  const statusTimeoutMs = deps.tailscaleStatusTimeoutMs ?? TAILSCALE_STATUS_TIMEOUT_MS;
   return {
     async mint(ownership: Exclude<TlsOwnership, "external">, names, signal): Promise<TlsPem> {
       // Names come off a certificate on disk and land in an issuer's argv;
@@ -140,10 +147,11 @@ export function createHostMinter(deps: HostMinterDeps = {}): TlsMinter {
           const failures: TailscaleCliFailure[] = [];
           for (const candidate of deps.tailscaleCandidates ?? tailscaleCliCandidates()) {
             try {
+              // A hung candidate must not spend the whole renewal's time.
               const status = await run(
                 candidate.file,
                 ["status", "--json"],
-                signal,
+                AbortSignal.any([signal, AbortSignal.timeout(statusTimeoutMs)]),
                 tailscaleCliEnv(candidate),
               );
               if (!status || !tailscaleIsRunningStatus(status)) {

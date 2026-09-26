@@ -60,3 +60,10 @@ export function tailscaleIsRunningStatus(output: string): boolean {
     return false;
   }
 }
+
+/**
+ * How long a `tailscale status --json` may take outside the gateway's 2s
+ * pairing discovery. A healthy CLI answers at once; one that hangs (a wedged
+ * daemon, an app waiting on its GUI) must not stall renewal or provisioning.
+ */
+export const TAILSCALE_STATUS_TIMEOUT_MS = 10_000;

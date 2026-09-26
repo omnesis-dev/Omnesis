@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { createHostMinter } from "./minters.js";
 
@@ -109,6 +111,59 @@ describe("createHostMinter", () => {
     await expect(minter.mint("tailscale", ["gw.tail.example"], signal())).rejects.toThrow(
       /^no Tailscale CLI the gateway can run: tried `tailscale`, `\/Applications\/Tailscale\.app\/Contents\/MacOS\/Tailscale` \(the gateway's PATH is /u,
     );
+  });
+
+  test("a hung Tailscale CLI is abandoned at the status bound and the next candidate renews", async () => {
+    const calls: string[][] = [];
+    const minter = createHostMinter({
+      tailscaleStatusTimeoutMs: 50,
+      tailscaleCandidates: [
+        { file: "tailscale", bundledApp: false },
+        { file: "/Applications/Tailscale.app/Contents/MacOS/Tailscale", bundledApp: true },
+      ],
+      run: async (file, args, runSignal) => {
+        calls.push([file, ...args]);
+        if (file === "tailscale") {
+          // Hangs until the caller gives up on it.
+          return new Promise((_resolve, reject) =>
+            runSignal.addEventListener("abort", () => reject(runSignal.reason)),
+          );
+        }
+        if (args[0] === "status") return '{"BackendState":"Running"}';
+        expect(runSignal.aborted).toBe(false);
+        writeFileSync(args[2]!, "TS-CERT");
+        writeFileSync(args[4]!, "TS-KEY");
+        return undefined;
+      },
+    });
+    expect(await minter.mint("tailscale", ["gw.tail.example"], signal())).toEqual({
+      cert: "TS-CERT",
+      key: "TS-KEY",
+    });
+    expect(calls.map(([file, command]) => [file, command])).toEqual([
+      ["tailscale", "status"],
+      ["/Applications/Tailscale.app/Contents/MacOS/Tailscale", "status"],
+      ["/Applications/Tailscale.app/Contents/MacOS/Tailscale", "cert"],
+    ]);
+  });
+
+  test("a real CLI process that hangs is killed at the bound and said so", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-minter-hung-"));
+    try {
+      const cli = join(dir, "tailscale");
+      writeFileSync(cli, "#!/bin/sh\nexec sleep 30\n", { mode: 0o755 });
+      const minter = createHostMinter({
+        tailscaleStatusTimeoutMs: 200,
+        tailscaleCandidates: [{ file: cli, bundledApp: false }],
+      });
+      const started = Date.now();
+      await expect(minter.mint("tailscale", ["gw.tail.example"], signal())).rejects.toThrow(
+        /`.*tailscale status` did not answer in time/u,
+      );
+      expect(Date.now() - started).toBeLessThan(5_000);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("the mkcert tier re-issues for every name the certificate carries", async () => {
