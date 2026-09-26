@@ -309,6 +309,8 @@ import {
 import type { AnswerResponse } from "@omnesis/types/privacy";
 import {
   commitPrivacyPolicy,
+  deletePrivacyPolicyFamily,
+  type DeletePrivacyPolicyFamilyResult,
   markPrivacyPolicyMirrorSynced,
   type CommitPrivacyPolicyInput,
   type CommitPrivacyPolicyResult,
@@ -1781,6 +1783,10 @@ export interface WriteGate {
   recordAnswerEgress(input: RecordAnswerEgressInput): Promise<RecordedAnswerEgress | null>;
   deletePrivacyConversation(input: DeletePrivacyConversationInput): Promise<boolean>;
   commitPrivacyPolicy(input: CommitPrivacyPolicyInput): Promise<CommitPrivacyPolicyResult>;
+  deletePrivacyPolicyFamily(
+    familyId: string,
+    now: number,
+  ): Promise<DeletePrivacyPolicyFamilyResult>;
   markPrivacyPolicyMirrorSynced(generation: number, digest: string): Promise<boolean>;
   claimAnswerCompletionDeliveries(
     input: ClaimAnswerCompletionDeliveriesInput,
@@ -2542,6 +2548,7 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     recordAnswerEgress: (input) => call("privacy.egressRecord", [input]),
     deletePrivacyConversation: (input) => call("privacy.conversationDelete", [input]),
     commitPrivacyPolicy: (input) => call("privacy.policyCommit", [input]),
+    deletePrivacyPolicyFamily: (familyId, now) => call("privacy.policyDelete", [familyId, now]),
     markPrivacyPolicyMirrorSynced: (generation, digest) =>
       call("privacy.policyMirrorSynced", [generation, digest]),
     claimAnswerCompletionDeliveries: (input) => call("privacy.completionsClaim", [input]),
@@ -3184,6 +3191,8 @@ export function directWriteGate(db: Db): WriteGate {
       recordAnswerEgress(db, input, recordMcpToolInvocationAudit, currentDeviceAnswerOwner),
     deletePrivacyConversation: async (input) => deletePrivacyConversation(db, input),
     commitPrivacyPolicy: async (input) => commitPrivacyPolicy(db, input),
+    deletePrivacyPolicyFamily: async (familyId, now) =>
+      deletePrivacyPolicyFamily(db, familyId, now),
     markPrivacyPolicyMirrorSynced: async (generation, digest) =>
       markPrivacyPolicyMirrorSynced(db, generation, digest),
     claimAnswerCompletionDeliveries: async (input) => claimAnswerCompletionDeliveries(db, input),

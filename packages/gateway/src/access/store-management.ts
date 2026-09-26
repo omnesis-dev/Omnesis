@@ -3,6 +3,8 @@
 
 import { DEFAULT_PRIVACY_POLICY_FAMILY_ID } from "@omnesis/types/privacy";
 
+import { privacyPolicyDeletionBlockedReason } from "../privacy/policy-history.js";
+
 import { oauthClientAuthenticates } from "./store-clients.js";
 import { appendAudit, getActiveCredential, hashSecret } from "./store-helpers.js";
 import { listAccessLevels } from "./store-level-summaries.js";
@@ -382,7 +384,11 @@ export function listAccessOverview(
          JOIN privacy_policy_state s ON s.family_id = f.id
         WHERE f.archived_at IS NULL ORDER BY f.created_at, f.id`,
     )
-    .all();
+    .all()
+    .map((family) => ({
+      ...family,
+      deletionBlockedReason: privacyPolicyDeletionBlockedReason(db, family.id),
+    }));
   return {
     sources: [
       ...availableSources,

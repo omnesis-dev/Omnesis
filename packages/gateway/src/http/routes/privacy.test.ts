@@ -186,6 +186,56 @@ describe("privacy admin routes", () => {
     });
   });
 
+  it("deletes an unused named policy and protects the default policy", async () => {
+    await app.request("/admin/privacy/policy");
+    const createdResponse = await app.request("/admin/privacy/policies", {
+      method: "POST",
+      headers: POLICY_MUTATION_HEADERS,
+      body: JSON.stringify({ name: "Unused policy", templateId: "balanced" }),
+    });
+    const created = await createdResponse.json();
+    db.exec("CREATE TABLE access_level_capabilities (policy_family_id TEXT)");
+    db.prepare("INSERT INTO access_level_capabilities VALUES (?)").run(created.familyId);
+    const inUse = await app.request(`/admin/privacy/policies/${created.familyId}`, {
+      method: "DELETE",
+      headers: POLICY_MUTATION_HEADERS,
+    });
+    expect(inUse.status).toBe(409);
+    expect(await inUse.json()).toMatchObject({
+      code: "policy_in_use",
+      error: expect.stringContaining("access level"),
+    });
+    db.exec("DELETE FROM access_level_capabilities");
+    const deleted = await app.request(`/admin/privacy/policies/${created.familyId}`, {
+      method: "DELETE",
+      headers: POLICY_MUTATION_HEADERS,
+    });
+    expect(deleted.status).toBe(204);
+    expect((await app.request(`/admin/privacy/policies/${created.familyId}`)).status).toBe(404);
+    const policies = await (await app.request("/admin/privacy/policies")).json();
+    expect(policies.policies.map((policy: { id: string }) => policy.id)).not.toContain(
+      created.familyId,
+    );
+    const blocked = await app.request(`/admin/privacy/policies/${policies.policies[0].id}`, {
+      method: "DELETE",
+      headers: POLICY_MUTATION_HEADERS,
+    });
+    expect(blocked.status).toBe(409);
+    expect(await blocked.json()).toMatchObject({ code: "policy_in_use" });
+    expect(
+      (
+        await app.request("/admin/privacy/policies/not-a-uuid", {
+          method: "DELETE",
+          headers: POLICY_MUTATION_HEADERS,
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (await app.request(`/admin/privacy/policies/${created.familyId}`, { method: "DELETE" }))
+        .status,
+    ).toBe(403);
+  });
+
   it("returns 400 for a malformed policy-family id on reads and mutations", async () => {
     const read = await app.request("/admin/privacy/policies/not-a-uuid");
     expect(read.status).toBe(400);
@@ -314,6 +364,7 @@ describe("privacy admin routes", () => {
       await next();
     });
     bearerApp.put("/policy", scope.portalAdmin(), (c) => c.json({ ok: true }));
+    mountPrivacyRoutes(strictRoute(bearerApp), {});
 
     const response = await bearerApp.request("/policy", {
       method: "PUT",
@@ -321,6 +372,11 @@ describe("privacy admin routes", () => {
     });
     expect(response.status).toBe(403);
     expect(await response.text()).toContain("portal session required");
+    const deleted = await bearerApp.request(`/admin/privacy/policies/${PORTAL_DEVICE_ID}`, {
+      method: "DELETE",
+      headers: { "X-Omnesis-CSRF": PORTAL_CSRF_TOKEN },
+    });
+    expect(deleted.status).toBe(403);
   });
 
   it("removes the legacy standing-watch endpoint", async () => {

@@ -1202,6 +1202,9 @@ export const createPrivacyPolicy = (body) =>
 export const getNamedPrivacyPolicy = (familyId) =>
   privacyRequest("GET", `/admin/privacy/policies/${encodeURIComponent(familyId)}`);
 
+export const deleteNamedPrivacyPolicy = (familyId) =>
+  privacyRequest("DELETE", `/admin/privacy/policies/${encodeURIComponent(familyId)}`);
+
 export const updateNamedPrivacyPolicy = (familyId, body) =>
   privacyRequest("PATCH", `/admin/privacy/policies/${encodeURIComponent(familyId)}`, { body });
 

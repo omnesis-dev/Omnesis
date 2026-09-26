@@ -8,9 +8,10 @@
 // way an access level does on the Access tab.
 
 import { html } from "htm/preact";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 
-import { createPrivacyPolicy, getPrivacyPolicyTemplates } from "../../api.js";
+import { createPrivacyPolicy, deleteNamedPrivacyPolicy, getPrivacyPolicyTemplates } from "../../api.js";
+import { ConfirmModal } from "../../components/confirm-modal.js";
 import { Modal } from "../../components/modal.js";
 import { policyFamilyId, policyFamilyName } from "../../components/grant-builder-state.js";
 import { policyEditorPath } from "../../lib/policy-path.js";
@@ -62,7 +63,11 @@ export function PolicyEditorPage({ policyId, policyName = null, onClose, heading
  * `headingRef` is the tab's heading, for focus to land on when the editor
  * page closes.
  */
-export function PolicyLibrary({ overview, overviewReady, loading, headingRef = null }) {
+export function PolicyLibrary({ overview, overviewReady, loading, headingRef = null, onRefresh }) {
+  const [deleting, setDeleting] = useState(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const deletePending = useRef(false);
+  const [deleteError, setDeleteError] = useState("");
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [templateId, setTemplateId] = useState("");
@@ -102,10 +107,30 @@ export function PolicyLibrary({ overview, overviewReady, loading, headingRef = n
     }
   }
 
+  async function remove() {
+    if (!deleting || deletePending.current) return;
+    deletePending.current = true;
+    setDeleteBusy(true);
+    setDeleteError("");
+    try {
+      await deleteNamedPrivacyPolicy(policyFamilyId(deleting));
+      setDeleting(null);
+      await onRefresh?.();
+    } catch (failure) {
+      setDeleting(null);
+      setDeleteError(failure?.serverMessage || "This policy could not be deleted.");
+      await onRefresh?.();
+    } finally {
+      deletePending.current = false;
+      setDeleteBusy(false);
+    }
+  }
+
   const policies = overview.policyFamilies ?? overview.privacyPolicies ?? [];
 
   return html`
     <section class="access-policies">
+      ${deleteError && html`<p class="access-error" role="alert">${deleteError}</p>`}
       <div class="access-list-header">
         <div>
           <h2 ref=${headingRef} tabIndex="-1">Policies</h2>
@@ -129,6 +154,7 @@ export function PolicyLibrary({ overview, overviewReady, loading, headingRef = n
                       <th>Revision</th>
                       <th class="portal-table-num" title="Live connections whose answers are reviewed under this policy — the blast radius of editing it">Connections</th>
                       <th class="portal-table-num" title="Integrations on access levels reviewed under this policy">Integrations</th>
+                      <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -137,6 +163,12 @@ export function PolicyLibrary({ overview, overviewReady, loading, headingRef = n
                       const revision = policy.revision ?? policy.currentRevision ?? null;
                       const affected = affectedPolicyAccess(overview, id);
                       const governed = affected.connectionCount;
+                      const deletionReason = policy.deletionBlockedReason
+                        ?? (id === overview.defaultPolicyFamilyId ? "The default policy cannot be deleted."
+                          : affected.levels.length || affected.connectionCount || affected.deviceCount
+                            ? "This policy is used by access levels, connections or integrations. Reassign them before deleting it."
+                            : !Object.hasOwn(policy, "deletionBlockedReason")
+                              ? "Policy usage could not be verified. Refresh before deleting it." : "");
                       const isDefault = id === overview.defaultPolicyFamilyId;
                       const openPolicy = () => navigate(policyEditorPath(id));
                       // A row whose policy has no id has nowhere to go, so it
@@ -167,6 +199,12 @@ export function PolicyLibrary({ overview, overviewReady, loading, headingRef = n
                           >${revision ? shortRevision(revision) : "None yet"}</small></td>
                         <td class="portal-table-num" onClick=${openFromCell}>${governed}</td>
                         <td class="portal-table-num" onClick=${openFromCell}>${affected.deviceCount}</td>
+                        <td><span title=${deletionReason || "Delete this unused policy"} aria-label=${deletionReason || undefined} tabindex=${deletionReason ? "0" : undefined}>
+                          <button type="button" class="btn-secondary" aria-label=${`Delete ${policyFamilyName(policy)}`}
+                            title=${deletionReason || "Delete this unused policy"}
+                            disabled=${!id || Boolean(deletionReason) || deleteBusy}
+                            onClick=${() => { setDeleteError(""); setDeleting(policy); }}>Delete</button>
+                        </span></td>
                       </tr>`;
                     })}
                   </tbody>
@@ -176,6 +214,17 @@ export function PolicyLibrary({ overview, overviewReady, loading, headingRef = n
                 No privacy policy exists yet. An access level cannot release reviewed answers until one does.
               </p>`}
 
+      <${ConfirmModal}
+        open=${Boolean(deleting)}
+        title=${`Delete ${deleting ? policyFamilyName(deleting) : "policy"}?`}
+        body="This removes the policy from the library. Version history and existing audit records are retained."
+        confirmLabel=${deleteBusy ? "Deleting…" : "Delete policy"}
+        destructive
+        confirmDisabled=${deleteBusy}
+        cancelDisabled=${deleteBusy}
+        onConfirm=${remove}
+        onCancel=${() => setDeleting(null)}
+      />
       <${Modal} open=${creating} title="Create policy" size="sm" onClose=${busy ? () => {} : () => setCreating(false)}>
         <div class="privacy-policy-create">
           <label class="form-group"><span>Name</span><input maxlength="120" value=${name}

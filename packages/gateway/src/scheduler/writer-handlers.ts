@@ -512,6 +512,7 @@ import {
 } from "../privacy/store.js";
 import {
   commitPrivacyPolicy,
+  deletePrivacyPolicyFamily,
   markPrivacyPolicyMirrorSynced,
   type CommitPrivacyPolicyInput,
 } from "../privacy/policy-history.js";
@@ -1529,6 +1530,8 @@ export const writerHandlers = {
     deletePrivacyConversation(db, input),
   "privacy.policyCommit": (db: Db, input: CommitPrivacyPolicyInput) =>
     commitPrivacyPolicy(db, input),
+  "privacy.policyDelete": (db: Db, familyId: string, now: number) =>
+    deletePrivacyPolicyFamily(db, familyId, now),
   "privacy.policyMirrorSynced": (db: Db, generation: number, digest: string) =>
     markPrivacyPolicyMirrorSynced(db, generation, digest),
   "privacy.completionsClaim": (db: Db, input: ClaimAnswerCompletionDeliveriesInput) =>

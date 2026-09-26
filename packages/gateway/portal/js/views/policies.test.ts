@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
   createPrivacyPolicy: vi.fn(),
+  deleteNamedPrivacyPolicy: vi.fn(),
   getPrivacyPolicyTemplates: vi.fn(),
   getAccessOverview: vi.fn(),
   forkPrivacyPolicy: vi.fn(),
@@ -129,7 +130,7 @@ describe("PoliciesView", () => {
 
     const headers = [...host.querySelectorAll(".access-policy-table thead th")]
       .map((cell) => cell.textContent?.trim());
-    expect(headers).toEqual(["Policy", "Revision", "Connections", "Integrations"]);
+    expect(headers).toEqual(["Policy", "Revision", "Connections", "Integrations", "Actions"]);
 
     const rows = [...host.querySelectorAll(".access-policy-table tbody tr")];
     expect(rows.map((row) => row.querySelector("a")?.textContent)).toEqual(["Household", "Work safe"]);

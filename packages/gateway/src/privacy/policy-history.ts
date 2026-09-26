@@ -237,6 +237,59 @@ export function commitPrivacyPolicy(
   })();
 }
 
+export type DeletePrivacyPolicyFamilyResult =
+  | { outcome: "deleted" }
+  | { outcome: "not-found" }
+  | { outcome: "in-use"; message: string };
+
+/** All stored rules count, including expired and revoked access. */
+export function privacyPolicyDeletionBlockedReason(
+  db: Database.Database,
+  familyId: string,
+): string | null {
+  if (familyId === DEFAULT_PRIVACY_POLICY_FAMILY_ID) {
+    return "The default policy cannot be deleted.";
+  }
+  for (const [table, label] of [
+    ["access_grant_capabilities", "an access grant"],
+    ["access_level_capabilities", "an access level"],
+  ] as const) {
+    const exists = db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .get(table);
+    if (
+      exists &&
+      db.prepare(`SELECT 1 FROM ${table} WHERE policy_family_id = ? LIMIT 1`).get(familyId)
+    ) {
+      return `This policy is used by ${label}. Remove its policy reference before deleting it.`;
+    }
+  }
+  return null;
+}
+
+/** Archive the library entry, retaining immutable versions and review provenance. */
+export function deletePrivacyPolicyFamily(
+  db: Database.Database,
+  familyId: string,
+  now: number,
+): DeletePrivacyPolicyFamilyResult {
+  return db.transaction((): DeletePrivacyPolicyFamilyResult => {
+    if (
+      !db
+        .prepare("SELECT 1 FROM privacy_policy_families WHERE id = ? AND archived_at IS NULL")
+        .get(familyId)
+    ) {
+      return { outcome: "not-found" };
+    }
+    const message = privacyPolicyDeletionBlockedReason(db, familyId);
+    if (message) return { outcome: "in-use", message };
+    db.prepare(
+      "UPDATE privacy_policy_families SET archived_at = ?, updated_at = ?, name_key = ? WHERE id = ?",
+    ).run(now, now, `\0archived:${familyId}`, familyId);
+    return { outcome: "deleted" };
+  })();
+}
+
 export function listPrivacyPolicyFamilies(db: Database.Database): PrivacyPolicyFamilySummary[] {
   const hasAccessTables =
     db
@@ -262,6 +315,7 @@ export function listPrivacyPolicyFamilies(db: Database.Database): PrivacyPolicyF
          JOIN privacy_policy_state s ON s.family_id = f.id
          JOIN privacy_policy_versions v
            ON v.family_id = s.family_id AND v.generation = s.generation
+        WHERE f.archived_at IS NULL
         ORDER BY f.created_at, f.id`,
     )
     .all();
@@ -294,6 +348,7 @@ export function listPrivacyPolicyFamilies(db: Database.Database): PrivacyPolicyF
     updatedAt: row.updated_at,
     archivedAt: row.archived_at,
     affectedGrantIds: grantsByFamily.get(row.id) ?? [],
+    deletionBlockedReason: privacyPolicyDeletionBlockedReason(db, row.id),
   }));
 }
 

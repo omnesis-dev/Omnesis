@@ -272,7 +272,10 @@ export class PrivacyPolicyStore {
     configDir: string,
     private readonly history?: {
       db: Database.Database;
-      writeGate: Pick<WriteGate, "commitPrivacyPolicy" | "markPrivacyPolicyMirrorSynced">;
+      writeGate: Pick<
+        WriteGate,
+        "commitPrivacyPolicy" | "markPrivacyPolicyMirrorSynced" | "deletePrivacyPolicyFamily"
+      >;
       now?: () => number;
       revisionGen?: () => string;
       mirrorWrite?: (path: string, policy: string) => Promise<void>;
@@ -313,7 +316,7 @@ export class PrivacyPolicyStore {
         throw new PrivacyPolicyValidationError("Privacy policy history is not available.");
       }
       const name = input.name.trim();
-      if (!name || name.length > 120) {
+      if (!name || name.length > 120 || name.includes("\0")) {
         throw new PrivacyPolicyValidationError("Privacy policy name is invalid.");
       }
       if (
@@ -336,6 +339,13 @@ export class PrivacyPolicyStore {
     });
   }
 
+  deleteFamily(familyId: string) {
+    return this.serialized(async () => {
+      if (!this.history) return { outcome: "not-found" } as const;
+      return this.history.writeGate.deletePrivacyPolicyFamily(familyId, this.now());
+    });
+  }
+
   updateFamily(
     familyId: string,
     expectedRevision: string,
@@ -344,6 +354,10 @@ export class PrivacyPolicyStore {
     if (familyId === DEFAULT_PRIVACY_POLICY_FAMILY_ID) return this.update(expectedRevision, mutate);
     return this.serialized(async () => {
       if (!this.history) return null;
+      const family = this.history.db
+        .prepare("SELECT 1 FROM privacy_policy_families WHERE id = ? AND archived_at IS NULL")
+        .get(familyId);
+      if (!family) return null;
       const current = currentPrivacyPolicyVersion(this.history!.db, familyId);
       if (!current) return null;
       if (current.revision !== expectedRevision) {
@@ -374,6 +388,13 @@ export class PrivacyPolicyStore {
       return this.revert(expectedRevision, source.policy, generation);
     }
     return this.serialized(async () => {
+      if (
+        !this.history!.db.prepare(
+          "SELECT 1 FROM privacy_policy_families WHERE id = ? AND archived_at IS NULL",
+        ).get(familyId)
+      ) {
+        throw new PrivacyPolicyValidationError("Privacy policy family not found.");
+      }
       validatePolicy(source.policy);
       return this.writeFamily(familyId, source.policy, expectedRevision, "restore", {
         originRevision: source.revision,

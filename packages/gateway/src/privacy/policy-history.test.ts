@@ -10,9 +10,11 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { DEFAULT_PRIVACY_POLICY_FAMILY_ID } from "@omnesis/types/privacy";
 import { directWriteGate } from "../write-gate.js";
+import { normalizeGrantRules, validateGrantRuleReferences } from "../access/store-rules.js";
 import { createAccessTables } from "../access/store.js";
 import {
   createPrivacyPolicyHistoryTables,
+  privacyPolicyDeletionBlockedReason,
   listPrivacyPolicyFamilies,
   listPrivacyPolicyVersions,
   privacyPolicyFamilyVersion,
@@ -44,6 +46,74 @@ async function fixture() {
 }
 
 describe("privacy policy history", () => {
+  it("removes an unused family from the library while retaining its history", async () => {
+    const { db, store } = await fixture();
+    const original = await store.get();
+    const family = await store.createFamily({
+      name: "Unused policy",
+      policy: original.policy,
+      action: "fork",
+      originRevision: original.revision,
+    });
+    expect(privacyPolicyDeletionBlockedReason(db, family.familyId!)).toBeNull();
+    expect(await store.deleteFamily(family.familyId!)).toEqual({ outcome: "deleted" });
+    expect(await store.getFamily(family.familyId!)).toBeNull();
+    expect(listPrivacyPolicyFamilies(db).map((entry) => entry.id)).not.toContain(family.familyId);
+    expect(privacyPolicyFamilyVersion(db, family.familyId!, 1)?.revision).toBe(family.revision);
+    expect(
+      await store.runFamilyIfRevision(family.familyId!, family.revision, async () => true),
+    ).toBeNull();
+    expect(await store.deleteFamily(family.familyId!)).toEqual({ outcome: "not-found" });
+    expect(
+      await store.updateFamily(family.familyId!, family.revision, () => original.policy),
+    ).toBeNull();
+    await expect(store.restoreFamily(family.familyId!, family.revision, family)).rejects.toThrow(
+      "not found",
+    );
+    expect(() =>
+      validateGrantRuleReferences(
+        db,
+        normalizeGrantRules([
+          {
+            capability: "answer",
+            sources: { mode: "all", sourceIds: [] },
+            release: { mode: "reviewed", policyFamilyId: family.familyId! },
+          },
+        ]),
+      ),
+    ).toThrow("Invalid privacy policy family");
+    const replacement = await store.createFamily({
+      name: "Unused policy",
+      policy: original.policy,
+      action: "template",
+    });
+    expect(replacement.familyId).not.toBe(family.familyId);
+    expect(await store.deleteFamily(DEFAULT_PRIVACY_POLICY_FAMILY_ID)).toMatchObject({
+      outcome: "in-use",
+    });
+  });
+
+  it.each(["access_grant_capabilities", "access_level_capabilities"])(
+    "blocks deletion when %s retains a policy reference",
+    async (table) => {
+      const { db, store } = await fixture();
+      const original = await store.get();
+      const family = await store.createFamily({
+        name: "Used policy",
+        policy: original.policy,
+        action: "template",
+      });
+      // References count independently of the owner's expiry or revocation state.
+      db.exec(`CREATE TABLE ${table} (policy_family_id TEXT)`);
+      db.prepare(`INSERT INTO ${table} VALUES (?)`).run(family.familyId);
+      expect(privacyPolicyDeletionBlockedReason(db, family.familyId!)).toContain("used by");
+      expect(await store.deleteFamily(family.familyId!)).toMatchObject({ outcome: "in-use" });
+      expect(await store.getFamily(family.familyId!)).not.toBeNull();
+      db.exec(`DELETE FROM ${table}`);
+      expect(await store.deleteFamily(family.familyId!)).toEqual({ outcome: "deleted" });
+    },
+  );
+
   it("bootstraps the existing revision, then assigns a unique revision to every change", async () => {
     const { db, store } = await fixture();
     const first = await store.get();

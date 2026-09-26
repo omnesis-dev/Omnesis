@@ -133,6 +133,15 @@ export function mountPrivacyRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
     },
   );
 
+  app.delete("/admin/privacy/policies/:familyId", noStore, scope.portalAdmin(), async (c) => {
+    const result = await requireDeps().deletePolicyFamily(
+      requiredPolicyFamilyId(c.req.param("familyId")),
+    );
+    if (result.outcome === "not-found") throw new NotFoundError("Privacy policy family not found.");
+    if (result.outcome === "in-use") throw new HttpError(409, "policy_in_use", result.message);
+    return c.body(null, 204);
+  });
+
   app.get("/admin/privacy/policies/:familyId", noStore, scope.admin(), async (c) => {
     const familyId = requiredPolicyFamilyId(c.req.param("familyId"));
     const policy = await requireDeps().getPolicyFamily(familyId);

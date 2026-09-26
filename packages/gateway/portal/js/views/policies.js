@@ -75,6 +75,7 @@ export function PoliciesView({ policyId = null } = {}) {
       overviewReady=${overviewReady}
       loading=${loading}
       headingRef=${headingRef}
+      onRefresh=${refresh}
     />
   </div>`;
 }
