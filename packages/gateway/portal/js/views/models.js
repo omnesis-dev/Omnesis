@@ -48,6 +48,8 @@ import {
   patchAdminConfig,
 } from "../api.js";
 import { CredentialsWizard } from "./credentials-wizard.js";
+import { CloudInferenceConsentModal } from "../components/cloud-inference-consent.js";
+import { remoteAssignmentConsent, inferenceAssignmentPatch } from "../lib/cloud-inference.js";
 import { ConfirmModal } from "../components/confirm-modal.js";
 import { CapabilityIcon } from "../components/capability-icon.js";
 import { useVisiblePoll } from "../lib/use-visible-poll.js";
@@ -426,6 +428,9 @@ export function ModelsView({ section }) {
   const [flash, setFlash] = useState(null);
   const [credsWizard, setCredsWizard] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
+  const [cloudConsent, setCloudConsent] = useState(null);
+  const cloudConsentRef = useRef(null);
+  const [cloudBusy, setCloudBusy] = useState(false);
   const [showAddBackend, setShowAddBackend] = useState(false);
   const [showCodexConfig, setShowCodexConfig] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
@@ -474,6 +479,10 @@ export function ModelsView({ section }) {
   useEffect(() => {
     refresh();
     refreshCodexRuntimePlan();
+    return () => {
+      cloudConsentRef.current?.resolve(false);
+      cloudConsentRef.current = null;
+    };
   }, []);
 
   // Probe HTTP backends once after first load so their status is fresh.
@@ -747,6 +756,10 @@ export function ModelsView({ section }) {
         // fall through
       }
     }
+    if (entry.kind === "anthropic-api") {
+      await assignHttp("anthropic", entry.apiModelId);
+      return;
+    }
     try {
       const res = await activateModel(entry.id, catalogRole, role);
       flashOk(res.willReindex ? `Activated ${entry.name} — reindex started.` : `Activated ${entry.name}.`);
@@ -756,12 +769,46 @@ export function ModelsView({ section }) {
     }
   };
 
+  const requestCloudConsent = (details) => {
+    if (cloudConsentRef.current) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      const pending = { ...details, resolve };
+      cloudConsentRef.current = pending;
+      setCloudConsent(pending);
+    });
+  };
+
+  const finishCloudConsent = (approved) => {
+    const pending = cloudConsentRef.current;
+    cloudConsentRef.current = null;
+    setCloudConsent(null);
+    pending?.resolve(approved);
+  };
+
+  const saveAssignment = async (targetRole, backendKey, model) => {
+    const consent = remoteAssignmentConsent(overview, backendKey, model);
+    if (consent && !await requestCloudConsent(consent)) return null;
+    return patchAdminConfig(inferenceAssignmentPatch(targetRole, `${backendKey}/${model}`, !!consent));
+  };
+
+  const setCloudPermission = async (enabled) => {
+    if (enabled && !await requestCloudConsent({})) return;
+    setCloudBusy(true);
+    try {
+      const res = await patchAdminConfig({ inference: { allowRemoteInference: enabled } });
+      if (!res.ok) throw new Error(res.body?.errors?.[0]?.message ?? res.body?.error ?? "Failed to update config.");
+      await refresh();
+      flashOk(`Cloud inference ${enabled ? "enabled" : "disabled"}.`);
+    } catch (e) { flashErr(e?.message ?? String(e)); }
+    finally { setCloudBusy(false); }
+  };
+
   const assignHttp = async (backendKey, model) => {
-    const assignmentValue = `${backendKey}/${model}`;
     // mode: "graceful" (default, zero-downtime) | "hard" (immediate cutover).
     const doAssign = async (mode = "graceful") => {
       try {
-        const res = await assignCapability(role, assignmentValue);
+        const res = await saveAssignment(role, backendKey, model);
+        if (!res) return;
         if (!res.ok) {
           flashErr(res.body?.errors?.[0]?.message ?? res.body?.error ?? "Failed to update config.");
           return;
@@ -851,7 +898,8 @@ export function ModelsView({ section }) {
   const assignCodexModel = async (targetRole, model) => {
     const targetTitle = capabilityFor(overview, targetRole)?.title ?? targetRole;
     try {
-      const res = await assignCapability(targetRole, `codex/${model}`);
+      const res = await saveAssignment(targetRole, "codex", model);
+      if (!res) return false;
       if (!res.ok) {
         flashErr(res.body?.errors?.[0]?.message ?? res.body?.error ?? "Failed to update config.");
         return false;
@@ -886,7 +934,10 @@ export function ModelsView({ section }) {
       return;
     }
     if (decision.kind === "activate") {
-      pickLocal(decision.entry, decision.catalogRole);
+      if (decision.entry.kind === "anthropic-api") {
+        setShowPicker(false);
+        void performActivation(decision.entry, decision.catalogRole);
+      } else pickLocal(decision.entry, decision.catalogRole);
       return;
     }
     setShowPicker(false);
@@ -970,6 +1021,26 @@ export function ModelsView({ section }) {
           </div>`
         : null}
 
+      ${view === "grid" ? html`<div class="detail-section models-cloud-inference">
+        <div class="models-cloud-control">
+          <h2>Cloud inference</h2>
+          <button type="button" class="models-cloud-switch" role="switch"
+            aria-checked=${overview.inference.allowRemoteInference === true}
+            aria-label="Allow cloud inference" disabled=${cloudBusy}
+            onClick=${() => setCloudPermission(overview.inference.allowRemoteInference !== true)}>
+            <span class="sr-only">${overview.inference.allowRemoteInference === true ? "Disable cloud inference" : "Enable cloud inference…"}</span>
+            <span class="models-cloud-switch-thumb" aria-hidden="true"></span>
+          </button>
+          <span role="status">${cloudBusy ? "Saving…" : overview.inference.allowRemoteInference === true ? "Enabled" : "Disabled"}</span>
+        </div>
+      </div>` : null}
+      <${CloudInferenceConsentModal}
+        open=${!!cloudConsent}
+        modelName=${cloudConsent?.modelName}
+        providerLabel=${cloudConsent?.providerLabel}
+        onConfirm=${() => finishCloudConsent(true)}
+        onCancel=${() => finishCloudConsent(false)}
+      />
       ${view === "grid"
         ? html`<${CapabilityGrid}
             overview=${overview}
@@ -1074,7 +1145,11 @@ export function ModelsView({ section }) {
               if (updated && pending?.pendingActivation) {
                 const { entry, catalogRole, capability } = pending.pendingActivation;
                 try {
-                  const res = await activateModel(entry.id, catalogRole, capability);
+                  const res = entry.kind === "anthropic-api"
+                    ? await saveAssignment(capability, "anthropic", entry.apiModelId)
+                    : await activateModel(entry.id, catalogRole, capability);
+                  if (!res) return;
+                  if (res.ok === false) throw new Error(res.body?.errors?.[0]?.message ?? res.body?.error ?? "Failed to update config.");
                   flashOk(res.willReindex ? `Activated ${entry.name} — reindex started.` : `Activated ${entry.name}.`);
                   await refresh();
                 } catch (e) {

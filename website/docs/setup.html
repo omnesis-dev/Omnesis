@@ -268,7 +268,8 @@
                   Tailscale daemon for a certificate for this machine's MagicDNS name (the name the
                   tailnet's DNS gives it). The gateway recognizes that certificate, so phones paired
                   against the name verify it through their operating system and keep working when
-                  the certificate renews. The gateway renews it before it expires.
+                  the certificate renews. The gateway renews it before it expires. A collector on
+                  the same machine is moved onto that name and restarted.
                 </td>
                 <td>
                   Install Tailscale and join your tailnet with <code>tailscale up</code> on Linux or

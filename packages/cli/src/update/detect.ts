@@ -1553,32 +1553,42 @@ export function dockerApplyPlan(
 }
 
 /**
- * `omnesis connect <harness> --refresh` — reinstall the plugin and skill,
- * run by `cli`: the command that starts the installed CLI.
+ * `omnesis connect <harness> --refresh --no-restart` — reinstall the plugin
+ * and skill, run by `cli`: the command that starts the installed CLI. The
+ * update restarts the harness itself, as its own step, so it can record a
+ * restart that did not happen on the harness's device row.
  */
 export function harnessRefreshSpec(harness: Harness, cli: CommandSpec): CommandSpec {
-  return { ...cli, args: [...cli.args, "connect", harness, "--refresh"] };
+  return { ...cli, args: [...cli.args, "connect", harness, "--refresh", "--no-restart"] };
 }
 
 /**
- * The harness's own restart. Omnesis does not supervise these processes —
- * the harness owns that surface — so this invokes the harness CLI and the
- * caller falls back to printing the instruction when the binary or the
- * subcommand is not there.
+ * One command of a harness's own CLI. Given the harness's resolved executable,
+ * the spec runs that path with its directory and this Node's leading PATH, so
+ * it works from a shell or service whose PATH does not include the harness's
+ * install location, and a `#!/usr/bin/env node` executable still finds an
+ * interpreter. Without one it names the bare command.
  */
-/**
- * `<harness> gateway restart`. Given the harness's resolved executable, the
- * spec runs that path with its directory and this Node's leading PATH, so the
- * restart works from a shell or service whose PATH does not include the
- * harness's install location, and a `#!/usr/bin/env node` executable still
- * finds an interpreter.
- */
-export function harnessRestartSpec(harness: Harness, binary?: string | null): CommandSpec {
-  if (!binary) return { command: harness, args: ["gateway", "restart"] };
+export function harnessCommandSpec(
+  harness: Harness,
+  args: readonly string[],
+  binary?: string | null,
+): CommandSpec {
+  if (!binary) return { command: harness, args: [...args] };
   const path = [dirname(binary), dirname(process.execPath), process.env.PATH ?? ""]
     .filter((entry) => entry.length > 0)
     .join(delimiter);
-  return { command: binary, args: ["gateway", "restart"], env: { PATH: path } };
+  return { command: binary, args: [...args], env: { PATH: path } };
+}
+
+/**
+ * `<harness> gateway restart`: the harness's own restart. Omnesis does not
+ * supervise these processes — the harness owns that surface — so the caller
+ * falls back to printing the instruction when the binary or the subcommand is
+ * not there.
+ */
+export function harnessRestartSpec(harness: Harness, binary?: string | null): CommandSpec {
+  return harnessCommandSpec(harness, ["gateway", "restart"], binary);
 }
 
 /** What an operator must run themselves when the updater may not do it. */

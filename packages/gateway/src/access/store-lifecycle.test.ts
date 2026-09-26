@@ -266,14 +266,28 @@ describe("access identity lifecycle", () => {
     const token = authorized.tokens.accessToken;
     const before = rawTokenState();
 
-    expect(revokeOAuthToken(db, token, client.clientId, "invented-wrong-secret", NOW + 20)).toBe(
-      false,
-    );
-    expect(revokeOAuthToken(db, token, client.clientId, undefined, NOW + 20)).toBe(false);
+    expect(
+      revokeOAuthToken(
+        db,
+        token,
+        client.clientId,
+        { clientSecret: "invented-wrong-secret" },
+        NOW + 20,
+      ),
+    ).toBe(false);
+    expect(revokeOAuthToken(db, token, client.clientId, {}, NOW + 20)).toBe(false);
     expect(lookupPrincipalAccessToken(db, token, RESOURCE, NOW + 21)).not.toBeNull();
     expect(revokedEvents()).toEqual([]);
 
-    expect(revokeOAuthToken(db, token, client.clientId, client.clientSecret, NOW + 22)).toBe(true);
+    expect(
+      revokeOAuthToken(
+        db,
+        token,
+        client.clientId,
+        { clientSecret: client.clientSecret! },
+        NOW + 22,
+      ),
+    ).toBe(true);
     expect(lookupPrincipalAccessToken(db, token, RESOURCE, NOW + 23)).toBeNull();
     // Revocation fences the credential; the token rows themselves are untouched.
     expect(rawTokenState()).toEqual(before);

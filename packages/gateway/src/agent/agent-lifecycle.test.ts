@@ -193,6 +193,7 @@ describe("AgentLifecycle", () => {
       await lifecycle.bootAgent();
       expect(lifecycle.routeDeps.agentService).toBeUndefined();
       expect(lifecycle.routeDeps.answerService).toBeUndefined();
+      expect(lifecycle.routeDeps.disabledCode).toBeUndefined();
       expect(lifecycle.routeDeps.agentConfig.enabled).toBe(false);
 
       backendUp = true;
@@ -273,6 +274,7 @@ describe("AgentLifecycle", () => {
 
       expect(lifecycle.routeDeps.agentService).toBeUndefined();
       expect(lifecycle.routeDeps.answerService).toBeUndefined();
+      expect(lifecycle.routeDeps.disabledCode).toBeUndefined();
       expect(attach).not.toHaveBeenCalled();
     } finally {
       globalThis.fetch = originalFetch;
@@ -321,6 +323,7 @@ describe("AgentLifecycle", () => {
       await shutdown;
       expect(lifecycle.routeDeps.agentService).toBeUndefined();
       expect(lifecycle.routeDeps.answerService).toBeUndefined();
+      expect(lifecycle.routeDeps.disabledCode).toBeUndefined();
       expect(attach).not.toHaveBeenCalled();
     } finally {
       globalThis.fetch = originalFetch;
@@ -448,6 +451,8 @@ describe("AgentLifecycle", () => {
       expect(lifecycle.routeDeps.agentService).toBeUndefined();
       expect(lifecycle.routeDeps.agentConfig.enabled).toBe(false);
       expect(lifecycle.routeDeps.disabledReason).toMatch(/allowRemoteInference/);
+      expect(lifecycle.routeDeps.disabledCode).toBe("remote_inference_disabled");
+      expect(lifecycle.routeDeps.agentConfig.disabledCode).toBe("remote_inference_disabled");
       expect(attach).not.toHaveBeenCalled();
     } finally {
       if (prevKey === undefined) delete process.env.OMNESIS_ANTHROPIC_API_KEY;
@@ -462,6 +467,8 @@ describe("AgentLifecycle", () => {
 
     expect(lifecycle.routeDeps.agentService).toBeUndefined();
     expect(lifecycle.routeDeps.disabledReason).toMatch(/allowRemoteInference/);
+    expect(lifecycle.routeDeps.disabledCode).toBe("remote_inference_disabled");
+    expect(lifecycle.routeDeps.agentConfig.disabledCode).toBe("remote_inference_disabled");
     expect(attach).not.toHaveBeenCalled();
   });
 
@@ -473,6 +480,39 @@ describe("AgentLifecycle", () => {
     expect(lifecycle.routeDeps.agentService).toBeUndefined();
     expect(lifecycle.routeDeps.agentConfig.enabled).toBe(false);
     expect(lifecycle.routeDeps.disabledReason).toMatch(/allowRemoteInference/);
+    expect(lifecycle.routeDeps.disabledCode).toBe("remote_inference_disabled");
+    expect(lifecycle.routeDeps.agentConfig.disabledCode).toBe("remote_inference_disabled");
+  });
+
+  test("a live swap clears cloud recovery when the next assignment is disabled", async () => {
+    const config = cloudAgentRemoteOffConfig("codex/gpt-5.4");
+    const { lifecycle, registry } = makeLifecycle(config);
+    await lifecycle.bootAgent();
+    expect(lifecycle.routeDeps.disabledCode).toBe("remote_inference_disabled");
+
+    config.inference!.assignments!.agent = undefined;
+    registry.loadConfig(config);
+    await lifecycle.applyAgentSwap();
+
+    expect(lifecycle.routeDeps.disabledCode).toBeUndefined();
+    expect(lifecycle.routeDeps.agentConfig.disabledCode).toBeUndefined();
+    expect(lifecycle.routeDeps.agentConfig.enabled).toBe(false);
+    await lifecycle.shutdown();
+  });
+
+  test("a remote HTTP agent exposes permission recovery at boot and live swap", async () => {
+    const config = httpAgentConfig();
+    config.inference!.allowRemoteInference = false;
+    config.inference!.backends!["agent-http"] = { type: "http", url: "https://203.0.113.10" };
+    const { lifecycle, registry } = makeLifecycle(config);
+    await registry.probeBackends();
+    await lifecycle.bootAgent();
+    expect(lifecycle.routeDeps.agentService).toBeUndefined();
+    expect(lifecycle.routeDeps.disabledCode).toBe("remote_inference_disabled");
+    expect(lifecycle.routeDeps.agentConfig.disabledCode).toBe("remote_inference_disabled");
+    await lifecycle.applyAgentSwap();
+    expect(lifecycle.routeDeps.disabledCode).toBe("remote_inference_disabled");
+    await lifecycle.shutdown();
   });
 
   test("resolveRoleBackend refuses a cloud sub-agent role when remote inference is off", () => {

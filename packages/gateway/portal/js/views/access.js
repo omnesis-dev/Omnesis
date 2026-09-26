@@ -51,7 +51,7 @@ import {
 import { navigate, replaceRoute } from "../lib/router.js";
 import { useVisiblePoll } from "../lib/use-visible-poll.js";
 import { ConfirmModal } from "../components/confirm-modal.js";
-import { AccessList, levelEditorPath } from "./access/access-list.js";
+import { AccessList, accessListIsEmpty, levelEditorPath } from "./access/access-list.js";
 import {
   RequestReview,
   authorizationErrorMessage,
@@ -610,19 +610,31 @@ export function AccessView({
         ${overviewReady
           ? html`<div class="access-actions">
               <button type="button" class="btn-secondary" onClick=${() => navigate(NEW_LEVEL_ROUTE)}>New access level</button>
-              ${overview.oauth
+              ${overview.oauth && !accessListIsEmpty(entries, levels)
                 ? html`<button type="button" class="btn-primary" onClick=${openConnect}>Connect an agent</button>`
                 : null}
             </div>`
           : null}
       </header>
 
+      ${overviewReady && overview.oauth?.loopbackOnly
+        ? html`<div class="access-oauth-blocker" role="status">
+            <strong>Local agents can connect.</strong>
+            <span>Use Connect an agent for clients running on the gateway’s machine.
+              To connect from another machine, set <code>gateway.publicBaseUrl</code> on the${" "}
+              <a href=${configHref} onClick=${(event) => { event.preventDefault(); navigate(configHref); }}>Config tab</a>.
+              This can be a private network address; ChatGPT and Claude apps need an Internet-reachable address.
+            </span>
+          </div>`
+        : null}
+
       ${!overviewReady || overview.oauth
         ? null
         : html`<div class="access-oauth-blocker" role="status">
             <strong>OAuth is not available yet.</strong>
             <span>
-              Connecting an agent runs over OAuth, which needs the Gateway public URL.
+              Agents on the gateway’s machine can sign in over a loopback address.
+              Connecting from another machine needs a configured Gateway public URL.
               Set <code>gateway.publicBaseUrl</code> on the${" "}
               <a
                 href=${configHref}

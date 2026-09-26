@@ -2,7 +2,15 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -55,13 +63,11 @@ describe("install.sh Tailscale CLI detection", () => {
   test("finds Homebrew's CLI by absolute path when PATH does not reach it", () => {
     const home = mkdtempSync(join(tmpdir(), "omnesis-tailscale-detection-"));
     try {
-      // PATH as a launchd job's: node's bin dir and the system's, no Homebrew bin.
-      const brew = join(home, "opt/homebrew/bin");
+      // The isolated PATH contains node, so an installed CLI cannot mask the fixture.
       const bin = join(home, "bin");
       mkdirSync(bin);
-      // Shadow an installed system CLI so this fixture never queries the host.
-      writeFileSync(join(bin, "tailscale"), "#!/bin/sh\nexit 127\n");
-      chmodSync(join(bin, "tailscale"), 0o755);
+      symlinkSync(process.execPath, join(bin, "node"));
+      const brew = join(home, "opt/homebrew/bin");
       mkdirSync(brew, { recursive: true });
       writeFileSync(
         join(brew, "tailscale"),
@@ -69,12 +75,12 @@ describe("install.sh Tailscale CLI detection", () => {
       );
       chmodSync(join(brew, "tailscale"), 0o755);
       const detect = `${cliFunctions}\nPLATFORM=darwin\nfind_tailscale_cli && tailscale_cli status`;
-      const output = execFileSync("sh", ["-c", detect], {
+      const output = execFileSync("/bin/sh", ["-c", detect], {
         encoding: "utf8",
         env: {
           ...process.env,
           HOME: home,
-          PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
+          PATH: bin,
           // Homebrew's prefixes, and /Applications, are looked for under here.
           OMNESIS_TEST_TAILSCALE_ROOT: home,
         },

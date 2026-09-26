@@ -67,6 +67,8 @@ export function Modal({ open, onClose, title, subtitle, size = "md", children })
     const panel = panelRef.current;
 
     const onKey = (e) => {
+      // A confirmation above this panel owns keyboard dismissal and focus.
+      if (document.querySelector(".confirm-modal-backdrop")) return;
       if (e.key === "Escape") {
         e.stopPropagation();
         onClose?.();

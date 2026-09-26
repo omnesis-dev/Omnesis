@@ -13,7 +13,8 @@ Flow for a release:
    `npm run release:check-version -- v<version>`.
 5. `npm run build && npm run typecheck && npm test`
 6. Land on `main`, wait for CI, then run
-   `npm run release:preflight-tag -- v<version>`.
+   `npm run release:preflight-tag -- v<version>` (it also refuses while the
+   install/update lanes on `main` are red; see `docs/install-e2e.md`).
 7. Create an annotated tag on the SHA printed by the preflight:
    `git tag -a v<version> -m "Omnesis <version>" <main-sha>`.
 8. Push only that tag: `git push origin v<version>`.

@@ -117,25 +117,75 @@ export interface OAuthClientRegistration {
   redirectUris: string[];
   grantTypes: string[];
   responseTypes: string[];
-  tokenEndpointAuthMethod: "none" | "client_secret_basic";
+  tokenEndpointAuthMethod: OAuthClientAuthMethod;
   /** Returned exactly once by dynamic registration for confidential clients. */
   clientSecret: string | null;
+  /** Where a `private_key_jwt` client publishes its signing keys; null for every other method. */
+  jwksUri: string | null;
+  /**
+   * The one algorithm a `private_key_jwt` client's metadata document says it
+   * signs with; null when the document names none, and for every other method.
+   */
+  tokenEndpointAuthSigningAlg: ClientAssertionAlgorithm | null;
   clientUri: string | null;
   createdAt: number;
 }
 
+/** Asymmetric JWS algorithms a `private_key_jwt` client may sign its assertion with. */
+export type ClientAssertionAlgorithm = "RS256" | "PS256" | "ES256";
+
+/**
+ * How a client authenticates at the token and revocation endpoints. Dynamic
+ * registration offers `none` and `client_secret_basic`; `private_key_jwt` is
+ * reachable only through a Client ID Metadata Document that names a JWKS.
+ */
+export type OAuthClientAuthMethod = "none" | "client_secret_basic" | "private_key_jwt";
+
 export type OAuthClientRegistrationInput = Omit<
   OAuthClientRegistration,
-  "clientId" | "createdAt" | "clientSecret" | "tokenEndpointAuthMethod"
+  | "clientId"
+  | "createdAt"
+  | "clientSecret"
+  | "tokenEndpointAuthMethod"
+  | "jwksUri"
+  | "tokenEndpointAuthSigningAlg"
 > & {
   /** Public clients remain the default for existing internal callers. */
-  tokenEndpointAuthMethod?: OAuthClientRegistration["tokenEndpointAuthMethod"];
+  tokenEndpointAuthMethod?: "none" | "client_secret_basic";
 };
 
-export type OAuthClientMetadataDocument = OAuthClientRegistrationInput & {
+export type OAuthClientMetadataDocument = Omit<
+  OAuthClientRegistrationInput,
+  "tokenEndpointAuthMethod"
+> & { clientId: string } & (
+    | { tokenEndpointAuthMethod: "none"; jwksUri: null; tokenEndpointAuthSigningAlg: null }
+    | {
+        tokenEndpointAuthMethod: "private_key_jwt";
+        jwksUri: string;
+        tokenEndpointAuthSigningAlg: ClientAssertionAlgorithm | null;
+      }
+  );
+
+/**
+ * A `private_key_jwt` client assertion the HTTP layer has already verified
+ * against the keys published at `jwksUri`. Signature verification needs the
+ * network, so it happens before the request reaches the writer; the writer
+ * then only confirms this proof names the client, key set and signing
+ * algorithm it has on record.
+ */
+export interface VerifiedClientAssertion {
+  method: "private_key_jwt";
   clientId: string;
-  tokenEndpointAuthMethod: "none";
-};
+  jwksUri: string;
+  /** The algorithm the assertion was signed with. */
+  alg: ClientAssertionAlgorithm;
+}
+
+/** What a request presented to authenticate its client. At most one field is set. */
+export interface OAuthClientCredentials {
+  clientSecret?: string;
+  clientAssertion?: VerifiedClientAssertion;
+}
 
 export type AuthorizationGrantSelection =
   | {
@@ -301,6 +351,7 @@ export type OAuthTokenExchangeInput =
       redirectUri: string;
       codeVerifier: string;
       clientSecret?: string;
+      clientAssertion?: VerifiedClientAssertion;
       resource: string;
     }
   | {
@@ -308,6 +359,7 @@ export type OAuthTokenExchangeInput =
       refreshToken: string;
       clientId: string;
       clientSecret?: string;
+      clientAssertion?: VerifiedClientAssertion;
       /** Optional on refresh; omission reuses the credential's bound audience. */
       resource?: string;
     };
@@ -402,7 +454,13 @@ export type AccessRevocationInput =
   | { kind: "profile"; id: string; actorTokenId: string }
   | { kind: "grant"; id: string; actorTokenId: string }
   | { kind: "principal"; id: string; actorTokenId: string }
-  | { kind: "token"; token: string; clientId: string; clientSecret?: string };
+  | {
+      kind: "token";
+      token: string;
+      clientId: string;
+      clientSecret?: string;
+      clientAssertion?: VerifiedClientAssertion;
+    };
 
 /** A request awaiting the operator's decision, as the overview lists it. */
 export interface PendingAuthorizationRequest {

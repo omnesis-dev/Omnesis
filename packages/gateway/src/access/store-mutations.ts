@@ -49,7 +49,7 @@ export function revokeAccessEntity(
     case "principal":
       return revokeAccessPrincipal(db, input.id, input.actorTokenId, now);
     case "token":
-      return revokeOAuthToken(db, input.token, input.clientId, input.clientSecret, now);
+      return revokeOAuthToken(db, input.token, input.clientId, input, now);
     default:
       return assertNever(input);
   }

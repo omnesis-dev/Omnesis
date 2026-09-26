@@ -12,12 +12,20 @@
 import { html } from "htm/preact";
 import { useState } from "preact/hooks";
 
-import { lookupAccessAuthorization } from "../../api.js";
+import { lookupAccessAuthorization, pairDevice } from "../../api.js";
 import { CopyIconButton } from "../../components/copy-button.js";
 import { Modal } from "../../components/modal.js";
 import { navigate } from "../../lib/router.js";
 import { authorizationStatusNotice } from "./authorization.js";
-import { clientSetups } from "./client-setup.js";
+import {
+  PUBLISH_DOCS,
+  agentSetups,
+  harnessAddresses,
+  isPrivateAddress,
+  servesUntrustedCertificate,
+  usesNonStandardPort,
+} from "./client-setup.js";
+import { AgentIcon } from "./agent-brand.js";
 import { errorMessage } from "./shared.js";
 
 /**
@@ -35,29 +43,207 @@ function unusableCodeReason(request, now = Date.now()) {
   return authorizationStatusNotice(request.status);
 }
 
-function ClientSetupList({ resource }) {
-  return html`<details class="access-client-setup">
-    <summary>Commands and install links for common clients</summary>
-    <ul>
-      ${clientSetups(resource).map(
-        (setup) => html`<li key=${setup.id} data-client=${setup.id}>
-          <span class="access-client-name">${setup.client}</span>
-          ${setup.kind === "link" &&
-          html`<a class="btn-secondary access-client-link" href=${setup.value}>Install in ${setup.client}</a>`}
-          ${setup.kind === "command" &&
-          html`<div class="access-mcp-resource">
-                <code title=${setup.value}>${setup.value}</code>
-                <${CopyIconButton}
-                  text=${setup.value}
-                  class="access-copy-button"
-                  title=${`Copy command for ${setup.client}`}
-                />
-              </div>`}
-          <p>${setup.note}</p>
-        </li>`,
+/** The warning mark on an agent card that cannot reach this gateway's address. */
+const WARNING_GLYPH = html`<svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><path d="M12 9v4M12 17h.01" /></svg>`;
+
+function ExternalLink({ href, children }) {
+  return html`<a href=${href} target="_blank" rel="noopener noreferrer">${children}</a>`;
+}
+
+/** A card's note: text parts, command names in code, and links. */
+function NoteText({ parts }) {
+  return parts.map((part) =>
+    typeof part === "string"
+      ? part
+      : part.href
+        ? html`<${ExternalLink} href=${part.href}>${part.text}<//>`
+        : html`<code>${part.code}</code>`,
+  );
+}
+
+/**
+ * For an agent that only accepts a publicly issued certificate, where this
+ * gateway serves one it will not accept, and how to give the gateway one.
+ */
+function TrustedCertificateNotice({ agent }) {
+  return html`<div class="access-agent-public is-warning" role="alert">
+    <p>
+      <strong>This gateway's certificate is not publicly trusted.</strong> ${agent.needsTrustedCertificate}, so it cannot connect to this gateway with its self-signed certificate.
+    </p>
+    <p>
+      <${ExternalLink} href=${PUBLISH_DOCS.certificates}>Give the gateway a Tailscale certificate<//>${" or "}<${ExternalLink} href=${PUBLISH_DOCS.domain}>use a domain of your own<//>.
+    </p>
+  </div>`;
+}
+
+/**
+ * For an agent that reaches the gateway from the Internet: whether it can
+ * reach this address at all, and where the docs explain publishing it.
+ */
+function PublicAddressNotice({ agent, resource }) {
+  const privateAddress = isPrivateAddress(resource);
+  const wrongPort = !privateAddress && agent.standardPortOnly && usesNonStandardPort(resource);
+  const warning = privateAddress || wrongPort;
+  return html`<div class=${`access-agent-public ${warning ? "is-warning" : ""}`} role=${warning ? "alert" : null}>
+    <p>
+      ${privateAddress
+        ? html`<strong>This address is private.</strong> ${agent.needsPublicAddress}, so it cannot reach this gateway until you publish it.`
+        : wrongPort
+          ? html`<strong>This address uses port ${new URL(resource).port}.</strong> ${agent.standardPortOnly}, so it cannot reach this gateway there.`
+          : html`${agent.needsPublicAddress}, so the address above must be reachable from the Internet${agent.standardPortOnly ? " on port 443" : ""}.`}
+    </p>
+    <p>
+      <${ExternalLink} href=${PUBLISH_DOCS.funnel}>Publish the gateway with Tailscale Funnel<//>${" or "}<${ExternalLink} href=${PUBLISH_DOCS.domain}>use a domain of your own<//>.
+    </p>
+  </div>`;
+}
+
+/**
+ * What a managed integration's machine needs before its commands: the address
+ * it pairs against, when the gateway accepts more than one, and a pairing code
+ * minted here so the commands carry it.
+ */
+function HarnessPairing({ addresses, addressIdx, setAddressIdx, pairing, onPair }) {
+  const expires = pairing.code
+    ? new Date(pairing.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : null;
+  return html`<div class="access-agent-pairing">
+    ${addresses.length > 1 &&
+    html`<label class="form-group">
+      <span>Address the agent machine connects to</span>
+      <select
+        id="access-agent-address"
+        value=${addressIdx}
+        onChange=${(event) => setAddressIdx(Number(event.currentTarget.value))}
+      >
+        ${addresses.map(
+          (address, index) => html`<option key=${address.gatewayUrl} value=${index}>
+            ${address.gatewayUrl} —${" "}
+            ${address.direct
+              ? "direct to the gateway (recommended)"
+              : "public address through a proxy, for machines outside your network"}
+          </option>`,
+        )}
+      </select>
+      <small>Use the direct address when that machine is on your network. Wherever the address presents the gateway's own certificate, the command checks it.</small>
+    </label>`}
+    ${pairing.code
+      ? html`<p>Pairing code <code>${pairing.code}</code> is in the commands below. It works once and expires at ${expires}.</p>`
+      : html`<div class="access-agent-pair-action">
+          <button type="button" class="btn-secondary" onClick=${onPair} disabled=${pairing.busy}>
+            ${pairing.busy ? "Creating…" : "Create a pairing code"}
+          </button>
+          <span>The command asks for one. Create it here and it is filled in.</span>
+        </div>`}
+    ${pairing.error && html`<p class="access-error" role="alert">${pairing.error}</p>`}
+  </div>`;
+}
+
+/** One copyable command; `labelled` names it above the box when it is not a tab. */
+function AgentCommand({ agent, command, labelled }) {
+  return html`<div class="access-agent-command">
+    ${labelled && html`<span>${command.label}</span>`}
+    <div class="access-mcp-resource">
+      <code title=${command.value}>${command.value}</code>
+      <${CopyIconButton} text=${command.value} class="access-copy-button" title=${`Copy command for ${agent.name}`} />
+    </div>
+  </div>`;
+}
+
+/** A grid of common agents; choosing one shows only that agent's setup. */
+function AgentSetupPicker({ oauth }) {
+  const [selectedId, setSelectedId] = useState(null);
+  const [commandIdx, setCommandIdx] = useState(0);
+  const [addressIdx, setAddressIdx] = useState(0);
+  const [pairing, setPairing] = useState({ code: null, expiresAt: null, busy: false, error: "" });
+  const addresses = harnessAddresses(oauth);
+  const harnessAddress = addresses[Math.min(addressIdx, addresses.length - 1)];
+  const agents = agentSetups(oauth, { harnessAddress, pairingCode: pairing.code ?? undefined });
+  const selected = agents.find((agent) => agent.id === selectedId) ?? null;
+
+  async function createPairingCode() {
+    setPairing((current) => ({ ...current, busy: true, error: "" }));
+    try {
+      const result = await pairDevice({ kind: "agent" });
+      setPairing({ code: result.pairingCode, expiresAt: result.expiresAt, busy: false, error: "" });
+    } catch (failure) {
+      setPairing({
+        code: null,
+        expiresAt: null,
+        busy: false,
+        error: errorMessage(failure, "The pairing code could not be created."),
+      });
+    }
+  }
+
+  return html`<div class="access-agent-setup">
+    <p class="access-agent-setup-label">Setup for common agents</p>
+    <div class="backend-opt-grid access-agent-grid">
+      ${agents.map(
+        (agent) => html`<button
+          type="button"
+          key=${agent.id}
+          class="backend-opt ${agent.id === selectedId ? "is-selected" : ""}"
+          data-agent=${agent.id}
+          aria-pressed=${agent.id === selectedId ? "true" : "false"}
+          aria-controls="access-agent-steps"
+          onClick=${() => {
+            setSelectedId(agent.id === selectedId ? null : agent.id);
+            setCommandIdx(0);
+          }}
+        >
+          <span class="backend-opt-icon"><${AgentIcon} icon=${agent.icon} /></span>
+          ${agent.blocked &&
+          html`<span class="access-agent-warning" role="img" aria-label="Cannot connect to this gateway" title="Cannot connect to this gateway">${WARNING_GLYPH}</span>`}
+          <span class="backend-opt-title">${agent.name}</span>
+        </button>`,
       )}
-    </ul>
-  </details>`;
+    </div>
+    ${selected &&
+    html`<div class="access-agent-steps" id="access-agent-steps" data-agent=${selected.id}>
+      ${selected.needsPublicAddress && html`<${PublicAddressNotice} agent=${selected} resource=${oauth.resource} />`}
+      ${selected.needsTrustedCertificate && servesUntrustedCertificate(oauth) && html`<${TrustedCertificateNotice} agent=${selected} />`}
+      ${selected.pairs &&
+      html`<${HarnessPairing}
+        addresses=${addresses}
+        addressIdx=${addressIdx}
+        setAddressIdx=${setAddressIdx}
+        pairing=${pairing}
+        onPair=${createPairingCode}
+      />`}
+      ${selected.alternatives
+        ? html`<div class="access-agent-tabbed">
+            <div class="access-agent-tabs" role="tablist" aria-label=${`Ways to connect ${selected.name}`}>
+              ${selected.commands.map(
+                (command, index) => html`<button
+                  type="button"
+                  role="tab"
+                  key=${command.label}
+                  class=${index === commandIdx ? "active" : ""}
+                  aria-selected=${index === commandIdx ? "true" : "false"}
+                  onClick=${() => setCommandIdx(index)}
+                >
+                  ${command.label}
+                </button>`,
+              )}
+            </div>
+            <${AgentCommand} agent=${selected} command=${selected.commands[commandIdx] ?? selected.commands[0]} />
+          </div>`
+        : selected.commands.map(
+            (command) => html`<${AgentCommand} key=${command.label} agent=${selected} command=${command} labelled />`,
+          )}
+      ${selected.note.length > 0 && html`<p><${NoteText} parts=${selected.note} /></p>`}
+      ${selected.headless &&
+      html`<div class="access-agent-headless">
+        <p><strong>No browser on this machine?</strong> <${NoteText} parts=${selected.headless.note} /></p>
+        ${selected.headless.command &&
+        html`<${AgentCommand} agent=${selected} command=${{ label: "Sign in without a browser", value: selected.headless.command }} />`}
+      </div>`}
+      <p class="access-agent-docs">
+        <${ExternalLink} href=${selected.docs}>${selected.name} setup in the docs<//>
+      </p>
+    </div>`}
+  </div>`;
 }
 
 function ConnectStep({ number, title, caption, children }) {
@@ -120,7 +306,9 @@ export function ConnectAgentDialog({ oauth, onClose }) {
       <${ConnectStep}
         number="1"
         title="Add this MCP server to the client"
-        caption="Paste it into ChatGPT, Claude, Codex, or another OAuth-capable client."
+        caption=${oauth.loopbackOnly
+          ? "This localhost address works only for agents running on the gateway’s machine. Hosted clients cannot reach it."
+          : "Paste it into ChatGPT, Claude, Codex, or another OAuth-capable client."}
       >
         <div class="access-mcp-resource">
           <code>${oauth.resource}</code>
@@ -130,12 +318,12 @@ export function ConnectAgentDialog({ oauth, onClose }) {
             title="Copy MCP resource"
           />
         </div>
-        <${ClientSetupList} resource=${oauth.resource} />
+        <${AgentSetupPicker} oauth=${oauth} />
       <//>
       <${ConnectStep}
         number="2"
-        title="Enter the code the client shows"
-        caption="The client's authorization window shows a short code once it has registered."
+        title="If the sign-in page shows a code, enter it here"
+        caption="When the agent's sign-in opens in a browser already signed in to this portal, you approve it there and can skip this step. Otherwise the sign-in page shows a short code: enter it here or on your phone."
       >
         <form onSubmit=${lookup} aria-busy=${lookingUp ? "true" : "false"}>
           <label class="form-group">

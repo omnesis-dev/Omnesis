@@ -251,10 +251,11 @@ export function formatVersionDryRun({
   return lines.join("\n");
 }
 
-export function formatTagDryRun({ tag, version, sign }) {
+export function formatTagDryRun({ tag, version, sign, allowFailedInstallE2e = false }) {
+  const override = allowFailedInstallE2e ? " --allow-failed-install-e2e" : "";
   return [
     `Would preflight and create ${tag} on HEAD:`,
-    `  node scripts/release/preflight-tag.mjs ${tag}`,
+    `  node scripts/release/preflight-tag.mjs ${tag}${override}`,
     `  git tag ${sign ? "-s" : "-a"} ${tag} -m "Omnesis ${version}" <verified-sha>`,
     "Dry run — nothing created. The tag is never pushed by this script.",
   ].join("\n");

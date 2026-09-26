@@ -95,6 +95,20 @@ vi.mock("@omnesis/agent-integration", async (importOriginal) => {
 vi.mock("./devices.js", () => ({
   redeemAgentIntegrationPairingCode: vi.fn(),
 }));
+// The harness's own CLI — its restart and its skill report — is a seam here:
+// no suite may restart a real OpenClaw or Hermes.
+const harnessCommands = vi.hoisted(() => ({
+  run: vi.fn<
+    (
+      spec: { command: string; args: string[]; env?: Record<string, string> },
+      mode: "inherit" | "capture",
+    ) => Promise<{ code: number; stdout: string }>
+  >(),
+}));
+vi.mock("../harness-restart.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../harness-restart.js")>()),
+  spawnHarnessCommand: harnessCommands.run,
+}));
 
 import { ensureGatewayTrust, fetchPeerCert } from "@omnesis/core";
 import {
@@ -229,8 +243,21 @@ function readableTree(root: string): string {
   return visit(root);
 }
 
+/** What each harness's skill report says when the Omnesis skill is ready. */
+const READY_SKILL_REPORT = {
+  openclaw: '{"eligible":["omnesis"],"disabled":[],"blocked":[],"missingRequirements":[]}',
+  hermes: "│ omnesis │ productivity │ local │ local │ enabled │",
+} as const;
+
 beforeEach(() => {
   vi.clearAllMocks();
+  harnessCommands.run.mockImplementation(async (spec, mode) => ({
+    code: 0,
+    stdout:
+      mode === "capture"
+        ? READY_SKILL_REPORT[spec.command.endsWith("hermes") ? "hermes" : "openclaw"]
+        : "",
+  }));
   integrationMocks.requestJson.mockImplementation(async () => ({
     status: "ok",
     experimental: true,
@@ -2696,5 +2723,136 @@ describe("connect --trust-fingerprint", () => {
         "trust-fingerprint": `sha256:${"d".repeat(64)}`,
       }),
     ).rejects.toThrow(/--skill-only reaches no gateway/);
+  });
+});
+
+describe("connect loads the plugin it installed", () => {
+  /** A refreshable installation of `harness`, with the config file its checks read. */
+  function refreshableHome(harness: Harness, { hermesVenv = false } = {}): string {
+    const home = mkdtempSync(join(tmpdir(), `omnesis-${harness}-reload-`));
+    tempHomes.push(home);
+    if (harness === "openclaw") {
+      writeFileSync(join(home, "openclaw.json"), "{}\n");
+    } else {
+      writeFileSync(
+        join(home, "config.yaml"),
+        "display:\n  background_process_notifications: all\n",
+      );
+    }
+    if (hermesVenv) {
+      const venv = join(home, "hermes-agent", "venv", "bin");
+      mkdirSync(venv, { recursive: true });
+      writeFileSync(join(venv, "hermes"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    }
+    seedRefreshableInstall(home, harness);
+    return home;
+  }
+
+  function captureLog(): () => string {
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map(String).join(" "));
+    });
+    return () => lines.join("\n");
+  }
+
+  const streamed = () =>
+    harnessCommands.run.mock.calls.filter(([, mode]) => mode === "inherit").map(([spec]) => spec);
+  const captured = () =>
+    harnessCommands.run.mock.calls.filter(([, mode]) => mode === "capture").map(([spec]) => spec);
+
+  it("--yes restarts OpenClaw in the home it installed into, then reports the skill ready", async () => {
+    const home = refreshableHome("openclaw");
+    const output = captureLog();
+
+    await run({ harness: "openclaw", dir: home, refresh: true, yes: true });
+
+    const [restart] = streamed();
+    expect(restart?.args).toEqual(["gateway", "restart"]);
+    expect(restart?.env).toMatchObject({
+      OPENCLAW_STATE_DIR: home,
+      OPENCLAW_CONFIG_PATH: join(home, "openclaw.json"),
+    });
+    expect(captured().map((spec) => spec.args)).toEqual([["skills", "check", "--json"]]);
+    expect(output()).toContain("Restarted OpenClaw with the new plugin.");
+    expect(output()).toContain("OpenClaw reports the omnesis skill ready.");
+    expect(output()).not.toContain("Verify with");
+  });
+
+  it("--yes restarts Hermes through the executable in its home", async () => {
+    const home = refreshableHome("hermes", { hermesVenv: true });
+    const output = captureLog();
+
+    await run({ harness: "hermes", dir: home, refresh: true, yes: true });
+
+    const [restart] = streamed();
+    expect(restart?.command).toBe(join(home, "hermes-agent", "venv", "bin", "hermes"));
+    expect(restart?.env).toMatchObject({ HERMES_HOME: home });
+    expect(captured()[0]?.args).toEqual(["skills", "list", "--source", "local"]);
+    expect(output()).toContain("Hermes reports the omnesis skill ready.");
+    expect(output()).toContain("new session");
+  });
+
+  it("without a terminal or --yes, names the restart instead of running it", async () => {
+    const home = refreshableHome("openclaw");
+    const output = captureLog();
+
+    await run({ harness: "openclaw", dir: home, refresh: true });
+
+    expect(streamed()).toEqual([]);
+    expect(output()).toMatch(/Restart openclaw to load the refreshed plugin .*gateway restart/u);
+    // The skill is still checked: whether it is ready does not wait on the restart.
+    expect(captured()).toHaveLength(1);
+  });
+
+  it("--no-restart names the restart even under --yes", async () => {
+    const home = refreshableHome("hermes");
+    const output = captureLog();
+
+    await run({ harness: "hermes", dir: home, refresh: true, yes: true, restart: false });
+
+    expect(streamed()).toEqual([]);
+    expect(output()).toContain("hermes gateway restart");
+  });
+
+  it("--skill-only changes no plugin, so it restarts nothing", async () => {
+    const home = refreshableHome("openclaw");
+    const output = captureLog();
+
+    await run({ harness: "openclaw", dir: home, "skill-only": true, yes: true });
+
+    expect(streamed()).toEqual([]);
+    expect(output()).not.toContain("Restart openclaw");
+    expect(output()).toContain("OpenClaw reports the omnesis skill ready.");
+  });
+
+  it("a restart that fails leaves the connect done and says what to run", async () => {
+    const home = refreshableHome("openclaw");
+    const output = captureLog();
+    harnessCommands.run.mockImplementation(async (_spec, mode) =>
+      mode === "inherit"
+        ? { code: 1, stdout: "" }
+        : { code: 0, stdout: READY_SKILL_REPORT.openclaw },
+    );
+
+    await run({ harness: "openclaw", dir: home, refresh: true, yes: true });
+
+    expect(output()).toContain("Could not restart openclaw");
+    expect(output()).toMatch(/Restart openclaw to load the refreshed plugin .*gateway restart/u);
+  });
+
+  it("a skill the harness does not report ready is said, with the command that shows why", async () => {
+    const home = refreshableHome("openclaw");
+    const output = captureLog();
+    harnessCommands.run.mockImplementation(async (_spec, mode) => ({
+      code: 0,
+      stdout: mode === "capture" ? '{"eligible":[],"disabled":["omnesis"]}' : "",
+    }));
+
+    await run({ harness: "openclaw", dir: home, refresh: true, yes: true });
+
+    expect(output()).toContain("it is disabled in OpenClaw's config");
+    expect(output()).toContain("openclaw skills info omnesis");
+    expect(output()).not.toContain("new session");
   });
 });

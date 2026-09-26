@@ -124,6 +124,7 @@ import { addSourceWireContracts } from "./migration-177-source-wire-contract.js"
 import { addPendingSourcePages } from "./migration-178-pending-source-pages.js";
 import { addSourceSyncIssues } from "./migration-179-source-sync-issues.js";
 import { normalizeSourceTimestamps } from "./migration-180-source-timestamps.js";
+import { migrateV182PrivateKeyJwtClients } from "./migration-182-private-key-jwt-clients.js";
 import { LATEST_SCHEMA_VERSION } from "./schema-version.js";
 import type { Db } from "./types.js";
 
@@ -4621,6 +4622,51 @@ export const MIGRATIONS: readonly Migration[] = [
         if (!cols.includes("access_level_id")) {
           db.exec(`ALTER TABLE ${table} ADD COLUMN access_level_id TEXT`);
         }
+      }
+    },
+  },
+  {
+    // Rebuilds `oauth_clients`, which other tables reference, so it follows
+    // migration 131's contract: foreign keys off and legacy_alter_table on
+    // around its own transaction, then a foreign_key_check of every table
+    // that references it before committing.
+    version: 182,
+    description: "let metadata-document OAuth clients authenticate with private_key_jwt",
+    ownTransaction: true,
+    up(db) {
+      const fkWasOn =
+        (db.prepare<[], { foreign_keys: number }>("PRAGMA foreign_keys").get()?.foreign_keys ??
+          0) === 1;
+      db.exec("PRAGMA foreign_keys = OFF");
+      db.exec("PRAGMA legacy_alter_table = ON");
+      db.exec("BEGIN");
+      try {
+        migrateV182PrivateKeyJwtClients(db);
+        const referencing = db
+          .prepare<[], { name: string }>(
+            `SELECT DISTINCT m.name FROM sqlite_master m, pragma_foreign_key_list(m.name) f
+             WHERE m.type = 'table' AND f."table" = 'oauth_clients'`,
+          )
+          .all();
+        for (const { name } of referencing) {
+          const violations = db.prepare(`PRAGMA foreign_key_check("${name}")`).all();
+          if (violations.length > 0) {
+            throw new Error(
+              `foreign_key_check(${name}) found ${violations.length} violation(s) after the rebuild`,
+            );
+          }
+        }
+        db.exec("COMMIT");
+      } catch (error) {
+        try {
+          db.exec("ROLLBACK");
+        } catch {
+          // The original migration failure is the actionable error.
+        }
+        throw error;
+      } finally {
+        db.exec("PRAGMA legacy_alter_table = OFF");
+        if (fkWasOn) db.exec("PRAGMA foreign_keys = ON");
       }
     },
   },

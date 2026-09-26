@@ -303,7 +303,7 @@ export function RequestReview({
   const options = connectionOptions(request, connection, overview);
   const approval = approvalFor(choice, options);
   const effectiveRules = approval?.rules ?? choice.rules;
-  const valid = Boolean(approval) && !validateGrantRules(effectiveRules);
+  const valid = Boolean(approval) && !validateGrantRules(effectiveRules, sources);
 
   // A taken level name is the owner's to fix by typing another, so the refusal
   // goes as soon as they do.

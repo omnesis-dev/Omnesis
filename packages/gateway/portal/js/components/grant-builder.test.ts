@@ -411,6 +411,19 @@ describe("GrantBuilder", () => {
     expect(host.querySelectorAll("[role='alert']")).toHaveLength(1);
   });
 
+  it("says so in the card when a boundary reads nothing", async () => {
+    await act(async () => render(h(GrantBuilder, {
+      value: { direct: { ...newGrantRule("direct"), sources: { mode: "denylist", sourceIds: ["github:work"] } } },
+      onChange: vi.fn(),
+      sources: [{ id: "github:work", name: "GitHub — Work" }],
+      policies: [],
+    }), host));
+
+    expect(host.querySelector(".grant-builder-boundary-error")?.textContent).toBe(
+      "Direct would not be able to read any source.",
+    );
+  });
+
   it("keeps Direct's consequence inside its own card rather than as a second banner", async () => {
     await act(async () => render(h(GrantBuilder, {
       value: {

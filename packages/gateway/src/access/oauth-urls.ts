@@ -55,6 +55,18 @@ export function resolveOAuthUrls(
   };
 }
 
+/** Advertise same-machine setup without permitting OAuth on a remote request origin. */
+export function resolveOAuthOverviewUrls(
+  requestUrl: string,
+  configuredBaseUrl?: string,
+  configuredResources?: readonly string[],
+  loopbackBaseUrl?: string,
+): OAuthEndpointUrls | null {
+  const urls = resolveOAuthUrls(requestUrl, configuredBaseUrl, configuredResources);
+  if (urls || configuredBaseUrl || !loopbackBaseUrl) return urls;
+  return resolveOAuthUrls(loopbackBaseUrl, undefined, configuredResources);
+}
+
 export function resolveOAuthMetadataPaths(
   configuredBaseUrl?: string,
   configuredResources?: readonly string[],

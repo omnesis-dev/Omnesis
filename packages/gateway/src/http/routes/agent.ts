@@ -198,6 +198,8 @@ export interface AgentRoutesDeps {
    * under Settings → Models").
    */
   disabledReason?: string;
+  /** Structured recovery reason when remote inference permission is missing. */
+  disabledCode?: "remote_inference_disabled";
   /** Current agent config snapshot for the /admin/agent/config status endpoint. */
   agentConfig?: AgentConfigSnapshot;
   /**
@@ -235,6 +237,8 @@ export interface AgentConfigSnapshot {
   backend: string;
   enabled: boolean;
   disabledReason?: string;
+  /** Structured recovery reason when remote inference permission is missing. */
+  disabledCode?: "remote_inference_disabled";
 }
 
 /**
@@ -324,7 +328,9 @@ export function mountAgentRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
   const requireService = (): AgentService => {
     if (!deps.agentService) {
       const reason = deps.disabledReason ?? "Agent harness not enabled on this gateway.";
-      throw new ServiceUnavailableError(reason);
+      throw deps.disabledCode
+        ? new HttpError(503, deps.disabledCode, reason)
+        : new ServiceUnavailableError(reason);
     }
     return deps.agentService;
   };
@@ -341,7 +347,9 @@ export function mountAgentRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
   const requireAnswerService = (): AnswerService => {
     if (!deps.answerService) {
       const reason = deps.disabledReason ?? "Agent harness not enabled on this gateway.";
-      throw new ServiceUnavailableError(reason);
+      throw deps.disabledCode
+        ? new HttpError(503, deps.disabledCode, reason)
+        : new ServiceUnavailableError(reason);
     }
     return deps.answerService;
   };
@@ -397,6 +405,7 @@ export function mountAgentRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
       backend: cfg.backend,
       enabled: cfg.enabled,
       disabledReason: cfg.disabledReason ?? null,
+      disabledCode: cfg.disabledCode ?? null,
     });
   });
 

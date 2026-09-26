@@ -391,8 +391,20 @@
         <p>
           Nothing leaves your machine by default: cloud backends (Anthropic, Codex) and HTTP
           backends that do not resolve to loopback stay unused until you enable remote inference.
-          Backends, presets, the remote-inference setting, and the other model roles are covered in
+          Choosing a cloud model in the portal asks you to confirm before enabling this permission
+          and saving the assignment. The permission covers all configured remote inference backends
+          on the gateway; turn off the <strong>Allow cloud inference</strong> switch under
+          <strong>Settings → Models</strong>. Backends, presets, the remote-inference setting, and
+          the other model roles are covered in
           <a href="/docs/operating#models">Operating → Models</a>.
+        </p>
+        <p>
+          If the agent already has a cloud model assigned but cloud inference is disabled, the
+          portal offers <strong>Enable cloud inference</strong> with confirmation, or
+          <strong>Choose a local model</strong>. Enabling it sends your messages, conversation
+          context, relevant Omnesis data, and tool results to the selected provider when you use the
+          agent. After enabling it, use <strong>Retry message</strong> to send a failed message. No
+          gateway restart or JSON editing is needed.
         </p>
 
         <h2 id="standing-instructions">Standing instructions</h2>

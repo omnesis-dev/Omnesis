@@ -112,7 +112,6 @@ describe("Nx change selection", () => {
   test("plugin marketplace edits run the workspace plugin checks", () => {
     for (const file of [
       ".claude-plugin/marketplace.json",
-      ".cursor-plugin/marketplace.json",
       ".agents/plugins/marketplace.json",
       ".github/plugin/marketplace.json",
     ]) {

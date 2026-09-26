@@ -331,8 +331,9 @@
           <strong>Settings → Access</strong> in the portal lists each access level followed by the
           connections and <a href="/docs/setup#device-access-level">integrations</a> that use it. A
           level shows its permissions, the sources it reaches, and its privacy policy. A connection
-          shows its name, the app it signed in from, and when it was last used, and expands to its
-          sign-ins. <code>omnesis access levels</code> prints the same list from the CLI.
+          shows its name, ID, the app it signed in from, when it was last used, and its sign-ins.
+          Permissions and connection details are always visible within each access level card.
+          <code>omnesis access levels</code> prints the same list from the CLI.
         </p>
         <ul>
           <li>
@@ -519,16 +520,16 @@
               <td>ChatGPT</td>
               <td>OpenAI's servers</td>
               <td>
-                a public HTTPS address, such as a
+                a public HTTPS address on port 443, such as a
                 <a href="#tailscale-funnel">Tailscale Funnel</a> name
               </td>
               <td><a href="#chatgpt">ChatGPT</a></td>
             </tr>
             <tr>
-              <td>VS Code, GitHub Copilot, Cursor, Gemini CLI</td>
+              <td>Antigravity CLI</td>
               <td>your machine</td>
-              <td>a configured HTTPS address its machine can reach; public for Gemini CLI</td>
-              <td><a href="#other-clients">Other clients</a></td>
+              <td>a configured HTTPS address its machine can reach</td>
+              <td><a href="#antigravity">Antigravity</a></td>
             </tr>
             <tr>
               <td>OpenClaw, Hermes</td>
@@ -543,10 +544,11 @@
         <p>
           <code>gateway.publicBaseUrl</code> (or the <code>OMNESIS_PUBLIC_BASE_URL</code>
           environment variable) is the gateway's HTTPS address for MCP sign-in: the OAuth issuer
-          every client remembers, so pick it once and keep it. Until it is set, the portal's
-          <strong>Connect an agent</strong> button stays hidden and only loopback sign-ins work. A
-          client on your machine, such as Claude Code, Codex, GitHub Copilot, VS Code, Cursor,
-          OpenClaw or Hermes, can use this address or one listed in
+          every client remembers, so pick it once and keep it. Until it is set,
+          <strong>Connect an agent</strong> offers a loopback address for agents running on the
+          gateway’s own machine; hosted clients and clients on other machines need a configured
+          address. This address can be private for local clients. A client on your machine, such as
+          Claude Code, Codex, OpenClaw or Hermes, can use this address or one listed in
           <code>gateway.mcpResourceUrls</code>, as long as its machine can reach it.
         </p>
         <p>
@@ -577,7 +579,11 @@
           Clients register either with a Client ID Metadata Document, a small JSON file published at
           the client's HTTPS identifier, or through Dynamic Client Registration. Omnesis fetches a
           metadata document directly, refuses redirects and private-network destinations, and
-          validates its redirect URLs before showing the approval screen.
+          validates its redirect URLs before showing the approval screen. A metadata document may
+          name a JSON Web Key Set and ask to authenticate with <code>private_key_jwt</code>; the
+          client then signs a short-lived assertion for each token and revocation request, and
+          Omnesis verifies it against that key set, fetched under the same rules. Clients that use
+          Dynamic Client Registration authenticate as public clients or with a client secret.
         </p>
 
         <h3 id="tailscale-funnel">Publish the gateway with Tailscale Funnel</h3>
@@ -589,7 +595,7 @@
           them to the Tailscale daemon on the gateway machine, which terminates TLS and forwards
           each request to the gateway on <code>localhost</code>. Funnel listens only on ports 443,
           8443 and 10000, so the public address has no <code>:7600</code>; your own devices keep
-          dialling port 7600 as before.
+          dialling port 7600 as before. Publish on 443: ChatGPT connects only on that port.
         </p>
         <ol>
           <li>
@@ -698,8 +704,9 @@
           </li>
           <li>
             <strong>New access level</strong> asks for a name, then Answer, Direct and Notes, the
-            sources and privacy policy, and a review of the resulting access. The review says when
-            the chosen level is already used by other connections.
+            sources and privacy policy, and a review of the resulting access. Answer and Direct must
+            be able to read at least one source. The review says when the chosen level is already
+            used by other connections.
           </li>
           <li>
             <strong>Replace a connection</strong>, for an agent signing in again, takes over that
@@ -718,32 +725,22 @@
 
         <h3 id="claude-code">Claude Code</h3>
         <p>
-          Choose one setup path: add the server by hand, or install the Claude plugin. Do not do
-          both, because the plugin declares the same connection.
-        </p>
-        <div class="term">
-          <div class="term-bar"><span></span><span></span><span></span></div>
-          <div class="term-body">
-            <p class="t-dim"># by hand</p>
-            <p>
-              <span class="t-prompt">❯</span>
-              <span class="t-cmd"
-                >claude mcp add --transport http --scope user omnesis
-                https://gateway.example.org/mcp</span
-              >
-            </p>
-          </div>
-        </div>
-        <p>
-          Then open Claude Code, run <code>/mcp</code>, select Omnesis, and complete the sign-in in
-          your browser.
+          Choose one setup path: install the Claude plugin, which is recommended, or only add the
+          server. Do not do both, because the plugin declares the same connection.
         </p>
         <p>
-          The Claude plugin declares the same HTTP connection and adds skills that teach Claude how
-          to use Answer, Direct, and Notes and how to set up or repair the connection. It asks for
-          your gateway's MCP URL (the HTTPS URL ending in <code>/mcp</code>), and it neither
-          launches an Omnesis process nor stores a gateway credential. <code>--sparse</code> checks
-          out only the plugin instead of the whole repository:
+          Claude Code and Codex accept only a certificate a public authority issued, such as the
+          Tailscale certificate or one for a domain of your own. They cannot connect to a gateway
+          that serves its self-signed certificate; give the gateway one of those
+          <a href="/docs/setup#certificates">certificates</a> first. OpenClaw and Hermes pin the
+          gateway's fingerprint instead, so they connect either way.
+        </p>
+        <p>
+          The Claude plugin declares the HTTP connection and adds skills that teach Claude how to
+          use Answer, Direct, and Notes and how to set up or repair the connection. It asks for your
+          gateway's MCP URL (the HTTPS URL ending in <code>/mcp</code>), and it neither launches an
+          Omnesis process nor stores a gateway credential. <code>--sparse</code> checks out only the
+          plugin instead of the whole repository:
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -764,12 +761,30 @@
             </p>
           </div>
         </div>
+        <p>To only add the server, without the skills:</p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >claude mcp add --transport http --scope user omnesis
+                https://gateway.example.org/mcp</span
+              >
+            </p>
+          </div>
+        </div>
         <p>
-          Installing from inside Claude Code asks for the URL instead, and
-          <code>/plugin configure omnesis@omnesis</code> changes it later; then sign in from
-          <code>/mcp</code>. Claude Code does not update plugins from other marketplaces on its own:
-          turn on auto-update for the <code>omnesis</code> marketplace under <code>/plugin</code>,
-          or run <code>claude plugin marketplace update omnesis</code> and
+          Either way, open Claude Code, run <code>/mcp</code>, select Omnesis, and complete the
+          sign-in in your browser. On a machine without a browser, see
+          <a href="#no-browser">Sign in without a browser</a>.
+        </p>
+        <p>
+          Installing the plugin from inside Claude Code asks for the URL instead, and
+          <code>/plugin configure omnesis@omnesis</code> changes it later. Claude Code does not
+          update plugins from other marketplaces on its own: turn on auto-update for the
+          <code>omnesis</code> marketplace under <code>/plugin</code>, or run
+          <code>claude plugin marketplace update omnesis</code> and
           <code>claude plugin update omnesis@omnesis</code> after updating Omnesis. Claude Code in
           VS Code and in the Claude desktop app cannot ask for the plugin's URL; set it from a
           terminal as above, or add the server by hand.
@@ -796,12 +811,17 @@
         <p>
           ChatGPT adds a custom MCP server as a developer-mode app. Developer mode is a feature of
           ChatGPT on the web, and whether your account can use it depends on your plan and, for a
-          workspace, its administrators. Publish the gateway first, with
+          workspace, its administrators. ChatGPT connects from OpenAI's servers and only on the
+          standard HTTPS port, 443, so publish the gateway there first, with
           <a href="#tailscale-funnel">Tailscale Funnel</a> or a
           <a href="/docs/setup#public-domain">domain of your own</a>, then:
         </p>
         <ol>
-          <li>In ChatGPT on the web, turn on developer mode in the settings.</li>
+          <li>
+            In ChatGPT on the web, turn on
+            <a href="https://developers.openai.com/api/docs/guides/developer-mode">developer mode</a
+            >.
+          </li>
           <li>
             Create an app for a remote MCP server. Enter the MCP URL shown under
             <strong>Settings → Access → Connect an agent</strong> in the portal, the public HTTPS
@@ -814,12 +834,8 @@
           <li>Enable the app in a new conversation.</li>
         </ol>
         <p>
-          ChatGPT's menu names change; OpenAI's
-          <a href="https://developers.openai.com/api/docs/guides/developer-mode"
-            >developer mode guide</a
-          >
-          has the current path. Keep one sign-in attempt open at a time; if several authorization
-          windows appear, close them all and start once more.
+          Keep one sign-in attempt open at a time; if several authorization windows appear, close
+          them all and start once more.
         </p>
 
         <h3 id="codex">Codex</h3>
@@ -848,8 +864,13 @@
           </div>
         </div>
         <p>
-          <code>codex mcp add</code> finds the gateway's sign-in and opens it straight away; approve
-          the connection in Omnesis, then start a new conversation. To sign in again later, run
+          Omnesis needs Codex 0.147 or later; earlier versions stop at the end of the sign-in with
+          <em>Authorization server response missing required issuer</em>. Check with
+          <code>codex --version</code> and, if it is older, run <code>codex update</code>, which
+          updates Codex however it was installed. <code>codex mcp add</code> finds the gateway's
+          sign-in and opens it straight away; approve the connection in Omnesis, then start a new
+          conversation. On a machine without a browser, see
+          <a href="#no-browser">Sign in without a browser</a>. To sign in again later, run
           <code>codex mcp login omnesis</code>. Refresh the guidance after updating Omnesis with
           <code>codex plugin marketplace upgrade omnesis</code>.
         </p>
@@ -859,45 +880,59 @@
           sign-in. The Claude plugin declares the connection itself.
         </div>
 
-        <h3 id="other-clients">VS Code, GitHub Copilot, Cursor, and Gemini CLI</h3>
+        <h3 id="no-browser">Sign in without a browser</h3>
         <p>
-          These clients run on your machine and sign in to <code>/mcp</code> themselves. The
-          portal's <strong>Connect an agent</strong> dialog lists each one's command or install link
-          with your gateway's address filled in, under
-          <strong>Commands and install links for common clients</strong>. For example:
+          On a machine with no browser, such as a server you reach over SSH, finish the sign-in from
+          another device. The agent prints a sign-in link; open it on a device with a browser and
+          approve the connection there. The browser then lands on a local address such as
+          <code>http://localhost:53682/callback?code=…</code>, which fails to load because the agent
+          is on the other machine. Copy that address from the address bar and paste it where the
+          agent asks for it.
         </p>
+        <ul>
+          <li>
+            <strong>Claude Code</strong> asks for the address by itself when it cannot open a
+            browser.
+          </li>
+          <li>
+            <strong>Antigravity</strong> always asks for an authorization code instead, which an
+            Antigravity page shows after you approve; see <a href="#antigravity">Antigravity</a>.
+          </li>
+          <li>
+            <strong>Codex</strong> asks for it only when signing in with <code>--no-browser</code>.
+            <code>codex mcp add</code> starts a sign-in it cannot finish there: once it says the
+            server is added, press Ctrl+C, then run
+            <code>codex mcp login omnesis --no-browser</code>.
+          </li>
+        </ul>
+
+        <h3 id="antigravity">Antigravity</h3>
+        <p>Add the server to Antigravity CLI:</p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
           <div class="term-body">
             <p>
               <span class="t-prompt">❯</span>
-              <span class="t-cmd"
-                >copilot mcp add --transport http omnesis https://gateway.example.org/mcp</span
-              >
-            </p>
-            <p>
-              <span class="t-prompt">❯</span>
-              <span class="t-cmd"
-                >gemini mcp add --scope user --transport http omnesis
-                https://gateway.example.org/mcp</span
-              >
+              <span class="t-cmd">agy mcp add omnesis https://gateway.example.org/mcp</span>
             </p>
           </div>
         </div>
         <p>
-          Gemini CLI signs in only to a public HTTPS address or to a loopback address on the same
-          machine, so give it the <a href="#tailscale-funnel">Tailscale Funnel</a> address or your
-          own domain rather than a tailnet name. Run <code>/mcp auth omnesis</code> inside Gemini
-          CLI to sign in.
+          Then run <code>/mcp</code> inside Antigravity CLI, select <code>omnesis</code> and choose
+          <strong>Authenticate</strong>. Antigravity opens the sign-in in your browser and also
+          prints its link, so it works the same on a machine without a browser: open the link on any
+          device and <a href="#approving-a-connection">approve the connection</a> in Omnesis. After
+          you approve, the browser opens an Antigravity page with an authorization code, which is
+          not the short code Omnesis may show while signing in: copy it and paste it into
+          Antigravity.
         </p>
+
+        <h3 id="other-clients">Other clients</h3>
         <p>
-          The repository also carries the same usage guidance as a plugin for GitHub Copilot CLI and
-          VS Code. In Copilot CLI, run
-          <code>copilot plugin marketplace add omnesis-dev/Omnesis</code> and
-          <code>copilot plugin install omnesis@omnesis</code>; in VS Code, add
-          <code>omnesis-dev/Omnesis</code> to the <code>chat.plugins.marketplaces</code> setting and
-          install <code>omnesis</code> from the plugin list. The plugin does not add the server; add
-          it as above.
+          Any other MCP client that supports remote HTTP servers with OAuth connects the same way:
+          give it the MCP URL and approve the sign-in in Omnesis. The portal's
+          <strong>Connect an agent</strong> dialog shows the setup for each common agent with your
+          address filled in: pick the agent under <strong>Setup for common agents</strong>.
         </p>
 
         <h2 id="openclaw-hermes">OpenClaw and Hermes</h2>
@@ -917,7 +952,19 @@
           line with its URL and certificate fingerprint. Mint the pairing code it asks for with
           <code>omnesis devices pair --kind agent</code>, or in the portal under
           <strong>Settings → Devices</strong>. The role refuses a machine that does not already have
-          OpenClaw or Hermes; it never installs them for you.
+          OpenClaw or Hermes; it never installs them for you. The portal writes this line for you:
+          under <strong>Settings → Access</strong>, open <strong>Connect an agent</strong>, choose
+          OpenClaw or Hermes, and create a pairing code there. The command it shows carries the
+          gateway's address, the code and, where the gateway serves that address itself, its
+          certificate fingerprint.
+        </p>
+        <p>
+          On a machine that already runs Omnesis, such as one with a collector, the role installs
+          nothing: it connects with the <code>omnesis</code> command already there and leaves the
+          checkout, its services and the keyring as they are. When that command is too old to run
+          this connect, the role offers to run <code>omnesis update</code> first, which restarts the
+          services and rolls back on failure; without a terminal to ask on, it stops and says to run
+          it. The role never touches the keyring: the agent keeps its credentials in its own home.
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -955,7 +1002,18 @@
           and <code>--trust-fingerprint sha256:…</code> to check the gateway's certificate against a
           fingerprint you were given instead of trusting whatever answers. It then waits up to ten
           minutes for you to <a href="#approving-a-connection">approve the connection</a>, so leave
-          it running until it finishes. Restart the OpenClaw or Hermes gateway afterwards.
+          it running until it finishes.
+        </p>
+        <p>
+          The agent reads its plugins when it starts, so once the plugin is installed
+          <code>connect</code> restarts it with <code>openclaw gateway restart</code> or
+          <code>hermes gateway restart</code>. On a terminal it asks first, because the restart
+          interrupts any run the agent is in the middle of; <code>--yes</code> restarts without
+          asking, and <code>--no-restart</code> prints the command instead. Without a terminal and
+          without <code>--yes</code>, it prints the command; the installer roles, which run it for
+          you, pass <code>--yes</code> when they have no terminal to ask on. It then asks the agent
+          whether the Omnesis skill is ready and says so, naming what to run when it is not. A new
+          session picks the skill up.
         </p>
         <p>
           <code>connect</code> warns when the plugin it is about to install differs in version from
@@ -965,8 +1023,9 @@
 
         <h3 id="harness-refresh">Refresh after an update</h3>
         <p>
-          After updating Omnesis, refresh the installed plugin and skill in place, then restart the
-          OpenClaw or Hermes gateway. Re-running the installer role with neither
+          After updating Omnesis, refresh the installed plugin and skill in place; the refresh
+          restarts OpenClaw or Hermes the way a first connect does. Re-running the installer role
+          with neither
           <code>--gateway-url</code> nor <code>--code</code> does the same.
         </p>
         <div class="term">

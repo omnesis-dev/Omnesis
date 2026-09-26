@@ -148,6 +148,20 @@ describe("Grant Builder state", () => {
     })).toBe("Select at least one source for Direct.");
   });
 
+  it("refuses a boundary that allows none of the known sources, however it was reached", () => {
+    const known = SOURCES.map((id) => ({ id }));
+    // Nothing ticked, then "Allow it automatically": every current source is listed away.
+    const noneNow = setFutureSourcesAllowed(newGrantRule("direct"), true, SOURCES);
+    expect(noneNow.sources).toEqual({ mode: "denylist", sourceIds: SOURCES });
+    expect(validateGrantRules({ direct: noneNow }, known)).toBe(
+      "Direct would not be able to read any source.",
+    );
+    // Without the known sources the shape alone looks fine; the list is what catches it.
+    expect(validateGrantRules({ direct: noneNow })).toBeNull();
+    expect(validateGrantRules({ direct: setSourceAllowed(noneNow, "github:work", true) }, known)).toBeNull();
+    expect(validateGrantRules({ direct: setAllSourcesAllowed(noneNow, SOURCES, true) }, known)).toBeNull();
+  });
+
   it("reports source selections that exceed the HTTP boundary", () => {
     const sourceIds = Array.from({ length: 257 }, (_, index) => `fictional:${index}`);
     expect(validateGrantRules({

@@ -108,6 +108,7 @@ export function ConfirmModal({
           ${hideCancel
             ? null
             : html`<button
+                type="button"
                 class="btn-ghost"
                 ref=${cancelRef}
                 disabled=${cancelDisabled}
@@ -117,6 +118,7 @@ export function ConfirmModal({
               </button>`}
           ${secondaryLabel
             ? html`<button
+                type="button"
                 class="btn-secondary ${secondaryDestructive ? "danger" : ""}"
                 disabled=${cancelDisabled}
                 onClick=${onSecondary}
@@ -125,6 +127,7 @@ export function ConfirmModal({
               </button>`
             : null}
           <button
+            type="button"
             class="btn-primary ${destructive ? "danger" : ""}"
             ref=${confirmRef}
             disabled=${confirmDisabled}
