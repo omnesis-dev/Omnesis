@@ -250,7 +250,9 @@ export class DirectMcpService {
         description:
           name === "run_sql"
             ? "Call list_tables first to discover permitted tables and columns (follow nextOffset). " +
-              handle.description
+              "Run a read-only DuckDB query for aggregates, trends, comparisons, or structured records. " +
+              "Use only discovered tables and columns; keep date windows and maxRows bounded. " +
+              "Operational SQLite, writes, file reads, and external access are unavailable."
             : handle.description,
         inputSchema,
       };

@@ -82,7 +82,12 @@ describe("DirectMcpService", () => {
   });
 
   it("keeps privacy, untrusted-data handling and schema discovery in the first 512 bytes", async () => {
-    const service = new DirectMcpService(handles());
+    const canonicalHandles = handles().map((handle) =>
+      handle.name === "run_sql"
+        ? { ...handle, description: "Read the analytics schema in the system prompt." }
+        : handle,
+    );
+    const service = new DirectMcpService(canonicalHandles);
     for (const authorization of [undefined, restrictedAuthorization]) {
       const prefix = Buffer.from(await service.instructions(authorization))
         .subarray(0, 512)
@@ -92,9 +97,9 @@ describe("DirectMcpService", () => {
       expect(prefix).toContain("Before run_sql, call list_tables");
       expect(prefix).toContain("nextOffset");
     }
-    expect(service.manifest().find((tool) => tool.name === "run_sql")?.description).toMatch(
-      /^Call list_tables first/,
-    );
+    const sqlDescription = service.manifest().find((tool) => tool.name === "run_sql")?.description;
+    expect(sqlDescription).toMatch(/^Call list_tables first/);
+    expect(sqlDescription).not.toContain("system prompt");
   });
 
   it("discovers a fresh scoped catalog without forwarding provenance or invoking canonical tools", async () => {
