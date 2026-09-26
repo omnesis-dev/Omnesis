@@ -704,6 +704,25 @@ describe("install.sh --openclaw / --hermes: a machine that already runs Omnesis"
     },
   );
 
+  test.skipIf(!HAS_PTY)(
+    "that update ignores --version, which the run reported as choosing nothing",
+    () => {
+      collectorMachine("existing-pinned");
+      plantHarnessHome("existing-pinned", ".openclaw");
+
+      const run = runInstallerOnTty(
+        "existing-pinned",
+        ["--openclaw", "--version", "9.9.9", ...CODED],
+        ["y"],
+        { OMNESIS_TEST_CONNECT_PREDATES_RESTART: "1" },
+      );
+
+      expect(run.status, run.output).toBe(0);
+      expect(run.output).toContain("this run installs nothing");
+      expect(run.calls.filter((call) => call.startsWith("update "))).toEqual(["update --yes"]);
+    },
+  );
+
   test.skipIf(!HAS_PTY)("declining that update changes nothing and connects nothing", () => {
     collectorMachine("existing-decline");
     plantHarnessHome("existing-decline", ".openclaw");

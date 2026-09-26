@@ -4175,6 +4175,11 @@ harness_require_connect_support() {
   esac
   ensure_node
   [ -z "$HARNESS_EXISTING_ROOT" ] || ensure_git
+  # This update only brings the CLI up to the connect it needs. --version and
+  # --edge were already reported as choosing nothing on this run, so the
+  # updater moves to its own default rather than to them.
+  PIN_VERSION=""
+  EDGE=0
   run_machine_update "$HARNESS_EXISTING_ROOT"
   existing_cli_connects || \
     fail "The update finished, but this machine's omnesis still cannot run this connect. Run: omnesis connect $HARNESS — it prints what to do next."
