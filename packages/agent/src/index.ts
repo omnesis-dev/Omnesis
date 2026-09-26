@@ -134,6 +134,7 @@ export {
   renderCognitionRetrievalGuidance,
   renderReadOnlyRetrievalPlaybook,
   renderTemporalRetrievalGuidance,
+  safeRetrievalCatalogTable,
   type ReadOnlyRetrievalPlaybookInput,
   type RetrievalCatalogColumn,
   type RetrievalCatalogTable,

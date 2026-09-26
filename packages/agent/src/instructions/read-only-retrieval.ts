@@ -200,19 +200,33 @@ ${catalogRule}
 - Do not attempt DDL, DML, extensions, file reads, attachments, or external access.`;
 }
 
+/**
+ * Reduce one catalog entry to what an agent may be shown: a plain identifier
+ * for the table and each column, and a known scalar type. Table and column
+ * names can derive from synced data, so anything else is dropped rather than
+ * echoed to a model. `null` when the table name itself is not a plain
+ * identifier.
+ */
+export function safeRetrievalCatalogTable(
+  table: RetrievalCatalogTable,
+): { tableName: string; columns: RetrievalCatalogColumn[] } | null {
+  if (!SAFE_ANALYTICS_IDENTIFIER.test(table.tableName)) return null;
+  return {
+    tableName: table.tableName,
+    columns: table.columns
+      .filter(
+        (column) =>
+          SAFE_ANALYTICS_IDENTIFIER.test(column.name) && SAFE_ANALYTICS_TYPE.test(column.type),
+      )
+      .slice(0, MAX_RETRIEVAL_CATALOG_COLUMNS_PER_TABLE),
+  };
+}
+
 export function renderAnalyticsCatalog(catalog: readonly RetrievalCatalogTable[]): string {
   const safeCatalog = catalog
-    .filter((table) => SAFE_ANALYTICS_IDENTIFIER.test(table.tableName))
-    .slice(0, MAX_RETRIEVAL_CATALOG_TABLES)
-    .map((table) => ({
-      tableName: table.tableName,
-      columns: table.columns
-        .filter(
-          (column) =>
-            SAFE_ANALYTICS_IDENTIFIER.test(column.name) && SAFE_ANALYTICS_TYPE.test(column.type),
-        )
-        .slice(0, MAX_RETRIEVAL_CATALOG_COLUMNS_PER_TABLE),
-    }));
+    .map(safeRetrievalCatalogTable)
+    .filter((table) => table !== null)
+    .slice(0, MAX_RETRIEVAL_CATALOG_TABLES);
 
   if (safeCatalog.length === 0) {
     return "_No analytics tables are currently registered._";

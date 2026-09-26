@@ -2,7 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { z } from "zod";
-import type { RetrievalCatalogTable, ToolHandle } from "@omnesis/agent";
+import {
+  safeRetrievalCatalogTable,
+  type RetrievalCatalogTable,
+  type ToolHandle,
+} from "@omnesis/agent";
 
 const listTablesArgsSchema = z
   .object({
@@ -34,9 +38,12 @@ export function createDirectListTablesTool(
       }
       try {
         const { offset, limit } = parsed.data;
-        const tables = [...(await catalog())].sort((a, b) =>
-          a.tableName < b.tableName ? -1 : a.tableName > b.tableName ? 1 : 0,
-        );
+        // Names and types pass the same identifier filter the instruction
+        // catalog applies, because both reach the agent's model.
+        const tables = (await catalog())
+          .map(safeRetrievalCatalogTable)
+          .filter((table) => table !== null)
+          .sort((a, b) => (a.tableName < b.tableName ? -1 : a.tableName > b.tableName ? 1 : 0));
         const page = tables.slice(offset, offset + limit).map((table) => ({
           tableName: table.tableName,
           columns: table.columns.map((column) => ({ name: column.name, type: column.type })),
