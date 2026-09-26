@@ -863,6 +863,8 @@ a:hover { text-decoration: underline; }
 .access-agent-pairing { display: grid; gap: 8px; }
 .access-agent-pair-action { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .access-agent-pair-action span { color: var(--text-secondary); font-size: 12px; }
+.access-agent-tabs { justify-self: start; }
+.access-agent-tabs button { font-size: 12px; }
 .access-agent-command { display: grid; gap: 6px; min-width: 0; }
 .access-agent-command > span { color: var(--text-primary); font-size: 12px; font-weight: 600; }
 .access-agent-steps .access-mcp-resource code {

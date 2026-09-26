@@ -84,10 +84,10 @@ function harnessCommands(harness, oauth, address, pairingCode) {
   ].join(" ");
   return [
     {
-      label: "No Omnesis on that machine yet",
+      label: "Omnesis not installed",
       value: `curl -fsSL https://omnesis.dev/install.sh | sh -s -- --${harness} ${flags}`,
     },
-    { label: "Omnesis CLI already installed", value: `omnesis connect ${harness} ${flags}` },
+    { label: "Omnesis CLI installed", value: `omnesis connect ${harness} ${flags}` },
   ];
 }
 
@@ -96,7 +96,8 @@ function harnessCommands(harness, oauth, address, pairingCode) {
  *
  * - `icon` is a bundled image under /portal/img/agents/ or a provider logo the
  *   gateway serves.
- * - `commands` may be empty for agents configured outside a terminal.
+ * - `commands` may be empty for agents configured outside a terminal; with
+ *   `alternatives`, they are ways to do the same thing and the user picks one.
  * - `needsPublicAddress` marks agents that reach the gateway from the Internet.
  * - `pairs` marks the managed integrations, which pair the machine they run on
  *   as an agent device before signing in.
@@ -119,11 +120,12 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
           value: `claude mcp add --transport http --scope user ${SERVER_NAME} ${url}`,
         },
         {
-          label: "Or install the plugin, which adds the same server and usage skills",
+          label: "Install the plugin",
           value: `claude plugin marketplace add omnesis-dev/Omnesis --sparse .claude-plugin plugins/omnesis-claude && claude plugin install omnesis@omnesis --config omnesis_mcp_url=${url}`,
         },
       ],
-      note: "Use one of the two, not both. Then run /mcp, select omnesis and choose Authenticate.",
+      note: "The plugin adds the same server plus skills that teach Claude to use Omnesis; use one or the other. Then run /mcp, select omnesis and choose Authenticate.",
+      alternatives: true,
       docs: `${DOCS}/connect#claude-code`,
     },
     {
@@ -181,7 +183,8 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
       subtitle: "Integration",
       icon: { src: "/portal/img/agents/openclaw.svg" },
       commands: harnessCommands("openclaw", oauth, address, pairingCode),
-      note: "Run one of the two on the machine that runs OpenClaw, then restart OpenClaw.",
+      note: "Run it on the machine that runs OpenClaw, then restart OpenClaw.",
+      alternatives: true,
       pairs: true,
       docs: `${DOCS}/connect#harness-install`,
     },
@@ -191,7 +194,8 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
       subtitle: "Integration",
       icon: { src: "/portal/img/agents/hermes.png" },
       commands: harnessCommands("hermes", oauth, address, pairingCode),
-      note: "Run one of the two on the machine that runs Hermes, then restart Hermes.",
+      note: "Run it on the machine that runs Hermes, then restart Hermes.",
+      alternatives: true,
       pairs: true,
       docs: `${DOCS}/connect#harness-install`,
     },

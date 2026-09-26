@@ -1593,18 +1593,26 @@ describe("AccessView", () => {
     const openclaw = host.querySelector<HTMLButtonElement>("button[data-agent='openclaw']")!;
     await act(async () => { openclaw.click(); });
 
-    const commands = () => [...host.querySelectorAll(".access-agent-command code")].map((code) => code.textContent);
-    expect(commands()[1]).toBe(
-      `omnesis connect openclaw --gateway-url https://gateway.example.org:7600 --trust-fingerprint sha256:${"ab".repeat(32)}`,
+    const command = () => host.querySelector(".access-agent-command code")?.textContent;
+    const tabs = () => [...host.querySelectorAll<HTMLButtonElement>(".access-agent-tabs [role='tab']")];
+    expect(tabs().map((tab) => tab.textContent?.trim())).toEqual(["Omnesis not installed", "Omnesis CLI installed"]);
+    expect(host.querySelectorAll(".access-agent-command")).toHaveLength(1);
+    expect(command()).toBe(
+      `curl -fsSL https://omnesis.dev/install.sh | sh -s -- --openclaw --gateway-url https://gateway.example.org:7600 --trust-fingerprint sha256:${"ab".repeat(32)}`,
     );
+
     const create = [...host.querySelectorAll<HTMLButtonElement>(".access-agent-pair-action button")][0]!;
     await act(async () => { create.click(); });
     await act(async () => { await Promise.resolve(); });
     expect(api.pairDevice).toHaveBeenCalledWith({ kind: "agent" });
-    expect(commands()).toEqual([
+    expect(command()).toBe(
       `curl -fsSL https://omnesis.dev/install.sh | sh -s -- --openclaw --gateway-url https://gateway.example.org:7600 --code K7Q2-M9XD --trust-fingerprint sha256:${"ab".repeat(32)}`,
+    );
+    await act(async () => { tabs()[1]!.click(); });
+    expect(tabs()[1]!.getAttribute("aria-selected")).toBe("true");
+    expect(command()).toBe(
       `omnesis connect openclaw --gateway-url https://gateway.example.org:7600 --code K7Q2-M9XD --trust-fingerprint sha256:${"ab".repeat(32)}`,
-    ]);
+    );
 
     const address = host.querySelector<HTMLSelectElement>("#access-agent-address")!;
     // linkedom's <select>.value is read-only; select the option instead.
@@ -1612,7 +1620,7 @@ describe("AccessView", () => {
       address.querySelectorAll("option")[1]!.setAttribute("selected", "");
       address.dispatchEvent(new window.Event("change", { bubbles: true }));
     });
-    expect(commands()[1]).toBe("omnesis connect openclaw --gateway-url https://gateway.example.org --code K7Q2-M9XD");
+    expect(command()).toBe("omnesis connect openclaw --gateway-url https://gateway.example.org --code K7Q2-M9XD");
   });
 
   test("offers connecting an agent only when the Gateway has usable OAuth URLs", async () => {

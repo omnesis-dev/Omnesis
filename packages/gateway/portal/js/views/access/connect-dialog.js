@@ -95,15 +95,27 @@ function HarnessPairing({ addresses, addressIdx, setAddressIdx, pairing, onPair 
           <button type="button" class="btn-secondary" onClick=${onPair} disabled=${pairing.busy}>
             ${pairing.busy ? "Creating…" : "Create a pairing code"}
           </button>
-          <span>Both commands ask for one. Create it here and it is filled in.</span>
+          <span>The command asks for one. Create it here and it is filled in.</span>
         </div>`}
     ${pairing.error && html`<p class="access-error" role="alert">${pairing.error}</p>`}
+  </div>`;
+}
+
+/** One copyable command; `labelled` names it above the box when it is not a tab. */
+function AgentCommand({ agent, command, labelled }) {
+  return html`<div class="access-agent-command">
+    ${labelled && html`<span>${command.label}</span>`}
+    <div class="access-mcp-resource">
+      <code title=${command.value}>${command.value}</code>
+      <${CopyIconButton} text=${command.value} class="access-copy-button" title=${`Copy command for ${agent.name}`} />
+    </div>
   </div>`;
 }
 
 /** A grid of common agents; choosing one shows only that agent's setup. */
 function AgentSetupPicker({ oauth }) {
   const [selectedId, setSelectedId] = useState(null);
+  const [commandIdx, setCommandIdx] = useState(0);
   const [addressIdx, setAddressIdx] = useState(0);
   const [pairing, setPairing] = useState({ code: null, expiresAt: null, busy: false, error: "" });
   const addresses = harnessAddresses(oauth);
@@ -137,7 +149,10 @@ function AgentSetupPicker({ oauth }) {
           data-agent=${agent.id}
           aria-pressed=${agent.id === selectedId ? "true" : "false"}
           aria-controls="access-agent-steps"
-          onClick=${() => setSelectedId(agent.id === selectedId ? null : agent.id)}
+          onClick=${() => {
+            setSelectedId(agent.id === selectedId ? null : agent.id);
+            setCommandIdx(0);
+          }}
         >
           <span class="backend-opt-icon"><${AgentIcon} icon=${agent.icon} /></span>
           <span class="backend-opt-title">${agent.name}</span>
@@ -156,19 +171,25 @@ function AgentSetupPicker({ oauth }) {
         pairing=${pairing}
         onPair=${createPairingCode}
       />`}
-      ${selected.commands.map(
-        (command) => html`<div class="access-agent-command" key=${command.label}>
-          <span>${command.label}</span>
-          <div class="access-mcp-resource">
-            <code title=${command.value}>${command.value}</code>
-            <${CopyIconButton}
-              text=${command.value}
-              class="access-copy-button"
-              title=${`Copy command for ${selected.name}`}
-            />
-          </div>
-        </div>`,
-      )}
+      ${selected.alternatives
+        ? html`<div class="segmented access-agent-tabs" role="tablist" aria-label=${`Ways to connect ${selected.name}`}>
+              ${selected.commands.map(
+                (command, index) => html`<button
+                  type="button"
+                  role="tab"
+                  key=${command.label}
+                  class=${index === commandIdx ? "active" : ""}
+                  aria-selected=${index === commandIdx ? "true" : "false"}
+                  onClick=${() => setCommandIdx(index)}
+                >
+                  ${command.label}
+                </button>`,
+              )}
+            </div>
+            <${AgentCommand} agent=${selected} command=${selected.commands[commandIdx] ?? selected.commands[0]} />`
+        : selected.commands.map(
+            (command) => html`<${AgentCommand} key=${command.label} agent=${selected} command=${command} labelled />`,
+          )}
       <p>${selected.note}</p>
       <p class="access-agent-docs">
         <${ExternalLink} href=${selected.docs}>${selected.name} setup in the docs<//>
