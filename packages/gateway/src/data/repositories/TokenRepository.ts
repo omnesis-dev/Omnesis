@@ -253,7 +253,12 @@ export function lookupAgentPairingCredential(
   return { id: TokenId(row.id), deviceId: DeviceId(row.device_id) };
 }
 
-/** Whether a credential found by {@link lookupAgentPairingCredential} still stands. */
+/**
+ * Whether a credential found by {@link lookupAgentPairingCredential} still
+ * stands: the token is unchanged and its device is still a trusted agent.
+ * Revoking a device deletes its tokens as well, so the device condition only
+ * keeps the proof from outliving a revocation that ever stops doing so.
+ */
 export function isAgentPairingCredentialActive(
   db: Db,
   tokenId: TokenId,
@@ -261,10 +266,12 @@ export function isAgentPairingCredentialActive(
   harness: "openclaw" | "hermes",
 ): boolean {
   const row = db
-    .prepare<
-      [string, string],
-      { id: string; scopes: string; expires_at: number | null }
-    >("SELECT id, scopes, expires_at FROM tokens WHERE id = ? AND device_id = ?")
+    .prepare<[string, string], { id: string; scopes: string; expires_at: number | null }>(
+      `SELECT t.id, t.scopes, t.expires_at
+         FROM tokens t
+         JOIN devices d ON d.id = t.device_id
+        WHERE t.id = ? AND t.device_id = ? AND d.kind = 'agent' AND d.revoked_at IS NULL`,
+    )
     .get(tokenId, deviceId);
   return !!row && isAgentPairingCredential(row, harness);
 }

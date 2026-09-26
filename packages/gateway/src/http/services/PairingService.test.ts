@@ -19,6 +19,7 @@ import { createDatabase } from "../../db.js";
 import {
   createDevice,
   createPairing,
+  getDevice,
   peekPairing,
 } from "../../data/repositories/DeviceRepository.js";
 import { createToken, listTokens, lookupToken } from "../../data/repositories/TokenRepository.js";
@@ -708,6 +709,49 @@ describe("PairingService", () => {
       expect(peekPairing(db, code)).not.toBeNull();
     });
 
+    // Revocation also deletes the device's tokens; marking the row alone
+    // shows the proof depends on the device, not only on its tokens.
+    const markRevoked = (deviceId: DeviceId) =>
+      db.prepare("UPDATE devices SET revoked_at = 1 WHERE id = ?").run(deviceId);
+
+    test("a credential of a revoked device proves nothing", async () => {
+      const early = await pairFirst();
+      markRevoked(early.device.id);
+      const earlyCode = freshCode();
+      expect(
+        await makeService().redeem({
+          pairingCode: earlyCode,
+          capabilities: openClawCapabilities,
+          agentIntegration: { harness: "openclaw" },
+          continuityCredential: early.credentials.delivery.token,
+        }),
+      ).toMatchObject({ outcome: "conflict", code: "AGENT_DEVICE_EXISTS" });
+      expect(peekPairing(db, earlyCode)).not.toBeNull();
+    });
+
+    test("a device revoked between the preflight and the commit is not reconnected", async () => {
+      const late = await pairFirst();
+      const baseWriteGate = directWriteGate(db);
+      const racingWriteGate: WriteGate = {
+        ...baseWriteGate,
+        redeemAgentIntegrationPairing: async (input) => {
+          markRevoked(late.device.id);
+          return baseWriteGate.redeemAgentIntegrationPairing(input);
+        },
+      };
+      const lateCode = freshCode();
+      expect(
+        await makeService({ writeGate: racingWriteGate }).redeem({
+          pairingCode: lateCode,
+          capabilities: openClawCapabilities,
+          agentIntegration: { harness: "openclaw" },
+          continuityCredential: late.credentials.delivery.token,
+        }),
+      ).toMatchObject({ outcome: "conflict", code: "AGENT_CREDENTIAL_STALE" });
+      expect(peekPairing(db, lateCode)).not.toBeNull();
+      expect(getDevice(db, late.device.id)?.revokedAt).not.toBeNull();
+    });
+
     test("a per-run or expiring token of the device proves nothing", async () => {
       const first = await pairFirst();
       // An agent run is handed short-lived tokens of its device; they live in
@@ -727,7 +771,15 @@ describe("PairingService", () => {
         "fictional-expiring-delivery",
         { ttlMs: 60_000 },
       );
-      for (const credential of [perRun.token, expiringDelivery.token]) {
+      // A standing token an administrator minted with a wider grant is not
+      // one of the three a pairing mints either.
+      const widened = createToken(
+        db,
+        first.device.id,
+        [SCOPE_SUBSCRIPTIONS_RECEIVE, SCOPE_SUBSCRIPTIONS_ANSWER],
+        "fictional-widened-delivery",
+      );
+      for (const credential of [perRun.token, expiringDelivery.token, widened.token]) {
         const code = freshCode();
         const result = await makeService().redeem({
           pairingCode: code,
