@@ -79,7 +79,10 @@ const PHASES: Array<{
   { phase: "workouts", next: "done", schema: HEALTH_WORKOUTS, load: workoutRecords },
 ];
 
-const accountId = selfAccountId();
+// Resolved when a source asks, not on import: a universe that does not carry
+// this source must still load the package, and its discover() then reports no
+// account instead of failing the provider load.
+const selfAccount = (): string => selfAccountId();
 
 export default defineStructuredSource<Cursor>({
   id: "apple-health",
@@ -99,8 +102,8 @@ export default defineStructuredSource<Cursor>({
   // iOS push of the hook is tracked alongside the other native-host work.)
   selfIdentity: { aliasPrefix: "apple-health-account" },
   analyticsSchemas: ALL_HEALTH_SCHEMAS,
-  discover: async () => preDiscoveredAccounts("apple-health", [accountId]),
-  authFlow: async () => fakeLocalFlow("apple-health", accountId),
+  discover: async () => preDiscoveredAccounts("apple-health", [selfAccount()]),
+  authFlow: async () => fakeLocalFlow("apple-health", selfAccount()),
   async create() {
     return {
       analyticsSchemas: ALL_HEALTH_SCHEMAS,

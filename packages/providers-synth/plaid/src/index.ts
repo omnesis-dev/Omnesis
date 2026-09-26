@@ -37,7 +37,10 @@ const { type: _type, ...rest } = realPlaid;
 // The item id comes from the cast like every other synth identity, so the
 // universe manifest, discover(), and the fixtures all agree on the source-id
 // suffix.
-const accountId = selfAccountId("extra", "plaidItemId");
+// Resolved when a source asks, not on import: a universe that does not carry
+// this source must still load the package, and its discover() then reports no
+// account instead of failing the provider load.
+const selfAccount = (): string => selfAccountId("extra", "plaidItemId");
 
 /**
  * Default UTC day the snapshot phases write to — repeated synth syncs re-emit
@@ -63,10 +66,10 @@ export default defineProvider<Record<string, never>>({
   authType: "api-key",
   credentials: undefined,
   supportedPlatforms: undefined,
-  discover: async () => preDiscoveredAccounts(PLAID_DESCRIPTOR_ID, [accountId]),
+  discover: async () => preDiscoveredAccounts(PLAID_DESCRIPTOR_ID, [selfAccount()]),
   // The real flow sends the user to a Plaid-hosted page — a local pair shim
   // stands in for that browser leg on the synth path.
-  authFlow: async () => fakeLocalFlow(PLAID_DESCRIPTOR_ID, accountId),
+  authFlow: async () => fakeLocalFlow(PLAID_DESCRIPTOR_ID, selfAccount()),
   // A synthetic double spreads the real definition, so every auth entry point
   // the real source declares has to be overridden here or a demo run reaches
   // the real service.

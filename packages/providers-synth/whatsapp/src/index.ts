@@ -20,15 +20,18 @@ export {
 } from "./wraps-real.js";
 
 const { type: _type, ...rest } = realWhatsapp;
-const accountId = selfAccountId("phone");
+// Resolved when a source asks, not on import: a universe that does not carry
+// this source must still load the package, and its discover() then reports no
+// account instead of failing the provider load.
+const selfAccount = (): string => selfAccountId("phone");
 
 export default defineSource<SynthCursor>({
   ...rest,
   authType: "qr",
   credentials: undefined,
-  discover: async () => preDiscoveredAccounts("whatsapp", [accountId]),
+  discover: async () => preDiscoveredAccounts("whatsapp", [selfAccount()]),
   authenticate: (session) =>
-    fakeQrSession("whatsapp", accountId, session, {
+    fakeQrSession("whatsapp", selfAccount(), session, {
       title: "Scan this code from your phone",
       instructions: "This is a synthetic pairing; nothing leaves this machine.",
     }),

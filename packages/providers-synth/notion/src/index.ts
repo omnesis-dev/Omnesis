@@ -29,7 +29,10 @@ import type { ProviderSourceEntry, StructuredSyncResult } from "@omnesis/source-
 import type { DocumentInput, ProviderId, SourceId } from "@omnesis/types";
 
 const { type: _type, ...rest } = realNotion;
-const accountId = selfAccountId("extra", "notionUserId");
+// Resolved when a source asks, not on import: a universe that does not carry
+// this source must still load the package, and its discover() then reports no
+// account instead of failing the provider load.
+const selfAccount = (): string => selfAccountId("extra", "notionUserId");
 
 interface DatabasesCursor extends SynthCursor {
   /** Index into the databases fixture. -1 = not started, length = done. */
@@ -40,8 +43,8 @@ export default defineProvider<Record<string, never>>({
   ...rest,
   authType: "oauth",
   credentials: undefined,
-  discover: async () => preDiscoveredAccounts("notion", [accountId]),
-  authFlow: async (_p, cb) => fakeOAuthFlow("notion", "Notion", accountId, cb),
+  discover: async () => preDiscoveredAccounts("notion", [selfAccount()]),
+  authFlow: async (_p, cb) => fakeOAuthFlow("notion", "Notion", selfAccount(), cb),
   // A synthetic double spreads the real definition, so every auth entry point
   // the real source declares has to be overridden here or a demo run reaches
   // the real service.

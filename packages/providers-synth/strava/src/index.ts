@@ -20,7 +20,10 @@ import {
 import type { AnalyticsTableSchema, StructuredSyncResult } from "@omnesis/source-sdk";
 
 const { type: _type, ...rest } = realStrava;
-const accountId = selfAccountId("extra", "stravaAthleteId");
+// Resolved when a source asks, not on import: a universe that does not carry
+// this source must still load the package, and its discover() then reports no
+// account instead of failing the provider load.
+const selfAccount = (): string => selfAccountId("extra", "stravaAthleteId");
 
 // Pull the two table schemas the synth populates out of the real source's
 // declared `analyticsSchemas` so they stay in lockstep with the real
@@ -53,8 +56,8 @@ export default defineProvider<Record<string, never>>({
   ...rest,
   authType: "oauth",
   credentials: undefined,
-  discover: async () => preDiscoveredAccounts("strava", [accountId]),
-  authFlow: async (_p, cb) => fakeOAuthFlow("strava", "Strava", accountId, cb),
+  discover: async () => preDiscoveredAccounts("strava", [selfAccount()]),
+  authFlow: async (_p, cb) => fakeOAuthFlow("strava", "Strava", selfAccount(), cb),
   // A synthetic double spreads the real definition, so every auth entry point
   // the real source declares has to be overridden here or a demo run reaches
   // the real service.

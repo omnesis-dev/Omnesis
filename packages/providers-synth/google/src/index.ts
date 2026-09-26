@@ -26,7 +26,10 @@ import {
 import type { StructuredSyncResult } from "@omnesis/source-sdk";
 
 const { type: _type, ...rest } = realGoogle;
-const accountId = selfAccountId("email");
+// Resolved when a source asks, not on import: a universe that does not carry
+// this source must still load the package, and its discover() then reports no
+// account instead of failing the provider load.
+const selfAccount = (): string => selfAccountId("email");
 const GOOGLE_CALENDAR_SCHEMA = new GoogleCalendarSource(
   {} as ConstructorParameters<typeof GoogleCalendarSource>[0],
 ).analyticsSchemas[0];
@@ -47,8 +50,8 @@ export default defineProvider<Record<string, never>>({
   ...rest,
   authType: "oauth",
   credentials: undefined,
-  discover: async () => preDiscoveredAccounts("google", [accountId]),
-  authFlow: async (_p, cb) => fakeOAuthFlow("google", "Google", accountId, cb),
+  discover: async () => preDiscoveredAccounts("google", [selfAccount()]),
+  authFlow: async (_p, cb) => fakeOAuthFlow("google", "Google", selfAccount(), cb),
   // A synthetic double spreads the real definition, so every auth entry point
   // the real source declares has to be overridden here or a demo run reaches
   // the real service.

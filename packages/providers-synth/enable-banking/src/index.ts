@@ -24,7 +24,10 @@ const { type: _type, ...rest } = realEnableBanking;
 // The connected-bank slug (e.g. "revolut-de") comes from the cast like every
 // other synth identity, so the universe manifest, discover(), and the
 // fixtures' source_account_id all agree.
-const accountId = selfAccountId("extra", "enableBankingAccountId");
+// Resolved when a source asks, not on import: a universe that does not carry
+// this source must still load the package, and its discover() then reports no
+// account instead of failing the provider load.
+const selfAccount = (): string => selfAccountId("extra", "enableBankingAccountId");
 
 /** Hybrid sync phases: accounts → balances → transactions (with documents). */
 interface EbSynthCursor extends SynthCursor {
@@ -36,8 +39,8 @@ export default defineProvider<Record<string, never>>({
   authType: "oauth",
   credentials: undefined,
   supportedPlatforms: undefined,
-  discover: async () => preDiscoveredAccounts("enable-banking", [accountId]),
-  authFlow: async (_p, cb) => fakeOAuthFlow("enable-banking", "Enable Banking", accountId, cb),
+  discover: async () => preDiscoveredAccounts("enable-banking", [selfAccount()]),
+  authFlow: async (_p, cb) => fakeOAuthFlow("enable-banking", "Enable Banking", selfAccount(), cb),
   // A synthetic double spreads the real definition, so every auth entry point
   // the real source declares has to be overridden here or a demo run reaches
   // the real service.
@@ -56,9 +59,9 @@ export default defineProvider<Record<string, never>>({
     contract: undefined,
     analyticsSchemas: allSchemas,
     async create({ sourceId, providerId }) {
-      const accounts = accountRecords(accountId);
-      const balances = balanceRecords(accountId);
-      const transactions = transactionData(accountId, { sourceId, providerId });
+      const accounts = accountRecords(selfAccount());
+      const balances = balanceRecords(selfAccount());
+      const transactions = transactionData(selfAccount(), { sourceId, providerId });
       return {
         analyticsSchemas: allSchemas,
         // Per-instance branding, mirroring the real create(): the source card

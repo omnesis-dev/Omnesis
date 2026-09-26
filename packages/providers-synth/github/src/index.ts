@@ -24,16 +24,19 @@ const { type: _type, ...rest } = realGithub;
 // The GitHub account id IS the login, so it comes from the cast like every
 // other synth identity — the universe manifest, discover() and the fixture
 // actors then all agree on one person.
-const accountId = selfAccountId("extra", "githubLogin");
+// Resolved when a source asks, not on import: a universe that does not carry
+// this source must still load the package, and its discover() then reports no
+// account instead of failing the provider load.
+const selfAccount = (): string => selfAccountId("extra", "githubLogin");
 
 export default defineProvider<Record<string, never>>({
   ...rest,
   authType: "api-key",
   credentials: undefined,
   supportedPlatforms: undefined,
-  discover: async () => preDiscoveredAccounts("github", [accountId]),
+  discover: async () => preDiscoveredAccounts("github", [selfAccount()]),
   // An api-key source has no browser leg — a local pair shim stands in.
-  authFlow: async () => fakeLocalFlow("github", accountId),
+  authFlow: async () => fakeLocalFlow("github", selfAccount()),
   // A synthetic double spreads the real definition, so every auth entry point
   // the real source declares has to be overridden here or a demo run reaches
   // the real service.

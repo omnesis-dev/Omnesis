@@ -18,16 +18,19 @@ const { type: _type, ...rest } = realGranola;
 // Granola keys an account by the owner's email — the real provider derives the
 // account id from the note owner. Use the cast's "self" email so the synthetic
 // notes resolve onto John in the people graph.
-const accountId = selfAccountId("email");
+// Resolved when a source asks, not on import: a universe that does not carry
+// this source must still load the package, and its discover() then reports no
+// account instead of failing the provider load.
+const selfAccount = (): string => selfAccountId("email");
 
 export default defineProvider<Record<string, never>>({
   ...rest,
   authType: "api-key",
   credentials: undefined,
-  discover: async () => preDiscoveredAccounts("granola", [accountId]),
+  discover: async () => preDiscoveredAccounts("granola", [selfAccount()]),
   // api-key sources have no browser leg — the local flow just marks the pair
   // and returns the resolved account id.
-  authFlow: async () => fakeLocalFlow("granola", accountId),
+  authFlow: async () => fakeLocalFlow("granola", selfAccount()),
   // A synthetic double spreads the real definition, so every auth entry point
   // the real source declares has to be overridden here or a demo run reaches
   // the real service.

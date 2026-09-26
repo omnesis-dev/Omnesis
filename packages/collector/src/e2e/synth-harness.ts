@@ -54,6 +54,7 @@ import { createLogger, readSecretTextFile, type SourceConfig } from "@omnesis/co
 import { SyncEngine, type StatusChangeEvent } from "../sync-engine.js";
 import { setupSources } from "../source-instantiator.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
+import { reportSetupFailures } from "./setup-failure-report.js";
 import {
   startFakeEmbedderServer,
   type FakeEmbedderServer,
@@ -722,9 +723,7 @@ export class SyntheticE2EHarness {
       );
       // A seed source that fails to instantiate produces an empty corpus and a
       // test that fails somewhere far from the cause. Name it here instead.
-      for (const failure of setupFailures) {
-        log.error(`Universe source ${failure.key} did not instantiate: ${failure.error}`);
-      }
+      reportSetupFailures(setupFailures, hostAssignments, this.universe, log);
       let ws: GatewayWsClient | undefined;
       if (entry.kind === "collector") {
         ws = new GatewayWsClient(this.gatewayUrl, created.token, { capabilities });
