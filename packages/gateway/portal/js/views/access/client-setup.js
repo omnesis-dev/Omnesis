@@ -138,8 +138,13 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
           label: "Add the server",
           value: `codex mcp add ${SERVER_NAME} --url ${url} --oauth-resource ${url}`,
         },
+        {
+          label: "Recommended: add the skills that teach Codex to use Omnesis",
+          value:
+            "codex plugin marketplace add omnesis-dev/Omnesis --sparse .agents/plugins --sparse plugins/omnesis && codex plugin add omnesis@omnesis",
+        },
       ],
-      note: "Codex opens the sign-in right away. Start a new thread afterwards.",
+      note: "Codex opens the sign-in right away when you add the server. The plugin carries guidance only, so it needs the server either way. Start a new thread afterwards.",
       docs: `${DOCS}/connect#codex`,
     },
     {

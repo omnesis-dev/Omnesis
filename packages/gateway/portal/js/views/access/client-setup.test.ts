@@ -31,6 +31,7 @@ interface AgentSetup {
   docs: string;
   needsPublicAddress?: string;
   pairs?: boolean;
+  alternatives?: boolean;
 }
 const agentSetups = (
   oauth: OAuth,
@@ -84,7 +85,10 @@ describe("agentSetups", () => {
     ]);
     expect(commands("codex")).toEqual([
       `codex mcp add omnesis --url ${RESOURCE} --oauth-resource ${RESOURCE}`,
+      "codex plugin marketplace add omnesis-dev/Omnesis --sparse .agents/plugins --sparse plugins/omnesis" +
+        " && codex plugin add omnesis@omnesis",
     ]);
+    expect(agent("codex").alternatives).toBeUndefined();
     expect(commands("gemini-cli")).toEqual([
       `gemini mcp add --scope user --transport http omnesis ${RESOURCE}`,
     ]);
