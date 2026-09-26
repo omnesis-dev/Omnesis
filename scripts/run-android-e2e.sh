@@ -15,7 +15,7 @@ export OMNESIS_GATEWAY_PORT="${OMNESIS_GATEWAY_PORT:-17700}"
 export OMNESIS_SYNTH_UNIVERSE="${OMNESIS_SYNTH_UNIVERSE:-e2e-minimal}"
 
 URL="https://localhost:${OMNESIS_GATEWAY_PORT}"
-CONFIG_FILE="/tmp/omnesis-android-e2e-config.json"
+CONFIG_FILE="/tmp/omnesis-android-e2e-config.json.proof"
 
 # Compile the test classes before the gateway boots, so the build does not
 # compete with the gateway's first indexing pass for a small machine's CPU.

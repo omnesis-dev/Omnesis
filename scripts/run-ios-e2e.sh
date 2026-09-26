@@ -110,7 +110,7 @@ echo "→ Running OmnesisTests/GatewayLiveE2ETests against the gateway…"
 # (GatewayLiveE2ETests.setUpWithError) reads this file and throws
 # XCTSkip if it's missing — so running xcodebuild test directly without
 # this wrapper script skips the suite cleanly.
-CONFIG_FILE=/tmp/omnesis-ios-e2e-config.json
+CONFIG_FILE=/tmp/omnesis-ios-e2e-config.json.proof
 # The config carries the gateway admin token; create it owner-only from the
 # start (umask in a subshell, no world-readable window) and remove it on exit.
 (umask 077; python3 -c "
