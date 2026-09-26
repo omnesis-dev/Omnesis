@@ -72,7 +72,7 @@ jobs:
           cache: npm
 
       - name: Install smoke harness dependencies
-        run: npm ci
+        run: scripts/ci/npm-ci.sh
 
       - name: lane [docker-runtime]
         run: node scripts/docker-runtime-smoke.mjs --build

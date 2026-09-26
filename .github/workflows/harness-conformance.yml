@@ -63,7 +63,7 @@ jobs:
           enable-cache: false
 
       - name: Install Omnesis dependencies
-        run: npm ci
+        run: scripts/ci/npm-ci.sh
 
       - name: Prepare isolated harness scratch
         shell: bash
