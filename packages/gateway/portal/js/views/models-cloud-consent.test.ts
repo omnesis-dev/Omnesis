@@ -127,11 +127,14 @@ describe("Models cloud inference consent", () => {
   it("requires confirmation to enable the persistent setting and disables it directly", async () => {
     await act(async () => { render(h(ModelsView, {}), host); });
     await act(async () => { await Promise.resolve(); });
+    expect(host.querySelector('[role="switch"]').getAttribute("aria-checked")).toBe("false");
     await click("Enable cloud inference…");
     expect(api.patchAdminConfig).not.toHaveBeenCalled();
+    expect(host.querySelector('[role="switch"]').getAttribute("aria-checked")).toBe("false");
     api.getModelsOverview.mockResolvedValue({ ...overview, inference: { ...overview.inference, allowRemoteInference: true } });
     await click("Enable cloud inference");
     expect(api.patchAdminConfig).toHaveBeenCalledWith({ inference: { allowRemoteInference: true } });
+    expect(host.querySelector('[role="switch"]').getAttribute("aria-checked")).toBe("true");
     await click("Disable cloud inference");
     expect(api.patchAdminConfig).toHaveBeenLastCalledWith({ inference: { allowRemoteInference: false } });
   });

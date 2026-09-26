@@ -1021,13 +1021,18 @@ export function ModelsView({ section }) {
           </div>`
         : null}
 
-      ${view === "grid" ? html`<div class="detail-section">
-        <h2>Allow cloud inference</h2>
-        <p role="status">Cloud inference is ${overview.inference.allowRemoteInference === true ? "enabled" : "disabled"}.</p>
-        <p class="detail-sub">Allow configured remote providers to process Omnesis data. Turning this off blocks remote inference; model assignments are kept.</p>
-        <button class="btn-secondary" disabled=${cloudBusy} onClick=${() => setCloudPermission(overview.inference.allowRemoteInference !== true)}>
-          ${cloudBusy ? "Saving…" : overview.inference.allowRemoteInference === true ? "Disable cloud inference" : "Enable cloud inference…"}
-        </button>
+      ${view === "grid" ? html`<div class="detail-section models-cloud-inference">
+        <div class="models-cloud-control">
+          <h2>Cloud inference</h2>
+          <button type="button" class="models-cloud-switch" role="switch"
+            aria-checked=${overview.inference.allowRemoteInference === true}
+            aria-label="Allow cloud inference" disabled=${cloudBusy}
+            onClick=${() => setCloudPermission(overview.inference.allowRemoteInference !== true)}>
+            <span class="sr-only">${overview.inference.allowRemoteInference === true ? "Disable cloud inference" : "Enable cloud inference…"}</span>
+            <span class="models-cloud-switch-thumb" aria-hidden="true"></span>
+          </button>
+          <span role="status">${cloudBusy ? "Saving…" : overview.inference.allowRemoteInference === true ? "Enabled" : "Disabled"}</span>
+        </div>
       </div>` : null}
       <${CloudInferenceConsentModal}
         open=${!!cloudConsent}

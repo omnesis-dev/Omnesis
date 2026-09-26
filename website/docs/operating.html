@@ -531,7 +531,7 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           <p>
             By default inference stays on this machine: cloud backends, including Anthropic and
             Codex, and HTTP backends that resolve to remote addresses require your permission. In
-            the portal, choose <strong>Enable cloud inference</strong> under
+            the portal, turn on <strong>Allow cloud inference</strong> under
             <strong>Settings → Models</strong> and confirm. Choosing a cloud model while this
             setting is off also asks for confirmation before saving the assignment. The permission
             applies to all configured remote inference backends on this gateway. Depending on their
@@ -540,7 +540,7 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           </p>
         </div>
         <p>
-          Choose <strong>Disable cloud inference</strong> in the same place to turn it off. Changes
+          Turn off <strong>Allow cloud inference</strong> in the same place to disable it. Changes
           take effect without restarting the gateway. From the CLI, set
           <code>inference.allowRemoteInference: true</code>, or pass <code>--allow-remote</code> to
           <code>backend add</code>.
