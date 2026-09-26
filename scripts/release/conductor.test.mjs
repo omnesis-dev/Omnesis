@@ -25,9 +25,10 @@ function runConductor(args) {
 test("parses the subcommand, its version argument and every flag", () => {
   expect(parseArgs(["version", "1.2.3", "--dry-run"])).toEqual({
     subcommand: "version",
-    options: { dryRun: true, sign: false, requestedVersion: "1.2.3" },
+    options: { dryRun: true, sign: false, allowFailedInstallE2e: false, requestedVersion: "1.2.3" },
   });
   expect(parseArgs(["tag", "--sign"]).options.sign).toBe(true);
+  expect(parseArgs(["tag", "--allow-failed-install-e2e"]).options.allowFailedInstallE2e).toBe(true);
   expect(parseArgs(["status", "--registry", "http://localhost:4873"]).options.registry).toBe(
     "http://localhost:4873",
   );

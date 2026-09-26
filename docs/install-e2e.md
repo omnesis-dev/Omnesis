@@ -54,14 +54,17 @@ the one that failed.
 
 ## Release gate
 
-`npm run release -- tag` reads this workflow's completed runs on `main` and
-refuses the tag when the newest full run (the nightly schedule, or a dispatch
-with `lanes=all`) is red, or when a push run newer than it is red. A cancelled
-run is passed over for the one before it. With no full run yet the tag
+The release tag preflight (`npm run release -- tag`, or
+`npm run release:preflight-tag -- v<version>` on its own) reads this
+workflow's completed runs on `main` after it has confirmed the tagged commit's
+green `full-validation` run, and refuses the tag when the newest full run (the
+nightly schedule, or a dispatch with `lanes=all`) is red, or when a push run
+newer than it is red. A cancelled run is passed over for the one before it. With no full run yet the tag
 proceeds with a warning; runs that cannot be read refuse it. After a fix on
 `main`, `gh workflow run install-e2e.yml --ref main -f lanes=all` produces the
 evidence that clears it. `--allow-failed-install-e2e` releases anyway, for an
-emergency, and prints the failing run it overrode.
+emergency, and prints the failing run it overrode. It overrides only this
+gate: a tag without a green `full-validation` run is refused regardless.
 
 ## Why the tailnet lanes never run on pull requests
 
