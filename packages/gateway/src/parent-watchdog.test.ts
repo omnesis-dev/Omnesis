@@ -3,11 +3,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  startLauncherWatchdog,
-  startParentWatchdog,
-  startParentWatchdogFromEnv,
-} from "./parent-watchdog.js";
+import { startParentWatchdog, startParentWatchdogFromEnv } from "./parent-watchdog.js";
 
 /** A real, killable process to stand in for a spawning runner. */
 function spawnIdleProcess(): ChildProcess {
@@ -126,45 +122,5 @@ describe("parent-watchdog", () => {
       parent.kill("SIGKILL");
       expect(await waitFor(() => fired, 5_000)).toBe(true);
     });
-  });
-});
-
-describe("startLauncherWatchdog", () => {
-  const SERVICE_ENV = { OMNESIS_SERVICE_MANAGER: "launchd-user" };
-
-  it("fires once we are reparented away from the launcher", async () => {
-    let parent = 4242;
-    let fired = 0;
-    const stop = startLauncherWatchdog({
-      env: SERVICE_ENV,
-      launcherPid: 4242,
-      currentParentPid: () => parent,
-      intervalMs: 10,
-      onLauncherGone: () => {
-        fired += 1;
-      },
-    });
-    expect(stop).not.toBeNull();
-    await new Promise((r) => setTimeout(r, 60));
-    expect(fired).toBe(0);
-    // tsx died; the kernel handed us to launchd.
-    parent = 1;
-    await new Promise((r) => setTimeout(r, 60));
-    expect(fired).toBe(1);
-    stop!();
-  });
-
-  it("stays inert for a gateway nobody supervises", () => {
-    // Run by hand: there is no replacement to hand the config dir to.
-    expect(
-      startLauncherWatchdog({ env: {}, launcherPid: 4242, onLauncherGone: () => {} }),
-    ).toBeNull();
-  });
-
-  it("stays inert for a gateway the service manager runs directly", () => {
-    // A packaged install: launchd itself (pid 1) is the parent for life.
-    expect(
-      startLauncherWatchdog({ env: SERVICE_ENV, launcherPid: 1, onLauncherGone: () => {} }),
-    ).toBeNull();
   });
 });

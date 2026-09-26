@@ -236,7 +236,7 @@ import {
   resolveActiveUsearchTarget,
 } from "./indexer/usearch-read-registry.js";
 import { quarantineCorruptUsearch } from "./indexer/usearch-boot-guard.js";
-import { startLauncherWatchdog, startParentWatchdogFromEnv } from "./parent-watchdog.js";
+import { startParentWatchdogFromEnv } from "./parent-watchdog.js";
 import {
   resolveGatewayStorageEncryptionKeys,
   storageEncryptionPosture,
@@ -313,20 +313,6 @@ const PORT = parseInt(process.env.OMNESIS_GATEWAY_PORT ?? "7600", 10);
 // store and broadcast `config.changed` to connected devices.
 applyPrivateUmask();
 ensurePrivateDirSync(configDir);
-// Under a service whose launcher runs us as a child (tsx, for a source install),
-// a launcher that dies leaves the service manager starting replacements that
-// can never take this config dir from us. Follow it out the way a service stop
-// would: during boot the signal ends the process, once running it shuts down.
-startLauncherWatchdog({
-  env: process.env,
-  launcherPid: process.ppid,
-  onLauncherGone: () => {
-    log.warn(
-      "The service's launcher process is gone; stopping so the service's replacement gateway can take over",
-    );
-    process.kill(process.pid, "SIGTERM");
-  },
-});
 // One gateway per config dir, decided before any store is opened: a second
 // process on these files is refused here, not discovered by a corrupted
 // analytics store later. A predecessor still shutting down is waited for.

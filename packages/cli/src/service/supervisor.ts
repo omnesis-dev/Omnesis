@@ -331,15 +331,15 @@ export class LaunchdSupervisor implements Supervisor {
   }
 
   /**
-   * Stop a gateway this job started that launchd no longer tracks.
+   * Stop a gateway an earlier run of this job left behind.
    *
-   * A source install's job runs `tsx`, whose child is the gateway. If tsx dies
-   * and the gateway does not, launchd reparents the gateway, counts the job as
-   * exited and starts a replacement. The replacement waits on the gateway's
-   * config-dir lock, gives up, and is restarted, while the orphan keeps the
-   * lock and keeps serving: `kickstart` and `bootout` reach only the job's
-   * current process, so a restart — including the one `omnesis update` makes —
-   * never reaches the process that is actually serving.
+   * A gateway can outlive the run of the job that started it: launchd then
+   * counts the job as exited and starts a replacement, which waits on the old
+   * gateway's config-dir lock, gives up, and is restarted, while the old one
+   * keeps the lock and keeps serving. `kickstart` and `bootout` reach only the
+   * job's current process, so no restart — including the one `omnesis update`
+   * makes — ever reaches the process that is actually serving, and an update
+   * waits for a new version that cannot start.
    *
    * The lock holder is stopped only when it is certainly left over from an
    * earlier run of this job: it holds this job's config dir, it carries this
