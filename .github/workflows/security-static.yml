@@ -34,17 +34,35 @@ jobs:
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
+      # The rules come from Semgrep's rules repository at a pinned commit rather
+      # than from the registry, whose responses differ between CDN edges and
+      # change without notice. scripts/security/semgrep-typescript-rules.txt
+      # lists the files of the p/typescript pack. Each file is laid out as
+      # <dir>/<name>/<name>.yaml so its rule ids match the registry's, which is
+      # what the source's `nosemgrep` annotations name.
       - name: Fetch pinned static-analysis rules
+        env:
+          RULES_REPOSITORY: https://github.com/semgrep/semgrep-rules.git
+          RULES_COMMIT: a84ff9cc2453ca91d581380de4b8b3f272f6f4be
         run: |
-          curl --fail --silent --show-error --location \
-            https://semgrep.dev/c/p/typescript \
-            --output "$RUNNER_TEMP/semgrep-typescript.yml"
-          if ! echo "63fbcca1826e787ca43282bf139ccec16745ad6551c87850b9ccee9ca9f98c0b  $RUNNER_TEMP/semgrep-typescript.yml" \
-            | sha256sum --check --strict; then
-            echo "Served rules ($(wc -c < "$RUNNER_TEMP/semgrep-typescript.yml") bytes) begin:"
-            head -c 600 "$RUNNER_TEMP/semgrep-typescript.yml"
-            exit 1
-          fi
+          set -euo pipefail
+          checkout="$RUNNER_TEMP/semgrep-rules"
+          git init --quiet "$checkout"
+          git -C "$checkout" fetch --quiet --depth 1 "$RULES_REPOSITORY" "$RULES_COMMIT"
+          git -C "$checkout" checkout --quiet --detach FETCH_HEAD
+          test "$(git -C "$checkout" rev-parse HEAD)" = "$RULES_COMMIT"
+          rules="$RUNNER_TEMP/semgrep-typescript"
+          count=0
+          while read -r file; do
+            case "$file" in ''|'#'*) continue ;; esac
+            name="$(basename "$file")"
+            dest="$rules/$(dirname "$file")/${name%.*}"
+            mkdir -p "$dest"
+            cp "$checkout/$file" "$dest/$name"
+            count=$((count + 1))
+          done < scripts/security/semgrep-typescript-rules.txt
+          echo "Assembled $count rule files."
+          test "$count" -gt 0
 
       - name: lane [security-static]
         run: |
@@ -52,11 +70,12 @@ jobs:
             --user "$(id -u):$(id -g)" \
             --env HOME=/tmp \
             --env SEMGREP_SEND_METRICS=off \
+            --workdir /rules \
             --volume "$GITHUB_WORKSPACE:/src:ro" \
-            --volume "$RUNNER_TEMP/semgrep-typescript.yml:/rules.yml:ro" \
+            --volume "$RUNNER_TEMP/semgrep-typescript:/rules:ro" \
             semgrep/semgrep@sha256:65dcd4408adda7c183a6b4550cb1e9b19f7f627a6fbb7e0559bd466bedc44d7b \
             semgrep scan \
-              --config /rules.yml \
+              --config . \
               --error \
               --metrics off \
               --exclude '**/*.test.ts' \
