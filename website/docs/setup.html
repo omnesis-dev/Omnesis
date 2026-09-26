@@ -274,13 +274,13 @@
                 <td>
                   Install Tailscale and join your tailnet with <code>tailscale up</code> on Linux or
                   through the Tailscale app on macOS. In the tailnet's admin console, enable
-                  MagicDNS and HTTPS certificates. On Linux, the installer may ask to make your
-                  account the machine's Tailscale operator (<code
-                    >sudo tailscale set --operator</code
-                  >), because only root or the operator can get certificates and the gateway renews
-                  as your account. On macOS, Omnesis can use Homebrew's <code>tailscale</code> or
-                  the app's bundled CLI even when they are not on your PATH or the gateway
-                  service's. Omnesis never joins a network or changes tailnet settings.
+                  MagicDNS and HTTPS certificates. On Linux, the installer and
+                  <code>omnesis tls provision</code> may ask to make your account the machine's
+                  Tailscale operator (<code>sudo tailscale set --operator</code>), because only root
+                  or the operator can get certificates and the gateway renews as your account. On
+                  macOS, Omnesis can use Homebrew's <code>tailscale</code> or the app's bundled CLI
+                  even when they are not on your PATH or the gateway service's. Omnesis never joins
+                  a network or changes tailnet settings.
                 </td>
               </tr>
               <tr>
