@@ -18,6 +18,8 @@ const CACHE_TTL_MS = 60_000;
 export const probeServedCertificate: CertificateProbe = (resource) =>
   new Promise((resolve) => {
     const host = resource.hostname.replace(/^\[(.*)\]$/u, "$1");
+    // Fingerprints whichever certificate answers; sends no data and trusts nothing.
+    // nosemgrep: problem-based-packs.insecure-transport.js-node.bypass-tls-verification.bypass-tls-verification
     const socket = connect({
       host,
       port: Number(resource.port || 443),
