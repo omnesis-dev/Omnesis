@@ -850,11 +850,11 @@
         <p>
           Omnesis needs Codex 0.147 or later; earlier versions stop at the end of the sign-in with
           <em>Authorization server response missing required issuer</em>. Check with
-          <code>codex --version</code>, and update it with the tool you installed it with, such as
-          <code>brew upgrade codex</code> or <code>npm install -g @openai/codex@latest</code>.
-          <code>codex mcp add</code> finds the gateway's sign-in and opens it straight away; approve
-          the connection in Omnesis, then start a new conversation. To sign in again later, run
-          <code>codex mcp login omnesis</code>. Refresh the guidance after updating Omnesis with
+          <code>codex --version</code> and, if it is older, run <code>codex update</code>, which
+          updates Codex however it was installed. <code>codex mcp add</code> finds the gateway's
+          sign-in and opens it straight away; approve the connection in Omnesis, then start a new
+          conversation. To sign in again later, run <code>codex mcp login omnesis</code>. Refresh
+          the guidance after updating Omnesis with
           <code>codex plugin marketplace upgrade omnesis</code>.
         </p>
         <div class="callout">

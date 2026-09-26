@@ -147,7 +147,7 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
             "codex plugin marketplace add omnesis-dev/Omnesis --sparse .agents/plugins --sparse plugins/omnesis && codex plugin add omnesis@omnesis",
         },
       ],
-      note: "Needs Codex 0.147 or later: check with codex --version, and update with the tool you installed it with, such as brew upgrade codex or npm install -g @openai/codex@latest. Codex opens the sign-in right away when you add the server. The plugin carries guidance only, so it needs the server either way. Start a new thread afterwards.",
+      note: "Needs Codex 0.147 or later: check with codex --version, and run codex update if it is older. Codex opens the sign-in right away when you add the server. The plugin carries guidance only, so it needs the server either way. Start a new thread afterwards.",
       docs: `${DOCS}/connect#codex`,
     },
     {
