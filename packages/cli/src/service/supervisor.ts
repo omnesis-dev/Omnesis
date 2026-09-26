@@ -341,11 +341,11 @@ export class LaunchdSupervisor implements Supervisor {
    * current process, so a restart — including the one `omnesis update` makes —
    * never reaches the process that is actually serving.
    *
-   * The lock holder is stopped only when it is certainly that orphan: it holds
-   * this job's config dir, it is not the job's process, launchd is its parent
-   * (the launcher that started it is gone), and it carries this job's label in
-   * the environment launchd gave it. A gateway someone runs by hand has none of
-   * these and is left alone.
+   * The lock holder is stopped only when it is certainly left over from an
+   * earlier run of this job: it holds this job's config dir, it carries this
+   * job's label in the environment launchd gave it, and it is neither the job's
+   * current process nor that process's child (tsx's gateway). A gateway someone
+   * runs by hand carries no such label and is left alone.
    */
   private async stopOrphanedGateway(component: ServiceComponent, instance?: string): Promise<void> {
     if (component !== "gateway") return;
@@ -355,7 +355,8 @@ export class LaunchdSupervisor implements Supervisor {
     const holder = holderOf(configDir);
     if (holder === null) return;
     const job = await this.deps.exec("launchctl", ["print", this.target(component, instance)]);
-    if (job.code === 0 && parseLaunchctlPrint(job.stdout).pid === holder.pid) return;
+    const jobPid = job.code === 0 ? parseLaunchctlPrint(job.stdout).pid : null;
+    if (jobPid === holder.pid) return;
     const ps = await this.deps.exec("ps", [
       "-E",
       "-ww",
@@ -365,7 +366,7 @@ export class LaunchdSupervisor implements Supervisor {
       String(holder.pid),
     ]);
     const row = /^\s*(\d+)\s+(.*)$/s.exec(ps.stdout);
-    if (ps.code !== 0 || !row || Number(row[1]) !== 1) return;
+    if (ps.code !== 0 || !row || (jobPid !== null && Number(row[1]) === jobPid)) return;
     const label = `XPC_SERVICE_NAME=${this.unitName(component, instance)}`;
     if (!row[2].split(/\s+/).includes(label)) return;
 

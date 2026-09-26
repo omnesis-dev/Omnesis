@@ -659,6 +659,16 @@ describe("LaunchdSupervisor", () => {
       expect(signals).toEqual([]);
     });
 
+    it("stops one whose own launcher is still alive but no longer the job's", async () => {
+      // A launcher launchd lost track of: the gateway's parent lives on, yet the
+      // job now runs pid 4100.
+      const { home, sup, signals, orphanNow } = withOrphan([psRow(3960, FROM_JOB)]);
+      await sup.install(spec(home));
+      orphanNow();
+      await sup.restart("gateway");
+      expect(signals).toEqual([[3963, "SIGTERM"]]);
+    });
+
     it("leaves a gateway someone runs by hand alone", async () => {
       const { home, sup, signals, orphanNow } = withOrphan([
         psRow(1, "XPC_SERVICE_NAME=application.com.apple.Terminal.1234"),
