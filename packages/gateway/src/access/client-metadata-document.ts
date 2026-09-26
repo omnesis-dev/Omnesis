@@ -13,6 +13,7 @@ import {
 import type { OAuthClientMetadataDocument } from "./types.js";
 
 const MAX_DOCUMENT_BYTES = 5 * 1_024;
+const SUPPORTED_GRANT_TYPES = ["authorization_code", "refresh_token"] as const;
 const MAX_CACHE_ENTRIES = 256;
 
 const metadataSchema = z
@@ -69,7 +70,12 @@ export class ClientMetadataDocumentResolver {
     ) {
       throw new Error("Client metadata contains an invalid URL.");
     }
-    const grantTypes = parsed.data.grant_types ?? ["authorization_code", "refresh_token"];
+    // The document describes the client, not this server: a grant it can use
+    // elsewhere is simply never issued here. Only the ones this server offers
+    // are kept, and the client must be able to use the code flow.
+    const grantTypes = (parsed.data.grant_types ?? [...SUPPORTED_GRANT_TYPES]).filter((value) =>
+      (SUPPORTED_GRANT_TYPES as readonly string[]).includes(value),
+    );
     const responseTypes = parsed.data.response_types ?? ["code"];
     const authMethod = parsed.data.token_endpoint_auth_method ?? "none";
     const signingAlg = parsed.data.token_endpoint_auth_signing_alg;
@@ -84,7 +90,6 @@ export class ClientMetadataDocumentResolver {
       parsed.data.client_secret !== undefined ||
       parsed.data.client_secret_expires_at !== undefined ||
       !grantTypes.includes("authorization_code") ||
-      grantTypes.some((value) => value !== "authorization_code" && value !== "refresh_token") ||
       responseTypes.length !== 1 ||
       responseTypes[0] !== "code"
     ) {

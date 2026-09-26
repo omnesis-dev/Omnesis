@@ -102,6 +102,36 @@ describe("ClientMetadataDocumentResolver", () => {
     });
   });
 
+  test("keeps only the grants this server offers and still requires the code flow", async () => {
+    const resolver = new ClientMetadataDocumentResolver(
+      dependencies({
+        fetch: vi.fn(async () =>
+          response({
+            grant_types: [
+              "authorization_code",
+              "refresh_token",
+              "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            ],
+          }),
+        ),
+      }),
+    );
+    await expect(resolver.resolve(CLIENT_ID)).resolves.toMatchObject({
+      grantTypes: ["authorization_code", "refresh_token"],
+    });
+
+    const withoutCodeFlow = new ClientMetadataDocumentResolver(
+      dependencies({
+        fetch: vi.fn(async () =>
+          response({ grant_types: ["urn:ietf:params:oauth:grant-type:jwt-bearer"] }),
+        ),
+      }),
+    );
+    await expect(withoutCodeFlow.resolve(CLIENT_ID)).rejects.toThrow(
+      "Client metadata requests unsupported OAuth behavior.",
+    );
+  });
+
   test("preserves the client identifier's exact string identity", async () => {
     const clientId = "https://client.example.com:443/oauth/client.json";
     const deps = dependencies({
