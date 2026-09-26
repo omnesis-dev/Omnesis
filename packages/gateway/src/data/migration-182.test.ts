@@ -105,6 +105,17 @@ describe("migration 182: private_key_jwt OAuth clients", () => {
     expect(() => insert.run("secret-with-jwks", "client_secret_basic", "h", jwks)).toThrow();
     expect(() => insert.run("unknown-method", "client_secret_post", "h", null)).toThrow();
 
+    const insertWithAlg = db.prepare(
+      `INSERT INTO oauth_clients (
+         client_id, client_name, redirect_uris, grant_types, response_types,
+         token_endpoint_auth_method, client_secret_hash, jwks_uri,
+         token_endpoint_auth_signing_alg, client_uri, created_at
+       ) VALUES (?, 'Fictional client', '[]', '[]', '[]', ?, NULL, ?, ?, NULL, 2)`,
+    );
+    expect(() => insertWithAlg.run("pinned-key", "private_key_jwt", jwks, "ES256")).not.toThrow();
+    expect(() => insertWithAlg.run("hmac-key", "private_key_jwt", jwks, "HS256")).toThrow();
+    expect(() => insertWithAlg.run("public-with-alg", "none", null, "RS256")).toThrow();
+
     // Deleting a client still cascades to what references it.
     db.prepare("DELETE FROM oauth_clients WHERE client_id = 'public-client'").run();
     expect(db.prepare("SELECT COUNT(*) AS count FROM oauth_execution_bindings").get()).toEqual({

@@ -6,8 +6,8 @@ import type { Db } from "./types.js";
 /**
  * Let an OAuth client authenticate with a signed JWT (`private_key_jwt`,
  * RFC 7523) against the key set its metadata document names. Such a client
- * carries a `jwks_uri` and never a secret; every other client carries no
- * `jwks_uri`. SQLite cannot alter a CHECK constraint in place, so the table
+ * carries a `jwks_uri` and never a secret, and may pin the one algorithm it
+ * signs with; every other client carries neither. SQLite cannot alter a CHECK constraint in place, so the table
  * is rebuilt; the caller owns the transaction and foreign-key handling.
  */
 export function migrateV182PrivateKeyJwtClients(db: Db): void {
@@ -32,6 +32,10 @@ export function migrateV182PrivateKeyJwtClients(db: Db): void {
       client_uri TEXT,
       created_at INTEGER NOT NULL,
       jwks_uri TEXT,
+      token_endpoint_auth_signing_alg TEXT
+        CHECK (token_endpoint_auth_signing_alg IN ('RS256', 'PS256', 'ES256')),
+      CHECK (token_endpoint_auth_signing_alg IS NULL OR
+        token_endpoint_auth_method = 'private_key_jwt'),
       CHECK (json_valid(redirect_uris) AND json_type(redirect_uris) = 'array'),
       CHECK (json_valid(grant_types) AND json_type(grant_types) = 'array'),
       CHECK (json_valid(response_types) AND json_type(response_types) = 'array'),

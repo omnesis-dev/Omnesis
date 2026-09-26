@@ -193,6 +193,7 @@ describe("MCP OAuth access routes", () => {
         responseTypes: ["code"],
         tokenEndpointAuthMethod: "none" as const,
         jwksUri: null,
+        tokenEndpointAuthSigningAlg: null,
         clientUri: "https://client.example.com",
       }),
     );
@@ -226,6 +227,7 @@ describe("MCP OAuth access routes", () => {
       responseTypes: ["code"],
       tokenEndpointAuthMethod: "none" as const,
       jwksUri: null,
+      tokenEndpointAuthSigningAlg: null,
       clientUri: null,
     });
     const assignedPort = authorizationUrl(loopbackClientId, "state-cimd-port");
@@ -1841,6 +1843,7 @@ describe("a metadata-document client authenticating with private_key_jwt", () =>
         responseTypes: ["code"],
         tokenEndpointAuthMethod: "private_key_jwt",
         jwksUri: JWKS_URI,
+        tokenEndpointAuthSigningAlg: "RS256",
         clientUri: "https://assistant.example.com/",
       }),
     );
@@ -1918,7 +1921,8 @@ describe("a metadata-document client authenticating with private_key_jwt", () =>
     expect(
       db
         .prepare(
-          `SELECT token_endpoint_auth_method, client_secret_hash, jwks_uri
+          `SELECT token_endpoint_auth_method, client_secret_hash, jwks_uri,
+                  token_endpoint_auth_signing_alg
            FROM oauth_clients WHERE client_id = ?`,
         )
         .get(CLIENT_ID),
@@ -1926,6 +1930,7 @@ describe("a metadata-document client authenticating with private_key_jwt", () =>
       token_endpoint_auth_method: "private_key_jwt",
       client_secret_hash: null,
       jwks_uri: JWKS_URI,
+      token_endpoint_auth_signing_alg: "RS256",
     });
 
     // Without any assertion the code is not spent: the client is refused first.

@@ -143,6 +143,7 @@ export function mountOAuthTokenRoutes(
         clientId,
         jwksUri: client.jwksUri,
         audiences,
+        signingAlg: client.tokenEndpointAuthSigningAlg,
       });
       return { ok: true, method: "private_key_jwt", clientId, credentials: { clientAssertion } };
     } catch (error) {

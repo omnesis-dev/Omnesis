@@ -11,7 +11,12 @@ const CLIENT_ID = "https://client.example.com/oauth/client.json";
 const JWKS_URI = "https://client.example.com/oauth/jwks.json";
 const ISSUER = "https://gateway.example.org";
 const TOKEN_ENDPOINT = `${ISSUER}/oauth/token`;
-const EXPECTED = { clientId: CLIENT_ID, jwksUri: JWKS_URI, audiences: [ISSUER, TOKEN_ENDPOINT] };
+const EXPECTED = {
+  clientId: CLIENT_ID,
+  jwksUri: JWKS_URI,
+  audiences: [ISSUER, TOKEN_ENDPOINT],
+  signingAlg: null,
+};
 const NOW_MS = 1_900_000_000_000;
 const NOW = NOW_MS / 1_000;
 
@@ -111,6 +116,7 @@ describe("ClientAssertionVerifier", () => {
       method: "private_key_jwt",
       clientId: CLIENT_ID,
       jwksUri: JWKS_URI,
+      alg: "RS256",
     });
     expect(deps.fetch).toHaveBeenCalledWith(
       new URL(JWKS_URI),
@@ -143,6 +149,49 @@ describe("ClientAssertionVerifier", () => {
     await expect(verifier.verify(assertion({ alg: "PS256" }), EXPECTED)).resolves.toMatchObject({
       clientId: CLIENT_ID,
     });
+  });
+
+  test("accepts only the algorithm the client registered, when it registered one", async () => {
+    const { deps, verifier } = verifierWith([jwk(rsa.publicKey, "rsa-1")]);
+    const pinned = { ...EXPECTED, signingAlg: "RS256" as const };
+    await expect(verifier.verify(assertion(), pinned)).resolves.toMatchObject({ alg: "RS256" });
+    await expect(verifier.verify(assertion({ alg: "PS256" }), pinned)).rejects.toThrow(
+      /registered/u,
+    );
+    await expect(
+      verifier.verify(assertion({ alg: "PS256" }), { ...EXPECTED, signingAlg: "PS256" }),
+    ).resolves.toMatchObject({ alg: "PS256" });
+    expect(deps.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  test("remembers a failed key-set fetch for thirty seconds and never serves a stale set", async () => {
+    let reachable = true;
+    const deps = dependencies(async () => {
+      if (!reachable) throw new Error("connect ECONNREFUSED");
+      return jwksResponse([jwk(rsa.publicKey, "rsa-1")], { cacheControl: "max-age=60" });
+    });
+    const verifier = new ClientAssertionVerifier(deps);
+    await verifier.verify(assertion(), EXPECTED);
+
+    // Once the cached set expires and the host is down, the old set is not reused.
+    reachable = false;
+    deps.advance(60_000);
+    await expect(verifier.verify(assertion(), EXPECTED)).rejects.toThrow(/ECONNREFUSED/u);
+    expect(deps.fetch).toHaveBeenCalledTimes(2);
+
+    // Inside the window every request fails without another outbound fetch.
+    deps.advance(29_000);
+    await expect(verifier.verify(assertion(), EXPECTED)).rejects.toThrow(/recently failed/u);
+    await expect(verifier.verify(assertion({ kid: "rsa-2" }), EXPECTED)).rejects.toThrow(
+      /recently failed/u,
+    );
+    expect(deps.fetch).toHaveBeenCalledTimes(2);
+
+    // After it, one fetch is tried again, and a success clears the failure.
+    reachable = true;
+    deps.advance(1_000);
+    await expect(verifier.verify(assertion(), EXPECTED)).resolves.toBeDefined();
+    expect(deps.fetch).toHaveBeenCalledTimes(3);
   });
 
   test("uses the only key when the header names none", async () => {

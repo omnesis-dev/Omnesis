@@ -8,15 +8,21 @@ import {
   fetchPublicJson,
   type PublicFetchDependencies,
 } from "./public-json-fetch.js";
-import type { VerifiedClientAssertion } from "./types.js";
+import type { ClientAssertionAlgorithm, VerifiedClientAssertion } from "./types.js";
 
 /** RFC 7523 §2.2: the `client_assertion_type` for a JWT client assertion. */
 export const JWT_BEARER_CLIENT_ASSERTION_TYPE =
   "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 
 /** Asymmetric JWS algorithms a client may sign its assertion with. */
-export const SUPPORTED_CLIENT_ASSERTION_ALGORITHMS = ["RS256", "PS256", "ES256"] as const;
-type AssertionAlgorithm = (typeof SUPPORTED_CLIENT_ASSERTION_ALGORITHMS)[number];
+export const SUPPORTED_CLIENT_ASSERTION_ALGORITHMS = [
+  "RS256",
+  "PS256",
+  "ES256",
+] as const satisfies readonly ClientAssertionAlgorithm[];
+export function isClientAssertionAlgorithm(value: unknown): value is ClientAssertionAlgorithm {
+  return (SUPPORTED_CLIENT_ASSERTION_ALGORITHMS as readonly unknown[]).includes(value);
+}
 
 const MAX_ASSERTION_LENGTH = 8 * 1_024;
 const MAX_JWKS_BYTES = 16 * 1_024;
@@ -28,6 +34,8 @@ const CLOCK_SKEW_SECONDS = 60;
 const MAX_ASSERTION_LIFETIME_SECONDS = 5 * 60;
 /** How soon an unknown `kid` may trigger another fetch of the same key set. */
 const MIN_JWKS_REFETCH_INTERVAL_MS = 30_000;
+/** How long a failed key-set fetch is remembered before the key set is fetched again. */
+const JWKS_FAILURE_TTL_MS = 30_000;
 const MAX_REPLAY_ENTRIES = 10_000;
 const MIN_RSA_MODULUS_BITS = 2_048;
 
@@ -43,6 +51,8 @@ export interface ClientAssertionExpectation {
   jwksUri: string;
   /** Values `aud` may carry: the issuer and the endpoint URLs that identify this server. */
   audiences: readonly string[];
+  /** The one algorithm the client's metadata document pins, or null to accept any supported one. */
+  signingAlg: ClientAssertionAlgorithm | null;
 }
 
 interface JwksCacheEntry {
@@ -59,7 +69,9 @@ interface JwksCacheEntry {
  * refetched once when an assertion names a key the cached set lacks — which is
  * how a client's key rotation is picked up — but no more often than every
  * thirty seconds per key set, so a stream of bogus key ids cannot turn every
- * request into an outbound fetch.
+ * request into an outbound fetch. A failed fetch is remembered for thirty
+ * seconds for the same reason: an unreachable key set costs at most one
+ * outbound fetch per window. A stale key set is never served in its place.
  *
  * Each `jti` is accepted once until its assertion expires. The replay cache is
  * in memory and bounded: the gateway is a single process, and an entry is only
@@ -70,6 +82,7 @@ interface JwksCacheEntry {
 export class ClientAssertionVerifier {
   private readonly jwksCache = new Map<string, JwksCacheEntry>();
   private readonly inFlight = new Map<string, Promise<JwksCacheEntry>>();
+  private readonly failedFetches = new Map<string, { failedAt: number; message: string }>();
   private readonly seenJtis = new Map<string, number>();
 
   constructor(
@@ -82,6 +95,11 @@ export class ClientAssertionVerifier {
   ): Promise<VerifiedClientAssertion> {
     const parsed = parseCompactJws(assertion);
     const { header, claims } = parsed;
+    if (expected.signingAlg !== null && header.alg !== expected.signingAlg) {
+      throw new ClientAssertionError(
+        "Client assertion algorithm is not the one the client registered.",
+      );
+    }
     const nowMs = this.dependencies.now();
     const now = Math.floor(nowMs / 1_000);
     checkClaims(claims, expected, now);
@@ -99,7 +117,12 @@ export class ClientAssertionVerifier {
     }
 
     this.recordJti(expected.clientId, claims.jti as string, claims.exp as number, now);
-    return { method: "private_key_jwt", clientId: expected.clientId, jwksUri: expected.jwksUri };
+    return {
+      method: "private_key_jwt",
+      clientId: expected.clientId,
+      jwksUri: expected.jwksUri,
+      alg: header.alg,
+    };
   }
 
   private async keySet(jwksUri: string, forceRefresh: boolean): Promise<JwksCacheEntry> {
@@ -107,7 +130,24 @@ export class ClientAssertionVerifier {
     if (!forceRefresh && cached && cached.expiresAt > this.dependencies.now()) return cached;
     const pending = this.inFlight.get(jwksUri);
     if (pending) return pending;
-    const fetching = this.fetchKeySet(jwksUri).finally(() => this.inFlight.delete(jwksUri));
+    const failed = this.failedFetches.get(jwksUri);
+    if (failed && this.dependencies.now() - failed.failedAt < JWKS_FAILURE_TTL_MS) {
+      throw new ClientAssertionError(
+        `Client JWKS recently failed and is not refetched yet: ${failed.message}`,
+      );
+    }
+    const fetching = this.fetchKeySet(jwksUri)
+      .then(
+        (entry) => {
+          this.failedFetches.delete(jwksUri);
+          return entry;
+        },
+        (error: unknown) => {
+          this.rememberFailure(jwksUri, error instanceof Error ? error.message : String(error));
+          throw error;
+        },
+      )
+      .finally(() => this.inFlight.delete(jwksUri));
     this.inFlight.set(jwksUri, fetching);
     return fetching;
   }
@@ -139,6 +179,15 @@ export class ClientAssertionVerifier {
     }
     this.jwksCache.set(jwksUri, entry);
     return entry;
+  }
+
+  private rememberFailure(jwksUri: string, message: string): void {
+    this.failedFetches.delete(jwksUri);
+    if (this.failedFetches.size >= MAX_JWKS_CACHE_ENTRIES) {
+      const oldest = this.failedFetches.keys().next().value as string | undefined;
+      if (oldest !== undefined) this.failedFetches.delete(oldest);
+    }
+    this.failedFetches.set(jwksUri, { failedAt: this.dependencies.now(), message });
   }
 
   private recordJti(clientId: string, jti: string, exp: number, now: number): void {
@@ -174,7 +223,7 @@ export function unverifiedAssertionSubject(assertion: string): string | null {
 }
 
 interface ParsedJws {
-  header: { alg: AssertionAlgorithm; kid?: string };
+  header: { alg: ClientAssertionAlgorithm; kid?: string };
   claims: Record<string, unknown>;
   signingInput: Buffer;
   signature: Buffer;
@@ -192,10 +241,7 @@ function parseCompactJws(assertion: string): ParsedJws {
   const header = decodeJsonObject(encodedHeader);
   const claims = decodeJsonObject(encodedClaims);
   if (!header || !claims) throw new ClientAssertionError("Client assertion is not a compact JWS.");
-  if (
-    typeof header.alg !== "string" ||
-    !(SUPPORTED_CLIENT_ASSERTION_ALGORITHMS as readonly string[]).includes(header.alg)
-  ) {
+  if (!isClientAssertionAlgorithm(header.alg)) {
     throw new ClientAssertionError("Client assertion algorithm is not supported.");
   }
   if (header.crit !== undefined) {
@@ -206,7 +252,7 @@ function parseCompactJws(assertion: string): ParsedJws {
   }
   return {
     header: {
-      alg: header.alg as AssertionAlgorithm,
+      alg: header.alg,
       ...(header.kid !== undefined ? { kid: header.kid as string } : {}),
     },
     claims,
@@ -298,7 +344,7 @@ function selectKey(keys: readonly JsonWebKey[], header: ParsedJws["header"]): Ke
   }
 }
 
-function keyAcceptsAlgorithm(jwk: JsonWebKey, alg: AssertionAlgorithm): boolean {
+function keyAcceptsAlgorithm(jwk: JsonWebKey, alg: ClientAssertionAlgorithm): boolean {
   const declared = jwk as { alg?: unknown; use?: unknown; key_ops?: unknown };
   if (declared.alg !== undefined && declared.alg !== alg) return false;
   if (declared.use !== undefined && declared.use !== "sig") return false;
@@ -320,7 +366,7 @@ function publicMembers(jwk: JsonWebKey): JsonWebKey {
 }
 
 function signatureVerifies(
-  alg: AssertionAlgorithm,
+  alg: ClientAssertionAlgorithm,
   key: KeyObject,
   signingInput: Buffer,
   signature: Buffer,

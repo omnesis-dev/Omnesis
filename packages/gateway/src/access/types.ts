@@ -122,9 +122,17 @@ export interface OAuthClientRegistration {
   clientSecret: string | null;
   /** Where a `private_key_jwt` client publishes its signing keys; null for every other method. */
   jwksUri: string | null;
+  /**
+   * The one algorithm a `private_key_jwt` client's metadata document says it
+   * signs with; null when the document names none, and for every other method.
+   */
+  tokenEndpointAuthSigningAlg: ClientAssertionAlgorithm | null;
   clientUri: string | null;
   createdAt: number;
 }
+
+/** Asymmetric JWS algorithms a `private_key_jwt` client may sign its assertion with. */
+export type ClientAssertionAlgorithm = "RS256" | "PS256" | "ES256";
 
 /**
  * How a client authenticates at the token and revocation endpoints. Dynamic
@@ -135,7 +143,12 @@ export type OAuthClientAuthMethod = "none" | "client_secret_basic" | "private_ke
 
 export type OAuthClientRegistrationInput = Omit<
   OAuthClientRegistration,
-  "clientId" | "createdAt" | "clientSecret" | "tokenEndpointAuthMethod" | "jwksUri"
+  | "clientId"
+  | "createdAt"
+  | "clientSecret"
+  | "tokenEndpointAuthMethod"
+  | "jwksUri"
+  | "tokenEndpointAuthSigningAlg"
 > & {
   /** Public clients remain the default for existing internal callers. */
   tokenEndpointAuthMethod?: "none" | "client_secret_basic";
@@ -145,20 +158,27 @@ export type OAuthClientMetadataDocument = Omit<
   OAuthClientRegistrationInput,
   "tokenEndpointAuthMethod"
 > & { clientId: string } & (
-    | { tokenEndpointAuthMethod: "none"; jwksUri: null }
-    | { tokenEndpointAuthMethod: "private_key_jwt"; jwksUri: string }
+    | { tokenEndpointAuthMethod: "none"; jwksUri: null; tokenEndpointAuthSigningAlg: null }
+    | {
+        tokenEndpointAuthMethod: "private_key_jwt";
+        jwksUri: string;
+        tokenEndpointAuthSigningAlg: ClientAssertionAlgorithm | null;
+      }
   );
 
 /**
  * A `private_key_jwt` client assertion the HTTP layer has already verified
  * against the keys published at `jwksUri`. Signature verification needs the
  * network, so it happens before the request reaches the writer; the writer
- * then only confirms this proof names the client and key set it has on record.
+ * then only confirms this proof names the client, key set and signing
+ * algorithm it has on record.
  */
 export interface VerifiedClientAssertion {
   method: "private_key_jwt";
   clientId: string;
   jwksUri: string;
+  /** The algorithm the assertion was signed with. */
+  alg: ClientAssertionAlgorithm;
 }
 
 /** What a request presented to authenticate its client. At most one field is set. */

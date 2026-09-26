@@ -3,7 +3,7 @@
 
 import * as z from "zod/v4";
 
-import { SUPPORTED_CLIENT_ASSERTION_ALGORITHMS } from "./client-assertion.js";
+import { isClientAssertionAlgorithm } from "./client-assertion.js";
 import {
   defaultPublicFetchDependencies,
   fetchPublicJson,
@@ -31,6 +31,7 @@ const metadataSchema = z
     token_endpoint_auth_method: z.string().optional(),
     token_endpoint_auth_signing_alg: z.string().optional(),
     jwks_uri: z.string().max(2_048).optional(),
+    jwks: z.unknown().optional(),
     client_uri: z.string().max(2_048).optional(),
     client_secret: z.unknown().optional(),
     client_secret_expires_at: z.unknown().optional(),
@@ -84,9 +85,11 @@ export class ClientMetadataDocumentResolver {
       // A key-authenticated client names where its public keys live; an
       // inline `jwks` would pin keys the client could never rotate.
       (authMethod === "private_key_jwt" && parsed.data.jwks_uri === undefined) ||
+      // RFC 7591 §2: a client names its keys by value or by reference, never both.
+      (parsed.data.jwks !== undefined && parsed.data.jwks_uri !== undefined) ||
       (authMethod === "private_key_jwt" &&
         signingAlg !== undefined &&
-        !(SUPPORTED_CLIENT_ASSERTION_ALGORITHMS as readonly string[]).includes(signingAlg)) ||
+        !isClientAssertionAlgorithm(signingAlg)) ||
       parsed.data.client_secret !== undefined ||
       parsed.data.client_secret_expires_at !== undefined ||
       !grantTypes.includes("authorization_code") ||
@@ -105,8 +108,19 @@ export class ClientMetadataDocumentResolver {
     };
     const value: OAuthClientMetadataDocument =
       authMethod === "private_key_jwt"
-        ? { ...common, tokenEndpointAuthMethod: "private_key_jwt", jwksUri: parsed.data.jwks_uri! }
-        : { ...common, tokenEndpointAuthMethod: "none", jwksUri: null };
+        ? {
+            ...common,
+            tokenEndpointAuthMethod: "private_key_jwt",
+            jwksUri: parsed.data.jwks_uri!,
+            // RFC 7591 §2: when named, every assertion must be signed with it.
+            tokenEndpointAuthSigningAlg: isClientAssertionAlgorithm(signingAlg) ? signingAlg : null,
+          }
+        : {
+            ...common,
+            tokenEndpointAuthMethod: "none",
+            jwksUri: null,
+            tokenEndpointAuthSigningAlg: null,
+          };
     const cacheAge = document.cacheAgeMs;
     if (cacheAge > 0) {
       if (this.cache.size >= MAX_CACHE_ENTRIES) {

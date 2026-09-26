@@ -7,6 +7,7 @@ import { hashSecret, secretHashMatches } from "./store-helpers.js";
 import { parseStringArray } from "./store-rules.js";
 import type { Db } from "../data/types.js";
 import type {
+  ClientAssertionAlgorithm,
   OAuthClientAuthMethod,
   OAuthClientCredentials,
   OAuthClientMetadataDocument,
@@ -31,6 +32,7 @@ export function registerOAuthClient(
     clientSecret,
     tokenEndpointAuthMethod,
     jwksUri: null,
+    tokenEndpointAuthSigningAlg: null,
     createdAt: now,
   };
   db.prepare(
@@ -65,8 +67,9 @@ export function upsertOAuthMetadataClient(
   db.prepare(
     `INSERT INTO oauth_clients (
        client_id, client_name, redirect_uris, grant_types, response_types,
-       token_endpoint_auth_method, client_secret_hash, jwks_uri, client_uri, created_at
-     ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
+       token_endpoint_auth_method, client_secret_hash, jwks_uri,
+       token_endpoint_auth_signing_alg, client_uri, created_at
+     ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
      ON CONFLICT(client_id) DO UPDATE SET
        client_name = excluded.client_name,
        redirect_uris = excluded.redirect_uris,
@@ -75,6 +78,7 @@ export function upsertOAuthMetadataClient(
        token_endpoint_auth_method = excluded.token_endpoint_auth_method,
        client_secret_hash = NULL,
        jwks_uri = excluded.jwks_uri,
+       token_endpoint_auth_signing_alg = excluded.token_endpoint_auth_signing_alg,
        client_uri = excluded.client_uri`,
   ).run(
     input.clientId,
@@ -84,6 +88,7 @@ export function upsertOAuthMetadataClient(
     JSON.stringify(input.responseTypes),
     input.tokenEndpointAuthMethod,
     input.jwksUri,
+    input.tokenEndpointAuthSigningAlg,
     input.clientUri,
     now,
   );
@@ -103,6 +108,7 @@ export function getOAuthClient(db: Db, clientId: string): OAuthClientRegistratio
         token_endpoint_auth_method: OAuthClientAuthMethod;
         client_secret_hash: string | null;
         jwks_uri: string | null;
+        token_endpoint_auth_signing_alg: ClientAssertionAlgorithm | null;
         client_uri: string | null;
         created_at: number;
       }
@@ -122,6 +128,7 @@ export function getOAuthClient(db: Db, clientId: string): OAuthClientRegistratio
     tokenEndpointAuthMethod: row.token_endpoint_auth_method,
     clientSecret: null,
     jwksUri: row.jwks_uri,
+    tokenEndpointAuthSigningAlg: row.token_endpoint_auth_signing_alg,
     clientUri: row.client_uri,
     createdAt: row.created_at,
   };
@@ -131,7 +138,8 @@ export function getOAuthClient(db: Db, clientId: string): OAuthClientRegistratio
  * Whether the presented credentials are exactly the registered method's:
  * no credential for a public client, the matching secret for
  * `client_secret_basic`, and a verified assertion over the client's current
- * key set for `private_key_jwt`. Presenting any other method fails.
+ * key set — signed with its declared algorithm, when it declares one — for
+ * `private_key_jwt`. Presenting any other method fails.
  */
 export function oauthClientAuthenticates(
   db: Db,
@@ -145,9 +153,11 @@ export function oauthClientAuthenticates(
         token_endpoint_auth_method: OAuthClientAuthMethod;
         client_secret_hash: string | null;
         jwks_uri: string | null;
+        token_endpoint_auth_signing_alg: ClientAssertionAlgorithm | null;
       }
     >(
-      `SELECT token_endpoint_auth_method, client_secret_hash, jwks_uri
+      `SELECT token_endpoint_auth_method, client_secret_hash, jwks_uri,
+              token_endpoint_auth_signing_alg
        FROM oauth_clients WHERE client_id = ?`,
     )
     .get(clientId);
@@ -170,7 +180,9 @@ export function oauthClientAuthenticates(
         clientAssertion.method === "private_key_jwt" &&
         clientAssertion.clientId === clientId &&
         row.jwks_uri !== null &&
-        clientAssertion.jwksUri === row.jwks_uri
+        clientAssertion.jwksUri === row.jwks_uri &&
+        (row.token_endpoint_auth_signing_alg === null ||
+          clientAssertion.alg === row.token_endpoint_auth_signing_alg)
       );
     default:
       return false;

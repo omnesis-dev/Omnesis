@@ -98,7 +98,25 @@ describe("ClientMetadataDocumentResolver", () => {
       responseTypes: ["code"],
       tokenEndpointAuthMethod: "private_key_jwt",
       jwksUri: "https://client.example.com/oauth/jwks.json",
+      tokenEndpointAuthSigningAlg: "RS256",
       clientUri: "https://client.example.com/",
+    });
+  });
+
+  test("leaves the signing algorithm open when a key client names none", async () => {
+    const deps = dependencies({
+      fetch: vi.fn(async () =>
+        response({
+          token_endpoint_auth_method: "private_key_jwt",
+          jwks_uri: "https://client.example.com/oauth/jwks.json",
+        }),
+      ),
+    });
+    await expect(
+      new ClientMetadataDocumentResolver(deps).resolve(CLIENT_ID),
+    ).resolves.toMatchObject({
+      tokenEndpointAuthMethod: "private_key_jwt",
+      tokenEndpointAuthSigningAlg: null,
     });
   });
 
@@ -192,6 +210,14 @@ describe("ClientMetadataDocumentResolver", () => {
         token_endpoint_auth_method: "private_key_jwt",
         jwks_uri: "https://client.example.com/oauth/jwks.json",
         token_endpoint_auth_signing_alg: "HS256",
+      }),
+    ],
+    [
+      "key set both inline and by reference",
+      response({
+        token_endpoint_auth_method: "private_key_jwt",
+        jwks_uri: "https://client.example.com/oauth/jwks.json",
+        jwks: { keys: [] },
       }),
     ],
     [
