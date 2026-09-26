@@ -48,6 +48,7 @@ import type {
   AuthorizationRequestDecisionInput,
   AuthorizationRequestPortal,
   AuthorizationRequestPublic,
+  OAuthClientCredentials,
   OAuthTokenSet,
   PendingAuthorizationRequest,
 } from "./types.js";
@@ -453,12 +454,11 @@ export function exchangeAuthorizationCode(
     clientId: string;
     redirectUri: string;
     codeVerifier: string;
-    clientSecret?: string;
     resource: string;
-  },
+  } & OAuthClientCredentials,
   now = Date.now(),
 ): AccessMutationResult<OAuthTokenSet> {
-  if (!oauthClientAuthenticates(db, input.clientId, input.clientSecret)) {
+  if (!oauthClientAuthenticates(db, input.clientId, input)) {
     return { ok: false, error: "invalid-client" };
   }
   const client = getOAuthClient(db, input.clientId);

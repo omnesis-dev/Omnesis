@@ -49,7 +49,6 @@ import {
   updateDocker,
   updateNpmGlobal,
   updateSourceCheckout,
-  approveInteractive,
   parseWaitForLockMinutes,
   runUpdateContinuation,
   continueOffer,
@@ -1380,7 +1379,7 @@ describe("executing a host's plan", () => {
       "git checkout --detach v0.3.0",
       "npm ci",
       "npm run build",
-      "/usr/local/bin/omnesis connect openclaw --refresh",
+      "/usr/local/bin/omnesis connect openclaw --refresh --no-restart",
       "openclaw gateway restart",
     ]);
     expect(approve).toHaveBeenCalledOnce();
@@ -1407,7 +1406,7 @@ describe("executing a host's plan", () => {
     const refresh = runner.calls.find((call) => call.spec.args.includes("--refresh"));
     expect(refresh?.spec).toEqual({
       command: tsx,
-      args: [entry, "connect", "hermes", "--refresh"],
+      args: [entry, "connect", "hermes", "--refresh", "--no-restart"],
       env: { PATH: "/opt/node/bin" },
     });
   });
@@ -1437,7 +1436,9 @@ describe("executing a host's plan", () => {
         approve,
       }),
     );
-    expect(executed(runner)).not.toContain("/usr/local/bin/omnesis connect openclaw --refresh");
+    expect(executed(runner)).not.toContain(
+      "/usr/local/bin/omnesis connect openclaw --refresh --no-restart",
+    );
     expect(approve).not.toHaveBeenCalled();
     expect(output()).toContain("omnesis connect openclaw --refresh");
   });
@@ -1531,7 +1532,9 @@ describe("executing a host's plan", () => {
         restart: false,
       }),
     );
-    expect(executed(runner)).toContain("/usr/local/bin/omnesis connect openclaw --refresh");
+    expect(executed(runner)).toContain(
+      "/usr/local/bin/omnesis connect openclaw --refresh --no-restart",
+    );
     expect(executed(runner)).not.toContain("openclaw gateway restart");
     expect(approve).not.toHaveBeenCalled();
     expect(output()).toContain("Restart it with");
@@ -3837,22 +3840,6 @@ describe("applying the release's service definitions", () => {
       expect(output()).toContain("launchd loads it at the next login");
     });
   });
-});
-
-// ── approveInteractive ──────────────────────────────────────────────────
-
-describe("approveInteractive", () => {
-  test("--yes answers a skippable interruption without a terminal", async () => {
-    await expect(approveInteractive("Restart openclaw now?", true)).resolves.toBe(true);
-  });
-
-  // vitest runs without a TTY on stdin, which is the unattended case.
-  test.skipIf(process.stdin.isTTY)(
-    "without --yes and without a terminal, the interruption is declined, never blocked on",
-    async () => {
-      await expect(approveInteractive("Restart openclaw now?", false)).resolves.toBe(false);
-    },
-  );
 });
 
 // ── A stopped gateway, a concurrent update, and daemons already on the build ──

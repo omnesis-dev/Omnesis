@@ -36,6 +36,7 @@ export const KNOWN_AGENT_ERROR_CODES = [
   "session_not_found",
   "forbidden",
   "agent_disabled",
+  "remote_inference_disabled",
   "context_window_exceeded",
   "output_truncated",
   "anthropic_api_error",

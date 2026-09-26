@@ -41,6 +41,12 @@ export const oauthAuthorizationHandleQuery = z
 
 export const oauthApprovalId = z.string().uuid();
 
+/** RFC 7521 §4.2 client authentication by assertion, accepted at the token and revocation endpoints. */
+const clientAssertionFields = {
+  client_assertion_type: z.string().min(1).max(256).optional(),
+  client_assertion: z.string().min(1).max(8_192).optional(),
+};
+
 export const oauthTokenForm = z
   .object({
     grant_type: z.string().min(1).max(128),
@@ -50,13 +56,15 @@ export const oauthTokenForm = z
     code_verifier: z.string().min(43).max(128).optional(),
     refresh_token: z.string().min(1).max(4_096).optional(),
     resource: z.string().min(1).max(2_048).optional(),
+    ...clientAssertionFields,
   })
   .passthrough();
 
 export const oauthRevokeForm = z
   .object({
     token: z.string().min(1).max(4_096),
-    client_id: z.string().min(1).max(256).optional(),
+    client_id: z.string().min(1).max(2_048).optional(),
+    ...clientAssertionFields,
     // RFC 7009 defines this as a hint. Unknown values must not prevent the
     // server from locating and revoking an otherwise valid token.
     token_type_hint: z.string().min(1).max(256).optional(),

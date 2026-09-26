@@ -1634,6 +1634,7 @@ export function reducer(state, action) {
             role: "user",
             parts: [{ kind: "text", text: action.text }],
             done: true,
+            deepResearch: action.deepResearch === true,
           },
         ],
       };
@@ -1647,7 +1648,15 @@ export function reducer(state, action) {
       const { optimisticId, userMessageId } = action;
       const alreadyMaterialized = state.turns.some((t) => t.id === userMessageId);
       if (alreadyMaterialized) {
-        return { ...state, turns: state.turns.filter((t) => t.id !== optimisticId) };
+        const optimistic = state.turns.find((turn) => turn.id === optimisticId);
+        return {
+          ...state,
+          turns: state.turns
+            .filter((turn) => turn.id !== optimisticId)
+            .map((turn) => turn.id === userMessageId && optimistic
+              ? { ...turn, deepResearch: optimistic.deepResearch === true }
+              : turn),
+        };
       }
       return {
         ...state,

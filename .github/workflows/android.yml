@@ -18,12 +18,10 @@ env:
 
 jobs:
   build-and-test:
-    # An arm64 macOS runner: the Roborazzi goldens under src/test/roborazzi/
-    # are rendered by Robolectric's native graphics on arm64 macOS, and a
-    # render on another platform rasterises text differently. The image carries
-    # the Android SDK; JDK 17 comes from setup-java, and the toolchain-verify
-    # step resolves the SDK (exported to later steps via $GITHUB_ENV).
-    runs-on: macos-latest
+    # The JVM, policy and bundle lanes give the same verdict on any platform, so
+    # they take a Linux runner, whose image carries the Android SDK. The render
+    # lane below is the one that needs macOS.
+    runs-on: ubuntu-latest
     timeout-minutes: 60
 
     defaults:
@@ -93,6 +91,62 @@ jobs:
         run: |
           ./gradlew :app:bundlePlayRelease --no-daemon --max-workers=2
           ./gradlew :app:bundleFullRelease --no-daemon --max-workers=2
+
+  render:
+    # An arm64 macOS runner: the Roborazzi goldens under src/test/roborazzi/
+    # are rendered by Robolectric's native graphics on arm64 macOS, and a
+    # render on Linux (x64 or arm64) rasterises text differently. The image
+    # carries the Android SDK; JDK 17 comes from setup-java.
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    defaults:
+      run:
+        working-directory: android
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Set up JDK 17
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Required-dependency, FAIL LOUD (never skip): the Android toolchain MUST
+      # be reachable on the runner. If JDK 17 or the Android SDK is missing the
+      # job fails here with a named error rather than silently green-passing.
+      - name: Verify Android toolchain is present (fail loud)
+        run: |
+          set -euo pipefail
+          if [ ! -x "$JAVA_HOME/bin/java" ]; then
+            echo "::error::JDK 17 not found at JAVA_HOME=$JAVA_HOME — the Android lane requires it. This is a required dependency; the job fails rather than skipping." >&2
+            exit 1
+          fi
+          # Resolve the Android SDK: prefer the runner's standard ~/Library
+          # location, then $ANDROID_HOME / $ANDROID_SDK_ROOT. Fail loud if none.
+          SDK=""
+          for cand in "$HOME/Library/Android/sdk" "${ANDROID_SDK_ROOT:-}" "${ANDROID_HOME:-}"; do
+            if [ -n "$cand" ] && [ -d "$cand/platform-tools" ]; then SDK="$cand"; break; fi
+          done
+          if [ -z "$SDK" ]; then
+            echo "::error::Android SDK not found (looked in ~/Library/Android/sdk, \$ANDROID_SDK_ROOT, \$ANDROID_HOME) — required dependency, failing loudly." >&2
+            exit 1
+          fi
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME/bin:$SDK/platform-tools" >> "$GITHUB_PATH"
+          echo "Using JDK 17 at $JAVA_HOME and Android SDK at $SDK"
+          "$JAVA_HOME/bin/java" -version
 
       # Roborazzi VERIFY (not record): compares a fresh render against the
       # tracked goldens under each module's src/test/roborazzi/. A drift (or a

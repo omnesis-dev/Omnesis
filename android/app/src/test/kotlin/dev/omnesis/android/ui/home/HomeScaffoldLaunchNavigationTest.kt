@@ -100,7 +100,10 @@ class HomeScaffoldLaunchNavigationTest {
 
     /**
      * Stopping the session is what ends the background work a paired session starts — the
-     * device socket's reconnect loop above all — so the gateway hears nothing more from it.
+     * device socket's reconnect loop and the launch reads above all — so the gateway hears
+     * nothing more from it. A request already on the wire when the session stopped may still
+     * reach the gateway just after; the gateway must settle within [SETTLE_DEADLINE_MILLIS]
+     * and then stay quiet for longer than any loop's backoff.
      */
     @Test
     fun stoppingTheSessionLeavesTheGatewayQuiet() {
@@ -112,8 +115,40 @@ class HomeScaffoldLaunchNavigationTest {
         assertNull(harness.session.session)
 
         val requestsAtStop = harness.gateway.requestPaths.size
+        val settled = awaitGatewaySettled()
+        assertTrue(
+            "the gateway never settled after stop: ${harness.gateway.requestPaths.drop(requestsAtStop)}",
+            settled != null,
+        )
         Thread.sleep(QUIET_WINDOW_MILLIS)
-        assertEquals(requestsAtStop, harness.gateway.requestPaths.size)
+        assertEquals(
+            "requests after the gateway settled: ${harness.gateway.requestPaths.drop(settled!!)}",
+            settled,
+            harness.gateway.requestPaths.size,
+        )
+    }
+
+    /**
+     * The request count once no new request has arrived for [SETTLE_MILLIS], or null when it
+     * keeps changing until [SETTLE_DEADLINE_MILLIS]. The settle interval is shorter than the
+     * device socket's smallest reconnect backoff, so a surviving loop settles between attempts
+     * and its next attempt lands inside the quiet window.
+     */
+    private fun awaitGatewaySettled(): Int? {
+        val deadline = System.nanoTime() + SETTLE_DEADLINE_MILLIS * 1_000_000
+        var count = harness.gateway.requestPaths.size
+        var stableSince = System.nanoTime()
+        while (System.nanoTime() < deadline) {
+            Thread.sleep(POLL_MILLIS)
+            val now = harness.gateway.requestPaths.size
+            if (now != count) {
+                count = now
+                stableSince = System.nanoTime()
+            } else if (System.nanoTime() - stableSince >= SETTLE_MILLIS * 1_000_000) {
+                return count
+            }
+        }
+        return null
     }
 
     /** With no launch, becoming active opens the held answer once per session, and not again. */
@@ -138,5 +173,10 @@ class HomeScaffoldLaunchNavigationTest {
     private companion object {
         /** Longer than the socket's largest early reconnect backoff, so a surviving loop would show. */
         const val QUIET_WINDOW_MILLIS = 3_000L
+
+        /** Shorter than the socket's smallest reconnect backoff (one second). */
+        const val SETTLE_MILLIS = 500L
+        const val SETTLE_DEADLINE_MILLIS = 10_000L
+        const val POLL_MILLIS = 50L
     }
 }

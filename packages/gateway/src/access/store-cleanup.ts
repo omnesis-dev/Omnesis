@@ -386,7 +386,10 @@ function cleanupOrphanedOAuthClients(
              SELECT 1 FROM oauth_execution_bindings eb WHERE eb.oauth_client_id = c.client_id
            ) AS orphan
          FROM oauth_clients c
-         WHERE c.token_endpoint_auth_method = 'none'
+         -- A secret cannot be handed out again, so only clients without one —
+         -- public and metadata-document clients, which re-register on their
+         -- next authorization — are collected.
+         WHERE c.token_endpoint_auth_method IN ('none', 'private_key_jwt')
            AND c.created_at < @cutoff
            ${afterCursor}
          ORDER BY c.created_at, c.client_id

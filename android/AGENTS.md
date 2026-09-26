@@ -231,7 +231,9 @@ Things that have bitten agents working in this module. Read before testing.
     --tests "dev.omnesis.android.screenshots.AgentParityScreenshotTest.citations_drawer_populated_light"
   ```
 - **CI runs the Android lane (`android.yml`).** Full validation calls this reusable
-  workflow for every pull request and push to `main`, on a GitHub-hosted arm64 macOS runner. It runs
+  workflow for every pull request and push to `main`: the JVM, policy and bundle lanes on
+  GitHub-hosted Linux, the Roborazzi render on arm64 macOS (the goldens rasterise differently
+  elsewhere). It runs
   both app flavor unit suites, release policy and bundle checks, Roborazzi verification,
   and live-gateway E2E. It FAILS loudly if the JDK 17 / Android SDK toolchain is
   unreachable (required dependency, never a silent skip). CI **verifies** (compares

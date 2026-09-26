@@ -1411,8 +1411,13 @@ describe("android.yml CI workflow structure (C20)", () => {
     wf = parse(readFileSync(join(repoRoot, ".github/workflows/android.yml"), "utf8"));
   });
 
-  it("renders on the arm64 macOS platform that recorded the goldens", () => {
-    expect(wf.jobs["build-and-test"]["runs-on"]).toBe("macos-latest");
+  it("renders on the arm64 macOS platform that recorded the goldens, and builds on Linux", () => {
+    expect(wf.jobs.render["runs-on"]).toBe("macos-latest");
+    expect(wf.jobs["build-and-test"]["runs-on"]).toBe("ubuntu-latest");
+    const renderLanes = wf.jobs.render.steps
+      .map((s) => s.name)
+      .filter((n) => n?.startsWith("lane ["));
+    expect(renderLanes).toEqual(["lane [android-render]"]);
   });
 
   it("is admission-only and validates the caller's exact revision without a path sentinel", () => {
@@ -1431,7 +1436,7 @@ describe("android.yml CI workflow structure (C20)", () => {
   });
 
   it("bounds every Gradle phase without leaving a persistent daemon for the next phase", () => {
-    const steps = wf.jobs["build-and-test"].steps;
+    const steps = [...wf.jobs["build-and-test"].steps, ...wf.jobs.render.steps];
     for (const name of ["android-jvm", "android-policy", "android-build", "android-render"]) {
       const step = steps.find((s) => s.name === `lane [${name}]`);
       const commands = step.run
@@ -1489,7 +1494,7 @@ describe("android.yml CI workflow structure (C20)", () => {
   );
 
   it("runs the Roborazzi VERIFY task (compare against tracked goldens), not record", () => {
-    const steps = wf.jobs["build-and-test"].steps;
+    const steps = [...wf.jobs["build-and-test"].steps, ...wf.jobs.render.steps];
     const runs = steps.map((s) => s.run || "").join("\n");
     expect(runs).toContain("verifyRoborazziPlayDebug");
     // CI must NEVER record — recording would rewrite the baseline and catch no drift.
@@ -1504,12 +1509,13 @@ describe("android.yml CI workflow structure (C20)", () => {
   });
 
   it("fails loud (never skips) when the Android toolchain is unreachable", () => {
-    const steps = wf.jobs["build-and-test"].steps;
-    const verify = steps.find((s) => /toolchain/i.test(s.name || ""));
-    expect(verify, "android.yml has no toolchain-verify step").toBeTruthy();
-    // The step exits non-zero on a missing JDK/SDK — a required dependency, no skip.
-    expect(verify.run).toMatch(/exit 1/);
-    expect(verify.run).toMatch(/required dependency/i);
+    for (const job of ["build-and-test", "render"]) {
+      const verify = wf.jobs[job].steps.find((s) => /toolchain/i.test(s.name || ""));
+      expect(verify, `android.yml ${job} has no toolchain-verify step`).toBeTruthy();
+      // The step exits non-zero on a missing JDK/SDK — a required dependency, no skip.
+      expect(verify.run).toMatch(/exit 1/);
+      expect(verify.run).toMatch(/required dependency/i);
+    }
   });
 
   it("the tracked golden dir is committed and not gitignored", () => {
@@ -1760,15 +1766,16 @@ describe("full-validation workflow topology", () => {
     }
   });
 
-  it("boots the arm64 emulator with a host-native helper", () => {
-    const qemu = workflows.docker.jobs["build-and-smoke"].steps.find((step) =>
-      step.uses?.startsWith("docker/setup-qemu-action@"),
+  it("builds each image platform natively on a runner of its own architecture", () => {
+    const job = workflows.docker.jobs["build-and-smoke"];
+    expect(job["runs-on"]).toBe("${{ matrix.runner }}");
+    expect(job.strategy.matrix.include).toEqual([
+      { platform: "linux/amd64", runner: "ubuntu-latest" },
+      { platform: "linux/arm64", runner: "ubuntu-24.04-arm" },
+    ]);
+    expect(job.steps.some((step) => step.uses?.startsWith("docker/setup-qemu-action@"))).toBe(
+      false,
     );
-    expect(qemu).toMatchObject({
-      if: "matrix.platform == 'linux/arm64'",
-      env: { DOCKER_DEFAULT_PLATFORM: "linux/amd64" },
-      with: { platforms: "arm64" },
-    });
   });
 
   it("gives an emulated gateway the full bounded health window", () => {
@@ -2201,106 +2208,112 @@ describe("external-harness conformance workflow", () => {
     expect(cleanup.run).toContain("Refusing post-verification replacement");
   });
 
-  it("leaves unowned, symlinked, and replaced harness scratch paths untouched", () => {
-    const cleanup = workflow.jobs.conformance.steps.find(
-      (step) => step.name === "Clean up pinned harness",
-    );
-    const runId = (BigInt(Date.now()) * 1_000_000n + BigInt(process.pid)).toString();
-    const baseEnv = {
-      ...process.env,
-      GITHUB_RUN_ID: runId,
-      HARNESS_NAME: "openclaw",
-    };
+  // Runs the cleanup step itself, which exists only on the workflow's
+  // ubuntu-latest runner and relies on GNU `mv -T` and `stat -c`, as does the
+  // test's own stand-in for `stat`; macOS has neither.
+  it.skipIf(process.platform !== "linux")(
+    "leaves unowned, symlinked, and replaced harness scratch paths untouched",
+    () => {
+      const cleanup = workflow.jobs.conformance.steps.find(
+        (step) => step.name === "Clean up pinned harness",
+      );
+      const runId = (BigInt(Date.now()) * 1_000_000n + BigInt(process.pid)).toString();
+      const baseEnv = {
+        ...process.env,
+        GITHUB_RUN_ID: runId,
+        HARNESS_NAME: "openclaw",
+      };
 
-    const formerFallback = `/tmp/oh-${runId}-o`;
-    mkdirSync(formerFallback);
-    writeFileSync(join(formerFallback, "must-remain"), "unowned\n");
-    cleanups.push(() => rmSync(formerFallback, { recursive: true, force: true }));
-    const missingOwnership = spawnSync("bash", ["-euo", "pipefail", "-c", cleanup.run], {
-      env: baseEnv,
-      encoding: "utf8",
-    });
-    expect(missingOwnership.status, missingOwnership.stderr).toBe(0);
-    expect(existsSync(join(formerFallback, "must-remain"))).toBe(true);
+      const formerFallback = `/tmp/oh-${runId}-o`;
+      mkdirSync(formerFallback);
+      writeFileSync(join(formerFallback, "must-remain"), "unowned\n");
+      cleanups.push(() => rmSync(formerFallback, { recursive: true, force: true }));
+      const missingOwnership = spawnSync("bash", ["-euo", "pipefail", "-c", cleanup.run], {
+        env: baseEnv,
+        encoding: "utf8",
+      });
+      expect(missingOwnership.status, missingOwnership.stderr).toBe(0);
+      expect(existsSync(join(formerFallback, "must-remain"))).toBe(true);
 
-    const danglingTarget = `/tmp/omnesis-absent-${runId}`;
-    const symlinkPath = `/tmp/oh-${runId}-o.abcdef`;
-    symlinkSync(danglingTarget, symlinkPath);
-    cleanups.push(() => rmSync(symlinkPath, { force: true }));
-    const symlinked = spawnSync("bash", ["-euo", "pipefail", "-c", cleanup.run], {
-      env: { ...baseEnv, HARNESS_ROOT: symlinkPath, HARNESS_ROOT_ID: "0:0" },
-      encoding: "utf8",
-    });
-    expect(symlinked.status, symlinked.stderr).toBe(64);
-    expect(lstatSync(symlinkPath).isSymbolicLink()).toBe(true);
+      const danglingTarget = `/tmp/omnesis-absent-${runId}`;
+      const symlinkPath = `/tmp/oh-${runId}-o.abcdef`;
+      symlinkSync(danglingTarget, symlinkPath);
+      cleanups.push(() => rmSync(symlinkPath, { force: true }));
+      const symlinked = spawnSync("bash", ["-euo", "pipefail", "-c", cleanup.run], {
+        env: { ...baseEnv, HARNESS_ROOT: symlinkPath, HARNESS_ROOT_ID: "0:0" },
+        encoding: "utf8",
+      });
+      expect(symlinked.status, symlinked.stderr).toBe(64);
+      expect(lstatSync(symlinkPath).isSymbolicLink()).toBe(true);
 
-    const replacedPath = mkdtempSync(`/tmp/oh-${runId}-o.`);
-    cleanups.push(() => rmSync(replacedPath, { recursive: true, force: true }));
-    const replaced = spawnSync("bash", ["-euo", "pipefail", "-c", cleanup.run], {
-      env: { ...baseEnv, HARNESS_ROOT: replacedPath, HARNESS_ROOT_ID: "0:0" },
-      encoding: "utf8",
-    });
-    expect(replaced.status, replaced.stderr).toBe(64);
-    expect(existsSync(replacedPath)).toBe(true);
+      const replacedPath = mkdtempSync(`/tmp/oh-${runId}-o.`);
+      cleanups.push(() => rmSync(replacedPath, { recursive: true, force: true }));
+      const replaced = spawnSync("bash", ["-euo", "pipefail", "-c", cleanup.run], {
+        env: { ...baseEnv, HARNESS_ROOT: replacedPath, HARNESS_ROOT_ID: "0:0" },
+        encoding: "utf8",
+      });
+      expect(replaced.status, replaced.stderr).toBe(64);
+      expect(existsSync(replacedPath)).toBe(true);
 
-    const ownedPath = mkdtempSync(`/tmp/oh-${runId}-o.`);
-    writeFileSync(join(ownedPath, "owned"), "delete me\n");
-    const ownedStat = statSync(ownedPath);
-    const owned = spawnSync("bash", ["-euo", "pipefail", "-c", cleanup.run], {
-      env: {
-        ...baseEnv,
-        HARNESS_ROOT: ownedPath,
-        HARNESS_ROOT_ID: `${ownedStat.dev}:${ownedStat.ino}`,
-      },
-      encoding: "utf8",
-    });
-    expect(owned.status, owned.stderr).toBe(0);
-    expect(existsSync(ownedPath)).toBe(false);
+      const ownedPath = mkdtempSync(`/tmp/oh-${runId}-o.`);
+      writeFileSync(join(ownedPath, "owned"), "delete me\n");
+      const ownedStat = statSync(ownedPath);
+      const owned = spawnSync("bash", ["-euo", "pipefail", "-c", cleanup.run], {
+        env: {
+          ...baseEnv,
+          HARNESS_ROOT: ownedPath,
+          HARNESS_ROOT_ID: `${ownedStat.dev}:${ownedStat.ino}`,
+        },
+        encoding: "utf8",
+      });
+      expect(owned.status, owned.stderr).toBe(0);
+      expect(existsSync(ownedPath)).toBe(false);
 
-    const racingOwnedPath = mkdtempSync(`/tmp/oh-${runId}-o.`);
-    writeFileSync(join(racingOwnedPath, "owned"), "owned data\n");
-    const racingOwnedStat = statSync(racingOwnedPath);
-    const racingBackup = `${racingOwnedPath}-original`;
-    const replacement = tmpDir("omnesis-harness-cleanup-replacement-");
-    writeFileSync(join(replacement, "must-remain"), "replacement\n");
-    const swapMarker = join(tmpDir("omnesis-harness-cleanup-swap-"), "swapped");
-    const fakeBin = tmpDir("omnesis-harness-cleanup-bin-");
-    writeFileSync(
-      join(fakeBin, "stat"),
-      [
-        "#!/bin/bash",
-        'if [[ "${!#}" == "." && ! -e "$SWAP_MARKER" ]]; then',
-        '  output="$(/usr/bin/stat "$@")"',
-        '  quarantine_parent="$(dirname -- "$PWD")"',
-        '  /usr/bin/mv -T -- "$quarantine_parent/root" "$SWAP_OWNED_BACKUP"',
-        '  /usr/bin/mv -T -- "$SWAP_REPLACEMENT" "$quarantine_parent/root"',
-        '  : > "$SWAP_MARKER"',
-        '  printf "%s\\n" "$output"',
-        "  exit 0",
-        "fi",
-        'exec /usr/bin/stat "$@"',
-        "",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-    cleanups.push(() => rmSync(racingOwnedPath, { recursive: true, force: true }));
-    cleanups.push(() => rmSync(racingBackup, { recursive: true, force: true }));
-    const raced = spawnSync("bash", ["-euo", "pipefail", "-c", cleanup.run], {
-      env: {
-        ...baseEnv,
-        PATH: `${fakeBin}:${baseEnv.PATH}`,
-        HARNESS_ROOT: racingOwnedPath,
-        HARNESS_ROOT_ID: `${racingOwnedStat.dev}:${racingOwnedStat.ino}`,
-        SWAP_MARKER: swapMarker,
-        SWAP_OWNED_BACKUP: racingBackup,
-        SWAP_REPLACEMENT: replacement,
-      },
-      encoding: "utf8",
-    });
-    expect(raced.status, raced.stderr).toBe(64);
-    expect(existsSync(join(racingOwnedPath, "must-remain"))).toBe(true);
-    expect(existsSync(racingBackup)).toBe(true);
-  });
+      const racingOwnedPath = mkdtempSync(`/tmp/oh-${runId}-o.`);
+      writeFileSync(join(racingOwnedPath, "owned"), "owned data\n");
+      const racingOwnedStat = statSync(racingOwnedPath);
+      const racingBackup = `${racingOwnedPath}-original`;
+      const replacement = tmpDir("omnesis-harness-cleanup-replacement-");
+      writeFileSync(join(replacement, "must-remain"), "replacement\n");
+      const swapMarker = join(tmpDir("omnesis-harness-cleanup-swap-"), "swapped");
+      const fakeBin = tmpDir("omnesis-harness-cleanup-bin-");
+      writeFileSync(
+        join(fakeBin, "stat"),
+        [
+          "#!/bin/bash",
+          'if [[ "${!#}" == "." && ! -e "$SWAP_MARKER" ]]; then',
+          '  output="$(/usr/bin/stat "$@")"',
+          '  quarantine_parent="$(dirname -- "$PWD")"',
+          '  /usr/bin/mv -T -- "$quarantine_parent/root" "$SWAP_OWNED_BACKUP"',
+          '  /usr/bin/mv -T -- "$SWAP_REPLACEMENT" "$quarantine_parent/root"',
+          '  : > "$SWAP_MARKER"',
+          '  printf "%s\\n" "$output"',
+          "  exit 0",
+          "fi",
+          'exec /usr/bin/stat "$@"',
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      cleanups.push(() => rmSync(racingOwnedPath, { recursive: true, force: true }));
+      cleanups.push(() => rmSync(racingBackup, { recursive: true, force: true }));
+      const raced = spawnSync("bash", ["-euo", "pipefail", "-c", cleanup.run], {
+        env: {
+          ...baseEnv,
+          PATH: `${fakeBin}:${baseEnv.PATH}`,
+          HARNESS_ROOT: racingOwnedPath,
+          HARNESS_ROOT_ID: `${racingOwnedStat.dev}:${racingOwnedStat.ino}`,
+          SWAP_MARKER: swapMarker,
+          SWAP_OWNED_BACKUP: racingBackup,
+          SWAP_REPLACEMENT: replacement,
+        },
+        encoding: "utf8",
+      });
+      expect(raced.status, raced.stderr).toBe(64);
+      expect(existsSync(join(racingOwnedPath, "must-remain"))).toBe(true);
+      expect(existsSync(racingBackup)).toBe(true);
+    },
+  );
 });
 
 describe("fast inner-loop typecheck scripts", () => {

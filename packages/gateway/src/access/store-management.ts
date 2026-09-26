@@ -14,6 +14,7 @@ import type {
   AccessOverview,
   AccessPrincipal,
   AccessPrincipalRenameInput,
+  OAuthClientCredentials,
   PrincipalCredential,
   PrincipalCredentialKind,
   PrincipalKind,
@@ -273,7 +274,7 @@ export function revokeOAuthToken(
   db: Db,
   rawToken: string,
   clientId: string,
-  clientSecret: string | undefined,
+  credentials: OAuthClientCredentials,
   now = Date.now(),
 ): boolean {
   return db.transaction(() => {
@@ -299,7 +300,7 @@ export function revokeOAuthToken(
       )
       .get(tokenHash, tokenHash);
     if (!credential || credential.oauth_client_id !== clientId) return false;
-    if (!oauthClientAuthenticates(db, credential.oauth_client_id, clientSecret)) return false;
+    if (!oauthClientAuthenticates(db, credential.oauth_client_id, credentials)) return false;
     const revoked = db
       .prepare(
         "UPDATE principal_credentials SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",

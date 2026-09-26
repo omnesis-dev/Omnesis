@@ -8,6 +8,7 @@ import { addOAuthRefreshRetryColumns } from "../data/migration-160-oauth-refresh
 import { indexPrincipalCredentialsByExecutionDevice } from "../data/migration-162-principal-credential-device-index.js";
 import { addNotesAccessCapability } from "../data/migration-163-notes-access.js";
 import { createAccessLevelTables } from "../data/migration-171-access-levels.js";
+import { migrateV182PrivateKeyJwtClients } from "../data/migration-182-private-key-jwt-clients.js";
 import type { Db } from "../data/types.js";
 
 /** Install the current access schema on a fresh database. */
@@ -28,5 +29,6 @@ export function createAccessTables(db: Db): void {
     indexPrincipalCredentialsByExecutionDevice(db);
     addNotesAccessCapability(db);
     createAccessLevelTables(db);
+    migrateV182PrivateKeyJwtClients(db);
   }
 }

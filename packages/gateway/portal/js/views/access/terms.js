@@ -7,6 +7,7 @@
 // the same way wherever they are shown.
 
 import { html } from "htm/preact";
+import { CapabilityBadge } from "../../components/grant-builder.js";
 
 import {
   isSourceAllowed,
@@ -16,7 +17,7 @@ import {
 } from "../../components/grant-builder-state.js";
 import { policyEditorPath } from "../../lib/policy-path.js";
 import { navigate } from "../../lib/router.js";
-import { capabilityLabel, overviewPolicies } from "./shared.js";
+import { overviewPolicies } from "./shared.js";
 
 /**
  * The policy a reviewed capability runs under, as a link to its editor.
@@ -74,26 +75,20 @@ export function answerPrivacySummary(rule, policies) {
   return policy ? policyFamilyName(policy) : "Privacy policy";
 }
 
-/**
- * The same, where a named policy is a link to it: "No privacy review" stays
- * plain words, since there is no policy to open.
- */
-export function AnswerPrivacy({ rule, policies }) {
-  if (rule.release.mode === "unreviewed") return "No privacy review";
-  return policySummary(rule.release.policyFamilyId, policies);
-}
-
-/** The terms a set of permissions runs under, one line per capability it holds. */
+/** The terms a set of permissions runs under, one line per capability, including withheld permissions. */
 export function AccessTerms({ rules, overview }) {
-  const lanes = ["answer", "direct"].filter((capability) => rules[capability]);
+  const lanes = ["answer", "direct", "notes"];
   const retained = (overview.sources ?? []).filter((source) => source.available === false);
   return html`<dl class="access-detail-grid">
     ${lanes.map((capability) => {
       const rule = rules[capability];
+      if (!rule) return html`<div key=${capability}><dt><${CapabilityBadge} capability=${capability} off=${true} /></dt><dd></dd></div>`;
+      if (capability === "notes") return html`<div key=${capability} class="access-term-notes"><dt><${CapabilityBadge} capability="notes" /></dt><dd>Saves notes under the agent's name</dd></div>`;
       const retainedAllowed = retained.filter((source) => isSourceAllowed(rule, sourceId(source))).length;
-      return html`<div key=${capability}>
-        <dt>${capabilityLabel(capability)}</dt>
+      return html`<div key=${capability} class=${`access-term-${capability}${capability === "answer" && rule.release.mode === "unreviewed" ? " access-term-unreviewed" : ""}`}>
+        <dt><${CapabilityBadge} capability=${capability} unreviewed=${capability === "answer" && rule.release.mode === "unreviewed"} /></dt>
         <dd>
+          <span class="access-reach-cell"><span class="sr-only">Sources: </span>${laneReach(rule, overview)}</span>${" · "}
           ${capability === "direct"
             ? "Raw access"
             : rule.release.mode === "unreviewed"
@@ -106,6 +101,5 @@ export function AccessTerms({ rules, overview }) {
         </dd>
       </div>`;
     })}
-    ${rules.notes ? html`<div><dt>${capabilityLabel("notes")}</dt><dd>Saves notes under the agent's name</dd></div>` : null}
   </dl>`;
 }

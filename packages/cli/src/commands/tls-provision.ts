@@ -46,6 +46,7 @@ import {
   isCertificateIpAddress,
   localMdnsHostname,
   safeNetworkInterfaces,
+  TAILSCALE_STATUS_TIMEOUT_MS,
   tailscaleCliCandidates,
   tailscaleCliEnv,
   tailscaleIsRunningStatus,
@@ -468,6 +469,7 @@ export function defaultTlsProvisionEnv(
           const status = execFileSync(candidate.file, ["status", "--json"], {
             encoding: "utf8",
             stdio: ["ignore", "pipe", "ignore"],
+            timeout: TAILSCALE_STATUS_TIMEOUT_MS,
             env: tailscaleCliEnv(candidate),
           });
           if (!tailscaleIsRunningStatus(status)) continue;
@@ -485,6 +487,7 @@ export function defaultTlsProvisionEnv(
         const json = execFileSync(tailscaleCli.file, ["status", "--json"], {
           encoding: "utf8",
           stdio: ["ignore", "pipe", "ignore"],
+          timeout: TAILSCALE_STATUS_TIMEOUT_MS,
           env: tailscaleCliEnv(tailscaleCli),
         });
         const dns = (JSON.parse(json) as { Self?: { DNSName?: string } }).Self?.DNSName ?? "";
@@ -501,6 +504,8 @@ export function defaultTlsProvisionEnv(
         ["cert", "--cert-file", certPath, "--key-file", keyPath, dnsName],
         {
           stdio: ["ignore", "ignore", "pipe"],
+          // An ACME order takes seconds; the bound only stops a hung daemon.
+          timeout: 5 * 60_000,
           env: tailscaleCliEnv(tailscaleCli),
         },
       );
@@ -721,6 +726,14 @@ async function runProvisionCommand(opts: TlsProvisionOptions): Promise<void> {
       );
     }
     for (const line of phoneRepairLines(before.previous, activation, before.phones)) {
+      process.stdout.write(`${line}\n`);
+    }
+    // Loaded here: it pulls in the service manager, which `tls status` never needs.
+    const { reconnectLocalCollector } = await import("./tls-local-collector.js");
+    const url = result.envWritten.OMNESIS_GATEWAY_URL;
+    for (const line of await reconnectLocalCollector(
+      url !== undefined && url !== env.existingGatewayUrl,
+    )) {
       process.stdout.write(`${line}\n`);
     }
   }

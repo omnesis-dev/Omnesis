@@ -34,10 +34,10 @@ describe("inference URL policy", () => {
   test("rejects public and private hosts by default", async () => {
     await expect(
       assertInferenceUrlAllowed("https://api.example.com/v1/models", { lookup: publicLookup }),
-    ).rejects.toThrow(/allowRemoteInference=true/);
+    ).rejects.toMatchObject({ code: "remote_inference_disabled" });
     await expect(
       assertInferenceUrlAllowed("http://gpu.lan:8001/v1/models", { lookup: privateLookup }),
-    ).rejects.toThrow(/allowRemoteInference=true/);
+    ).rejects.toMatchObject({ code: "remote_inference_disabled" });
   });
 
   test("allows public and private hosts only with explicit remote opt-in", async () => {
@@ -61,7 +61,7 @@ describe("inference URL policy", () => {
         allowRemoteInference: true,
         lookup: metadataLookup,
       }),
-    ).rejects.toThrow(InferenceUrlPolicyError);
+    ).rejects.toMatchObject({ code: "inference_url_blocked" });
   });
 
   test("rejects hostnames that resolve to no addresses", async () => {

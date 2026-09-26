@@ -33,6 +33,7 @@ import {
   IntegrationHttpError,
   loadIntegrationCredentials,
   PinnedGatewayHttpClient,
+  resolveHarnessBinary,
   upgradeLegacyIntegrationCredentials,
   writeIntegrationCredentials,
   type GatewayCapabilities,
@@ -54,6 +55,12 @@ import {
   readIntegrationCapabilities,
   warnOnVersionDrift,
 } from "../connect-gateway-facts.js";
+import { approveInteractive } from "../approve.js";
+import {
+  reloadConnectedHarness,
+  spawnHarnessCommand,
+  type HarnessInvocation,
+} from "../harness-restart.js";
 import { authorizeHarness } from "./connect-oauth.js";
 import { redeemAgentIntegrationPairingCode } from "./devices.js";
 
@@ -165,6 +172,50 @@ export function skillFilePath(harness: Harness, home: string): string {
       return join(home, "skills", SKILL_NAME, "SKILL.md");
     case "hermes":
       return join(home, "skills", "productivity", SKILL_NAME, "SKILL.md");
+    default:
+      return assertNever(harness);
+  }
+}
+
+/**
+ * The Hermes executable inside its home: the venv install, then a checkout
+ * beside it — the candidates Hermes's own plugin loader tries before PATH.
+ */
+function hermesHomeExecutable(home: string): string | undefined {
+  return [
+    join(home, "hermes-agent", "venv", "bin", "hermes"),
+    join(home, "hermes-agent", "hermes"),
+  ].find((candidate) => existsSync(candidate));
+}
+
+/**
+ * How to run the harness installation `connect` just changed: its executable,
+ * and the environment that points that executable at this home, so a restart
+ * or a skill check reaches the same profile the plugin was installed into.
+ */
+export function harnessInvocation(
+  harness: Harness,
+  home: string,
+  opts: {
+    openClawConfigPath?: string;
+    resolveBinary?: (harness: Harness) => string | null;
+  } = {},
+): HarnessInvocation {
+  const resolveBinary = opts.resolveBinary ?? ((name: Harness) => resolveHarnessBinary(name));
+  switch (harness) {
+    case "openclaw":
+      return {
+        binary: resolveBinary(harness),
+        env: {
+          OPENCLAW_STATE_DIR: home,
+          OPENCLAW_CONFIG_PATH: opts.openClawConfigPath ?? openClawConfigPath(home),
+        },
+      };
+    case "hermes":
+      return {
+        binary: hermesHomeExecutable(home) ?? resolveBinary(harness),
+        env: { HERMES_HOME: home },
+      };
     default:
       return assertNever(harness);
   }
@@ -842,10 +893,7 @@ function prepareHarnessPlugin(
               )
             : readFileSync(join(source, file)),
       }));
-      const hermesCommand = [
-        join(home, "hermes-agent", "venv", "bin", "hermes"),
-        join(home, "hermes-agent", "hermes"),
-      ].find((candidate) => existsSync(candidate));
+      const hermesCommand = hermesHomeExecutable(home);
       return {
         install: () => {
           for (const { file, content } of files) {
@@ -1385,6 +1433,17 @@ export const connectCommand = defineCommand({
       description:
         "Refresh the installed plugin, skill, and the connection's OAuth authorization without re-pairing the operational device",
     },
+    restart: {
+      type: "boolean",
+      default: true,
+      description:
+        "Restart the harness once its plugin is installed, so it loads it (pass --no-restart to print the command instead)",
+    },
+    yes: {
+      type: "boolean",
+      default: false,
+      description: "Restart the harness without asking first",
+    },
   },
   async run(ctx) {
     const harnessArg = typeof ctx.args.harness === "string" ? ctx.args.harness.trim() : "";
@@ -1816,23 +1875,24 @@ export const connectCommand = defineCommand({
     });
     console.log(`Installed the Omnesis skill at ${skillPath}.`);
 
+    // Every path but `--skill-only` installed the plugin, and the harness
+    // reads plugins only when it starts. A skill alone is picked up by the
+    // next session, so it needs no restart.
     console.log();
-    switch (harness) {
-      case "openclaw":
-        console.log(
-          `Verify with ${c.bold}openclaw skills check${c.reset} — the omnesis skill should be ` +
-            `ready. Restart the OpenClaw gateway if it was running (config + env are read at startup).`,
-        );
-        break;
-      case "hermes":
-        console.log(
-          `Restart the Hermes gateway, then start a ${c.bold}new session${c.reset} — the plugin, ` +
-            `platform adapter, and skills index are loaded at startup.`,
-        );
-        break;
-      default:
-        assertNever(harness);
-    }
+    await reloadConnectedHarness(
+      harness,
+      { pluginChanged: !skillOnly },
+      harnessInvocation(harness, home, {
+        ...(selectedOpenClawConfigPath ? { openClawConfigPath: selectedOpenClawConfigPath } : {}),
+      }),
+      {
+        approve:
+          ctx.args.restart === false
+            ? async () => false
+            : (message) => approveInteractive(message, ctx.args.yes === true),
+        run: spawnHarnessCommand,
+      },
+    );
     if (skillCapabilities.subscriptions) {
       console.log(`Then ask your agent a question, or to create or inspect an Omnesis watch.`);
     } else {

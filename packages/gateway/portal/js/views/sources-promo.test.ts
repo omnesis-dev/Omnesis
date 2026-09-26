@@ -14,6 +14,7 @@ const apiMocks = vi.hoisted(() => ({
   getAdminSyncStatus: vi.fn(async () => ({ items: [] })),
   getOverallStatus: vi.fn(async () => ({})),
   getIndexStats: vi.fn(async () => null),
+  getAccessOverview: vi.fn(async (): Promise<Record<string, unknown>> => ({ principals: [] })),
   listDevices: vi.fn(async () => ({ items: [] })),
   triggerSourceSync: vi.fn(),
   joinSourceMember: vi.fn(),

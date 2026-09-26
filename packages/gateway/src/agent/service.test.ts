@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { type AgentEvent, type WsEvent } from "@omnesis/core";
+import { InferenceUrlPolicyError, type AgentEvent, type WsEvent } from "@omnesis/core";
 import {
   ReplayBackend,
   type ChatBackend,
@@ -1395,6 +1395,47 @@ describe("AgentService", () => {
     const evt = findSendFailed();
     expect(evt).toBeDefined();
     expect((evt!.payload as { message: string }).message).toBe(backendMessage);
+  });
+  it("preserves missing cloud consent on the terminal agent error event", async () => {
+    const backendMessage = "Model API error (500): upstream exploded";
+    const captured: WsEvent[] = [];
+    const service = new AgentService({
+      backendFactory: () => ({
+        name: "boom",
+        model: "boom",
+        runTurn() {
+          return (async function* () {
+            throw new InferenceUrlPolicyError(
+              "https://203.0.113.10",
+              backendMessage,
+              "remote_inference_disabled",
+            );
+
+            yield undefined as never;
+          })();
+        },
+      }),
+      ports: { search: stubSearch, document: stubDocument },
+      systemPrompt: "test",
+      broadcastEvent: (e) => captured.push(e),
+      sessionIdGen: () => "S_sendfail",
+      idleTimeoutMs: 60_000,
+    });
+    const { sessionId } = await service.createSession(callerA);
+    service.sendMessage(callerA, sessionId, "hi");
+    const findSendFailed = () =>
+      captured.find(
+        (c) =>
+          c.type === "agent.error" &&
+          (c.payload as { code: string }).code === "remote_inference_disabled",
+      );
+    for (let i = 0; i < 20 && !findSendFailed(); i++) {
+      await new Promise((r) => setImmediate(r));
+    }
+    const evt = findSendFailed();
+    expect(evt).toBeDefined();
+    expect((evt!.payload as { message: string }).message).toContain(backendMessage);
+    await service.dispose();
   });
 
   it("persists failed no-output turns with a terminal assistant message", async () => {

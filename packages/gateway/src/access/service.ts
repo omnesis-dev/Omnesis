@@ -74,6 +74,11 @@ export class AccessService {
     return this.writer.upsertOAuthMetadataClient(input);
   }
 
+  /** A registered client as the reader sees it, for authenticating it before any write. */
+  getOAuthClient(clientId: string) {
+    return getOAuthClient(this.reader, clientId);
+  }
+
   isRegisteredRedirect(clientId: string, redirectUri: string): boolean {
     const client = getOAuthClient(this.reader, clientId);
     if (!client) return false;

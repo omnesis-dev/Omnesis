@@ -5,7 +5,12 @@ import { randomBytes } from "node:crypto";
 import { createLogger } from "@omnesis/core";
 import { buildPage, clampLimit, scopeSatisfies, SCOPE_ADMIN, tryDeviceId } from "@omnesis/types";
 
-import { resolveOAuthUrls } from "../../access/oauth-urls.js";
+import {
+  createServedByGatewayCheck,
+  type CertificateProbe,
+  type ServedResource,
+} from "../../access/served-by-gateway.js";
+import { resolveOAuthOverviewUrls, resolveOAuthUrls } from "../../access/oauth-urls.js";
 import { ClientMetadataDocumentResolver } from "../../access/client-metadata-document.js";
 import { normalizeInteractiveOAuthScope } from "../../access/oauth-scopes.js";
 import { MCP_ACCESS_SCOPE, type AuthorizationRequestPortal } from "../../access/types.js";
@@ -68,6 +73,8 @@ export function mountOAuthAuthorizationRoutes(
   access: AccessService,
   options: {
     publicBaseUrl?: string;
+    /** Actual same-machine gateway origin advertised for local-only setup. */
+    loopbackBaseUrl?: string;
     mcpResourceUrls?: readonly string[];
     authorizationNotifier?: Pick<AccessAuthorizationNotifier, "targetDeviceIds" | "wakeQueued">;
     clientMetadataResolver?: Pick<ClientMetadataDocumentResolver, "resolve">;
@@ -83,6 +90,12 @@ export function mountOAuthAuthorizationRoutes(
      * for that refresh before it answers.
      */
     onDeviceLevelChanged?: () => void;
+    /** SHA-256 fingerprint of the certificate this gateway serves right now. */
+    tlsFingerprintSha256?: string | (() => string);
+    /** The port the gateway listens on, which tells its own listener from a proxy. */
+    listenPort?: number;
+    /** Replaces the TLS connection that checks which certificate a resource presents (tests). */
+    probeCertificate?: CertificateProbe;
   } = {},
 ): void {
   const authorizationLimiter = oauthAuthorizationRateLimiter();
@@ -172,7 +185,10 @@ export function mountOAuthAuthorizationRoutes(
             ? validateHttpsUrl(discovered.clientUri, "client_uri")
             : null,
         });
-      } catch {
+      } catch (error) {
+        log.warn(
+          `Client metadata for ${JSON.stringify(query.client_id)} could not be verified: ${error instanceof Error ? error.message : String(error)}`,
+        );
         return oauthError(c, 400, "invalid_client", "Client metadata could not be verified.");
       }
     }
@@ -325,14 +341,51 @@ export function mountOAuthAuthorizationRoutes(
     reconnect: null,
     connection: access.getConnectionProposal(request),
   });
-  app.get("/portal/api/access", noStore, scope.admin(), (c) => {
-    const urls = resolveOAuthUrls(c.req.url, options.publicBaseUrl, options.mcpResourceUrls);
-    return c.json({ ...access.overview(), oauth: urls ? { resource: urls.resource } : null });
+  // Every MCP resource the gateway accepts, marked with whether a client there
+  // meets the gateway's own certificate: only then can it check the
+  // fingerprint returned beside it.
+  const fingerprint = () =>
+    typeof options.tlsFingerprintSha256 === "function"
+      ? options.tlsFingerprintSha256()
+      : options.tlsFingerprintSha256;
+  const servedByGateway = createServedByGatewayCheck({
+    fingerprint,
+    ...(options.listenPort !== undefined ? { listenPort: options.listenPort } : {}),
+    ...(options.probeCertificate ? { probe: options.probeCertificate } : {}),
   });
-  app.get("/admin/access", noStore, scope.admin(), (c) => {
-    const urls = resolveOAuthUrls(c.req.url, options.publicBaseUrl, options.mcpResourceUrls);
-    return c.json({ ...access.overview(), oauth: urls ? { resource: urls.resource } : null });
-  });
+  const accessOverview = async (requestUrl: string) => {
+    const urls = resolveOAuthOverviewUrls(
+      requestUrl,
+      options.publicBaseUrl,
+      options.mcpResourceUrls,
+      options.loopbackBaseUrl,
+    );
+    const served = urls
+      ? await servedByGateway(urls.supportedResources)
+      : new Map<string, ServedResource>();
+    return {
+      ...access.overview(),
+      oauth: urls
+        ? {
+            resource: urls.resource,
+            ...(!options.publicBaseUrl ? { loopbackOnly: true } : {}),
+            resources: urls.supportedResources.map((resource) => ({
+              resource,
+              servedByGateway: served.get(resource)?.servedByGateway ?? false,
+              direct: served.get(resource)?.direct ?? false,
+              publiclyTrusted: served.get(resource)?.publiclyTrusted ?? false,
+            })),
+            tlsFingerprintSha256: fingerprint() ?? null,
+          }
+        : null,
+    };
+  };
+  app.get("/portal/api/access", noStore, scope.admin(), async (c) =>
+    c.json(await accessOverview(c.req.url)),
+  );
+  app.get("/admin/access", noStore, scope.admin(), async (c) =>
+    c.json(await accessOverview(c.req.url)),
+  );
   app.post(
     "/portal/api/access/authorizations/lookup",
     noStore,
