@@ -55,8 +55,11 @@ permissions: {}
 # A newer push to a pull request replaces its run. Runs on main are never
 # cancelled: the release gate reads them, and a dispatch of one lane must not
 # silently end a dispatch of every lane.
+# The nightly run and a dispatch of every lane share one group, so two full
+# runs never overlap on the tailnet or compete for macOS runners; the later
+# one queues.
 concurrency:
-  group: install-e2e-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.lanes || 'all' }}
+  group: install-e2e-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && format('push-{0}', github.ref) || format('full-{0}-{1}', github.ref, inputs.lanes || 'all') }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -219,9 +222,11 @@ jobs:
             mode: upgrade
             os: ubuntu-24.04-arm
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 120
+    # Up to four hours waiting for the partner's runner, then the lane.
+    timeout-minutes: 330
     environment: tailnet-e2e
     permissions:
+      actions: read
       contents: read
       id-token: write
     env:
@@ -234,6 +239,14 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
+      # Hosted macOS runners can be queued for hours while Linux ones start
+      # at once. Nothing below starts, and nothing joins the tailnet, until
+      # the partner job has a runner too.
+      - name: Wait for the collector job to get a runner
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PARTNER: ${{ matrix.lane }} tailnet collector
+        run: node scripts/install-e2e/partner.mjs wait --partner "$PARTNER" --timeout 14400
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: install-e2e-fixtures
@@ -288,9 +301,11 @@ jobs:
             mode: upgrade
             os: macos-14
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 120
+    # Up to four hours waiting for the partner's runner, then the lane.
+    timeout-minutes: 330
     environment: tailnet-e2e
     permissions:
+      actions: read
       contents: read
       id-token: write
     env:
@@ -304,6 +319,14 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
+      # Hosted macOS runners can be queued for hours while Linux ones start
+      # at once. Nothing below starts, and nothing joins the tailnet, until
+      # the partner job has a runner too.
+      - name: Wait for the gateway job to get a runner
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PARTNER: ${{ matrix.lane }} tailnet gateway
+        run: node scripts/install-e2e/partner.mjs wait --partner "$PARTNER" --timeout 14400
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: install-e2e-fixtures
