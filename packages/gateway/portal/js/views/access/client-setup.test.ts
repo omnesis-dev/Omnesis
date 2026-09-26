@@ -7,6 +7,12 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 
 import {
+  agentIconForApp,
+  AGENT_ICONS,
+  // @ts-expect-error — the portal is plain JS.
+} from "./agent-brand.js";
+
+import {
   agentSetups as untypedAgentSetups,
   harnessAddresses as untypedHarnessAddresses,
   isPrivateAddress as untypedIsPrivateAddress,
@@ -283,4 +289,26 @@ describe("isPrivateAddress", () => {
   ])("cannot tell that %s is private", (resource) => {
     expect(isPrivateAddress(resource)).toBe(false);
   });
+});
+
+
+describe("connection app logos", () => {
+  test.each([
+    ["ChatGPT", "chatgpt"], ["  CHATGPT Desktop  ", "chatgpt"],
+    ["OpenAI", "chatgpt"], ["OpenAI Codex", "chatgpt"],
+    ["Codex CLI", "codex"], ["codex_cli_rs", "codex"],
+    ["Claude", "claude-apps"], ["claude desktop", "claude-apps"],
+    ["claude code", "claude-code"], ["claude-cli", "claude-code"],
+    ["anthropic claude", "claude-apps"], ["claude code 2.0", "claude-apps"],
+    ["google antigravity", "antigravity"], ["OpenClaw Agent", "openclaw"],
+    ["hermes agent", "hermes"],
+  ])("reuses the setup logo for %s", (name, id) => {
+    expect(agentIconForApp(name)).toBe(AGENT_ICONS[id]);
+  });
+
+  test.each([null, undefined, "", "Guv", "Fictional reader", "My ChatGPT helper", "Claudeish", "OpenAIish"])(
+    "leaves unrecognized names text-only: %s", (name) => {
+      expect(agentIconForApp(name)).toBeNull();
+    },
+  );
 });

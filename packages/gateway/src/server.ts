@@ -545,7 +545,7 @@ export function createServer(
     /** Exact externally reachable MCP protected-resource URLs. */
     mcpResourceUrls?: readonly string[];
     /**
-     * Gateway listen port. Used solely to scope the portal session
+     * Gateway listen port. Advertises the local MCP setup address and scopes the portal session
      * cookie name per-port (see `sessionCookieName(port)` in
      * `http/cookies.ts`) so two gateways on the same host don't
      * overwrite each other's `__omnesis_session` cookie in the browser.
@@ -1259,6 +1259,7 @@ export function createServer(
   // of the JSON approval endpoints even though the route-level tests pass.
   mountOAuthAccessRoutes(app, accessService, {
     publicBaseUrl: opts?.publicBaseUrl,
+    ...(opts?.port ? { loopbackBaseUrl: `https://localhost:${opts.port}` } : {}),
     mcpResourceUrls: opts?.mcpResourceUrls,
     authorizationNotifier: opts?.accessAuthorizationNotifier,
     onAuthorizationPending: opts?.accessCleanupWake,

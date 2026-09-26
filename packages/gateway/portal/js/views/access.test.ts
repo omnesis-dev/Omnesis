@@ -396,6 +396,18 @@ describe("AccessView", () => {
     expect(empty.textContent).not.toMatch(/^Connect an agent to authorize/);
   });
 
+  test("offers the connect dialog for local-only setup and explains the same-machine limit", async () => {
+    api.getAccessOverview.mockResolvedValue({ principals: [], levels: [], oauth: {
+      resource: "https://localhost:17600/mcp", loopbackOnly: true,
+    } });
+    await mount();
+    expect(host.querySelector(".access-oauth-blocker")?.textContent).toContain("Local agents can connect");
+    await act(async () => { connectButton()!.click(); });
+    expect(host.querySelector(".access-connect-dialog")?.textContent).toContain("only for agents running on the gateway’s machine");
+    expect(host.querySelector(".access-mcp-resource code")?.textContent).toBe("https://localhost:17600/mcp");
+    expect(host.querySelector("button[data-agent='claude-code']")).not.toBeNull();
+  });
+
   test("keeps the connect dialog shut on a gateway without OAuth, however it was asked for", async () => {
     // The route asks for the dialog directly; step 1 has no address to show
     // and step 2 would take a code no gateway could have issued.
@@ -611,21 +623,24 @@ describe("AccessView", () => {
 
     // A level can exist with nobody on it, and says so rather than showing an empty table.
     const notes = levelGroup("Fictional notes");
-    expect(notes.querySelector(".access-count-cell")?.textContent).toBe("");
+    expect(notes.querySelector(".access-count-cell")).toBeNull();
     expect(notes.querySelector(".access-level-empty")?.textContent).toBe("No connections use this access level yet.");
     expect(notes.querySelector(".access-connection-row")).toBeNull();
-    expect(notes.querySelector(".access-privacy-cell")?.textContent).toContain("—");
+    expect(notes.querySelector(".access-level-head .access-badge")).toBeNull();
+    expect(notes.querySelector(".access-level-terms .access-badge-notes")).not.toBeNull();
 
-    // The level's header row carries what its permissions allow.
+    // Permission details appear once beneath the level header.
+    expect(levelGroup("fictional research").querySelector(".access-level-head .access-badge")).toBeNull();
     const research = levelGroup("fictional research");
-    expect(research.querySelector(".access-count-cell")?.textContent).toBe("2 connections");
-    expect(research.querySelector(".access-privacy-cell")?.textContent).toContain("Household");
+    expect(research.querySelector(".access-count-cell")).toBeNull();
+    expect(research.querySelector(".access-level-terms")?.textContent).toContain("Household");
     // The policy it names is a link to that policy.
-    const policyLink = research.querySelector(".access-privacy-cell a")!;
+    const policyLink = research.querySelector(".access-level-terms a")!;
     expect(policyLink.textContent).toBe("Household");
     expect(policyLink.getAttribute("href")).toBe("/portal/settings/policies/policy-a");
-    expect(research.querySelector(".access-level-head .access-badge-answer")?.getAttribute("class")).not.toContain("is-off");
-    expect(research.querySelector(".access-level-head .access-badge-direct")?.getAttribute("class")).toContain("is-off");
+    expect(research.querySelector(".access-level-terms .access-badge-answer")?.getAttribute("class")).not.toContain("is-off");
+    expect(research.querySelector(".access-level-terms .access-badge-direct")?.getAttribute("class")).toContain("is-off");
+    expect(research.querySelector(".access-level-terms")?.textContent).not.toContain("Not granted");
 
     // Its connections follow it, inside the card: by name, the app that signed
     // in, and when it was last used — with no column headings repeated per level.
@@ -634,7 +649,7 @@ describe("AccessView", () => {
     expect(rows.map((row) => row.querySelector(".access-connection-label")?.textContent))
       .toEqual(["Fictional desktop", "Fictional laptop"]);
     expect(rows.map((row) => row.querySelector(".access-app-cell")?.textContent))
-      .toEqual(["App: Fictional coding agent", "App: Fictional desktop app"]);
+      .toEqual(["Signed in from Fictional coding agent", "Signed in from Fictional desktop app"]);
     expect(rows.map((row) => row.querySelector(".access-used-cell")?.textContent))
       .toEqual(["Never used", `Last used ${timeAgo(1_757_000_000_000)}`]);
 
@@ -717,44 +732,43 @@ describe("AccessView", () => {
     expect(await menuItems("Actions for Fictional laptop")).toEqual(["Rename", "Move to another access level…", "Remove"]);
   });
 
-  test("expands a connection to its labelled details, from anywhere on the row", async () => {
+  test("always shows connection facts without collapsible rows or nested panels", async () => {
     api.getAccessOverview.mockResolvedValue(levelOverview);
     await mount();
     const row = connectionRow("Fictional laptop");
-    const chevron = row.querySelector<HTMLButtonElement>(".access-expand")!;
-    expect(chevron.getAttribute("aria-label")).toBe("Details of Fictional laptop");
-    // Shut, the chevron names no panel: the id it would name is not in the document.
-    expect(chevron.getAttribute("aria-controls")).toBeNull();
-
-    await act(async () => { row.querySelector(".access-app-cell")!.dispatchEvent(new window.Event("click", { bubbles: true })); });
-    const panelId = chevron.getAttribute("aria-controls");
-    expect(panelId).toBe("access-connection-detail-grant-principal-laptop");
-    // The panel sits directly under the row it belongs to.
-    const panel = host.querySelector(`[id="${panelId}"]`)!;
-    expect(panel.previousElementSibling).toBe(row);
-    // Labelled fields, so the app's name never reads as a stale connection name.
-    const facts = detailFacts(panel);
-    expect(Object.keys(facts)).toEqual(["Connection ID", "Signed in", "Last used", "App"]);
-    expect(facts["Signed in"]).toBe(timestamp(1_756_000_000_000));
-    expect(facts["Last used"]).toBe(timestamp(1_757_000_000_000));
-    expect(facts.App).toBe("Fictional desktop app");
-    // The connection's own ID is there to copy, for looking its history up.
-    expect(panel.querySelector(".access-fact-id code")?.textContent).toBe("principal-laptop");
+    expect(host.querySelector(".access-expand")).toBeNull();
+    expect(row.querySelector(".access-connection-heading .access-connection-meta")?.textContent?.trim())
+      .toBe(`Signed in from Fictional desktop app · Last used ${timeAgo(1_757_000_000_000)}`);
+    const panel = row.nextElementSibling!;
+    expect(detailFacts(panel)).toEqual({
+      "Connection ID": "principal-laptop",
+      "Signed in": timestamp(1_756_000_000_000),
+      "Last used": timestamp(1_757_000_000_000),
+    });
     expect(panel.querySelector(".access-fact-id button")?.getAttribute("title")).toBe("Copy connection ID");
-    // One sign-in is told by the fields alone.
     expect(panel.querySelector(".access-sign-ins")).toBeNull();
-
-    // The chevron closes it rather than its click bubbling into the row and undoing itself.
-    await act(async () => { chevron.click(); });
-    expect(host.querySelector(".access-connection-detail")).toBeNull();
-
-    // The row's own menu does its own job instead of opening the detail.
-    await act(async () => { row.querySelector<HTMLButtonElement>(".row-action-trigger")!.click(); });
-    expect(host.querySelector("[role='menuitem']")).not.toBeNull();
-    expect(chevron.getAttribute("aria-expanded")).toBe("false");
+    await act(async () => { row.querySelector(".access-app-cell")!.dispatchEvent(new window.Event("click", { bubbles: true })); });
+    expect(row.nextElementSibling).toBe(panel);
+    await chooseAction("Actions for Fictional laptop", "Rename");
+    expect(row.nextElementSibling).toBe(panel);
+    expect(row.querySelector("input")).not.toBeNull();
   });
 
-  test("expands a level to the terms its permissions run under, linking the policy by name", async () => {
+  test("puts a recognized app logo beside its sign-in label, independently of renamed connections", async () => {
+    api.getAccessOverview.mockResolvedValue({
+      ...levelOverview,
+      principals: [connectionOf("principal-logo", "Fictional reader", "level-research", [reviewedAnswer()], [
+        signIn("cred-logo", "Fictional reader", { clientName: "ChatGPT" }),
+      ])],
+    });
+    await mount();
+    const app = connectionRow("Fictional reader").querySelector(".access-app-cell")!;
+    expect(app.textContent).toBe("Signed in from ChatGPT");
+    expect(app.querySelector(".access-agent-logo .provider-icon")?.getAttribute("style")).toContain("/model-logos/openai.svg");
+    expect(app.querySelector(".access-agent-logo")?.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  test("always shows the terms its permissions run under, linking the policy by name", async () => {
     api.getAccessOverview.mockResolvedValue({
       ...levelOverview,
       levels: [
@@ -772,7 +786,6 @@ describe("AccessView", () => {
     await mount();
 
     const research = levelGroup("fictional research");
-    await act(async () => { research.querySelector<HTMLButtonElement>(".access-level-head .access-expand")!.click(); });
     const link = research.querySelector(".access-level-terms a") as HTMLAnchorElement;
     // A list of links reads out its names alone, so the word travels with it.
     expect(link.getAttribute("aria-label")).toBe("Policy: Household");
@@ -780,21 +793,19 @@ describe("AccessView", () => {
     await act(async () => { link.dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true })); });
     expect(router.navigate).toHaveBeenCalledWith("/portal/settings/policies/policy-a");
 
-    // An unreviewed Answer is named in words, in the header as well as on its badge.
+    // An unreviewed Answer is named in words beside its badge.
     const raw = levelGroup("Fictional raw reads");
-    expect(raw.querySelector(".access-privacy-cell")?.textContent).toContain("No privacy review");
-    expect(raw.querySelector(".access-privacy-cell a")).toBeNull();
-    expect(raw.querySelector(".access-privacy-cell")?.getAttribute("class")).toContain("access-unreviewed");
-    const answer = raw.querySelector(".access-level-head .access-badge-answer")!;
+    expect(raw.querySelector(".access-level-terms")?.textContent).toContain("No privacy review");
+    expect(raw.querySelector(".access-level-terms a")).toBeNull();
+    expect(raw.querySelector(".access-level-terms .access-unreviewed")).not.toBeNull();
+    const answer = raw.querySelector(".access-level-terms .access-badge-answer")!;
     expect(answer.getAttribute("class")).toContain("is-unreviewed");
     expect(answer.textContent).toContain("released without privacy review");
-    await act(async () => { raw.querySelector<HTMLButtonElement>(".access-level-head .access-expand")!.click(); });
     expect(raw.querySelector(".access-level-terms")?.textContent).toContain("Raw access");
     expect(raw.querySelector(".access-level-terms a")).toBeNull();
 
     // A policy the overview no longer carries is not invented behind a link.
     const lost = levelGroup("Fictional lost policy");
-    await act(async () => { lost.querySelector<HTMLButtonElement>(".access-level-head .access-expand")!.click(); });
     expect(lost.querySelector(".access-level-terms a")).toBeNull();
     expect(lost.querySelector(".access-level-terms")?.textContent).toContain("Policy unavailable");
   });
@@ -823,7 +834,7 @@ describe("AccessView", () => {
     await mount();
 
     const research = levelGroup("fictional research");
-    expect(research.querySelector(".access-count-cell")?.textContent).toContain("1 integration");
+    expect(research.querySelector(".access-count-cell")).toBeNull();
     const deviceLink = research.querySelector<HTMLAnchorElement>(".access-level-devices a")!;
     expect(deviceLink.textContent).toBe("Studio voice");
     expect(deviceLink.querySelector("svg.access-device-icon")).not.toBeNull();
@@ -982,25 +993,21 @@ describe("AccessView", () => {
     // It is not active access, but it is still a live connection a new sign-in can take over.
     expect(host.querySelector(".access-header p")?.textContent).toContain("2 active connections.");
     expect(await menuItems("Actions for Fictional laptop")).toEqual(["Rename", "Move to another access level…", "Remove"]);
-    await act(async () => { signedOut.querySelector<HTMLButtonElement>(".access-expand")!.click(); });
     expect(host.querySelector('[id="access-connection-detail-grant-principal-laptop"] .access-muted')?.textContent).toBe("No active sign-in");
 
     // Approved and never signed in is access granted, still waiting for its first sign-in.
     const never = connectionRow("Fictional desktop");
     expect(never.querySelector(".access-revoked")).toBeNull();
-    await act(async () => { never.querySelector<HTMLButtonElement>(".access-expand")!.click(); });
     expect(host.querySelector('[id="access-connection-detail-grant-principal-desk"] .access-muted')?.textContent).toBe("No sign-in yet");
 
     // Several sign-ins are listed, newest first, each saying where it signed in
     // from; one from an app that gave no name is still told apart by its day.
-    const tablet = connectionRow("Fictional tablet");
-    await act(async () => { tablet.querySelector<HTMLButtonElement>(".access-expand")!.click(); });
     const panel = host.querySelector('[id="access-connection-detail-grant-principal-tablet"]')!;
     const day = (at: number) => new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(at));
     expect([...panel.querySelectorAll(".access-sign-in")].map((item) => item.textContent?.trim()))
       .toEqual([`Signed in from fictional reader · ${day(1_756_500_000_000)}`, `Signed in · ${day(1_756_000_000_000)}`]);
     expect(detailFacts(panel)["Signed in"]).toBe(timestamp(1_756_500_000_000));
-    expect(detailFacts(panel).App).toBe("fictional reader");
+    expect(connectionRow("Fictional tablet").querySelector(".access-app-cell")?.textContent).toBe("Signed in from fictional reader");
   });
 
   test("counts only live connections: an expired one neither counts nor keeps its level from being deleted", async () => {
@@ -1020,12 +1027,12 @@ describe("AccessView", () => {
 
     // Where the gateway sent no count, the page counts by its rule: listed is not counted.
     const research = levelGroup("fictional research");
-    expect(research.querySelector(".access-count-cell")?.textContent).toBe("1 connection");
+    expect(research.querySelector(".access-count-cell")).toBeNull();
     expect(research.querySelectorAll(".access-connection-row")).toHaveLength(2);
 
     // A level only expired connections use has none active, and can be deleted.
     const notes = levelGroup("Fictional notes");
-    expect(notes.querySelector(".access-count-cell")?.textContent).toBe("No active connections");
+    expect(notes.querySelector(".access-count-cell")).toBeNull();
     expect(notes.querySelector(".access-level-empty")).toBeNull();
     const deletion = (await openMenu("Actions for Fictional notes")).find((item) => itemLabel(item) === "Delete")!;
     expect(deletion.getAttribute("aria-disabled")).toBeNull();
@@ -1237,7 +1244,7 @@ describe("AccessView", () => {
       expect(connectionRow(NEW_NAME)).toBeDefined();
       expect(host.querySelector(".access-notice")?.textContent).toBe(`“${NAME}” is now “${NEW_NAME}”.`);
       // Focus goes back to the row rather than to the page.
-      expect(document.activeElement).toBe(connectionRow(NEW_NAME).querySelector(".access-expand"));
+      expect(document.activeElement).toBe(connectionRow(NEW_NAME).querySelector(".row-action-trigger"));
     });
 
     test("Escape and Cancel both put the name back untouched", async () => {
@@ -1245,7 +1252,7 @@ describe("AccessView", () => {
       await typeInto(input, "Half-typed");
       await keydown(input, "Escape");
       expect(field()).toBeNull();
-      expect(document.activeElement).toBe(connectionRow(NAME).querySelector(".access-expand"));
+      expect(document.activeElement).toBe(connectionRow(NAME).querySelector(".row-action-trigger"));
 
       await chooseAction(`Actions for ${NAME}`, "Rename");
       input = field()!;
@@ -1290,7 +1297,7 @@ describe("AccessView", () => {
       expect(connectionRow(NAME)).toBeUndefined();
     });
 
-    test("a click on the field's own space does not open the row's detail", async () => {
+    test("connection details stay visible while renaming", async () => {
       await openRename();
       // linkedom calls a listener with `this` set to the event's target, so a
       // click bubbling up from the input never reaches preact's handler on the
@@ -1299,7 +1306,7 @@ describe("AccessView", () => {
       await act(async () => {
         form.dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
       });
-      expect(form.closest(".access-connection-row")?.querySelector(".access-expand")?.getAttribute("aria-expanded")).toBe("false");
+      expect(form.closest(".access-connection-row")?.nextElementSibling?.className).toBe("access-connection-detail");
     });
   });
 
@@ -1887,7 +1894,7 @@ describe("AccessView", () => {
       expect(router.replaceRoute).toHaveBeenCalledWith("/portal/settings/access");
       await act(async () => { render(h(AccessView, {}), host); });
       expect(host.textContent).toContain("Your update was not applied");
-      const head = levelGroup("fictional research").querySelector(".access-level-head")!;
+      const head = levelGroup("fictional research").querySelector(".access-level-terms")!;
       expect(head.querySelector(".access-badge-direct")?.getAttribute("class")).not.toContain("is-off");
       expect(head.querySelector(".access-badge-answer")?.getAttribute("class")).toContain("is-off");
     });

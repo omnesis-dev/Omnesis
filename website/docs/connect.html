@@ -328,8 +328,9 @@
           <strong>Settings → Access</strong> in the portal lists each access level followed by the
           connections and <a href="/docs/setup#device-access-level">integrations</a> that use it. A
           level shows its permissions, the sources it reaches, and its privacy policy. A connection
-          shows its name, the app it signed in from, and when it was last used, and expands to its
-          sign-ins. <code>omnesis access levels</code> prints the same list from the CLI.
+          shows its name, ID, the app it signed in from, when it was last used, and its sign-ins.
+          Permissions and connection details are always visible within each access level card.
+          <code>omnesis access levels</code> prints the same list from the CLI.
         </p>
         <ul>
           <li>
@@ -540,11 +541,12 @@
         <p>
           <code>gateway.publicBaseUrl</code> (or the <code>OMNESIS_PUBLIC_BASE_URL</code>
           environment variable) is the gateway's HTTPS address for MCP sign-in: the OAuth issuer
-          every client remembers, so pick it once and keep it. Until it is set, the portal's
-          <strong>Connect an agent</strong> button stays hidden and only loopback sign-ins work. A
-          client on your machine, such as Claude Code, Codex, OpenClaw or Hermes, can use this
-          address or one listed in <code>gateway.mcpResourceUrls</code>, as long as its machine can
-          reach it.
+          every client remembers, so pick it once and keep it. Until it is set,
+          <strong>Connect an agent</strong> offers a loopback address for agents running on the
+          gateway’s own machine; hosted clients and clients on other machines need a configured
+          address. This address can be private for local clients. A client on your machine, such as
+          Claude Code, Codex, OpenClaw or Hermes, can use this address or one listed in
+          <code>gateway.mcpResourceUrls</code>, as long as its machine can reach it.
         </p>
         <p>
           Hosted connectors run on their provider's servers, so they can reach your gateway only at

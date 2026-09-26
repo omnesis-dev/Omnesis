@@ -10,7 +10,7 @@ import {
   type CertificateProbe,
   type ServedResource,
 } from "../../access/served-by-gateway.js";
-import { resolveOAuthUrls } from "../../access/oauth-urls.js";
+import { resolveOAuthOverviewUrls, resolveOAuthUrls } from "../../access/oauth-urls.js";
 import { ClientMetadataDocumentResolver } from "../../access/client-metadata-document.js";
 import { normalizeInteractiveOAuthScope } from "../../access/oauth-scopes.js";
 import { MCP_ACCESS_SCOPE, type AuthorizationRequestPortal } from "../../access/types.js";
@@ -73,6 +73,8 @@ export function mountOAuthAuthorizationRoutes(
   access: AccessService,
   options: {
     publicBaseUrl?: string;
+    /** Actual same-machine gateway origin advertised for local-only setup. */
+    loopbackBaseUrl?: string;
     mcpResourceUrls?: readonly string[];
     authorizationNotifier?: Pick<AccessAuthorizationNotifier, "targetDeviceIds" | "wakeQueued">;
     clientMetadataResolver?: Pick<ClientMetadataDocumentResolver, "resolve">;
@@ -352,7 +354,12 @@ export function mountOAuthAuthorizationRoutes(
     ...(options.probeCertificate ? { probe: options.probeCertificate } : {}),
   });
   const accessOverview = async (requestUrl: string) => {
-    const urls = resolveOAuthUrls(requestUrl, options.publicBaseUrl, options.mcpResourceUrls);
+    const urls = resolveOAuthOverviewUrls(
+      requestUrl,
+      options.publicBaseUrl,
+      options.mcpResourceUrls,
+      options.loopbackBaseUrl,
+    );
     const served = urls
       ? await servedByGateway(urls.supportedResources)
       : new Map<string, ServedResource>();
@@ -361,6 +368,7 @@ export function mountOAuthAuthorizationRoutes(
       oauth: urls
         ? {
             resource: urls.resource,
+            ...(!options.publicBaseUrl ? { loopbackOnly: true } : {}),
             resources: urls.supportedResources.map((resource) => ({
               resource,
               servedByGateway: served.get(resource)?.servedByGateway ?? false,
