@@ -16,7 +16,6 @@ import {
   setAllSourcesAllowed,
   setFutureSourcesAllowed,
   setSourceAllowed,
-  allowEverySource,
   sourceBoundaryError,
   sourceId,
   sourceLabel,
@@ -129,11 +128,7 @@ export function SourceBoundary({ capability, label, rule, sources, disabled, onC
           ${visibleSources.length === 0 && html`<p class="grant-builder-empty">No sources match that search.</p>`}
         </div>
       `}
-    ${error && html`<div class="grant-builder-boundary-problem">
-      <p class="access-field-error grant-builder-boundary-error" role="alert">${error}</p>
-      ${rule.sources.mode !== "all" && html`<button type="button" class="btn-tiny grant-builder-allow-every"
-        onClick=${() => onChange(allowEverySource(rule))}>Allow every source, including new ones</button>`}
-    </div>`}
+    ${error && html`<p class="access-field-error grant-builder-boundary-error" role="alert">${error}</p>`}
     <fieldset class="grant-builder-future" disabled=${disabled}>
       <legend>When you connect a new source</legend>
       <label>

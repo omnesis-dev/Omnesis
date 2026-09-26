@@ -1586,8 +1586,7 @@ a:hover { text-decoration: underline; }
 .grant-builder-guidance { margin: 0 0 11px; color: var(--text-muted); font-size: 12px; }
 /* A boundary's refusal sits with the list that earns it, not at the foot of
    the step, so the owner reads it where the fix is. */
-.grant-builder-boundary-problem { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 11px 0 0; }
-.grant-builder-boundary-error { margin: 0; }
+.grant-builder-boundary-error { margin: 11px 0 0; }
 .grant-builder-source-tools {
   display: grid;
   grid-template-columns: minmax(180px, 1fr) auto auto;
