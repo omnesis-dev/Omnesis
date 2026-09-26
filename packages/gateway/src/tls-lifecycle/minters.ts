@@ -80,6 +80,44 @@ async function mintWithBinary(
   }
 }
 
+interface TailscaleCliFailure {
+  file: string;
+  error: unknown;
+}
+
+function isMissingBinary(err: unknown): boolean {
+  const code = (e: unknown) => (e as NodeJS.ErrnoException | undefined)?.code;
+  return code(err) === "ENOENT" || code((err as Error | undefined)?.cause) === "ENOENT";
+}
+
+function backendState(status: string | void): string {
+  try {
+    const state = (JSON.parse(status ?? "") as { BackendState?: unknown }).BackendState;
+    return typeof state === "string" ? state : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Why no candidate could renew. A CLI that ran and said no (logged out,
+ * stopped, failed) is the operator's actual problem; the candidates that are
+ * simply absent are named only when no CLI ran at all, and then all together.
+ */
+function tailscaleUnavailable(failures: TailscaleCliFailure[]): Error {
+  const ran = failures.filter((failure) => !isMissingBinary(failure.error));
+  if (ran.length > 0) {
+    const messages = ran.map(({ error }) =>
+      error instanceof Error ? error.message : String(error),
+    );
+    return new Error(messages.join("; "), { cause: ran[0]!.error });
+  }
+  const tried = failures.map(({ file }) => `\`${file}\``).join(", ");
+  return new Error(
+    `no Tailscale CLI the gateway can run: tried ${tried || "none"} (the gateway's PATH is ${process.env.PATH ?? "unset"})`,
+  );
+}
+
 export function createHostMinter(deps: HostMinterDeps = {}): TlsMinter {
   const run = deps.run ?? runBinary;
   const selfSigned = deps.selfSigned ?? generateSelfSigned;
@@ -99,7 +137,7 @@ export function createHostMinter(deps: HostMinterDeps = {}): TlsMinter {
           const dnsName = names.find((name) => name.includes(".") && !/^[\d.:]+$/u.test(name));
           if (!dnsName) throw new Error("the current certificate carries no DNS name to renew");
           let selected: TailscaleCliCandidate | undefined;
-          let lastError: unknown;
+          const failures: TailscaleCliFailure[] = [];
           for (const candidate of deps.tailscaleCandidates ?? tailscaleCliCandidates()) {
             try {
               const status = await run(
@@ -109,16 +147,22 @@ export function createHostMinter(deps: HostMinterDeps = {}): TlsMinter {
                 tailscaleCliEnv(candidate),
               );
               if (!status || !tailscaleIsRunningStatus(status)) {
-                lastError = new Error("Tailscale is not connected");
+                const state = backendState(status);
+                failures.push({
+                  file: candidate.file,
+                  error: new Error(
+                    `\`${candidate.file}\` reports Tailscale is not connected${state ? ` (${state})` : ""}`,
+                  ),
+                });
                 continue;
               }
               selected = candidate;
               break;
             } catch (err) {
-              lastError = err;
+              failures.push({ file: candidate.file, error: err });
             }
           }
-          if (!selected) throw lastError ?? new Error("Tailscale is unavailable");
+          if (!selected) throw tailscaleUnavailable(failures);
           return mintWithBinary(
             selected.file,
             (certPath, keyPath) => [

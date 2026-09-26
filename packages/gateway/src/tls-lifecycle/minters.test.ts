@@ -70,6 +70,47 @@ describe("createHostMinter", () => {
     ]);
   });
 
+  test("a renewal that finds no connected CLI names the one that answered, not the last absent one", async () => {
+    const missing = (file: string) =>
+      Object.assign(new Error(`\`${file}\` is not installed or not on the gateway's PATH`), {
+        cause: Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }),
+      });
+    const minter = createHostMinter({
+      tailscaleCandidates: [
+        { file: "tailscale", bundledApp: false },
+        { file: "/opt/homebrew/bin/tailscale", bundledApp: false },
+        { file: "/Applications/Tailscale.app/Contents/MacOS/Tailscale", bundledApp: true },
+        {
+          file: "/Users/maya/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+          bundledApp: true,
+        },
+      ],
+      run: async (file) => {
+        if (file === "/opt/homebrew/bin/tailscale") return '{"BackendState":"NeedsLogin"}';
+        throw missing(file);
+      },
+    });
+    const error = await minter.mint("tailscale", ["gw.tail.example"], signal()).catch((e) => e);
+    expect(error.message).toBe(
+      "`/opt/homebrew/bin/tailscale` reports Tailscale is not connected (NeedsLogin)",
+    );
+  });
+
+  test("with no CLI anywhere, the renewal error names every place it looked", async () => {
+    const minter = createHostMinter({
+      tailscaleCandidates: [
+        { file: "tailscale", bundledApp: false },
+        { file: "/Applications/Tailscale.app/Contents/MacOS/Tailscale", bundledApp: true },
+      ],
+      run: async () => {
+        throw Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" });
+      },
+    });
+    await expect(minter.mint("tailscale", ["gw.tail.example"], signal())).rejects.toThrow(
+      /^no Tailscale CLI the gateway can run: tried `tailscale`, `\/Applications\/Tailscale\.app\/Contents\/MacOS\/Tailscale` \(the gateway's PATH is /u,
+    );
+  });
+
   test("the mkcert tier re-issues for every name the certificate carries", async () => {
     const calls: string[][] = [];
     const minter = createHostMinter({
