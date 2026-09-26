@@ -1264,6 +1264,7 @@ export function createServer(
     onAuthorizationPending: opts?.accessCleanupWake,
     onDeviceLevelChanged: () => statusCache.bump(),
     tlsFingerprintSha256: opts?.tlsFingerprintSha256,
+    listenPort: opts?.port,
   });
   mountLegacyMcpCutoverRoute(app, {
     getDevice: (deviceId) => getDevice(db, deviceId),

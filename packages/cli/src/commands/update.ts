@@ -80,6 +80,8 @@ import {
   type ServiceComponent,
 } from "@omnesis/core";
 import { upsertDotEnv } from "@omnesis/config";
+import { approveInteractive } from "../approve.js";
+import { restartHarness } from "../harness-restart.js";
 import {
   c,
   CliError,
@@ -998,35 +1000,24 @@ async function recordHarnessResult(
 }
 
 /**
- * Restart a harness after its plugin changed, having asked first. Omnesis
- * does not supervise these processes — the harness owns that surface — so a
- * missing binary or an unknown subcommand is not a failure; it is the point
- * at which the operator is told exactly what to run.
+ * Restart a harness after its plugin changed, having asked first, and keep a
+ * restart that did not happen on the harness's device row.
  */
-async function restartHarness(
+async function restartRefreshedHarness(
   harness: Harness,
   targetVersion: string | null,
   deps: UpdateFlowDeps,
 ): Promise<void> {
-  const manual = `Restart ${harness} to load the refreshed plugin (it reads its config and plugins at startup).`;
-  const approved = await deps.approve(
-    `Restart ${harness} now? This interrupts any run it is in the middle of.`,
-  );
-  if (!approved) {
-    console.log(`${c.dim}${manual}${c.reset}`);
-    return;
-  }
-  const spec = harnessRestartSpec(
+  const binary = (deps.resolveHarness ?? ((name: Harness) => resolveHarnessBinary(name)))(harness);
+  const outcome = await restartHarness(
     harness,
-    (deps.resolveHarness ?? ((name: Harness) => resolveHarnessBinary(name)))(harness),
+    { binary },
+    { approve: deps.approve, run: (spec) => attempt(deps, spec) },
   );
-  console.log(`${c.dim}$ ${formatCommandSpec(spec)}${c.reset}`);
-  const result = await attempt(deps, spec);
-  if (result.code !== 0) {
-    console.log(`${c.yellow}! Could not restart ${harness}. ${manual}${c.reset}`);
+  if (outcome.kind === "failed") {
     await recordHarnessResult(harness, targetVersion, deps, {
       state: "restart-pending",
-      detail: `Plugin ${targetVersion ?? "from the current build"} installed; the restart failed on its host (${formatCommandSpec(spec)} exited ${result.code}), so it is still owed.`,
+      detail: `Plugin ${targetVersion ?? "from the current build"} installed; the restart failed on its host (${outcome.command} exited ${outcome.code}), so it is still owed.`,
     });
   }
 }
@@ -1407,7 +1398,7 @@ async function executeHostPlan(
         }
         case "harness-restart": {
           if (!unrefreshed.has(step.harness)) {
-            await restartHarness(step.harness, expectVersion, deps);
+            await restartRefreshedHarness(step.harness, expectVersion, deps);
           }
           break;
         }
@@ -2573,24 +2564,6 @@ async function confirmInteractive(message: string, skip: boolean): Promise<void>
     prompts.cancel("Cancelled.");
     throw new CliError("", EXIT_CANCELLED);
   }
-}
-
-/**
- * A prompt whose "no" is a legitimate answer: declining leaves the update
- * complete and prints what the operator can do later. Without a terminal
- * there is nobody to ask, so it declines rather than blocking on a prompt
- * that could never be answered.
- */
-export async function approveInteractive(message: string, skip: boolean): Promise<boolean> {
-  if (skip) return true;
-  if (!process.stdout.isTTY || !process.stdin.isTTY) return false;
-  // Reached only on a terminal without `--yes`, which is exactly the path on
-  // which `confirmInteractive` already resolved this module — so this import
-  // is served from the module cache rather than from a node_modules the
-  // update has since rewritten.
-  const prompts = await import("@clack/prompts");
-  const confirmed = await prompts.confirm({ message });
-  return !prompts.isCancel(confirmed) && confirmed === true;
 }
 
 /** How long to wait between `/health` probes while the gateway boots. */

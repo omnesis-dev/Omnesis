@@ -946,6 +946,14 @@
           gateway's address, the code and, where the gateway serves that address itself, its
           certificate fingerprint.
         </p>
+        <p>
+          On a machine that already runs Omnesis, such as one with a collector, the role installs
+          nothing: it connects with the <code>omnesis</code> command already there and leaves the
+          checkout, its services and the keyring as they are. When that command is too old to run
+          this connect, the role offers to run <code>omnesis update</code> first, which restarts the
+          services and rolls back on failure; without a terminal to ask on, it stops and says to run
+          it. The role never touches the keyring: the agent keeps its credentials in its own home.
+        </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
           <div class="term-body">
@@ -982,7 +990,18 @@
           and <code>--trust-fingerprint sha256:…</code> to check the gateway's certificate against a
           fingerprint you were given instead of trusting whatever answers. It then waits up to ten
           minutes for you to <a href="#approving-a-connection">approve the connection</a>, so leave
-          it running until it finishes. Restart the OpenClaw or Hermes gateway afterwards.
+          it running until it finishes.
+        </p>
+        <p>
+          The agent reads its plugins when it starts, so once the plugin is installed
+          <code>connect</code> restarts it with <code>openclaw gateway restart</code> or
+          <code>hermes gateway restart</code>. On a terminal it asks first, because the restart
+          interrupts any run the agent is in the middle of; <code>--yes</code> restarts without
+          asking, and <code>--no-restart</code> prints the command instead. Without a terminal and
+          without <code>--yes</code>, it prints the command; the installer roles, which run it for
+          you, pass <code>--yes</code> when they have no terminal to ask on. It then asks the agent
+          whether the Omnesis skill is ready and says so, naming what to run when it is not. A new
+          session picks the skill up.
         </p>
         <p>
           <code>connect</code> warns when the plugin it is about to install differs in version from
@@ -992,8 +1011,9 @@
 
         <h3 id="harness-refresh">Refresh after an update</h3>
         <p>
-          After updating Omnesis, refresh the installed plugin and skill in place, then restart the
-          OpenClaw or Hermes gateway. Re-running the installer role with neither
+          After updating Omnesis, refresh the installed plugin and skill in place; the refresh
+          restarts OpenClaw or Hermes the way a first connect does. Re-running the installer role
+          with neither
           <code>--gateway-url</code> nor <code>--code</code> does the same.
         </p>
         <div class="term">

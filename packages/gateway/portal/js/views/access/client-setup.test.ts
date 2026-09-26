@@ -16,12 +16,13 @@ import {
 
 interface OAuth {
   resource: string;
-  resources?: Array<{ resource: string; servedByGateway: boolean }>;
+  resources?: Array<{ resource: string; servedByGateway: boolean; direct: boolean }>;
   tlsFingerprintSha256?: string | null;
 }
 interface Address {
   gatewayUrl: string;
   servedByGateway: boolean;
+  direct: boolean;
 }
 type NotePart = string | { code: string } | { href: string; text: string };
 interface AgentSetup {
@@ -128,8 +129,8 @@ describe("agentSetups", () => {
     const oauth = {
       resource: RESOURCE,
       resources: [
-        { resource: RESOURCE, servedByGateway: false },
-        { resource: "https://gateway.example.org:7600/mcp", servedByGateway: true },
+        { resource: RESOURCE, servedByGateway: false, direct: false },
+        { resource: "https://gateway.example.org:7600/mcp", servedByGateway: true, direct: true },
       ],
       tlsFingerprintSha256: FINGERPRINT,
     };
@@ -140,6 +141,11 @@ describe("agentSetups", () => {
     const proxied = harnessAddresses(oauth)[1];
     expect(commands("openclaw", oauth, { harnessAddress: proxied })[1]).toBe(
       "omnesis connect openclaw --gateway-url https://gateway.example.org",
+    );
+    // A proxy that presents the gateway's own certificate is still pinnable.
+    const sameCertificate = { gatewayUrl: "https://gateway.example.org", servedByGateway: true, direct: false };
+    expect(commands("openclaw", oauth, { harnessAddress: sameCertificate })[1]).toBe(
+      `omnesis connect openclaw --gateway-url https://gateway.example.org --trust-fingerprint sha256:${FINGERPRINT}`,
     );
   });
 
@@ -202,19 +208,38 @@ describe("harnessAddresses", () => {
       harnessAddresses({
         resource: RESOURCE,
         resources: [
-          { resource: RESOURCE, servedByGateway: false },
-          { resource: "https://gateway.example.org:7600/mcp", servedByGateway: true },
+          { resource: RESOURCE, servedByGateway: false, direct: false },
+          { resource: "https://gateway.example.org:7600/mcp", servedByGateway: true, direct: true },
         ],
       }),
     ).toEqual([
-      { gatewayUrl: "https://gateway.example.org:7600", servedByGateway: true },
-      { gatewayUrl: "https://gateway.example.org", servedByGateway: false },
+      { gatewayUrl: "https://gateway.example.org:7600", servedByGateway: true, direct: true },
+      { gatewayUrl: "https://gateway.example.org", servedByGateway: false, direct: false },
+    ]);
+  });
+
+  test("puts the gateway's own listener before a proxy that serves its certificate", () => {
+    // A tailnet funnel on 443 presents the same certificate as a gateway on
+    // its Tailscale certificate: pinnable, but not the direct address.
+    expect(
+      harnessAddresses({
+        resource: RESOURCE,
+        resources: [
+          { resource: RESOURCE, servedByGateway: true, direct: false },
+          { resource: "https://other.example.org/mcp", servedByGateway: false, direct: false },
+          { resource: "https://gateway.example.org:7600/mcp", servedByGateway: true, direct: true },
+        ],
+      }),
+    ).toEqual([
+      { gatewayUrl: "https://gateway.example.org:7600", servedByGateway: true, direct: true },
+      { gatewayUrl: "https://gateway.example.org", servedByGateway: true, direct: false },
+      { gatewayUrl: "https://other.example.org", servedByGateway: false, direct: false },
     ]);
   });
 
   test("falls back to the main resource when the gateway lists none", () => {
     expect(harnessAddresses({ resource: RESOURCE })).toEqual([
-      { gatewayUrl: "https://gateway.example.org", servedByGateway: false },
+      { gatewayUrl: "https://gateway.example.org", servedByGateway: false, direct: false },
     ]);
   });
 });

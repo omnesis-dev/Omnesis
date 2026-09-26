@@ -1786,7 +1786,7 @@ describe("apply plans", () => {
       formatCommandSpec(
         harnessRefreshSpec("openclaw", { command: "/usr/local/bin/omnesis", args: [] }),
       ),
-    ).toBe("/usr/local/bin/omnesis connect openclaw --refresh");
+    ).toBe("/usr/local/bin/omnesis connect openclaw --refresh --no-restart");
     expect(formatCommandSpec(harnessRestartSpec("hermes"))).toBe("hermes gateway restart");
   });
 });

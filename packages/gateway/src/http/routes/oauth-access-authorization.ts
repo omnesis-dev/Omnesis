@@ -8,6 +8,7 @@ import { buildPage, clampLimit, scopeSatisfies, SCOPE_ADMIN, tryDeviceId } from 
 import {
   createServedByGatewayCheck,
   type CertificateProbe,
+  type ServedResource,
 } from "../../access/served-by-gateway.js";
 import { resolveOAuthUrls } from "../../access/oauth-urls.js";
 import { ClientMetadataDocumentResolver } from "../../access/client-metadata-document.js";
@@ -89,6 +90,8 @@ export function mountOAuthAuthorizationRoutes(
     onDeviceLevelChanged?: () => void;
     /** SHA-256 fingerprint of the certificate this gateway serves right now. */
     tlsFingerprintSha256?: string | (() => string);
+    /** The port the gateway listens on, which tells its own listener from a proxy. */
+    listenPort?: number;
     /** Replaces the TLS connection that checks which certificate a resource presents (tests). */
     probeCertificate?: CertificateProbe;
   } = {},
@@ -345,13 +348,14 @@ export function mountOAuthAuthorizationRoutes(
       : options.tlsFingerprintSha256;
   const servedByGateway = createServedByGatewayCheck({
     fingerprint,
+    ...(options.listenPort !== undefined ? { listenPort: options.listenPort } : {}),
     ...(options.probeCertificate ? { probe: options.probeCertificate } : {}),
   });
   const accessOverview = async (requestUrl: string) => {
     const urls = resolveOAuthUrls(requestUrl, options.publicBaseUrl, options.mcpResourceUrls);
     const served = urls
       ? await servedByGateway(urls.supportedResources)
-      : new Map<string, boolean>();
+      : new Map<string, ServedResource>();
     return {
       ...access.overview(),
       oauth: urls
@@ -359,7 +363,8 @@ export function mountOAuthAuthorizationRoutes(
             resource: urls.resource,
             resources: urls.supportedResources.map((resource) => ({
               resource,
-              servedByGateway: served.get(resource) ?? false,
+              servedByGateway: served.get(resource)?.servedByGateway ?? false,
+              direct: served.get(resource)?.direct ?? false,
             })),
             tlsFingerprintSha256: fingerprint() ?? null,
           }

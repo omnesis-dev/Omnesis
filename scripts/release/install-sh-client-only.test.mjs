@@ -22,12 +22,10 @@ describe("install.sh client-only mode", () => {
     // this branch decides what a client install skips.
     const mainStart = installScript.indexOf("main() {");
     expect(mainStart).toBeGreaterThan(0);
-    const clientBranch = installScript.indexOf(
-      'if [ "$CLIENT_ONLY" = 1 ]; then\n    setup_keyring_init',
-      mainStart,
-    );
+    const clientBranch = installScript.indexOf('if [ "$CLIENT_ONLY" = 1 ]; then\n', mainStart);
     const tlsCall = installScript.indexOf("  provision_tls", clientBranch);
     expect(clientBranch).toBeGreaterThan(0);
+    expect(installScript.slice(clientBranch, tlsCall)).toContain("setup_keyring_init");
     expect(installScript.slice(clientBranch, tlsCall)).toContain("print_client_banner");
     expect(installScript.slice(clientBranch, tlsCall)).toContain("return 0");
     expect(installScript.slice(clientBranch, tlsCall)).not.toContain("start_services");

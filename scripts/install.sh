@@ -59,6 +59,14 @@
 # --no-model) have nothing to skip on an update. The harness roles already
 # refresh an existing connection.
 #
+# A harness role on a machine that already runs Omnesis — a checkout this
+# installer recorded, or a gateway or collector service registered for this
+# account — installs nothing: it runs `omnesis connect` with the CLI that is
+# already there, and leaves its checkout, launcher, services and keyring as
+# they are. When that CLI predates the connect this installer runs, the run
+# offers the machine's own `omnesis update` first (which restarts its services
+# and rolls back on failure), or stops and says to run it.
+#
 # The two required choices (which embedding model, and what to do about a
 # keyring it cannot use) are read from /dev/tty, because under `curl | sh`
 # stdin is the script itself. An ordinary gateway may optionally offer Codex
@@ -97,8 +105,13 @@
 #                                  Either one: install the CLI, then run
 #                                  `omnesis connect`, which pairs an agent device
 #                                  with the gateway and installs the plugin and
-#                                  skill. The harness itself is never installed
-#                                  here; a machine without one is refused.
+#                                  skill, then restarts the harness (asking
+#                                  first on a terminal) and reports whether its
+#                                  Omnesis skill is ready. The harness itself is
+#                                  never installed here; a machine without one
+#                                  is refused. Neither role touches the keyring:
+#                                  the harness keeps its credentials in its own
+#                                  home.
 #   --gateway-url <url>            (role flags above) the gateway to pair with.
 #                                  Omitted, the LAN is browsed for one and the
 #                                  hit is confirmed before anything is paired.
@@ -246,6 +259,12 @@ HARNESS=""
 HARNESS_HOME=""
 HARNESS_REFRESH=0
 HARNESS_RESUME=0
+# Set when a harness role runs on a machine that already runs Omnesis: what was
+# found there, the checkout this installer recorded (empty for an install it
+# did not record), and that the role connects with the CLI already there.
+HARNESS_EXISTING=0
+HARNESS_EXISTING_WHAT=""
+HARNESS_EXISTING_ROOT=""
 PAIR_GATEWAY_URL=""
 PAIR_GATEWAY_URL_FLAG=0
 PAIR_FINGERPRINT=""
@@ -382,6 +401,8 @@ show_install_plan() {
     PLAN_TARGET="$CONFIG_DIR"
   else
     if [ "$UPDATE_EXISTING" = 1 ]; then PLAN_ROLE="update of this machine's existing install"
+    elif [ "$HARNESS_EXISTING" = 1 ]; then
+      PLAN_ROLE="$(harness_label "$HARNESS") integration for another gateway, using this machine's existing Omnesis"
     elif [ "$COLLECTOR" = 1 ]; then PLAN_ROLE="collector for another gateway"
     elif [ -n "$HARNESS" ]; then PLAN_ROLE="$(harness_label "$HARNESS") integration for another gateway"
     elif [ "$CLIENT_ONLY" = 1 ]; then PLAN_ROLE="CLI only"
@@ -406,6 +427,10 @@ show_install_plan() {
     if [ "$METHOD" = package ]; then PLAN_TARGET="user-writable npm prefix (resolved during install)"
     elif [ "$METHOD" = auto ]; then PLAN_TARGET="npm prefix or $SOURCE_DIR (resolved during install)"
     else PLAN_TARGET="$SOURCE_DIR"; fi
+    if [ "$HARNESS_EXISTING" = 1 ]; then
+      PLAN_DELIVERY="none; the CLI already installed here ($HARNESS_EXISTING_WHAT)"
+      PLAN_TARGET="$OMNESIS_BIN"
+    fi
   fi
 
   stage "Install plan"
@@ -2904,10 +2929,10 @@ process.stdin.on("end", () => {
 
 # Whether this run leaves behind a secret the keyring would seal. A gateway has
 # its index and admin token; a collector has its device token. A plain CLI host
-# has neither, and a harness host keeps the harness's credentials in the
-# harness's own home — so neither is offered the passphrase flag, and neither is
-# told to re-run with one.
-seals_secrets() { [ "$CLIENT_ONLY_FLAG" = 0 ] && [ -z "$HARNESS" ]; }
+# has neither, so it is not offered the passphrase flag, nor told to re-run with
+# one. A harness host never reaches the keyring at all: the harness keeps its
+# credentials in its own home.
+seals_secrets() { [ "$CLIENT_ONLY_FLAG" = 0 ]; }
 
 setup_keyring_init() {
   [ "$WANT_KEYRING" = 1 ] || { warn "Skipping keyring setup (--no-keyring) — no encryption at rest. Arm it later with: omnesis secure"; return 0; }
@@ -4061,13 +4086,120 @@ harness_connect() {
   info "up to ten minutes for that approval. Leave this running until it finishes."
   echo ""
   # Under `curl | sh` this process's stdin is the script, so hand the CLI the
-  # terminal directly or it would refuse a question it cannot ask.
+  # terminal directly or it would refuse a question it cannot ask. On that
+  # terminal connect asks before restarting the harness; with nobody to ask,
+  # it restarts it, because the plugin it just installed loads no other way.
   if is_promptable; then
     CONNECT_OK=0; "$OMNESIS_BIN" "$@" </dev/tty && CONNECT_OK=1
   else
-    CONNECT_OK=0; "$OMNESIS_BIN" "$@" </dev/null && CONNECT_OK=1
+    CONNECT_OK=0; "$OMNESIS_BIN" "$@" --yes </dev/null && CONNECT_OK=1
   fi
   [ "$CONNECT_OK" = 1 ] || fail "Connecting $(harness_label "$HARNESS") failed — see what it reported above. A run that got as far as redeeming the code records that, so re-running \`omnesis connect $HARNESS\` resumes it without a fresh code."
+}
+
+# Resolve the harness home, find the gateway and the code when this is a fresh
+# pairing, and connect.
+harness_pair_and_connect() {
+  harness_resolve_home
+  # A refresh and a resume both already know their gateway and hold their
+  # own credential; only a fresh pairing needs a gateway and a code.
+  if [ "$HARNESS_REFRESH" = 0 ] && [ "$HARNESS_RESUME" = 0 ]; then
+    resolve_gateway
+    read_pairing_code agent
+  fi
+  harness_connect
+}
+
+# A harness role on a machine that already runs Omnesis connects with the CLI
+# that install put there. Installing over it would move the checkout its
+# gateway or collector runs from, rewrite the launcher their services start
+# through, and rebuild both under the running daemons — with none of the
+# restart, health check or rollback `omnesis update` wraps around that work.
+# The install is present when this installer recorded a checkout, or when a
+# gateway or collector service of this account is registered.
+plan_existing_harness() {
+  [ -n "$HARNESS" ] || return 0
+  HARNESS_EXISTING_CLI=""
+  if HARNESS_EXISTING_ROOT="$(recorded_source_root)"; then
+    HARNESS_EXISTING_WHAT="the checkout at $HARNESS_EXISTING_ROOT"
+    # The source launcher is the one entry point such an install has.
+    [ ! -x "$HOME/.local/bin/omnesis" ] || HARNESS_EXISTING_CLI="$HOME/.local/bin/omnesis"
+  else
+    HARNESS_EXISTING_ROOT=""
+  fi
+  case "$REGISTERED_BEFORE_RUN" in
+    " gateway collector") SERVICES_FOUND="its gateway and collector services" ;;
+    " gateway") SERVICES_FOUND="its gateway service" ;;
+    " collector") SERVICES_FOUND="its collector service" ;;
+    *) SERVICES_FOUND="" ;;
+  esac
+  if [ -n "$SERVICES_FOUND" ]; then
+    if [ -n "$HARNESS_EXISTING_WHAT" ]; then
+      HARNESS_EXISTING_WHAT="$HARNESS_EXISTING_WHAT and $SERVICES_FOUND"
+    else
+      HARNESS_EXISTING_WHAT="$SERVICES_FOUND"
+    fi
+  fi
+  [ -n "$HARNESS_EXISTING_WHAT" ] || return 0
+  if [ -z "$HARNESS_EXISTING_CLI" ]; then
+    resolve_existing_cli
+    HARNESS_EXISTING_CLI="$EXISTING_CLI"
+  fi
+  [ -n "$HARNESS_EXISTING_CLI" ] || \
+    fail "This machine already runs Omnesis ($HARNESS_EXISTING_WHAT), but no omnesis command was found to connect $(harness_label "$HARNESS") with. Installing another one here would replace what those services run, so nothing was changed. Repair that install first — re-run this installer without --$HARNESS — then run this line again."
+  OMNESIS_BIN="$HARNESS_EXISTING_CLI"
+  HARNESS_EXISTING=1
+}
+
+# Whether the CLI at $OMNESIS_BIN runs the connect this installer asks for: one
+# that restarts the harness and reports on its skill. Read from its own help,
+# which names every flag it accepts, so a build between releases answers for
+# what it is rather than for a version number.
+existing_cli_connects() {
+  "$OMNESIS_BIN" connect --help </dev/null 2>/dev/null | grep -q -- '--no-restart'
+}
+
+# Make sure the CLI already here can run this role's connect. One that
+# predates it is brought up to date by the machine's own updater — the one path
+# that moves an install under running services with a restart, a health check
+# and a rollback — after asking; with nobody to ask, the run stops and names it.
+harness_require_connect_support() {
+  existing_cli_connects && return 0
+  EXISTING_VERSION="$("$OMNESIS_BIN" --version </dev/null 2>/dev/null || true)"
+  warn "This machine's Omnesis (${EXISTING_VERSION:-version unknown}) predates the connect this role runs, which restarts $(harness_label "$HARNESS") and reports whether its skill is ready."
+  is_promptable || \
+    fail "Update it first with its own updater — omnesis update — then run this line again. Nothing was changed."
+  ANSWER="$(ask_tty "Update this machine's Omnesis now with omnesis update? It restarts its services and rolls back on failure. [Y/n] ")"
+  case "$ANSWER" in
+    n|N|no|No|NO) fail "Nothing was changed. Update with: omnesis update — then run this line again." ;;
+  esac
+  ensure_node
+  [ -z "$HARNESS_EXISTING_ROOT" ] || ensure_git
+  # This update only brings the CLI up to the connect it needs. --version and
+  # --edge were already reported as choosing nothing on this run, so the
+  # updater moves to its own default rather than to them.
+  PIN_VERSION=""
+  EDGE=0
+  run_machine_update "$HARNESS_EXISTING_ROOT"
+  existing_cli_connects || \
+    fail "The update finished, but this machine's omnesis still cannot run this connect. Run: omnesis connect $HARNESS — it prints what to do next."
+}
+
+# The harness role on a machine that already runs Omnesis: no Node, no
+# checkout, no build and no keyring — only the connect, with the CLI there.
+harness_on_existing_install() {
+  show_install_plan
+  configure_network_budget
+  stage "Connecting with this machine's Omnesis"
+  info "This machine already runs Omnesis ($HARNESS_EXISTING_WHAT). It is left as it is:"
+  info "nothing is checked out, rebuilt or re-sealed."
+  if [ -n "$PIN_VERSION$PIN_COMMIT" ] || [ "$EDGE" = 1 ] || [ "$METHOD_FLAG" = 1 ]; then
+    warn "--version, --commit, --edge and --method choose what to install, and this run installs nothing. To move this machine's Omnesis, run: omnesis update"
+  fi
+  harness_require_connect_support
+  info "Using: $OMNESIS_BIN ($("$OMNESIS_BIN" --version </dev/null 2>/dev/null || echo 'version unavailable'))"
+  harness_pair_and_connect
+  print_harness_banner
 }
 
 print_harness_banner() {
@@ -4078,16 +4210,8 @@ print_harness_banner() {
     printf '\033[1m\033[0;32m%s is connected to Omnesis.\033[0m\n' "$(harness_label "$HARNESS")"
   fi
   echo ""
-  case "$HARNESS" in
-    openclaw)
-      echo "  Restart the OpenClaw gateway — its config and env are read at startup."
-      echo "  Then verify with: openclaw skills check"
-      ;;
-    hermes)
-      echo "  Restart the Hermes gateway, then start a new session — the plugin,"
-      echo "  platform adapter, and skills index are loaded at startup."
-      ;;
-  esac
+  echo "  Connect said above whether $(harness_label "$HARNESS") restarted with its plugin"
+  echo "  and whether it reports the Omnesis skill ready, with the next step if not."
   echo ""
   echo "  Harness home:  $HARNESS_HOME"
   # A refresh and a resume both take the gateway from what is already recorded,
@@ -5921,21 +6045,32 @@ update_existing_install() {
   ensure_node
   ensure_git
   OMNESIS_BIN="$HOME/.local/bin/omnesis"
-  repair_source_fetch_config "$SOURCE_DIR"
+  run_machine_update "$SOURCE_DIR"
+  print_update_banner
+}
+
+# Run this machine's own `omnesis update` at $OMNESIS_BIN, toward --version or
+# --edge when given. $1 is the checkout this installer recorded, or empty for
+# an install it did not record, which its updater moves on its own.
+run_machine_update() {
+  MACHINE_UPDATE_ROOT="$1"
   set -- update --yes
   [ -z "$PIN_VERSION" ] || set -- "$@" --target-version "$PIN_VERSION"
   [ "$EDGE" = 0 ] || set -- "$@" --edge
-  # Updaters before 0.5.6 refuse a newer target that shares no history with
-  # the installed build. Their --force also skips the downgrade refusal, so it
-  # is added only when the target is not older than the installed build. The
-  # installed build is the last completed one: after an interrupted update the
-  # wrapper returns to it before running its updater.
-  INSTALLED_VERSION="$(source_version_at "$(source_last_completed_commit "$RECORDED_SOURCE_ROOT" HEAD)")"
-  if [ "$FORCE" = 1 ]; then
-    set -- "$@" --force
-  elif version_is_newer 0.5.6 "$INSTALLED_VERSION" &&
-       { [ -z "$PIN_VERSION" ] || ! version_is_newer "$INSTALLED_VERSION" "$PIN_VERSION"; }; then
-    set -- "$@" --force
+  if [ -n "$MACHINE_UPDATE_ROOT" ]; then
+    repair_source_fetch_config "$MACHINE_UPDATE_ROOT"
+    # Updaters before 0.5.6 refuse a newer target that shares no history with
+    # the installed build. Their --force also skips the downgrade refusal, so
+    # it is added only when the target is not older than the installed build.
+    # The installed build is the last completed one: after an interrupted
+    # update the wrapper returns to it before running its updater.
+    INSTALLED_VERSION="$(source_version_at "$(source_last_completed_commit "$MACHINE_UPDATE_ROOT" HEAD)")"
+    if [ "$FORCE" = 1 ]; then
+      set -- "$@" --force
+    elif version_is_newer 0.5.6 "$INSTALLED_VERSION" &&
+         { [ -z "$PIN_VERSION" ] || ! version_is_newer "$INSTALLED_VERSION" "$PIN_VERSION"; }; then
+      set -- "$@" --force
+    fi
   fi
   stage "Updating with this machine's own updater"
   info "Running: omnesis $*"
@@ -5943,7 +6078,6 @@ update_existing_install() {
   "$OMNESIS_BIN" "$@" </dev/null || UPDATE_STATUS=$?
   [ "$UPDATE_STATUS" = 0 ] || \
     fail "The update did not finish (exit $UPDATE_STATUS); its own messages above say why. Fix that and re-run this installer, or run: omnesis update"
-  print_update_banner
 }
 
 print_update_banner() {
@@ -6167,6 +6301,7 @@ main() {
   detect_platform
   note_registered_services
   plan_existing_update
+  plan_existing_harness
   # Before Node, before the CLI, and above all before a single-use pairing code
   # is asked for: a harness role on a machine with no harness is refused now,
   # not after an install that cannot be used and a code that cannot be reused.
@@ -6190,6 +6325,10 @@ main() {
   fi
   if [ "$UPDATE_EXISTING" = 1 ]; then
     update_existing_install
+    return 0
+  fi
+  if [ "$HARNESS_EXISTING" = 1 ]; then
+    harness_on_existing_install
     return 0
   fi
   # Asked before the plan and every mutation, so the printed role is the one
@@ -6217,8 +6356,13 @@ main() {
   info "Installed: $("$OMNESIS_BIN" --version 2>/dev/null || echo '(version unavailable)')"
   stage "Configuring this machine"
   if [ "$CLIENT_ONLY" = 1 ]; then
-    setup_keyring_init
-    setup_keyring_migrate
+    # A harness host has nothing of Omnesis's to seal — the harness keeps its
+    # credentials in its own home — and a keyring armed here would seal
+    # whatever else of Omnesis this account holds as a side effect.
+    if [ -z "$HARNESS" ]; then
+      setup_keyring_init
+      setup_keyring_migrate
+    fi
     if [ "$COLLECTOR" = 1 ]; then
       setup_collector_storage_keys
       resolve_gateway
@@ -6241,14 +6385,7 @@ main() {
       return 0
     fi
     if [ -n "$HARNESS" ]; then
-      harness_resolve_home
-      # A refresh and a resume both already know their gateway and hold their
-      # own credential; only a fresh pairing needs a gateway and a code.
-      if [ "$HARNESS_REFRESH" = 0 ] && [ "$HARNESS_RESUME" = 0 ]; then
-        resolve_gateway
-        read_pairing_code agent
-      fi
-      harness_connect
+      harness_pair_and_connect
       finalize_package_source_wrapper unsafe
       rm -f "$CONFIG_DIR/install-method"
       print_harness_banner
