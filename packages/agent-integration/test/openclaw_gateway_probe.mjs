@@ -121,9 +121,17 @@ try {
     OPENCLAW_CONFIG_PATH: configPath,
     OPENCLAW_SKIP_UPDATE_CHECK: "1",
   });
+  // The pinned OpenClaw gates plugin installs on capability consent, which
+  // `omnesis connect` gives on the operator's behalf; the probe does the same.
   execFileSync(
     openClawBin,
-    ["plugins", "install", "--force", `npm-pack:${join(probeRoot, archive)}`],
+    [
+      "plugins",
+      "install",
+      "--force",
+      "--accept-capabilities",
+      `npm-pack:${join(probeRoot, archive)}`,
+    ],
     { cwd: repositoryRoot, env: environment, stdio: ["ignore", "pipe", "pipe"] },
   );
   const inspection = JSON.parse(
