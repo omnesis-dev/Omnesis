@@ -235,7 +235,9 @@ const searchSnapshot = z
   .object({
     enabled: z
       .boolean()
-      .describe("Maintain a periodically-refreshed search snapshot for fast reads.")
+      .describe(
+        "Maintain a periodically-refreshed search snapshot for fast reads when search workers are disabled.",
+      )
       .optional(),
     refreshIntervalMs: z
       .number()

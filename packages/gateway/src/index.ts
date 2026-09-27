@@ -831,7 +831,15 @@ const searchConfig = config.search as unknown as SearchConfig | undefined;
 // mechanism and the refresh-task failure mode (a stalled refresh
 // pins the WAL indefinitely; mitigated by the periodic timer not
 // being held across event-loop turns).
-const snapshotEnabled = searchConfig?.snapshot?.enabled ?? true;
+//
+// The snapshot applies only when this handle is the sole search path. With
+// the search-worker pool on, the workers read the current index on every
+// query and this handle serves the main-thread fallback the pipeline takes
+// when the pool is saturated, not ready or faulted; a snapshot here would pin
+// that fallback up to one refresh interval behind the workers, so the same
+// query would answer from two different corpora depending on load.
+const snapshotEnabled =
+  (searchConfig?.snapshot?.enabled ?? true) && runtime.searchWorkerConcurrency === 0;
 const snapshotRefreshMs = searchConfig?.snapshot?.refreshIntervalMs ?? 600_000;
 // Read-only handle tunables. The mmap default (1 GiB) is the Phase-0
 // winning configuration: OS-unified-cache sharing across all
