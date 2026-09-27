@@ -174,8 +174,8 @@ export function preflightExecutionTokensReissue(
         `SELECT 1 AS present
          FROM principal_credentials c
          JOIN devices d ON d.id = c.execution_device_id
-         JOIN oauth_authorization_requests ar ON ar.credential_id = c.id
          WHERE c.execution_device_id = ? AND c.oauth_client_id = ?
+           AND c.approved_audience IS NOT NULL AND c.approved_scope IS NOT NULL
            AND c.kind = 'interactive' AND c.status = 'active' AND c.revoked_at IS NULL
            AND (c.expires_at IS NULL OR c.expires_at > ?)
            AND d.kind = 'agent' AND d.revoked_at IS NULL

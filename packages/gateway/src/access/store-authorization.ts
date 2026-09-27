@@ -341,8 +341,8 @@ export function decideAuthorizationRequest(
         db.prepare(
           `INSERT INTO principal_credentials (
              id, grant_id, oauth_client_id, kind, status, label, execution_device_id,
-             created_at, expires_at
-           ) VALUES (?, ?, ?, 'interactive', 'pending', ?, ?, ?, ?)`,
+             created_at, expires_at, approved_audience, approved_scope
+           ) VALUES (?, ?, ?, 'interactive', 'pending', ?, ?, ?, ?, ?, ?)`,
         ).run(
           credentialId,
           resolved.grantId,
@@ -351,6 +351,8 @@ export function decideAuthorizationRequest(
           row.execution_device_id,
           now,
           resolved.expiresAt,
+          row.resource,
+          row.scope,
         );
         db.prepare(
           `UPDATE oauth_authorization_requests

@@ -21,6 +21,8 @@ import { commitPrivacyPolicy } from "../privacy/policy-history.js";
 import {
   agentDeviceAuthorizations,
   agentDeviceRevocationImpacts,
+  type AccessCleanupPhase,
+  cleanupExpiredAccessStateBatch,
   createAccessTables,
   createAuthorizationRequest,
   createExecutionBinding,
@@ -29,6 +31,8 @@ import {
   exchangeAuthorizationCode,
   issueAuthorizationCode,
   lookupPrincipalAccessToken,
+  type OAuthClientCleanupCursor,
+  preflightExecutionTokensReissue,
   refreshPrincipalAccessToken,
   registerOAuthClient,
   reissueExecutionDeviceTokens,
@@ -237,6 +241,93 @@ describe("re-issuing an agent device's approved OAuth credential", () => {
     expect(reissued.ok).toBe(true);
     expect(agentDeviceAuthorizations(db, lapsed + 1).get("agent-openclaw")).toEqual({
       status: "authorized",
+    });
+  });
+});
+
+describe("re-issuing after the access cleanup has reaped the approval's request", () => {
+  // The authorization request is reaped minutes after its code is issued; the
+  // credential it created lives for months. Recovery has to keep working for
+  // the whole of the credential's life, not only the first few minutes.
+  const LATER = NOW + 45 * 24 * 60 * 60_000;
+
+  function reapEverythingExpired(at: number): void {
+    // Every phase the scheduled sweep runs, in its order.
+    const phases: AccessCleanupPhase[] = [
+      "executionBindings",
+      "authorizationRequests",
+      "accessTokens",
+      "refreshTokens",
+      "auditEvents",
+      "oauthClients",
+    ];
+    for (const phase of phases) {
+      let cursor: OAuthClientCleanupCursor | undefined;
+      for (;;) {
+        const result = cleanupExpiredAccessStateBatch(db, phase, at, 200, cursor);
+        if (!result.hasMore) break;
+        cursor = result.cursor;
+      }
+    }
+    expect(requestCount()).toBe(0);
+    expect(tokenCount()).toBe(0);
+  }
+
+  test("re-keys the approved credential with the audience and scope it was approved for", () => {
+    const enrolled = enrolAgent("agent-openclaw", "openclaw");
+    reapEverythingExpired(LATER);
+    const input = { deviceId: "agent-openclaw", oauthClientId: enrolled.clientId };
+
+    expect(preflightExecutionTokensReissue(db, input, LATER)).toBe(true);
+    const reissued = reissueExecutionDeviceTokens(db, input, LATER);
+    if (!reissued.ok) throw new Error(`re-issue refused: ${reissued.error}`);
+    expect(reissued.value.scope).toBe(defaultAuthorizationScope());
+    expect(
+      lookupPrincipalAccessToken(db, reissued.value.accessToken, RESOURCE, LATER + 1),
+    ).toMatchObject({
+      credentialId: enrolled.credentialId,
+      grantId: enrolled.grantId,
+      executionDeviceId: "agent-openclaw",
+    });
+    expect(credentialCount()).toBe(1);
+  });
+
+  test("still refuses a revoked grant", () => {
+    const enrolled = enrolAgent("agent-openclaw", "openclaw");
+    reapEverythingExpired(LATER);
+    expect(revokeAccessGrant(db, enrolled.grantId, "portal-token", LATER)).toBe(true);
+    const input = { deviceId: "agent-openclaw", oauthClientId: enrolled.clientId };
+
+    // The reader preflight does not read the grant; the writer re-proves it.
+    expect(reissueExecutionDeviceTokens(db, input, LATER + 1)).toEqual({
+      ok: false,
+      error: "inactive-grant",
+    });
+  });
+
+  test("still refuses a revoked device", () => {
+    const enrolled = enrolAgent("agent-openclaw", "openclaw");
+    reapEverythingExpired(LATER);
+    db.prepare("UPDATE devices SET revoked_at = ? WHERE id = ?").run(LATER, "agent-openclaw");
+    const input = { deviceId: "agent-openclaw", oauthClientId: enrolled.clientId };
+
+    expect(preflightExecutionTokensReissue(db, input, LATER + 1)).toBe(false);
+    expect(reissueExecutionDeviceTokens(db, input, LATER + 1)).toEqual({
+      ok: false,
+      error: "not-found",
+    });
+  });
+
+  test("still cannot reach another device's credential", () => {
+    const enrolled = enrolAgent("agent-openclaw", "openclaw");
+    insertAgentDevice("agent-hermes", "hermes");
+    reapEverythingExpired(LATER);
+    const input = { deviceId: "agent-hermes", oauthClientId: enrolled.clientId };
+
+    expect(preflightExecutionTokensReissue(db, input, LATER)).toBe(false);
+    expect(reissueExecutionDeviceTokens(db, input, LATER)).toEqual({
+      ok: false,
+      error: "not-found",
     });
   });
 });
@@ -521,4 +612,19 @@ function auditEvents(): string[] {
     .prepare<[], { event_type: string }>("SELECT event_type FROM access_audit_events")
     .all()
     .map((row) => row.event_type);
+}
+
+function requestCount(): number {
+  return db
+    .prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM oauth_authorization_requests")
+    .get()!.count;
+}
+
+function tokenCount(): number {
+  return db
+    .prepare<[], { count: number }>(
+      `SELECT (SELECT COUNT(*) FROM oauth_access_tokens)
+            + (SELECT COUNT(*) FROM oauth_refresh_tokens) AS count`,
+    )
+    .get()!.count;
 }

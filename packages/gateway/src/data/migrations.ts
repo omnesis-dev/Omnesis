@@ -125,6 +125,7 @@ import { addPendingSourcePages } from "./migration-178-pending-source-pages.js";
 import { addSourceSyncIssues } from "./migration-179-source-sync-issues.js";
 import { normalizeSourceTimestamps } from "./migration-180-source-timestamps.js";
 import { migrateV182PrivateKeyJwtClients } from "./migration-182-private-key-jwt-clients.js";
+import { addCredentialApprovedAudience } from "./migration-183-credential-approved-audience.js";
 import { LATEST_SCHEMA_VERSION } from "./schema-version.js";
 import type { Db } from "./types.js";
 
@@ -4669,6 +4670,12 @@ export const MIGRATIONS: readonly Migration[] = [
         if (fkWasOn) db.exec("PRAGMA foreign_keys = ON");
       }
     },
+  },
+  {
+    version: 183,
+    description:
+      "an interactive credential keeps its approved audience and scope after its authorization request is reaped",
+    up: addCredentialApprovedAudience,
   },
 ];
 

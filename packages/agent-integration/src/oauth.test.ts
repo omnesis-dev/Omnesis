@@ -255,6 +255,160 @@ describe("integration OAuth provider", () => {
     expect(recoveries).toBe(1);
   });
 
+  test("keeps the cause of a refresh failure the SDK swallowed", async () => {
+    const provider = {
+      tokens: () => ({ access_token: "principal-access-old" }),
+      credentialsFilePath: "",
+      clearAuthorizationAttempt: () => {},
+    } as unknown as IntegrationOAuthProvider;
+    const refreshBody = () => new URLSearchParams({ grant_type: "refresh_token" });
+    // Stands in for `auth()`: the refresh POST fails, the SDK swallows it and
+    // asks for a browser instead.
+    const swallowingAuthorize = async (
+      _provider: unknown,
+      _gatewayUrl: string,
+      fetchFn: (input: string | URL, init?: RequestInit) => Promise<Response>,
+    ) => {
+      await fetchFn("https://gateway.example.org:7600/oauth/token", {
+        method: "POST",
+        body: refreshBody(),
+      }).catch(() => undefined);
+      return "REDIRECT" as const;
+    };
+    const warnings: string[] = [];
+    const logger = { warn: (message: string) => warnings.push(message) };
+    const networkDown = async () => {
+      throw new TypeError("fetch failed", {
+        cause: Object.assign(new Error("socket hang up"), { code: "ECONNRESET" }),
+      });
+    };
+
+    // Recovery heals it: the cause is logged, nothing is thrown.
+    const healed = new SerializedIntegrationAuthProvider(
+      provider,
+      "https://gateway.example.org:7600",
+      swallowingAuthorize,
+      async () => {},
+      logger,
+    );
+    await healed.onUnauthorized(unauthorized(networkDown));
+    expect(warnings).toEqual([
+      "Omnesis OAuth refresh failed (fetch failed: ECONNRESET socket hang up); re-issuing with the device's management token",
+    ]);
+
+    // Recovery fails too: its own error is what the caller sees, and the
+    // refresh failure that led there is not lost behind it.
+    const refused = new SerializedIntegrationAuthProvider(
+      provider,
+      "https://gateway.example.org:7600",
+      swallowingAuthorize,
+      () => Promise.reject(new Error("Omnesis corpus access is no longer authorized.")),
+      logger,
+    );
+    await expect(
+      refused.onUnauthorized(
+        unauthorized(async () => Response.json({ error: "server_error" }, { status: 503 })),
+      ),
+    ).rejects.toThrow(
+      'Omnesis corpus access is no longer authorized. (The refresh attempt before it failed: HTTP 503: {"error":"server_error"}.)',
+    );
+  });
+
+  test("recognises the refresh request the real SDK sends", async () => {
+    // The observer keys on the request shape `auth()` produces, so this runs
+    // the SDK itself against a token endpoint that refuses the refresh token.
+    const directory = mkdtempSync(join(tmpdir(), "omnesis-integration-oauth-refusal-"));
+    try {
+      const credentialsPath = join(directory, "integration.json");
+      writeFileSync(
+        credentialsPath,
+        JSON.stringify({
+          gatewayUrl: "https://gateway.example.org:7600",
+          deliveryToken: "omn_fictional_delivery",
+          ingestionToken: "omn_fictional_ingestion",
+          managementToken: "omn_fictional_management",
+          oauth: {
+            redirectUri: "http://127.0.0.1:48123/callback",
+            clientInformation: {
+              client_id: "client_fictional",
+              issuer: "https://gateway.example.org:7600",
+            },
+            tokens: {
+              access_token: "access-fictional",
+              refresh_token: "refresh-fictional",
+              issuer: "https://gateway.example.org:7600",
+            },
+            discoveryState: {
+              authorizationServerUrl: "https://gateway.example.org:7600",
+              authorizationServerMetadata: {
+                issuer: "https://gateway.example.org:7600",
+                authorization_endpoint: "https://gateway.example.org:7600/oauth/authorize",
+                token_endpoint: "https://gateway.example.org:7600/oauth/token",
+                response_types_supported: ["code"],
+              },
+            },
+          },
+        }),
+        { mode: 0o600 },
+      );
+      const tokenRequests: string[] = [];
+      const gateway = async (input: string | URL, init?: RequestInit) => {
+        if (String(input) !== "https://gateway.example.org:7600/oauth/token") {
+          return new Response(null, { status: 404 });
+        }
+        tokenRequests.push(String(init?.body));
+        return Response.json(
+          {
+            error: "invalid_grant",
+            error_description: "The refresh token is\n  no longer valid.",
+          },
+          { status: 400 },
+        );
+      };
+      const warnings: string[] = [];
+      let recoveries = 0;
+      await new SerializedIntegrationAuthProvider(
+        new IntegrationOAuthProvider(credentialsPath, "OpenClaw"),
+        "https://gateway.example.org:7600",
+        undefined,
+        async () => {
+          recoveries += 1;
+        },
+        { warn: (message) => warnings.push(message) },
+      ).renew(gateway);
+
+      expect(tokenRequests).toHaveLength(1);
+      expect(tokenRequests[0]).toContain("grant_type=refresh_token");
+      expect(recoveries).toBe(1);
+      expect(warnings).toEqual([
+        'Omnesis OAuth refresh failed (HTTP 400: {"error":"invalid_grant","error_description":"The refresh token is\\n no longer valid."}); re-issuing with the device\'s management token',
+      ]);
+      expect(warnings.join("\n")).not.toContain("refresh-fictional");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("says nothing about a refresh when the SDK never attempted one", async () => {
+    const provider = {
+      tokens: () => ({ access_token: "principal-access-old" }),
+      credentialsFilePath: "",
+      clearAuthorizationAttempt: () => {},
+    } as unknown as IntegrationOAuthProvider;
+    const warnings: string[] = [];
+    const serialized = new SerializedIntegrationAuthProvider(
+      provider,
+      "https://gateway.example.org:7600",
+      async () => "REDIRECT",
+      () => Promise.reject(new Error("Omnesis corpus access is no longer authorized.")),
+      { warn: (message) => warnings.push(message) },
+    );
+    await expect(serialized.onUnauthorized(unauthorized(fetch))).rejects.toThrow(
+      /^Omnesis corpus access is no longer authorized\.$/u,
+    );
+    expect(warnings).toEqual([]);
+  });
+
   test("a failed recovery leaves no authorization the keepalive would wait on", async () => {
     // Getting to recovery means the SDK already wrote a PKCE verifier for an
     // authorization nobody can complete. Left there, it reads as "somebody is
@@ -436,3 +590,12 @@ describe("integration OAuth provider", () => {
     }
   });
 });
+
+/** A 401 on the MCP endpoint, as the SDK hands it to `onUnauthorized`. */
+function unauthorized(fetchFn: (input: string | URL, init?: RequestInit) => Promise<Response>) {
+  return {
+    response: new Response(null, { status: 401 }),
+    serverUrl: new URL("https://gateway.example.org:7600/mcp"),
+    fetchFn,
+  };
+}
