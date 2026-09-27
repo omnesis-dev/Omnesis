@@ -136,7 +136,7 @@ travels with the upstream project at <https://github.com/rsms/inter>.
 
 ## 3. Bundled icon glyphs
 
-Source packages bundle selected SVG glyphs from [Lucide](https://lucide.dev),
+Source packages and the web portal bundle selected SVG glyphs from [Lucide](https://lucide.dev),
 including the generic voicemail glyph used for Apple Voicemail. Lucide is
 licensed under ISC:
 

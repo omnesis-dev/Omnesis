@@ -3,7 +3,7 @@
 
 // How a set of permissions is described on the Access page: how much of the
 // corpus it reaches, in the few words a table column has, and the terms each
-// capability runs under, one line apiece. An access level's permissions read
+// capability runs under, one tile apiece. An access level's permissions read
 // the same way wherever they are shown.
 
 import { html } from "htm/preact";
@@ -75,31 +75,60 @@ export function answerPrivacySummary(rule, policies) {
   return policy ? policyFamilyName(policy) : "Privacy policy";
 }
 
-/** The terms a set of permissions runs under, one line per capability, including withheld permissions. */
+// Lucide glyphs (https://lucide.dev, ISC-licensed), inlined like the portal's
+// other icons: "book-open" for Answer, "arrow-left-right" for Direct and
+// "file-text" for Notes.
+const CAPABILITY_GLYPHS = {
+  answer: html`<path d="M12 7v14" /><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z" />`,
+  direct: html`<path d="M8 3 4 7l4 4" /><path d="M4 7h16" /><path d="m16 21 4-4-4-4" /><path d="M20 17H4" />`,
+  notes: html`<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path d="M14 2v4a2 2 0 0 0 2 2h4" /><path d="M10 9H8" /><path d="M16 13H8" /><path d="M16 17H8" />`,
+};
+
+function CapabilityGlyph({ capability }) {
+  return html`<span class="access-term-icon" aria-hidden="true"><svg
+    viewBox="0 0 24 24"
+    width="18"
+    height="18"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.75"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  >${CAPABILITY_GLYPHS[capability]}</svg></span>`;
+}
+
+/**
+ * The terms a set of permissions runs under: one tile per capability, always
+ * all three and always in the same order, so a capability's position never
+ * moves from one level to the next. A withheld capability keeps its tile and
+ * says Off.
+ */
 export function AccessTerms({ rules, overview }) {
   const lanes = ["answer", "direct", "notes"];
   const retained = (overview.sources ?? []).filter((source) => source.available === false);
   return html`<dl class="access-detail-grid">
     ${lanes.map((capability) => {
       const rule = rules[capability];
-      if (!rule) return html`<div key=${capability}><dt><${CapabilityBadge} capability=${capability} off=${true} /></dt><dd></dd></div>`;
-      if (capability === "notes") return html`<div key=${capability} class="access-term-notes"><dt><${CapabilityBadge} capability="notes" /></dt><dd>Saves notes under the agent's name</dd></div>`;
-      const retainedAllowed = retained.filter((source) => isSourceAllowed(rule, sourceId(source))).length;
-      return html`<div key=${capability} class=${`access-term-${capability}${capability === "answer" && rule.release.mode === "unreviewed" ? " access-term-unreviewed" : ""}`}>
-        <dt><${CapabilityBadge} capability=${capability} unreviewed=${capability === "answer" && rule.release.mode === "unreviewed"} /></dt>
-        <dd>
-          <span class="access-reach-cell"><span class="sr-only">Sources: </span>${laneReach(rule, overview)}</span>${" · "}
-          ${capability === "direct"
-            ? "Raw access"
-            : rule.release.mode === "unreviewed"
-              ? html`<span class="access-unreviewed">No privacy review</span>`
-              : policySummary(rule.release.policyFamilyId, overviewPolicies(overview))}
-          ${" · "}${rule.sources.mode === "allowlist" ? "New sources blocked" : "New sources allowed"}
-          ${retained.length > 0
-            ? ` · Retained: ${retainedAllowed} allowed, ${retained.length - retainedAllowed} blocked`
-            : null}
-        </dd>
+      const unreviewed = capability === "answer" && rule?.release.mode === "unreviewed";
+      const term = (className, body) => html`<div key=${capability} class=${`access-term ${className}`}>
+        <dt><${CapabilityGlyph} capability=${capability} /><${CapabilityBadge} capability=${capability} off=${!rule} unreviewed=${unreviewed} /></dt>
+        <dd>${body}</dd>
       </div>`;
+      // The badge already tells a screen reader the capability is not granted.
+      if (!rule) return term("access-term-off", html`<span aria-hidden="true">Off</span>`);
+      if (capability === "notes") return term("access-term-notes", "Saves notes under the agent's name");
+      const retainedAllowed = retained.filter((source) => isSourceAllowed(rule, sourceId(source))).length;
+      return term(`access-term-${capability}${unreviewed ? " access-term-unreviewed" : ""}`, html`
+        <span class="access-reach-cell"><span class="sr-only">Sources: </span>${laneReach(rule, overview)}</span>${" · "}
+        ${capability === "direct"
+          ? "Raw access"
+          : unreviewed
+            ? html`<span class="access-unreviewed">No privacy review</span>`
+            : policySummary(rule.release.policyFamilyId, overviewPolicies(overview))}
+        ${" · "}${rule.sources.mode === "allowlist" ? "New sources blocked" : "New sources allowed"}
+        ${retained.length > 0
+          ? ` · Retained: ${retainedAllowed} allowed, ${retained.length - retainedAllowed} blocked`
+          : null}`);
     })}
   </dl>`;
 }

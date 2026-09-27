@@ -1084,90 +1084,187 @@ a:hover { text-decoration: underline; }
    access" way out leads somewhere this window has no business going. */
 .consent-main .access-page-back { display: none; }
 
-/* One grouped list: each access level a full-width card, its connections
-   aligned beneath its header. */
-.access-list { display: grid; gap: 14px; }
+/* One grouped list: each access level a full-width card — its name, its
+   three capability tiles, then who uses it. */
+.access-list { display: grid; gap: 16px; }
 .access-level-group {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--bg-secondary);
   overflow: hidden;
 }
-/* The level title shares the header with its action menu. */
+/* The level's name on the left, its Edit button and menu on the right. */
 .access-level-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  padding: 10px 14px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px 12px;
 }
-.access-level-title { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.access-level-title { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.access-level-kicker {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
 .access-level-name {
   overflow: hidden;
   margin: 0;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.access-level-terms { padding: 6px 14px 16px; }
-.access-level-terms .access-detail-grid dd { overflow-wrap: anywhere; }
-.access-level-terms .access-detail-grid { display: flex; flex-wrap: wrap; gap: 12px; }
-.access-level-terms .access-detail-grid > div {
-  flex: 0 1 220px;
-  min-width: 0;
-  box-sizing: border-box;
-  padding: 10px 12px;
-  border: 1px solid var(--border-light);
-  border-radius: 6px;
+.access-level-actions { display: flex; flex: none; align-items: center; gap: 8px; }
+.access-level-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+  font-size: 12px;
 }
-.access-level-terms .access-detail-grid > .access-term-answer { border-color: color-mix(in srgb, var(--success) 25%, var(--border-light)); }
-.access-level-terms .access-detail-grid > .access-term-direct { border-color: color-mix(in srgb, var(--danger) 25%, var(--border-light)); }
-.access-level-terms .access-detail-grid > .access-term-notes { border-color: color-mix(in srgb, var(--accent) 25%, var(--border-light)); }
-.access-level-terms .access-detail-grid > .access-term-unreviewed { border-color: color-mix(in srgb, var(--warning) 25%, var(--border-light)); }
-.access-level-body { margin: 0 14px 10px; }
+.access-level-terms { padding: 0 18px 16px; }
+.access-level-terms .access-detail-grid {
+  display: grid;
+  margin: 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+/* One tile per capability: a tinted glyph, vertically centred on the left,
+   beside the capability's name and the terms it runs under. */
+.access-level-terms .access-term {
+  --term-color: var(--text-muted);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+  min-height: 60px;
+  box-sizing: border-box;
+  padding: 12px 14px 12px 62px;
+  border: 1px solid color-mix(in srgb, var(--term-color) 35%, var(--border-light));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--term-color) 4%, transparent);
+}
+.access-level-terms .access-term dt { display: flex; }
+.access-level-terms .access-term dd {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.access-term-icon {
+  position: absolute;
+  top: 50%;
+  left: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--term-color) 14%, transparent);
+  color: var(--term-color);
+  transform: translateY(-50%);
+}
+/* Inside a tile the capability's name is a label, not a pill. */
+.access-level-terms .access-term .access-badge {
+  padding: 0;
+  border: none;
+  font-size: 10px;
+  letter-spacing: 0.07em;
+}
+.access-level-terms .access-term-answer { --term-color: var(--success); }
+.access-level-terms .access-term-direct { --term-color: var(--danger); }
+.access-level-terms .access-term-notes { --term-color: var(--accent); }
+.access-level-terms .access-term-unreviewed { --term-color: var(--warning); }
+.access-level-terms .access-term-off { background: transparent; border-color: var(--border-light); }
+.access-level-terms .access-term-off .access-badge.is-off { opacity: 1; }
+.access-level-terms .access-term-off dd { color: var(--text-muted); }
+.access-level-body { display: grid; gap: 14px; padding: 0 18px 16px; }
+.access-level-section { display: grid; gap: 8px; }
+.access-level-subhead { margin: 0; color: var(--text-primary); font-size: 12.5px; font-weight: 600; }
+.access-level-count { color: var(--text-muted); font-weight: 500; }
 .access-level-empty {
   margin: 0;
-  padding: 9px 0;
+  padding: 2px 0;
   color: var(--text-muted);
   font-size: 12px;
 }
 .access-level-devices {
-  margin: 6px 0 0;
-  padding: 0 12px;
-  color: var(--text-muted);
-  font-size: 12px;
+  display: grid;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  list-style: none;
 }
+.access-device-item {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 14px;
+  padding: 10px 14px;
+}
+.access-device-heading { display: grid; gap: 3px; min-width: 0; }
+.access-device-heading .access-device-link { font-size: 13px; font-weight: 600; }
+.access-device-meta { color: var(--text-muted); font-size: 11.5px; }
+.access-device-item + .access-device-item { border-top: 1px solid var(--border-light); }
 .access-device-link,
 .access-impact-device {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  vertical-align: middle;
 }
 .access-device-icon { flex: none; color: var(--text-muted); }
+/* The connections of a level as one bordered table, a hairline between rows. */
 .access-connection-list {
   display: grid;
-  gap: 8px;
-  margin: 0 0 0 12px;
+  margin: 0;
   padding: 0;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
   list-style: none;
 }
-.access-connection-item {
-  padding: 8px 12px;
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--bg-primary) 60%, var(--bg-secondary));
-}
-/* Each action menu sits beside the title it belongs to. */
+.access-connection-item { padding: 10px 14px; }
+.access-connection-item + .access-connection-item { border-top: 1px solid var(--border-light); }
+/* Logo · name and status · facts · menu, on one line. */
 .access-connection-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: 30px minmax(180px, 1fr) minmax(0, 2fr) auto;
   align-items: center;
-  gap: 10px;
-  min-height: 36px;
-  padding: 3px 0;
+  column-gap: 14px;
+  row-gap: 8px;
 }
+.access-connection-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  color: var(--text-muted);
+}
+.access-connection-logo .privacy-glyph { width: 22px; height: 22px; }
 .access-connection-row.is-inactive .access-connection-label,
 .access-connection-row.is-inactive .access-app-cell,
 .access-connection-row.is-inactive .access-used-cell { color: var(--text-muted); }
+.access-connection-row.is-inactive .access-connection-logo { filter: grayscale(1); opacity: 0.6; }
+.access-status-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-right: 2px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+.access-connection-row.is-active .access-status-dot { background: var(--success); }
+.access-connection-row.is-pending .access-status-dot { background: var(--warning); }
 .access-triad.is-inactive { filter: saturate(0.25); opacity: 0.75; }
 .access-row-actions { display: inline-flex; flex: none; }
 .access-level-group .row-action-menu { flex: none; }
@@ -1176,39 +1273,41 @@ a:hover { text-decoration: underline; }
   align-items: center;
   justify-content: center;
   font-size: 0;
-  width: 22px;
-  height: 22px;
+  width: 30px;
+  height: 30px;
   padding: 0;
-  border-color: transparent;
+  border: 1px solid var(--border);
+  border-radius: 7px;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 .access-level-group .row-action-trigger::after {
   content: "";
-  width: 2px;
-  height: 2px;
+  width: 3px;
+  height: 3px;
   border-radius: 50%;
   background: currentColor;
-  box-shadow: -4px 0 currentColor, 4px 0 currentColor;
+  box-shadow: -5px 0 currentColor, 5px 0 currentColor;
 }
+.access-connection-row .row-action-trigger { width: 26px; height: 26px; border-color: transparent; }
 .access-level-group .row-action-trigger:hover,
 .access-level-group .row-action-trigger:focus-visible {
   background: var(--bg-hover);
   color: var(--text-primary);
 }
 .access-agent-logo { display: inline-flex; flex: none; }
-.access-app-cell { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; vertical-align: middle; color: var(--text-secondary); font-size: 11.5px; }
-.access-app-label { min-width: 0; overflow-wrap: anywhere; }
+.access-app-cell { min-width: 0; overflow-wrap: anywhere; color: var(--text-secondary); font-size: 11.5px; }
 .access-connection-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; color: var(--text-secondary); font-size: 11.5px; }
 .access-connection-heading { display: grid; gap: 3px; min-width: 0; }
 .access-cell-lead { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; min-width: 0; }
 /* An agent's or a connection's name is one the client or the owner chose, so
    it reads as a name rather than as the opaque identifier the monospace face
-   implies; the identifier itself lives in the detail. */
+   implies; the identifier itself lives in the row's facts. */
 .access-connection-label {
   overflow: hidden;
   color: var(--text-primary);
-  font-size: 12.5px;
+  font-size: 13px;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1268,13 +1367,7 @@ a:hover { text-decoration: underline; }
   opacity: 0.35;
 }
 
-/* Connection facts share the card surface and align with the row above. */
-.access-connection-detail {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-  padding: 6px 0 0;
-}
+/* A connection's facts, in their own column of the row. */
 .access-connection-facts {
   display: grid;
   grid-template-columns: minmax(0, 1.6fr) repeat(2, minmax(0, 1fr));
@@ -1287,25 +1380,17 @@ a:hover { text-decoration: underline; }
 /* An id is one token: it belongs on one line, or it reads as two values. */
 .access-fact-id dd { display: flex; align-items: center; gap: 4px; }
 .access-fact-id code { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-/* Every sign-in of a connection that holds several, one per line. */
+/* Every sign-in of a connection that holds several, one per line, beneath its row. */
 .access-sign-ins {
   display: grid;
   gap: 3px;
-  margin: 0;
+  margin: 8px 0 0 44px;
   padding: 7px 0 0;
   border-top: 1px solid var(--border-light);
   list-style: none;
 }
 .access-sign-in { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; color: var(--text-secondary); font-size: 11.5px; }
-.access-detail-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  gap: 10px 24px;
-  margin: 0;
-}
-.access-detail-grid dt { margin-bottom: 4px; }
-.access-detail-grid dd { margin: 2px 0 0; color: var(--text-secondary); font-size: 11.5px; }
-.access-detail-grid a { color: inherit; text-decoration: underline; }
+.access-term dd a { color: inherit; text-decoration: underline; }
 .access-revoked,
 .access-badge {
   display: inline-flex;
@@ -1770,7 +1855,17 @@ a:hover { text-decoration: underline; }
 .access-request-actions > .btn-ghost.danger { color: var(--danger); }
 .access-request-actions button:disabled { cursor: not-allowed; opacity: .5; }
 
+@media (max-width: 1100px) {
+  .access-connection-row { grid-template-columns: 30px minmax(0, 1fr) auto; }
+  .access-connection-row .access-connection-facts { grid-column: 2 / -1; grid-row: 2; }
+}
+
+@media (max-width: 900px) {
+  .access-level-terms .access-detail-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
 @media (max-width: 760px) {
+  .access-level-head { flex-wrap: wrap; }
   .access-header,
   .access-list-header { flex-direction: column; gap: 12px; }
   .access-actions { justify-content: flex-start; }
@@ -1786,12 +1881,9 @@ a:hover { text-decoration: underline; }
   .grant-builder-bulk { grid-column: 1 / -1; justify-content: flex-start; }
   .grant-builder-rule { grid-template-columns: 1fr; }
   .access-triad { gap: 4px; }
-  .access-detail-grid { grid-template-columns: minmax(0, 1fr); }
   .access-pending-item { grid-template-columns: minmax(0, 1fr); }
   /* Level names wrap on narrow screens. */
-  .access-level-title { flex-wrap: wrap; }
-
-
+  .access-level-name { white-space: normal; }
   .access-connection-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .access-choice-option { grid-template-columns: auto minmax(0, 1fr); }
   .access-choice-option .access-triad { grid-column: 2; }
