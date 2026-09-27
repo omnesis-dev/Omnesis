@@ -111,11 +111,11 @@ trap 'exit 130' INT TERM
 
 # ── iOS ────────────────────────────────────────────────────────────────────
 
-# Boots the simulator and builds the app and its UI tests in the background,
-# so the build overlaps the gateway's indexing. Sets IOS_UDID and
-# IOS_BUILD_PID for run_ios.
+# Boots the simulator and builds the app and its UI tests, before the gateway
+# starts: compiling and embedding the corpus at once on one runner starves
+# both, and the corpus could take most of its readiness budget. Sets IOS_UDID
+# for run_ios.
 IOS_UDID=""
-IOS_BUILD_PID=""
 IOS_PACKAGE_FLAGS=()
 prepare_ios() {
   local simulator_name="${OMNESIS_JOURNEY_IOS_SIMULATOR:-iPhone 17}"
@@ -142,26 +142,26 @@ print(max(matches)[1])
   export OMNESIS_IOS_PACKAGES_DIR="${OMNESIS_IOS_PACKAGES_DIR:-$ROOT/ios/build/packages}"
   "$ROOT/scripts/ci/resolve-ios-packages.sh" OmnesisDemoUITests
   IOS_PACKAGE_FLAGS=(-clonedSourcePackagesDirPath "$OMNESIS_IOS_PACKAGES_DIR" -disableAutomaticPackageResolution)
-  echo "→ Building the app and its UI tests while the gateway indexes…"
+  echo "→ Building the app and its UI tests…"
+  local started=$SECONDS
   # A generic destination: the build needs no particular simulator, and a
   # freshly booted one is not always visible to xcodebuild yet.
-  xcodebuild build-for-testing \
+  if ! xcodebuild build-for-testing \
     -project "$ROOT/ios/Omnesis.xcodeproj" \
     -scheme OmnesisDemoUITests \
     -destination "generic/platform=iOS Simulator" \
     "${IOS_PACKAGE_FLAGS[@]}" \
     -derivedDataPath "$IOS_DERIVED_DATA" \
-    >"$ARTIFACTS/xcodebuild-build.log" 2>&1 &
-  IOS_BUILD_PID=$!
-}
-
-run_ios() {
-  local udid="$IOS_UDID"
-  if ! wait "$IOS_BUILD_PID"; then
+    >"$ARTIFACTS/xcodebuild-build.log" 2>&1; then
     grep -E 'error:|\*\* BUILD' "$ARTIFACTS/xcodebuild-build.log" | tail -40 >&2
     echo "✗ The iOS app or its UI tests did not build." >&2
     return 1
   fi
+  echo "  built in $((SECONDS - started))s."
+}
+
+run_ios() {
+  local udid="$IOS_UDID"
   local bundle_id
   bundle_id="$("$ROOT/scripts/ios-resolved-bundle-id.sh" OmnesisDemo)"
   # A person grants these when the app asks; the journeys are not about the
@@ -370,6 +370,11 @@ PY
 
 # ── Gateway ────────────────────────────────────────────────────────────────
 
+IOS_DERIVED_DATA="$WORK/ios-derived-data"
+if [[ "$PLATFORM" == ios ]]; then
+  prepare_ios
+fi
+
 # The apps search through POST /search, which answers only once documents are
 # embedded, so the gateway needs its embedding model. A machine that already
 # has one in ~/.config/omnesis/models lends it (synth-gateway.sh links it);
@@ -403,6 +408,7 @@ if [[ ! -f "$HOME/.config/omnesis/models/$MODEL_FILE" ]]; then
 fi
 
 echo "→ Booting the synthetic gateway on $URL (universe e2e-minimal, replay agent)…"
+gateway_started=$SECONDS
 # A blank slate every run; the model link survives.
 if [[ -d "$OMNESIS_CONFIG_DIR" ]]; then
   "$ROOT/scripts/synth-gateway.sh" stop >/dev/null 2>&1 || true
@@ -421,16 +427,9 @@ TOKEN="$(cat "$OMNESIS_CONFIG_DIR/token")"
 FINGERPRINT="$(openssl x509 -in "$OMNESIS_CONFIG_DIR/tls/cert.pem" -noout -fingerprint -sha256 \
   | cut -d= -f2 | tr -d ':' | tr 'A-F' 'a-f')"
 
-IOS_DERIVED_DATA="$WORK/ios-derived-data"
-if [[ "$PLATFORM" == ios ]]; then
-  export URL
-  prepare_ios
-fi
-
 # The search journeys look for this invented document; the index is ready for
 # them once the gateway's own search returns it. Search reads a snapshot that
-# refreshes on a timer, so each check asks for a fresh one first. A cold macOS
-# runner can take minutes just to load the embedding model.
+# refreshes on a timer, so each check asks for a fresh one first.
 READY_DOCUMENT="Acme Q3 Planning"
 READY_BUDGET_SECONDS="${OMNESIS_JOURNEY_READY_TIMEOUT:-900}"
 echo "→ Waiting for the corpus to be searchable…"
@@ -457,7 +456,7 @@ if [[ "$ready" != 1 ]]; then
   echo "The gateway never returned \"$READY_DOCUMENT\" from /search within ${READY_BUDGET_SECONDS}s." >&2
   exit 1
 fi
-echo "  corpus ready after ${SECONDS}s."
+echo "  corpus ready $((SECONDS - gateway_started))s after the gateway started."
 
 export URL
 "run_$PLATFORM"
