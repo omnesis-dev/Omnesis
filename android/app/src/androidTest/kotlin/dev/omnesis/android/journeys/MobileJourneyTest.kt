@@ -83,13 +83,17 @@ class MobileJourneyTest {
         val pairing = gateway.mintPairing(deviceName)
         scenario = ActivityScenario.launch(MainActivity::class.java)
 
-        tap("onboarding.pair")
         // The scanner asks for the camera first; a person pairing by code declines.
         // The permission controller's package differs between AOSP and Google images.
-        val deny = device.wait(
-            Until.findObject(By.res(Pattern.compile(".*permissioncontroller:id/permission_deny_button"))),
-            STEP_TIMEOUT_MS,
-        )
+        // A tap that lands while the launch splash is still leaving the screen is
+        // dropped, so the tap is repeated until the pairing screen asks.
+        val denySelector = By.res(Pattern.compile(".*permissioncontroller:id/permission_deny_button"))
+        var deny: androidx.test.uiautomator.UiObject2? = null
+        for (attempt in 1..3) {
+            tap("onboarding.pair")
+            deny = device.wait(Until.findObject(denySelector), STEP_TIMEOUT_MS / 3)
+            if (deny != null) break
+        }
         checkNotNull(deny) { "the pairing screen never asked for the camera" }.click()
         tap("pairing.manual")
         waitForTag("pairing.pasteJSON.field")
