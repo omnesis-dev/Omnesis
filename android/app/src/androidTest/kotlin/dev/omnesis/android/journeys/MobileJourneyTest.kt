@@ -83,13 +83,24 @@ class MobileJourneyTest {
         val pairing = gateway.mintPairing(deviceName)
         scenario = ActivityScenario.launch(MainActivity::class.java)
 
-        tap("onboarding.pair")
         // The scanner asks for the camera first; a person pairing by code declines.
         // The permission controller's package differs between AOSP and Google images.
-        val deny = device.wait(
-            Until.findObject(By.res(Pattern.compile(".*permissioncontroller:id/permission_deny_button"))),
-            STEP_TIMEOUT_MS,
-        )
+        // A tap that lands while the launch splash is still leaving the screen is
+        // dropped, so it is repeated while onboarding is still showing. Once the
+        // pairing screen is up, the request can take several seconds to appear.
+        val denySelector = By.res(Pattern.compile(".*permissioncontroller:id/permission_deny_button"))
+        var deny: androidx.test.uiautomator.UiObject2? = null
+        tap("onboarding.pair")
+        val deadline = System.currentTimeMillis() + PAIRING_TIMEOUT_MS
+        while (deny == null && System.currentTimeMillis() < deadline) {
+            // A stalled system app's "isn't responding" dialog can cover the
+            // request; waiting on it is the emulator's business, not the app's.
+            device.findObject(By.res("android", "aerr_wait"))?.click()
+            deny = device.wait(Until.findObject(denySelector), 5_000)
+            if (deny == null && onScreen(hasTestTag("onboarding.pair"))) {
+                compose.onAllNodesWithTag("onboarding.pair").onFirst().performClick()
+            }
+        }
         checkNotNull(deny) { "the pairing screen never asked for the camera" }.click()
         tap("pairing.manual")
         waitForTag("pairing.pasteJSON.field")
@@ -186,13 +197,14 @@ class MobileJourneyTest {
      */
     private fun waitFor(matcher: SemanticsMatcher, failure: String, timeoutMs: Long = STEP_TIMEOUT_MS) {
         try {
-            compose.waitUntil(timeoutMs) {
-                runCatching { compose.onAllNodes(matcher).fetchSemanticsNodes().isNotEmpty() }.getOrDefault(false)
-            }
+            compose.waitUntil(timeoutMs) { onScreen(matcher) }
         } catch (timeout: androidx.compose.ui.test.ComposeTimeoutException) {
             throw AssertionError(failure, timeout)
         }
     }
+
+    private fun onScreen(matcher: SemanticsMatcher): Boolean =
+        runCatching { compose.onAllNodes(matcher).fetchSemanticsNodes().isNotEmpty() }.getOrDefault(false)
 
     private fun notificationPermission(): TestRule =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

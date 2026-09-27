@@ -272,6 +272,10 @@ run_android() {
   local reports="$ROOT/android/app/build/reports/androidTests/connected"
   local device_shots="/sdcard/omnesis-journeys"
 
+  # A system app that stalls on a busy emulator (the launcher, typically)
+  # raises an "isn't responding" dialog over whatever the journey is driving.
+  # Those dialogs are about the emulator, not the app under test.
+  bounded 30 adb shell settings put global hide_error_dialogs 1 >/dev/null 2>&1 || true
   local device_video="/sdcard/omnesis-journeys-video"
   bounded 30 adb shell rm -rf "$device_shots" "$device_video" >/dev/null 2>&1 || true
   bounded 30 adb shell mkdir -p "$device_video" >/dev/null 2>&1 || true
