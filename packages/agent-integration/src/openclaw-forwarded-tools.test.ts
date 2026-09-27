@@ -99,7 +99,11 @@ async function startPlugin(grant: readonly FictionalCapability[]) {
   return { gateway, stateDir, host, offered, tool };
 }
 
-function writeCredentials(stateDir: string, gatewayUrl: string): void {
+function writeCredentials(
+  stateDir: string,
+  gatewayUrl: string,
+  clientId = "client_fictional",
+): void {
   mkdirSync(join(stateDir, "omnesis"), { recursive: true });
   writeFileSync(
     join(stateDir, "omnesis", "integration.json"),
@@ -110,7 +114,7 @@ function writeCredentials(stateDir: string, gatewayUrl: string): void {
       managementToken: "omn_fictional_management",
       oauth: {
         redirectUri: "http://127.0.0.1:48123/callback",
-        clientInformation: { client_id: "client_fictional" },
+        clientInformation: { client_id: clientId },
         tokens: {
           access_token: "omn_oat_fictional",
           refresh_token: "omn_ort_fictional",
@@ -242,22 +246,30 @@ describe("OpenClaw Direct and Notes tools", () => {
     );
   });
 
-  test("keeps the last listing across a restart with the gateway down", async () => {
+  test("keeps the last listing across a restart with the gateway down, for that connection only", async () => {
     const first = await startPlugin(["direct"]);
     expect(existsSync(join(first.stateDir, "omnesis", "mcp-tools.json"))).toBe(true);
     await first.host.services[0]!.stop();
+    // The gateway goes down; the connection is unchanged.
+    await first.gateway.close();
 
-    writeCredentials(first.stateDir, "http://127.0.0.1:1");
-    const host = fakeHost();
-    registerOpenClawIntegration(host.api as never);
-    const service = host.services[0]!;
-    await service.start({ stateDir: first.stateDir, logger: { warn: vi.fn() } });
-    cleanups.push(() => service.stop());
-    const factory = host.tools.find(({ options }) => options.names)!.factory;
-    const resolved = factory({ sessionKey: "agent:main:main" }) as Tool[];
-    expect(resolved.map((candidate) => candidate.name)).toEqual([
-      "omnesis_run_sql",
-      "omnesis_list_tables",
-    ]);
+    const restart = async (clientId: string): Promise<string[]> => {
+      writeCredentials(first.stateDir, first.gateway.url, clientId);
+      const host = fakeHost();
+      registerOpenClawIntegration(host.api as never);
+      const service = host.services[0]!;
+      await service.start({ stateDir: first.stateDir, logger: { warn: vi.fn() } });
+      try {
+        const factory = host.tools.find(({ options }) => options.names)!.factory;
+        const resolved = factory({ sessionKey: "agent:main:main" });
+        return ((resolved ?? []) as Tool[]).map((candidate) => candidate.name);
+      } finally {
+        await service.stop();
+      }
+    };
+    expect(await restart("client_fictional")).toEqual(["omnesis_run_sql", "omnesis_list_tables"]);
+    // `omnesis connect --refresh` bound a new connection, whose grant nothing
+    // has listed yet.
+    expect(await restart("client_reconnected")).toEqual([]);
   });
 });

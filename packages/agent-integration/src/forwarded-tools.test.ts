@@ -12,8 +12,13 @@ import {
   ForwardedToolCatalogue,
   forwardedToolOutcome,
   forwardedToolsFromListing,
+  forwardedToolsOwner,
   readForwardedToolCache,
 } from "./forwarded-tools.js";
+
+const OWNER = forwardedToolsOwner("https://gateway.example.com:7600", {
+  client_id: "client_fictional",
+})!;
 
 const tempDirs: string[] = [];
 
@@ -91,12 +96,20 @@ describe("what a forwarded call returns", () => {
 describe("the connection's tool catalogue", () => {
   test("starts from the last listing a previous process kept", async () => {
     const path = cachePath();
-    writeFileSync(path, JSON.stringify({ tools: [listed("add_note"), listed("ask_omnesis")] }));
+    writeFileSync(
+      path,
+      JSON.stringify({ ...OWNER, tools: [listed("add_note"), listed("ask_omnesis")] }),
+    );
     const list = vi.fn(async () => {
       throw new Error("gateway unreachable");
     });
     const warn = vi.fn();
-    const catalogue = new ForwardedToolCatalogue({ list, cachePath: path, logger: { warn } });
+    const catalogue = new ForwardedToolCatalogue({
+      list,
+      cachePath: path,
+      owner: OWNER,
+      logger: { warn },
+    });
     expect(catalogue.current().map((tool) => tool.name)).toEqual(["add_note"]);
     await catalogue.idle();
     // The failed listing leaves the kept one standing.
@@ -108,9 +121,51 @@ describe("the connection's tool catalogue", () => {
     const catalogue = new ForwardedToolCatalogue({
       list: async () => new Promise<never>(() => {}),
       cachePath: cachePath(),
+      owner: OWNER,
       logger: { warn: vi.fn() },
     });
     expect(catalogue.current()).toEqual([]);
+  });
+
+  test("never offers a listing kept for another connection or gateway", async () => {
+    const path = cachePath();
+    writeFileSync(path, JSON.stringify({ ...OWNER, tools: [listed("run_sql")] }));
+    const unreachable = async () => {
+      throw new Error("gateway unreachable");
+    };
+    for (const owner of [
+      forwardedToolsOwner("https://gateway.example.com:7600", { client_id: "client_replaced" }),
+      forwardedToolsOwner("https://other.example.com:7600", { client_id: "client_fictional" }),
+      forwardedToolsOwner("https://gateway.example.com:7600", {}),
+    ]) {
+      const catalogue = new ForwardedToolCatalogue({
+        list: unreachable,
+        cachePath: path,
+        owner,
+        logger: { warn: vi.fn() },
+      });
+      expect(catalogue.current()).toEqual([]);
+      await catalogue.idle();
+    }
+    // A listing that names no connection is nobody's.
+    writeFileSync(path, JSON.stringify({ tools: [listed("run_sql")] }));
+    expect(readForwardedToolCache(path, OWNER)).toBeNull();
+  });
+
+  test("replaces a listing kept for another connection even when the new one is empty", async () => {
+    const path = cachePath();
+    writeFileSync(
+      path,
+      JSON.stringify({ ...OWNER, clientId: "client_replaced", tools: [listed("run_sql")] }),
+    );
+    const catalogue = new ForwardedToolCatalogue({
+      list: async () => [],
+      cachePath: path,
+      owner: OWNER,
+      logger: { warn: vi.fn() },
+    });
+    await catalogue.refresh();
+    expect(readForwardedToolCache(path, OWNER)).toEqual([]);
   });
 
   test("keeps a listing for the next process, readable only by its owner", async () => {
@@ -118,11 +173,12 @@ describe("the connection's tool catalogue", () => {
     const catalogue = new ForwardedToolCatalogue({
       list: async () => [listed("list_tables"), listed("run_sql")],
       cachePath: path,
+      owner: OWNER,
       logger: { warn: vi.fn() },
     });
     await catalogue.refresh();
     expect(catalogue.current().map((tool) => tool.name)).toEqual(["run_sql", "list_tables"]);
-    expect(readForwardedToolCache(path).map((tool) => tool.name)).toEqual([
+    expect(readForwardedToolCache(path, OWNER)?.map((tool) => tool.name)).toEqual([
       "run_sql",
       "list_tables",
     ]);
@@ -140,6 +196,7 @@ describe("the connection's tool catalogue", () => {
     const catalogue = new ForwardedToolCatalogue({
       list,
       cachePath: cachePath(),
+      owner: OWNER,
       logger: { warn: vi.fn() },
       now: () => clock,
     });
@@ -176,37 +233,43 @@ describe("the connection's tool catalogue", () => {
     expect(catalogue.current().map((tool) => tool.name)).toEqual(["run_sql", "add_note"]);
   });
 
-  test("an invalidated listing is re-read at once, joining one already under way", async () => {
+  test("an invalidated listing is re-read at once, after one already under way", async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
+    // The listing under way was answered before access narrowed; the one
+    // after it sees the narrowed grant.
+    const listings = [[listed("run_sql"), listed("add_note")], [listed("add_note")]];
     const list = vi.fn(async () => {
-      await gate;
-      return [listed("add_note")];
+      const answer = listings.shift()!;
+      if (listings.length === 1) await gate;
+      return answer;
     });
     const catalogue = new ForwardedToolCatalogue({
       list,
       cachePath: cachePath(),
+      owner: OWNER,
       logger: { warn: vi.fn() },
     });
     const first = catalogue.refresh();
     catalogue.invalidate();
+    catalogue.invalidate();
     catalogue.current();
     release();
     await first;
-    expect(list).toHaveBeenCalledTimes(1);
-    catalogue.invalidate();
+    await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(2));
     await catalogue.idle();
+    expect(catalogue.current().map((tool) => tool.name)).toEqual(["add_note"]);
     expect(list).toHaveBeenCalledTimes(2);
   });
 
   test("ignores a kept listing it cannot read", () => {
     const path = cachePath();
     writeFileSync(path, "not json");
-    expect(readForwardedToolCache(path)).toEqual([]);
-    writeFileSync(path, JSON.stringify({ tools: "nope" }));
-    expect(readForwardedToolCache(path)).toEqual([]);
+    expect(readForwardedToolCache(path, OWNER)).toBeNull();
+    writeFileSync(path, JSON.stringify({ ...OWNER, tools: "nope" }));
+    expect(readForwardedToolCache(path, OWNER)).toBeNull();
     expect(readFileSync(path, "utf8")).toContain("nope");
   });
 });

@@ -30,7 +30,9 @@ export const ANSWER_ERROR_META_KEY = "dev.omnesis/error";
 /**
  * The largest `/mcp` response accepted. A Direct result may carry up to 1 MiB
  * of JSON, and the JSON-RPC envelope and event-stream framing around it add a
- * little more.
+ * little more; the rest is headroom, so a result at the gateway's ceiling is
+ * never cut off while a misbehaving gateway still cannot make the plugin
+ * buffer without bound.
  */
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 

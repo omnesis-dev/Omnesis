@@ -23,6 +23,7 @@ export interface FictionalGateway {
   calls: FictionalToolCall[];
   /** How many `tools/list` requests the gateway has answered. */
   listings(): number;
+  /** Stop listening, dropping open connections. Safe to call more than once. */
   close(): Promise<void>;
 }
 
@@ -197,14 +198,17 @@ export async function startFictionalGateway(
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("fictional gateway did not listen");
+  let closed: Promise<void> | undefined;
   return {
     url: `http://127.0.0.1:${address.port}`,
     grant,
     calls,
     listings: () => listings,
     close: () =>
-      new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      ),
+      closed ??
+      (closed = new Promise<void>((resolve, reject) => {
+        server.closeAllConnections();
+        server.close((error) => (error ? reject(error) : resolve()));
+      })),
   };
 }

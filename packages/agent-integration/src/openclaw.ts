@@ -58,6 +58,7 @@ import {
   FORWARDED_TOOL_TIMEOUT_MS,
   ForwardedToolCatalogue,
   forwardedToolOutcome,
+  forwardedToolsOwner,
   type ForwardedTool,
 } from "./forwarded-tools.js";
 import { harnessClientName } from "./harness.js";
@@ -1239,6 +1240,7 @@ class OpenClawIntegrationService {
         this.forwardedTools = new ForwardedToolCatalogue({
           list: (timeoutMs) => answerMcp.listTools(undefined, timeoutMs),
           cachePath: join(context.stateDir, "omnesis", "mcp-tools.json"),
+          owner: forwardedToolsOwner(credentials.gatewayUrl, credentials.oauth.clientInformation),
           logger: context.logger,
         });
       } else {

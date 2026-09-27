@@ -69,7 +69,17 @@ const forwardedToolSchema = z.object({
 
 export type ForwardedTool = z.infer<typeof forwardedToolSchema> & { name: ForwardedToolName };
 
-const cacheFileSchema = z.object({ tools: z.array(z.unknown()) });
+/** The connection a listing was made for: its gateway and its OAuth client. */
+export interface ForwardedToolsOwner {
+  gatewayUrl: string;
+  clientId: string;
+}
+
+const cacheFileSchema = z.object({
+  gatewayUrl: z.string(),
+  clientId: z.string(),
+  tools: z.array(z.unknown()),
+});
 
 /**
  * The hostable tools in a `tools/list` result, in offering order.
@@ -138,6 +148,13 @@ export interface ForwardedToolCatalogueOptions {
   list(timeoutMs: number): Promise<readonly unknown[]>;
   /** Where the last listing is kept, so a restart with the gateway down keeps it. */
   cachePath: string;
+  /**
+   * Whose listing it is: the gateway and the OAuth client the listing was made
+   * for. A kept listing made for anyone else — a connection since replaced by
+   * `omnesis connect --refresh`, another gateway — is never offered. Without
+   * one, no listing is kept or read.
+   */
+  owner: ForwardedToolsOwner | undefined;
   logger: IntegrationLogger;
   now?: () => number;
 }
@@ -149,18 +166,26 @@ export interface ForwardedToolCatalogueOptions {
  * on the network. A listing older than `FORWARDED_TOOLS_STALE_MS` is re-read in
  * the background on the next use, so a change to the connection's access
  * level reaches the harness within minutes and without a restart; so is one a
- * forwarded call found out of date. The last good listing is persisted, and is
- * what a process starts from until its own first listing lands.
+ * forwarded call found out of date. The last good listing is persisted for its
+ * owner, and is what that owner's next process starts from until its own first
+ * listing lands.
  */
 export class ForwardedToolCatalogue {
   private tools: readonly ForwardedTool[];
+  /** Whether the kept listing is this owner's copy of `tools`. */
+  private kept: boolean;
   private nextRefreshAt = 0;
   private inFlight: Promise<void> | null = null;
+  /** Bumped by `invalidate`, so a listing already under way cannot vouch for later access. */
+  private generation = 0;
   private readonly now: () => number;
 
   constructor(private readonly options: ForwardedToolCatalogueOptions) {
     this.now = options.now ?? Date.now;
-    this.tools = readForwardedToolCache(options.cachePath);
+    const kept =
+      options.owner === undefined ? null : readForwardedToolCache(options.cachePath, options.owner);
+    this.tools = kept ?? [];
+    this.kept = kept !== null;
   }
 
   /** The tools to offer now. A stale listing is re-read for the next caller. */
@@ -169,10 +194,17 @@ export class ForwardedToolCatalogue {
     return this.tools;
   }
 
-  /** Re-read the listing at the next opportunity, starting now. */
+  /**
+   * Re-read the listing now. A listing already under way may have been
+   * answered before the change that prompted this, so it is followed by
+   * another rather than joined.
+   */
   invalidate(): void {
+    this.generation += 1;
     this.nextRefreshAt = 0;
-    void this.refresh();
+    const pending = this.inFlight;
+    if (pending) void pending.then(() => this.refresh());
+    else void this.refresh();
   }
 
   /**
@@ -183,6 +215,7 @@ export class ForwardedToolCatalogue {
   refresh(timeoutMs = FORWARDED_TOOL_TIMEOUT_MS): Promise<void> {
     if (this.inFlight) return this.inFlight;
     const started = this.now();
+    const generation = this.generation;
     this.nextRefreshAt = started + FORWARDED_TOOLS_RETRY_MS;
     this.inFlight = (async () => {
       let listed: ForwardedTool[];
@@ -194,14 +227,20 @@ export class ForwardedToolCatalogue {
         );
         return;
       }
-      this.nextRefreshAt = started + FORWARDED_TOOLS_STALE_MS;
-      if (JSON.stringify(listed) === JSON.stringify(this.tools)) return;
+      if (generation === this.generation) {
+        this.nextRefreshAt = started + FORWARDED_TOOLS_STALE_MS;
+      }
+      const changed = JSON.stringify(listed) !== JSON.stringify(this.tools);
       this.tools = listed;
+      const owner = this.options.owner;
+      if (owner === undefined || (this.kept && !changed)) return;
+      this.kept = false;
       try {
         writeSecretFileDurably(
           this.options.cachePath,
-          `${JSON.stringify({ tools: listed }, null, 2)}\n`,
+          `${JSON.stringify({ ...owner, tools: listed }, null, 2)}\n`,
         );
+        this.kept = true;
       } catch (error) {
         this.options.logger.warn(`could not keep the Omnesis tool listing: ${describe(error)}`);
       }
@@ -211,9 +250,9 @@ export class ForwardedToolCatalogue {
     return this.inFlight;
   }
 
-  /** Settles once no listing is under way, for a clean shutdown. */
+  /** Settles once no listing is under way or queued behind one, for a clean shutdown. */
   async idle(): Promise<void> {
-    await this.inFlight;
+    while (this.inFlight) await this.inFlight;
   }
 }
 
@@ -221,12 +260,34 @@ function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** The listing a previous process kept, or none when it is missing or unreadable. */
-export function readForwardedToolCache(path: string): ForwardedTool[] {
+/**
+ * The listing a previous process kept for this owner, or null when there is
+ * none: missing, unreadable, or kept for someone else.
+ */
+export function readForwardedToolCache(
+  path: string,
+  owner: ForwardedToolsOwner,
+): ForwardedTool[] | null {
   try {
     const parsed = cacheFileSchema.safeParse(JSON.parse(readFileSync(path, "utf8")));
-    return parsed.success ? forwardedToolsFromListing(parsed.data.tools) : [];
+    if (
+      !parsed.success ||
+      parsed.data.gatewayUrl !== owner.gatewayUrl ||
+      parsed.data.clientId !== owner.clientId
+    ) {
+      return null;
+    }
+    return forwardedToolsFromListing(parsed.data.tools);
   } catch {
-    return [];
+    return null;
   }
+}
+
+/** The owner of a connection's listing, once it has an OAuth client. */
+export function forwardedToolsOwner(
+  gatewayUrl: string,
+  clientInformation: Readonly<Record<string, unknown>>,
+): ForwardedToolsOwner | undefined {
+  const clientId = clientInformation.client_id;
+  return typeof clientId === "string" && clientId !== "" ? { gatewayUrl, clientId } : undefined;
 }
