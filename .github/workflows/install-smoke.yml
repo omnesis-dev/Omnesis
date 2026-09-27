@@ -144,7 +144,16 @@ jobs:
       # boot the installed gateway, which opens its stores through them.
       - name: "proof: break a native module (do not merge)"
         run: |
-          built=$(find "$TEST_HOME/.npm-global/lib/node_modules/omnesis" -path '*better-sqlite3-multiple-ciphers/build/Release/*.node')
+          dir=$(node -e '
+            const { createRequire } = require("node:module");
+            const { realpathSync } = require("node:fs");
+            const { dirname } = require("node:path");
+            const omnesis = realpathSync(process.argv[1] + "/node_modules/omnesis/package.json");
+            const gateway = createRequire(omnesis).resolve("@omnesis/gateway/package.json");
+            console.log(dirname(createRequire(gateway).resolve("better-sqlite3-multiple-ciphers/package.json")));
+          ' "$TEST_HOME/.npm-global/lib")
+          echo "module dir: $dir"
+          built=$(find -L "$dir" -name '*.node')
           [ -n "$built" ] || { echo "no built module found to break"; exit 1; }
           echo "$built" | while read -r f; do : >"$f"; echo "truncated $f"; done
 
