@@ -59,6 +59,7 @@ import {
 } from "./oauth-access-shared.js";
 import type { Context, MiddlewareHandler } from "hono";
 import type { AppEnv, RouteApp } from "./types.js";
+import type { AgentCertificateTrust } from "../../tls-lifecycle/agent-trust.js";
 import type { AccessService } from "../../access/service.js";
 import type { AccessAuthorizationNotifier } from "../../access/authorization-notifier.js";
 
@@ -96,6 +97,8 @@ export function mountOAuthAuthorizationRoutes(
     listenPort?: number;
     /** Replaces the TLS connection that checks which certificate a resource presents (tests). */
     probeCertificate?: CertificateProbe;
+    /** Who minted the served certificate and the file an agent on this machine trusts it by. */
+    agentCertificateTrust?: () => AgentCertificateTrust;
   } = {},
 ): void {
   const authorizationLimiter = oauthAuthorizationRateLimiter();
@@ -376,6 +379,7 @@ export function mountOAuthAuthorizationRoutes(
               publiclyTrusted: served.get(resource)?.publiclyTrusted ?? false,
             })),
             tlsFingerprintSha256: fingerprint() ?? null,
+            certificate: options.agentCertificateTrust?.() ?? null,
           }
         : null,
     };

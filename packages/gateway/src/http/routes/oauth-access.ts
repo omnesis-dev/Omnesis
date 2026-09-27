@@ -9,6 +9,7 @@ import type { ClientAssertionVerifier } from "../../access/client-assertion.js";
 import type { ClientMetadataDocumentResolver } from "../../access/client-metadata-document.js";
 import type { RouteApp } from "./types.js";
 import type { CertificateProbe } from "../../access/served-by-gateway.js";
+import type { AgentCertificateTrust } from "../../tls-lifecycle/agent-trust.js";
 
 export function mountOAuthAccessRoutes(
   app: RouteApp,
@@ -30,6 +31,8 @@ export function mountOAuthAccessRoutes(
     listenPort?: number;
     /** See `mountOAuthAuthorizationRoutes`. */
     probeCertificate?: CertificateProbe;
+    /** See `mountOAuthAuthorizationRoutes`. */
+    agentCertificateTrust?: () => AgentCertificateTrust;
   } = {},
 ): void {
   mountOAuthAccessProtocolRoutes(app, access, options);

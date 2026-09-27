@@ -1108,6 +1108,10 @@ describe("install.sh --docker: what it puts on this host", () => {
     expect(run.output).toContain("serves a self-signed");
     expect(run.output).toContain("re-run with --tls-cert/--tls-key");
     expect(run.output).not.toContain("omnesis tls provision");
+    expect(run.output).toContain(
+      "Connecting AI agents — this gateway has no Tailscale certificate",
+    );
+    expect(run.output).toContain("https://omnesis.dev/docs/install#docker-tls");
     expect(run.output).toContain("read macOS databases");
     expect(run.output).toContain("Multicast does not cross the Docker bridge");
     expect(run.output).toContain("no OS keyring");

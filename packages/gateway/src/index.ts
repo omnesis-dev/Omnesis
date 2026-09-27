@@ -2343,6 +2343,7 @@ const app = createServer(db, DB_PATH, {
   },
   tlsFingerprintSha256: () => tlsLifecycle.fingerprintSha256(),
   tlsLifecycle,
+  agentCertificateTrust: () => tlsLifecycle.agentCertificateTrust(),
   // A Tailscale certificate is publicly chained, so its names need no
   // allowlist entry: phones verify them through platform trust at any port.
   publiclyTrustedPairingHosts: () => tlsLifecycle.publiclyTrustedNames(),

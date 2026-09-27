@@ -327,6 +327,15 @@
           <a href="#browser-extension">browser extension</a> cannot pair through it at all.
         </p>
         <p>
+          Agents are the other reason. OpenClaw and Hermes pin the gateway's fingerprint and connect
+          with any of these certificates. Claude Code cannot connect to the self-signed one, and
+          needs a one-time trust setting for a mkcert one; Codex needs that setting for either. See
+          <a href="/docs/connect#trust-certificate">Trust the gateway's certificate</a>. ChatGPT and
+          the Claude apps connect from their providers' servers, so they need a public address
+          whatever the certificate: <a href="/docs/connect#tailscale-funnel">Tailscale Funnel</a> or
+          a <a href="#public-domain">domain of your own</a>.
+        </p>
+        <p>
           A certificate controls whether a client trusts the gateway, not whether it can reach it.
           It must cover the exact name or address the client uses. Reaching the gateway is a network
           question: the same LAN, the same tailnet, or a port you open (see

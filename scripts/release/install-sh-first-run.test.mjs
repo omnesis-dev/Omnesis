@@ -1826,6 +1826,13 @@ describe("install.sh gateway URL", () => {
     expect(run.output).toContain("Connect your browser (optional)");
     expect(run.output).toContain("serves a self-signed");
     expect(run.output).toContain("omnesis tls provision");
+    // Which agents can connect without a Tailscale certificate, and the fix.
+    expect(run.output).toContain(
+      "Connecting AI agents — this gateway has no Tailscale certificate",
+    );
+    expect(run.output).toMatch(/claude code, chatgpt and the claude apps cannot connect/iu);
+    expect(run.output).toContain("Codex works with one setting");
+    expect(run.output).toContain("(SSL_CERT_FILE)");
   });
 });
 
@@ -2321,6 +2328,7 @@ describe("install.sh second-machine banner", () => {
     expect(run.status).toBe(0);
     expect(run.output).toContain("--gateway-url https://workstation.example-tailnet.ts.net:7600");
     expect(run.output).toContain(`--trust-fingerprint sha256:${fingerprint}`);
+    expect(run.output).not.toContain("Connecting AI agents");
   });
 
   test.skipIf(!HAS_PTY)(
@@ -2395,6 +2403,11 @@ describe("install.sh second-machine banner", () => {
     expect(run.output).toContain("omnesis devices pair --kind browser");
     expect(run.output).not.toContain("serves a self-signed");
     expect(run.output).not.toContain("Which address should another machine use");
+    // The terminal agents trust mkcert with one setting; hosted apps need a public address.
+    expect(run.output).toContain("Connecting AI agents — this gateway serves a mkcert certificate");
+    expect(run.output).toMatch(/claude code and codex need a one-time trust setting/iu);
+    expect(run.output).toContain("ChatGPT and the Claude apps cannot");
+    expect(run.output).not.toContain("no Tailscale certificate");
   });
 
   test.skipIf(process.platform !== "linux")(

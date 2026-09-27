@@ -5604,6 +5604,7 @@ print_docker_banner() {
   if [ "$COLLECTOR" != 1 ]; then
     print_phone_lines
     print_browser_lines
+    print_agent_certificate_lines
   fi
   echo "  Compose file:  $COMPOSE_FILE  (image tag: $IMAGE_TAG)"
   echo "  Stop:          docker compose -f $COMPOSE_FILE down"
@@ -5943,6 +5944,7 @@ print_banner() {
   print_browser_lines
   print_second_machine_lines
   print_port_move_lines
+  print_agent_certificate_lines
   echo "  Manage services:  omnesis service status|logs|restart"
   echo "  Update later:     omnesis update"
   print_path_hints
@@ -5992,6 +5994,42 @@ print_browser_lines() {
   fi
   echo "  https://omnesis.dev/docs/setup#browser-extension"
   echo ""
+}
+
+# Which agents can connect to the certificate this gateway ends up serving,
+# read from what .env records: nothing for the gateway's self-signed default,
+# the fixed mkcert path for the mkcert tier. A Tailscale certificate, or an
+# operator's own, prints nothing; those are either publicly trusted or chosen
+# by someone who knows what trusts them.
+print_agent_certificate_lines() {
+  AGENT_CERT="$(dotenv_value OMNESIS_TLS_CERT 2>/dev/null || true)"
+  if [ -z "$AGENT_CERT" ]; then
+    printf '\033[1m\033[0;33mConnecting AI agents — this gateway has no Tailscale certificate:\033[0m\n'
+    echo ""
+    echo "  It serves its own self-signed certificate. Without a Tailscale certificate (or a"
+    echo "  domain of your own), Claude Code, ChatGPT and the Claude apps cannot connect."
+    echo "  OpenClaw, Hermes and the phone apps work as they are. Codex works with one setting"
+    echo "  (SSL_CERT_FILE), shown in the portal under Settings → Access → Connect an agent."
+    if [ "$DOCKER" = 1 ]; then
+      echo "  To fix it, issue a Tailscale certificate on the host and re-run with --tls-cert/--tls-key:"
+      echo "  https://omnesis.dev/docs/install#docker-tls"
+    else
+      echo "  To fix it, set up Tailscale (MagicDNS and HTTPS certificates on), then run:"
+      echo "    omnesis tls provision"
+    fi
+    echo "  ChatGPT and the Claude apps also need the gateway published (Tailscale Funnel or a"
+    echo "  domain of your own): https://omnesis.dev/docs/connect#bring-your-own-agent"
+    echo ""
+  elif [ "$AGENT_CERT" = "$CONFIG_DIR/tls/mkcert.crt" ]; then
+    printf '\033[1m\033[0;33mConnecting AI agents — this gateway serves a mkcert certificate:\033[0m\n'
+    echo ""
+    echo "  Only this machine trusts it. Claude Code and Codex need a one-time trust setting"
+    echo "  first, shown in the portal under Settings → Access → Connect an agent. OpenClaw,"
+    echo "  Hermes and the phone apps work as they are. ChatGPT and the Claude apps cannot"
+    echo "  connect: they need a public address (Tailscale Funnel or a domain of your own)."
+    echo "  https://omnesis.dev/docs/connect#trust-certificate"
+    echo ""
+  fi
 }
 
 # Whether the gateway serves a certificate other than its self-signed default:

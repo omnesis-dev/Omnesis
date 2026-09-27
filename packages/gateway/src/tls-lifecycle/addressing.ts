@@ -14,30 +14,35 @@ import { parseDotEnv } from "@omnesis/config";
 import { normalizeRequiredHost } from "@omnesis/core";
 
 /**
- * `OMNESIS_TLS_CERT` / `OMNESIS_TLS_KEY` as the config directory's `.env`
- * spells them now, falling back to what the process was started with — except
- * for a key `.env` itself supplied at boot and has since dropped, which reads
- * as unset. A provisioning run that rewrote the file is picked up without a
- * restart, and so is one that took the override away.
+ * `OMNESIS_TLS_CERT` / `OMNESIS_TLS_KEY`, and the private CA behind them
+ * (`OMNESIS_TLS_CA`), as the config directory's `.env` spells them now,
+ * falling back to what the process was started with — except for a key `.env`
+ * itself supplied at boot and has since dropped, which reads as unset. A
+ * provisioning run that rewrote the file is picked up without a restart, and
+ * so is one that took the override away.
  */
 export function currentTlsMaterialPaths(
   configDir: string,
   env: NodeJS.ProcessEnv = process.env,
   suppliedByDotEnvAtBoot: ReadonlySet<string> = new Set(),
-): { certPath?: string; keyPath?: string } {
+): { certPath?: string; keyPath?: string; caPath?: string } {
   let fromFile: Record<string, string> = {};
   try {
     fromFile = parseDotEnv(readFileSync(join(configDir, ".env"), "utf8"));
   } catch {
     // No .env, or unreadable: the boot-time environment stands.
   }
-  const current = (key: "OMNESIS_TLS_CERT" | "OMNESIS_TLS_KEY"): string | undefined =>
+  const current = (
+    key: "OMNESIS_TLS_CERT" | "OMNESIS_TLS_KEY" | "OMNESIS_TLS_CA",
+  ): string | undefined =>
     fromFile[key] ?? (suppliedByDotEnvAtBoot.has(key) ? undefined : env[key]);
   const certPath = current("OMNESIS_TLS_CERT");
   const keyPath = current("OMNESIS_TLS_KEY");
+  const caPath = current("OMNESIS_TLS_CA");
   return {
     ...(certPath ? { certPath } : {}),
     ...(keyPath ? { keyPath } : {}),
+    ...(caPath ? { caPath } : {}),
   };
 }
 
