@@ -1007,14 +1007,6 @@ pre[data-highlighted] {
 :where(.docs-content) li + li {
   margin-top: 6px;
 }
-/* Prose measure: running text stays near 70–75 characters a line while
-   tables, terminals and figures keep the full column. (Inter's "0" is wide, so
-   60ch holds about 75 average characters.) */
-.docs-content > p,
-.docs-content > ul,
-.docs-content > ol {
-  max-width: 60ch;
-}
 .docs-content strong {
   color: var(--text-primary);
   font-weight: 600;
@@ -1038,12 +1030,10 @@ pre[data-highlighted] {
 
 .docs-content code {
   font-family: var(--font-mono);
-  font-size: 0.86em;
-  background: var(--surface-strong);
-  border: 1px solid var(--surface-border);
-  border-radius: 6px;
-  padding: 0.12em 0.38em;
-  color: var(--text-primary);
+  font-size: 0.9em;
+  line-height: inherit;
+  vertical-align: baseline;
+  color: color-mix(in srgb, var(--text-secondary) 55%, var(--text-primary));
   overflow-wrap: break-word;
   hyphens: none;
 }
@@ -1196,11 +1186,16 @@ pre[data-highlighted] {
 /* ── Tables ── */
 
 .table-wrap {
+  --table-rule: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--accent) 14%, var(--border-subtle) 56%) 85%,
+    #000
+  );
   overflow-x: auto;
   margin: 20px 0 28px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--table-rule);
   border-radius: 12px;
-  background: var(--bg-card);
+  background: color-mix(in srgb, var(--accent) 3%, var(--bg-deep) 82%);
 }
 .docs-content table {
   border-collapse: collapse;
@@ -1213,15 +1208,15 @@ pre[data-highlighted] {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--text-muted);
+  color: var(--text-primary);
   padding: 10px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-raised);
+  border-bottom: 1px solid var(--table-rule);
+  background: color-mix(in srgb, var(--accent) 5%, #000 6%);
   white-space: nowrap;
 }
 .docs-content td {
   padding: 10px 16px;
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--table-rule);
   color: var(--text-secondary);
   vertical-align: top;
 }
@@ -1234,6 +1229,16 @@ pre[data-highlighted] {
 @media (min-width: 601px) {
   .docs-content td:first-child {
     white-space: nowrap;
+  }
+  .docs-content .table-troubleshooting {
+    table-layout: fixed;
+  }
+  .docs-content .table-troubleshooting :is(th, td) {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .docs-content .table-troubleshooting th:first-child {
+    width: 220px;
   }
 }
 /* Under 600px a reference table becomes a stack of cards, one per row: docs.js
@@ -1262,7 +1267,7 @@ pre[data-highlighted] {
   }
   .stack tr {
     padding: 12px 16px;
-    border-bottom: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--table-rule);
   }
   .stack tr:last-child {
     border-bottom: none;
@@ -1468,16 +1473,12 @@ a.card h3 {
   color: var(--text-secondary);
   font-size: 12.5px;
 }
-/* Inline code in a step moves to the next line as a whole where it fits
-   there, and breaks inside only when it is wider than the step. */
+/* Long technical terms can wrap within narrow diagram cards. */
 .flow-desc code,
 .flow-title code,
 .lane-note code {
-  display: inline-block;
-  max-width: 100%;
   font-size: 0.9em;
-  line-height: 1.35;
-  vertical-align: baseline;
+  overflow-wrap: anywhere;
 }
 .docs-content .flow-gate {
   border: 1.5px solid var(--color-bookmark);
@@ -1614,6 +1615,76 @@ a.card h3 {
 @media (max-width: 600px) {
   .diagram {
     padding: 14px;
+  }
+}
+
+/* Transparent cards group diagram components on the page. */
+.diagram.diagram-flat {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.diagram-flat .flow-step {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+}
+.diagram-flat .lanes {
+  gap: 24px;
+}
+.diagram-flat .flow-gate {
+  border-color: var(--color-bookmark);
+}
+.diagram.diagram-flat .lane {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+}
+.diagram-flat .lane .flow-step {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+.diagram-nested .lane .flow-step {
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+.diagram-flat .lane .flow-gate {
+  padding: 12px;
+  border: 1px solid var(--color-bookmark);
+  border-radius: 8px;
+}
+.diagram-flat .lane-title {
+  color: var(--text-secondary);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+.diagram-flat > .flow + .lanes {
+  margin-top: 28px;
+}
+.diagram-flat > .flow + .lanes::before {
+  content: none;
+}
+.diagram-branches > .flow + .lanes {
+  margin-top: 34px;
+}
+.diagram-branches > .flow + .lanes::before {
+  content: "↓";
+}
+.diagram-flat figcaption {
+  margin-top: 24px;
+}
+.docs-content .diagram-compact > .flow {
+  width: 75%;
+  margin-inline: auto;
+}
+@container (min-width: 520px) {
+  .diagram-compact .flow-step > .flow-desc {
+    align-self: center;
   }
 }
 
