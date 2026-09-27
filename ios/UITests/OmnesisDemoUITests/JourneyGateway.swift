@@ -109,7 +109,8 @@ struct JourneyGateway {
         _ path: String,
         body: [String: String]?,
         authorized: Bool = true
-    ) throws -> [String: Any] {
+    ) throws
+        -> [String: Any] {
         var request = URLRequest(url: url.appendingPathComponent(path))
         request.httpMethod = method
         request.timeoutInterval = 30
@@ -146,7 +147,7 @@ struct JourneyGateway {
             let text = String(data: data, encoding: .utf8) ?? ""
             throw JourneyGatewayError.httpStatus(path, status, text)
         }
-        return (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        return try (JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
     }
 }
 
