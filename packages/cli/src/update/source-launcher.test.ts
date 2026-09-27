@@ -235,6 +235,47 @@ describe("source recovery launcher", () => {
     expect(existsSync(ran)).toBe(true);
   });
 
+  test("dependency recovery does not install against a broken node-gyp header cache", () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-source-launcher-"));
+    scratch.push(dir);
+    const rootDir = join(dir, "source");
+    const homeDir = join(dir, "home");
+    const configDir = join(dir, "config");
+    const fakeBin = join(dir, "bin");
+    const devdir = join(dir, "node-gyp");
+    const headers = join(devdir, process.versions.node);
+    const seen = join(dir, "seen");
+    mkdirSync(rootDir);
+    mkdirSync(fakeBin);
+    // What a header fetch killed part-way leaves: the stamp node-gyp trusts,
+    // and a common.gypi that never got its bytes.
+    mkdirSync(join(headers, "include", "node"), { recursive: true });
+    writeFileSync(join(headers, "installVersion"), "11\n");
+    writeFileSync(join(headers, "include", "node", "common.gypi"), "");
+    writeFileSync(
+      join(fakeBin, "npm"),
+      `#!/bin/sh\n[ "$1" = ci ] || exit 0\nif [ -e ${JSON.stringify(headers)} ]; then echo present >> ${JSON.stringify(seen)}; else echo absent >> ${JSON.stringify(seen)}; fi\nmkdir -p node_modules/.bin\nprintf '#!/bin/sh\\n' > node_modules/.bin/tsx\nchmod 755 node_modules/.bin/tsx\n`,
+      { mode: 0o755 },
+    );
+    const launcher = prepareSourceRecoveryLauncher(rootDir, configDir, homeDir);
+
+    const result = spawnSync(launcher, ["status"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+        npm_config_devdir: devdir,
+        OMNESIS_CONFIG_DIR: configDir,
+        OMNESIS_UPDATE_LOCK_ID: "",
+      },
+    });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain(`The node-gyp headers for Node ${process.versions.node}`);
+    // npm's own node-gyp is not known here, so npm ci fetches the headers
+    // itself -- into an empty directory, not the broken one.
+    expect(readFileSync(seen, "utf8")).toBe("absent\n");
+  });
+
   test("dependency recovery releases its lock before a non-update daemon stays running", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omnesis-source-launcher-"));
     scratch.push(dir);

@@ -5,6 +5,7 @@ import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { atomicWriteFileSync } from "@omnesis/core";
+import { NODE_GYP_HEADERS_SCRIPT } from "./node-gyp-headers.js";
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
@@ -149,13 +150,21 @@ try {
 update_unfinished() {
   [ "$UPDATE_PHASE" = "applying" ] || [ "$UPDATE_PHASE" = "rolling-back" ] || [ "$UPDATE_PHASE" = "mismatch" ]
 }
+# The node-gyp header check the installer runs before each npm ci; see
+# prepare_node_gyp_headers in the installer.
+prepare_node_gyp_headers() {
+  ( cd "$1" && node -e '${NODE_GYP_HEADERS_SCRIPT}' "$(npm config get node-gyp 2>/dev/null)" ) || true
+}
 # npm installs over the node_modules a workspace checkout already has, and
 # an install over another build's tree can fail the same way on every run.
 # A failed install is retried once from an empty node_modules.
 install_source_dependencies() {
+  prepare_node_gyp_headers "$SOURCE_ROOT"
   ( cd "$SOURCE_ROOT" && npm ci ) && return 0
   printf '%s\\n' "Installing dependencies failed; installing them again from an empty node_modules..." >&2
-  rm -rf "$SOURCE_ROOT/node_modules" && ( cd "$SOURCE_ROOT" && npm ci )
+  rm -rf "$SOURCE_ROOT/node_modules" || return 1
+  prepare_node_gyp_headers "$SOURCE_ROOT"
+  ( cd "$SOURCE_ROOT" && npm ci )
 }
 read_update_phase
 if update_unfinished; then

@@ -889,6 +889,48 @@ source_step_failed() {
   fail "$3"
 }
 
+# node-gyp builds a native module against Node's headers, which it fetches once
+# per Node version into its cache and trusts from then on, as long as the
+# version stamp it writes there is present. Two things break that directory.
+# `npm ci` runs several native modules' `node-gyp rebuild` at once, and on a
+# cold cache each fetches the headers into the same directory: one copies a
+# file over while another reads it, or removes the whole directory after an
+# error of its own, and the reader fails on an empty or missing common.gypi.
+# And a fetch killed part-way can leave the stamp beside files that never got
+# their bytes, which fails every later build the same way. So before each
+# `npm ci`: discard this Node version's header directory unless it is whole,
+# and fetch the headers once, alone, with npm's own node-gyp. Nothing else in
+# the cache is touched, and a fetch that fails leaves `npm ci` to fetch the
+# headers itself, as it always did. The updater runs the same script before
+# its own `npm ci` (packages/cli/src/update/node-gyp-headers.ts); a test keeps
+# the copies identical.
+prepare_node_gyp_headers() {
+  ( cd "$1" && node -e 'const fs = require("fs"), os = require("os"), path = require("path");
+const env = (name) => Object.entries(process.env).find(([key]) => key.toLowerCase() === name)?.[1] || "";
+if (env("npm_config_nodedir")) process.exit(0);
+const cache = env("npm_config_devdir").replace(/^~/, os.homedir()) || (process.platform === "darwin"
+  ? path.join(os.homedir(), "Library", "Caches", "node-gyp")
+  : path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "node-gyp"));
+const dir = path.join(cache, process.versions.node);
+const whole = () => ["installVersion", "include/node/node.h", "include/node/node_api.h",
+  "include/node/common.gypi", "include/node/config.gypi"].every((file) => {
+  try {
+    const text = fs.readFileSync(path.join(dir, file), "utf8").trim();
+    return text !== "" && (!file.endsWith(".gypi") || text.endsWith("}"));
+  } catch {
+    return false;
+  }
+});
+if (whole()) process.exit(0);
+if (fs.existsSync(dir)) console.error("The node-gyp headers for Node " + process.versions.node + " in " + dir + " are incomplete; fetching them again.");
+fs.rmSync(dir, { recursive: true, force: true });
+const gyp = process.argv[1];
+if (gyp && fs.existsSync(gyp)) {
+  require("child_process").spawnSync(process.execPath, [gyp, "install", "--ensure"], { stdio: "ignore", timeout: 180000 });
+}
+if (!whole()) fs.rmSync(dir, { recursive: true, force: true });' "$(npm config get node-gyp 2>/dev/null)" ) || true
+}
+
 # A source install builds the whole workspace on this machine, and that build
 # needs a 3 GB heap. Refuse a machine that cannot hold it before Node, git or a
 # checkout are installed, instead of failing minutes into the build with a heap
@@ -1739,13 +1781,44 @@ try {
 update_unfinished() {
   [ "\$UPDATE_PHASE" = "applying" ] || [ "\$UPDATE_PHASE" = "rolling-back" ] || [ "\$UPDATE_PHASE" = "mismatch" ]
 }
+# The node-gyp header check the installer runs before each npm ci; see
+# prepare_node_gyp_headers in the installer.
+prepare_node_gyp_headers() {
+  ( cd "\$1" && node -e 'const fs = require("fs"), os = require("os"), path = require("path");
+const env = (name) => Object.entries(process.env).find(([key]) => key.toLowerCase() === name)?.[1] || "";
+if (env("npm_config_nodedir")) process.exit(0);
+const cache = env("npm_config_devdir").replace(/^~/, os.homedir()) || (process.platform === "darwin"
+  ? path.join(os.homedir(), "Library", "Caches", "node-gyp")
+  : path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "node-gyp"));
+const dir = path.join(cache, process.versions.node);
+const whole = () => ["installVersion", "include/node/node.h", "include/node/node_api.h",
+  "include/node/common.gypi", "include/node/config.gypi"].every((file) => {
+  try {
+    const text = fs.readFileSync(path.join(dir, file), "utf8").trim();
+    return text !== "" && (!file.endsWith(".gypi") || text.endsWith("}"));
+  } catch {
+    return false;
+  }
+});
+if (whole()) process.exit(0);
+if (fs.existsSync(dir)) console.error("The node-gyp headers for Node " + process.versions.node + " in " + dir + " are incomplete; fetching them again.");
+fs.rmSync(dir, { recursive: true, force: true });
+const gyp = process.argv[1];
+if (gyp && fs.existsSync(gyp)) {
+  require("child_process").spawnSync(process.execPath, [gyp, "install", "--ensure"], { stdio: "ignore", timeout: 180000 });
+}
+if (!whole()) fs.rmSync(dir, { recursive: true, force: true });' "\$(npm config get node-gyp 2>/dev/null)" ) || true
+}
 # npm installs over the node_modules a workspace checkout already has, and
 # an install over another build's tree can fail the same way on every run.
 # A failed install is retried once from an empty node_modules.
 install_source_dependencies() {
+  prepare_node_gyp_headers "\$SOURCE_ROOT"
   ( cd "\$SOURCE_ROOT" && npm ci ) && return 0
   printf '%s\n' "Installing dependencies failed; installing them again from an empty node_modules..." >&2
-  rm -rf "\$SOURCE_ROOT/node_modules" && ( cd "\$SOURCE_ROOT" && npm ci )
+  rm -rf "\$SOURCE_ROOT/node_modules" || return 1
+  prepare_node_gyp_headers "\$SOURCE_ROOT"
+  ( cd "\$SOURCE_ROOT" && npm ci )
 }
 read_update_phase
 if update_unfinished; then
@@ -2246,9 +2319,11 @@ install_source() {
   # message already tells the operator to do by hand; the retry should not
   # need to be told.
   DEPS_INSTALLED_CLEAN=0
+  prepare_node_gyp_headers "$SOURCE_DIR"
   if ! ( cd "$SOURCE_DIR" && npm ci ); then
     warn "Installing dependencies failed (npm's error is above); trying once more..."
     rm -rf "$SOURCE_DIR/node_modules"
+    prepare_node_gyp_headers "$SOURCE_DIR"
     ( cd "$SOURCE_DIR" && npm ci ) || \
       source_step_failed "$?" "Installing dependencies" "Installing dependencies failed twice — npm's error is above; a network problem or a busy file is the usual cause. Nothing is lost: re-run this installer and it continues from the checkout it already made."
     DEPS_INSTALLED_CLEAN=1
@@ -2265,6 +2340,7 @@ install_source() {
   if [ "$BUILD_STATUS" != 0 ] && [ "$DEPS_INSTALLED_CLEAN" = 0 ]; then
     warn "The build failed. An interrupted earlier run can leave dependencies without the files their tarballs ship, which fails the build this way every time; reinstalling them from scratch and building once more..."
     rm -rf "$SOURCE_DIR/node_modules"
+    prepare_node_gyp_headers "$SOURCE_DIR"
     ( cd "$SOURCE_DIR" && npm ci ) || \
       source_step_failed "$?" "Installing dependencies" "Reinstalling dependencies after a failed build did not succeed — npm's error is above. Nothing is lost: re-run this installer and it continues from the checkout it already made."
     DEPS_INSTALLED_CLEAN=1

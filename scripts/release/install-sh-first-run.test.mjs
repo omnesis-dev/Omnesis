@@ -1405,6 +1405,60 @@ describe("install.sh workspace build", () => {
     ).toBe(true);
   });
 
+  // node-gyp fetches Node's headers once per Node version into a cache outside
+  // the checkout and trusts that directory from then on. A first attempt
+  // killed while fetching them leaves the version stamp beside an empty
+  // common.gypi, so a retry from an empty node_modules alone compiles against
+  // it and fails every native module the same way (forge I28, 27 Sep; CI's
+  // Docker lanes the day before). And on a cold cache `npm ci` builds several
+  // native modules at once, each fetching the headers into the same place.
+  // So each attempt first discards a broken cache for this Node and fetches
+  // the headers once, alone, with npm's own node-gyp.
+  test("each dependency install first makes node-gyp's headers whole, so the retry builds against good ones", () => {
+    const devdir = fixturePath("npm-ci-gyp-devdir");
+    const version = process.versions.node;
+    mkdirSync(join(devdir, "22.1.0"), { recursive: true });
+    writeFileSync(join(devdir, "22.1.0", "installVersion"), "11\n");
+    const nodeGyp = fixturePath("fake-node-gyp.js");
+    writeFileSync(
+      nodeGyp,
+      `const fs = require("node:fs"), path = require("node:path");
+fs.appendFileSync(process.env.OMNESIS_TEST_CALLS, "node-gyp " + process.argv.slice(2).join(" ") + "\\n");
+const dir = path.join(process.env.npm_config_devdir, process.versions.node, "include", "node");
+fs.mkdirSync(dir, { recursive: true });
+for (const file of ["node.h", "node_api.h"]) fs.writeFileSync(path.join(dir, file), "#pragma once\\n");
+for (const file of ["common.gypi", "config.gypi"]) fs.writeFileSync(path.join(dir, file), "{}\\n");
+fs.writeFileSync(path.join(dir, "..", "..", "installVersion"), "11\\n");
+`,
+    );
+    const run = runInstaller("npm-ci-retry-gyp-cache", ["--no-tls", "--embedder", EMBED_IDS[0]], {
+      OMNESIS_TEST_KEYRING: "ready",
+      OMNESIS_TEST_NPM_CI_FAILURES: "1",
+      OMNESIS_TEST_NPM_CI_BREAKS_GYP_CACHE: "1",
+      OMNESIS_TEST_NODE_GYP: nodeGyp,
+      npm_config_devdir: devdir,
+    });
+    expect(run.status).toBe(0);
+    expect(run.calls.filter((c) => c === "npm ci" || /^(node-gyp|gyp-cache) /.test(c))).toEqual([
+      // A cold cache: fetched once, before npm ci builds against it.
+      "node-gyp install --ensure",
+      "npm ci",
+      "gyp-cache whole",
+      // That attempt failed and left the headers broken; the retry replaces them.
+      "node-gyp install --ensure",
+      "npm ci",
+      "gyp-cache whole",
+    ]);
+    expect(run.output).toContain(
+      `The node-gyp headers for Node ${version} in ${join(devdir, version)} are incomplete; fetching them again.`,
+    );
+    // Only this Node's headers are node-gyp's business here.
+    expect(readFileSync(join(devdir, "22.1.0", "installVersion"), "utf8")).toBe("11\n");
+    expect(statSync(join(devdir, version, "include", "node", "common.gypi")).size).toBeGreaterThan(
+      0,
+    );
+  });
+
   test("a dependency install that fails twice stops with what failed and that re-running continues", () => {
     const run = runInstaller("npm-ci-fails", ["--no-tls", "--embedder", EMBED_IDS[0]], {
       OMNESIS_TEST_KEYRING: "ready",
