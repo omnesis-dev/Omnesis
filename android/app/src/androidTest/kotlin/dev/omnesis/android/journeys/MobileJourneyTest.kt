@@ -89,10 +89,11 @@ class MobileJourneyTest {
         // dropped, so the tap is repeated until the pairing screen asks.
         val denySelector = By.res(Pattern.compile(".*permissioncontroller:id/permission_deny_button"))
         var deny: androidx.test.uiautomator.UiObject2? = null
+        tap("onboarding.pair")
         for (attempt in 1..3) {
-            tap("onboarding.pair")
             deny = device.wait(Until.findObject(denySelector), STEP_TIMEOUT_MS / 3)
-            if (deny != null) break
+            if (deny != null || !onScreen(hasTestTag("onboarding.pair"))) break
+            compose.onAllNodesWithTag("onboarding.pair").onFirst().performClick()
         }
         checkNotNull(deny) { "the pairing screen never asked for the camera" }.click()
         tap("pairing.manual")
@@ -185,13 +186,14 @@ class MobileJourneyTest {
      */
     private fun waitFor(matcher: SemanticsMatcher, failure: String, timeoutMs: Long = STEP_TIMEOUT_MS) {
         try {
-            compose.waitUntil(timeoutMs) {
-                runCatching { compose.onAllNodes(matcher).fetchSemanticsNodes().isNotEmpty() }.getOrDefault(false)
-            }
+            compose.waitUntil(timeoutMs) { onScreen(matcher) }
         } catch (timeout: androidx.compose.ui.test.ComposeTimeoutException) {
             throw AssertionError(failure, timeout)
         }
     }
+
+    private fun onScreen(matcher: SemanticsMatcher): Boolean =
+        runCatching { compose.onAllNodes(matcher).fetchSemanticsNodes().isNotEmpty() }.getOrDefault(false)
 
     private fun notificationPermission(): TestRule =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
