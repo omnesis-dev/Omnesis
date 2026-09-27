@@ -346,8 +346,8 @@ export class SerializedIntegrationAuthProvider implements AuthProvider {
    * of the other and the last write wins.
    */
   private async attemptRecovery(refreshFailure: string | undefined): Promise<void> {
-    // The SDK swallows a refresh that failed for any reason but a definitive
-    // OAuth refusal, so this is the only place its cause is still known.
+    // The SDK never surfaces why a refresh failed on its way to asking for a
+    // browser, so this is the only place the cause is still known.
     if (refreshFailure !== undefined) {
       this.logger.warn(
         `Omnesis OAuth refresh failed (${refreshFailure}); re-issuing with the device's management token`,
@@ -462,6 +462,7 @@ function observeRefreshRequests(fetchFn: FetchLike): {
       if (!(body instanceof URLSearchParams) || body.get("grant_type") !== "refresh_token") {
         return fetchFn(input, init);
       }
+      failure = undefined;
       let response: Response;
       try {
         response = await fetchFn(input, init);
@@ -474,7 +475,7 @@ function observeRefreshRequests(fetchFn: FetchLike): {
           .clone()
           .text()
           .catch(() => "");
-        const excerpt = text.trim().slice(0, REFRESH_FAILURE_BODY_LIMIT);
+        const excerpt = text.replace(/\s+/gu, " ").trim().slice(0, REFRESH_FAILURE_BODY_LIMIT);
         failure = `HTTP ${response.status}${excerpt ? `: ${excerpt}` : ""}`;
       }
       return response;

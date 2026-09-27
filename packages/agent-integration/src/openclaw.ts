@@ -1177,6 +1177,7 @@ class OpenClawIntegrationService {
             // A question asked after a long silence repairs the credential
             // itself rather than failing and waiting for somebody to notice.
             () => reissueIntegrationOAuthTokens(oauthProvider, credentials, "openclaw"),
+            context.logger,
           ),
           credentials.tls,
         );
@@ -1301,8 +1302,12 @@ class OpenClawIntegrationService {
     // an interactive attempt is live — it can always try again next tick.
     if (provider.hasPendingAuthorization()) return;
     if (!refreshKeepaliveDue(provider.tokensObtainedAt(), Date.now())) return;
-    await new SerializedIntegrationAuthProvider(provider, credentials.gatewayUrl, undefined, () =>
-      reissueIntegrationOAuthTokens(provider, credentials, "openclaw"),
+    await new SerializedIntegrationAuthProvider(
+      provider,
+      credentials.gatewayUrl,
+      undefined,
+      () => reissueIntegrationOAuthTokens(provider, credentials, "openclaw"),
+      this.logger,
     ).renew(integrationOAuthFetch(credentials.gatewayUrl, credentials.tls));
   }
 
