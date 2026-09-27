@@ -1473,10 +1473,18 @@ final class CollectorCoreTests: XCTestCase {
     /// that treats the two alike clears the warning while the source is still
     /// refused.
     func testConcurrentDrainReportsNoObservation() async throws {
-        let session = MockSession()
-        session.responder = { [weak self] req in
-            guard let self else { return (Data(), URLResponse()) }
-            return okResponse(body: "{\"ingested\":1}", url: req.url!)
+        // The first pass is held inside its upload until the second call has
+        // returned, so the two calls overlap by construction rather than by
+        // scheduling luck.
+        let gate = SyncGate()
+        let session = GatedSession(gate: gate) { req in
+            let http = HTTPURLResponse(
+                url: req.url!,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            return (Data("{\"ingested\":1}".utf8), http)
         }
         let gateway = try GatewayClient(
             baseURL: XCTUnwrap(URL(string: "http://mac.local:7600")),
@@ -1484,17 +1492,52 @@ final class CollectorCoreTests: XCTestCase {
             session: session
         )
         let buffer = OfflineBuffer(directory: directory)
+        try await enqueueBatch(buffer, sourceId: "core-location-visits:local")
         let uploader = Uploader(gateway: gateway, buffer: buffer)
 
-        async let first = uploader.drain()
-        async let second = uploader.drain()
-        let results = try await [first, second]
+        let first = Task { try await uploader.drain() }
+        await gate.waitUntilStarted()
+        let second = try await uploader.drain()
+        await gate.release()
+        let firstStats = try await first.value
 
-        XCTAssertEqual(
-            results.filter { $0.blocked == nil }.count, 1,
-            "exactly one pass is the no-op re-entrant call"
-        )
-        XCTAssertEqual(results.filter { $0.blocked != nil }.count, 1)
+        XCTAssertNil(second.blocked, "the re-entrant call observed nothing")
+        XCTAssertEqual(second.uploaded, 0)
+        XCTAssertEqual(second.remaining, 1, "the in-flight batch is still buffered")
+        XCTAssertEqual(firstStats.blocked, [], "the owning pass walked the buffer")
+        XCTAssertEqual(firstStats.uploaded, 1)
+        XCTAssertEqual(session.requestCount, 1, "the re-entrant call sent nothing")
+    }
+
+    /// Suspends its first request on a `SyncGate`; later requests answer at once.
+    private final class GatedSession: URLSessionLike, @unchecked Sendable {
+        private let gate: SyncGate
+        private let respond: @Sendable (URLRequest) -> (Data, URLResponse)
+        private let lock = NSLock()
+        private var requests = 0
+
+        init(gate: SyncGate, respond: @escaping @Sendable (URLRequest) -> (Data, URLResponse)) {
+            self.gate = gate
+            self.respond = respond
+        }
+
+        var requestCount: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return requests
+        }
+
+        func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+            if countRequest() == 1 { await gate.block() }
+            return respond(request)
+        }
+
+        private func countRequest() -> Int {
+            lock.lock()
+            defer { lock.unlock() }
+            requests += 1
+            return requests
+        }
     }
 
     private actor LifecycleRecorder {
