@@ -31,6 +31,7 @@ import {
   exchangeAuthorizationCode,
   issueAuthorizationCode,
   lookupPrincipalAccessToken,
+  type OAuthClientCleanupCursor,
   preflightExecutionTokensReissue,
   refreshPrincipalAccessToken,
   registerOAuthClient,
@@ -251,15 +252,21 @@ describe("re-issuing after the access cleanup has reaped the approval's request"
   const LATER = NOW + 45 * 24 * 60 * 60_000;
 
   function reapEverythingExpired(at: number): void {
+    // Every phase the scheduled sweep runs, in its order.
     const phases: AccessCleanupPhase[] = [
       "executionBindings",
       "authorizationRequests",
       "accessTokens",
       "refreshTokens",
+      "auditEvents",
+      "oauthClients",
     ];
     for (const phase of phases) {
-      while (cleanupExpiredAccessStateBatch(db, phase, at).hasMore) {
-        // Drain the phase.
+      let cursor: OAuthClientCleanupCursor | undefined;
+      for (;;) {
+        const result = cleanupExpiredAccessStateBatch(db, phase, at, 200, cursor);
+        if (!result.hasMore) break;
+        cursor = result.cursor;
       }
     }
     expect(requestCount()).toBe(0);

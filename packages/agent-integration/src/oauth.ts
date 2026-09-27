@@ -340,8 +340,8 @@ export class SerializedIntegrationAuthProvider implements AuthProvider {
    * the scheduled keepalive stands down for: one transient recovery failure
    * would otherwise disarm it for the life of the installation.
    *
-   * Runs outside the cross-process credential lock, which the refresh attempt
-   * released on its way out. Two processes recovering at once is harmless:
+   * May run inside or outside the cross-process credential lock, depending on
+   * which path reached it. Two processes recovering at once is harmless:
    * each re-issue starts its own token family, so neither looks like a replay
    * of the other and the last write wins.
    */
