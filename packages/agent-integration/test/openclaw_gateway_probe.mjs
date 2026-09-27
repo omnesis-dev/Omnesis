@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -11,10 +11,14 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+
+import { startFictionalGateway } from "./fictional-mcp-gateway.ts";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const openClawBin = join(
@@ -71,7 +75,41 @@ writeFileSync(inheritedConfigPath, inheritedConfig);
 const stateDir = join(probeRoot, "state");
 const configPath = join(stateDir, "openclaw.json");
 let gateway;
+let omnesis;
 let failure;
+
+const FICTIONAL_CAPTURE_ID = "3f0c9a52-6d1e-4b8a-9c77-2a5e1d4b8f10";
+const GATEWAY_TOKEN = randomBytes(24).toString("hex");
+
+/**
+ * Invoke one tool through the running OpenClaw gateway, the way an agent run
+ * resolves and executes it, retrying while the plugin's service is starting.
+ */
+async function invokeTool(environment, port, name, args, deadline = Date.now() + 30_000) {
+  for (;;) {
+    const { stdout } = await promisify(execFile)(
+      openClawBin,
+      [
+        "gateway",
+        "call",
+        "tools.invoke",
+        "--port",
+        String(port),
+        "--token",
+        GATEWAY_TOKEN,
+        "--json",
+        "--params",
+        JSON.stringify({ name, args }),
+      ],
+      { cwd: repositoryRoot, env: environment, encoding: "utf8" },
+    );
+    const outcome = JSON.parse(stdout);
+    if (outcome.ok || outcome.error?.code !== "not_found" || Date.now() > deadline) {
+      return outcome;
+    }
+    await delay(250);
+  }
+}
 
 try {
   execFileSync(
@@ -150,6 +188,21 @@ try {
     "omnesis_answer",
     "omnesis_subscription_answer",
     "omnesis_subscriptions",
+    ...[
+      "search_many",
+      "fetch_many",
+      "lookup_document_by_url",
+      "lookup_people",
+      "trace_connections",
+      "run_sql",
+      "temporal_query",
+      "entity_context",
+      "search_loops",
+      "list_loops",
+      "fetch_loop",
+      "list_tables",
+      "add_note",
+    ].map((name) => `omnesis_${name}`),
   ].sort();
   const actualTools = Array.isArray(inspection.plugin?.toolNames)
     ? [...inspection.plugin.toolNames].sort()
@@ -166,12 +219,15 @@ try {
     throw new Error(`OpenClaw runtime inspection rejected Omnesis:\n${JSON.stringify(inspection)}`);
   }
 
+  // A connection granted Direct and Notes: the plugin must offer and forward
+  // exactly what this gateway lists for it.
+  omnesis = await startFictionalGateway(["answer", "direct", "notes"]);
   const integrationDir = join(stateDir, "omnesis");
   mkdirSync(integrationDir, { recursive: true });
   writeFileSync(
     join(integrationDir, "integration.json"),
     `${JSON.stringify({
-      gatewayUrl: "http://127.0.0.1:1",
+      gatewayUrl: omnesis.url,
       deliveryToken: "omn_fictional_delivery",
       ingestionToken: "omn_fictional_ingestion",
       managementToken: "omn_fictional_management",
@@ -184,6 +240,7 @@ try {
           token_type: "Bearer",
           scope: "omnesis:access offline_access",
         },
+        tokensObtainedAt: Date.now(),
       },
       maxConcurrentRuns: 2,
     })}\n`,
@@ -205,7 +262,9 @@ try {
       String(port),
       "--allow-unconfigured",
       "--auth",
-      "none",
+      "token",
+      "--token",
+      GATEWAY_TOKEN,
       "--bind",
       "loopback",
     ],
@@ -226,11 +285,40 @@ try {
     throw new Error(`OpenClaw rejected the Omnesis plugin:\n${startup}`);
   }
 
+  // Full mode, through OpenClaw's own tool resolution and execution.
+  const tables = await invokeTool(environment, port, "omnesis_list_tables", {});
+  if (!tables.ok || !JSON.stringify(tables.output).includes("fictional_readings")) {
+    throw new Error(`OpenClaw did not forward omnesis_list_tables:\n${JSON.stringify(tables)}`);
+  }
+  const rows = await invokeTool(environment, port, "omnesis_run_sql", {
+    sql: "SELECT day, value FROM fictional_readings",
+  });
+  if (!rows.ok || rows.output?.details?.structuredContent?.rows?.[0]?.value !== 7) {
+    throw new Error(`OpenClaw did not forward omnesis_run_sql:\n${JSON.stringify(rows)}`);
+  }
+  const note = await invokeTool(environment, port, "omnesis_add_note", {
+    id: FICTIONAL_CAPTURE_ID,
+    text: "Book the fictional piano tuning.",
+  });
+  if (!note.ok || note.output?.details?.structuredContent?.captureId !== FICTIONAL_CAPTURE_ID) {
+    throw new Error(`OpenClaw did not forward omnesis_add_note:\n${JSON.stringify(note)}`);
+  }
+  // A Direct tool the gateway did not list is not offered at all.
+  const unlisted = await invokeTool(environment, port, "omnesis_lookup_people", {}, 0);
+  if (unlisted.ok || unlisted.error?.code !== "not_found") {
+    throw new Error(`OpenClaw offered an unlisted tool:\n${JSON.stringify(unlisted)}`);
+  }
+  const forwarded = omnesis.calls.map((call) => call.name).join(",");
+  if (forwarded !== "list_tables,run_sql,add_note") {
+    throw new Error(`the fictional gateway saw ${forwarded}`);
+  }
+
   process.stdout.write("OpenClaw managed-install runtime probe passed\n");
 } catch (error) {
   failure = error;
 } finally {
   if (gateway) await stop(gateway);
+  if (omnesis) await omnesis.close();
   const inheritedConfigAfter = existsSync(inheritedConfigPath)
     ? readFileSync(inheritedConfigPath, "utf8")
     : undefined;

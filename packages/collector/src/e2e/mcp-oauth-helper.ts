@@ -757,7 +757,7 @@ export async function completeOAuthAuthorization(
   );
 }
 
-function rulesForCapabilities(
+export function rulesForCapabilities(
   capabilities: TestGrantCapability[],
   defaultPolicyFamilyId: string | undefined,
 ): TestGrantRule[] {

@@ -1034,6 +1034,27 @@
           gateway states which tools it offers, and <code>omnesis connect</code> installs only
           those.
         </p>
+        <h3 id="harness-tools">What the agent can use</h3>
+        <p>
+          The agent asks questions with <code>omnesis_answer</code>, whatever its connection's
+          access level. When the level grants <a href="#access-levels">Direct or Notes</a>, the
+          plugin also offers those tools, named <code>omnesis_</code> followed by the gateway's tool
+          name: <code>omnesis_list_tables</code>, <code>omnesis_run_sql</code>,
+          <code>omnesis_add_note</code> and the rest. It offers exactly the tools the gateway lists
+          for the connection, with the gateway's descriptions, and forwards each call to the same
+          tool on <code>/mcp</code>, so a source-restricted Direct permission gets its restricted
+          set. They are available in conversations, scheduled runs and watch runs alike.
+          <code>omnesis_add_note</code> takes the same UUID <code>id</code> as any other client, and
+          a retry reuses it.
+        </p>
+        <p>
+          OpenClaw re-reads the connection's tools every few minutes, so a change to its access
+          level reaches new runs without a restart. Hermes reads them when it starts: after granting
+          Direct or Notes to a Hermes connection, restart it with
+          <code>hermes gateway restart</code>. A tool the level no longer grants is refused by the
+          gateway either way. Each plugin keeps the last list it read, so a restart while the
+          gateway is unreachable keeps the tools it had.
+        </p>
         <h3 id="harness-install">Install</h3>
         <p>
           Make the gateway reachable from the machine that runs the agent at an address it accepts

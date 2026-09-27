@@ -185,7 +185,8 @@ export function writeIntegrationCredentials(
   writeSecretFileDurably(path, `${JSON.stringify(checked, null, 2)}\n`);
 }
 
-function writeSecretFileDurably(path: string, data: string): void {
+/** Replace a private integration file atomically, readable only by its owner. */
+export function writeSecretFileDurably(path: string, data: string): void {
   const parent = dirname(path);
   const temporary = `${path}.omnesis-${process.pid.toString(36)}${randomBytes(6).toString("hex")}.tmp`;
   mkdirSync(parent, { recursive: true });

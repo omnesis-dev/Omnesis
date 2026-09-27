@@ -24,6 +24,8 @@ import {
   decideOAuthAuthorization,
   loginPortal,
   newAnswerPrincipalSelection,
+  rulesForCapabilities,
+  type TestGrantCapability,
 } from "./mcp-oauth-helper.js";
 
 export type ManagedHarness = "openclaw" | "hermes";
@@ -42,6 +44,8 @@ export interface ManagedIntegrationEnrollmentOptions {
   trustFingerprint?: string;
   connectEnv?: SpawnConnectOptions["env"];
   inheritConnectEnv?: boolean;
+  /** What the approved connection's access level grants; Answer alone when omitted. */
+  capabilities?: TestGrantCapability[];
 }
 
 export interface ManagedIntegrationEnrollment {
@@ -83,16 +87,22 @@ export async function enrollManagedIntegration(
       apiKey: options.portalApiKey,
     });
     const overview = await accessOverview(options.gatewayUrl, portal);
+    const selection = newAnswerPrincipalSelection(
+      overview,
+      `Fictional ${options.harness} managed principal`,
+      {
+        grantName: `${options.harness} managed Answer grant`,
+        credentialLabel: `${options.harness} managed credential`,
+      },
+    );
     await decideOAuthAuthorization(options.gatewayUrl, portal, pending.id, {
       decision: "approve",
-      selection: newAnswerPrincipalSelection(
-        overview,
-        `Fictional ${options.harness} managed principal`,
-        {
-          grantName: `${options.harness} managed Answer grant`,
-          credentialLabel: `${options.harness} managed credential`,
-        },
-      ),
+      selection: options.capabilities
+        ? {
+            ...selection,
+            rules: rulesForCapabilities(options.capabilities, overview.defaultPolicyFamilyId),
+          }
+        : selection,
     });
     const completed = await waitForExit(running, 90_000);
     running = undefined;

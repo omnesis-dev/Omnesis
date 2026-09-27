@@ -13,6 +13,7 @@ import {
   parseAgentSessionKey,
   parseThreadSessionSuffix,
 } from "openclaw/plugin-sdk/routing";
+import { ProtocolError } from "@modelcontextprotocol/client";
 
 import { AgentIntegrationClient, defaultIntegrationCapability } from "./client.js";
 import {
@@ -52,6 +53,13 @@ import {
   PinnedGatewayHttpClient,
 } from "./http.js";
 import { NativeAnswerMcpClient, integrationOAuthFetch } from "./native-answer-mcp.js";
+import {
+  FORWARDED_TOOL_NAMES,
+  FORWARDED_TOOL_TIMEOUT_MS,
+  ForwardedToolCatalogue,
+  forwardedToolOutcome,
+  type ForwardedTool,
+} from "./forwarded-tools.js";
 import { harnessClientName } from "./harness.js";
 import { IntegrationOAuthProvider, SerializedIntegrationAuthProvider } from "./oauth.js";
 import {
@@ -131,8 +139,8 @@ interface OpenClawIntegrationApi {
     stop(context: { stateDir: string; logger: IntegrationLogger }): Promise<void>;
   }): void;
   registerTool(
-    factory: (context: OpenClawPluginToolContext) => OpenClawAgentTool | null,
-    options: { name: string; optional?: boolean },
+    factory: (context: OpenClawPluginToolContext) => OpenClawAgentTool | OpenClawAgentTool[] | null,
+    options: { name: string; optional?: boolean } | { names: string[]; optional?: boolean },
   ): void;
   runtime: {
     agent: {
@@ -255,6 +263,19 @@ export interface OpenClawRunIdentity {
 }
 
 const CRON_SESSION_KEY = /:cron:.+:run:([^:]+)$/;
+
+/**
+ * The OpenClaw name for a forwarded gateway tool. OpenClaw's tool namespace is
+ * shared by every plugin, so the integration's tools all carry the `omnesis_`
+ * prefix; the rest is the gateway's own name, which the gateway's descriptions
+ * use when they refer to one another.
+ */
+function openClawForwardedToolName(gatewayName: string): string {
+  return `omnesis_${gatewayName}`;
+}
+
+/** Every forwarded tool name the plugin manifest declares. */
+export const OPENCLAW_FORWARDED_TOOL_NAMES = FORWARDED_TOOL_NAMES.map(openClawForwardedToolName);
 
 /**
  * How long a filed completion route can still be needed. An answer held for
@@ -987,6 +1008,8 @@ class OpenClawIntegrationService {
   private credentials: OperationalIntegrationCredentials | null = null;
   private credentialsPath: string | null = null;
   private answerMcp: NativeAnswerMcpClient | null = null;
+  /** The connection's Direct and Notes tools, as the gateway lists them. */
+  private forwardedTools: ForwardedToolCatalogue | null = null;
   private completionRoutes: OpenClawCompletionRoutes | null = null;
   /** How many times one ask has come back still being prepared. */
   private readonly pendingAsks = new Map<string, number>();
@@ -1102,6 +1125,37 @@ class OpenClawIntegrationService {
     };
   }
 
+  /**
+   * The connection's Direct and Notes tools, offered wherever `omnesis_answer`
+   * is — conversations, scheduled runs and Watch-woken runs alike — because
+   * the access level, not the kind of run, is what grants them.
+   *
+   * Read from the running service rather than from this instance: OpenClaw
+   * may resolve tools through a registration made only to discover them,
+   * whose service never started and has listed nothing. A process with no
+   * running service has no credential to forward with, so it offers none.
+   */
+  forwardedToolsForContext(context: OpenClawPluginToolContext): OpenClawAgentTool[] | null {
+    if (!context.sessionKey) return null;
+    const tools = this.slot.current?.listedForwardedTools() ?? [];
+    if (tools.length === 0) return null;
+    return tools.map((tool) => ({
+      name: openClawForwardedToolName(tool.name),
+      label: tool.title ?? tool.name,
+      description: tool.description,
+      parameters: tool.inputSchema,
+      execute: async (_toolCallId, raw, signal) => {
+        const active = this.slot.current;
+        if (!active) throw new Error("integration service is not running");
+        return active.callForwardedTool(tool.name, raw, signal);
+      },
+    }));
+  }
+
+  private listedForwardedTools(): readonly ForwardedTool[] {
+    return this.forwardedTools?.current() ?? [];
+  }
+
   async start(context: { stateDir: string; logger: IntegrationLogger }): Promise<void> {
     // Fixed native-runtime convention. Current harnesses do not isolate this
     // same-user state directory from an unsandboxed model shell; see the
@@ -1168,7 +1222,7 @@ class OpenClawIntegrationService {
           credentialsPath,
           harnessClientName("openclaw"),
         );
-        this.answerMcp = new NativeAnswerMcpClient(
+        const answerMcp = new NativeAnswerMcpClient(
           credentials.gatewayUrl,
           new SerializedIntegrationAuthProvider(
             oauthProvider,
@@ -1181,10 +1235,17 @@ class OpenClawIntegrationService {
           ),
           credentials.tls,
         );
+        this.answerMcp = answerMcp;
+        this.forwardedTools = new ForwardedToolCatalogue({
+          list: (timeoutMs) => answerMcp.listTools(undefined, timeoutMs),
+          cachePath: join(context.stateDir, "omnesis", "mcp-tools.json"),
+          logger: context.logger,
+        });
       } else {
         this.answerMcp = null;
+        this.forwardedTools = null;
         context.logger.warn(
-          "Omnesis ingestion and delivery remain active, but Answer and subscription management require `omnesis connect openclaw --refresh`",
+          "Omnesis ingestion and delivery remain active, but Answer, Direct, Notes and subscription management require `omnesis connect openclaw --refresh`",
         );
       }
       this.completionRoutes = completionRoutes;
@@ -1199,7 +1260,12 @@ class OpenClawIntegrationService {
         ? subscriptionsAvailable(credentials)
         : false;
       if (hasIntegrationOAuth(credentials)) {
-        await this.reconcileWithGateway(credentialsPath);
+        // Both are time-boxed and never fatal: a gateway that is down at start
+        // leaves the answers from the last successful start standing.
+        await Promise.all([
+          this.reconcileWithGateway(credentialsPath),
+          this.forwardedTools?.refresh(CAPABILITY_PROBE_TIMEOUT_MS),
+        ]);
         this.startOAuthKeepalive();
       }
       this.slot.current = this;
@@ -1209,14 +1275,21 @@ class OpenClawIntegrationService {
       this.inbox = null;
       this.credentials = null;
       this.credentialsPath = null;
+      const forwardedTools = this.forwardedTools;
       this.answerMcp = null;
+      this.forwardedTools = null;
       this.completionRoutes = null;
       if (this.keepaliveTimer) {
         clearInterval(this.keepaliveTimer);
         this.keepaliveTimer = null;
       }
       if (this.slot.current === this) this.slot.current = null;
-      await Promise.allSettled([delivery?.stop(), ingestion?.stop(), this.keepaliveInFlight]);
+      await Promise.allSettled([
+        delivery?.stop(),
+        ingestion?.stop(),
+        this.keepaliveInFlight,
+        forwardedTools?.idle(),
+      ]);
       inbox.close();
       completionRoutes.close();
       throw error;
@@ -1320,12 +1393,14 @@ class OpenClawIntegrationService {
     const inbox = this.inbox;
     const completionRoutes = this.completionRoutes;
     const answerMcp = this.answerMcp;
+    const forwardedTools = this.forwardedTools;
     this.delivery = null;
     this.ingestion = null;
     this.inbox = null;
     this.credentials = null;
     this.credentialsPath = null;
     this.answerMcp = null;
+    this.forwardedTools = null;
     this.completionRoutes = null;
     if (this.keepaliveTimer) {
       clearInterval(this.keepaliveTimer);
@@ -1339,6 +1414,7 @@ class OpenClawIntegrationService {
         delivery?.stop(),
         ingestion?.stop(),
         answerMcp?.close(),
+        forwardedTools?.idle(),
         keepalive,
         this.drainOutcomeWatchers(),
       ]);
@@ -1873,6 +1949,54 @@ class OpenClawIntegrationService {
     };
   }
 
+  /**
+   * Forward one call to the gateway tool of the same name.
+   *
+   * A result the gateway marked as an error — a refused or failed query, an
+   * invalid note — is returned as that error, with the gateway's own words.
+   * A call the gateway would not dispatch at all usually means the
+   * connection's access changed since the listing, so the listing is re-read
+   * before the failure is reported.
+   */
+  private async callForwardedTool(
+    name: string,
+    raw: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<OpenClawToolResult> {
+    const mcp = this.answerMcp;
+    if (!mcp) throw new Error("integration OAuth state is not available");
+    let result;
+    try {
+      result = await mcp.callTool(name, raw, signal, FORWARDED_TOOL_TIMEOUT_MS);
+    } catch (error) {
+      if (error instanceof ProtocolError) this.forwardedTools?.invalidate();
+      throw error;
+    }
+    const outcome = forwardedToolOutcome(result);
+    if (outcome.isError) {
+      return {
+        content: [{ type: "text", text: outcome.text }],
+        details: { ok: false, error: outcome.text },
+      };
+    }
+    return {
+      content: [
+        ...(outcome.text ? [{ type: "text" as const, text: outcome.text }] : []),
+        ...(outcome.structuredContent !== undefined
+          ? [{ type: "text" as const, text: JSON.stringify(outcome.structuredContent) }]
+          : []),
+      ],
+      // Nested, like the answer tools' results: OpenClaw reads top-level
+      // fields such as `status` and `error` to classify a tool's outcome.
+      details: {
+        ok: true,
+        ...(outcome.structuredContent !== undefined
+          ? { structuredContent: outcome.structuredContent }
+          : {}),
+      },
+    };
+  }
+
   private async manageSubscriptions(
     raw: Record<string, unknown>,
     signal?: AbortSignal,
@@ -2069,7 +2193,6 @@ export function registerOpenClawIntegration(api: OfficialOpenClawPluginApi): voi
   }
   // Keep the integration's runtime surface deliberately narrow while making
   // the installed OpenClaw SDK the compile-time registration contract.
-  // See #175 — Direct and Notes are not exposed even when the grant includes them.
   const integrationApi = api as unknown as OpenClawIntegrationApi;
   const service = new OpenClawIntegrationService(integrationApi, openClawServiceSlot);
   integrationApi.registerTool((context) => service.ordinaryAnswerToolForContext(context), {
@@ -2080,6 +2203,9 @@ export function registerOpenClawIntegration(api: OfficialOpenClawPluginApi): voi
   });
   integrationApi.registerTool((context) => service.managementToolForContext(context), {
     name: "omnesis_subscriptions",
+  });
+  integrationApi.registerTool((context) => service.forwardedToolsForContext(context), {
+    names: OPENCLAW_FORWARDED_TOOL_NAMES,
   });
   if (api.registrationMode === "tool-discovery") return;
   const nudge = () => service.nudge();
@@ -2098,6 +2224,6 @@ export const OPENCLAW_PLUGIN_DEFINITION = {
   id: "omnesis-integration",
   name: "Omnesis Integration",
   description:
-    "Ingests durable OpenClaw transcripts and delivers approved Omnesis answers and subscription wakes.",
+    "Ingests durable OpenClaw transcripts, delivers approved Omnesis answers and subscription wakes, and offers the Direct and Notes tools a connection is granted.",
   register: registerOpenClawIntegration,
 } satisfies OpenClawPluginDefinition;

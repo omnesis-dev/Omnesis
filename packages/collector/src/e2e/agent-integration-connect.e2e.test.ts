@@ -3,6 +3,7 @@
 
 import "./synth-env.js";
 
+import { randomUUID } from "node:crypto";
 import { globSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -55,6 +56,14 @@ describe("managed agent integration enrollment — spawned gateway", () => {
   test("connects, installs, authorizes, and cold-restarts the Hermes adapter", async () => {
     await exerciseManagedIntegration("hermes");
   }, 180_000);
+
+  test.each(["openclaw", "hermes"] as const)(
+    "%s: a connection granted Direct and Notes lists tables, runs SQL and adds a note through the plugin",
+    async (harnessName) => {
+      await exerciseForwardedTools(harnessName);
+    },
+    180_000,
+  );
 
   test("re-running connect on a connected OpenClaw machine keeps its device and its watches", async () => {
     const home = mkdtempSync(join(tmpdir(), "omnesis-openclaw-reconnect-e2e-"));
@@ -277,6 +286,156 @@ describe("managed agent integration enrollment — spawned gateway", () => {
       }
     }
     if (primaryError) throw primaryError;
+  }
+
+  /**
+   * The plugin's Direct and Notes tools against the real gateway: offered for
+   * the connection's grant, forwarded to the gateway's own tools, and audited
+   * against the connection like any other MCP client's calls.
+   */
+  async function exerciseForwardedTools(harnessName: "openclaw" | "hermes") {
+    const home = mkdtempSync(join(tmpdir(), `omnesis-${harnessName}-forwarded-e2e-`));
+    const cliConfig = mkdtempSync(join(tmpdir(), `omnesis-${harnessName}-forwarded-cli-e2e-`));
+    const fakeBin = mkdtempSync(join(tmpdir(), `omnesis-${harnessName}-forwarded-bin-e2e-`));
+    try {
+      prepareHarnessHome(harnessName, home, fakeBin);
+      const enrollment = await enrollManagedIntegration({
+        harness: harnessName,
+        repositoryRoot,
+        gatewayUrl: harness.gatewayUrl,
+        portalApiKey: harness.apiKey,
+        gatewayDbPath: harness.getDbPath(),
+        home,
+        fakeBin,
+        cliConfigDir: cliConfig,
+        capabilities: ["answer", "direct", "notes"],
+        createPairingCode: async () =>
+          (
+            await harness.gatewayJson<{ pairingCode: string }>("/admin/devices/pair", {
+              method: "POST",
+              body: JSON.stringify({
+                name: `Fictional ${harnessName} Direct integration`,
+                kind: "agent",
+                scopes: ["subscriptions:receive"],
+              }),
+            })
+          ).pairingCode,
+      });
+      const captureId = randomUUID();
+      const note = { id: captureId, text: "Remember the fictional recital programme." };
+      const calls = [
+        { tool: "omnesis_list_tables", args: { limit: 1 } },
+        { tool: "omnesis_run_sql", args: { sql: "SELECT 1 AS value", maxRows: 1 } },
+        { tool: "omnesis_add_note", args: note },
+        // A retry with the same capture id is the same note.
+        { tool: "omnesis_add_note", args: note },
+      ];
+      const { tools, results } = await invokeForwardedTools(harnessName, home, calls);
+
+      expect(tools).toEqual(
+        expect.arrayContaining([
+          "omnesis_answer",
+          "omnesis_list_tables",
+          "omnesis_run_sql",
+          "omnesis_add_note",
+        ]),
+      );
+      expect(tools).not.toContain("omnesis_ask_omnesis");
+      expect(results[0]).toMatchObject({
+        kind: "structured",
+        resultType: "analytics.tables",
+      });
+      expect(results[1]).toMatchObject({ kind: "sql.rows", columns: ["value"], rows: [[1]] });
+      expect(results[2]).toMatchObject({ captureId });
+      expect((results[3] as { id: string }).id).toBe((results[2] as { id: string }).id);
+
+      const { credentialId } = accessIdentity(enrollment.authorizationRequestId);
+      const audited = withDb(true, (db) =>
+        (
+          db
+            .prepare(
+              `SELECT detail FROM access_audit_events
+               WHERE event_type = 'mcp-tool-invoked' AND credential_id = ?
+               ORDER BY occurred_at, id`,
+            )
+            .all(credentialId) as Array<{ detail: string }>
+        ).map((row) => {
+          const detail = JSON.parse(row.detail) as { capability: string; tool: string };
+          return `${detail.capability}:${detail.tool}`;
+        }),
+      );
+      expect(audited).toEqual([
+        "direct:list_tables",
+        "direct:run_sql",
+        "notes:add_note",
+        "notes:add_note",
+      ]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cliConfig, { recursive: true, force: true });
+      rmSync(fakeBin, { recursive: true, force: true });
+    }
+  }
+
+  /**
+   * Make each call through the installed plugin in a cold process, and return
+   * the tools it offered with each call's structured result.
+   */
+  async function invokeForwardedTools(
+    harnessName: "openclaw" | "hermes",
+    home: string,
+    calls: Array<{ tool: string; args: Record<string, unknown> }>,
+  ): Promise<{ tools: string[]; results: unknown[] }> {
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const run = promisify(execFile);
+    if (harnessName === "openclaw") {
+      const { tools } = await probeOpenClawPlugin(home);
+      const result = await run(
+        process.execPath,
+        [resolve(repositoryRoot, "packages/agent-integration/test/openclaw_mcp_probe.mjs")],
+        {
+          cwd: repositoryRoot,
+          env: {
+            ...process.env,
+            OMNESIS_OPENCLAW_ENTRY_PATH: openClawEntry(home),
+            OMNESIS_OPENCLAW_STATE_DIR: home,
+            OMNESIS_OPENCLAW_TOOL_CALLS: JSON.stringify(calls),
+          },
+          timeout: 90_000,
+          maxBuffer: 4 * 1024 * 1024,
+        },
+      );
+      const results = JSON.parse(result.stdout) as Array<{
+        details?: { ok?: boolean; structuredContent?: unknown };
+      }>;
+      for (const outcome of results) expect(outcome.details?.ok).toBe(true);
+      return { tools, results: results.map((outcome) => outcome.details?.structuredContent) };
+    }
+    const result = await run(
+      "python3",
+      [resolve(repositoryRoot, "packages/agent-integration/test/hermes_gateway_probe.py")],
+      {
+        cwd: repositoryRoot,
+        env: {
+          ...process.env,
+          HERMES_HOME: home,
+          OMNESIS_HERMES_ADAPTER_PATH: join(home, "plugins", "omnesis-integration", "adapter.py"),
+          OMNESIS_HERMES_TOOL_CALLS: JSON.stringify(calls),
+        },
+        timeout: 90_000,
+        maxBuffer: 4 * 1024 * 1024,
+      },
+    );
+    const parsed = JSON.parse(result.stdout) as {
+      tools: string[];
+      results: Array<{ error?: unknown; structuredContent?: unknown }>;
+    };
+    for (const outcome of parsed.results) expect(outcome.error).toBeUndefined();
+    return {
+      tools: parsed.tools,
+      results: parsed.results.map((outcome) => outcome.structuredContent),
+    };
   }
 
   function prepareHarnessHome(

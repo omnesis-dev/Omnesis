@@ -336,7 +336,7 @@ describe("OpenClaw plugin registration", () => {
     registerOpenClawIntegration(fake as never);
     expect(fake.services).toHaveLength(1);
     expect(fake.hooks).toHaveLength(1);
-    expect(fake.tools).toHaveLength(3);
+    expect(fake.tools).toHaveLength(4);
   });
 
   test("exposes only tools in scoped tool-discovery mode", () => {
@@ -344,7 +344,7 @@ describe("OpenClaw plugin registration", () => {
     registerOpenClawIntegration(fake as never);
     expect(fake.services).toHaveLength(0);
     expect(fake.hooks).toHaveLength(0);
-    expect(fake.tools).toHaveLength(3);
+    expect(fake.tools).toHaveLength(4);
   });
 
   test("owns work through one managed service in full mode", () => {
@@ -365,7 +365,7 @@ describe("OpenClaw plugin registration", () => {
         },
       },
     ]);
-    expect(fake.tools).toHaveLength(3);
+    expect(fake.tools).toHaveLength(4);
   });
 
   test("discovery-time tool factories delegate to the active full-runtime service", async () => {
@@ -833,7 +833,9 @@ describe("OpenClaw plugin registration", () => {
     registerOpenClawIntegration(fake as never);
 
     expect(manifest.contracts?.tools?.sort()).toEqual(
-      fake.tools.map(({ options }) => options.name).sort(),
+      fake.tools
+        .flatMap(({ options }) => (options.names as string[] | undefined) ?? [options.name])
+        .sort(),
     );
   });
 

@@ -103,7 +103,7 @@ ADAPTER_SOURCE_COMMIT = _read_adapter_source_commit()
 DELIVERY_PROTOCOL_MIN_VERSION = 3
 DELIVERY_PROTOCOL_VERSION = 4
 MCP_PROTOCOL_VERSION = "2026-07-28"
-MCP_ANSWER_ENDPOINT = "/mcp"
+MCP_ENDPOINT = "/mcp"
 MCP_PROTOCOL_VERSION_META_KEY = "io.modelcontextprotocol/protocolVersion"
 MCP_CLIENT_CAPABILITIES_META_KEY = "io.modelcontextprotocol/clientCapabilities"
 MCP_NATIVE_CONVERSATION_META_KEY = "dev.omnesis/nativeConversationId"
@@ -130,6 +130,39 @@ _OAUTH_REFRESH_TOKEN_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000
 _OAUTH_REFRESH_MARGIN_MS = 7 * 24 * 60 * 60 * 1000
 _OAUTH_KEEPALIVE_INTERVAL_SECONDS = 6 * 60 * 60.0
 _CAPABILITY_PROBE_TIMEOUT_SECONDS = 3.0
+
+# Every gateway tool this adapter can host as a native Hermes tool: the Direct
+# inventory and Notes' `add_note`, in the order they are offered. The
+# connection's `tools/list` decides which of them it actually gets. Stated again
+# in `src/forwarded-tools.ts`; `forwarded-tools-parity.test.ts` holds both copies
+# to the gateway's own inventory. Answer is not among them: the adapter hosts it
+# through `omnesis_answer`, which owns waiting, approval routing and retries.
+_FORWARDED_TOOL_NAMES = (
+    "search_many",
+    "fetch_many",
+    "lookup_document_by_url",
+    "lookup_people",
+    "trace_connections",
+    "run_sql",
+    "temporal_query",
+    "entity_context",
+    "search_loops",
+    "list_loops",
+    "fetch_loop",
+    "list_tables",
+    "add_note",
+)
+# How long a forwarded call may take, above the gateway's own 30-second Direct
+# limit.
+_FORWARDED_TOOL_TIMEOUT_SECONDS = 60.0
+# The largest `/mcp` response accepted. A Direct result may carry up to 1 MiB
+# of JSON, and the JSON-RPC envelope and event-stream framing around it add a
+# little more.
+_MCP_RESPONSE_MAX_BYTES = 4 * 1024 * 1024
+# Bounds a `tools/list` walk, like the official client's default.
+_MCP_LIST_MAX_PAGES = 64
+# Bounds the gateway's own words on a refused MCP request.
+_MCP_REJECTION_MAX_CHARS = 500
 
 
 def _process_is_alive(pid: int) -> bool:
@@ -201,9 +234,9 @@ def _acquire_refresh_lock(path: Path) -> int:
             time.sleep(_OAUTH_REFRESH_LOCK_WAIT_SECONDS)
 
 
-def _write_credentials(path: Path, raw: Dict[str, Any]) -> None:
-    """Atomically replace a credential document without weakening its mode."""
-    temporary = path.with_name(f".integration-{uuid.uuid4().hex}.tmp")
+def _write_private_json(path: Path, raw: Dict[str, Any]) -> None:
+    """Atomically replace a JSON document readable only by its owner."""
+    temporary = path.with_name(f".omnesis-{uuid.uuid4().hex}.tmp")
     try:
         descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as output:
@@ -475,6 +508,19 @@ class GatewayHttpError(ConnectionError):
 
 class McpProtocolError(ConnectionError):
     """The stateless MCP peer returned a malformed or failed exchange."""
+
+
+class McpRequestRejected(McpProtocolError):
+    """The gateway answered an MCP request with a JSON-RPC error.
+
+    ``detail`` is the gateway's own message, bounded and stripped of control
+    characters. For a forwarded tool it is what the agent is told — typically
+    that the connection is no longer granted the tool it called.
+    """
+
+    def __init__(self, detail: Optional[str] = None):
+        super().__init__("Omnesis rejected the MCP request")
+        self.detail = detail
 
 
 def _subscription_unsupported_error(
@@ -1329,7 +1375,7 @@ def _record_gateway_capabilities(path: Path, subscriptions: bool) -> None:
             return
         next_capabilities["subscriptions"] = subscriptions
         raw["capabilities"] = next_capabilities
-        _write_credentials(path, raw)
+        _write_private_json(path, raw)
     finally:
         _release_owned_refresh_lock(lock_path, descriptor)
 
@@ -1348,6 +1394,112 @@ def _reconcile_gateway_capabilities(path: Path) -> bool:
     if warning:
         logger.warning("%s", warning)
     return subscriptions
+
+
+def _forwarded_tool_name(gateway_name: str) -> str:
+    """The Hermes name for a forwarded gateway tool.
+
+    Hermes keeps one tool namespace for every plugin, so the integration's
+    tools all carry the ``omnesis_`` prefix; the rest is the gateway's own
+    name, which the gateway's descriptions use when they refer to one another.
+    """
+    return f"omnesis_{gateway_name}"
+
+
+def _forwarded_tools_from_listing(listing: Any) -> list[Dict[str, Any]]:
+    """The hostable tools in a ``tools/list`` result, in offering order.
+
+    A tool this adapter cannot host, or one whose definition is malformed, is
+    left out rather than failing the whole listing: the rest of the grant is
+    still usable, and a half-formed tool would hand the model a schema it
+    cannot satisfy.
+    """
+    by_name: Dict[str, Dict[str, Any]] = {}
+    for candidate in listing if isinstance(listing, list) else []:
+        if not isinstance(candidate, dict):
+            continue
+        name = candidate.get("name")
+        title = candidate.get("title")
+        description = candidate.get("description")
+        schema = candidate.get("inputSchema")
+        if (
+            name not in _FORWARDED_TOOL_NAMES
+            or not isinstance(description, str)
+            or not description
+            or not isinstance(schema, dict)
+            or schema.get("type") != "object"
+            or (title is not None and (not isinstance(title, str) or not title))
+        ):
+            continue
+        by_name[name] = {
+            "name": name,
+            **({"title": title} if title else {}),
+            "description": description,
+            "inputSchema": schema,
+        }
+    return [by_name[name] for name in _FORWARDED_TOOL_NAMES if name in by_name]
+
+
+def _forwarded_tools_cache_path(credentials_path: Path) -> Path:
+    """Where the last listing is kept, beside the credential it was listed with."""
+    return credentials_path.with_name("mcp-tools.json")
+
+
+def _read_forwarded_tools_cache(path: Path) -> list[Dict[str, Any]]:
+    """The listing a previous process kept, or none when it is missing or unreadable."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return _forwarded_tools_from_listing(
+        raw.get("tools") if isinstance(raw, dict) else None
+    )
+
+
+def _refresh_forwarded_tools(
+    credentials_path: Path, timeout: float
+) -> list[Dict[str, Any]]:
+    """List the connection's forwardable tools and keep the listing.
+
+    A connection with no OAuth sign-in has no corpus access to list, so it
+    offers none and keeps nothing.
+    """
+    credentials = _load_credentials(credentials_path)
+    if credentials.oauth_access_token is None:
+        return []
+    probe = OmnesisAdapter.for_tools()
+    probe._credential_path = credentials_path
+    probe._credentials = credentials
+    tools = probe.list_forwarded_tools(timeout)
+    cache = _forwarded_tools_cache_path(credentials_path)
+    if _read_forwarded_tools_cache(cache) != tools:
+        _write_private_json(cache, {"tools": tools})
+    return tools
+
+
+def _forwarded_tool_result(result: Dict[str, Any]) -> str:
+    """What the agent is told about a forwarded call, in the gateway's words."""
+    blocks = result.get("content")
+    text = "\n".join(
+        block["text"]
+        for block in (blocks if isinstance(blocks, list) else [])
+        if isinstance(block, dict)
+        and block.get("type") == "text"
+        and isinstance(block.get("text"), str)
+    )
+    if result.get("isError") is True:
+        return json.dumps({"error": text}, ensure_ascii=False)
+    return json.dumps(
+        {
+            "content": text,
+            **(
+                {"structuredContent": result["structuredContent"]}
+                if "structuredContent" in result
+                else {}
+            ),
+        },
+        ensure_ascii=False,
+    )
 
 
 # The re-issue route's refusal when no approved credential is bound to this
@@ -4051,11 +4203,13 @@ class OmnesisAdapter(BasePlatformAdapter):
         metadata: Optional[Dict[str, Any]] = None,
         timeout: float = GATEWAY_TIMEOUT_SECONDS,
     ) -> Dict[str, Any]:
-        """Make one dependency-free modern stateless MCP tool call.
+        """Make one dependency-free modern stateless MCP Answer tool call.
 
         Hermes already owns the pinned HTTP/TLS transport. Keeping the tiny
         modern envelope here avoids adding an MCP runtime (and its lifecycle)
-        to a Python plugin that needs exactly two tools on one fixed server.
+        to a Python plugin that talks to one fixed server with stateless
+        requests. The forwarded Direct and Notes tools use the same envelope
+        through ``call_forwarded_tool``.
         """
         if name not in {"ask_omnesis", "get_answer_status"}:
             raise ValueError("unsupported Omnesis MCP tool")
@@ -4120,6 +4274,101 @@ class OmnesisAdapter(BasePlatformAdapter):
             )
         return _validate_answer_response(result.get("structuredContent"))
 
+    def list_forwarded_tools(self, timeout: float) -> list[Dict[str, Any]]:
+        """The Direct and Notes tools the gateway lists for this connection."""
+        assert self._credentials is not None
+        token = self._credentials.oauth_access_token
+        if token is None:
+            return []
+        listing: list[Any] = []
+        cursor: Optional[str] = None
+        for _page in range(_MCP_LIST_MAX_PAGES):
+            params: Dict[str, Any] = {
+                "_meta": {
+                    MCP_PROTOCOL_VERSION_META_KEY: MCP_PROTOCOL_VERSION,
+                    MCP_CLIENT_CAPABILITIES_META_KEY: {},
+                },
+                **({"cursor": cursor} if cursor is not None else {}),
+            }
+            result = self._mcp_request(token, "tools/list", params, timeout)
+            page = result.get("tools")
+            if not isinstance(page, list):
+                raise McpProtocolError("Omnesis returned an invalid tool listing")
+            listing.extend(page)
+            next_cursor = result.get("nextCursor")
+            if not isinstance(next_cursor, str) or not next_cursor:
+                break
+            cursor = next_cursor
+            # The token may have been refreshed by the page just read.
+            token = self._credentials.oauth_access_token or token
+        return _forwarded_tools_from_listing(listing)
+
+    def call_forwarded_tool(self, name: str, args: Any) -> str:
+        """Forward one call to the gateway tool of the same name.
+
+        A result the gateway marked as an error — a refused or failed query,
+        an invalid note — is returned as that error, in the gateway's words.
+        A call the gateway would not dispatch at all usually means the
+        connection's access changed since this process registered its tools,
+        so the kept listing is re-read for the next Hermes start.
+        """
+        if name not in _FORWARDED_TOOL_NAMES or not isinstance(args, dict):
+            return json.dumps({"error": "invalid Omnesis tool input"})
+        if not self._ensure_tool_resources():
+            return json.dumps({"error": "Omnesis integration is unavailable"})
+        assert self._credentials is not None
+        token = self._credentials.oauth_access_token
+        if token is None:
+            return json.dumps(_answer_failure_payload(GatewayHttpError(401)))
+        try:
+            result = self._mcp_request(
+                token,
+                "tools/call",
+                {
+                    "name": name,
+                    "arguments": args,
+                    "_meta": {
+                        MCP_PROTOCOL_VERSION_META_KEY: MCP_PROTOCOL_VERSION,
+                        MCP_CLIENT_CAPABILITIES_META_KEY: {},
+                    },
+                },
+                _FORWARDED_TOOL_TIMEOUT_SECONDS,
+                name,
+            )
+        except McpRequestRejected as rejected:
+            try:
+                _refresh_forwarded_tools(
+                    self._credential_path, _CAPABILITY_PROBE_TIMEOUT_SECONDS
+                )
+            except Exception as error:
+                logger.warning(
+                    "Could not list the Omnesis tools this connection may use: %s",
+                    error,
+                )
+            return json.dumps(
+                {"error": rejected.detail or str(rejected)}, ensure_ascii=False
+            )
+        except GatewayHttpError as failure:
+            logger.warning(
+                "Omnesis %s request failed: HTTP %s%s",
+                name,
+                failure.status,
+                f" ({failure.code})" if failure.code else "",
+            )
+            if failure.status in {401, 403}:
+                return json.dumps(_answer_failure_payload(failure))
+            return json.dumps(
+                {
+                    "error": f"Omnesis {name} request failed",
+                    "status": failure.status,
+                    **({"code": failure.code} if failure.code else {}),
+                }
+            )
+        except Exception:
+            logger.warning("Omnesis %s request failed", name, exc_info=True)
+            return json.dumps({"error": f"Omnesis {name} request failed"})
+        return _forwarded_tool_result(result)
+
     def _mcp_request(
         self,
         token: str,
@@ -4148,7 +4397,7 @@ class OmnesisAdapter(BasePlatformAdapter):
         }
         try:
             response = self._request_json(
-                "POST", MCP_ANSWER_ENDPOINT, token, payload, timeout, headers
+                "POST", MCP_ENDPOINT, token, payload, timeout, headers
             )
         except GatewayHttpError as error:
             if error.status != 401:
@@ -4159,7 +4408,7 @@ class OmnesisAdapter(BasePlatformAdapter):
                 raise
             token = self._refresh_oauth_token(token)
             response = self._request_json(
-                "POST", MCP_ANSWER_ENDPOINT, token, payload, timeout, headers
+                "POST", MCP_ENDPOINT, token, payload, timeout, headers
             )
         if (
             not isinstance(response, dict)
@@ -4170,7 +4419,13 @@ class OmnesisAdapter(BasePlatformAdapter):
         if "error" in response:
             if set(response) != {"jsonrpc", "id", "error"}:
                 raise McpProtocolError("Omnesis returned an invalid MCP error")
-            raise McpProtocolError("Omnesis rejected the MCP request")
+            error = response.get("error")
+            message = error.get("message") if isinstance(error, dict) else None
+            raise McpRequestRejected(
+                _CONTROL_CHARACTERS.sub("", message)[:_MCP_REJECTION_MAX_CHARS]
+                if isinstance(message, str)
+                else None
+            )
         if set(response) != {"jsonrpc", "id", "result"}:
             raise McpProtocolError("Omnesis returned an invalid MCP result")
         result = response.get("result")
@@ -4332,7 +4587,7 @@ class OmnesisAdapter(BasePlatformAdapter):
         # that returns no new one leaves the old one — and its clock — running.
         if rotated:
             raw["oauth"]["tokensObtainedAt"] = int(time.time() * 1000)
-        _write_credentials(path, raw)
+        _write_private_json(path, raw)
         self._credentials = _load_credentials(path)
         return self._credentials.oauth_access_token
 
@@ -4381,9 +4636,16 @@ class OmnesisAdapter(BasePlatformAdapter):
             base_path = parsed.path.rstrip("/")
             connection.request(method, f"{base_path}{endpoint}", body, headers)
             response = connection.getresponse()
-            response_body = response.read(MAX_FRAME_BYTES + 1)
-            if len(response_body) > MAX_FRAME_BYTES:
-                raise ConnectionError("Omnesis answer exceeded 1 MiB")
+            max_bytes = (
+                _MCP_RESPONSE_MAX_BYTES
+                if endpoint == MCP_ENDPOINT
+                else MAX_FRAME_BYTES
+            )
+            response_body = response.read(max_bytes + 1)
+            if len(response_body) > max_bytes:
+                raise ConnectionError(
+                    f"Omnesis answer exceeded {max_bytes // (1024 * 1024)} MiB"
+                )
             if not 200 <= response.status < 300:
                 raise _gateway_http_error(response.status, response_body)
             # Not every gateway write answers with a document.
@@ -4700,6 +4962,34 @@ def _management_tool_handler(args: Dict[str, Any], **kwargs: Any) -> str:
     return _tool_adapter().manage_subscriptions(args, kwargs.get("session_id"))
 
 
+def _forwarded_tool_handler(gateway_name: str) -> Any:
+    def handler(args: Dict[str, Any], **_kwargs: Any) -> str:
+        return _tool_adapter().call_forwarded_tool(gateway_name, args)
+
+    return handler
+
+
+def _registered_forwarded_tools() -> list[Dict[str, Any]]:
+    """Settle the Direct and Notes tools before Hermes registers them.
+
+    Hermes registers a plugin's tools once, when it loads the plugin, so this
+    is the moment the connection's access level is read: a short live listing,
+    kept for later loads, or the kept listing when the gateway cannot be
+    reached. A machine where the integration is not configured has nothing to
+    list with and offers none.
+    """
+    path = _credentials_path()
+    if not path.exists():
+        return []
+    try:
+        return _refresh_forwarded_tools(path, _CAPABILITY_PROBE_TIMEOUT_SECONDS)
+    except Exception as error:
+        logger.warning(
+            "Could not list the Omnesis tools this connection may use: %s", error
+        )
+    return _read_forwarded_tools_cache(_forwarded_tools_cache_path(path))
+
+
 def _registered_subscriptions_available() -> bool:
     """Settle the Watch tool inventory before Hermes registers it.
 
@@ -4886,6 +5176,23 @@ def register(ctx: Any) -> None:
             },
             handler=_management_tool_handler,
             description="Manage privacy-reviewed Omnesis subscriptions.",
+            emoji="◉",
+        )
+    # The connection's Direct and Notes tools, exactly as the gateway lists and
+    # describes them for its access level. They serve every session, like
+    # `omnesis_answer`: the access level, not the kind of run, grants them.
+    for tool in _registered_forwarded_tools():
+        name = _forwarded_tool_name(tool["name"])
+        ctx.register_tool(
+            name=name,
+            toolset="omnesis",
+            schema={
+                "name": name,
+                "description": tool["description"],
+                "parameters": tool["inputSchema"],
+            },
+            handler=_forwarded_tool_handler(tool["name"]),
+            description=tool.get("title", tool["name"]),
             emoji="◉",
         )
     ctx.register_platform(
