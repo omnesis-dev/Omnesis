@@ -106,13 +106,15 @@ on Android, with the Compose semantics tree in `logcat.txt` under the
 
 ## In CI
 
-`.github/workflows/mobile-journeys.yml` runs the iOS journeys on every push to
-`main`, on manual dispatch, and on pull requests that change the iOS app or the
-shared machinery (the journey script, `synth-gateway.sh`, the `e2e-minimal`
-universe, the replay scenarios, the workflow), on one `macos-26` runner. The
-Android lane boots an API 34 emulator with KVM on `ubuntu-latest`, rendering
-through ANGLE (`-gpu swangle_indirect`); it runs on manual dispatch only until
-the emulator is stable there (#200). Neither lane needs a secret.
+`.github/workflows/mobile-journeys.yml` runs both platforms' journeys on every
+push to `main` and on manual dispatch, and on pull requests that change the
+corresponding app or the shared machinery (the journey script,
+`synth-gateway.sh`, the `e2e-minimal` universe, the replay scenarios, the
+workflow). The iOS lane uses one `macos-26` runner. The Android lane boots an
+API 34 emulator with KVM on `ubuntu-latest`, rendering through ANGLE
+(`-gpu swangle_indirect`): with SwiftShader's own GL or guest rendering, the
+emulator process dies while the app draws its Ask screen. Neither lane needs a
+secret.
 
 A manual run picks its platforms:
 `gh workflow run mobile-journeys.yml --ref <branch> -f platforms=android`

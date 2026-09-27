@@ -5,11 +5,11 @@ name: mobile-journeys
 # the way a person does. `scripts/run-mobile-journeys.sh` does the work; see
 # docs/mobile-journeys.md.
 #
-# The iOS lane runs on every push to `main`, on pull requests that change the
-# iOS app or the shared journey machinery, and on manual dispatch
-# (`gh workflow run mobile-journeys.yml --ref <branch>`); it takes one macOS
-# runner. The Android lane runs the emulator on Linux with KVM and, until the
-# emulator is stable on hosted runners, only on manual dispatch. The lanes stay
+# Both lanes run on every push to `main` and on manual dispatch
+# (`gh workflow run mobile-journeys.yml --ref <branch>`); a pull request runs
+# the platform whose app, or whose shared journey machinery, it changes. The
+# iOS lane takes one macOS runner; the Android lane runs the emulator on Linux
+# with KVM. The lanes stay
 # outside full-validation, so a simulator or emulator flake cannot turn the
 # README badge red; a journey that fails is retried once before the lane fails.
 #
@@ -24,6 +24,7 @@ on:
     branches: [main]
     paths:
       - "ios/**"
+      - "android/**"
       - "scripts/run-mobile-journeys.sh"
       - "scripts/synth-gateway.sh"
       - "evals/universes/default/agent-demos/**"
@@ -51,13 +52,14 @@ env:
 
 jobs:
   changes:
-    # Whether a pull request touches the iOS journeys. Pushes and manual runs
+    # Which platforms' journeys a pull request touches. Pushes and manual runs
     # skip this.
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       ios: ${{ steps.paths.outputs.ios }}
+      android: ${{ steps.paths.outputs.android }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -73,9 +75,12 @@ jobs:
           files="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"
           shared='^(scripts/(run-mobile-journeys|synth-gateway)\.sh|evals/universes/(default/agent-demos|e2e-minimal)/|\.github/workflows/mobile-journeys\.yml)'
           ios=false
+          android=false
           if grep -Eq "^ios/|$shared" <<<"$files"; then ios=true; fi
+          if grep -Eq "^android/|$shared" <<<"$files"; then android=true; fi
           echo "ios=$ios" >> "$GITHUB_OUTPUT"
-          echo "iOS journeys: $ios"
+          echo "android=$android" >> "$GITHUB_OUTPUT"
+          echo "iOS journeys: $ios, Android journeys: $android"
 
   ios:
     needs: changes
@@ -144,9 +149,7 @@ jobs:
 
   android:
     needs: changes
-    # Manual dispatch only while the emulator is unstable on hosted runners.
-    # See #200 — planned: back on pushes to main after five green dispatches.
-    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.platforms != 'ios' }}
+    if: ${{ !cancelled() && (github.event_name == 'push' || (github.event_name == 'pull_request' && needs.changes.outputs.android == 'true') || (github.event_name == 'workflow_dispatch' && inputs.platforms != 'ios')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
