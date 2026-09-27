@@ -340,6 +340,7 @@ export class CodexAppServerRuntime {
       toolTimeoutMs,
       maxToolIterations,
       signal,
+      heldForTurnId: [],
     };
 
     const abort = (): void => {
@@ -408,10 +409,8 @@ export class CodexAppServerRuntime {
       const parsedTurnId = extractTurnId(turnResult);
       if (!parsedTurnId) throw new Error("Codex app-server did not return a turn id");
       turnId = parsedTurnId;
-      if (state.turnId && state.turnId !== turnId) {
-        throw new Error("Codex app-server returned a turn id that did not match its early events");
-      }
       state.turnId = turnId;
+      this.releaseHeldMessages(state);
 
       while (true) {
         const next = await queue.shift();
@@ -453,6 +452,8 @@ export class CodexAppServerRuntime {
       }
     } finally {
       signal?.removeEventListener("abort", abort);
+      // A turn that never learned its id judges anything still held as foreign.
+      this.releaseHeldMessages(state);
       if (this.activeTurn === state) this.activeTurn = null;
       queue.close();
     }
@@ -625,6 +626,12 @@ export class CodexAppServerRuntime {
     const tool = stringField(p, "tool") ?? "";
     const rawArgs = p?.arguments ?? {};
 
+    if (state && this.holdUntilTurnId(state, params)) {
+      return new Promise((resolve) => {
+        state.heldForTurnId?.push(() => resolve(this.handleToolCall(params)));
+      });
+    }
+
     if (!state || !this.acceptTurnScopedParams(state, params)) {
       return {
         success: false,
@@ -729,6 +736,10 @@ export class CodexAppServerRuntime {
   private handleNotification(method: string, params: unknown): void {
     const state = this.activeTurn;
     if (!state) return;
+    if (this.holdUntilTurnId(state, params)) {
+      state.heldForTurnId?.push(() => this.handleNotification(method, params));
+      return;
+    }
 
     if (method === "item/agentMessage/delta") {
       if (!this.acceptTurnScopedParams(state, params)) return;
@@ -866,11 +877,26 @@ export class CodexAppServerRuntime {
     if (threadId && state.threadId && threadId !== state.threadId) return false;
     const turnId = turnIdFromParams(p);
     if (!turnId) return state.turnId === "";
-    if (!state.turnId) {
-      state.turnId = turnId;
-      return true;
-    }
     return turnId === state.turnId;
+  }
+
+  /**
+   * Codex may deliver a turn's first events before the `turn/start` response,
+   * or in the same read, ahead of the continuation that records the turn id.
+   * Until that id is known those events cannot be told apart from another
+   * turn's output, so a message naming a turn is held and replayed, in arrival
+   * order, once `turn/start` settles.
+   */
+  private holdUntilTurnId(state: ActiveCodexTurn, params: unknown): boolean {
+    if (state.turnId || !state.heldForTurnId) return false;
+    const p = asRecord(params);
+    return p !== null && turnIdFromParams(p) !== null;
+  }
+
+  private releaseHeldMessages(state: ActiveCodexTurn): void {
+    const held = state.heldForTurnId;
+    state.heldForTurnId = null;
+    for (const replay of held ?? []) replay();
   }
 
   private failActiveTurn(code: string, message: string): void {
@@ -1175,6 +1201,8 @@ interface ActiveCodexTurn {
   toolTimeoutMs: number;
   maxToolIterations: number;
   signal?: AbortSignal;
+  /** Turn-scoped messages received before `turn/start` returned the turn id; null once released. */
+  heldForTurnId: Array<() => void> | null;
 }
 
 type AgentEndUsage = {
