@@ -92,6 +92,18 @@ that ended without ever running fails the job at once. The nightly run and a
 dispatch of every lane share a concurrency group, so two full runs never
 overlap.
 
+On the Mac, the Tailscale action points the system resolver at MagicDNS
+(`100.100.100.100`) whenever the tailnet has MagicDNS on. The standalone
+`tailscaled` forwards public names from there to the resolvers it last read
+from `/etc/resolv.conf`, and reads that file again whenever a node joins or
+leaves the tailnet; by then it lists only `100.100.100.100`, so every public
+lookup fails and the runner loses npm, git and its own connection to GitHub.
+The collector job therefore joins with `--accept-dns=false`, puts back the
+DNS settings it saved before the action ran, and pins the gateway's MagicDNS
+name in `/etc/hosts`. Both sides check that they can still resolve and reach
+`registry.npmjs.org` and `github.com` after joining, and the collector checks
+again right before its install, so a lost network fails in about a minute.
+
 ## Public logs
 
 Actions logs and artifacts of this repository are public. The lane never
