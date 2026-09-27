@@ -101,6 +101,9 @@ fi
 # since the last xcodegen run).
 cd "$ROOT/ios"
 xcodegen generate >/dev/null
+export OMNESIS_IOS_PACKAGES_DIR="${OMNESIS_IOS_PACKAGES_DIR:-$ROOT/ios/build/packages}"
+"$ROOT/scripts/ci/resolve-ios-packages.sh" Omnesis
+PACKAGE_FLAGS=(-clonedSourcePackagesDirPath "$OMNESIS_IOS_PACKAGES_DIR" -disableAutomaticPackageResolution)
 
 echo "→ Running OmnesisTests/GatewayLiveE2ETests against the gateway…"
 # Hand the URL + token to the simulator's test process via a file at a
@@ -124,6 +127,7 @@ xcodebuild test \
   -project Omnesis.xcodeproj \
   -scheme Omnesis \
   -destination "$DEST" \
+  "${PACKAGE_FLAGS[@]}" \
   -resultBundlePath "$RESULT_DIR/live.xcresult" \
   -only-testing:OmnesisTests/GatewayLiveE2ETests
 

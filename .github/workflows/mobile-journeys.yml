@@ -110,6 +110,13 @@ jobs:
             echo "DEVELOPMENT_TEAM = " > ios/Local.xcconfig
           fi
 
+      - name: Cache Swift packages
+        # Keyed on project.yml, which pins every package version.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ios/build/packages
+          key: ios-packages-${{ runner.os }}-${{ hashFiles('ios/project.yml') }}
+
       - name: lane [ios-journeys]
         env:
           OMNESIS_JOURNEY_ARTIFACTS: ${{ runner.temp }}/mobile-journeys

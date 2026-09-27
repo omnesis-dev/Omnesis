@@ -116,6 +116,7 @@ trap 'exit 130' INT TERM
 # IOS_BUILD_PID for run_ios.
 IOS_UDID=""
 IOS_BUILD_PID=""
+IOS_PACKAGE_FLAGS=()
 prepare_ios() {
   local simulator_name="${OMNESIS_JOURNEY_IOS_SIMULATOR:-iPhone 17}"
   local udid
@@ -138,6 +139,9 @@ print(max(matches)[1])
   IOS_UDID="$udid"
 
   (cd "$ROOT/ios" && xcodegen generate >/dev/null)
+  export OMNESIS_IOS_PACKAGES_DIR="${OMNESIS_IOS_PACKAGES_DIR:-$ROOT/ios/build/packages}"
+  "$ROOT/scripts/ci/resolve-ios-packages.sh" OmnesisDemoUITests
+  IOS_PACKAGE_FLAGS=(-clonedSourcePackagesDirPath "$OMNESIS_IOS_PACKAGES_DIR" -disableAutomaticPackageResolution)
   echo "→ Building the app and its UI tests while the gateway indexes…"
   # A generic destination: the build needs no particular simulator, and a
   # freshly booted one is not always visible to xcodebuild yet.
@@ -145,6 +149,7 @@ print(max(matches)[1])
     -project "$ROOT/ios/Omnesis.xcodeproj" \
     -scheme OmnesisDemoUITests \
     -destination "generic/platform=iOS Simulator" \
+    "${IOS_PACKAGE_FLAGS[@]}" \
     -derivedDataPath "$IOS_DERIVED_DATA" \
     >"$ARTIFACTS/xcodebuild-build.log" 2>&1 &
   IOS_BUILD_PID=$!
@@ -202,6 +207,7 @@ print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"],
     -scheme OmnesisDemoUITests \
     -destination "platform=iOS Simulator,id=$udid" \
     -derivedDataPath "$IOS_DERIVED_DATA" \
+    "${IOS_PACKAGE_FLAGS[@]}" \
     -resultBundlePath "$ARTIFACTS/ios-journeys.xcresult" \
     -retry-tests-on-failure -test-iterations $((RETRIES + 1)) \
     "${tests[@]}" 2>&1 | tee "$ARTIFACTS/xcodebuild.log" \
