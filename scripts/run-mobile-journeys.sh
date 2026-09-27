@@ -139,10 +139,12 @@ print(max(matches)[1])
 
   (cd "$ROOT/ios" && xcodegen generate >/dev/null)
   echo "→ Building the app and its UI tests while the gateway indexes…"
+  # A generic destination: the build needs no particular simulator, and a
+  # freshly booted one is not always visible to xcodebuild yet.
   xcodebuild build-for-testing \
     -project "$ROOT/ios/Omnesis.xcodeproj" \
     -scheme OmnesisDemoUITests \
-    -destination "platform=iOS Simulator,id=$udid" \
+    -destination "generic/platform=iOS Simulator" \
     -derivedDataPath "$IOS_DERIVED_DATA" \
     >"$ARTIFACTS/xcodebuild-build.log" 2>&1 &
   IOS_BUILD_PID=$!
