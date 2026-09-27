@@ -114,6 +114,10 @@ Android lane boots an API 34 emulator with KVM on `ubuntu-latest`, rendering
 through ANGLE (`-gpu swangle_indirect`); it runs on manual dispatch only until
 the emulator is stable there (#200). Neither lane needs a secret.
 
+A manual run picks its platforms:
+`gh workflow run mobile-journeys.yml --ref <branch> -f platforms=android`
+(`both`, `ios` or `android`).
+
 A lane passes only when every journey it selected ran and passed: a skipped
 test fails it.
 

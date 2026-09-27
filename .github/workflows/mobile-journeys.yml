@@ -30,6 +30,12 @@ on:
       - "evals/universes/e2e-minimal/**"
       - ".github/workflows/mobile-journeys.yml"
   workflow_dispatch:
+    inputs:
+      platforms:
+        description: Which platforms' journeys to run
+        type: choice
+        options: [both, ios, android]
+        default: both
 
 # A newer push to a pull request replaces its run. Runs on main are never
 # cancelled, so each finished run is a verdict on its commit.
@@ -73,7 +79,7 @@ jobs:
 
   ios:
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.ios == 'true') }}
+    if: ${{ !cancelled() && (github.event_name == 'push' || (github.event_name == 'pull_request' && needs.changes.outputs.ios == 'true') || (github.event_name == 'workflow_dispatch' && inputs.platforms != 'android')) }}
     # The project requires Xcode 26, the macOS 26 image's default, which
     # carries the iPhone 17 simulator the journeys run on.
     runs-on: macos-26
@@ -140,7 +146,7 @@ jobs:
     needs: changes
     # Manual dispatch only while the emulator is unstable on hosted runners.
     # See #200 — planned: back on pushes to main after five green dispatches.
-    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' }}
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.platforms != 'ios' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -210,6 +216,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: android-journeys
-          path: ${{ runner.temp }}/mobile-journeys/
+          # The emulator runner keeps the emulator's own crash reports here.
+          path: |
+            ${{ runner.temp }}/mobile-journeys/
+            /tmp/android-runner/
           if-no-files-found: ignore
           retention-days: 14
