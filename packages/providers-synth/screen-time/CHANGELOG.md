@@ -1,5 +1,14 @@
 # @omnesis/provider-screen-time-synth
 
+## 0.5.14
+
+### Patch Changes
+
+- @omnesis/core@0.5.14
+- @omnesis/providers-synth-common@0.5.14
+- @omnesis/provider-screen-time@0.5.14
+- @omnesis/source-sdk@0.5.14
+
 ## 0.5.13
 
 ### Patch Changes

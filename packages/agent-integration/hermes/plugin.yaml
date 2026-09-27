@@ -1,7 +1,7 @@
 name: omnesis-integration
 label: Omnesis
 kind: platform
-version: 0.5.13
+version: 0.5.14
 description: >
   Ingests durable Hermes transcripts, accepts privacy-reviewed Omnesis
   subscription wakes in dedicated background sessions, and offers the Direct

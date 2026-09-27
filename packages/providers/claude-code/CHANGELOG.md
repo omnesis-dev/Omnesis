@@ -1,5 +1,12 @@
 # @omnesis/provider-claude-code
 
+## 0.5.14
+
+### Patch Changes
+
+- @omnesis/source-sdk@0.5.14
+- @omnesis/types@0.5.14
+
 ## 0.5.13
 
 ### Patch Changes
