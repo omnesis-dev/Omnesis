@@ -48,9 +48,14 @@ opt_in_rules:
   - sorted_first_last
   - toggle_bool
   - unneeded_parentheses_in_closure_argument
-  - unused_import
   - vertical_parameter_alignment_on_call
   - yoda_condition
+
+# `unused_import` is deliberately absent. It is an analyzer rule, which only
+# `swiftlint analyze` runs, over a full build's compiler log; measured on the
+# CI macOS runner it analyzed about four files a minute (500+ files: over two
+# hours), far beyond the iOS job's budget. Listing it under the lint rules only
+# drew a warning that it was skipped.
 
 # Disabled rules with rationale.
 disabled_rules:
