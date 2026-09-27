@@ -2146,6 +2146,11 @@
   ],
   "tailnetIps": [
     {
+      "value": "100.100.100.100",
+      "paths": ["docs/install-e2e.md", "scripts/install-e2e/tailnet.sh"],
+      "reason": "Tailscale's fixed MagicDNS resolver address, the same on every tailnet"
+    },
+    {
       "value": "100.101.102.103",
       "paths": [
         "packages/cli/src/commands/phone-pairing.test.ts",

@@ -52,6 +52,7 @@ esac
 
 group "Tailnet"
 ts_register
+ts_check_internet
 FQDN="$(ts_field 'j.Self.DNSName.replace(/\.$/, "")')" || die "this node has no MagicDNS name"
 ts_wait_resolves "$FQDN" 120
 GATEWAY_URL="https://$FQDN:7600"

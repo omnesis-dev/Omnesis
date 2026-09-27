@@ -270,7 +270,9 @@ jobs:
           log-mode: quiet
       # Only the Tailscale step needs the OIDC token. Nothing after it (the
       # installer runs npm lifecycle scripts) gets the means to mint one.
+      # A green lane takes under twenty minutes; see the collector job.
       - name: Gateway
+        timeout-minutes: 60
         run: |
           unset ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL
           E2E_WORK="$RUNNER_TEMP/install-e2e" E2E_FIXTURE_DIR="$RUNNER_TEMP/fixtures/$E2E_MODE" \
@@ -335,17 +337,33 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/fixtures"
           tar -C "$RUNNER_TEMP/fixtures" -xzf "$RUNNER_TEMP/fixtures.tgz"
+      # Before the Tailscale action repoints them; tailnet-collector.sh
+      # puts them back.
+      - name: Remember the Mac's DNS settings
+        run: |
+          mkdir -p "$RUNNER_TEMP/install-e2e"
+          networksetup -getdnsservers Ethernet >"$RUNNER_TEMP/install-e2e/dns-servers"
+          networksetup -getsearchdomains Ethernet >"$RUNNER_TEMP/install-e2e/dns-search-domains"
       - uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
         with:
           oauth-client-id: ${{ secrets.TS_CLIENT_ID }}
           audience: ${{ secrets.TS_AUDIENCE }}
           tags: tag:omnesis-ci
           hostname: ${{ env.NODE_NAME }}
+          # The Mac takes no DNS from the tailnet. The action still points
+          # the system resolver at MagicDNS, whose public forwarding breaks
+          # on the next network-map change; tailnet-collector.sh restores
+          # the Mac's own resolvers and pins the gateway's name instead
+          # (ts_restore_system_dns in scripts/install-e2e/tailnet.sh).
+          args: --accept-dns=false
           # Quiet is load-bearing: the other modes print the tailnet's DNS
           # suffix, and this log is public.
           log-mode: quiet
       # Only the Tailscale step needs the OIDC token; see the gateway job.
+      # A green lane takes under twenty minutes. The bound keeps a wedged
+      # step from holding its partner for the rest of the job's timeout.
       - name: Collector
+        timeout-minutes: 60
         run: |
           unset ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL
           E2E_WORK="$RUNNER_TEMP/install-e2e" E2E_FIXTURE_DIR="$RUNNER_TEMP/fixtures/$E2E_MODE" \
