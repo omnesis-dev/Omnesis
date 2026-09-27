@@ -789,16 +789,21 @@
             </p>
             <p>
               <span class="t-prompt">❯</span>
-              <span class="t-cmd">export SSL_CERT_FILE="$(mkcert -CAROOT)/rootCA.pem"</span>
+              <span class="t-cmd"
+                >alias codex='SSL_CERT_FILE="$(mkcert -CAROOT)/rootCA.pem" codex'</span
+              >
             </p>
           </div>
         </div>
         <p>
-          Start the agent from that shell, and add the line to your shell profile, such as
-          <code>~/.zshrc</code> or <code>~/.bashrc</code>, so every new shell has it. Both variables
-          add to the authorities the agent already trusts, so its own connections keep working. An
-          agent on another machine needs a copy of the file there, with the same variable set to the
-          copy's path. Copy only <code>rootCA.pem</code>, never <code>rootCA-key.pem</code>. The
+          Put the line in your shell profile, such as <code>~/.zshrc</code> or
+          <code>~/.bashrc</code>, then open a new shell and start the agent. For Codex the line is
+          an alias, so the setting applies to Codex alone: many other programs, such as
+          <code>curl</code> and Python, trust only the file <code>SSL_CERT_FILE</code> names, and
+          exporting it everywhere would break their connections. For the agents themselves both
+          settings add to the authorities they already trust, so their own connections keep working.
+          An agent on another machine needs a copy of the file there, with the same variable set to
+          the copy's path. Copy only <code>rootCA.pem</code>, never <code>rootCA-key.pem</code>. The
           portal does not offer the setting for a certificate of your own that no public authority
           issued; set the variable to the authority that issued it.
         </p>
