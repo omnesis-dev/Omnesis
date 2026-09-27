@@ -4,10 +4,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resetActiveUniverseCache } from "@omnesis/providers-synth-common";
 
-const previousUniverse = process.env.OMNESIS_SYNTH_UNIVERSE;
-
 async function discoverIn(universe: string) {
-  process.env.OMNESIS_SYNTH_UNIVERSE = universe;
+  // Pre-discovered mode, so the answer never depends on a pair marker some
+  // earlier synthetic run left in this machine's config directory.
+  vi.stubEnv("OMNESIS_SYNTH_PRE_DISCOVERED", "1");
+  vi.stubEnv("OMNESIS_SYNTH_UNIVERSE", universe);
   resetActiveUniverseCache();
   vi.resetModules();
   const { default: synthScreenTime } = await import("./index.js");
@@ -16,8 +17,7 @@ async function discoverIn(universe: string) {
 
 describe("synth screen-time discover", () => {
   afterEach(() => {
-    if (previousUniverse === undefined) delete process.env.OMNESIS_SYNTH_UNIVERSE;
-    else process.env.OMNESIS_SYNTH_UNIVERSE = previousUniverse;
+    vi.unstubAllEnvs();
     resetActiveUniverseCache();
   });
 
