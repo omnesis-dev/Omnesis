@@ -420,8 +420,16 @@ export class BrainBench {
         lastProgressAt = Date.now();
       }
       const debounced = includeUpcoming ? await this.debouncedRunCount() : 0;
+      // A pushed document sits in the waker's buffer, not the queue, until the
+      // waker's next background tick — and a busy gateway (the boot sync's
+      // derivation work, say) can hold that tick back past the confirmation
+      // window below. Idle has to include the buffer, or a push reads as quiet
+      // before its run even exists.
       const idle =
-        pulse.counts.queuedRuns === 0 && pulse.runningRuns.length === 0 && debounced === 0;
+        pulse.counts.queuedRuns === 0 &&
+        pulse.counts.bufferedWakes === 0 &&
+        pulse.runningRuns.length === 0 &&
+        debounced === 0;
       if (idle) {
         // One more settle interval, so a run enqueued by the run that just
         // finished (feedback, notes compaction, scheduled follow-ups) is
@@ -431,6 +439,7 @@ export class BrainBench {
         const stillDebounced = includeUpcoming ? await this.debouncedRunCount() : 0;
         if (
           confirm.counts.queuedRuns === 0 &&
+          confirm.counts.bufferedWakes === 0 &&
           confirm.runningRuns.length === 0 &&
           stillDebounced === 0
         ) {
@@ -445,7 +454,7 @@ export class BrainBench {
           .map((r) => `${r.kind}/${r.status} attempts=${r.attempts} ${r.lastError ?? ""}`)
           .join("; ");
         throw new Error(
-          `brain queue did not drain (queued=${pulse.counts.queuedRuns}, running=${pulse.runningRuns.length}, debounced=${debounced}, failed24h=${pulse.counts.failedRuns24h}): ${detail}`,
+          `brain queue did not drain (queued=${pulse.counts.queuedRuns}, bufferedWakes=${pulse.counts.bufferedWakes}, running=${pulse.runningRuns.length}, debounced=${debounced}, failed24h=${pulse.counts.failedRuns24h}): ${detail}`,
         );
       }
       await sleep(250);

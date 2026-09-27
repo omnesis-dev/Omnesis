@@ -101,6 +101,7 @@ export interface BrainBudgetStatus {
 export interface RunActivityReader {
   startedAtMs(id: string): number | null;
   runningIds?(): string[];
+  bufferedWakes?(): number;
 }
 
 /**
@@ -192,7 +193,10 @@ export class CognitionAdminQueryService {
     ).length;
     counts.queuedRuns = Math.max(0, counts.queuedRuns - runningDuePending);
     return {
-      counts,
+      // A wake the waker has accepted but not yet enqueued is pending work the
+      // queue rows cannot show; without it a just-ingested document reads as
+      // an idle engine until the next waker tick.
+      counts: { ...counts, bufferedWakes: this.activity?.bufferedWakes?.() ?? 0 },
       runningRows,
       upcomingRuns: listUpcomingCognitionRuns(this.db, now, 10),
       recentSettledRuns: listRecentSettledCognitionRuns(this.db, 10),

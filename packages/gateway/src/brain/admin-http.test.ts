@@ -73,6 +73,7 @@ let READ_TOKEN: string;
 let status: BriefsFeatureStatus;
 /** Fake drainer live-run registry; tests mark ids running here. */
 let runningNow: Map<string, number>;
+let bufferedWakesNow: number;
 
 function cleanupDb(path: string) {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {
@@ -211,6 +212,7 @@ beforeEach(() => {
   READ_TOKEN = mintToken([SCOPE_READ]);
   status = { visible: true, enabled: true, modelAssigned: true, active: true };
   runningNow = new Map();
+  bufferedWakesNow = 0;
   ioBacklogCalls = 0;
   budgetSettings = { dailyTokens: null, dailyRuns: null };
   // Starting the backfill is its own operator decision, so a fresh database
@@ -245,6 +247,7 @@ beforeEach(() => {
     cognitionActivity: {
       startedAtMs: (id) => runningNow.get(id) ?? null,
       runningIds: () => [...runningNow.keys()],
+      bufferedWakes: () => bufferedWakesNow,
     },
   });
 });
@@ -455,6 +458,16 @@ describe("GET /admin/brain/pulse", () => {
     expect(body.counts.totalLoops).toBe(2);
     expect(body.runningRuns.map((run) => run.id)).toEqual(["run_due_running"]);
     expect(body.upcomingRuns.map((run) => run.id)).toEqual(["run_upcoming"]);
+    expect(body.counts).toMatchObject({ bufferedWakes: 0 });
+  });
+
+  test("counts wakes the waker accepted but has not yet enqueued", async () => {
+    bufferedWakesNow = 3;
+    const body = (await (await get("/admin/brain/pulse")).json()) as {
+      counts: { queuedRuns: number; totalRuns: number; bufferedWakes: number };
+    };
+    // The queue itself is empty — only the waker's backlog says work is coming.
+    expect(body.counts).toMatchObject({ queuedRuns: 0, totalRuns: 0, bufferedWakes: 3 });
   });
 });
 
