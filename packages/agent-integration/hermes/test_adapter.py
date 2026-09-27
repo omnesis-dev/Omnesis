@@ -4120,6 +4120,12 @@ class AnswerIdentityOwnershipTests(unittest.TestCase):
     """Omnesis-minted identifiers are threaded, never asked of the model."""
 
     def setUp(self):
+        # Registration reads the Hermes home; keep it off this machine's own.
+        home = tempfile.TemporaryDirectory()
+        self.addCleanup(home.cleanup)
+        environment = patch.dict(os.environ, {"HERMES_HOME": home.name})
+        environment.start()
+        self.addCleanup(environment.stop)
         self.instance = adapter_module.OmnesisAdapter.for_tools()
         self.instance._credentials = object()
 
@@ -4593,7 +4599,20 @@ class ForwardedToolTests(unittest.TestCase):
         )
         self.assertEqual(sent[0]["headers"]["Mcp-Method"], "tools/list")
         self.assertNotIn("Mcp-Name", sent[0]["headers"])
-        self.assertEqual(sent[0]["timeout"], 3.0)
+        # The limit bounds the whole walk, so each page gets what is left of it.
+        self.assertLessEqual(sent[1]["timeout"], sent[0]["timeout"])
+        self.assertLessEqual(sent[0]["timeout"], 3.0)
+        self.assertGreater(sent[0]["timeout"], 2.0)
+
+    def test_a_listing_that_outlasts_its_limit_fails(self):
+        self.instance._ensure_tool_resources()
+        clock = iter([100.0, 100.5, 104.0])
+        self.respond([{"tools": [_fictional_tool("run_sql")], "nextCursor": "page-2"}])
+        with (
+            patch.object(adapter_module.time, "monotonic", side_effect=lambda: next(clock)),
+            self.assertRaises(adapter_module.McpProtocolError),
+        ):
+            self.instance.list_forwarded_tools(3.0)
 
     def test_forwards_a_call_and_returns_the_gateway_result_faithfully(self):
         sent = self.respond(
@@ -4691,7 +4710,33 @@ class ForwardedToolTests(unittest.TestCase):
         self.assertEqual([tool["name"] for tool in tools], ["list_tables", "add_note"])
         cache = self.credentials_path.with_name("mcp-tools.json")
         self.assertEqual(stat.S_IMODE(cache.stat().st_mode), 0o600)
-        self.assertEqual(adapter_module._read_forwarded_tools_cache(cache), tools)
+        credentials = adapter_module._load_credentials(self.credentials_path)
+        self.assertEqual(adapter_module._read_forwarded_tools_cache(cache, credentials), tools)
+
+    def test_a_kept_listing_serves_only_the_connection_it_was_read_with(self):
+        cache = self.credentials_path.with_name("mcp-tools.json")
+        credentials = adapter_module._load_credentials(self.credentials_path)
+        kept = {
+            "gatewayUrl": credentials.gateway_url,
+            "clientId": credentials.oauth_client_id,
+            "tools": [_fictional_tool("list_tables")],
+        }
+        cache.write_text(json.dumps(kept))
+        self.assertEqual(
+            [
+                tool["name"]
+                for tool in adapter_module._read_forwarded_tools_cache(cache, credentials)
+            ],
+            ["list_tables"],
+        )
+        for other in (
+            dataclasses.replace(credentials, oauth_client_id="omn_oc_other"),
+            dataclasses.replace(credentials, gateway_url="http://127.0.0.1:2"),
+            dataclasses.replace(credentials, oauth_client_id=None),
+        ):
+            self.assertEqual(adapter_module._read_forwarded_tools_cache(cache, other), [])
+        cache.write_text(json.dumps({"tools": kept["tools"]}))
+        self.assertEqual(adapter_module._read_forwarded_tools_cache(cache, credentials), [])
 
     def test_registers_the_listed_tools_as_the_gateway_describes_them(self):
         tools = [
@@ -4728,7 +4773,15 @@ class ForwardedToolTests(unittest.TestCase):
 
     def test_registration_falls_back_to_the_kept_listing_when_the_gateway_is_down(self):
         cache = self.credentials_path.with_name("mcp-tools.json")
-        cache.write_text(json.dumps({"tools": [_fictional_tool("list_tables")]}))
+        cache.write_text(
+            json.dumps(
+                {
+                    "gatewayUrl": "http://127.0.0.1:1",
+                    "clientId": "omn_oc_example",
+                    "tools": [_fictional_tool("list_tables")],
+                }
+            )
+        )
         context = Mock()
         with (
             patch.object(adapter_module, "_reconcile_gateway_capabilities", return_value=False),

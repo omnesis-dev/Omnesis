@@ -1445,15 +1445,29 @@ def _forwarded_tools_cache_path(credentials_path: Path) -> Path:
     return credentials_path.with_name("mcp-tools.json")
 
 
-def _read_forwarded_tools_cache(path: Path) -> list[Dict[str, Any]]:
-    """The listing a previous process kept, or none when it is missing or unreadable."""
+def _read_forwarded_tools_cache(
+    path: Path, credentials: Credentials
+) -> list[Dict[str, Any]]:
+    """The listing a previous process kept for this connection.
+
+    The listing names the gateway and OAuth client it was read with, so one
+    kept for another connection — before a reconnect bound a different client
+    or gateway — offers nothing. A missing or unreadable listing offers
+    nothing either.
+    """
+    if credentials.oauth_client_id is None:
+        return []
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
-    return _forwarded_tools_from_listing(
-        raw.get("tools") if isinstance(raw, dict) else None
-    )
+    if (
+        not isinstance(raw, dict)
+        or raw.get("gatewayUrl") != credentials.gateway_url
+        or raw.get("clientId") != credentials.oauth_client_id
+    ):
+        return []
+    return _forwarded_tools_from_listing(raw.get("tools"))
 
 
 def _refresh_forwarded_tools(
@@ -1472,8 +1486,15 @@ def _refresh_forwarded_tools(
     probe._credentials = credentials
     tools = probe.list_forwarded_tools(timeout)
     cache = _forwarded_tools_cache_path(credentials_path)
-    if _read_forwarded_tools_cache(cache) != tools:
-        _write_private_json(cache, {"tools": tools})
+    if _read_forwarded_tools_cache(cache, credentials) != tools:
+        _write_private_json(
+            cache,
+            {
+                "gatewayUrl": credentials.gateway_url,
+                "clientId": credentials.oauth_client_id,
+                "tools": tools,
+            },
+        )
     return tools
 
 
@@ -4282,7 +4303,13 @@ class OmnesisAdapter(BasePlatformAdapter):
             return []
         listing: list[Any] = []
         cursor: Optional[str] = None
+        # ``timeout`` bounds the whole walk, not each page: plugin load waits
+        # on it.
+        deadline = time.monotonic() + timeout
         for _page in range(_MCP_LIST_MAX_PAGES):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise McpProtocolError("Omnesis did not list its tools in time")
             params: Dict[str, Any] = {
                 "_meta": {
                     MCP_PROTOCOL_VERSION_META_KEY: MCP_PROTOCOL_VERSION,
@@ -4290,7 +4317,7 @@ class OmnesisAdapter(BasePlatformAdapter):
                 },
                 **({"cursor": cursor} if cursor is not None else {}),
             }
-            result = self._mcp_request(token, "tools/list", params, timeout)
+            result = self._mcp_request(token, "tools/list", params, remaining)
             page = result.get("tools")
             if not isinstance(page, list):
                 raise McpProtocolError("Omnesis returned an invalid tool listing")
@@ -4987,7 +5014,11 @@ def _registered_forwarded_tools() -> list[Dict[str, Any]]:
         logger.warning(
             "Could not list the Omnesis tools this connection may use: %s", error
         )
-    return _read_forwarded_tools_cache(_forwarded_tools_cache_path(path))
+    try:
+        credentials = _load_credentials(path)
+    except Exception:
+        return []
+    return _read_forwarded_tools_cache(_forwarded_tools_cache_path(path), credentials)
 
 
 def _registered_subscriptions_available() -> bool:

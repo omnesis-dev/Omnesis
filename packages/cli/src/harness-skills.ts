@@ -198,9 +198,7 @@ do not have them, ask with \`omnesis_answer\` instead.
 
 Each tool's description is the one Omnesis gives every agent; follow it. Where it
 names another Omnesis tool, such as \`list_tables\`, call the \`omnesis_\` tool of that
-name. Use \`omnesis_answer\` when the answer should pass through the user's Omnesis
-privacy policy: only Answer is privacy reviewed, and Direct tools must never be used
-to reconstruct something Answer denied, reduced, or held for approval.
+name.
 
 \`omnesis_add_note\` saves a note when the user asks you to tell Omnesis something or
 to remember it. Give it a UUID \`id\` of your own, reuse that \`id\` when you retry the

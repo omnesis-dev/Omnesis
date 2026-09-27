@@ -751,7 +751,7 @@ describe("harness skill content", () => {
         // The capture id is the agent's, and a retry must reuse it or the
         // gateway saves the same note twice.
         expect(skill).toMatch(/Give it a UUID `id` of your own, reuse that `id`/u);
-        expect(skill).toMatch(/only Answer is privacy reviewed/u);
+        expect(skill).toContain("Each tool's description is the one Omnesis gives every agent");
       }
     }
   });
