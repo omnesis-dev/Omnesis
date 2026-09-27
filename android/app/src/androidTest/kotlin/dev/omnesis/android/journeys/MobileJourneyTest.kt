@@ -121,7 +121,12 @@ class MobileJourneyTest {
         search(DOCUMENT_TITLE)
         waitFor(searchResult(DOCUMENT_TITLE), "searching for \"$DOCUMENT_TITLE\" did not list the document")
         compose.onAllNodes(searchResult(DOCUMENT_TITLE)).onFirst().performClick()
-        waitFor(hasText(DOCUMENT_LINE, substring = true), "the opened document does not show \"$DOCUMENT_LINE\"")
+        // The result row's snippet quotes the same line, so the match must
+        // come from outside the results list: from the opened document.
+        waitFor(
+            hasText(DOCUMENT_LINE, substring = true) and !hasTestTag("search.result"),
+            "the opened document does not show \"$DOCUMENT_LINE\"",
+        )
     }
 
     /**
