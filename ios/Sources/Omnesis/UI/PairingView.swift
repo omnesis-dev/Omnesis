@@ -80,6 +80,7 @@ struct PairingView: View {
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
+                .accessibilityIdentifier("pairing.moreOptions")
             }
         }
         .sheet(isPresented: $showingManualEntry) {
@@ -151,6 +152,9 @@ struct PairingView: View {
                         RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3))
                     )
                     .frame(minHeight: 180)
+                    .autocorrectionDisabled(true)
+                    .textInputAutocapitalization(.never)
+                    .accessibilityIdentifier("pairing.pasteJSON.field")
                 Spacer()
             }
             .padding()
@@ -167,6 +171,7 @@ struct PairingView: View {
                         handleRead(pasted)
                     }
                     .disabled(manualJSON.isEmpty || isPairing)
+                    .accessibilityIdentifier("pairing.pasteJSON.submit")
                 }
             }
         }
@@ -351,6 +356,7 @@ struct PairingConfirmationSheet: View {
                             .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.large))
                     }
                     .disabled(isPairing)
+                    .accessibilityIdentifier("pairing.confirm")
                 }
             }
             .padding(Theme.Spacing.lg)

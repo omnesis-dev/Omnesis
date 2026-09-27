@@ -129,6 +129,7 @@ struct PhoneSetupConnectedPage: View {
             VStack(spacing: 12) {
                 Button("Choose what to add") { coordinator.continueFromConnected() }
                     .buttonStyle(PhoneSetupPrimaryButtonStyle())
+                    .accessibilityIdentifier("phoneSetup.choose")
                 Text("Everything here is also in Settings")
                     .phoneSetupFinePrint()
             }
@@ -265,6 +266,7 @@ struct PhoneSetupChoosePage: View {
                     .disabled(selected == 0)
                 Button("Skip for now") { coordinator.complete() }
                     .buttonStyle(PhoneSetupTextButtonStyle())
+                    .accessibilityIdentifier("phoneSetup.skip")
             }
         }
     }

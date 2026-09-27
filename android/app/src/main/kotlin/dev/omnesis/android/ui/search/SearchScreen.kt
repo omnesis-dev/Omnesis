@@ -53,6 +53,7 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -126,7 +127,7 @@ fun SearchContent(
             CenterAlignedTopAppBar(
                 title = {},
                 navigationIcon = {
-                    IconButton(onClick = onOpenMenu) {
+                    IconButton(onClick = onOpenMenu, modifier = Modifier.testTag("menu.toggle")) {
                         Icon(Icons.Outlined.Menu, contentDescription = "Menu", tint = c.textPrimary)
                     }
                 },
@@ -237,7 +238,8 @@ private fun SearchField(
                 cursorBrush = SolidColor(c.accent),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .focusRequester(focusRequester),
+                    .focusRequester(focusRequester)
+                    .testTag("search.field"),
             )
             if (query.isEmpty()) {
                 Text(
@@ -360,7 +362,7 @@ private fun ResultsList(
                 item = item,
                 catalog = catalog,
                 onClick = { onOpenDocument(item.documentId) },
-                modifier = Modifier.padding(horizontal = OmSpacing.md, vertical = 10.dp),
+                modifier = Modifier.testTag("search.result").padding(horizontal = OmSpacing.md, vertical = 10.dp),
             )
             if (idx < items.lastIndex) {
                 HorizontalDivider(

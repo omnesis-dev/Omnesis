@@ -212,7 +212,7 @@ struct MainMenuDrawer: View {
     /// unless the mode is active.
     private var menuSection: some View {
         VStack(spacing: 0) {
-            row(icon: "magnifyingglass", label: "Search", isActive: selection == .search) {
+            row(id: "search", icon: "magnifyingglass", label: "Search", isActive: selection == .search) {
                 select(.search)
             }
             // Omnesis Briefs — the proactive awareness feed. Experimental mode
@@ -221,6 +221,7 @@ struct MainMenuDrawer: View {
             // banner owns the shortcut to the model picker.
             if let destination = store.briefsMenuEntry.destination {
                 row(
+                    id: "briefs",
                     icon: "rectangle.stack",
                     label: "Briefs",
                     isActive: selection == .briefs,
@@ -235,10 +236,10 @@ struct MainMenuDrawer: View {
                 }
             }
 
-            row(icon: "square.grid.2x2", label: "Sources", isActive: selection == .sources) {
+            row(id: "sources", icon: "square.grid.2x2", label: "Sources", isActive: selection == .sources) {
                 select(.sources)
             }
-            row(icon: "person.2", label: "People", isActive: selection == .people) {
+            row(id: "people", icon: "person.2", label: "People", isActive: selection == .people) {
                 select(.people)
             }
             // Tell Omnesis is generally available. The offline queue still
@@ -249,6 +250,7 @@ struct MainMenuDrawer: View {
             // in ordinary operation, and the badge is how the owner learns a
             // decision is waiting without opening the screen.
             row(
+                id: "audit",
                 icon: "checkmark.shield",
                 label: "Audit",
                 isActive: selection == .privacy,
@@ -260,6 +262,7 @@ struct MainMenuDrawer: View {
 
             if store.experimentalEnabled {
                 row(
+                    id: "watches",
                     // An eye rather than a bell: a watch is a standing question
                     // about the corpus, and most of them never notify at all.
                     icon: "eye",
@@ -278,6 +281,7 @@ struct MainMenuDrawer: View {
     private var tellOmnesisRow: some View {
         let warningCount = store.notes.warnedPending(now: warningClock).count
         return row(
+            id: "tellOmnesis",
             icon: "mic.fill",
             label: "Tell Omnesis",
             isActive: false,
@@ -325,6 +329,7 @@ struct MainMenuDrawer: View {
     /// One navigation row. `warning` is the drawer's single way to say "this
     /// destination needs attention", and never a sentence of diagnostics.
     private func row(
+        id: String,
         icon: String,
         label: String,
         isActive: Bool,
@@ -364,6 +369,7 @@ struct MainMenuDrawer: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("menu.\(id)")
 
             if let warning, let onTap = warning.onTap {
                 Button(action: onTap) {

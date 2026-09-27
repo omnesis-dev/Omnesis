@@ -96,6 +96,7 @@ struct SearchView: View {
                 .focused($queryFocused)
                 .onSubmit { Task { await runSearch() } }
                 .foregroundStyle(Theme.textPrimary)
+                .accessibilityIdentifier("search.field")
             if !query.isEmpty {
                 Button {
                     query = ""
@@ -211,6 +212,7 @@ struct SearchView: View {
                                 .padding(.horizontal, Theme.Spacing.md)
                                 .padding(.vertical, 10)
                         }
+                        .accessibilityIdentifier("search.result")
                         if idx < results.count - 1 {
                             Divider().background(Theme.borderLight).padding(.leading, 44)
                         }

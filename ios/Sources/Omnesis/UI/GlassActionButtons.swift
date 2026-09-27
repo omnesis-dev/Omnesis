@@ -46,7 +46,7 @@ struct GlassActionIconButton: View {
 @available(iOS 17.0, *)
 struct GlassActionCircle: ViewModifier {
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, *), AutomationGlass.enabled {
             content.glassEffect(.regular.interactive(), in: Circle())
         } else {
             content

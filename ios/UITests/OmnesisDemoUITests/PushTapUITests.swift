@@ -46,7 +46,7 @@ final class PushTapUITests: XCTestCase {
     }
 
     func testSettingsCanOpenMCPAuthorization() {
-        let app = XCUIApplication()
+        let app = Self.harnessApp()
         app.launchEnvironment["DEMO_SETTINGS_PREVIEW"] = "1"
         app.launch()
 
@@ -63,7 +63,7 @@ final class PushTapUITests: XCTestCase {
     }
 
     func testAllowAllOnlyEnablesSourceRows() {
-        let app = XCUIApplication()
+        let app = Self.harnessApp()
         app.launchEnvironment["DEMO_ACCESS_AUTHORIZATION"] = "1"
         app.launch()
 
@@ -85,8 +85,18 @@ final class PushTapUITests: XCTestCase {
         waitForExpectations(timeout: 5)
     }
 
-    private func runPushTap(mode: String, expectedNavBar: String) throws {
+    /// Each harness renders its own fixtures and assumes nothing stored:
+    /// clear any pairing an earlier test in the same simulator left behind.
+    /// Glass chrome never reports idle to XCTest; see `AutomationGlass`.
+    private static func harnessApp() -> XCUIApplication {
         let app = XCUIApplication()
+        app.launchEnvironment["DEMO_RESET_PAIRING"] = "1"
+        app.launchEnvironment["DEMO_PLAIN_GLASS"] = "1"
+        return app
+    }
+
+    private func runPushTap(mode: String, expectedNavBar: String) throws {
+        let app = Self.harnessApp()
         app.launchEnvironment["DEMO_PUSH_TAP"] = mode
         app.launch()
         XCTAssertTrue(

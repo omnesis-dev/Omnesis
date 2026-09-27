@@ -43,6 +43,7 @@ public struct OmnesisApp: App {
         // makes OmnesisURLSession build a PinnedSession that trusts
         // the gateway's cert.
         #if DEBUG
+        AutomationPairingReset.applyIfRequested()
         let automationPairingData: Data? = {
             if let json = ProcessInfo.processInfo.environment["DEMO_PAIRING_JSON"] {
                 return json.data(using: .utf8)
