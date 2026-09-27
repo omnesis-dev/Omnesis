@@ -19,7 +19,11 @@ WORKDIR /app
 # needs. That is also why these images are large: the CLI reaches every
 # provider package, and neither image can be trimmed without giving up that
 # control path.
-FROM base AS runtime-build
+#
+# The full workspace install is its own stage: the compiled closures are built
+# from it, and the production-dependency stage below borrows its lockfile-pinned
+# patch-package without shipping it.
+FROM base AS workspace-install
 COPY package.json package-lock.json tsconfig*.json LICENSE ./
 COPY packages/ packages/
 COPY patches/ patches/
@@ -30,6 +34,8 @@ COPY scripts/native-runtime-preflight.mjs scripts/native-runtime-preflight.mjs
 # image's own Node headers instead.
 COPY scripts/ci/npm-ci.sh scripts/ci/npm-ci.sh
 RUN sh scripts/ci/npm-ci.sh
+
+FROM workspace-install AS runtime-build
 COPY scripts/release/ scripts/release/
 COPY scripts/runtime/ scripts/runtime/
 COPY scripts/seeded-state/ scripts/seeded-state/
@@ -43,9 +49,11 @@ RUN node scripts/runtime/stage-runtime.mjs --build \
 FROM base AS runtime-dependencies
 COPY package.json package-lock.json ./
 COPY packages/ packages/
+COPY patches/ patches/
 COPY scripts/native-runtime-preflight.mjs scripts/native-runtime-preflight.mjs
 COPY scripts/ci/npm-ci.sh scripts/ci/npm-ci.sh
-# The root prepare/postinstall hooks are development-only. The native-runtime
+# The root prepare hook installs git hooks and the root postinstall runs
+# patch-package, a devDependency that `--omit=dev` leaves out. The native-runtime
 # compatibility preinstall remains, as do dependency lifecycle scripts.
 RUN npm pkg delete scripts.prepare scripts.postinstall \
     && sh scripts/ci/npm-ci.sh --omit=dev --omit=peer \
@@ -55,6 +63,13 @@ RUN npm pkg delete scripts.prepare scripts.postinstall \
        --include-workspace-root=false \
     && rm -rf /app/node_modules/typescript \
     && rm -f /app/node_modules/.bin/tsc /app/node_modules/.bin/tsserver
+# The patches in patches/ change runtime behavior (among them, libsignal's
+# console dumps of whole session records, ratchet private keys included), so
+# the shipped tree carries every one. patch-package comes from the workspace
+# install, mounted for this step only; a patch that no longer applies fails the
+# build.
+RUN --mount=type=bind,from=workspace-install,source=/app/node_modules,target=/opt/patch-tooling/node_modules \
+    node /opt/patch-tooling/node_modules/patch-package/index.js --error-on-fail
 
 # ── Hardened runtime base ─────────────────────────────────────────────────────
 # Shared by both daemon images: no JavaScript package managers, a fixed non-root uid/gid,
