@@ -196,7 +196,14 @@ export class TlsLifecycleService {
    * The file an agent on this machine trusts to accept the served
    * certificate. For an mkcert certificate it is the root that issued it:
    * the CA the operator recorded (`OMNESIS_TLS_CA`), a copy beside the
-   * material, or mkcert's own root for this account.
+   * material, or mkcert's own root for this account. Resolved on every call
+   * against the certificate served now, so a renewal or a rewritten `.env` is
+   * reflected at once; the few small reads it costs are negligible beside the
+   * connection probes the access overview already makes.
+   *
+   * Inside a container the account's mkcert directory is the container's, not
+   * the host's, so only paths under the config directory, which the container
+   * mounts at the host's own path, and the recorded CA are considered.
    */
   agentCertificateTrust(): AgentCertificateTrust {
     const material = this.material();
@@ -208,7 +215,9 @@ export class TlsLifecycleService {
       authorityCandidates: [
         ...(caPath ? [caPath] : []),
         join(this.tlsDir, "rootCA.pem"),
-        ...(this.options.mkcertRoots?.() ?? mkcertRootCandidates()),
+        ...(this.options.inContainer
+          ? []
+          : (this.options.mkcertRoots?.() ?? mkcertRootCandidates())),
       ],
     });
   }

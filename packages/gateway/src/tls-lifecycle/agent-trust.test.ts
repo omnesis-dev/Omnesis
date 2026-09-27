@@ -214,10 +214,12 @@ describe("TlsLifecycleService.agentCertificateTrust", () => {
     configDir: string,
     paths: { certPath?: string; keyPath?: string; caPath?: string },
     roots: string[],
+    extra: { initial?: { cert: string; key: string }; inContainer?: boolean } = {},
   ) {
     return new TlsLifecycleService({
       configDir,
-      initial: mkcertLeaf,
+      initial: extra.initial ?? mkcertLeaf,
+      inContainer: extra.inContainer ?? false,
       activate: () => {},
       materialPaths: () => paths,
       requiredHosts: () => ["localhost"],
@@ -266,5 +268,31 @@ describe("TlsLifecycleService.agentCertificateTrust", () => {
         join(scratch, "nowhere", "rootCA.pem"),
       ]).agentCertificateTrust(),
     ).toEqual({ kind: "mkcert", trustFile: null });
+  });
+
+  test("skips the account's mkcert directory inside a container", () => {
+    const { configDir, certPath, keyPath } = mkcertConfigDir();
+    expect(
+      service(configDir, { certPath, keyPath }, [root.certPath], {
+        inContainer: true,
+      }).agentCertificateTrust(),
+    ).toEqual({ kind: "mkcert", trustFile: null });
+    const copy = join(configDir, "tls", "rootCA.pem");
+    writeFileSync(copy, readFileSync(root.certPath, "utf8"));
+    expect(
+      service(configDir, { certPath, keyPath }, [], { inContainer: true }).agentCertificateTrust(),
+    ).toEqual({ kind: "mkcert", trustFile: copy });
+  });
+
+  test("follows the gateway's own certificate file as it is replaced on disk", () => {
+    const configDir = mkdtempSync(join(scratch, "config-"));
+    mkdirSync(join(configDir, "tls"));
+    const certPath = join(configDir, "tls", "cert.pem");
+    writeFileSync(certPath, ownLeaf.cert);
+    const lifecycle = service(configDir, {}, [], { initial: ownLeaf });
+    expect(lifecycle.agentCertificateTrust()).toEqual({ kind: "self-signed", trustFile: certPath });
+    // A file that no longer matches what is served is never offered.
+    writeFileSync(certPath, selfSigned().cert);
+    expect(lifecycle.agentCertificateTrust()).toEqual({ kind: "self-signed", trustFile: null });
   });
 });

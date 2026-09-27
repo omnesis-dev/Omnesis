@@ -22,7 +22,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { type TlsOwnership } from "@omnesis/core";
+import { assertNever, type TlsOwnership } from "@omnesis/core";
 
 /** What the access overview tells a client about trusting the served certificate. */
 export interface AgentCertificateTrust {
@@ -84,11 +84,16 @@ export interface AgentCertificateTrustInput {
   readFile?: (path: string) => string;
 }
 
+/**
+ * The trust file for the served certificate, or none when no candidate can be
+ * shown to verify it. Only ever returns the path of a certificate: private keys
+ * are never read as candidates and a file that does not parse is skipped.
+ */
 export function resolveAgentCertificateTrust(
   input: AgentCertificateTrustInput,
 ): AgentCertificateTrust {
   const readFile = input.readFile ?? ((path: string) => readFileSync(path, "utf8"));
-  const none = { kind: input.ownership, trustFile: null };
+  const none: AgentCertificateTrust = { kind: input.ownership, trustFile: null };
   let served: X509Certificate;
   try {
     served = new X509Certificate(input.servedCertPem);
@@ -115,5 +120,7 @@ export function resolveAgentCertificateTrust(
     case "tailscale":
     case "external":
       return none;
+    default:
+      return assertNever(input.ownership);
   }
 }
