@@ -34,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
@@ -102,7 +103,7 @@ fun OnboardingScreen(
 
             Button(
                 onClick = onPairClicked,
-                modifier = Modifier.fillMaxWidth().height(52.dp),
+                modifier = Modifier.fillMaxWidth().height(52.dp).testTag("onboarding.pair"),
                 colors = ButtonDefaults.buttonColors(containerColor = c.accent, contentColor = Color.White),
             ) {
                 Text("Pair with your gateway", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)

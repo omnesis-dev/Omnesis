@@ -1351,7 +1351,7 @@ private struct ComposerGlass: ViewModifier {
 
     @ViewBuilder
     private func glass(_ content: Content) -> some View {
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, *), AutomationGlass.enabled {
             content.glassEffect(
                 .regular.tint(
                     accented
@@ -1462,7 +1462,7 @@ private struct GlassCapsuleGroup: ViewModifier {
 
     @ViewBuilder
     private func glass(_ content: Content) -> some View {
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, *), AutomationGlass.enabled {
             content.glassEffect(
                 .regular.tint(ComposerChrome.tint.opacity(0.5)).interactive(),
                 in: Capsule()
@@ -1497,7 +1497,7 @@ private struct GlassCircleButton: ViewModifier {
 
     @ViewBuilder
     private func glass(_ content: Content) -> some View {
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, *), AutomationGlass.enabled {
             content.glassEffect(
                 .regular.tint(ComposerChrome.tint.opacity(0.5)).interactive(),
                 in: Circle()

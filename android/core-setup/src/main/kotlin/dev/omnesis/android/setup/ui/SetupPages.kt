@@ -25,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -45,7 +46,7 @@ fun SetupConnectedPage(gatewayHost: String, mark: Painter, onChooseWhatToAdd: ()
         tint = SetupBrandTint,
         modifier = modifier,
         bottom = {
-            SetupPrimaryButton("Choose what to add", onChooseWhatToAdd, Modifier.fillMaxWidth())
+            SetupPrimaryButton("Choose what to add", onChooseWhatToAdd, Modifier.fillMaxWidth().testTag("phoneSetup.choose"))
             SetupFinePrint("Everything here is also in Settings")
         },
     ) {
@@ -91,7 +92,7 @@ fun SetupChoosePage(
                 Modifier.fillMaxWidth(),
                 enabled = selectedCount > 0 && setUpEnabled,
             )
-            SetupTextAction("Skip for now", onSkip)
+            SetupTextAction("Skip for now", onSkip, Modifier.testTag("phoneSetup.skip"))
         },
     ) {
         Spacer(Modifier.height(6.dp))

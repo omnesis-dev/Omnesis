@@ -33,6 +33,8 @@ final class AgentScrollUITests: XCTestCase {
 
     private func launch(mode: String) {
         app.launchEnvironment["DEMO_AGENT_PREVIEW"] = mode
+        // Glass chrome never reports idle to XCTest; see `AutomationGlass`.
+        app.launchEnvironment["DEMO_PLAIN_GLASS"] = "1"
         app.launch()
     }
 
