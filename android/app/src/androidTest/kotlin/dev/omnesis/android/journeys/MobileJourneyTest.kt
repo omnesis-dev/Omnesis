@@ -86,14 +86,17 @@ class MobileJourneyTest {
         // The scanner asks for the camera first; a person pairing by code declines.
         // The permission controller's package differs between AOSP and Google images.
         // A tap that lands while the launch splash is still leaving the screen is
-        // dropped, so the tap is repeated until the pairing screen asks.
+        // dropped, so it is repeated while onboarding is still showing. Once the
+        // pairing screen is up, the request can take several seconds to appear.
         val denySelector = By.res(Pattern.compile(".*permissioncontroller:id/permission_deny_button"))
         var deny: androidx.test.uiautomator.UiObject2? = null
         tap("onboarding.pair")
-        for (attempt in 1..3) {
-            deny = device.wait(Until.findObject(denySelector), STEP_TIMEOUT_MS / 3)
-            if (deny != null || !onScreen(hasTestTag("onboarding.pair"))) break
-            compose.onAllNodesWithTag("onboarding.pair").onFirst().performClick()
+        val deadline = System.currentTimeMillis() + PAIRING_TIMEOUT_MS
+        while (deny == null && System.currentTimeMillis() < deadline) {
+            deny = device.wait(Until.findObject(denySelector), 5_000)
+            if (deny == null && onScreen(hasTestTag("onboarding.pair"))) {
+                compose.onAllNodesWithTag("onboarding.pair").onFirst().performClick()
+            }
         }
         checkNotNull(deny) { "the pairing screen never asked for the camera" }.click()
         tap("pairing.manual")
