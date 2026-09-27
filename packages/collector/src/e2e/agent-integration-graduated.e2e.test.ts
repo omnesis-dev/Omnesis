@@ -200,7 +200,13 @@ describe("managed agent integration on a gateway without Watches", () => {
   test("a lapsed ticket is recovered headlessly, without a browser", async () => {
     // The cliff: nobody asked this installation anything for a month, so the
     // refresh token is gone and the only ordinary way back is interactive.
-    await harness.restartGateway(() => expireRefreshTokens());
+    // The access cleanup reaped the approval's authorization request within
+    // minutes of its code being issued, so recovery cannot lean on it either.
+    await harness.restartGateway(() => {
+      expireRefreshTokens();
+      reapAuthorizationRequests();
+    });
+    expect(authorizationRequestCount()).toBe(0);
     const before = readCredentials();
     expect(await agentAuthorizationState()).toEqual({
       status: "needs-reauthorization",
@@ -453,6 +459,28 @@ describe("managed agent integration on a gateway without Watches", () => {
       db
         .prepare("UPDATE oauth_access_tokens SET expires_at = 0 WHERE credential_id = ?")
         .run(credentialId),
+    );
+  }
+
+  /** Delete the approval's request rows, as the access cleanup does once they expire. */
+  function reapAuthorizationRequests(): void {
+    withDb((db) =>
+      db
+        .prepare("DELETE FROM oauth_authorization_requests WHERE credential_id = ?")
+        .run(credentialId),
+    );
+  }
+
+  function authorizationRequestCount(): number {
+    return withDb(
+      (db) =>
+        (
+          db
+            .prepare(
+              "SELECT COUNT(*) AS count FROM oauth_authorization_requests WHERE credential_id = ?",
+            )
+            .get(credentialId) as { count: number }
+        ).count,
     );
   }
 

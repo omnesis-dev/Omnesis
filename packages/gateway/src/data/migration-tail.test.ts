@@ -57,7 +57,7 @@ const TAIL_VERSIONS = Array.from(
  * `windBack` to undo; its input is planted by the test that replays it, and
  * it is named here on the same terms as the rest.
  */
-const WOUND_BACK = [172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182];
+const WOUND_BACK = [172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183];
 
 let dir: string;
 let dbPath: string;
@@ -111,6 +111,15 @@ function windBack(db: Db): void {
     .all()
     .some((row) => row.name === "access_level_id");
   if (pairingsHaveAccessLevel) db.exec("ALTER TABLE device_pairings DROP COLUMN access_level_id");
+  const credentialColumns = db
+    .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('principal_credentials')")
+    .all()
+    .map((row) => row.name);
+  for (const column of ["approved_audience", "approved_scope"]) {
+    if (credentialColumns.includes(column)) {
+      db.exec(`ALTER TABLE principal_credentials DROP COLUMN ${column}`);
+    }
+  }
   const oauthClientsHaveJwks = db
     .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('oauth_clients')")
     .all()
@@ -241,6 +250,14 @@ describe("an install several versions behind, upgrading", () => {
           .all()
           .map((row) => row.name),
       ).toContain("access_level_id");
+      expect(
+        db
+          .prepare<[], { name: string }>(
+            "SELECT name FROM pragma_table_info('principal_credentials')",
+          )
+          .all()
+          .map((row) => row.name),
+      ).toEqual(expect.arrayContaining(["approved_audience", "approved_scope"]));
     } finally {
       (db as unknown as Database.Database).close();
     }

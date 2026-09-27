@@ -330,9 +330,11 @@ function revokeCompromisedRefreshFamily(
  * statement below only *finds* a credential — one already created by an
  * approved authorization request, already bound to this exact device by the
  * execution binding, and still active. It never creates a principal, a grant,
- * or a credential, and it copies the approved audience and scope off that
- * request rather than accepting them from the caller. Revoke the grant and
- * there is nothing left to find.
+ * or a credential, and it copies the audience and scope the approval recorded
+ * on that credential rather than accepting them from the caller. They live on
+ * the credential because the authorization request is reaped once its code
+ * window closes, and the credential outlives it by months. Revoke the grant
+ * and there is nothing left to find.
  *
  * It leaves the credential's existing refresh tokens alone, which matters more
  * than it looks. Recovery normally runs because the old ticket is already
@@ -350,12 +352,12 @@ export function reissueExecutionDeviceTokens(
   now = Date.now(),
 ): AccessMutationResult<OAuthTokenSet> {
   const row = db
-    .prepare<[string, string, number], { credential_id: string; resource: string; scope: string }>(
-      `SELECT c.id AS credential_id, ar.resource, ar.scope
+    .prepare<[string, string, number], { credential_id: string; audience: string; scope: string }>(
+      `SELECT c.id AS credential_id, c.approved_audience AS audience, c.approved_scope AS scope
        FROM principal_credentials c
        JOIN devices d ON d.id = c.execution_device_id
-       JOIN oauth_authorization_requests ar ON ar.credential_id = c.id
        WHERE c.execution_device_id = ? AND c.oauth_client_id = ?
+         AND c.approved_audience IS NOT NULL AND c.approved_scope IS NOT NULL
          AND c.kind = 'interactive' AND c.status = 'active' AND c.revoked_at IS NULL
          AND (c.expires_at IS NULL OR c.expires_at > ?)
          AND d.kind = 'agent' AND d.revoked_at IS NULL
@@ -385,7 +387,7 @@ export function reissueExecutionDeviceTokens(
     const tokens = issueTokenPair(db, {
       credentialId: active.credential_id,
       grantRevision: active.grant_revision,
-      audience: row.resource,
+      audience: row.audience,
       scope: row.scope,
       authorityExpiresAt: earlierExpiry(active.credential_expires_at, active.grant_expires_at),
       // Honour what the client registered for, exactly as the authorization-code

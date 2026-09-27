@@ -20,6 +20,7 @@ import {
   updateIntegrationOAuthState,
   type IntegrationOAuthState,
 } from "./credentials.js";
+import { silentIntegrationLogger, type IntegrationLogger } from "./logger.js";
 import { mcpEndpointUrl } from "./tls.js";
 
 const REFRESH_LOCK_WAIT_MS = 25;
@@ -286,6 +287,7 @@ export class SerializedIntegrationAuthProvider implements AuthProvider {
      * plugin supplies the headless recovery instead.
      */
     private readonly recover?: () => Promise<void>,
+    private readonly logger: IntegrationLogger = silentIntegrationLogger,
   ) {}
 
   /**
@@ -308,18 +310,22 @@ export class SerializedIntegrationAuthProvider implements AuthProvider {
    * management token on each one and bury the real error behind a call that
    * usually succeeds. So they are rethrown.
    */
-  private async refreshOrRecover(attempt: () => Promise<"AUTHORIZED" | "REDIRECT">): Promise<void> {
+  private async refreshOrRecover(
+    fetchFn: FetchLike,
+    attempt: (fetchFn: FetchLike) => Promise<"AUTHORIZED" | "REDIRECT">,
+  ): Promise<void> {
+    const refresh = observeRefreshRequests(fetchFn);
     let result: "AUTHORIZED" | "REDIRECT";
     try {
-      result = await attempt();
+      result = await attempt(refresh.fetchFn);
     } catch (error) {
       if (!this.recover || !isInteractiveAuthorizationRequired(error)) throw error;
-      await this.attemptRecovery();
+      await this.attemptRecovery(refresh.failure());
       return;
     }
     if (result === "AUTHORIZED") return;
     if (!this.recover) throw new InteractiveAuthorizationUnavailableError();
-    await this.attemptRecovery();
+    await this.attemptRecovery(refresh.failure());
   }
 
   /**
@@ -339,11 +345,21 @@ export class SerializedIntegrationAuthProvider implements AuthProvider {
    * each re-issue starts its own token family, so neither looks like a replay
    * of the other and the last write wins.
    */
-  private async attemptRecovery(): Promise<void> {
+  private async attemptRecovery(refreshFailure: string | undefined): Promise<void> {
+    // The SDK swallows a refresh that failed for any reason but a definitive
+    // OAuth refusal, so this is the only place its cause is still known.
+    if (refreshFailure !== undefined) {
+      this.logger.warn(
+        `Omnesis OAuth refresh failed (${refreshFailure}); re-issuing with the device's management token`,
+      );
+    }
     try {
       await this.recover!();
     } catch (error) {
       this.provider.clearAuthorizationAttempt();
+      if (refreshFailure !== undefined && error instanceof Error) {
+        error.message = `${error.message} (The refresh attempt before it failed: ${refreshFailure}.)`;
+      }
       throw error;
     }
   }
@@ -373,11 +389,11 @@ export class SerializedIntegrationAuthProvider implements AuthProvider {
    * recovery fallback with the reactive path.
    */
   async renew(fetchFn: FetchLike): Promise<void> {
-    await this.refreshOrRecover(() =>
+    await this.refreshOrRecover(fetchFn, (observed) =>
       authorizeIntegrationOAuthWithCredentialLock(
         this.provider,
         this.gatewayUrl,
-        fetchFn,
+        observed,
         this.authorize,
       ),
     );
@@ -390,19 +406,19 @@ export class SerializedIntegrationAuthProvider implements AuthProvider {
     if (!this.refreshInFlight) {
       this.refreshInFlight = (async () => {
         const refresh = () =>
-          this.refreshOrRecover(() =>
-            this.authorize(this.provider, this.gatewayUrl, context.fetchFn),
+          this.refreshOrRecover(context.fetchFn, (observed) =>
+            this.authorize(this.provider, this.gatewayUrl, observed),
           );
         if (!this.provider.credentialsFilePath) {
           await refresh();
           return;
         }
         if (failedBearer === undefined) {
-          await this.refreshOrRecover(() =>
+          await this.refreshOrRecover(context.fetchFn, (observed) =>
             authorizeIntegrationOAuthWithCredentialLock(
               this.provider,
               this.gatewayUrl,
-              context.fetchFn,
+              observed,
               this.authorize,
             ),
           );
@@ -420,6 +436,60 @@ export class SerializedIntegrationAuthProvider implements AuthProvider {
     }
     await this.refreshInFlight;
   }
+}
+
+const REFRESH_FAILURE_BODY_LIMIT = 200;
+
+/**
+ * Remember why the SDK's refresh-token request failed.
+ *
+ * `auth()` treats a refresh POST that threw or answered `server_error` as if
+ * there were no refresh token at all, and answers `invalid_grant` by clearing
+ * the tokens and going round again; either way it ends up asking for a
+ * browser and the refresh error never reaches the caller. Watching the
+ * request on its way through the fetch it was given is the only way to keep
+ * it. Only the outcome is kept — a failed token response carries no token.
+ */
+function observeRefreshRequests(fetchFn: FetchLike): {
+  fetchFn: FetchLike;
+  failure(): string | undefined;
+} {
+  let failure: string | undefined;
+  return {
+    failure: () => failure,
+    fetchFn: async (input, init) => {
+      const body = init?.body;
+      if (!(body instanceof URLSearchParams) || body.get("grant_type") !== "refresh_token") {
+        return fetchFn(input, init);
+      }
+      let response: Response;
+      try {
+        response = await fetchFn(input, init);
+      } catch (error) {
+        failure = describeFetchError(error);
+        throw error;
+      }
+      if (!response.ok) {
+        const text = await response
+          .clone()
+          .text()
+          .catch(() => "");
+        const excerpt = text.trim().slice(0, REFRESH_FAILURE_BODY_LIMIT);
+        failure = `HTTP ${response.status}${excerpt ? `: ${excerpt}` : ""}`;
+      }
+      return response;
+    },
+  };
+}
+
+function describeFetchError(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const cause = error.cause;
+  const detail =
+    cause instanceof Error
+      ? `${isNodeError(cause) && cause.code ? `${cause.code} ` : ""}${cause.message}`
+      : undefined;
+  return detail ? `${error.message}: ${detail}` : error.message;
 }
 
 /** @internal Exported for cross-language lease regression tests. */
