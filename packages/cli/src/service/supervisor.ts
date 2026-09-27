@@ -35,7 +35,13 @@ import {
   systemdUnitName,
   systemdUnitPath,
 } from "./units.js";
-import type { ServiceComponent, ServiceSpec, ServiceState, ServiceStatus } from "./types.js";
+import type {
+  ServiceComponent,
+  ServiceLiveness,
+  ServiceSpec,
+  ServiceState,
+  ServiceStatus,
+} from "./types.js";
 
 // ── Exec seams ─────────────────────────────────────────────────────────
 
@@ -127,6 +133,8 @@ export interface Supervisor {
     instance?: string,
   ): Promise<ServiceDefinitionInspection>;
   status(component: ServiceComponent, instance?: string): Promise<ServiceStatus>;
+  /** Whether the unit's process is alive, down, or being relaunched, and how often it started. */
+  liveness(component: ServiceComponent, instance?: string): Promise<ServiceLiveness>;
   /** Stream logs for the given components; resolves with the pager's exit code. */
   logs(
     components: ServiceComponent[],
@@ -199,6 +207,29 @@ export function launchdPlistEnvValue(plist: string, key: string): string | null 
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, "'")
     .replace(/&amp;/g, "&");
+}
+
+/**
+ * Parse `launchctl print` output into a liveness reading. `runs` counts every
+ * spawn since the job was loaded; a job that is not running is down whether
+ * launchd has scheduled its next spawn after a crash or left it stopped.
+ */
+export function parseLaunchctlLiveness(output: string): Omit<ServiceLiveness, "installed"> {
+  const state = /^\s*state = (.+)$/m.exec(output)?.[1]?.trim() ?? null;
+  const pid = /^\s*pid = (\d+)$/m.exec(output);
+  const runs = /^\s*runs = (\d+)$/m.exec(output);
+  const lastExit = /^\s*last exit code = (.+)$/m.exec(output)?.[1]?.trim();
+  const running = state === "running" && pid !== null;
+  const detail = [
+    `state = ${state ?? "unknown"}`,
+    ...(lastExit !== undefined ? [`last exit code = ${lastExit}`] : []),
+  ].join(", ");
+  return {
+    running,
+    down: state !== null && !running,
+    starts: runs ? Number.parseInt(runs[1], 10) : null,
+    detail,
+  };
 }
 
 /** Parse `launchctl print` output into a state + pid. */
@@ -476,6 +507,23 @@ export class LaunchdSupervisor implements Supervisor {
     return { component, unit, installed: true, ...parseLaunchctlPrint(res.stdout) };
   }
 
+  async liveness(component: ServiceComponent, instance?: string): Promise<ServiceLiveness> {
+    if (!this.isInstalled(component, instance)) {
+      return {
+        installed: false,
+        running: false,
+        down: false,
+        starts: null,
+        detail: "not installed",
+      };
+    }
+    const res = await this.deps.exec("launchctl", ["print", this.target(component, instance)]);
+    if (res.code !== 0) {
+      return { installed: true, running: false, down: true, starts: null, detail: "not loaded" };
+    }
+    return { installed: true, ...parseLaunchctlLiveness(res.stdout) };
+  }
+
   async logs(
     components: ServiceComponent[],
     instance: string | undefined,
@@ -518,6 +566,35 @@ export interface SystemdDeps {
   stream: StreamRunner;
   home: string;
   username: string;
+}
+
+/**
+ * Parse `systemctl show -p ActiveState -p SubState -p MainPID -p NRestarts`
+ * into a liveness reading. `activating` with SubState `auto-restart` is the
+ * RestartSec wait after the process exited, so it is down, while any other
+ * `activating` is a start in progress. NRestarts counts the manager's
+ * automatic restarts.
+ */
+export function parseSystemdLiveness(output: string): Omit<ServiceLiveness, "installed"> {
+  const props = new Map<string, string>();
+  for (const line of output.split(/\r?\n/u)) {
+    const eq = line.indexOf("=");
+    if (eq > 0) props.set(line.slice(0, eq), line.slice(eq + 1).trim());
+  }
+  const active = props.get("ActiveState") ?? "";
+  const sub = props.get("SubState") ?? "";
+  const pid = Number.parseInt(props.get("MainPID") ?? "", 10);
+  const restarts = Number.parseInt(props.get("NRestarts") ?? "", 10);
+  const restarting = active === "activating" && sub === "auto-restart";
+  return {
+    running:
+      (active === "active" || active === "reloading" || (active === "activating" && !restarting)) &&
+      Number.isFinite(pid) &&
+      pid > 0,
+    down: active === "failed" || active === "inactive" || restarting,
+    starts: Number.isFinite(restarts) ? restarts : null,
+    detail: `${active || "unknown"}${sub ? ` (${sub})` : ""}`,
+  };
 }
 
 /** Map `systemctl is-active` output to a ServiceState. */
@@ -663,6 +740,31 @@ export class SystemdSupervisor implements Supervisor {
       pid = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
     }
     return { component, unit, installed: true, state, pid };
+  }
+
+  async liveness(component: ServiceComponent, instance?: string): Promise<ServiceLiveness> {
+    if (!this.isInstalled(component, instance)) {
+      return {
+        installed: false,
+        running: false,
+        down: false,
+        starts: null,
+        detail: "not installed",
+      };
+    }
+    const show = await this.systemctl([
+      "show",
+      "-p",
+      "ActiveState",
+      "-p",
+      "SubState",
+      "-p",
+      "MainPID",
+      "-p",
+      "NRestarts",
+      this.unitName(component, instance),
+    ]);
+    return { installed: true, ...parseSystemdLiveness(show.stdout) };
   }
 
   async logs(

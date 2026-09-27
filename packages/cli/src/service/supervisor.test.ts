@@ -21,7 +21,9 @@ import {
   createSupervisor,
   launchdPlistEnvValue,
   mapSystemdActiveState,
+  parseLaunchctlLiveness,
   parseLaunchctlPrint,
+  parseSystemdLiveness,
   type ExecResult,
   type ExecRunner,
   type LaunchdDeps,
@@ -344,6 +346,46 @@ describe("SystemdSupervisor", () => {
     const status = await sup.status("gateway");
     expect(status.state).toBe("running");
     expect(status.pid).toBe(4242);
+  });
+
+  it("liveness reads state, pid and restart count in one show", async () => {
+    const { home, sup, calls } = make([
+      {
+        prefix: ["systemctl", "--user", "show"],
+        result: { stdout: "ActiveState=active\nSubState=running\nMainPID=4242\nNRestarts=0\n" },
+      },
+    ]);
+    await sup.install(spec(home));
+    calls.length = 0;
+    expect(await sup.liveness("gateway")).toEqual({
+      installed: true,
+      running: true,
+      down: false,
+      starts: 0,
+      detail: "active (running)",
+    });
+    expect(calls).toEqual([
+      [
+        "systemctl",
+        "--user",
+        "show",
+        "-p",
+        "ActiveState",
+        "-p",
+        "SubState",
+        "-p",
+        "MainPID",
+        "-p",
+        "NRestarts",
+        "omnesis-gateway.service",
+      ],
+    ]);
+  });
+
+  it("liveness of a unit that is not installed judges nothing", async () => {
+    const { sup, calls } = make();
+    expect((await sup.liveness("gateway")).installed).toBe(false);
+    expect(calls).toEqual([]);
   });
 
   it("status maps failed units and skips the pid lookup", async () => {
@@ -813,6 +855,72 @@ describe("LaunchdSupervisor", () => {
     await expect(sup.logs(["gateway"], undefined, { follow: false, lines: 50 })).rejects.toThrow(
       /No log files/,
     );
+  });
+});
+
+describe("parseSystemdLiveness", () => {
+  const show = (active: string, sub: string, pid: number, restarts: number) =>
+    `ActiveState=${active}\nSubState=${sub}\nMainPID=${pid}\nNRestarts=${restarts}\n`;
+
+  it("a running process is up", () => {
+    expect(parseSystemdLiveness(show("active", "running", 12, 0))).toMatchObject({
+      running: true,
+      down: false,
+      starts: 0,
+    });
+  });
+
+  it("a start in progress is neither up nor down", () => {
+    expect(parseSystemdLiveness(show("activating", "start", 0, 0))).toMatchObject({
+      running: false,
+      down: false,
+    });
+  });
+
+  it("the restart delay after an exit is down, with the restart count", () => {
+    expect(parseSystemdLiveness(show("activating", "auto-restart", 0, 3))).toEqual({
+      running: false,
+      down: true,
+      starts: 3,
+      detail: "activating (auto-restart)",
+    });
+  });
+
+  it("failed and inactive units are down", () => {
+    expect(parseSystemdLiveness(show("failed", "failed", 0, 5)).down).toBe(true);
+    expect(parseSystemdLiveness(show("inactive", "dead", 0, 0)).down).toBe(true);
+  });
+
+  it("a reading without a restart count says so", () => {
+    expect(parseSystemdLiveness("ActiveState=active\nMainPID=7\n").starts).toBeNull();
+  });
+});
+
+describe("parseLaunchctlLiveness", () => {
+  it("a running job is up and reports its spawn count", () => {
+    expect(parseLaunchctlLiveness("\tstate = running\n\truns = 1\n\tpid = 12\n")).toEqual({
+      running: true,
+      down: false,
+      starts: 1,
+      detail: "state = running",
+    });
+  });
+
+  it("a job waiting out its throttle after a crash is down and names the exit", () => {
+    expect(
+      parseLaunchctlLiveness(
+        "\tstate = spawn scheduled\n\truns = 4\n\tlast exit code = 78: EX_CONFIG\n",
+      ),
+    ).toEqual({
+      running: false,
+      down: true,
+      starts: 4,
+      detail: "state = spawn scheduled, last exit code = 78: EX_CONFIG",
+    });
+  });
+
+  it("output without a state judges nothing", () => {
+    expect(parseLaunchctlLiveness("garbage")).toMatchObject({ running: false, down: false });
   });
 });
 

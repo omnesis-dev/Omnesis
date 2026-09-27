@@ -2530,6 +2530,51 @@ describe("awaitGatewayHealth", () => {
     );
     expect(probes).toHaveLength(0);
   });
+
+  describe("with the gateway service's liveness", () => {
+    const alive = {
+      installed: true,
+      running: true,
+      down: false,
+      starts: 0,
+      detail: "active (running)",
+    };
+    const crashed = (starts: number) => ({
+      installed: true,
+      running: false,
+      down: true,
+      starts,
+      detail: "activating (auto-restart)",
+    });
+
+    test("a crash-looping gateway ends the wait long before the timeout", async () => {
+      const { deps, probes } = fakeClock([new Error("ECONNREFUSED")]);
+      let reads = 0;
+      deps.liveness = () => Promise.resolve(crashed(reads++));
+      await expect(awaitGatewayHealth(URL, "0.3.0", 600_000, deps)).rejects.toThrow(
+        /did not report 0\.3\.0: the service manager relaunched it 2 times/u,
+      );
+      expect(probes.length).toBeLessThan(5);
+    });
+
+    test("a slow boot whose process stays up keeps the whole wait", async () => {
+      const { deps, probes } = fakeClock([
+        ...Array.from({ length: 200 }, () => new Error("ECONNREFUSED")),
+        { ok: true, status: 200, version: "0.3.0" },
+      ]);
+      deps.liveness = () => Promise.resolve(alive);
+      await awaitGatewayHealth(URL, "0.3.0", 600_000, deps);
+      expect(probes).toHaveLength(201);
+    });
+
+    test("a manager that cannot be read leaves the timeout in charge", async () => {
+      const { deps } = fakeClock([new Error("ECONNREFUSED")]);
+      deps.liveness = () => Promise.reject(new Error("systemctl unavailable"));
+      await expect(awaitGatewayHealth(URL, "0.3.0", 20_000, deps)).rejects.toThrow(
+        /within 20s \(ECONNREFUSED\)/u,
+      );
+    });
+  });
 });
 
 describe("parseHealthTimeoutSeconds", () => {
