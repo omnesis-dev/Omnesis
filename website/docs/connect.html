@@ -741,8 +741,9 @@
 
         <h3 id="trust-certificate">Trust the gateway's certificate</h3>
         <p>
-          Claude Code and Codex trust the certificate authorities their system trusts. A Tailscale
-          certificate, or one for a domain of your own, needs nothing more. For a
+          Claude Code and Codex trust the public certificate authorities, not the local authority
+          mkcert installs on the machine. A Tailscale certificate, or one for a domain of your own,
+          needs nothing more. For a
           <a href="/docs/setup#certificates">mkcert certificate</a>, and for Codex also the
           gateway's self-signed certificate, set one environment variable to a file that vouches for
           the gateway's certificate, in the shell you start the agent from:
@@ -921,8 +922,8 @@
         <h3 id="codex">Codex</h3>
         <p>
           With a Tailscale certificate or one for a domain of your own, Codex connects as is. With a
-          mkcert or the gateway's self-signed certificate, set <code>SSL_CERT_FILE</code> first; see
-          <a href="#trust-certificate">Trust the gateway's certificate</a>.
+          mkcert certificate or the gateway's self-signed one, set <code>SSL_CERT_FILE</code> first;
+          see <a href="#trust-certificate">Trust the gateway's certificate</a>.
         </p>
         <p>Install the guidance, then register your gateway separately:</p>
         <div class="term">
