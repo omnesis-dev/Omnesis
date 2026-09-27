@@ -2183,6 +2183,57 @@ describe("full-validation workflow topology", () => {
     expect(existsSync(join(nodedir, "include", "node", "common.gypi"))).toBe(true);
   });
 
+  it("applies patches/ in every image stage that installs dependencies", () => {
+    // A stage without the root postinstall must run patch-package itself, or
+    // its tree ships upstream behavior the patches remove — libsignal's
+    // session-record console dumps among it.
+    const dockerfile = readFileSync(join(repoRoot, "Dockerfile"), "utf8");
+    const stages = dockerfile.split(/^FROM /mu).slice(1);
+    const installing = stages.filter((stage) => /sh scripts\/ci\/npm-ci\.sh/u.test(stage));
+    expect(installing).toHaveLength(2);
+    for (const stage of installing) {
+      const name = stage.split("\n")[0];
+      expect(stage, name).toMatch(/^COPY patches\/ patches\/$/mu);
+      if (/npm pkg delete[^\n]*scripts\.postinstall/u.test(stage)) {
+        expect(stage, name).toMatch(/node \S+\/patch-package\/index\.js --error-on-fail$/mu);
+      }
+    }
+  });
+
+  it("lists every file patches/ rewrites, patched in the workspace install", async () => {
+    const { patchedFiles } = await import("./lib/patched-files.mjs");
+    const files = patchedFiles(repoRoot);
+    const patches = readdirSync(join(repoRoot, "patches")).filter((n) => n.endsWith(".patch"));
+    expect(new Set(files.map((f) => f.patch))).toEqual(new Set(patches));
+    expect(files.map((f) => f.path)).toContain("node_modules/libsignal/src/session_record.js");
+
+    // An unpatched copy is refused rather than taken as the reference.
+    const root = tmpDir("omnesis-patched-files-");
+    mkdirSync(join(root, "patches"));
+    const target = "node_modules/example-dep/index.js";
+    mkdirSync(join(root, "node_modules/example-dep"), { recursive: true });
+    writeFileSync(
+      join(root, "patches/example-dep+1.0.0.patch"),
+      [
+        `diff --git a/${target} b/${target}`,
+        `--- a/${target}`,
+        `+++ b/${target}`,
+        "@@ -1,3 +1,2 @@",
+        " function close(session) {",
+        '-  console.info("Closing session:", session);',
+        " }",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(root, target),
+      'function close(session) {\n  console.info("Closing session:", session);\n}\n',
+    );
+    expect(() => patchedFiles(root)).toThrow(`${target} is not patched by example-dep+1.0.0.patch`);
+    writeFileSync(join(root, target), "function close(session) {\n}\n");
+    expect(patchedFiles(root).map((f) => f.path)).toEqual([target]);
+  });
+
   it("runs every job of every workflow on a GitHub-hosted runner", async () => {
     const { parse } = await import("yaml");
     const workflowDir = join(repoRoot, ".github/workflows");

@@ -12,8 +12,10 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { gatewayBootBudgetMs } from "./lib/boot-budget.mjs";
+import { patchedFiles } from "./lib/patched-files.mjs";
 import {
   SEEDED_STATE_MANIFEST,
   createSeededStateArtifact,
@@ -172,6 +174,28 @@ function assertOmnesisBinary(target) {
   }
 }
 
+/**
+ * Every file `patches/` rewrites ships byte-identical to the patched workspace
+ * copy. An unpatched libsignal, for one, prints whole session records (ratchet
+ * private keys included) to the daemon's log.
+ */
+function assertPatchedDependencies(target) {
+  const expected = patchedFiles(fileURLToPath(new URL("..", import.meta.url)));
+  const shipped = shell(target, `cd /app && sha256sum ${expected.map((f) => f.path).join(" ")}`);
+  const digests = new Map(
+    shipped
+      .trim()
+      .split("\n")
+      .map((line) => line.split(/\s+/u))
+      .map(([sha256, path]) => [path, sha256]),
+  );
+  for (const { patch, path, sha256 } of expected) {
+    if (digests.get(path) !== sha256) {
+      throw new Error(`${target} ships ${path} without ${patch}`);
+    }
+  }
+}
+
 /** Both daemons and the updater run as the same fixed unprivileged identity. */
 function assertUnprivilegedIdentity(target) {
   const identity = shell(target, "id -u; id -g").split("\n").slice(0, 2).join(":");
@@ -192,10 +216,12 @@ try {
   }
 
   assertNoPackageManagers(image, "/app/packages/gateway/dist/index.js");
+  assertPatchedDependencies(image);
   assertUnprivilegedIdentity(image);
   assertOmnesisBinary(image);
 
   assertNoPackageManagers(collectorImage, "/app/packages/collector/dist/main.js");
+  assertPatchedDependencies(collectorImage);
   assertUnprivilegedIdentity(collectorImage);
   assertOmnesisBinary(collectorImage);
 
@@ -204,6 +230,7 @@ try {
   // that cannot replace themselves. Everything else about it is the gateway
   // runtime, so it answers the same questions.
   assertNoPackageManagers(updaterImage, "/app/packages/gateway/dist/index.js");
+  assertPatchedDependencies(updaterImage);
   assertUnprivilegedIdentity(updaterImage);
   assertOmnesisBinary(updaterImage);
   shell(updaterImage, "command -v docker >/dev/null && docker compose version >/dev/null");

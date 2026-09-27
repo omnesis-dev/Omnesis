@@ -128,7 +128,11 @@ export function pullRequestScope(files, plan, bundleFiles, projectCount) {
     android_render: any(files, /^android\//),
     docker_image: deploys,
     docker_smoke:
-      deploys || any(files, /^scripts\/docker-(?:install-smoke\.sh|runtime-smoke\.mjs)$/),
+      deploys ||
+      any(
+        files,
+        /^scripts\/(?:docker-(?:install-smoke\.sh|runtime-smoke\.mjs)|lib\/patched-files\.mjs)$/,
+      ),
     install_smoke: deploys,
     topology: deploys || any(files, /^scripts\/docker-topology\//),
     docker_security:
