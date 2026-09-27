@@ -35,9 +35,10 @@
 import { spawn } from "node:child_process";
 
 export const NODE_GYP_HEADERS_SCRIPT = `const fs = require("fs"), os = require("os"), path = require("path");
-const env = (name) => Object.entries(process.env).find(([key]) => key.toLowerCase() === name)?.[1] || "";
-if (env("npm_config_nodedir")) process.exit(0);
-const cache = env("npm_config_devdir").replace(/^~/, os.homedir()) || (process.platform === "darwin"
+const option = (name) => ["npm_package_config_node_gyp_", "npm_config_"].map((prefix) =>
+  Object.entries(process.env).find(([key]) => key.toLowerCase() === prefix + name)?.[1]).find(Boolean) || "";
+if (option("nodedir")) process.exit(0);
+const cache = option("devdir").replace(/^~/, os.homedir()) || (process.platform === "darwin"
   ? path.join(os.homedir(), "Library", "Caches", "node-gyp")
   : path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "node-gyp"));
 const dir = path.join(cache, process.versions.node);

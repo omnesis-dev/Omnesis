@@ -191,6 +191,25 @@ describe("the node-gyp header check run before npm ci", () => {
     expect(readFileSync(join(dir, "include/node/common.gypi"), "utf8")).toBe("");
   });
 
+  test("node-gyp's own package-config options are read too, as it reads them", () => {
+    const { root, devdir, dir } = fixture();
+    writeHeaders(dir, { "include/node/common.gypi": "" });
+    const skipped = runScript(root, fakeNodeGyp(root, "whole"), {
+      npm_config_devdir: devdir,
+      npm_package_config_node_gyp_nodedir: "/usr/local",
+    });
+    expect(skipped.gypCalls).toEqual([]);
+    const other = join(root, "package-devdir");
+    writeHeaders(join(other, VERSION), { "include/node/common.gypi": "" });
+    runScript(root, "", {
+      npm_config_devdir: devdir,
+      npm_package_config_node_gyp_devdir: other,
+    });
+    // The package option wins, as it does in node-gyp.
+    expect(existsSync(join(other, VERSION))).toBe(false);
+    expect(existsSync(dir)).toBe(true);
+  });
+
   test("without a devdir it reads node-gyp's default cache for this platform", () => {
     const { root } = fixture();
     const home = join(root, "home");

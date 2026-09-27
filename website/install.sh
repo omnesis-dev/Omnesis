@@ -906,9 +906,10 @@ source_step_failed() {
 # the copies identical.
 prepare_node_gyp_headers() {
   ( cd "$1" && node -e 'const fs = require("fs"), os = require("os"), path = require("path");
-const env = (name) => Object.entries(process.env).find(([key]) => key.toLowerCase() === name)?.[1] || "";
-if (env("npm_config_nodedir")) process.exit(0);
-const cache = env("npm_config_devdir").replace(/^~/, os.homedir()) || (process.platform === "darwin"
+const option = (name) => ["npm_package_config_node_gyp_", "npm_config_"].map((prefix) =>
+  Object.entries(process.env).find(([key]) => key.toLowerCase() === prefix + name)?.[1]).find(Boolean) || "";
+if (option("nodedir")) process.exit(0);
+const cache = option("devdir").replace(/^~/, os.homedir()) || (process.platform === "darwin"
   ? path.join(os.homedir(), "Library", "Caches", "node-gyp")
   : path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "node-gyp"));
 const dir = path.join(cache, process.versions.node);
@@ -1785,9 +1786,10 @@ update_unfinished() {
 # prepare_node_gyp_headers in the installer.
 prepare_node_gyp_headers() {
   ( cd "\$1" && node -e 'const fs = require("fs"), os = require("os"), path = require("path");
-const env = (name) => Object.entries(process.env).find(([key]) => key.toLowerCase() === name)?.[1] || "";
-if (env("npm_config_nodedir")) process.exit(0);
-const cache = env("npm_config_devdir").replace(/^~/, os.homedir()) || (process.platform === "darwin"
+const option = (name) => ["npm_package_config_node_gyp_", "npm_config_"].map((prefix) =>
+  Object.entries(process.env).find(([key]) => key.toLowerCase() === prefix + name)?.[1]).find(Boolean) || "";
+if (option("nodedir")) process.exit(0);
+const cache = option("devdir").replace(/^~/, os.homedir()) || (process.platform === "darwin"
   ? path.join(os.homedir(), "Library", "Caches", "node-gyp")
   : path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "node-gyp"));
 const dir = path.join(cache, process.versions.node);
