@@ -24,7 +24,12 @@ COPY package.json package-lock.json tsconfig*.json LICENSE ./
 COPY packages/ packages/
 COPY patches/ patches/
 COPY scripts/native-runtime-preflight.mjs scripts/native-runtime-preflight.mjs
-RUN npm ci
+# npm builds several native modules at once; without a node directory each
+# fetches Node's headers into the same node-gyp cache, and one can read a
+# common.gypi another is still writing. The CI wrapper builds against the
+# image's own Node headers instead.
+COPY scripts/ci/npm-ci.sh scripts/ci/npm-ci.sh
+RUN sh scripts/ci/npm-ci.sh
 COPY scripts/release/ scripts/release/
 COPY scripts/runtime/ scripts/runtime/
 COPY scripts/seeded-state/ scripts/seeded-state/
@@ -39,10 +44,11 @@ FROM base AS runtime-dependencies
 COPY package.json package-lock.json ./
 COPY packages/ packages/
 COPY scripts/native-runtime-preflight.mjs scripts/native-runtime-preflight.mjs
+COPY scripts/ci/npm-ci.sh scripts/ci/npm-ci.sh
 # The root prepare/postinstall hooks are development-only. The native-runtime
 # compatibility preinstall remains, as do dependency lifecycle scripts.
 RUN npm pkg delete scripts.prepare scripts.postinstall \
-    && npm ci --omit=dev --omit=peer \
+    && sh scripts/ci/npm-ci.sh --omit=dev --omit=peer \
        --workspace @omnesis/gateway \
        --workspace @omnesis/collector \
        --workspace omnesis \

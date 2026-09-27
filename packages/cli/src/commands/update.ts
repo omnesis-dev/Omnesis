@@ -208,6 +208,7 @@ import {
   updateInterruptionRouter,
 } from "../update/interruption.js";
 import { prepareSourceRecoveryLauncher } from "../update/source-launcher.js";
+import { prepareNodeGypHeaders } from "../update/node-gyp-headers.js";
 import { buildHeapEnv, buildMemoryTight } from "../update/build-heap.js";
 import {
   buildToolsInstallCommand,
@@ -414,6 +415,11 @@ export interface UpdateFlowDeps {
   interruptions: UpdateInterruptionRouter;
   /** Install the source launcher that remains runnable through npm ci. */
   prepareSourceLauncher?(rootDir: string): void | Promise<void>;
+  /**
+   * Make node-gyp's Node headers whole before a source checkout's `npm ci`
+   * (`prepareNodeGypHeaders`). Best effort: it never fails the update.
+   */
+  prepareNodeGypHeaders?(rootDir: string): Promise<void>;
   /** The environment a source build runs with: the heap sized for this machine. */
   buildEnv?(): Record<string, string> | undefined;
   /** Version of the running CLI (`readPackageVersion`). */
@@ -539,7 +545,9 @@ async function runStep(deps: UpdateFlowDeps, spec: CommandSpec): Promise<RunOutc
  * that names a `retry` gets its reset and one more run when it fails on its
  * own — not when it was killed, since a second run meets the same memory
  * shortage, and not once the update was interrupted. When the reset itself
- * fails, the command's own failure is what the caller reports.
+ * fails, the command's own failure is what the caller reports. Each run of
+ * `npm ci` is preceded by the node-gyp header check, so a retry never builds
+ * against the broken header cache that may have failed the first run.
  */
 async function attempt(
   deps: UpdateFlowDeps,
@@ -553,6 +561,17 @@ async function attempt(
       return { code: 1, stdout: err instanceof Error ? err.message : String(err) };
     }
   };
+  // Both attempts compile the tree's native modules; each first makes sure
+  // the headers they compile against are whole (see prepareNodeGypHeaders).
+  const prepareHeaders = async (): Promise<void> => {
+    if (!isDependencyInstall(spec) || !deps.prepareNodeGypHeaders) return;
+    try {
+      await deps.prepareNodeGypHeaders(spec.cwd ?? process.cwd());
+    } catch {
+      // npm ci fetches the headers itself, as it always did.
+    }
+  };
+  await prepareHeaders();
   const first = await once(spec);
   const { retry } = spec;
   if (
@@ -570,8 +589,14 @@ async function attempt(
   console.log(`${c.dim}$ ${formatCommandSpec(retry.reset)}${c.reset}`);
   const reset = await once(retry.reset);
   if (reset.code !== 0 || control?.signal?.aborted) return first;
+  await prepareHeaders();
   console.log(`${c.dim}$ ${formatCommandSpec(spec)}${c.reset}`);
   return once(spec);
+}
+
+/** `npm ci`: the step that runs the tree's native builds. */
+function isDependencyInstall(spec: CommandSpec): boolean {
+  return spec.command === "npm" && spec.args.join(" ") === "ci";
 }
 
 /**
@@ -2975,6 +3000,7 @@ function hostUpdateDeps(ctx: HostUpdateContext): {
     prepareSourceLauncher: (rootDir) => {
       prepareSourceRecoveryLauncher(rootDir, configDir, homedir());
     },
+    prepareNodeGypHeaders: (rootDir) => prepareNodeGypHeaders(rootDir),
     buildEnv: () => buildHeapEnv(),
     currentVersion: ctx.currentVersion,
     reportHarnessResult: async (harness, result) => {

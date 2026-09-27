@@ -2635,6 +2635,45 @@ describe("rolling back a failed update", () => {
       expect(logged.join("\n")).not.toContain("Rolled back");
     });
 
+    // A header fetch killed part-way leaves node-gyp's cache for this Node
+    // with its version stamp and a common.gypi that never got its bytes; the
+    // cache is outside the checkout, so an empty node_modules alone rebuilds
+    // against it and fails the same way. Each attempt checks it first.
+    test("each install attempt first makes node-gyp's headers whole, from the checkout", async () => {
+      const runner = fakeRunner([...preflight, clean, failed, clean, clean, clean]);
+      const prepared: { cwd: string; after: string | undefined }[] = [];
+      await source(
+        makeDeps(runner, {
+          prepareNodeGypHeaders: (cwd) => {
+            prepared.push({ cwd, after: executed(runner).at(-1) });
+            return Promise.resolve();
+          },
+        }),
+      );
+      expect(prepared).toEqual([
+        { cwd: rootDir, after: "git checkout --detach v0.3.0" },
+        { cwd: rootDir, after: "rm -rf node_modules" },
+      ]);
+      expect(executed(runner).slice(1)).toEqual([
+        "git checkout --detach v0.3.0",
+        "npm ci",
+        "rm -rf node_modules",
+        "npm ci",
+        "npm run build",
+      ]);
+    });
+
+    test("a header check that throws is not the update's failure", async () => {
+      const runner = fakeRunner([...preflight, clean, clean, clean, clean]);
+      await source(
+        makeDeps(runner, {
+          prepareNodeGypHeaders: () => Promise.reject(new Error("no npm config")),
+        }),
+      );
+      expect(executed(runner)).toContain("npm run build");
+      expect(logged.join("\n")).not.toContain("Rolled back");
+    });
+
     test("a retry that fails too rolls back, and the rollback's own install gets the same retry", async () => {
       const runner = fakeRunner([
         ...preflight,

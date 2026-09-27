@@ -2161,6 +2161,11 @@ describe("full-validation workflow topology", () => {
         }
       }
     }
+    // The image build runs npm's native builds too, on a node-gyp cache that
+    // is cold in every fresh layer.
+    const dockerfile = readFileSync(join(repoRoot, "Dockerfile"), "utf8");
+    expect(dockerfile).not.toMatch(/(?:^RUN|&&)\s+npm ci\b/mu);
+    expect(dockerfile.match(/(?:^RUN|&&)\s+sh scripts\/ci\/npm-ci\.sh/gmu)).toHaveLength(2);
     const dir = tmpDir("omnesis-npm-ci-");
     writeFileSync(
       join(dir, "npm"),

@@ -132,11 +132,27 @@ exit 1
   // OMNESIS_TEST_NPM_BUILD_FAILURES=<n> fails the first n builds the way an
   // interrupted earlier run does: a tree npm ci accepted, missing the
   // declaration files its packages ship.
+  // `npm config get node-gyp` answers OMNESIS_TEST_NODE_GYP (nothing when
+  // unset). With npm_config_devdir set, each `npm ci` records the state of
+  // node-gyp's headers for this Node there as `gyp-cache <state>`, and with
+  // OMNESIS_TEST_NPM_CI_BREAKS_GYP_CACHE a failing one leaves them as a
+  // header fetch killed part-way does: the stamp, and an empty common.gypi.
   writeExecutable(
     join(fakeBin, "npm"),
     `#!/bin/sh
+if [ "$1" = config ] && [ "$2" = get ] && [ "$3" = node-gyp ]; then
+  printf '%s\\n' "\${OMNESIS_TEST_NODE_GYP:-}"
+  exit 0
+fi
+gyp_cache="\${npm_config_devdir:+$npm_config_devdir/$(node -p process.versions.node)}"
 if [ "$1" = ci ]; then
   printf 'npm ci\\n' >> "$OMNESIS_TEST_CALLS"
+  if [ -n "$gyp_cache" ]; then
+    if [ ! -e "$gyp_cache" ]; then state=absent
+    elif [ -s "$gyp_cache/installVersion" ] && [ -s "$gyp_cache/include/node/common.gypi" ]; then state=whole
+    else state=broken; fi
+    printf 'gyp-cache %s\\n' "$state" >> "$OMNESIS_TEST_CALLS"
+  fi
   if [ -n "\${OMNESIS_TEST_RECORD_NETWORK_ENV:-}" ]; then
     printf 'network env git-limit=%s git-time=%s npm-retries=%s npm-timeout=%s\\n' \
       "\${GIT_HTTP_LOW_SPEED_LIMIT:-}" "\${GIT_HTTP_LOW_SPEED_TIME:-}" \
@@ -154,6 +170,11 @@ if [ "$1" = ci ]; then
     # tree from one that re-entered it.
     mkdir -p node_modules
     printf 'partial\\n' > node_modules/.omnesis-partial-tree
+    if [ -n "\${OMNESIS_TEST_NPM_CI_BREAKS_GYP_CACHE:-}" ] && [ -n "$gyp_cache" ]; then
+      mkdir -p "$gyp_cache/include/node"
+      printf '11\\n' > "$gyp_cache/installVersion"
+      : > "$gyp_cache/include/node/common.gypi"
+    fi
     echo "npm error code ECONNRESET" >&2
     exit "\${OMNESIS_TEST_NPM_CI_EXIT:-1}"
   fi
