@@ -502,11 +502,14 @@ describe("CodexAppServerBackend", () => {
     }
   });
 
-  it("ignores stale native output from a previous turn", async () => {
+  it.each([
+    ["in the same read as the turn/start response", "stale-native-output"],
+    ["before the turn/start response", "stale-native-output-before-response"],
+  ] as const)("ignores stale native output from a previous turn %s", async (_order, scenario) => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-stale-native-output-")));
     const codexHome = join(dir, "codex-home");
     const logPath = join(dir, "fake-codex.jsonl");
-    const backend = makeBackend({ codexHome, logPath, scenario: "stale-native-output" });
+    const backend = makeBackend({ codexHome, logPath, scenario });
 
     try {
       const events = await collect(backend.runTurn(baseInput()));
