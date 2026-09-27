@@ -139,6 +139,37 @@ jobs:
           echo "Installed: $INSTALLED | Expected: $EXPECTED"
           [ "$INSTALLED" = "$EXPECTED" ] || { echo "Version mismatch"; exit 1; }
 
+      # `--version` loads no native module, so it passes on an install whose
+      # native builds failed. Load each one from the installed package, then
+      # boot the installed gateway, which opens its stores through them.
+      - name: lane [install-package-native]
+        run: |
+          set -o pipefail
+          node scripts/install-smoke-native.mjs "$TEST_HOME/.npm-global/lib"
+          BOOT_HOME="$TEST_HOME-boot"
+          mkdir -p "$BOOT_HOME"
+          HOME="$BOOT_HOME" OMNESIS_CONFIG_DIR="$BOOT_HOME/config" OMNESIS_GATEWAY_PORT=17650 \
+            "$OMNESIS_BIN" gateway serve >"$BOOT_HOME/gateway.log" 2>&1 &
+          gateway=$!
+          health=""
+          for _ in $(seq 120); do
+            health=$(curl -sfk https://localhost:17650/health) && break
+            kill -0 "$gateway" 2>/dev/null || break
+            sleep 1
+          done
+          kill "$gateway" 2>/dev/null || true
+          wait "$gateway" 2>/dev/null || true
+          echo "health: $health"
+          EXPECTED=$(node -p "require('./packages/cli/package.json').version")
+          if [ "$(printf '%s' "$health" | node -pe 'JSON.parse(require("fs").readFileSync(0, "utf8")).version' 2>/dev/null)" != "$EXPECTED" ]; then
+            echo "The installed gateway did not serve $EXPECTED."
+            tail -60 "$BOOT_HOME/gateway.log"
+            exit 1
+          fi
+          grep -q "ready — owning writable handle" "$BOOT_HOME/gateway.log" \
+            || { echo "The installed gateway never opened its writable store."; tail -60 "$BOOT_HOME/gateway.log"; exit 1; }
+          rm -rf "$BOOT_HOME"
+
       - name: Verify the package update path reports an up-to-date install
         run: |
           output=$(HOME="$TEST_HOME" NPM_CONFIG_PREFIX="$TEST_HOME/.npm-global" \
@@ -233,7 +264,7 @@ jobs:
           npm config delete "//localhost:$VERDACCIO_PORT/:_authToken" || true
           docker rm -f verdaccio-${{ github.run_id }} || true
           rm -f /tmp/verdaccio-ci-${{ github.run_id }}.yml
-          rm -rf "$TEST_HOME" "$TEST_HOME-auto"
+          rm -rf "$TEST_HOME" "$TEST_HOME-auto" "$TEST_HOME-boot"
 
   source:
     name: source install
