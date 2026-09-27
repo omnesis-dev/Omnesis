@@ -85,6 +85,17 @@ export function servesUntrustedCertificate(oauth) {
 }
 
 /**
+ * The gateway's own certificate, as the overview describes it, when the main
+ * address presents it. A proxy in front with a certificate of its own makes
+ * the gateway's certificate, and the file that vouches for it, beside the
+ * point for an agent that dials that address.
+ */
+export function mainAddressCertificate(oauth) {
+  const main = oauth.resources?.find((entry) => entry.resource === oauth.resource);
+  return main?.servedByGateway ? (oauth.certificate ?? null) : null;
+}
+
+/**
  * The file an agent trusts this gateway's certificate by, when the gateway
  * names one of a kind the agent accepts: `agent.certificateTrust.kinds` lists
  * the certificate kinds its trust setting works for.
@@ -169,7 +180,11 @@ function harnessCommands(harness, oauth, address, pairingCode) {
  *   public authority issued, the agent is `blocked` too, unless
  *   `certificateTrust` names the setting that makes it trust the file the
  *   gateway offers for its kind of certificate: then the agent gets a
- *   `trustStep`, a command to run before its own.
+ *   `trustStep`, a command to run before its own. Where `onlyFor` names the
+ *   agent's command, the step also carries the `alias` a shell profile keeps
+ *   instead of the export, because the variable would change what other
+ *   programs trust. The file is only offered where the main address presents
+ *   the gateway's own certificate.
  * - `pairs` marks the managed integrations, which pair the machine they run on
  *   as an agent device before signing in.
  *
@@ -242,7 +257,10 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
         command: `codex mcp login ${SERVER_NAME} --no-browser`,
       },
       needsTrustedCertificate: "Codex only accepts a certificate issued by an authority it trusts",
-      certificateTrust: { variable: "SSL_CERT_FILE", kinds: ["mkcert", "self-signed"] },
+      // OpenSSL-based programs such as curl and Python take SSL_CERT_FILE as
+      // the only authorities they trust, so it is kept to Codex's own command
+      // rather than every shell.
+      certificateTrust: { variable: "SSL_CERT_FILE", kinds: ["mkcert", "self-signed"], onlyFor: "codex" },
       docs: `${DOCS}/connect#codex`,
     },
     {
@@ -305,7 +323,7 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
   ];
   const nonStandardPort = usesNonStandardPort(oauth.resource);
   return agents.map((agent) => {
-    const trustFile = untrustedCertificate ? agentTrustFile(agent, oauth.certificate) : null;
+    const trustFile = untrustedCertificate ? agentTrustFile(agent, mainAddressCertificate(oauth)) : null;
     if (
       (agent.needsPublicAddress && privateAddress) ||
       (agent.standardPortOnly && nonStandardPort) ||
@@ -314,14 +332,17 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
       return { ...agent, blocked: true, commands: [], alternatives: false, note: [], headless: undefined };
     }
     if (!trustFile) return agent;
-    const { variable } = agent.certificateTrust;
+    const { variable, onlyFor } = agent.certificateTrust;
+    const setting = `${variable}=${shellQuote(trustFile)}`;
     return {
       ...agent,
       trustStep: {
         label: TRUST_STEP_LABEL,
-        value: `export ${variable}=${shellQuote(trustFile)}`,
+        value: `export ${setting}`,
         variable,
         file: trustFile,
+        // What a shell profile carries instead of the export, when the export is too broad.
+        ...(onlyFor ? { alias: `alias ${onlyFor}=${shellQuote(`${setting} ${onlyFor}`)}` } : {}),
       },
     };
   });

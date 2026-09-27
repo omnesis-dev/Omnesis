@@ -1707,9 +1707,40 @@ describe("AccessView", () => {
       // The agent's own commands follow the trust step.
       expect(steps.querySelectorAll(".access-agent-command").length).toBe(2);
 
+      expect(trust.textContent).toMatch(/add the line to your shell profile/u);
+
       steps = await open("codex");
       expect(firstCommand(steps)).toBe(`export SSL_CERT_FILE=${MKCERT_ROOT}`);
+      // SSL_CERT_FILE would narrow what curl trusts, so the profile keeps it to Codex.
+      const codexTrust = steps.querySelector(".access-agent-trust")!;
+      expect([...codexTrust.querySelectorAll(".access-agent-command code")].map((code) => code.textContent)).toEqual([
+        `export SSL_CERT_FILE=${MKCERT_ROOT}`,
+        `alias codex='SSL_CERT_FILE=${MKCERT_ROOT} codex'`,
+      ]);
+      expect(codexTrust.textContent).toMatch(/would trust only that file/u);
       expect(steps.textContent).toMatch(/codex mcp add omnesis/u);
+    });
+
+    test("a proxy with its own certificate gets no trust step for the gateway's", async () => {
+      api.getAccessOverview.mockResolvedValue({
+        principals: [],
+        oauth: {
+          resource: "https://proxy.example.org/mcp",
+          resources: [
+            { resource: "https://proxy.example.org/mcp", servedByGateway: false, direct: false, publiclyTrusted: false },
+            { resource: "https://gateway.example.org:7600/mcp", servedByGateway: true, direct: true, publiclyTrusted: false },
+          ],
+          certificate: { kind: "self-signed", trustFile: OWN_CERT },
+        },
+      });
+      await mount({ connectOpen: true });
+      for (const id of ["claude-code", "codex"]) {
+        expect(host.querySelector(`button[data-agent='${id}'] .access-agent-warning`)).not.toBeNull();
+        const steps = await open(id);
+        expect(steps.querySelector(".access-agent-trust")).toBeNull();
+        // The gateway's own certificate is not what the agent meets there.
+        expect(steps.querySelector(".access-agent-public")!.textContent).toMatch(/with the certificate it serves/u);
+      }
     });
 
     test("a self-signed gateway shows codex its trust step and keeps claude-code blocked", async () => {

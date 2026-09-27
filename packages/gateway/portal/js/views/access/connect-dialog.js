@@ -23,6 +23,7 @@ import {
   harnessAddresses,
   reconnectableHarnessDevices,
   isPrivateAddress,
+  mainAddressCertificate,
   servesUntrustedCertificate,
   usesNonStandardPort,
 } from "./client-setup.js";
@@ -97,8 +98,12 @@ function CertificateTrustStep({ agent }) {
   return html`<div class="access-agent-trust">
     <${AgentCommand} agent=${agent} command=${step} labelled />
     <p>
-      Run it in the terminal you start ${agent.name} from, then start ${agent.name} there. To keep it for every new terminal, add the line to your shell profile, such as <code>~/.zshrc</code> or <code>~/.bashrc</code>.
+      Run it in the terminal you start ${agent.name} from, then start ${agent.name} there. To keep it for every new terminal, add ${step.alias
+        ? html`this line to your shell profile, such as <code>~/.zshrc</code> or <code>~/.bashrc</code>, instead: other programs, such as curl, read <code>${step.variable}</code> too and would trust only that file.`
+        : html`the line to your shell profile, such as <code>~/.zshrc</code> or <code>~/.bashrc</code>.`}
     </p>
+    ${step.alias &&
+    html`<${AgentCommand} agent=${agent} command=${{ label: "Keep it for every new terminal", value: step.alias }} />`}
     <p>
       This path is on the gateway's machine. For ${agent.name} on another machine, or under an account that cannot read the file, copy it there and set <code>${step.variable}</code> to the copy's path.${" "}
       <${ExternalLink} href=${PUBLISH_DOCS.trust}>Trusting the gateway's certificate<//>
@@ -354,7 +359,7 @@ function AgentSetupPicker({ oauth }) {
       ${selected.blocked &&
       selected.needsTrustedCertificate &&
       servesUntrustedCertificate(oauth) &&
-      html`<${TrustedCertificateNotice} agent=${selected} certificate=${oauth.certificate} />`}
+      html`<${TrustedCertificateNotice} agent=${selected} certificate=${mainAddressCertificate(oauth)} />`}
       ${selected.trustStep && html`<${CertificateTrustStep} agent=${selected} />`}
       ${selected.pairs &&
       html`<${HarnessPairing}

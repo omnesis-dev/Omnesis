@@ -46,7 +46,7 @@ interface AgentSetup {
   pairs?: boolean;
   alternatives?: boolean;
   blocked?: boolean;
-  trustStep?: { label: string; value: string; variable: string; file: string };
+  trustStep?: { label: string; value: string; variable: string; file: string; alias?: string };
 }
 const agentSetups = (
   oauth: OAuth,
@@ -254,10 +254,38 @@ describe("agentSetups", () => {
     });
 
     test("quotes a path a shell would split", () => {
-      const path = "/Users/maya/ca files/rootCA.pem";
-      expect(agent("claude-code", untrusted({ kind: "mkcert", trustFile: path })).trustStep?.value).toBe(
-        `export NODE_EXTRA_CA_CERTS='${path}'`,
+      const path = "/Users/maya/Library/mkcert data/rootCA.pem";
+      const oauth = untrusted({ kind: "mkcert", trustFile: path });
+      expect(agent("claude-code", oauth).trustStep?.value).toBe(`export NODE_EXTRA_CA_CERTS='${path}'`);
+      expect(agent("codex", oauth).trustStep?.alias).toBe(
+        `alias codex='SSL_CERT_FILE='\\''${path}'\\'' codex'`,
       );
+    });
+
+    test("keeps the codex variable to codex in a shell profile, and the claude-code one as exported", () => {
+      const oauth = untrusted({ kind: "mkcert", trustFile: MKCERT_ROOT });
+      // SSL_CERT_FILE replaces what curl and Python trust; NODE_EXTRA_CA_CERTS only adds.
+      expect(agent("codex", oauth).trustStep?.alias).toBe(`alias codex='SSL_CERT_FILE=${MKCERT_ROOT} codex'`);
+      expect(agent("claude-code", oauth).trustStep?.alias).toBeUndefined();
+    });
+
+    test("offers no file where the main address is a proxy with a certificate of its own", () => {
+      for (const certificate of [
+        { kind: "mkcert", trustFile: MKCERT_ROOT },
+        { kind: "self-signed", trustFile: OWN_CERT },
+      ]) {
+        const oauth = {
+          ...untrusted(certificate),
+          resources: [
+            { resource: RESOURCE, servedByGateway: false, direct: false, publiclyTrusted: false },
+            { resource: "https://gateway.example.org:7600/mcp", servedByGateway: true, direct: true, publiclyTrusted: false },
+          ],
+        };
+        for (const id of ["claude-code", "codex"]) {
+          expect(agent(id, oauth)).toMatchObject({ blocked: true, commands: [] });
+          expect(agent(id, oauth).trustStep).toBeUndefined();
+        }
+      }
     });
   });
 
