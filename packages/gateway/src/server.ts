@@ -142,6 +142,7 @@ import {
 } from "./http/cookies.js";
 import type { DiskUsageSnapshot } from "@omnesis/core/doctor";
 import type { TlsLifecyclePort } from "./http/routes/admin/internals.js";
+import type { AgentCertificateTrust } from "./tls-lifecycle/agent-trust.js";
 import type { PushPlan } from "@omnesis/core/push";
 import type Database from "better-sqlite3";
 import type { BootstrapSettingsView } from "./brain/bootstrap-status.js";
@@ -526,6 +527,8 @@ export function createServer(
     tlsFingerprintSha256?: string | (() => string);
     /** The served certificate's lifecycle, for `/admin/tls`. */
     tlsLifecycle?: TlsLifecyclePort;
+    /** Who minted the served certificate and the file an agent on this machine trusts it by. */
+    agentCertificateTrust?: () => AgentCertificateTrust;
     /** HTTPS origins allowed in explicitly system-trusted V4 pairing payloads. */
     systemTrustPairingOrigins?: readonly string[] | (() => readonly string[]);
     /** Hosts the served certificate covers with a publicly trusted chain, at any port. */
@@ -1266,6 +1269,7 @@ export function createServer(
     onDeviceLevelChanged: () => statusCache.bump(),
     tlsFingerprintSha256: opts?.tlsFingerprintSha256,
     listenPort: opts?.port,
+    agentCertificateTrust: opts?.agentCertificateTrust,
   });
   mountLegacyMcpCutoverRoute(app, {
     getDevice: (deviceId) => getDevice(db, deviceId),

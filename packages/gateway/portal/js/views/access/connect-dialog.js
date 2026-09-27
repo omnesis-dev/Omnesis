@@ -63,16 +63,45 @@ function NoteText({ parts }) {
 }
 
 /**
- * For an agent that only accepts a publicly issued certificate, where this
- * gateway serves one it will not accept, and how to give the gateway one.
+ * For an agent that only accepts a certificate from an authority it trusts,
+ * where this gateway serves one it will not accept, and how to give the
+ * gateway one. An agent that can be told to trust an mkcert root, but not a
+ * self-signed certificate, is pointed at mkcert as well.
  */
-function TrustedCertificateNotice({ agent }) {
+function TrustedCertificateNotice({ agent, certificate }) {
+  const kinds = agent.certificateTrust?.kinds ?? [];
+  const selfSigned = certificate?.kind === "self-signed";
+  const refusesSelfSigned = selfSigned && !kinds.includes("self-signed");
+  const offersMkcert = selfSigned && kinds.includes("mkcert");
   return html`<div class="access-agent-public is-warning" role="alert">
     <p>
-      <strong>This gateway's certificate is not publicly trusted.</strong> ${agent.needsTrustedCertificate}, so it cannot connect to this gateway with its self-signed certificate.
+      <strong>This gateway's certificate is not publicly trusted.</strong>${" "}
+      ${refusesSelfSigned
+        ? `${agent.name} cannot trust a self-signed certificate, so it cannot connect to this gateway until the gateway serves another one.`
+        : `${agent.needsTrustedCertificate}, so it cannot connect to this gateway with ${selfSigned ? "its self-signed certificate" : "the certificate it serves"}.`}
     </p>
     <p>
-      <${ExternalLink} href=${PUBLISH_DOCS.certificates}>Give the gateway a Tailscale certificate<//>${" or "}<${ExternalLink} href=${PUBLISH_DOCS.domain}>use a domain of your own<//>.
+      <${ExternalLink} href=${PUBLISH_DOCS.certificates}>Give the gateway a Tailscale certificate<//>${offersMkcert ? ", " : " or "}<${ExternalLink} href=${PUBLISH_DOCS.domain}>use a domain of your own<//>${offersMkcert
+        ? html`, or <${ExternalLink} href=${PUBLISH_DOCS.certificates}>mint an mkcert certificate<//>, which ${agent.name} trusts with one setting`
+        : ""}.
+    </p>
+  </div>`;
+}
+
+/**
+ * The setting that makes an agent trust this gateway's certificate, to run
+ * before the agent's own commands. The file is on the gateway's machine.
+ */
+function CertificateTrustStep({ agent }) {
+  const step = agent.trustStep;
+  return html`<div class="access-agent-trust">
+    <${AgentCommand} agent=${agent} command=${step} labelled />
+    <p>
+      Run it in the terminal you start ${agent.name} from, then start ${agent.name} there. To keep it for every new terminal, add the line to your shell profile, such as <code>~/.zshrc</code> or <code>~/.bashrc</code>.
+    </p>
+    <p>
+      This path is on the gateway's machine. For ${agent.name} on another machine, or under an account that cannot read the file, copy it there and set <code>${step.variable}</code> to the copy's path.${" "}
+      <${ExternalLink} href=${PUBLISH_DOCS.trust}>Trusting the gateway's certificate<//>
     </p>
   </div>`;
 }
@@ -322,7 +351,11 @@ function AgentSetupPicker({ oauth }) {
     ${selected &&
     html`<div class="access-agent-steps" id="access-agent-steps" data-agent=${selected.id}>
       ${selected.needsPublicAddress && html`<${PublicAddressNotice} agent=${selected} resource=${oauth.resource} />`}
-      ${selected.needsTrustedCertificate && servesUntrustedCertificate(oauth) && html`<${TrustedCertificateNotice} agent=${selected} />`}
+      ${selected.blocked &&
+      selected.needsTrustedCertificate &&
+      servesUntrustedCertificate(oauth) &&
+      html`<${TrustedCertificateNotice} agent=${selected} certificate=${oauth.certificate} />`}
+      ${selected.trustStep && html`<${CertificateTrustStep} agent=${selected} />`}
       ${selected.pairs &&
       html`<${HarnessPairing}
         agentName=${selected.name}

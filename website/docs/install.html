@@ -309,7 +309,24 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
             agent-harness host, with the gateway's URL and certificate fingerprint, and how to mint
             the pairing code that command asks for.
           </li>
+          <li>
+            Ends with a warning when the gateway has no Tailscale certificate, naming the AI agents
+            that cannot connect to the certificate it serves.
+          </li>
         </ol>
+        <div class="callout warn">
+          <strong>Choose the certificate for the agents you want to connect.</strong> Without a
+          Tailscale certificate or a domain of your own, the gateway serves its self-signed
+          certificate, and Claude Code, ChatGPT and the Claude apps cannot connect to it. OpenClaw,
+          Hermes and the phone apps work as they are, and Codex works with one setting,
+          <code>SSL_CERT_FILE</code>, which the portal shows. With a mkcert certificate, Claude Code
+          and Codex each need a
+          <a href="/docs/connect#trust-certificate">one-time trust setting</a>. ChatGPT and the
+          Claude apps connect from their providers' servers, so they also need the gateway
+          <a href="/docs/connect#tailscale-funnel">published</a>. To move to a Tailscale certificate
+          later, set up Tailscale with MagicDNS and HTTPS certificates, then run
+          <code>omnesis tls provision</code>.
+        </div>
 
         <h3 id="roles">Roles</h3>
         <p>

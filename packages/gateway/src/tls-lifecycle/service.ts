@@ -51,6 +51,11 @@ import {
   type TlsRenewalMode,
 } from "@omnesis/core";
 import { fingerprintFromCertPem } from "../tls.js";
+import {
+  mkcertRootCandidates,
+  resolveAgentCertificateTrust,
+  type AgentCertificateTrust,
+} from "./agent-trust.js";
 
 const log = createLogger("gateway").child("tls");
 
@@ -79,8 +84,14 @@ export interface TlsLifecycleServiceOptions {
   initial: TlsPem;
   /** Swap material into the listening server. */
   activate: (material: TlsPem) => void;
-  /** `OMNESIS_TLS_CERT` / `OMNESIS_TLS_KEY` as the gateway reads them now. */
-  materialPaths: () => { certPath?: string | null; keyPath?: string | null };
+  /** `OMNESIS_TLS_CERT` / `OMNESIS_TLS_KEY` / `OMNESIS_TLS_CA` as the gateway reads them now. */
+  materialPaths: () => {
+    certPath?: string | null;
+    keyPath?: string | null;
+    caPath?: string | null;
+  };
+  /** Where mkcert keeps its root certificate on this host; mkcert's own defaults when absent. */
+  mkcertRoots?: () => string[];
   /** Hostnames and IP literals clients address this gateway by. */
   requiredHosts: () => string[];
   /** Names a trusted reverse proxy serves with its own certificate; reported, never required. */
@@ -179,6 +190,27 @@ export class TlsLifecycleService {
     return new Date(
       Math.max(this.now(), notAfter - settings.renewBeforeDays * 24 * 60 * 60 * 1000),
     );
+  }
+
+  /**
+   * The file an agent on this machine trusts to accept the served
+   * certificate. For an mkcert certificate it is the root that issued it:
+   * the CA the operator recorded (`OMNESIS_TLS_CA`), a copy beside the
+   * material, or mkcert's own root for this account.
+   */
+  agentCertificateTrust(): AgentCertificateTrust {
+    const material = this.material();
+    const caPath = this.options.materialPaths().caPath;
+    return resolveAgentCertificateTrust({
+      ownership: material.ownership,
+      certPath: material.certPath,
+      servedCertPem: this.served.cert,
+      authorityCandidates: [
+        ...(caPath ? [caPath] : []),
+        join(this.tlsDir, "rootCA.pem"),
+        ...(this.options.mkcertRoots?.() ?? mkcertRootCandidates()),
+      ],
+    });
   }
 
   snapshot(): TlsLifecycleSnapshot {

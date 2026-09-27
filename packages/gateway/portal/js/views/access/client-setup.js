@@ -19,7 +19,11 @@ export const PUBLISH_DOCS = {
   funnel: `${DOCS}/connect#tailscale-funnel`,
   domain: `${DOCS}/setup#public-domain`,
   certificates: `${DOCS}/setup#certificates`,
+  trust: `${DOCS}/connect#trust-certificate`,
 };
+
+/** The step before an agent's commands that tells it to trust the gateway's certificate. */
+export const TRUST_STEP_LABEL = "Trust this gateway's certificate first";
 
 /** POSIX-shell single quoting, so a value can never split a pasted command. */
 function shellQuote(value) {
@@ -78,6 +82,16 @@ export function usesNonStandardPort(resource) {
 export function servesUntrustedCertificate(oauth) {
   const main = oauth.resources?.find((entry) => entry.resource === oauth.resource);
   return main?.publiclyTrusted === false;
+}
+
+/**
+ * The file an agent trusts this gateway's certificate by, when the gateway
+ * names one of a kind the agent accepts: `agent.certificateTrust.kinds` lists
+ * the certificate kinds its trust setting works for.
+ */
+function agentTrustFile(agent, certificate) {
+  if (!agent.certificateTrust || !certificate?.trustFile) return null;
+  return agent.certificateTrust.kinds.includes(certificate.kind) ? certificate.trustFile : null;
 }
 
 /**
@@ -150,13 +164,16 @@ function harnessCommands(harness, oauth, address, pairingCode) {
  *   and `standardPortOnly` those that only dial port 443. With an address such
  *   an agent cannot reach, it is `blocked` and has no commands or
  *   instructions, because none of them could work.
- * - `needsTrustedCertificate` marks agents that only accept a certificate a
- *   public authority issued. Where the gateway's address serves one it does
- *   not, such as its self-signed certificate, the agent is `blocked` too.
+ * - `needsTrustedCertificate` marks agents that only accept a certificate an
+ *   authority they trust issued. Where the gateway's address serves one no
+ *   public authority issued, the agent is `blocked` too, unless
+ *   `certificateTrust` names the setting that makes it trust the file the
+ *   gateway offers for its kind of certificate: then the agent gets a
+ *   `trustStep`, a command to run before its own.
  * - `pairs` marks the managed integrations, which pair the machine they run on
  *   as an agent device before signing in.
  *
- * @param {{ resource: string, resources?: Array<{ resource: string, servedByGateway: boolean, direct: boolean }>, tlsFingerprintSha256?: string | null }} oauth
+ * @param {{ resource: string, resources?: Array<{ resource: string, servedByGateway: boolean, direct: boolean, publiclyTrusted?: boolean }>, tlsFingerprintSha256?: string | null, certificate?: { kind: string, trustFile: string | null } | null }} oauth
  * @param {{ harnessAddress?: { gatewayUrl: string, servedByGateway: boolean, direct: boolean }, pairingCode?: string }} [pairing]
  */
 export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
@@ -191,7 +208,9 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
       },
       alternatives: true,
       // See #168 — planned: a per-install local CA so this agent can trust a self-signed gateway.
-      needsTrustedCertificate: "Claude Code only accepts a certificate a public authority issued",
+      needsTrustedCertificate: "Claude Code only accepts a certificate issued by an authority it trusts",
+      // Node adds the file to its authorities; a self-signed leaf is not one.
+      certificateTrust: { variable: "NODE_EXTRA_CA_CERTS", kinds: ["mkcert"] },
       docs: `${DOCS}/connect#claude-code`,
     },
     {
@@ -222,7 +241,8 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
         ],
         command: `codex mcp login ${SERVER_NAME} --no-browser`,
       },
-      needsTrustedCertificate: "Codex only accepts a certificate a public authority issued",
+      needsTrustedCertificate: "Codex only accepts a certificate issued by an authority it trusts",
+      certificateTrust: { variable: "SSL_CERT_FILE", kinds: ["mkcert", "self-signed"] },
       docs: `${DOCS}/connect#codex`,
     },
     {
@@ -284,11 +304,25 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
     },
   ];
   const nonStandardPort = usesNonStandardPort(oauth.resource);
-  return agents.map((agent) =>
-    (agent.needsPublicAddress && privateAddress) ||
-    (agent.standardPortOnly && nonStandardPort) ||
-    (agent.needsTrustedCertificate && untrustedCertificate)
-      ? { ...agent, blocked: true, commands: [], alternatives: false, note: [], headless: undefined }
-      : agent,
-  );
+  return agents.map((agent) => {
+    const trustFile = untrustedCertificate ? agentTrustFile(agent, oauth.certificate) : null;
+    if (
+      (agent.needsPublicAddress && privateAddress) ||
+      (agent.standardPortOnly && nonStandardPort) ||
+      (agent.needsTrustedCertificate && untrustedCertificate && !trustFile)
+    ) {
+      return { ...agent, blocked: true, commands: [], alternatives: false, note: [], headless: undefined };
+    }
+    if (!trustFile) return agent;
+    const { variable } = agent.certificateTrust;
+    return {
+      ...agent,
+      trustStep: {
+        label: TRUST_STEP_LABEL,
+        value: `export ${variable}=${shellQuote(trustFile)}`,
+        variable,
+        file: trustFile,
+      },
+    };
+  });
 }

@@ -739,17 +739,81 @@
           such as a managed integration's, can only use an access level that includes Answer.
         </p>
 
+        <h3 id="trust-certificate">Trust the gateway's certificate</h3>
+        <p>
+          Claude Code and Codex trust the certificate authorities their system trusts. A Tailscale
+          certificate, or one for a domain of your own, needs nothing more. For a
+          <a href="/docs/setup#certificates">mkcert certificate</a>, and for Codex also the
+          gateway's self-signed certificate, set one environment variable to a file that vouches for
+          the gateway's certificate, in the shell you start the agent from:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Gateway certificate</th>
+                <th>Claude Code</th>
+                <th>Codex</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Tailscale, or your own domain</td>
+                <td>nothing to set</td>
+                <td>nothing to set</td>
+              </tr>
+              <tr>
+                <td>mkcert</td>
+                <td><code>NODE_EXTRA_CA_CERTS</code> = mkcert's <code>rootCA.pem</code></td>
+                <td><code>SSL_CERT_FILE</code> = mkcert's <code>rootCA.pem</code></td>
+              </tr>
+              <tr>
+                <td>Self-signed</td>
+                <td>cannot connect</td>
+                <td><code>SSL_CERT_FILE</code> = the gateway's <code>tls/cert.pem</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          <strong>Settings → Access → Connect an agent</strong> in the portal shows the line with
+          the file's real path on the gateway's machine above each agent's commands, for example:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">export NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">export SSL_CERT_FILE="$(mkcert -CAROOT)/rootCA.pem"</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          Start the agent from that shell, and add the line to your shell profile, such as
+          <code>~/.zshrc</code> or <code>~/.bashrc</code>, so every new shell has it. Both variables
+          add to the authorities the agent already trusts, so its own connections keep working. An
+          agent on another machine needs a copy of the file there, with the same variable set to the
+          copy's path. Copy only <code>rootCA.pem</code>, never <code>rootCA-key.pem</code>. The
+          portal does not offer the setting for a certificate of your own that no public authority
+          issued; set the variable to the authority that issued it.
+        </p>
+
         <h3 id="claude-code">Claude Code</h3>
         <p>
           Choose one setup path: install the Claude plugin, which is recommended, or only add the
           server. Do not do both, because the plugin declares the same connection.
         </p>
         <p>
-          Claude Code and Codex accept only a certificate a public authority issued, such as the
-          Tailscale certificate or one for a domain of your own. They cannot connect to a gateway
-          that serves its self-signed certificate; give the gateway one of those
-          <a href="/docs/setup#certificates">certificates</a> first. OpenClaw and Hermes pin the
-          gateway's fingerprint instead, so they connect either way.
+          Claude Code accepts only a certificate issued by an authority it trusts. With a Tailscale
+          certificate or one for a domain of your own it connects as is; with a mkcert certificate
+          it needs the <a href="#trust-certificate">one-time trust setting</a> first. It cannot
+          connect to a gateway that serves its self-signed certificate at all: give the gateway a
+          Tailscale, domain or mkcert <a href="/docs/setup#certificates">certificate</a> first.
+          OpenClaw and Hermes pin the gateway's fingerprint instead, so they connect either way.
         </p>
         <p>
           The Claude plugin declares the HTTP connection and adds skills that teach Claude how to
@@ -855,6 +919,11 @@
         </p>
 
         <h3 id="codex">Codex</h3>
+        <p>
+          With a Tailscale certificate or one for a domain of your own, Codex connects as is. With a
+          mkcert or the gateway's self-signed certificate, set <code>SSL_CERT_FILE</code> first; see
+          <a href="#trust-certificate">Trust the gateway's certificate</a>.
+        </p>
         <p>Install the guidance, then register your gateway separately:</p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>

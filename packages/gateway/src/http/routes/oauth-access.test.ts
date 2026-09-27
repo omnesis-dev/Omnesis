@@ -169,6 +169,7 @@ describe("MCP OAuth access routes", () => {
       ],
       tlsFingerprintSha256: () => fingerprint,
       probeCertificate: async (resource) => presented[resource.toString()] ?? null,
+      agentCertificateTrust: () => ({ kind: "mkcert", trustFile: "/srv/mkcert/rootCA.pem" }),
     });
     const overview = await withAliases.request(`${ORIGIN}/admin/access`, {
       headers: { "X-Test-Portal": "yes" },
@@ -191,6 +192,7 @@ describe("MCP OAuth access routes", () => {
         },
       ],
       tlsFingerprintSha256: fingerprint,
+      certificate: { kind: "mkcert", trustFile: "/srv/mkcert/rootCA.pem" },
     });
 
     // A proxy that presents the same certificate on another port — Tailscale
@@ -224,6 +226,7 @@ describe("MCP OAuth access routes", () => {
         { resource: RESOURCE, servedByGateway: false, direct: false, publiclyTrusted: false },
       ],
       tlsFingerprintSha256: null,
+      certificate: null,
     });
   });
 

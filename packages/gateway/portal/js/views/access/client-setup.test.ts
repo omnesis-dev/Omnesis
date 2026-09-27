@@ -24,6 +24,7 @@ interface OAuth {
   resource: string;
   resources?: Array<{ resource: string; publiclyTrusted?: boolean; servedByGateway: boolean; direct: boolean }>;
   tlsFingerprintSha256?: string | null;
+  certificate?: { kind: string; trustFile: string | null } | null;
 }
 interface Address {
   gatewayUrl: string;
@@ -45,6 +46,7 @@ interface AgentSetup {
   pairs?: boolean;
   alternatives?: boolean;
   blocked?: boolean;
+  trustStep?: { label: string; value: string; variable: string; file: string };
 }
 const agentSetups = (
   oauth: OAuth,
@@ -175,7 +177,7 @@ describe("agentSetups", () => {
     };
     for (const id of ["claude-code", "codex"]) {
       expect(agent(id, selfSigned)).toMatchObject({ blocked: true, commands: [], note: [] });
-      expect(agent(id, selfSigned).needsTrustedCertificate).toMatch(/public authority/u);
+      expect(agent(id, selfSigned).needsTrustedCertificate).toMatch(/authority it trusts/u);
     }
     // Pinning the fingerprint is how the managed integrations trust it.
     for (const id of ["openclaw", "hermes", "antigravity"]) {
@@ -188,6 +190,75 @@ describe("agentSetups", () => {
     expect(agent("claude-code", trusted).blocked).toBeUndefined();
     // A gateway that does not report trust leaves the setup in place.
     expect(agent("claude-code", { resource: RESOURCE }).blocked).toBeUndefined();
+  });
+
+  describe("the certificate trust step", () => {
+    const untrusted = (certificate: OAuth["certificate"]): OAuth => ({
+      resource: RESOURCE,
+      resources: [{ resource: RESOURCE, servedByGateway: true, direct: true, publiclyTrusted: false }],
+      certificate,
+    });
+    const MKCERT_ROOT = "/home/maya/.local/share/mkcert/rootCA.pem";
+    const OWN_CERT = "/home/maya/.config/omnesis/tls/cert.pem";
+
+    test("an mkcert gateway unblocks both terminal agents with the root to trust", () => {
+      const oauth = untrusted({ kind: "mkcert", trustFile: MKCERT_ROOT });
+      expect(agent("claude-code", oauth)).toMatchObject({
+        trustStep: {
+          label: "Trust this gateway's certificate first",
+          value: `export NODE_EXTRA_CA_CERTS=${MKCERT_ROOT}`,
+          variable: "NODE_EXTRA_CA_CERTS",
+          file: MKCERT_ROOT,
+        },
+      });
+      expect(agent("codex", oauth).trustStep?.value).toBe(`export SSL_CERT_FILE=${MKCERT_ROOT}`);
+      for (const id of ["claude-code", "codex"]) {
+        expect(agent(id, oauth).blocked).toBeUndefined();
+        expect(agent(id, oauth).commands.length).toBeGreaterThan(0);
+      }
+    });
+
+    test("a self-signed gateway unblocks Codex only", () => {
+      const oauth = untrusted({ kind: "self-signed", trustFile: OWN_CERT });
+      expect(agent("codex", oauth).trustStep?.value).toBe(`export SSL_CERT_FILE=${OWN_CERT}`);
+      expect(agent("codex", oauth).blocked).toBeUndefined();
+      expect(agent("claude-code", oauth)).toMatchObject({ blocked: true, commands: [] });
+      expect(agent("claude-code", oauth).trustStep).toBeUndefined();
+    });
+
+    test("keeps both blocked without a file to trust or for an operator's own certificate", () => {
+      for (const certificate of [
+        null,
+        { kind: "mkcert", trustFile: null },
+        { kind: "self-signed", trustFile: null },
+        { kind: "external", trustFile: "/srv/tls/ca.pem" },
+      ]) {
+        for (const id of ["claude-code", "codex"]) {
+          expect(agent(id, untrusted(certificate))).toMatchObject({ blocked: true, commands: [] });
+        }
+      }
+    });
+
+    test("offers no step where the certificate is publicly trusted", () => {
+      const oauth = {
+        ...untrusted({ kind: "tailscale", trustFile: null }),
+        resources: [{ resource: RESOURCE, servedByGateway: true, direct: true, publiclyTrusted: true }],
+      };
+      for (const id of ["claude-code", "codex"]) {
+        expect(agent(id, oauth).trustStep).toBeUndefined();
+        expect(agent(id, oauth).blocked).toBeUndefined();
+      }
+      // An mkcert file is never offered where the address is trusted anyway.
+      const trustedMkcert = { ...oauth, certificate: { kind: "mkcert", trustFile: MKCERT_ROOT } };
+      expect(agent("claude-code", trustedMkcert).trustStep).toBeUndefined();
+    });
+
+    test("quotes a path a shell would split", () => {
+      const path = "/Users/maya/ca files/rootCA.pem";
+      expect(agent("claude-code", untrusted({ kind: "mkcert", trustFile: path })).trustStep?.value).toBe(
+        `export NODE_EXTRA_CA_CERTS='${path}'`,
+      );
+    });
   });
 
   test("blocks ChatGPT on an address off port 443, which it never dials", () => {

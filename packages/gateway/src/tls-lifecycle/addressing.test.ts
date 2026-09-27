@@ -121,6 +121,20 @@ describe("currentTlsMaterialPaths", () => {
     });
   });
 
+  test("reads the private CA the material chains to under the same rule", () => {
+    const configDir = mkdtempSync(join(tmpdir(), "omnesis-tls-paths-"));
+    dirs.push(configDir);
+    writeFileSync(
+      join(configDir, ".env"),
+      "OMNESIS_TLS_CERT=/srv/tls/mkcert.crt\nOMNESIS_TLS_KEY=/srv/tls/mkcert.key\nOMNESIS_TLS_CA=/srv/tls/rootCA.pem\n",
+    );
+    expect(currentTlsMaterialPaths(configDir, { OMNESIS_TLS_CA: "/boot/ca.pem" })).toEqual({
+      certPath: "/srv/tls/mkcert.crt",
+      keyPath: "/srv/tls/mkcert.key",
+      caPath: "/srv/tls/rootCA.pem",
+    });
+  });
+
   test("nothing set anywhere means the gateway's own pair", () => {
     const configDir = mkdtempSync(join(tmpdir(), "omnesis-tls-paths-"));
     dirs.push(configDir);

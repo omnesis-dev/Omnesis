@@ -1665,6 +1665,87 @@ describe("AccessView", () => {
     ]);
   });
 
+  describe("the certificate trust step", () => {
+    const MKCERT_ROOT = "/home/maya/.local/share/mkcert/rootCA.pem";
+    const OWN_CERT = "/home/maya/.config/omnesis/tls/cert.pem";
+    function overview(certificate: unknown, publiclyTrusted = false) {
+      api.getAccessOverview.mockResolvedValue({
+        principals: [],
+        oauth: {
+          resource: "https://gateway.example.org:7600/mcp",
+          resources: [
+            { resource: "https://gateway.example.org:7600/mcp", servedByGateway: true, direct: true, publiclyTrusted },
+          ],
+          certificate,
+        },
+      });
+    }
+    async function open(id: string) {
+      const card = host.querySelector<HTMLButtonElement>(`button[data-agent='${id}']`)!;
+      await act(async () => { card.click(); });
+      await vi.waitFor(() => expect(host.querySelector(".access-agent-steps")?.getAttribute("data-agent")).toBe(id));
+      return host.querySelector(".access-agent-steps")!;
+    }
+    const firstCommand = (steps: Element) => steps.querySelector(".access-agent-command code")?.textContent;
+
+    test("an mkcert gateway shows both terminal agents the root to trust before their commands", async () => {
+      overview({ kind: "mkcert", trustFile: MKCERT_ROOT });
+      await mount({ connectOpen: true });
+      for (const id of ["claude-code", "codex"]) {
+        expect(host.querySelector(`button[data-agent='${id}'] .access-agent-warning`)).toBeNull();
+      }
+
+      let steps = await open("claude-code");
+      const trust = steps.querySelector(".access-agent-trust")!;
+      expect(trust.textContent).toMatch(/Trust this gateway's certificate first/u);
+      expect(firstCommand(steps)).toBe(`export NODE_EXTRA_CA_CERTS=${MKCERT_ROOT}`);
+      expect(trust.textContent).toMatch(/This path is on the gateway's machine/u);
+      expect(trust.querySelector("a")?.getAttribute("href")).toBe(
+        "https://omnesis.dev/docs/connect#trust-certificate",
+      );
+      expect(steps.querySelector(".access-agent-public")).toBeNull();
+      // The agent's own commands follow the trust step.
+      expect(steps.querySelectorAll(".access-agent-command").length).toBe(2);
+
+      steps = await open("codex");
+      expect(firstCommand(steps)).toBe(`export SSL_CERT_FILE=${MKCERT_ROOT}`);
+      expect(steps.textContent).toMatch(/codex mcp add omnesis/u);
+    });
+
+    test("a self-signed gateway shows codex its trust step and keeps claude-code blocked", async () => {
+      overview({ kind: "self-signed", trustFile: OWN_CERT });
+      await mount({ connectOpen: true });
+      expect(host.querySelector("button[data-agent='codex'] .access-agent-warning")).toBeNull();
+      expect(host.querySelector("button[data-agent='claude-code'] .access-agent-warning")).not.toBeNull();
+
+      let steps = await open("codex");
+      expect(firstCommand(steps)).toBe(`export SSL_CERT_FILE=${OWN_CERT}`);
+
+      steps = await open("claude-code");
+      expect(steps.querySelector(".access-agent-trust")).toBeNull();
+      expect(steps.querySelector(".access-agent-command")).toBeNull();
+      const notice = steps.querySelector(".access-agent-public")!;
+      expect(notice.textContent).toMatch(/claude code cannot trust a self-signed certificate/iu);
+      expect(notice.textContent).toMatch(/mint an mkcert certificate/u);
+      expect([...notice.querySelectorAll("a")].map((link) => link.getAttribute("href"))).toEqual([
+        "https://omnesis.dev/docs/setup#certificates",
+        "https://omnesis.dev/docs/setup#public-domain",
+        "https://omnesis.dev/docs/setup#certificates",
+      ]);
+    });
+
+    test("a publicly trusted gateway needs no trust step", async () => {
+      overview({ kind: "tailscale", trustFile: null }, true);
+      await mount({ connectOpen: true });
+      for (const id of ["claude-code", "codex"]) {
+        const steps = await open(id);
+        expect(steps.querySelector(".access-agent-trust")).toBeNull();
+        expect(steps.querySelector(".access-agent-public")).toBeNull();
+        expect(firstCommand(steps)).not.toMatch(/^export /u);
+      }
+    });
+  });
+
   test("warns ChatGPT off an address that is not on port 443", async () => {
     api.getAccessOverview.mockResolvedValue({
       principals: [],
