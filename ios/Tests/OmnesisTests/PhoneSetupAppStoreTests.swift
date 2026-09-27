@@ -11,7 +11,10 @@ import XCTest
 @MainActor
 final class PhoneSetupAppStoreTests: XCTestCase {
     private let deviceId = "11111111-1111-4111-8111-111111111111"
-    /// Nothing listens here, so a request the runtime makes fails at once.
+    /// Nothing listens here. A connection to it usually fails at once, but on
+    /// a loaded simulator it can hang until the request times out, so an
+    /// operation a test awaits never reaches it: unpair's self-revocation
+    /// goes to `UnavailableGateway` instead.
     private let gatewayURL = "https://127.0.0.1:9"
     /// Movement and Places keep their switches in the shared defaults.
     private let sharedKeys = [ActivitySegmentsSettings.Keys.enabled, CoreLocationVisitsSettings.Keys.enabled]
@@ -399,7 +402,8 @@ final class PhoneSetupAppStoreTests: XCTestCase {
             phoneSetupProgress: PhoneSetupProgressStore(defaults: progress),
             notificationPermissions: notifications,
             localSourceActivator: LocalSourceActivator(defaults: DictionaryDefaults()),
-            localSourceOwner: LocalSourceOwnerRecord(defaults: owner)
+            localSourceOwner: LocalSourceOwnerRecord(defaults: owner),
+            revocationSession: UnavailableGateway()
         )
     }
 }
