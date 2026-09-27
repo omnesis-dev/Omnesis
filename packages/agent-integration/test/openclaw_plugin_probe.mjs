@@ -7,7 +7,8 @@
  *
  * Two things are only observable from inside a real plugin process: which
  * tools it offers a session — which depends on what the gateway said it could
- * do — and what its start-time OAuth keepalive did to the stored credential.
+ * do and what the connection's access level grants — and what its start-time
+ * OAuth keepalive did to the stored credential.
  * `service.stop()` waits for a renewal in flight, so by the time this exits
  * the credential file has settled and the caller can read it.
  */
@@ -37,8 +38,11 @@ try {
   // for; a tool the plugin declines to offer returns null here.
   const context = { sessionKey: "agent:main:e2e:plugin-probe" };
   offered = tools
-    .filter((candidate) => candidate.factory(context) !== null)
-    .map((candidate) => candidate.options.name)
+    .flatMap((candidate) => {
+      const resolved = candidate.factory(context);
+      if (!resolved) return [];
+      return (Array.isArray(resolved) ? resolved : [resolved]).map((tool) => tool.name);
+    })
     .sort();
 } finally {
   await service.stop();

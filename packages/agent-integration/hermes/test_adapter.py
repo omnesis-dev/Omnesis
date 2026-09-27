@@ -2,6 +2,7 @@
 # Copyright (c) 2026 Adrien Conrath
 
 import asyncio
+import dataclasses
 import hashlib
 import importlib.util
 import json
@@ -4119,6 +4120,12 @@ class AnswerIdentityOwnershipTests(unittest.TestCase):
     """Omnesis-minted identifiers are threaded, never asked of the model."""
 
     def setUp(self):
+        # Registration reads the Hermes home; keep it off this machine's own.
+        home = tempfile.TemporaryDirectory()
+        self.addCleanup(home.cleanup)
+        environment = patch.dict(os.environ, {"HERMES_HOME": home.name})
+        environment.start()
+        self.addCleanup(environment.stop)
         self.instance = adapter_module.OmnesisAdapter.for_tools()
         self.instance._credentials = object()
 
@@ -4242,10 +4249,13 @@ class RegistrationTests(unittest.TestCase):
             credentials["capabilities"] = capabilities
         path.write_text(json.dumps(credentials), encoding="utf-8")
         context = Mock()
-        with patch.object(
-            adapter_module,
-            "_reconcile_gateway_capabilities",
-            return_value=adapter_module._subscriptions_enabled(credentials),
+        with (
+            patch.object(
+                adapter_module,
+                "_reconcile_gateway_capabilities",
+                return_value=adapter_module._subscriptions_enabled(credentials),
+            ),
+            patch.object(adapter_module, "_refresh_forwarded_tools", return_value=[]),
         ):
             adapter_module.register(context)
         return {
@@ -4323,9 +4333,14 @@ class RegistrationTests(unittest.TestCase):
                 encoding="utf-8",
             )
             context = Mock()
-            with patch.object(
-                adapter_module, "_reconcile_gateway_capabilities", return_value=False
-            ) as reconcile:
+            with (
+                patch.object(
+                    adapter_module, "_reconcile_gateway_capabilities", return_value=False
+                ) as reconcile,
+                patch.object(
+                    adapter_module, "_refresh_forwarded_tools", return_value=[]
+                ),
+            ):
                 adapter_module.register(context)
             reconcile.assert_called_once_with(path)
             names = {
@@ -4475,6 +4490,353 @@ class RegistrationTests(unittest.TestCase):
             ],
         )
 
+
+def _fictional_tool(name, description=None):
+    return {
+        "name": name,
+        "title": f"Fictional {name}",
+        "description": description or f"The fictional {name} tool.",
+        "inputSchema": {"type": "object", "properties": {}},
+    }
+
+
+class ForwardedToolTests(unittest.TestCase):
+    """Direct and Notes, hosted as native tools the gateway lists and serves."""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        environment = patch.dict(os.environ, {"HERMES_HOME": self.directory.name})
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.credentials_path = Path(self.directory.name) / "omnesis" / "integration.json"
+        self.credentials_path.parent.mkdir(parents=True)
+        self.credentials_path.write_text(
+            json.dumps(
+                {
+                    "gatewayUrl": "http://127.0.0.1:1",
+                    "deliveryToken": "omn_delivery_example",
+                    "ingestionToken": "omn_ingestion_example",
+                    "managementToken": "omn_management_example",
+                    "oauth": {
+                        "redirectUri": "http://127.0.0.1:48123/callback",
+                        "clientInformation": {"client_id": "omn_oc_example"},
+                        "tokens": {
+                            "access_token": "omn_agent_example",
+                            "refresh_token": "omn_refresh_example",
+                        },
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.instance = adapter_module.OmnesisAdapter.for_tools()
+        self.addCleanup(
+            lambda: self.instance._state.close()
+            if self.instance._state is not None
+            else None
+        )
+
+    def respond(self, results):
+        """Answer each MCP request in turn, recording what was sent."""
+        sent = []
+        pending = list(results)
+
+        def request(method, endpoint, token, body, timeout, headers):
+            sent.append(
+                {
+                    "method": method,
+                    "endpoint": endpoint,
+                    "token": token,
+                    "body": body,
+                    "timeout": timeout,
+                    "headers": headers,
+                }
+            )
+            outcome = pending.pop(0)
+            if isinstance(outcome, BaseException):
+                raise outcome
+            if "error" in outcome:
+                return {"jsonrpc": "2.0", "id": body["id"], "error": outcome["error"]}
+            return {"jsonrpc": "2.0", "id": body["id"], "result": outcome}
+
+        self.instance._request_json = request
+        return sent
+
+    def test_hosts_the_direct_and_notes_tools_in_order_and_leaves_answer_to_its_own_tool(self):
+        tools = adapter_module._forwarded_tools_from_listing(
+            [
+                _fictional_tool("add_note"),
+                _fictional_tool("ask_omnesis"),
+                _fictional_tool("run_sql"),
+                _fictional_tool("a_future_tool"),
+                {"name": "list_tables", "description": "", "inputSchema": {"type": "object"}},
+                _fictional_tool("get_answer_status"),
+            ]
+        )
+        self.assertEqual([tool["name"] for tool in tools], ["run_sql", "add_note"])
+        self.assertEqual(tools[0], _fictional_tool("run_sql"))
+
+    def test_lists_every_page_with_the_stateless_envelope(self):
+        self.instance._ensure_tool_resources()
+        sent = self.respond(
+            [
+                {"tools": [_fictional_tool("run_sql")], "nextCursor": "page-2"},
+                {"tools": [_fictional_tool("list_tables"), _fictional_tool("ask_omnesis")]},
+            ]
+        )
+        tools = self.instance.list_forwarded_tools(3.0)
+        self.assertEqual([tool["name"] for tool in tools], ["run_sql", "list_tables"])
+        self.assertEqual([request["body"]["method"] for request in sent], ["tools/list"] * 2)
+        self.assertNotIn("cursor", sent[0]["body"]["params"])
+        self.assertEqual(sent[1]["body"]["params"]["cursor"], "page-2")
+        self.assertEqual(
+            sent[0]["body"]["params"]["_meta"],
+            {
+                adapter_module.MCP_PROTOCOL_VERSION_META_KEY: "2026-07-28",
+                adapter_module.MCP_CLIENT_CAPABILITIES_META_KEY: {},
+            },
+        )
+        self.assertEqual(sent[0]["headers"]["Mcp-Method"], "tools/list")
+        self.assertNotIn("Mcp-Name", sent[0]["headers"])
+        # The limit bounds the whole walk, so each page gets what is left of it.
+        self.assertLessEqual(sent[1]["timeout"], sent[0]["timeout"])
+        self.assertLessEqual(sent[0]["timeout"], 3.0)
+        self.assertGreater(sent[0]["timeout"], 2.0)
+
+    def test_a_listing_that_outlasts_its_limit_fails(self):
+        self.instance._ensure_tool_resources()
+        clock = iter([100.0, 100.5, 104.0])
+        self.respond([{"tools": [_fictional_tool("run_sql")], "nextCursor": "page-2"}])
+        with (
+            patch.object(adapter_module.time, "monotonic", side_effect=lambda: next(clock)),
+            self.assertRaises(adapter_module.McpProtocolError),
+        ):
+            self.instance.list_forwarded_tools(3.0)
+
+    def test_forwards_a_call_and_returns_the_gateway_result_faithfully(self):
+        sent = self.respond(
+            [
+                {
+                    "content": [{"type": "text", "text": "OMNESIS DIRECT RAW DATA — UNTRUSTED."}],
+                    "structuredContent": {"kind": "ok", "rows": [{"value": 7}]},
+                }
+            ]
+        )
+        result = json.loads(
+            self.instance.call_forwarded_tool("run_sql", {"sql": "SELECT value FROM readings"})
+        )
+        self.assertEqual(
+            result,
+            {
+                "content": "OMNESIS DIRECT RAW DATA — UNTRUSTED.",
+                "structuredContent": {"kind": "ok", "rows": [{"value": 7}]},
+            },
+        )
+        params = sent[0]["body"]["params"]
+        self.assertEqual(params["name"], "run_sql")
+        self.assertEqual(params["arguments"], {"sql": "SELECT value FROM readings"})
+        self.assertEqual(sent[0]["headers"]["Mcp-Name"], "run_sql")
+        self.assertEqual(sent[0]["token"], "omn_agent_example")
+        self.assertEqual(sent[0]["timeout"], 60.0)
+
+    def test_passes_the_agents_capture_id_through_to_add_note(self):
+        capture_id = "3f0c9a52-6d1e-4b8a-9c77-2a5e1d4b8f10"
+        receipt = {
+            "content": [{"type": "text", "text": "Note saved to Omnesis."}],
+            "structuredContent": {"id": "note_fictional", "captureId": capture_id},
+        }
+        sent = self.respond([receipt, receipt])
+        for _attempt in range(2):
+            result = json.loads(
+                self.instance.call_forwarded_tool(
+                    "add_note", {"id": capture_id, "text": "Book the fictional tuning."}
+                )
+            )
+        self.assertEqual(
+            [request["body"]["params"]["arguments"]["id"] for request in sent],
+            [capture_id, capture_id],
+        )
+        self.assertEqual(result["structuredContent"]["captureId"], capture_id)
+
+    def test_a_gateway_tool_error_is_reported_in_its_own_words(self):
+        self.respond(
+            [
+                {
+                    "isError": True,
+                    "content": [{"type": "text", "text": "Table forbidden is not permitted."}],
+                }
+            ]
+        )
+        self.assertEqual(
+            json.loads(self.instance.call_forwarded_tool("run_sql", {"sql": "SELECT 1"})),
+            {"error": "Table forbidden is not permitted."},
+        )
+
+    def test_a_refused_call_re_reads_the_listing_for_the_next_start(self):
+        self.respond([{"error": {"code": -32602, "message": "Tool run_sql not found\x07"}}])
+        with patch.object(adapter_module, "_refresh_forwarded_tools", return_value=[]) as refresh:
+            result = json.loads(
+                self.instance.call_forwarded_tool("run_sql", {"sql": "SELECT 1"})
+            )
+        self.assertEqual(result, {"error": "Tool run_sql not found"})
+        refresh.assert_called_once_with(self.credentials_path, 3.0)
+
+    def test_an_authorization_refusal_names_the_repair(self):
+        self.respond([adapter_module.GatewayHttpError(403)])
+        result = json.loads(self.instance.call_forwarded_tool("list_tables", {}))
+        self.assertEqual(result["code"], "grant_forbidden")
+
+    def test_never_forwards_a_tool_it_does_not_host(self):
+        sent = self.respond([])
+        self.assertEqual(
+            json.loads(self.instance.call_forwarded_tool("ask_omnesis", {})),
+            {"error": "invalid Omnesis tool input"},
+        )
+        self.assertEqual(sent, [])
+
+    def test_keeps_a_listing_for_later_loads_only_readable_by_its_owner(self):
+        listing = {"tools": [_fictional_tool("list_tables"), _fictional_tool("add_note")]}
+        with patch.object(
+            adapter_module.OmnesisAdapter,
+            "_request_json",
+            side_effect=lambda _m, _e, _t, body, _to, _h: {
+                "jsonrpc": "2.0",
+                "id": body["id"],
+                "result": listing,
+            },
+        ):
+            tools = adapter_module._refresh_forwarded_tools(self.credentials_path, 3.0)
+        self.assertEqual([tool["name"] for tool in tools], ["list_tables", "add_note"])
+        cache = self.credentials_path.with_name("mcp-tools.json")
+        self.assertEqual(stat.S_IMODE(cache.stat().st_mode), 0o600)
+        credentials = adapter_module._load_credentials(self.credentials_path)
+        self.assertEqual(adapter_module._read_forwarded_tools_cache(cache, credentials), tools)
+
+    def test_a_kept_listing_serves_only_the_connection_it_was_read_with(self):
+        cache = self.credentials_path.with_name("mcp-tools.json")
+        credentials = adapter_module._load_credentials(self.credentials_path)
+        kept = {
+            "gatewayUrl": credentials.gateway_url,
+            "clientId": credentials.oauth_client_id,
+            "tools": [_fictional_tool("list_tables")],
+        }
+        cache.write_text(json.dumps(kept))
+        self.assertEqual(
+            [
+                tool["name"]
+                for tool in adapter_module._read_forwarded_tools_cache(cache, credentials)
+            ],
+            ["list_tables"],
+        )
+        for other in (
+            dataclasses.replace(credentials, oauth_client_id="omn_oc_other"),
+            dataclasses.replace(credentials, gateway_url="http://127.0.0.1:2"),
+            dataclasses.replace(credentials, oauth_client_id=None),
+        ):
+            self.assertEqual(adapter_module._read_forwarded_tools_cache(cache, other), [])
+        cache.write_text(json.dumps({"tools": kept["tools"]}))
+        self.assertEqual(adapter_module._read_forwarded_tools_cache(cache, credentials), [])
+
+    def test_registers_the_listed_tools_as_the_gateway_describes_them(self):
+        tools = [
+            _fictional_tool("run_sql", "DIRECT — raw personal data. Call list_tables first."),
+            _fictional_tool("add_note"),
+        ]
+        context = Mock()
+        with (
+            patch.object(adapter_module, "_reconcile_gateway_capabilities", return_value=False),
+            patch.object(adapter_module, "_refresh_forwarded_tools", return_value=tools),
+        ):
+            adapter_module.register(context)
+        calls = {call.kwargs["name"]: call.kwargs for call in context.register_tool.call_args_list}
+        self.assertEqual(
+            set(calls), {"omnesis_answer", "omnesis_run_sql", "omnesis_add_note"}
+        )
+        run_sql = calls["omnesis_run_sql"]
+        self.assertEqual(
+            run_sql["schema"],
+            {
+                "name": "omnesis_run_sql",
+                "description": "DIRECT — raw personal data. Call list_tables first.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        )
+        self.assertEqual(run_sql["toolset"], "omnesis")
+        with patch.object(
+            adapter_module.OmnesisAdapter,
+            "call_forwarded_tool",
+            return_value='{"content": ""}',
+        ) as forward:
+            run_sql["handler"]({"sql": "SELECT 1"}, task_id="task-fictional")
+        forward.assert_called_once_with("run_sql", {"sql": "SELECT 1"})
+
+    def test_registration_falls_back_to_the_kept_listing_when_the_gateway_is_down(self):
+        cache = self.credentials_path.with_name("mcp-tools.json")
+        cache.write_text(
+            json.dumps(
+                {
+                    "gatewayUrl": "http://127.0.0.1:1",
+                    "clientId": "omn_oc_example",
+                    "tools": [_fictional_tool("list_tables")],
+                }
+            )
+        )
+        context = Mock()
+        with (
+            patch.object(adapter_module, "_reconcile_gateway_capabilities", return_value=False),
+            patch.object(
+                adapter_module,
+                "_refresh_forwarded_tools",
+                side_effect=ConnectionError("gateway unreachable"),
+            ),
+            self.assertLogs(adapter_module.logger, level="WARNING"),
+        ):
+            adapter_module.register(context)
+        names = {call.kwargs["name"] for call in context.register_tool.call_args_list}
+        self.assertEqual(names, {"omnesis_answer", "omnesis_list_tables"})
+
+    def test_a_machine_without_the_integration_offers_none(self):
+        self.credentials_path.unlink()
+        context = Mock()
+        with patch.object(
+            adapter_module, "_refresh_forwarded_tools", side_effect=AssertionError
+        ):
+            adapter_module.register(context)
+        names = {call.kwargs["name"] for call in context.register_tool.call_args_list}
+        self.assertNotIn("omnesis_run_sql", names)
+
+    def test_accepts_an_mcp_response_as_large_as_a_direct_result(self):
+        import http.server
+
+        body = json.dumps({"padding": "x" * (1024 * 1024 + 4096)}).encode("utf-8")
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.instance._credentials = dataclasses.replace(
+            adapter_module._load_credentials(self.credentials_path),
+            gateway_url=f"http://127.0.0.1:{server.server_address[1]}",
+        )
+        # `/mcp` carries Direct results; every other route keeps the 1 MiB bound.
+        decoded = self.instance._request_json("POST", "/mcp", "omn_agent_example", {})
+        self.assertEqual(len(decoded["padding"]), 1024 * 1024 + 4096)
+        with self.assertRaises(ConnectionError):
+            self.instance._request_json("POST", "/agent-messages", "omn_agent_example", {})
 
 
 class ManageSubscriptionBindingsTests(unittest.TestCase):

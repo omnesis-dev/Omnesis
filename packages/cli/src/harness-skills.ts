@@ -17,6 +17,11 @@ import { assertNever } from "@omnesis/core";
  * - Hermes parses `prerequisites.commands`; its adapter reads the same private
  *   integration state convention and needs no environment bearer.
  *
+ * The Direct and Notes tools are described without regard to the connection's
+ * access level, because the level can change after the skill is written: the
+ * plugin offers exactly the ones the gateway lists for the connection, and
+ * each carries the gateway's own description.
+ *
  * The body differs per *gateway*. Watch management rides on a gateway runtime
  * that ships separately from the rest of the integration, and the installed
  * plugin registers those tools only where the gateway offers them. A skill
@@ -182,6 +187,22 @@ is not a failure either: Omnesis has already asked the user in the Omnesis app
 and will deliver the result to this conversation once they decide. Tell the user
 you are waiting on their approval, do not reveal or infer the held result, and do
 not promise that Omnesis sends the message itself.
+
+## Direct and Notes
+
+When this connection's access level grants them, you also have native tools for
+Omnesis Direct and Notes. Each is named \`omnesis_\` followed by the
+Omnesis tool's own name — for example \`omnesis_list_tables\`, \`omnesis_run_sql\` and
+\`omnesis_add_note\` — and is offered only when the access level includes it. If you
+do not have them, ask with \`omnesis_answer\` instead.
+
+Each tool's description is the one Omnesis gives every agent; follow it. Where it
+names another Omnesis tool, such as \`list_tables\`, call the \`omnesis_\` tool of that
+name.
+
+\`omnesis_add_note\` saves a note when the user asks you to tell Omnesis something or
+to remember it. Give it a UUID \`id\` of your own, reuse that \`id\` when you retry the
+same note, and use a new one for a new note.
 
 ## Writing a cron that asks Omnesis
 

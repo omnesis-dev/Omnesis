@@ -188,6 +188,31 @@ async def main():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
 
+    forwarded_calls = os.environ.get("OMNESIS_HERMES_TOOL_CALLS")
+    if forwarded_calls is not None:
+        # Load the plugin the way Hermes does, then call each registered tool
+        # through the handler Hermes would run it with.
+        class RecordingContext:
+            def __init__(self):
+                self.tools = {}
+
+            def register_tool(self, name, **kwargs):
+                self.tools[name] = kwargs
+
+            def register_platform(self, **_kwargs):
+                pass
+
+        context = RecordingContext()
+        module.register(context)
+        results = [
+            json.loads(context.tools[call["tool"]]["handler"](call["args"]))
+            for call in json.loads(forwarded_calls)
+        ]
+        if module._TOOL_ADAPTER is not None and module._TOOL_ADAPTER._state is not None:
+            module._TOOL_ADAPTER._state.close()
+        print(json.dumps({"tools": sorted(context.tools), "results": results}))
+        return
+
     if os.environ.get("OMNESIS_HERMES_REAL_MCP") == "1":
         instance = module.OmnesisAdapter.for_tools()
         instance._session_identity = lambda _session_id: ("slack", "probe")

@@ -9,17 +9,30 @@ import { createServer } from "node:net";
 import { dirname, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 
+import { FORWARDED_TOOL_NAMES } from "@omnesis/agent-integration";
+
 import { gatewayBootBudgetMs } from "./gateway-env.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
 import type { ManagedHarness } from "./managed-integration-enrollment.js";
 
 const execFileAsync = promisify(execFile);
 
-export const EXPECTED_HARNESS_TOOLS = [
+const ANSWER_AND_WATCH_TOOLS = [
   "omnesis_answer",
   "omnesis_subscription_answer",
   "omnesis_subscriptions",
 ] as const;
+
+/**
+ * The tools each host reports for the lane's Answer-only connection. OpenClaw
+ * reports every tool the plugin manifest declares, including the Direct and
+ * Notes tools it offers only to a connection granted them; Hermes registers
+ * only the tools the connection is granted.
+ */
+const EXPECTED_HARNESS_TOOLS: Record<ManagedHarness, readonly string[]> = {
+  openclaw: [...ANSWER_AND_WATCH_TOOLS, ...FORWARDED_TOOL_NAMES.map((name) => `omnesis_${name}`)],
+  hermes: ANSWER_AND_WATCH_TOOLS,
+};
 
 interface HarnessRuntimeConformanceOptions {
   harness: ManagedHarness;
@@ -64,7 +77,7 @@ async function assertOpenClawConformance(options: HarnessRuntimeConformanceOptio
   if (inspection.plugin?.status !== "loaded") {
     throw new Error(`OpenClaw did not load Omnesis: ${JSON.stringify(inspection)}`);
   }
-  assertExactTools("OpenClaw", inspection.plugin.toolNames);
+  assertExactTools("OpenClaw", inspection.plugin.toolNames, EXPECTED_HARNESS_TOOLS.openclaw);
   if (!Array.isArray(inspection.diagnostics) || inspection.diagnostics.length !== 0) {
     throw new Error(`OpenClaw reported loader diagnostics: ${JSON.stringify(inspection)}`);
   }
@@ -143,7 +156,7 @@ async function assertHermesConformance(options: HarnessRuntimeConformanceOptions
   if (report.ok !== true || !Array.isArray(report.findings) || report.findings.length !== 0) {
     throw new Error(`Hermes rejected the Omnesis plugin: ${JSON.stringify(report)}`);
   }
-  assertExactTools("Hermes", report.tools);
+  assertExactTools("Hermes", report.tools, EXPECTED_HARNESS_TOOLS.hermes);
 
   // Doctor proves the registration API. A short foreground gateway boot also
   // proves that the installed platform can be materialized in the real host
@@ -194,12 +207,12 @@ function requiredAbsoluteExecutable(name: string): string {
   return value;
 }
 
-function assertExactTools(label: string, value: unknown): void {
+function assertExactTools(label: string, value: unknown, expectedTools: readonly string[]): void {
   if (!Array.isArray(value) || value.some((name) => typeof name !== "string")) {
     throw new Error(`${label} did not report a string tool inventory: ${JSON.stringify(value)}`);
   }
   const actual = [...value].sort();
-  const expected = [...EXPECTED_HARNESS_TOOLS].sort();
+  const expected = [...expectedTools].sort();
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error(
       `${label} tool inventory changed: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,

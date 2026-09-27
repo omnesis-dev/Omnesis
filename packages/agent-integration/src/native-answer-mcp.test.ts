@@ -10,6 +10,10 @@ import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, test } from "vitest";
 import { z } from "zod/v4";
 
+import {
+  FICTIONAL_LARGE_RESULT_BYTES,
+  startFictionalGateway,
+} from "../test/fictional-mcp-gateway.js";
 import { integrationAnswerRequestId } from "./answer-wait.js";
 import { IntegrationHttpError } from "./http.js";
 import { IntegrationOAuthProvider, SerializedIntegrationAuthProvider } from "./oauth.js";
@@ -597,6 +601,43 @@ describe("native Answer MCP client", () => {
       ).rejects.toBeDefined();
     } finally {
       await client.close();
+    }
+  });
+});
+
+describe("the connection's other tools", () => {
+  test("lists every tool the credential is granted and returns a tool's result as sent", async () => {
+    const fictional = await startFictionalGateway(["answer", "direct"]);
+    const client = new NativeAnswerMcpClient(fictional.url, "omn_fictional");
+    try {
+      expect((await client.listTools()).map((tool) => tool.name).sort()).toEqual([
+        "ask_omnesis",
+        "list_tables",
+        "run_sql",
+      ]);
+      // A tool error is the gateway's answer, not a failed request.
+      const refused = await client.callTool("run_sql", { sql: "SELECT * FROM forbidden_table" });
+      expect(refused).toMatchObject({
+        isError: true,
+        content: [{ type: "text", text: "Table forbidden_table is not permitted." }],
+      });
+    } finally {
+      await client.close();
+      await fictional.close();
+    }
+  });
+
+  test("accepts a Direct result as large as the gateway will send", async () => {
+    const fictional = await startFictionalGateway(["direct"]);
+    const client = new NativeAnswerMcpClient(fictional.url, "omn_fictional");
+    try {
+      const result = await client.callTool("run_sql", {
+        sql: "SELECT index, note FROM fictional_large_table",
+      });
+      expect(JSON.stringify(result.structuredContent)).toHaveLength(FICTIONAL_LARGE_RESULT_BYTES);
+    } finally {
+      await client.close();
+      await fictional.close();
     }
   });
 });

@@ -34,6 +34,7 @@ export { agentIntegrationVersion, describeVersionDrift } from "./version.js";
 export { capDeviceUpdateDetail, summarizeCommandFailure } from "./command-output.js";
 export { resolveHarnessBinary } from "./self-update.js";
 export { integrationOAuthFetch } from "./native-answer-mcp.js";
+export { FORWARDED_TOOL_NAMES } from "./forwarded-tools.js";
 export {
   AmbiguousDeliveryError,
   DeliveryConflictError,

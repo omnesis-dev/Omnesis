@@ -51,7 +51,7 @@ conformanceDescribe("pinned external harness plugin conformance", () => {
     }
   }, 15_000);
 
-  test("connect installs the plugin and its real host exposes exactly three tools", async () => {
+  test("connect installs the plugin and its real host exposes exactly its expected tools", async () => {
     if (!requestedHarness) throw new Error("the conformance harness was not selected");
     const root = mkdtempSync(join(tmpdir(), `omnesis-${requestedHarness}-conformance-`));
     const home = join(root, "harness");

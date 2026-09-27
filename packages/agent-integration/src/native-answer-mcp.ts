@@ -10,8 +10,10 @@ import {
   SdkErrorCode,
   StreamableHTTPClientTransport,
   type AuthProvider,
+  type CallToolResult,
   type FetchLike,
   type OAuthClientProvider,
+  type Tool,
 } from "@modelcontextprotocol/client";
 import { z } from "zod";
 
@@ -25,7 +27,14 @@ import type { AnswerPoster } from "./answer-wait.js";
 
 export const NATIVE_CONVERSATION_META_KEY = "dev.omnesis/nativeConversationId";
 export const ANSWER_ERROR_META_KEY = "dev.omnesis/error";
-const MAX_RESPONSE_BYTES = 1024 * 1024;
+/**
+ * The largest `/mcp` response accepted. A Direct result may carry up to 1 MiB
+ * of JSON, and the JSON-RPC envelope and event-stream framing around it add a
+ * little more; the rest is headroom, so a result at the gateway's ceiling is
+ * never cut off while a misbehaving gateway still cannot make the plugin
+ * buffer without bound.
+ */
+const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 
 const answerBase = {
   workflowId: z.string(),
@@ -84,8 +93,9 @@ function parseNativeAnswerResponse(value: unknown): NativeAnswerResponse {
 
 /**
  * Official modern-MCP client adapted to the native integrations' pinned TLS
- * boundary. The native route is request metadata, never a tool argument the
- * external model can choose.
+ * boundary. It carries the integration's Answer asks, and lists and forwards
+ * the connection's other tools (see `forwarded-tools.ts`). The native route is
+ * request metadata, never a tool argument the external model can choose.
  */
 export class NativeAnswerMcpClient {
   private readonly endpoint: URL;
@@ -150,7 +160,6 @@ export class NativeAnswerMcpClient {
     signal?: AbortSignal,
     options?: GatewayRequestOptions,
   ): Promise<T> {
-    // See #175 — only Answer is bridged; Direct and Notes tools are not.
     if (path !== "/mcp") {
       throw new Error("native Answer MCP client accepts only /mcp");
     }
@@ -182,6 +191,34 @@ export class NativeAnswerMcpClient {
     return this.call("get_answer_status", { taskId }, signal, options?.timeoutMs);
   }
 
+  /** Every tool the gateway lists for this connection's credential. */
+  async listTools(signal?: AbortSignal, timeoutMs = 60_000): Promise<Tool[]> {
+    return this.request(timeoutMs, signal, async (client, remaining) => {
+      const { tools } = await client.listTools(undefined, {
+        signal,
+        timeout: remaining,
+        maxTotalTimeout: remaining,
+        cacheMode: "bypass",
+      });
+      return tools;
+    });
+  }
+
+  /** Call one gateway tool and return its result as the gateway sent it. */
+  async callTool(
+    name: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+    timeoutMs = 60_000,
+  ): Promise<CallToolResult> {
+    return this.request(timeoutMs, signal, (client, remaining) =>
+      client.callTool(
+        { name, arguments: args },
+        { signal, timeout: remaining, maxTotalTimeout: remaining },
+      ),
+    );
+  }
+
   async close(): Promise<void> {
     this.closed = true;
     this.connectAbort?.abort(new Error("Native Answer MCP client is closed"));
@@ -203,11 +240,8 @@ export class NativeAnswerMcpClient {
     timeoutMs = 60_000,
     nativeConversationId?: string,
   ): Promise<NativeAnswerResponse> {
-    const deadline = Date.now() + timeoutMs;
-    await this.connect(signal, remainingBudget(deadline));
-    try {
-      const remaining = remainingBudget(deadline);
-      const result = await this.client!.callTool(
+    const result = await this.request(timeoutMs, signal, (client, remaining) =>
+      client.callTool(
         {
           name,
           arguments: args,
@@ -216,9 +250,22 @@ export class NativeAnswerMcpClient {
             : {}),
         },
         { signal, timeout: remaining, maxTotalTimeout: remaining },
-      );
-      if (result.isError) throw toolError(result._meta);
-      return parseNativeAnswerResponse(result.structuredContent);
+      ),
+    );
+    if (result.isError) throw toolError(result._meta);
+    return parseNativeAnswerResponse(result.structuredContent);
+  }
+
+  /** Run one request on the connected client inside a single time budget. */
+  private async request<T>(
+    timeoutMs: number,
+    signal: AbortSignal | undefined,
+    send: (client: Client, remainingMs: number) => Promise<T>,
+  ): Promise<T> {
+    const deadline = Date.now() + timeoutMs;
+    await this.connect(signal, remainingBudget(deadline));
+    try {
+      return await send(this.client!, remainingBudget(deadline));
     } catch (error) {
       if (error instanceof SdkError && error.code === SdkErrorCode.RequestTimeout) {
         throw new GatewayRequestTimeoutError(timeoutMs);
@@ -402,7 +449,7 @@ function pinnedFetch(
           incoming.on("data", (chunk: Buffer) => {
             received += chunk.byteLength;
             if (received > MAX_RESPONSE_BYTES) {
-              outgoing.destroy(new Error("gateway response exceeded 1 MiB"));
+              outgoing.destroy(new Error("gateway response exceeded 4 MiB"));
               return;
             }
             chunks.push(chunk);

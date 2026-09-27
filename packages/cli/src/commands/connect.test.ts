@@ -741,6 +741,21 @@ describe("harness skill content", () => {
     expect(skill).not.toContain("managementToken");
   });
 
+  it("both variants explain the Direct and Notes tools without assuming a grant", () => {
+    for (const capabilities of [WITH_WATCHES, { subscriptions: false }]) {
+      for (const skill of [buildOpenClawSkill(capabilities), buildHermesSkill(capabilities)]) {
+        expect(skill).toContain("## Direct and Notes");
+        expect(skill).toMatch(/offered only when the access level includes it/u);
+        expect(skill).toContain("`omnesis_list_tables`");
+        expect(skill).toContain("`omnesis_run_sql`");
+        // The capture id is the agent's, and a retry must reuse it or the
+        // gateway saves the same note twice.
+        expect(skill).toMatch(/Give it a UUID `id` of your own, reuse that `id`/u);
+        expect(skill).toContain("Each tool's description is the one Omnesis gives every agent");
+      }
+    }
+  });
+
   it("both variants explain document-watch and analytics-watch semantics", () => {
     for (const skill of [buildOpenClawSkill(WITH_WATCHES), buildHermesSkill(WITH_WATCHES)]) {
       expect(skill).toContain("`idempotencyKey`");

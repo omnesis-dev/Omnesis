@@ -20,6 +20,20 @@ plugin reads the recorded answer to decide whether to register them — so an
 installation against a gateway without Watches has no tool that answers 404 and
 no skill text promising one.
 
+The connection's Direct and Notes tools reach the agent the same way. Each
+plugin lists the connection's tools on `/mcp` (`tools/list`), offers the Direct
+and Notes ones as native tools named `omnesis_<gateway tool>` with the gateway's
+own descriptions and input schemas, and forwards each call to the gateway tool
+of the same name, returning the gateway's text and structured result. The plugin
+holds no model of which access level grants what: a connection without Direct
+or Notes is listed none and offered none. The last listing is kept beside the
+credential file (`mcp-tools.json`) so a restart with the gateway down keeps the
+tools it had. OpenClaw re-reads the listing every five minutes and whenever the
+gateway refuses a forwarded call; Hermes registers its tools once, when it loads
+the plugin, so a newly granted tool reaches it on its next restart.
+`packages/agent-integration/src/forwarded-tools.ts` holds the list of tool names
+a plugin can host, which the OpenClaw manifest must declare.
+
 ## Install and connect
 
 Run this on the machine that hosts the external agent:
