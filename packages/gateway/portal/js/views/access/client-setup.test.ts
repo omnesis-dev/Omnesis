@@ -46,7 +46,7 @@ interface AgentSetup {
   pairs?: boolean;
   alternatives?: boolean;
   blocked?: boolean;
-  trustStep?: { label: string; value: string; variable: string; file: string; alias?: string };
+  trustStep?: { label: string; value: string; variable: string; file: string };
 }
 const agentSetups = (
   oauth: OAuth,
@@ -257,16 +257,7 @@ describe("agentSetups", () => {
       const path = "/Users/maya/Library/mkcert data/rootCA.pem";
       const oauth = untrusted({ kind: "mkcert", trustFile: path });
       expect(agent("claude-code", oauth).trustStep?.value).toBe(`export NODE_EXTRA_CA_CERTS='${path}'`);
-      expect(agent("codex", oauth).trustStep?.alias).toBe(
-        `alias codex='SSL_CERT_FILE='\\''${path}'\\'' codex'`,
-      );
-    });
-
-    test("keeps the codex variable to codex in a shell profile, and the claude-code one as exported", () => {
-      const oauth = untrusted({ kind: "mkcert", trustFile: MKCERT_ROOT });
-      // SSL_CERT_FILE replaces what curl and Python trust; NODE_EXTRA_CA_CERTS only adds.
-      expect(agent("codex", oauth).trustStep?.alias).toBe(`alias codex='SSL_CERT_FILE=${MKCERT_ROOT} codex'`);
-      expect(agent("claude-code", oauth).trustStep?.alias).toBeUndefined();
+      expect(agent("codex", oauth).trustStep?.value).toBe(`export SSL_CERT_FILE='${path}'`);
     });
 
     test("offers no file where the main address is a proxy with a certificate of its own", () => {

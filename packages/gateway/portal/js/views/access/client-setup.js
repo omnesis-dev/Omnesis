@@ -180,11 +180,8 @@ function harnessCommands(harness, oauth, address, pairingCode) {
  *   public authority issued, the agent is `blocked` too, unless
  *   `certificateTrust` names the setting that makes it trust the file the
  *   gateway offers for its kind of certificate: then the agent gets a
- *   `trustStep`, a command to run before its own. Where `onlyFor` names the
- *   agent's command, the step also carries the `alias` a shell profile keeps
- *   instead of the export, because the variable would change what other
- *   programs trust. The file is only offered where the main address presents
- *   the gateway's own certificate.
+ *   `trustStep`, a command to run before its own. The file is only offered
+ *   where the main address presents the gateway's own certificate.
  * - `pairs` marks the managed integrations, which pair the machine they run on
  *   as an agent device before signing in.
  *
@@ -260,7 +257,7 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
       // OpenSSL-based programs such as curl and Python take SSL_CERT_FILE as
       // the only authorities they trust, so it is kept to Codex's own command
       // rather than every shell.
-      certificateTrust: { variable: "SSL_CERT_FILE", kinds: ["mkcert", "self-signed"], onlyFor: "codex" },
+      certificateTrust: { variable: "SSL_CERT_FILE", kinds: ["mkcert", "self-signed"] },
       docs: `${DOCS}/connect#codex`,
     },
     {
@@ -332,17 +329,14 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
       return { ...agent, blocked: true, commands: [], alternatives: false, note: [], headless: undefined };
     }
     if (!trustFile) return agent;
-    const { variable, onlyFor } = agent.certificateTrust;
-    const setting = `${variable}=${shellQuote(trustFile)}`;
+    const { variable } = agent.certificateTrust;
     return {
       ...agent,
       trustStep: {
         label: TRUST_STEP_LABEL,
-        value: `export ${setting}`,
+        value: `export ${variable}=${shellQuote(trustFile)}`,
         variable,
         file: trustFile,
-        // What a shell profile carries instead of the export, when the export is too broad.
-        ...(onlyFor ? { alias: `alias ${onlyFor}=${shellQuote(`${setting} ${onlyFor}`)}` } : {}),
       },
     };
   });

@@ -1699,7 +1699,7 @@ describe("AccessView", () => {
       const trust = steps.querySelector(".access-agent-trust")!;
       expect(trust.textContent).toMatch(/Trust this gateway's certificate first/u);
       expect(firstCommand(steps)).toBe(`export NODE_EXTRA_CA_CERTS=${MKCERT_ROOT}`);
-      expect(trust.textContent).toMatch(/This path is on the gateway's machine/u);
+      expect(trust.textContent).toMatch(/Ensure NODE_EXTRA_CA_CERTS is set where claude code runs\./iu);
       expect(trust.querySelector("a")?.getAttribute("href")).toBe(
         "https://omnesis.dev/docs/connect#trust-certificate",
       );
@@ -1707,17 +1707,13 @@ describe("AccessView", () => {
       // The agent's own commands follow the trust step.
       expect(steps.querySelectorAll(".access-agent-command").length).toBe(2);
 
-      expect(trust.textContent).toMatch(/add the line to your shell profile/u);
-
       steps = await open("codex");
       expect(firstCommand(steps)).toBe(`export SSL_CERT_FILE=${MKCERT_ROOT}`);
-      // SSL_CERT_FILE would narrow what curl trusts, so the profile keeps it to Codex.
       const codexTrust = steps.querySelector(".access-agent-trust")!;
       expect([...codexTrust.querySelectorAll(".access-agent-command code")].map((code) => code.textContent)).toEqual([
         `export SSL_CERT_FILE=${MKCERT_ROOT}`,
-        `alias codex='SSL_CERT_FILE=${MKCERT_ROOT} codex'`,
       ]);
-      expect(codexTrust.textContent).toMatch(/would trust only that file/u);
+      expect(codexTrust.textContent).toMatch(/Ensure SSL_CERT_FILE is set where Codex runs\./u);
       expect(steps.textContent).toMatch(/codex mcp add omnesis/u);
     });
 
