@@ -76,6 +76,7 @@ jobs:
 
       - name: Start Verdaccio
         run: |
+          scripts/ci/docker-pull.sh verdaccio/verdaccio@sha256:9d622d256378c6e7ae09f384774ee2f0f8ac67a66c066db55921a0b7218abc4c
           docker run -d \
             --name verdaccio-${{ github.run_id }} \
             -p 0:4873 \

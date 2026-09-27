@@ -66,6 +66,7 @@ jobs:
 
       - name: lane [security-static]
         run: |
+          scripts/ci/docker-pull.sh semgrep/semgrep@sha256:65dcd4408adda7c183a6b4550cb1e9b19f7f627a6fbb7e0559bd466bedc44d7b
           docker run --rm \
             --user "$(id -u):$(id -g)" \
             --env HOME=/tmp \
