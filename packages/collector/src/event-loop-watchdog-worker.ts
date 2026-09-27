@@ -17,8 +17,10 @@ import {
   StallJudge,
   WATCHDOG_ARMED,
   type PausedFrame,
+  type WatchdogMessage,
   type WatchdogWorkerData,
 } from "./event-loop-watchdog-shared.js";
+import { leaveRelaunchRequest, type RelaunchRequest } from "./relaunch-request.js";
 
 const { heartbeat, stallLimitMs, checkIntervalMs, captureTimeoutMs } =
   workerData as WatchdogWorkerData;
@@ -26,10 +28,15 @@ const { heartbeat, stallLimitMs, checkIntervalMs, captureTimeoutMs } =
 /** A check this late means the process itself was not running. */
 const SUSPENDED_GAP_MS = 3 * checkIntervalMs;
 
+let relaunch: RelaunchRequest | null = null;
+parentPort?.on("message", (message: WatchdogMessage) => {
+  relaunch = message.relaunch;
+});
+
 const nowMs = (): number => Number(process.hrtime.bigint() / 1_000_000n);
 
-function report(message: string): void {
-  const line = `${new Date().toISOString()} ERROR [collector:watchdog] ${message}\n`;
+function report(message: string, level: "ERROR" | "INFO " = "ERROR"): void {
+  const line = `${new Date().toISOString()} ${level} [collector:watchdog] ${message}\n`;
   try {
     writeSync(2, line);
   } catch {
@@ -46,8 +53,13 @@ function report(message: string): void {
 }
 
 function die(): void {
+  if (relaunch) {
+    const failure = leaveRelaunchRequest(relaunch);
+    if (failure) report(`Could not leave a relaunch request: ${failure}`);
+    else report(`Killing the collector; ${relaunch.description}`, "INFO ");
+  }
   // A stalled main thread cannot run a SIGTERM handler, so only a signal it
-  // does not handle ends the process. The service unit restarts it.
+  // does not handle ends the process.
   process.kill(process.pid, "SIGKILL");
 }
 

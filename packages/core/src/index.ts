@@ -1174,6 +1174,7 @@ export {
   HARDENED_UNIT_PATH,
   isServiceComponent,
   launchdLabel,
+  LAUNCHD_THROTTLE_INTERVAL_SECONDS,
   launchdLabelInstance,
   launchdPlistPath,
   systemdEscapeArg,

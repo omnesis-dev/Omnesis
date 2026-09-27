@@ -13,6 +13,7 @@ import {
   PASSPHRASE_CREDENTIAL_NAME,
   PASSPHRASE_FILE_ENV,
   GATEWAY_EXIT_TIMEOUT_SECONDS,
+  LAUNCHD_THROTTLE_INTERVAL_SECONDS,
   launchdLabel,
   systemdEscapeArg,
   type SecretStoreBackend,
@@ -211,7 +212,10 @@ export function escapeXml(value: string): string {
  * contract as the systemd unit's `Restart=on-failure`, so a daemon that stops
  * deliberately (a collector whose device was revoked writes down why and
  * exits 0) stays stopped on both platforms instead of relooping every
- * ThrottleInterval. ThrottleInterval stops a crash-looping daemon from
+ * ThrottleInterval. launchd may still hold a respawn back indefinitely, so the
+ * collector also leaves its own request to be started again when it exits
+ * non-zero or its watchdog kills it (`packages/collector/src/relaunch-request.ts`).
+ * ThrottleInterval stops a crash-looping daemon from
  * spinning the CPU. ExitTimeOut is how long launchd lets a stopping daemon
  * drain before SIGKILL; it exceeds the gateway's own shutdown budget
  * (`GATEWAY_SHUTDOWN_BUDGET_MS`) so a large index flush or analytics close
@@ -242,7 +246,7 @@ ${args}
       <false/>
     </dict>
     <key>ThrottleInterval</key>
-    <integer>10</integer>
+    <integer>${LAUNCHD_THROTTLE_INTERVAL_SECONDS}</integer>
     <key>ExitTimeOut</key>
     <integer>${GATEWAY_EXIT_TIMEOUT_SECONDS}</integer>
     <key>ProcessType</key>
