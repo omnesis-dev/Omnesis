@@ -50,6 +50,8 @@ export interface PulseCounts {
   unreadBriefs: number;
   totalBriefs: number;
   failedRuns24h: number;
+  /** Wakes the waker accepted but has not yet turned into queue rows. */
+  bufferedWakes: number;
 }
 
 export interface Pulse {

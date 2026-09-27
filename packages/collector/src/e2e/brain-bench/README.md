@@ -281,6 +281,9 @@ acknowledged | snoozed` — _not_ a `state`. `already_handled` is loop-kind only
   `acknowledged` info-kind only; the wrong pairing is a 400.
 - `pulse.counts.queuedRuns` counts only runs whose `next_attempt_at <= now`, so a run
   sitting inside its debounce window is **not** in it — `upcomingRuns` carries that.
+- A pushed document is not a queue row yet: the waker buffers it in memory and enqueues it
+  on its next background tick. `pulse.counts.bufferedWakes` counts those wakes, and
+  `drainUntilQuiet` waits for them to reach zero.
 - `GET /admin/brain/clock` reports `now` as an **ISO string**, not a number.
 
 For state with no route — consumption edges, engine-state markers, evidence sidecars —

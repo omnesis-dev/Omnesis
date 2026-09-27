@@ -151,7 +151,8 @@ export interface BriefsRunQueueBootDeps {
   sweeps?: SweepService;
   /**
    * Live-run registry shared with the HTTP layer: the drainer marks runs
-   * around execution, `/admin/brain/runs` reads it. The composition root
+   * around execution and the waker registers its not-yet-enqueued backlog;
+   * `/admin/brain/runs` and `/admin/brain/pulse` read it. The composition root
    * constructs it (the server is created before this boot runs).
    */
   activity?: CognitionRunActivity;
@@ -655,6 +656,7 @@ export async function bootBriefs(deps: {
       );
       rq.scheduler.schedule(wakerBundle.task);
       rq.backgroundJobs.registerAll([wakerBundle.job]);
+      rq.activity?.attachWakeBacklog(wakerBundle.pendingWakes);
       deps.log.info(`Briefs real-time waker started`);
     }
   }

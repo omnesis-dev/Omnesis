@@ -121,6 +121,13 @@ export interface BriefsWakerDrainBundle {
   job: BackgroundJob;
   /** Drain + enqueue everything now (tests / graceful shutdown). */
   flushNow(): Promise<void>;
+  /**
+   * Wakes accepted but not yet in the run queue: still buffered, or drained
+   * by a flush whose enqueue has not landed. The queue alone cannot show
+   * these, so an observer that judges the engine idle from its rows must add
+   * them.
+   */
+  pendingWakes(): number;
 }
 
 /** Build the `data`-run payload for one buffered wake. */
@@ -182,6 +189,9 @@ export function briefsWakerDrainTask(
   const stages = (): readonly DerivationStage[] =>
     opts.activeDerivationStages?.() ?? DERIVATION_STAGES;
   const tracker = new QueueTracker({ initialRemaining: buffer.size() });
+  // Wakes a flush has taken out of the buffer and not yet enqueued (or put
+  // back). Additive, so an overlapping `flushNow` and tick both count.
+  let inFlight = 0;
 
   async function flush(): Promise<{ hadWork: boolean; enqueued: number }> {
     const wakes = buffer.drain();
@@ -195,69 +205,74 @@ export function briefsWakerDrainTask(
       return { hadWork: false, enqueued: 0 };
     }
     let enqueued = 0;
-    for (const wake of wakes) {
-      const now = clock();
-      // Thread-membership documents (emails in a thread) fold on a source-scoped
-      // thread key so a burst of same-thread arrivals batches into one run;
-      // standalone documents fold per-document.
-      const dedupeKey =
-        wake.threadKey !== undefined
-          ? dataRunThreadDedupeKey(wake.threadKey)
-          : dataRunDedupeKey(wake.docId);
-      // The readiness barrier. A run answers to two independent waits: the
-      // trailing debounce (has the document stopped changing?) and derivation
-      // (does the graph know where this document sits yet?). It becomes due at
-      // whichever is later — but only until derivation completes, at which
-      // point `releaseReadyRuns` pulls it back to the debounce deadline. The
-      // barrier is thus a CEILING on the wait, not the wait itself.
-      //
-      // `wake.immediate` opts out entirely: content the user handed to the
-      // assistant deliberately has already bypassed every volume gate and
-      // carries no debounce, so making it wait on background derivation would
-      // contradict the one property that marker exists to guarantee.
-      const debounceUntil = now + wake.debounceMs;
-      const barrierMs = wake.immediate ? 0 : (opts.derivationBarrierMs?.() ?? 0);
-      const barrierUntil = now + barrierMs;
-      const derivation = barrierMs > 0 ? documentDerivationState(db, wake.docId, stages()) : null;
-      // Only a barrier deadline that actually pushes the run out is a hold; if
-      // the debounce already runs longer, there is nothing for the release pass
-      // to give back and the row must not advertise a claim on its schedule.
-      const heldForDerivation =
-        derivation !== null &&
-        derivation.exists &&
-        !derivation.complete &&
-        barrierUntil > debounceUntil;
-      const notBefore = heldForDerivation ? barrierUntil : debounceUntil;
-      try {
-        const pending = getPendingRunByDedupeKey(db, dedupeKey);
-        const payload = buildDataRunPayload(wake, pending?.payload ?? null, now, opts.diffLimits);
-        await writeGate.enqueueCognitionRun(
-          {
-            id: randomUUID(),
-            kind: "data",
-            payload: {
-              ...payload,
-              debounceUntil,
-              ...(heldForDerivation ? { barrierUntil } : {}),
+    inFlight += wakes.length;
+    try {
+      for (const wake of wakes) {
+        const now = clock();
+        // Thread-membership documents (emails in a thread) fold on a source-scoped
+        // thread key so a burst of same-thread arrivals batches into one run;
+        // standalone documents fold per-document.
+        const dedupeKey =
+          wake.threadKey !== undefined
+            ? dataRunThreadDedupeKey(wake.threadKey)
+            : dataRunDedupeKey(wake.docId);
+        // The readiness barrier. A run answers to two independent waits: the
+        // trailing debounce (has the document stopped changing?) and derivation
+        // (does the graph know where this document sits yet?). It becomes due at
+        // whichever is later — but only until derivation completes, at which
+        // point `releaseReadyRuns` pulls it back to the debounce deadline. The
+        // barrier is thus a CEILING on the wait, not the wait itself.
+        //
+        // `wake.immediate` opts out entirely: content the user handed to the
+        // assistant deliberately has already bypassed every volume gate and
+        // carries no debounce, so making it wait on background derivation would
+        // contradict the one property that marker exists to guarantee.
+        const debounceUntil = now + wake.debounceMs;
+        const barrierMs = wake.immediate ? 0 : (opts.derivationBarrierMs?.() ?? 0);
+        const barrierUntil = now + barrierMs;
+        const derivation = barrierMs > 0 ? documentDerivationState(db, wake.docId, stages()) : null;
+        // Only a barrier deadline that actually pushes the run out is a hold; if
+        // the debounce already runs longer, there is nothing for the release pass
+        // to give back and the row must not advertise a claim on its schedule.
+        const heldForDerivation =
+          derivation !== null &&
+          derivation.exists &&
+          !derivation.complete &&
+          barrierUntil > debounceUntil;
+        const notBefore = heldForDerivation ? barrierUntil : debounceUntil;
+        try {
+          const pending = getPendingRunByDedupeKey(db, dedupeKey);
+          const payload = buildDataRunPayload(wake, pending?.payload ?? null, now, opts.diffLimits);
+          await writeGate.enqueueCognitionRun(
+            {
+              id: randomUUID(),
+              kind: "data",
+              payload: {
+                ...payload,
+                debounceUntil,
+                ...(heldForDerivation ? { barrierUntil } : {}),
+              },
+              notBefore,
+              dedupeKey,
+              // Only `data` folds carry the ceiling — a forever-active doc's run
+              // stays claimable within `cycle_anchor_at + maxDeferMs`. Inert on
+              // the fresh INSERT this may be (inserts fire on their debounce).
+              maxDeferMs: wake.maxDeferMs,
             },
-            notBefore,
-            dedupeKey,
-            // Only `data` folds carry the ceiling — a forever-active doc's run
-            // stays claimable within `cycle_anchor_at + maxDeferMs`. Inert on
-            // the fresh INSERT this may be (inserts fire on their debounce).
-            maxDeferMs: wake.maxDeferMs,
-          },
-          now,
-        );
-        enqueued++;
-      } catch (err) {
-        buffer.restore(wake);
-        log.debug(
-          `briefs waker re-buffered wake for ${wake.docId} after writer error: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
+            now,
+          );
+          enqueued++;
+        } catch (err) {
+          buffer.restore(wake);
+          log.debug(
+            `briefs waker re-buffered wake for ${wake.docId} after writer error: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
       }
+    } finally {
+      inFlight -= wakes.length;
     }
     tracker.setRemaining(buffer.size());
     return { hadWork: true, enqueued };
@@ -356,5 +371,6 @@ export function briefsWakerDrainTask(
       await flush();
       await releaseReadyRuns(clock());
     },
+    pendingWakes: () => buffer.size() + inFlight,
   };
 }

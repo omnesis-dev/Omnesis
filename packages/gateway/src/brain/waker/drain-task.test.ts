@@ -177,6 +177,42 @@ describe("briefs waker drain", () => {
     expect(payload.diff).toBeUndefined();
   });
 
+  test("pendingWakes counts a wake from acceptance until its queue row has landed", async () => {
+    expect(bundle.pendingWakes()).toBe(0);
+    bus.emit("document.upserted", insertEvent());
+    // Buffered: accepted, not yet drained.
+    expect(bundle.pendingWakes()).toBe(1);
+
+    // Drained but mid-enqueue: out of the buffer, not yet a row. Holding the
+    // write open is the window an observer of the queue alone would misread.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const direct = writeGate.enqueueCognitionRun;
+    writeGate.enqueueCognitionRun = async (input, atNow) => {
+      await gate;
+      return direct(input, atNow);
+    };
+    const flushing = bundle.flushNow();
+    await Promise.resolve();
+    expect(pendingRows()).toHaveLength(0);
+    expect(bundle.pendingWakes()).toBe(1);
+
+    release();
+    await flushing;
+    expect(pendingRows()).toHaveLength(1);
+    expect(bundle.pendingWakes()).toBe(0);
+  });
+
+  test("a wake whose enqueue fails stays pending, back in the buffer", async () => {
+    writeGate.enqueueCognitionRun = async () => {
+      throw new Error("writer unavailable");
+    };
+    bus.emit("document.upserted", insertEvent());
+    await bundle.flushNow();
+    expect(pendingRows()).toHaveLength(0);
+    expect(bundle.pendingWakes()).toBe(1);
+  });
+
   test("an ineligible event enqueues nothing", async () => {
     bus.emit("document.upserted", insertEvent({ documentType: "webpage" }));
     bus.emit("document.upserted", insertEvent({ id: "doc-2", metadata: { bulkMail: true } }));

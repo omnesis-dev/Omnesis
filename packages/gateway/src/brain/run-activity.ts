@@ -16,6 +16,8 @@
 export class CognitionRunActivity {
   /** Run id → unix-ms start of the in-flight attempt. */
   private readonly running = new Map<string, number>();
+  /** Reads the waker's not-yet-enqueued wakes; absent until the waker starts. */
+  private wakeBacklog: (() => number) | null = null;
 
   start(id: string, at: number): void {
     this.running.set(id, at);
@@ -37,5 +39,19 @@ export class CognitionRunActivity {
 
   get count(): number {
     return this.running.size;
+  }
+
+  /**
+   * Register the real-time waker's backlog: document wakes it has accepted
+   * but not yet turned into queue rows. Like the running set, this is state
+   * the queue table cannot show.
+   */
+  attachWakeBacklog(read: () => number): void {
+    this.wakeBacklog = read;
+  }
+
+  /** Wakes accepted by the waker and not yet in the run queue. */
+  bufferedWakes(): number {
+    return this.wakeBacklog?.() ?? 0;
   }
 }
