@@ -108,6 +108,7 @@ import {
   type ServiceDefinitionOutcome,
   type ServiceDefinitionUpdater,
 } from "../update/service-definitions.js";
+import { ServiceExitWatch } from "../update/service-exit-watch.js";
 import {
   assertImageTag,
   assessDockerApplyEvidence,
@@ -225,6 +226,7 @@ import {
   type FleetUpdateSummary,
 } from "../update/fleet.js";
 import { runBackup } from "./backup.js";
+import type { ServiceLiveness } from "../service/types.js";
 import type { Writable } from "node:stream";
 
 // ── Exec seam ───────────────────────────────────────────────────────────
@@ -2582,6 +2584,12 @@ export interface HealthWaitDeps {
   /** Wall clock, in milliseconds. */
   now(): number;
   sleep(ms: number): Promise<void>;
+  /**
+   * The gateway service's liveness, read between probes so a gateway whose
+   * process has exited ends the wait early. Absent where no service manager
+   * runs the gateway (Docker, a remote gateway).
+   */
+  liveness?(): Promise<ServiceLiveness>;
 }
 
 const nodeHealthWaitDeps: HealthWaitDeps = {
@@ -2659,6 +2667,7 @@ export async function awaitGatewayHealth(
 ): Promise<void> {
   const url = `${gatewayUrl}/health`;
   const deadline = deps.now() + timeoutMs;
+  const exitWatch = deps.liveness ? new ServiceExitWatch() : null;
   // Assigned on every path through the loop body that does not return.
   let lastError: string;
   for (;;) {
@@ -2675,6 +2684,14 @@ export async function awaitGatewayHealth(
       lastError = err instanceof Error ? err.message : String(err);
     }
     if (signal?.aborted) throw new Error("Gateway health wait aborted");
+    if (exitWatch && deps.liveness) {
+      // A manager that cannot be read decides nothing; the timeout still holds.
+      const reading = await deps.liveness().catch(() => null);
+      const exited = reading ? exitWatch.observe(reading, deps.now()) : null;
+      if (exited) {
+        throw new Error(`${url} did not report ${expectVersion ?? "a healthy gateway"}: ${exited}`);
+      }
+    }
     if (deps.now() >= deadline) {
       throw new Error(
         `${url} did not report ${expectVersion ?? "a healthy gateway"} within ` +
@@ -3066,7 +3083,9 @@ function hostUpdateDeps(ctx: HostUpdateContext): {
         GATEWAY_REQUEST_URL,
         expectVersion,
         healthTimeoutSec * 1_000,
-        undefined,
+        plan.kind === "docker"
+          ? nodeHealthWaitDeps
+          : { ...nodeHealthWaitDeps, liveness: () => createSupervisor().liveness("gateway") },
         signal,
       );
     },

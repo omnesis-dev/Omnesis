@@ -372,6 +372,12 @@
           reach is reported with the command to restart it.
         </p>
         <p>
+          The health wait lasts up to ten minutes, so a long migration can finish. A gateway whose
+          process has exited does not use that time: when the service manager (systemd or launchd)
+          has relaunched it twice during the wait, or has held no gateway process for 15 seconds,
+          the update rolls back at once. A gateway that is still running keeps the whole wait.
+        </p>
+        <p>
           Rolling back the code does not roll back the data. If the new gateway got far enough to
           run its migrations, the previous release clears the sync positions the newer version wrote
           and those sources sync again from the start. For the exact state before the update,

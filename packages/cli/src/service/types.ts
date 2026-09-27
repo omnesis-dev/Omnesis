@@ -68,3 +68,27 @@ export interface ServiceStatus {
   state: ServiceState;
   pid: number | null;
 }
+
+/**
+ * What the service manager says about a daemon's process right now, read so an
+ * update can tell a gateway that is still booting from one that has exited.
+ */
+export interface ServiceLiveness {
+  /** False when no unit is installed, so nothing can be judged. */
+  installed: boolean;
+  /** The manager has a live process for the unit. */
+  running: boolean;
+  /**
+   * The manager holds no process and is not starting one: the unit failed or
+   * is inactive, or is waiting out a restart delay after the process exited.
+   */
+  down: boolean;
+  /**
+   * How many times the manager has launched or automatically restarted the
+   * unit, counted from an origin the manager chooses; only differences
+   * between two readings mean anything. Null where the manager does not say.
+   */
+  starts: number | null;
+  /** The manager's own words for the state, for an error message. */
+  detail: string;
+}
