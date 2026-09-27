@@ -13,7 +13,10 @@ import {
 import { loadBookmarks, mapBookmark, mapBookmarkEdge } from "./fixtures.js";
 
 const { type: _type, ...rest } = realChrome;
-const accountId = selfAccountId("email");
+// Resolved when a source asks, not on import: a universe that does not carry
+// this source must still load the package, and its discover() then reports no
+// account instead of failing the provider load.
+const selfAccount = (): string => selfAccountId("email");
 
 export default defineSource<SynthCursor>({
   ...rest,
@@ -27,8 +30,8 @@ export default defineSource<SynthCursor>({
   config: undefined,
   authType: "local",
   credentials: undefined,
-  discover: async () => preDiscoveredAccounts("chrome", [accountId]),
-  authFlow: async () => fakeLocalFlow("chrome", accountId),
+  discover: async () => preDiscoveredAccounts("chrome", [selfAccount()]),
+  authFlow: async () => fakeLocalFlow("chrome", selfAccount()),
   // A synthetic double spreads the real definition, so every auth entry point
   // the real source declares has to be overridden here or a demo run reaches
   // the real service.

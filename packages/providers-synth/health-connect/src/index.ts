@@ -76,7 +76,10 @@ const PHASES: Array<{
   { phase: "cycle", next: "done", schema: HC_CYCLE, load: cycleRecords },
 ];
 
-const accountId = selfAccountId();
+// Resolved when a source asks, not on import: a universe that does not carry
+// this source must still load the package, and its discover() then reports no
+// account instead of failing the provider load.
+const selfAccount = (): string => selfAccountId();
 
 export default defineStructuredSource<Cursor>({
   id: "health-connect",
@@ -91,8 +94,8 @@ export default defineStructuredSource<Cursor>({
     imageDataUri: healthConnectIconDataUri,
   },
   analyticsSchemas: ALL_HEALTH_CONNECT_SCHEMAS,
-  discover: async () => preDiscoveredAccounts("health-connect", [accountId]),
-  authFlow: async () => fakeLocalFlow("health-connect", accountId),
+  discover: async () => preDiscoveredAccounts("health-connect", [selfAccount()]),
+  authFlow: async () => fakeLocalFlow("health-connect", selfAccount()),
   async create() {
     return {
       analyticsSchemas: ALL_HEALTH_CONNECT_SCHEMAS,

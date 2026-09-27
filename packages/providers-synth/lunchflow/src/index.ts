@@ -23,7 +23,10 @@ const { type: _type, ...rest } = realLunchflow;
 // The single connection's account id comes from the cast like every other
 // synth identity, so the universe manifest, discover(), and the fixtures all
 // agree on the source-id suffix.
-const accountId = selfAccountId("extra", "lunchflowAccountId");
+// Resolved when a source asks, not on import: a universe that does not carry
+// this source must still load the package, and its discover() then reports no
+// account instead of failing the provider load.
+const selfAccount = (): string => selfAccountId("extra", "lunchflowAccountId");
 
 /** Hybrid sync phases: accounts → balances → transactions (with documents). */
 interface LfSynthCursor extends SynthCursor {
@@ -35,9 +38,9 @@ export default defineProvider<Record<string, never>>({
   authType: "api-key",
   credentials: undefined,
   supportedPlatforms: undefined,
-  discover: async () => preDiscoveredAccounts("lunchflow", [accountId]),
+  discover: async () => preDiscoveredAccounts("lunchflow", [selfAccount()]),
   // Api-key sources have no browser leg — a local pair shim stands in.
-  authFlow: async () => fakeLocalFlow("lunchflow", accountId),
+  authFlow: async () => fakeLocalFlow("lunchflow", selfAccount()),
   // A synthetic double spreads the real definition, so every auth entry point
   // the real source declares has to be overridden here or a demo run reaches
   // the real service.

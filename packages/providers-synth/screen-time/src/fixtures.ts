@@ -32,6 +32,14 @@ function loadFixture(): Fixture {
   return cached;
 }
 
+/**
+ * Throw when the active universe ships no screen-time fixture, so discovery
+ * reports no account there instead of creating a source whose every sync fails.
+ */
+export function requireFixture(): void {
+  loadFixture();
+}
+
 /** Tiny deterministic PRNG seeded by the input — gives same numbers each run. */
 function hash(s: string): number {
   let h = 2166136261;

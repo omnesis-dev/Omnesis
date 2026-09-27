@@ -10,7 +10,7 @@ import {
   preDiscoveredAccounts,
   type SynthCursor,
 } from "@omnesis/providers-synth-common";
-import { allSessions, allDaily } from "./fixtures.js";
+import { allSessions, allDaily, requireFixture } from "./fixtures.js";
 import type { StructuredSyncResult } from "@omnesis/source-sdk";
 
 const {
@@ -58,7 +58,10 @@ export default defineStructuredSource<Cursor>({
   singleInstance: true,
   supportedPlatforms: undefined,
   credentials: undefined,
-  discover: async () => preDiscoveredAccounts("screen-time", [accountId]),
+  discover: async () => {
+    requireFixture();
+    return preDiscoveredAccounts("screen-time", [accountId]);
+  },
   authFlow: async () => fakeLocalFlow("screen-time", accountId),
   // A synthetic double spreads the real definition, so every auth entry point
   // the real source declares has to be overridden here or a demo run reaches
