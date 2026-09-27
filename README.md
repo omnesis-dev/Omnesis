@@ -1,3 +1,6 @@
+> [!CAUTION]
+> **Omnesis is in alpha.** Expect rough edges, especially when installing on setups we haven't tried yet. If something goes wrong, please [open an issue](https://github.com/omnesis-dev/Omnesis/issues/new/choose) with what you ran and what you saw, or send a pull request. Every report helps make Omnesis install flawlessly for everyone.
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/brand/omnesis-mark-white.svg">
