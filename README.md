@@ -14,7 +14,7 @@
   <a href="https://github.com/omnesis-dev/Omnesis/actions/workflows/full-validation.yml?query=branch%3Amain+event%3Apush"><img src="https://github.com/omnesis-dev/Omnesis/actions/workflows/ci-status.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL_v3-blue.svg" alt="License: AGPL v3"></a>
   <a href="https://x.com/Omnesisdev"><img src="https://img.shields.io/badge/X-%40Omnesisdev-black?logo=x&amp;logoColor=white" alt="Omnesis on X"></a>
-  <a href="https://discord.gg/4Y8pQHrVv"><img src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&amp;logoColor=white" alt="Join Omnesis on Discord"></a>
+  <a href="https://discord.gg/QeaNZGAs2V"><img src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&amp;logoColor=white" alt="Join Omnesis on Discord"></a>
 </p>
 
 <p align="center"><strong>Index, search, and reason about your entire digital life.<br>On machines you own, with the models you choose.</strong></p>
@@ -179,7 +179,7 @@ Contributions are covered by a Contributor License Agreement — a copyright ass
 
 ## Community & Support
 
-- **Chat with the community** — [join the Omnesis Discord](https://discord.gg/4Y8pQHrVv)
+- **Chat with the community** — [join the Omnesis Discord](https://discord.gg/QeaNZGAs2V)
 - **Questions, ideas, and help** — [GitHub Discussions](https://github.com/omnesis-dev/Omnesis/discussions)
 - **Bugs & feature requests** — [open an issue](https://github.com/omnesis-dev/Omnesis/issues/new/choose)
 - See [`SUPPORT.md`](SUPPORT.md) for where to go for what.

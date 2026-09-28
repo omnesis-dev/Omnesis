@@ -225,7 +225,7 @@ describe("website docs", () => {
       ...publicHtml,
       ...Object.fromEntries(docPages.map((f) => [`docs/${f}`, html[f]])),
     };
-    const socialLinks = ["https://x.com/Omnesisdev", "https://discord.gg/4Y8pQHrVv"];
+    const socialLinks = ["https://x.com/Omnesisdev", "https://discord.gg/QeaNZGAs2V"];
     for (const [file, page] of Object.entries(pages)) {
       const footer = page.match(/<footer\b[\s\S]*?<\/footer>/)?.[0];
       expect(footer, file).toBeTruthy();
@@ -280,7 +280,7 @@ describe("website docs", () => {
           ...NAV_LINKS,
           REPO_URL,
           "https://x.com/Omnesisdev",
-          "https://discord.gg/4Y8pQHrVv",
+          "https://discord.gg/QeaNZGAs2V",
         ]),
       );
     }
