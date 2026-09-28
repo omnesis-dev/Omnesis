@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -37,6 +45,10 @@ describe("parseMessageFileName", () => {
   test("accepts the delimiters tools use where a colon is forbidden", () => {
     expect(parseMessageFileName("abc!2,S").uniq).toBe("abc");
     expect(parseMessageFileName("abc;2,RS").flags).toBe("RS");
+  });
+
+  test("lowercase letters are keywords, not flags", () => {
+    expect(parseMessageFileName("abc:2,Sdt").flags).toBe("S");
   });
 
   test("a name without an info suffix is all identity", () => {
@@ -97,6 +109,15 @@ describe("walkMaildir", () => {
     ]);
   });
 
+  test("a top-level Inbox folder in any casing is INBOX; a nested one keeps its name", () => {
+    createMailbox(join(root, "Inbox"));
+    createMailbox(join(root, "Work", "inbox"));
+    const names = walkMaildir(root, [], LIMITS)
+      .mailboxes.map((m) => m.name)
+      .sort();
+    expect(names).toEqual(["INBOX", "Work/inbox"]);
+  });
+
   test("exclude patterns match folder names case-insensitively", () => {
     createMailbox(join(root, "INBOX"));
     createMailbox(join(root, "[Gmail]", "All Mail"));
@@ -119,6 +140,25 @@ describe("walkMaildir", () => {
       { mailboxId: "INBOX", uniq: "100.a.host", relPath: "new/100.a.host", flags: "" },
       { mailboxId: "INBOX", uniq: "101.b.host", relPath: "cur/101.b.host:2,FS", flags: "FS" },
     ]);
+  });
+
+  test("keywords do not mark a message trashed, and symbolic links are never followed", () => {
+    const inbox = createMailbox(join(root, "INBOX"));
+    deliverMessage(inbox, "100.a.host", "Subject: a\r\n\r\nx", { flags: "S" });
+    renameSync(join(inbox, "cur", "100.a.host:2,S"), join(inbox, "cur", "100.a.host:2,Sdt"));
+    symlinkSync(join(root, "elsewhere"), join(inbox, "cur", "200.link.host:2,S"));
+    expect(walkMaildir(root, [], LIMITS).files).toEqual([
+      { mailboxId: "INBOX", uniq: "100.a.host", relPath: "cur/100.a.host:2,Sdt", flags: "S" },
+    ]);
+  });
+
+  test("an excluded folder name is matched literally, brackets and all", () => {
+    createMailbox(join(root, "INBOX"));
+    createMailbox(join(root, "[Gmail]", "All Mail"));
+    createMailbox(join(root, "G", "All Mail"));
+    const names = walkMaildir(root, ["[Gmail]/All Mail"], LIMITS).mailboxes.map((m) => m.name);
+    // As a glob character class the brackets would also match "G/All Mail".
+    expect(names.sort()).toEqual(["G/All Mail", "INBOX"]);
   });
 
   test("a message caught in both new and cur resolves to cur", () => {
@@ -175,12 +215,31 @@ describe("walkMaildir", () => {
     }
   });
 
-  test.skipIf(isRoot)("an unreadable root is a permission error", () => {
+  test.skipIf(isRoot)("an unreadable Maildir++ folder is a gap, unless it is one left out", () => {
+    createMailbox(root);
+    const work = createMailbox(join(root, ".Work"));
+    const trash = createMailbox(join(root, ".Trash"));
+    chmodSync(work, 0o000);
+    chmodSync(trash, 0o000);
+    try {
+      const walk = walkMaildir(root, [], LIMITS);
+      expect(walk.gaps.map((g) => g.mailboxId)).toEqual([".Work"]);
+      expect(walk.mailboxes.map((m) => m.name)).toEqual(["INBOX"]);
+    } finally {
+      chmodSync(work, 0o755);
+      chmodSync(trash, 0o755);
+    }
+  });
+
+  test.skipIf(isRoot)("an unreadable root is a permission error with a remedy", () => {
     createMailbox(join(root, "INBOX"));
     chmodSync(root, 0o000);
     try {
       expect(() => walkMaildir(root, [], LIMITS)).toThrow(
-        expect.objectContaining({ kind: "permission" }) as Error,
+        expect.objectContaining({
+          kind: "permission",
+          remediation: expect.objectContaining({ steps: expect.any(Array) as unknown }) as unknown,
+        }) as Error,
       );
     } finally {
       chmodSync(root, 0o755);

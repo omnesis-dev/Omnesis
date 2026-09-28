@@ -7559,10 +7559,7 @@
     },
     {
       "value": "Northstar Agent",
-      "paths": [
-        "packages/gateway/src/models/recent-models.test.ts",
-        "packages/gateway/src/subscriptions/service.test.ts"
-      ],
+      "paths": ["packages/gateway/src/models/recent-models.test.ts"],
       "reason": "reviewed invented model fixture"
     },
     {

@@ -47,7 +47,6 @@ describe("MaildirIndex", () => {
         key,
         signature: "s",
         seq,
-        hasDocument: true,
         attachments: [],
       });
       index.recordEmissions("g1", [row("a", 1), row("b", 2)], []);

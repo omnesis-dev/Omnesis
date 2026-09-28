@@ -9,7 +9,8 @@
  * what it is called depends on the tool that wrote it, and every tool in
  * common use is covered by two rules:
  *
- * - A root that is itself a mailbox is the account's inbox, `INBOX`.
+ * - A root that is itself a mailbox is the account's inbox, `INBOX`, and so is
+ *   a top-level folder named `inbox` in any casing.
  * - A directory name beginning with a dot is a Maildir++ folder: the dot is
  *   dropped and the dots inside it are hierarchy separators, so `.Work.Travel`
  *   is `Work/Travel`. Anything else is a folder named verbatim, nested as it
@@ -26,7 +27,9 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import picomatch from "picomatch";
+import { fullDiskAccessRemediation } from "@omnesis/core";
 import { SyncError } from "@omnesis/types";
+import type { SyncRemediation } from "@omnesis/types";
 
 /** The deepest a mailbox may sit below the root. */
 const MAX_DEPTH = 12;
@@ -75,7 +78,7 @@ interface MessageFile {
   uniq: string;
   /** Path relative to the mailbox directory: `cur/<name>` or `new/<name>`. */
   relPath: string;
-  /** Maildir flag letters, sorted: `F` flagged, `R` replied, `S` seen, `P` passed. */
+  /** Maildir flag letters, sorted: `F` flagged, `R` replied, `S` seen, `P` passed. Keywords are dropped. */
   flags: string;
 }
 
@@ -101,7 +104,10 @@ export function parseMessageFileName(fileName: string): { uniq: string; flags: s
   // where tools substitute `!` (mbsync on Windows) or `;` (Dovecot's option).
   const match = /^(.+?)[:!;]2,([A-Za-z]*)$/.exec(fileName);
   if (!match) return { uniq: fileName, flags: "" };
-  const flags = [...new Set(match[2]!.toUpperCase())].sort().join("");
+  // Only capital letters are flags. Lowercase letters are keywords a tool
+  // assigned (Dovecot writes them a–z), and treating them as flags would read
+  // a keyword `d` or `t` as a draft or a deletion.
+  const flags = [...new Set(match[2]!.replace(/[^A-Z]/g, ""))].sort().join("");
   return { uniq: match[1]!, flags };
 }
 
@@ -112,6 +118,17 @@ export function isIgnoredByFlags(flags: string): boolean {
 
 function decodeSegment(segment: string): string {
   return segment.startsWith(".") ? segment.slice(1).split(".").join("/") : segment;
+}
+
+/**
+ * The name a mailbox is known by. The inbox is always `INBOX`, the name IMAP
+ * reserves for it, however the tool spelled the folder — mbsync's usual
+ * layout writes it as `Inbox` — so a question about the inbox finds it.
+ */
+function mailboxName(segments: readonly string[]): string {
+  if (segments.length === 0) return "INBOX";
+  if (segments.length === 1 && segments[0]!.toLowerCase() === "inbox") return "INBOX";
+  return segments.join("/");
 }
 
 function lastSegment(name: string): string {
@@ -130,14 +147,49 @@ function isMailboxDir(names: ReadonlySet<string>): boolean {
   return names.has("cur") && names.has("new");
 }
 
+/**
+ * What to do about a Maildir the collector may not read. On macOS a folder
+ * under Documents, Desktop or an external volume needs a privacy grant; on
+ * Linux it is the folder's own permissions.
+ */
+function readAccessRemediation(): SyncRemediation {
+  if (process.platform === "darwin") return fullDiskAccessRemediation(process.execPath);
+  return {
+    summary: "The collector cannot read the Maildir",
+    steps: [
+      "Give the account the collector runs as permission to read the Maildir folder and every folder inside it.",
+    ],
+    restartRequired: false,
+  };
+}
+
+/**
+ * A tree past one of the walk's limits. Retrying cannot clear it; leaving
+ * folders out can.
+ */
+export function tooLargeError(message: string): SyncError {
+  return new SyncError(
+    "unknown",
+    `${message}; leave some folders out with the source's exclude setting`,
+    {
+      remediation: {
+        summary: "The Maildir is larger than the source reads",
+        steps: [
+          "Open the source's settings and add the folders you do not need to Exclude folders — for example a folder that holds a copy of every message, such as [Gmail]/All Mail.",
+        ],
+        restartRequired: false,
+      },
+    },
+  );
+}
+
 function readError(err: unknown, dir: string): SyncError {
   const code = (err as { code?: unknown } | null)?.code;
   const msg = err instanceof Error ? err.message : String(err);
   if (code === "EACCES" || code === "EPERM") {
-    return new SyncError(
-      "permission",
-      `Cannot read the Maildir at ${dir}: ${msg}. Grant the collector read access to this folder.`,
-    );
+    return new SyncError("permission", `Cannot read the Maildir at ${dir}: ${msg}`, {
+      remediation: readAccessRemediation(),
+    });
   }
   if (code === "ENOENT" || code === "ENOTDIR") {
     return new SyncError(
@@ -148,13 +200,14 @@ function readError(err: unknown, dir: string): SyncError {
   return new SyncError("unknown", `Cannot read the Maildir at ${dir}: ${msg}`);
 }
 
-function listDir(dir: string): Array<{ name: string; isDir: boolean; isFile: boolean }> {
+function listDir(dir: string): Array<{ name: string; isDir: boolean; isLink: boolean }> {
   return readdirSync(dir, { withFileTypes: true }).map((entry) => ({
     name: entry.name,
-    // Symbolic links are neither: no mail tool writes one, and following them
-    // would let a link lead the walk outside the tree it was pointed at.
     isDir: entry.isDirectory(),
-    isFile: entry.isFile(),
+    // Symbolic links are never followed, as folders or as messages: no mail
+    // tool writes one, and following one would let it lead the walk outside
+    // the tree it was pointed at.
+    isLink: entry.isSymbolicLink(),
   }));
 }
 
@@ -171,8 +224,13 @@ export function walkMaildir(
   exclude: readonly string[],
   limits: WalkLimits,
 ): MaildirWalk {
-  const excludeMatchers = exclude.map((pattern) => picomatch(pattern, { nocase: true }));
+  // `*`, `**` and `?` are wildcards; brackets are literal, because folder
+  // names carry them — `[Gmail]/All Mail` means that folder, not a class.
+  const excludeMatchers = exclude.map((pattern) =>
+    picomatch(pattern.replace(/[[\]]/g, "\\$&"), { nocase: true }),
+  );
   const isExcluded = (name: string) => excludeMatchers.some((matches) => matches(name));
+  const isLeftOut = (name: string) => isSkippedFolderName(name) || isExcluded(name);
 
   const mailboxes: Mailbox[] = [];
   const gaps: MaildirWalk["gaps"] = [];
@@ -184,18 +242,20 @@ export function walkMaildir(
     } catch (err) {
       if (depth === 0) throw readError(err, dir);
       // A subfolder that will not list may be a mailbox or may hold some.
-      // Either way its mail is missing from this walk.
-      gaps.push({ mailboxId: relSegments.join("/"), reason: String((err as Error).message) });
+      // Either way its mail is missing from this walk — unless it is one the
+      // source would leave out anyway.
+      if (!isLeftOut(mailboxName(nameSegments))) {
+        gaps.push({ mailboxId: relSegments.join("/"), reason: String((err as Error).message) });
+      }
       return;
     }
     const names = new Set(entries.filter((e) => e.isDir).map((e) => e.name));
     if (isMailboxDir(names)) {
-      const name = nameSegments.length === 0 ? "INBOX" : nameSegments.join("/");
-      if (!isSkippedFolderName(name) && !isExcluded(name)) {
+      const name = mailboxName(nameSegments);
+      if (!isLeftOut(name)) {
         if (mailboxes.length >= limits.maxMailboxes) {
-          throw new SyncError(
-            "unknown",
-            `The Maildir at ${root} holds more than ${limits.maxMailboxes} folders; use the source's exclude setting to leave some out`,
+          throw tooLargeError(
+            `The Maildir at ${root} holds more than ${limits.maxMailboxes} folders`,
           );
         }
         mailboxes.push({ id: relSegments.join("/"), name, dir, sent: isSentFolderName(name) });
@@ -208,7 +268,9 @@ export function walkMaildir(
       const child = join(dir, entry.name);
       if (entry.name.startsWith(".")) {
         // A dot-folder is entered only when it is a Maildir++ mailbox; the
-        // rest belong to other tools.
+        // rest belong to other tools. One that will not list could be either,
+        // so it is a gap unless its name is one the source leaves out: taking
+        // it for another tool's folder would read its mail as deleted.
         let childNames: Set<string>;
         try {
           childNames = new Set(
@@ -216,7 +278,14 @@ export function walkMaildir(
               .filter((e) => e.isDir)
               .map((e) => e.name),
           );
-        } catch {
+        } catch (err) {
+          const name = mailboxName([...nameSegments, decodeSegment(entry.name)]);
+          if (!isLeftOut(name)) {
+            gaps.push({
+              mailboxId: [...relSegments, entry.name].join("/"),
+              reason: String((err as Error).message),
+            });
+          }
           continue;
         }
         if (!isMailboxDir(childNames)) continue;
@@ -252,7 +321,7 @@ export function walkMaildir(
         break;
       }
       for (const entry of entries) {
-        if (entry.name.startsWith(".") || entry.isDir) continue;
+        if (entry.name.startsWith(".") || entry.isDir || entry.isLink) continue;
         const { uniq, flags } = parseMessageFileName(entry.name);
         const file: MessageFile = {
           mailboxId: mailbox.id,
@@ -271,10 +340,7 @@ export function walkMaildir(
       if (isIgnoredByFlags(file.flags)) continue;
       files.push(file);
       if (files.length > limits.maxFiles) {
-        throw new SyncError(
-          "unknown",
-          `The Maildir at ${root} holds more than ${limits.maxFiles} messages; use the source's exclude setting to leave some folders out`,
-        );
+        throw tooLargeError(`The Maildir at ${root} holds more than ${limits.maxFiles} messages`);
       }
     }
   }

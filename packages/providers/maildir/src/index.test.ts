@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -100,6 +108,27 @@ describe("create", () => {
     await again.dispose?.();
   });
 
+  test("removing the source deletes its index and nothing else", async () => {
+    const root = join(scratch, "Mail");
+    deliverMessage(createMailbox(join(root, "INBOX")), "1.a.host", "Subject: Hi\r\n\r\nbody");
+    const configDir = join(scratch, "config");
+    const stateDir = join(configDir, "maildir", "Mail-0");
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(join(stateDir, "other-file"), "kept");
+    const instance = await definition.create!({
+      accountId: "Mail-0",
+      sourceId: SourceId("maildir:Mail-0"),
+      providerId: ProviderId("maildir:Mail-0"),
+      config: { path: root, exclude: [] },
+      host: fakeSourceHost({ stateDir, configDir }),
+    });
+    await drain(instance);
+    await instance.dispose?.();
+    expect(existsSync(join(stateDir, "maildir-index.sqlite"))).toBe(true);
+    await definition.cleanupCredentials!("Mail-0", { configDir });
+    expect(readdirSync(stateDir)).toEqual(["other-file"]);
+  });
+
   test("refuses to start without a folder", async () => {
     await expect(
       definition.create!({
@@ -140,6 +169,26 @@ describe("document event profile", () => {
       ].join("\r\n"),
       { flags: "FRS" },
     );
+    deliverMessage(
+      join(root, "INBOX"),
+      "2.b.host",
+      "From: <jamie.lopez@example.org>\r\nTo: maya.reeves@example.com\r\nSubject: Plain note\r\nMessage-ID: <p@example.org>\r\n\r\nNothing special.",
+      { flags: "S" },
+    );
+    deliverMessage(
+      join(root, "INBOX"),
+      "3.c.host",
+      [
+        "From: <bookings@example.net>",
+        "To: maya.reeves@example.com",
+        "Subject: Table booked",
+        "Message-ID: <t@example.org>",
+        "Content-Type: text/html; charset=utf-8",
+        "",
+        '<html><head><script type="application/ld+json">{"@type":"FoodEstablishmentReservation","startTime":"2026-05-01T19:00:00Z","paymentDueDate":"2026-04-30T12:00:00Z"}</script></head><body><p>See you soon.</p></body></html>',
+      ].join("\r\n"),
+      { flags: "S" },
+    );
     const instance = await definition.create!({
       accountId: "p",
       sourceId: SourceId("maildir:p"),
@@ -160,14 +209,38 @@ describe("document event profile", () => {
     for (const role of roles) expect(maildirDocumentEventProfile.personRoles).toContain(role);
     expect([...roles].sort()).toEqual([...(maildirDocumentEventProfile.personRoles ?? [])].sort());
 
-    const email = documents.find((d) => d.metadata.documentType === "email")!;
-    const read = (path: string): unknown =>
+    const receipt = documents.find((d) => d.title === "Receipt")!;
+    const read = (doc: DocumentInput, path: string): unknown =>
       path
         .split(".")
-        .reduce<unknown>((value, key) => (value as Record<string, unknown>)?.[key], email.metadata);
+        .reduce<unknown>((value, key) => (value as Record<string, unknown>)?.[key], doc.metadata);
+    const typeOf = (value: unknown) =>
+      Array.isArray(value) ? "string-array" : typeof value === "boolean" ? "boolean" : typeof value;
     for (const field of maildirDocumentEventProfile.metadataFields ?? []) {
-      expect(read(field.path), `${field.path} is declared but not written`).toBeDefined();
+      expect(
+        typeOf(read(receipt, field.path)),
+        `${field.path} is declared but not written as ${field.type}`,
+      ).toBe(field.type);
     }
-    expect(email.metadata.tags).toEqual(["INBOX"]);
+
+    // "Absent, never false, on the rest."
+    const plain = documents.find((d) => d.title === "Plain note")!;
+    for (const path of ["extra.flagged", "extra.answered", "bulkMail", "automatedSender"]) {
+      expect(read(plain, path), `${path} on a plain message`).toBeUndefined();
+    }
+
+    // Attachment documents carry no folder tag and no thread id.
+    const attachment = documents.find((d) => d.metadata.documentType === "attachment")!;
+    expect(attachment.metadata.tags).toBeUndefined();
+    expect(read(attachment, "extra.threadId")).toBeUndefined();
+
+    // The temporal projections read what schema.org markup declares.
+    const booking = documents.find((d) => d.title === "Table booked")!;
+    const projected = new Set(definition.documentTemporalProjections?.map((p) => p.start));
+    expect(projected).toEqual(new Set(["scheduledAt", "dueAt"]));
+    expect(booking.metadata.scheduledAt).toBe("2026-05-01T19:00:00Z");
+    expect(booking.metadata.dueAt).toBe("2026-04-30T12:00:00Z");
+
+    expect(receipt.metadata.tags).toEqual(["INBOX"]);
   });
 });

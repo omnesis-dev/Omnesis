@@ -38,6 +38,10 @@ const log = createLogger("source:maildir");
 
 const MAX_BODY_CHARS = 512 * 1024;
 const MAX_PEOPLE_PER_MESSAGE = 1_000;
+/** Addresses shown per header line; a message to a large list names the rest by count. */
+const MAX_SHOWN_ADDRESSES = 50;
+/** Thread references kept; the root is the first, and it is the one threading reads. */
+const MAX_REFERENCES = 50;
 
 /** Where a message lives in the tree, gathered over every copy of it. */
 export interface MessagePlacement {
@@ -88,7 +92,11 @@ export function attachmentChildIds(
 }
 
 function formatAddresses(addresses: MailAddress[]): string[] {
-  return addresses.map((a) => (a.name ? `${a.name} <${a.address}>` : a.address));
+  const shown = addresses
+    .slice(0, MAX_SHOWN_ADDRESSES)
+    .map((a) => (a.name ? `${a.name} <${a.address}>` : a.address));
+  const rest = addresses.length - shown.length;
+  return rest > 0 ? [...shown, `and ${rest} more`] : shown;
 }
 
 function computeRelevanceScore(message: ParsedMessage, placement: MessagePlacement): number {
@@ -213,7 +221,8 @@ export async function normalizeMessage(
       extra: {
         internetMessageId: message.messageId,
         inReplyTo: message.inReplyTo,
-        references: message.references.length > 0 ? message.references : undefined,
+        references:
+          message.references.length > 0 ? message.references.slice(0, MAX_REFERENCES) : undefined,
         threadId,
         ...(placement.flagged ? { flagged: true } : {}),
         ...(placement.answered ? { answered: true } : {}),

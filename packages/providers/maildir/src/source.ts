@@ -33,7 +33,7 @@ import { createLogger } from "@omnesis/core";
 import { SnapshotEnumeration } from "@omnesis/source-sdk";
 import { SourceId, ProviderId, SyncError } from "@omnesis/types";
 import { MaildirIndex } from "./index-store.js";
-import { walkMaildir } from "./layout.js";
+import { tooLargeError, walkMaildir } from "./layout.js";
 import { parseMessageFile, scanMessage } from "./message.js";
 import { attachmentChildIds, normalizeMessage } from "./normalizer.js";
 import type { AttachmentExtractionConfig, AttachmentExtractFn } from "@omnesis/core";
@@ -56,7 +56,7 @@ const DEFAULT_LIMITS: MaildirLimits = {
   maxFiles: 1_000_000,
   maxPresentIds: 1_000_000,
   emitPageSize: 50,
-  scanPageSize: 1_000,
+  scanPageSize: 500,
 };
 /** How long a cycle's walk may be reused between its pages. */
 const PLAN_TTL_MS = 10 * 60 * 1000;
@@ -98,7 +98,7 @@ export interface MaildirSourceOptions {
 }
 
 interface PlanEntry extends MessagePlacement {
-  /** The copies to read, in order: the first that opens is parsed. */
+  /** The copies to read, in order: the first that opens and parses is used. */
   paths: string[];
   signature: string;
 }
@@ -112,10 +112,10 @@ interface CyclePlan {
   mailboxDirs: Map<string, string>;
   mailboxNames: Map<string, string>;
   sentMailboxes: Set<string>;
-  /** Files whose headers could not be read this cycle; not retried until the next one. */
-  unscannable: Set<string>;
-  /** Mailboxes that failed partway, beyond the walk's own gaps. */
-  extraGaps: Array<{ mailboxId: string; reason: string }>;
+  /** Files the index has not read yet, in the order the scan stage reads them. */
+  unscanned: FileRow[];
+  /** How many files this cycle could not read; reported once, on the final page. */
+  unreadableFiles: number;
   pending?: PlanEntry[];
   cycleTotal?: number;
   bootstrap: boolean;
@@ -170,7 +170,8 @@ export class MaildirSource {
     this.id = SourceId(options.sourceId);
     this.providerId = ProviderId(options.providerId);
     this.limits = { ...DEFAULT_LIMITS, ...options.limits };
-    this.cutoffMs = options.dataCutoff ? new Date(options.dataCutoff).getTime() : undefined;
+    const cutoffMs = options.dataCutoff ? new Date(options.dataCutoff).getTime() : Number.NaN;
+    this.cutoffMs = Number.isFinite(cutoffMs) ? cutoffMs : undefined;
     this.ctx = {
       sourceId: this.id,
       providerId: this.providerId,
@@ -199,7 +200,9 @@ export class MaildirSource {
 
   async sync(cursor: MaildirCursor | null, opts?: SyncOptions): Promise<SyncResult<MaildirCursor>> {
     opts?.signal?.throwIfAborted();
-    if (this.syncInFlight) throw new Error("Maildir sync is already in progress");
+    if (this.syncInFlight) {
+      throw new SyncError("transient", "A Maildir sync is already in progress for this source");
+    }
     this.syncInFlight = true;
     try {
       return await this.syncPage(cursor, opts?.signal);
@@ -227,16 +230,8 @@ export class MaildirSource {
     this.plan = plan;
 
     // Stage 1: name every file the index has not seen.
-    const unscanned = index
-      .allFiles()
-      .filter(
-        (file) =>
-          file.key === null &&
-          plan.mailboxDirs.has(file.mailboxId) &&
-          !plan.unscannable.has(fileKey(file.mailboxId, file.uniq)),
-      );
-    if (unscanned.length > 0) {
-      const batch = unscanned.slice(0, this.limits.scanPageSize);
+    if (plan.unscanned.length > 0) {
+      const batch = plan.unscanned.splice(0, this.limits.scanPageSize);
       await this.scan(batch, plan, index, signal);
       return {
         documents: [],
@@ -246,7 +241,7 @@ export class MaildirSource {
         progress: {
           phase: plan.bootstrap ? "bootstrap" : "incremental",
           processed: 0,
-          detail: `Reading message headers: ${unscanned.length - batch.length} left`,
+          detail: `Reading message headers: ${plan.unscanned.length} left`,
         },
       };
     }
@@ -259,7 +254,7 @@ export class MaildirSource {
     const rows: EmittedRow[] = [];
     for (const entry of batch) {
       signal?.throwIfAborted();
-      const emitted = await this.emit(entry, next.seq, plan);
+      const emitted = await this.emit(entry, next.seq);
       if (!emitted) continue;
       documents.push(...emitted.documents);
       rows.push(emitted.row);
@@ -277,7 +272,10 @@ export class MaildirSource {
 
     signal?.throwIfAborted();
     if (epoch !== this.epoch) {
-      throw new Error("The Maildir source was restarted while this page was being built");
+      throw new SyncError(
+        "transient",
+        "The Maildir source was restarted while this page was being built",
+      );
     }
     index.recordEmissions(generation, rows, forget);
     if (!hasMore) this.plan = undefined;
@@ -292,6 +290,11 @@ export class MaildirSource {
     }
     const issue = snapshot!.withheldIssue();
     if (issue) log.warn(snapshot!.withheldReason() ?? "Snapshot withheld");
+    if (plan.unreadableFiles > 0) {
+      log.warn(
+        `${plan.unreadableFiles} message file(s) under ${this.options.root} could not be read this cycle; they are retried on the next one`,
+      );
+    }
     return {
       documents,
       deletedExternalIds: [],
@@ -328,20 +331,26 @@ export class MaildirSource {
       mailboxDirs: new Map(walk.mailboxes.map((m) => [m.id, m.dir])),
       mailboxNames: new Map(walk.mailboxes.map((m) => [m.id, m.name])),
       sentMailboxes: new Set(walk.mailboxes.filter((m) => m.sent).map((m) => m.id)),
-      unscannable: new Set(),
-      extraGaps: [],
+      unscanned: [],
+      unreadableFiles: 0,
       bootstrap,
     };
     this.reconcile(plan, index);
+    plan.unscanned = index.unscannedFiles().filter((file) => plan.mailboxDirs.has(file.mailboxId));
     return plan;
   }
 
+  /**
+   * Whether a mailbox sits under a folder the walk could not list — the
+   * folder itself, or anything inside it. A gap on the root mailbox (`""`)
+   * covers that mailbox alone: the root itself always lists, or the walk
+   * throws.
+   */
   private isInGap(plan: CyclePlan, mailboxId: string): boolean {
-    return [...plan.walk.gaps, ...plan.extraGaps].some(
+    return plan.walk.gaps.some(
       (gap) =>
         gap.mailboxId === mailboxId ||
-        gap.mailboxId === "" ||
-        mailboxId.startsWith(`${gap.mailboxId}/`),
+        (gap.mailboxId !== "" && mailboxId.startsWith(`${gap.mailboxId}/`)),
     );
   }
 
@@ -397,17 +406,17 @@ export class MaildirSource {
         );
         scans.push({ mailboxId: file.mailboxId, uniq: file.uniq, ...scanned });
       } catch (err) {
-        plan.unscannable.add(fileKey(file.mailboxId, file.uniq));
-        if (isGoneError(err)) continue; // Moved or deleted since the walk; the next walk sees where.
-        if (isAccessError(err)) {
-          plan.extraGaps.push({
-            mailboxId: file.mailboxId,
-            reason: "a message file could not be read",
-          });
+        // A file that will not open stays unread in the index and is tried
+        // again next cycle. It withholds nothing: its folder listed in full,
+        // and a file never read was never emitted, so there is nothing of it
+        // the snapshot could wrongly leave out. One that moved since the walk
+        // is found where it went by the next walk.
+        if (!isGoneError(err)) {
+          plan.unreadableFiles += 1;
+          log.debug(
+            `Cannot read a message in ${plan.mailboxNames.get(file.mailboxId) ?? file.mailboxId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
-        log.warn(
-          `Skipping unreadable message in ${plan.mailboxNames.get(file.mailboxId) ?? file.mailboxId}: ${err instanceof Error ? err.message : String(err)}`,
-        );
       }
     }
     index.recordScans(scans);
@@ -485,43 +494,27 @@ export class MaildirSource {
   /**
    * Parse one message and build its documents.
    *
-   * Returns nothing when no copy could be opened: every copy moved or went
-   * since the walk, and the next cycle's walk finds where. A copy the process
-   * may not read withholds this cycle's snapshot. A message that opens but
-   * will not parse is recorded with no document, so it is not retried every
-   * cycle until it changes.
+   * Tries each copy in turn and returns nothing when none opens and parses:
+   * every copy moved since the walk, the process may not read them, or they
+   * are not mail. Nothing is recorded then, so what was last emitted for the
+   * message stands — the snapshot keeps naming it from the index while any
+   * copy is on disk — and it is tried again next cycle.
    */
   private async emit(
     entry: PlanEntry,
     seq: number,
-    plan: CyclePlan,
   ): Promise<{ documents: DocumentInput[]; row: EmittedRow } | undefined> {
     for (const path of entry.paths) {
       let parsed;
       try {
         parsed = await parseMessageFile(path);
       } catch (err) {
-        if (isGoneError(err)) continue;
-        if (isAccessError(err)) {
-          plan.extraGaps.push({ mailboxId: "", reason: "a message file could not be read" });
+        if (!isGoneError(err)) {
           log.warn(
-            `Cannot read a message file: ${err instanceof Error ? err.message : String(err)}`,
+            `Cannot read a message file${isAccessError(err) ? "" : " as mail"}: ${err instanceof Error ? err.message : String(err)}`,
           );
-          return undefined;
         }
-        log.warn(
-          `Skipping a message that will not parse: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        return {
-          documents: [],
-          row: {
-            key: entry.key,
-            signature: entry.signature,
-            seq,
-            hasDocument: false,
-            attachments: [],
-          },
-        };
+        continue;
       }
       const normalized = await normalizeMessage(parsed, entry, this.ctx);
       return {
@@ -530,7 +523,6 @@ export class MaildirSource {
           key: entry.key,
           signature: entry.signature,
           seq,
-          hasDocument: true,
           attachments: normalized.attachments,
         },
       };
@@ -541,8 +533,8 @@ export class MaildirSource {
   /**
    * Name every message still on disk, one partition per folder.
    *
-   * A message is named when it has a copy in a folder and was emitted with a
-   * document — in this generation, which is the only one the gateway holds.
+   * A message is named when it has a copy in a folder that listed and was
+   * emitted in this generation, the only one the gateway holds.
    * Messages the index remembers emitting but that no file holds any more
    * are forgotten here; the snapshot's silence about them is what deletes
    * them.
@@ -554,7 +546,7 @@ export class MaildirSource {
   ): { snapshot: SnapshotEnumeration; forget: string[] } {
     const emitted = index.allEmitted();
     for (const row of pageRows) emitted.set(row.key, row);
-    const gaps = [...plan.walk.gaps, ...plan.extraGaps];
+    const gaps = plan.walk.gaps;
     const partitions = [...plan.walk.mailboxes.map((m) => m.id), ...gaps.map((g) => g.mailboxId)];
     const snapshot = new SnapshotEnumeration(new Set(partitions));
     const gapped = new Set<string>();
@@ -575,16 +567,15 @@ export class MaildirSource {
     let named = 0;
     for (const file of files) {
       const key = file.key!;
-      if (gapped.has(file.mailboxId) || !plan.mailboxDirs.has(file.mailboxId)) continue;
+      if (!plan.mailboxDirs.has(file.mailboxId) || this.isInGap(plan, file.mailboxId)) continue;
       if (this.cutoffMs !== undefined && keyDates.get(key)! < this.cutoffMs) continue;
       const row = emitted.get(key);
-      if (!row?.hasDocument) continue;
+      if (!row) continue;
       const ids = [key, ...attachmentChildIds(key, row.attachments, this.ctx)];
       named += ids.length;
       if (named > this.limits.maxPresentIds) {
-        throw new SyncError(
-          "unknown",
-          `The Maildir at ${this.options.root} names more than ${this.limits.maxPresentIds} documents; use the source's exclude setting to leave some folders out`,
+        throw tooLargeError(
+          `The Maildir at ${this.options.root} names more than ${this.limits.maxPresentIds} documents`,
         );
       }
       const list = byMailbox.get(file.mailboxId);

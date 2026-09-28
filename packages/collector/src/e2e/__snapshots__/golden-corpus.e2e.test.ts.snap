@@ -36,12 +36,12 @@ exports[`Golden-corpus regression net (e2e-minimal) > people graph — top non-s
   },
   {
     "aliasCount": 3,
-    "documentCount": 10,
+    "documentCount": 13,
     "identifyingName": "John Smith",
   },
   {
     "aliasCount": 5,
-    "documentCount": 9,
+    "documentCount": 10,
     "identifyingName": "Alex Chen",
   },
   {
@@ -56,7 +56,7 @@ exports[`Golden-corpus regression net (e2e-minimal) > people graph — top non-s
   },
   {
     "aliasCount": 3,
-    "documentCount": 3,
+    "documentCount": 4,
     "identifyingName": "Carol Nakamura",
   },
   {
@@ -65,14 +65,14 @@ exports[`Golden-corpus regression net (e2e-minimal) > people graph — top non-s
     "identifyingName": "Daniel Harper",
   },
   {
-    "aliasCount": 2,
+    "aliasCount": 3,
     "documentCount": 3,
-    "identifyingName": "Emma Park",
+    "identifyingName": "Dave Ortiz",
   },
   {
     "aliasCount": 2,
-    "documentCount": 2,
-    "identifyingName": "Dave Ortiz",
+    "documentCount": 3,
+    "identifyingName": "Emma Park",
   },
 ]
 `;
@@ -101,6 +101,7 @@ exports[`Golden-corpus regression net (e2e-minimal) > per-source document count 
     "google-drive:john.smith@example.com": 3,
     "granola-meetings:john.smith@example.com": 3,
     "lunchflow-accounts:default": 4,
+    "maildir:mail-synth-johnsmith": 3,
     "notion-databases:user_john_smith": 4,
     "notion-pages:user_john_smith": 3,
     "obsidian-notes:Personal": 3,
@@ -113,7 +114,7 @@ exports[`Golden-corpus regression net (e2e-minimal) > per-source document count 
     "things:local": 3,
     "whatsapp-messages:+15550100": 3,
   },
-  "total": 102,
+  "total": 105,
 }
 `;
 
@@ -126,6 +127,10 @@ exports[`Golden-corpus regression net (e2e-minimal) > search "Globex" surfaces d
   {
     "sourceId": "granola-meetings:john.smith@example.com",
     "title": "Acme Q3 Planning",
+  },
+  {
+    "sourceId": "maildir:mail-synth-johnsmith",
+    "title": "Globex workshop agenda",
   },
   {
     "sourceId": "things:local",
@@ -146,10 +151,6 @@ exports[`Golden-corpus regression net (e2e-minimal) > search "Globex" surfaces d
   {
     "sourceId": "outlook-email:john.smith@example.com",
     "title": "Vendor evaluation — first cut",
-  },
-  {
-    "sourceId": "browser-history:chrome",
-    "title": "chrome browsing — 2025-09-02",
   },
 ]
 `;
@@ -217,6 +218,7 @@ exports[`Golden-corpus regression net (e2e-minimal) > the source list contains e
   "granola-meetings:john.smith@example.com",
   "health-connect:android-synth-johnsmith",
   "lunchflow-accounts:default",
+  "maildir:mail-synth-johnsmith",
   "notion-databases:user_john_smith",
   "notion-pages:user_john_smith",
   "obsidian-notes:Personal",

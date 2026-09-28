@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createHash } from "node:crypto";
-import { realpathSync } from "node:fs";
+import { realpathSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import { resolveAttachmentConfig } from "@omnesis/core";
 import {
@@ -11,6 +11,7 @@ import {
   expandHostPath,
   type SourceInstance,
 } from "@omnesis/source-sdk";
+import { safePathSegment } from "@omnesis/types";
 import { maildirDocumentEventProfile } from "./document-event-profile.js";
 import { maildirIcon } from "./icons.js";
 import { probeMaildirReadAccess } from "./probe.js";
@@ -31,7 +32,7 @@ export default defineSource({
   id: "maildir",
   name: "Maildir",
   description:
-    "Email a mail tool keeps on this machine as a Maildir — mbsync, offlineimap, getmail, Thunderbird",
+    "Email a mail tool keeps on this machine as a Maildir — mbsync, offlineimap, getmail, or Thunderbird set to Maildir storage",
   provider: { id: "maildir", name: "Maildir" },
   authType: "local",
   experimental: true,
@@ -86,6 +87,21 @@ export default defineSource({
       .slice(0, 80);
     return `${label || "maildir"}-${suffix}`;
   },
+  /**
+   * The source keeps no credential, but removing it should not leave its
+   * index behind: that file lists the account's folder and file names. This
+   * is the hook the collector calls when a source is removed, so it deletes
+   * the index there. The directory is the account's state directory, which
+   * the collector derives the same way.
+   */
+  cleanupCredentials(accountId, ctx) {
+    if (!ctx?.configDir) return Promise.resolve();
+    const dir = join(ctx.configDir, safePathSegment("maildir"), safePathSegment(accountId));
+    for (const suffix of ["", "-wal", "-shm"]) {
+      rmSync(join(dir, `${INDEX_FILE}${suffix}`), { force: true });
+    }
+    return Promise.resolve();
+  },
   config: configSchema.object({
     path: configSchema.path({
       label: "Maildir folder",
@@ -98,7 +114,7 @@ export default defineSource({
     }),
     exclude: configSchema.list(configSchema.string({ label: "Folder pattern" }), {
       label: "Exclude folders",
-      help: "Folder names or glob patterns to leave out, one per line — for example [Gmail]/All Mail. Leave empty to sync every folder except drafts, spam and trash.",
+      help: "Folder names to leave out, one per line — for example [Gmail]/All Mail. * matches within a folder name and ** across folders. Leave empty to sync every folder except drafts, spam and trash.",
       // Not a setup question: which folders to leave out only becomes clear
       // after a first sync shows what is there.
       advanced: true,

@@ -827,6 +827,22 @@ describe("mailPeopleMentions", () => {
     ]);
   });
 
+  test("a phone number in the body is a mention that cannot create a person", () => {
+    const people = mailPeopleMentions({}, "Call me on +1 (415) 555-0134 tomorrow.", 10);
+    expect(people).toEqual([
+      { role: "mentioned", phones: ["+14155550134"], allowPersonCreation: false },
+    ]);
+  });
+
+  test("a display name that is really an address is not kept as a name", () => {
+    const people = mailPeopleMentions(
+      { from: [{ name: "jamie.lopez@example.org", address: "jamie.lopez@example.org" }] },
+      "",
+      10,
+    );
+    expect(people[0]?.name).toBeUndefined();
+  });
+
   test("stops at the cap", () => {
     const to = Array.from({ length: 5 }, (_, i) => ({ address: `member${i}@example.org` }));
     expect(mailPeopleMentions({ to }, "", 3)).toHaveLength(3);

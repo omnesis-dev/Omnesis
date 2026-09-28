@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import realMaildir from "@omnesis/provider-maildir";
 import { defineSource } from "@omnesis/source-sdk";
@@ -36,9 +34,9 @@ export default defineSource({
   authenticate: undefined,
   cleanupCredentials: undefined,
   async create(options) {
-    const root = options.host
-      ? join(options.host.stateDir, "synthetic-maildir")
-      : mkdtempSync(join(tmpdir(), "omnesis-synthetic-maildir-"));
+    if (!options.host)
+      throw new Error("The synthetic Maildir needs a host state directory to write its tree");
+    const root = join(options.host.stateDir, "synthetic-maildir");
     materializeMaildir(root, loadMessages());
     return realMaildir.create!({ ...options, config: { path: root, exclude: [] } });
   },

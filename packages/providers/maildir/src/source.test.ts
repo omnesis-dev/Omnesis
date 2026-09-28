@@ -375,6 +375,25 @@ describe("copies in several folders", () => {
   });
 });
 
+describe("files that are not mail", () => {
+  test("do not stop the cycle or poison the cursor", async () => {
+    const inbox = folder("INBOX");
+    deliverMessage(inbox, "1.a.host", message());
+    deliverMessage(
+      inbox,
+      "2.junk.host",
+      Buffer.from([0, 1, 2, 255, 254, 0, 10, 13]).toString("latin1"),
+    );
+    const gateway = new FakeGateway();
+    const source = makeSource();
+    const first = await gateway.cycle(source);
+    expect(first.emitted.map((d) => d.title)).toContain("Welcome to the team");
+    expect(first.present).toHaveLength(first.emitted.length);
+    const again = await gateway.cycle(source);
+    expect(again.emitted).toEqual([]);
+  });
+});
+
 describe("the gateway's cursor is the commit point", () => {
   test("a page the gateway never committed is emitted again", async () => {
     const inbox = folder("INBOX");
@@ -398,6 +417,33 @@ describe("the gateway's cursor is the commit point", () => {
     expect(last.hasMore).toBe(false);
     expect(last.presentExternalIds).toHaveLength(2);
   });
+
+  test.skipIf(isRoot)(
+    "a re-emission the gateway never committed leaves the committed one in force",
+    async () => {
+      const inbox = folder("INBOX");
+      deliverMessage(inbox, "1.a.host", message(), { flags: "S" });
+      const gateway = new FakeGateway();
+      const source = makeSource();
+      await gateway.cycle(source);
+      const committed = gateway.cursor;
+      // Starred: the next page re-emits it, and that page is lost.
+      const starred = join(inbox, "cur", maildirFileName("1.a.host", "cur", "FS"));
+      renameSync(join(inbox, "cur", maildirFileName("1.a.host", "cur", "S")), starred);
+      const lost = await source.sync(committed);
+      expect(lost.documents).toHaveLength(1);
+      // Before the retry the file stops opening, so it cannot be re-emitted.
+      chmodSync(starred, 0o000);
+      try {
+        const retried = await source.sync(committed);
+        expect(retried.documents).toEqual([]);
+        // Still on disk, so still named, from what the gateway did commit.
+        expect(retried.presentExternalIds).toEqual([...gateway.docs.keys()]);
+      } finally {
+        chmodSync(starred, 0o644);
+      }
+    },
+  );
 
   test("a resync starts a new generation and re-emits every message", async () => {
     deliverMessage(folder("INBOX"), "1.a.host", message());
@@ -551,6 +597,78 @@ describe("gaps withhold the snapshot", () => {
       const healed = await gateway.cycle(source);
       expect(healed.emitted).toEqual([]);
       expect([...gateway.docs.values()].map((d) => d.title)).toEqual(["Kept"]);
+    },
+  );
+
+  test.skipIf(isRoot)(
+    "an unreadable message file withholds nothing and is read once it opens",
+    async () => {
+      // The root is itself the inbox, the layout where a gap on one file once
+      // stalled every folder.
+      createMailbox(root);
+      deliverMessage(root, "1.a.host", message(), { flags: "S" });
+      const locked = deliverMessage(
+        root,
+        "2.b.host",
+        message({ messageId: "locked@example.org", subject: "Locked" }),
+        { flags: "S" },
+      );
+      deliverMessage(
+        folder("Archive"),
+        "3.c.host",
+        message({ messageId: "c@example.org", subject: "Archived" }),
+      );
+      chmodSync(locked, 0o000);
+      const gateway = new FakeGateway();
+      const source = makeSource();
+      try {
+        const first = await gateway.cycle(source);
+        expect(first.emitted.map((d) => d.title).sort()).toEqual([
+          "Archived",
+          "Welcome to the team",
+        ]);
+        expect(first.present).toHaveLength(2);
+        expect(first.issues).toEqual([]);
+      } finally {
+        chmodSync(locked, 0o644);
+      }
+      const healed = await gateway.cycle(source);
+      expect(healed.emitted.map((d) => d.title)).toEqual(["Locked"]);
+      expect(gateway.docs.size).toBe(3);
+    },
+  );
+
+  test.skipIf(isRoot)(
+    "a folder that stays unreadable keeps its messages cycle after cycle",
+    async () => {
+      const inbox = folder("INBOX");
+      const archive = folder("Archive");
+      deliverMessage(inbox, "1.a.host", message(), { flags: "S" });
+      deliverMessage(
+        archive,
+        "2.b.host",
+        message({ messageId: "kept@example.org", subject: "Kept" }),
+        {
+          flags: "S",
+        },
+      );
+      const gateway = new FakeGateway();
+      const source = makeSource();
+      await gateway.cycle(source);
+      chmodSync(join(archive, "cur"), 0o000);
+      try {
+        for (let cycle = 0; cycle < 3; cycle++) {
+          const impaired = await gateway.cycle(source);
+          expect(impaired.emitted).toEqual([]);
+          expect(impaired.present).toBeUndefined();
+          expect(gateway.docs.size).toBe(2);
+        }
+      } finally {
+        chmodSync(join(archive, "cur"), 0o755);
+      }
+      const healed = await gateway.cycle(source);
+      expect(healed.emitted).toEqual([]);
+      expect(healed.present).toHaveLength(2);
     },
   );
 
