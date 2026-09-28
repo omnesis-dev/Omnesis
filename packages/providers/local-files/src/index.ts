@@ -428,9 +428,6 @@ export default defineSource({
   provider: { id: "local-files", name: "Local Files" },
   authType: "local",
   unitName: "files",
-  // Not yet battle-tested (relevance at volume is unsolved): hidden from the
-  // Add-source picker until the operator opts in with OMNESIS_EXPERIMENTAL=1.
-  experimental: true,
   singleInstance: true,
   // Pinned at creation: each machine observes a genuinely distinct stream,
   // the union is the truth, and identical paths on two machines are two

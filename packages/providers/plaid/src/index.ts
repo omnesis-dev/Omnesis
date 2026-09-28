@@ -152,9 +152,6 @@ export default defineProvider<PlaidContext>({
   // no embedded widget, and no callback for Omnesis to host. The bank's own
   // OAuth redirect happens entirely between the user's browser and Plaid.
   authType: "oauth",
-  // Not yet battle-tested: hidden from the Add-source picker until the
-  // operator opts in with OMNESIS_EXPERIMENTAL=1.
-  experimental: true,
   credentials: plaidCredentialsSpec,
 
   // Resolve connected items offline from the per-item credential dirs the
