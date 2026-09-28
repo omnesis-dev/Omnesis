@@ -10066,9 +10066,7 @@
         "evals/universes/default/sources/maildir/messages.json",
         "evals/universes/e2e-minimal/sources/maildir/messages.json",
         "packages/collector/src/e2e/maildir-lifecycle.e2e.test.ts",
-        "packages/collector/src/e2e/maildir.e2e.test.ts",
         "packages/providers-synth/maildir/src/fixtures.ts",
-        "packages/providers-synth/maildir/src/index.test.ts",
         "packages/providers/maildir/src/layout.test.ts",
         "packages/providers/maildir/src/source.test.ts"
       ],
