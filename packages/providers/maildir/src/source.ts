@@ -78,6 +78,14 @@ const UNNAMED_FILES = "\0unnamed";
 const RETRY_BACKOFF_MS = [60 * 60 * 1000, 6 * 60 * 60 * 1000, 24 * 60 * 60 * 1000];
 /** How long a cycle's walk may be reused between its pages. */
 const PLAN_TTL_MS = 10 * 60 * 1000;
+/**
+ * How long one sync may run before it ends and leaves the rest to the next.
+ * A first sync of a large tree reads every file and extracts every
+ * attachment; the host stops a sync that runs too long, and a sync that ends
+ * on its own instead keeps its committed pages and reports no error. The
+ * index remembers what was read and emitted, so the next sync continues.
+ */
+const SYNC_BUDGET_MS = 20 * 60 * 1000;
 
 export interface MaildirLimits extends WalkLimits {
   /**
@@ -190,6 +198,8 @@ export class MaildirSource {
   /** Bumped by a resync, so a page still being built for the old run cannot record anything. */
   private epoch = 0;
   private syncInFlight = false;
+  /** When the current sync's first page began; unset between syncs. */
+  private syncStartedAt: number | undefined;
 
   constructor(private readonly options: MaildirSourceOptions) {
     this.id = SourceId(options.sourceId);
@@ -229,10 +239,14 @@ export class MaildirSource {
       throw new SyncError("transient", "A Maildir sync is already in progress for this source");
     }
     this.syncInFlight = true;
+    this.syncStartedAt ??= this.now();
     try {
-      return await this.syncPage(cursor, opts?.signal);
+      const page = await this.syncPage(cursor, opts?.signal);
+      if (!page.hasMore) this.syncStartedAt = undefined;
+      return page;
     } catch (err) {
       this.plan = undefined;
+      this.syncStartedAt = undefined;
       throw err;
     } finally {
       this.syncInFlight = false;
@@ -258,17 +272,13 @@ export class MaildirSource {
     if (plan.unscanned.length > 0) {
       const batch = plan.unscanned.splice(0, this.limits.scanPageSize);
       await this.scan(batch, plan, index, signal);
-      return {
-        documents: [],
-        deletedExternalIds: [],
-        cursor: next,
-        hasMore: true,
-        progress: {
-          phase: plan.bootstrap ? "bootstrap" : "incremental",
-          processed: 0,
-          detail: `Reading message headers: ${plan.unscanned.length} left`,
-        },
+      const progress: SyncProgress = {
+        phase: plan.bootstrap ? "bootstrap" : "incremental",
+        processed: 0,
+        detail: `Reading message headers: ${plan.unscanned.length} left`,
       };
+      if (this.budgetSpent()) return this.pauseCycle(next, [], progress);
+      return { documents: [], deletedExternalIds: [], cursor: next, hasMore: true, progress };
     }
 
     // Stage 2: emit what changed.
@@ -311,6 +321,7 @@ export class MaildirSource {
       total: plan.cycleTotal,
     };
     if (hasMore) {
+      if (this.budgetSpent()) return this.pauseCycle(next, documents, progress);
       return { documents, deletedExternalIds: [], cursor: next, hasMore: true, progress };
     }
     const issue = snapshot!.withheldIssue();
@@ -328,6 +339,36 @@ export class MaildirSource {
       cursor: next,
       hasMore: false,
       progress,
+    };
+  }
+
+  private budgetSpent(): boolean {
+    return this.syncStartedAt !== undefined && this.now() - this.syncStartedAt >= SYNC_BUDGET_MS;
+  }
+
+  /**
+   * End this sync before its cycle is done: the page is committed as usual,
+   * no snapshot is sent, and the next sync starts from a fresh walk and
+   * carries on from what the index recorded.
+   */
+  private pauseCycle(
+    next: MaildirCursor,
+    documents: DocumentInput[],
+    progress: SyncProgress,
+  ): SyncResult<MaildirCursor> {
+    this.plan = undefined;
+    log.info(
+      `Sync of ${this.options.root} paused after ${Math.round(SYNC_BUDGET_MS / 60_000)} minutes; the next sync continues it`,
+    );
+    return {
+      documents,
+      deletedExternalIds: [],
+      cursor: next,
+      hasMore: false,
+      progress: {
+        ...progress,
+        detail: `${progress.detail ?? "Syncing"}; continues on the next sync`,
+      },
     };
   }
 

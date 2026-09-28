@@ -341,6 +341,47 @@ describe("bootstrap", () => {
   });
 });
 
+describe("a sync that runs long", () => {
+  test("ends without a snapshot and the next sync finishes the cycle", async () => {
+    const inbox = folder("INBOX");
+    for (let i = 1; i <= 5; i++) {
+      deliverMessage(
+        inbox,
+        `${i}.a.host`,
+        message({ messageId: `m${i}@example.org`, subject: `Message ${i}` }),
+      );
+    }
+    let clock = 0;
+    const source = new MaildirSource({
+      sourceId: "maildir:fixture",
+      providerId: "maildir:fixture",
+      root,
+      exclude: [],
+      indexPath: join(scratch, "index.sqlite"),
+      attachmentConfig: resolveAttachmentConfig(undefined, { defaultEnabled: true }),
+      limits: { emitPageSize: 1 },
+      // The clock moves on every time the source reads it, so a sync of more
+      // than a page or two runs past its budget.
+      now: () => (clock += 6 * 60 * 1000),
+    });
+    const gateway = new FakeGateway();
+    const emitted: string[] = [];
+    let paused = 0;
+    let final: string[] | undefined;
+    for (let sync = 0; sync < 20 && final === undefined; sync++) {
+      const result = await gateway.cycle(source);
+      emitted.push(...result.emitted.map((d) => d.externalId));
+      if (result.present === undefined) paused += 1;
+      else final = result.present;
+    }
+    expect(paused).toBeGreaterThan(0);
+    expect(final).toHaveLength(5);
+    expect(emitted).toHaveLength(5);
+    expect(new Set(emitted).size).toBe(5);
+    expect(gateway.docs.size).toBe(5);
+  });
+});
+
 describe("incremental cycles", () => {
   test("an unchanged tree emits nothing and still names everything", async () => {
     deliverMessage(folder("INBOX"), "1.a.host", message());
