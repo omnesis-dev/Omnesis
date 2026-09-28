@@ -35,15 +35,15 @@ async function sampleDir(
   path: string,
   limit: number,
   signal: AbortSignal,
-): Promise<{ names: Array<{ name: string; isDir: boolean }> } | Outcome> {
+): Promise<{ names: Array<{ name: string; isDir: boolean; isFile: boolean }> } | Outcome> {
   try {
     const dir = await opendir(path);
     try {
-      const names: Array<{ name: string; isDir: boolean }> = [];
+      const names: Array<{ name: string; isDir: boolean; isFile: boolean }> = [];
       while (names.length < limit && !signal.aborted) {
         const entry = await dir.read();
         if (!entry) break;
-        names.push({ name: entry.name, isDir: entry.isDirectory() });
+        names.push({ name: entry.name, isDir: entry.isDirectory(), isFile: entry.isFile() });
       }
       return { names };
     } finally {
@@ -72,7 +72,7 @@ async function probeMailbox(dir: string, signal: AbortSignal): Promise<Outcome> 
     if (listing === "missing") return "missing";
     if ("status" in listing) return listing;
     sawMailbox = true;
-    const file = listing.names.find((entry) => !entry.isDir && !entry.name.startsWith("."));
+    const file = listing.names.find((entry) => entry.isFile && !entry.name.startsWith("."));
     if (file) return openOne(join(dir, sub, file.name));
   }
   return sawMailbox ? { status: "readable" } : "missing";

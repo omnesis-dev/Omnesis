@@ -31,8 +31,7 @@ const INDEX_FILE = "maildir-index.sqlite";
 export default defineSource({
   id: "maildir",
   name: "Maildir",
-  description:
-    "Email a mail tool keeps on this machine as a Maildir — mbsync, offlineimap, getmail, or Thunderbird set to Maildir storage",
+  description: "Email a mail tool such as mbsync or offlineimap keeps on this machine as a Maildir",
   provider: { id: "maildir", name: "Maildir" },
   authType: "local",
   experimental: true,

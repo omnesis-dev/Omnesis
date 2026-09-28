@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -38,7 +39,7 @@ describe("messageKey", () => {
 });
 
 describe("scanMessage", () => {
-  test("reads the identity, date and size from the headers alone", async () => {
+  test("reads the identity and date from the headers alone", async () => {
     const raw = renderMessage({
       messageId: "scan@example.org",
       from: { address: "jamie.lopez@example.org" },
@@ -51,7 +52,6 @@ describe("scanMessage", () => {
     expect(scanned).toEqual({
       key: messageKey("scan@example.org", "INBOX", "x"),
       dateMs: Date.parse("2026-02-01T12:00:00Z"),
-      size: Buffer.byteLength(raw),
     });
   });
 
@@ -73,6 +73,22 @@ describe("scanMessage", () => {
       () => 0,
     );
     expect(scanned.dateMs).toBe(1_700_000_000_000);
+  });
+
+  test("a named pipe is refused at once rather than waited on", async () => {
+    const pipe = join(dir, "pipe");
+    execFileSync("mkfifo", [pipe]);
+    await expect(scanMessage(pipe, "INBOX", "x", () => 0)).rejects.toMatchObject({
+      code: "ENOTREGULAR",
+    });
+    await expect(parseMessageFile(pipe)).rejects.toMatchObject({ code: "ENOTREGULAR" });
+  });
+
+  test("a symbolic link is not followed", async () => {
+    const target = write("target", "Subject: x\n\nbody");
+    const link = join(dir, "link");
+    symlinkSync(target, link);
+    await expect(parseMessageFile(link)).rejects.toMatchObject({ code: "ELOOP" });
   });
 
   test("a file that is not there is an error the caller classifies", async () => {

@@ -39,7 +39,7 @@ import { attachmentChildIds, normalizeMessage } from "./normalizer.js";
 import type { AttachmentExtractionConfig, AttachmentExtractFn } from "@omnesis/core";
 import type { SyncCursor, SyncOptions, SyncProgress, SyncResult } from "@omnesis/source-sdk";
 import type { DocumentInput } from "@omnesis/types";
-import type { EmittedRow, FileRow } from "./index-store.js";
+import type { EmittedAttachment, EmittedRow, FileRow } from "./index-store.js";
 import type { MaildirWalk, WalkLimits } from "./layout.js";
 import type { MessagePlacement, NormalizeContext } from "./normalizer.js";
 
@@ -58,6 +58,11 @@ const DEFAULT_LIMITS: MaildirLimits = {
   emitPageSize: 50,
   scanPageSize: 500,
 };
+/**
+ * The snapshot partition standing for files the cycle could not name. Not a
+ * folder id: those are relative paths, and this cannot be one.
+ */
+const UNNAMED_FILES = "\0unnamed";
 /** How long a cycle's walk may be reused between its pages. */
 const PLAN_TTL_MS = 10 * 60 * 1000;
 
@@ -101,6 +106,9 @@ interface PlanEntry extends MessagePlacement {
   /** The copies to read, in order: the first that opens and parses is used. */
   paths: string[];
   signature: string;
+  contentFingerprint: string;
+  /** What was last emitted for its attachments, when only its folders or flags changed since. */
+  reuse?: EmittedAttachment[];
 }
 
 interface CyclePlan {
@@ -116,6 +124,8 @@ interface CyclePlan {
   unscanned: FileRow[];
   /** How many files this cycle could not read; reported once, on the final page. */
   unreadableFiles: number;
+  /** Of those, how many the index could not name, because their headers never read. */
+  unnamedFiles: number;
   pending?: PlanEntry[];
   cycleTotal?: number;
   bootstrap: boolean;
@@ -254,7 +264,7 @@ export class MaildirSource {
     const rows: EmittedRow[] = [];
     for (const entry of batch) {
       signal?.throwIfAborted();
-      const emitted = await this.emit(entry, next.seq);
+      const emitted = await this.emit(entry, next.seq, plan);
       if (!emitted) continue;
       documents.push(...emitted.documents);
       rows.push(emitted.row);
@@ -333,6 +343,7 @@ export class MaildirSource {
       sentMailboxes: new Set(walk.mailboxes.filter((m) => m.sent).map((m) => m.id)),
       unscanned: [],
       unreadableFiles: 0,
+      unnamedFiles: 0,
       bootstrap,
     };
     this.reconcile(plan, index);
@@ -387,13 +398,7 @@ export class MaildirSource {
     index: MaildirIndex,
     signal: AbortSignal | undefined,
   ): Promise<void> {
-    const scans: Array<{
-      mailboxId: string;
-      uniq: string;
-      key: string;
-      dateMs: number;
-      size: number;
-    }> = [];
+    const scans: Array<{ mailboxId: string; uniq: string; key: string; dateMs: number }> = [];
     for (const file of batch) {
       signal?.throwIfAborted();
       const path = this.filePath(plan, file);
@@ -407,10 +412,11 @@ export class MaildirSource {
         scans.push({ mailboxId: file.mailboxId, uniq: file.uniq, ...scanned });
       } catch (err) {
         // A file that will not open stays unread in the index and is tried
-        // again next cycle. It withholds nothing: its folder listed in full,
-        // and a file never read was never emitted, so there is nothing of it
-        // the snapshot could wrongly leave out. One that moved since the walk
-        // is found where it went by the next walk.
+        // again next cycle; one that moved since the walk is found where it
+        // went by the next walk. Either could be the only copy left of a
+        // message already emitted — the new copy of a message just moved to
+        // another folder — which the snapshot must not read as deleted.
+        plan.unnamedFiles += 1;
         if (!isGoneError(err)) {
           plan.unreadableFiles += 1;
           log.debug(
@@ -453,7 +459,9 @@ export class MaildirSource {
       }
       const entry = this.placement(plan, key, files, fingerprint);
       if (this.cutoffMs !== undefined && entry.dateMs < this.cutoffMs) continue;
-      if (emitted.get(key)?.signature === entry.signature) continue;
+      const prior = emitted.get(key);
+      if (prior?.signature === entry.signature) continue;
+      if (prior?.contentFingerprint === fingerprint) entry.reuse = prior.attachments;
       pending.push(entry);
     }
     // Oldest first, so an interrupted bootstrap has filled in history in order.
@@ -488,6 +496,7 @@ export class MaildirSource {
       dateMs: Number.isFinite(dateMs) ? dateMs : 0,
       paths: named.map((n) => this.filePath(plan, n.file)),
       signature,
+      contentFingerprint: fingerprint,
     };
   }
 
@@ -503,6 +512,7 @@ export class MaildirSource {
   private async emit(
     entry: PlanEntry,
     seq: number,
+    plan: CyclePlan,
   ): Promise<{ documents: DocumentInput[]; row: EmittedRow } | undefined> {
     for (const path of entry.paths) {
       let parsed;
@@ -510,18 +520,20 @@ export class MaildirSource {
         parsed = await parseMessageFile(path);
       } catch (err) {
         if (!isGoneError(err)) {
-          log.warn(
+          plan.unreadableFiles += 1;
+          log.debug(
             `Cannot read a message file${isAccessError(err) ? "" : " as mail"}: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
         continue;
       }
-      const normalized = await normalizeMessage(parsed, entry, this.ctx);
+      const normalized = await normalizeMessage(parsed, entry, this.ctx, entry.reuse);
       return {
         documents: normalized.documents,
         row: {
           key: entry.key,
           signature: entry.signature,
+          contentFingerprint: entry.contentFingerprint,
           seq,
           attachments: normalized.attachments,
         },
@@ -546,7 +558,25 @@ export class MaildirSource {
   ): { snapshot: SnapshotEnumeration; forget: string[] } {
     const emitted = index.allEmitted();
     for (const row of pageRows) emitted.set(row.key, row);
-    const gaps = plan.walk.gaps;
+    const files = index.allFiles().filter((file) => file.key !== null);
+    // A message's date is its earliest copy's, as the emit stage decided it.
+    const keyDates = new Map<string, number>();
+    for (const file of files) {
+      const date = file.dateMs ?? 0;
+      keyDates.set(file.key!, Math.min(keyDates.get(file.key!) ?? date, date));
+    }
+    const vanished = [...emitted.keys()].filter((key) => !keyDates.has(key));
+    // A message the index can no longer place may be in a file this cycle
+    // could not name. Until every file is named, it is neither forgotten nor
+    // left out.
+    const unnamed = plan.unnamedFiles > 0 && vanished.length > 0;
+
+    const gaps = [
+      ...plan.walk.gaps,
+      ...(unnamed
+        ? [{ mailboxId: UNNAMED_FILES, reason: "some message files could not be read" }]
+        : []),
+    ];
     const partitions = [...plan.walk.mailboxes.map((m) => m.id), ...gaps.map((g) => g.mailboxId)];
     const snapshot = new SnapshotEnumeration(new Set(partitions));
     const gapped = new Set<string>();
@@ -556,24 +586,17 @@ export class MaildirSource {
       snapshot.gap(gap.mailboxId, gap.reason);
     }
 
-    const files = index.allFiles().filter((file) => file.key !== null);
-    // A message's date is its earliest copy's, as the emit stage decided it.
-    const keyDates = new Map<string, number>();
-    for (const file of files) {
-      const date = file.dateMs ?? 0;
-      keyDates.set(file.key!, Math.min(keyDates.get(file.key!) ?? date, date));
-    }
     const byMailbox = new Map<string, string[]>();
-    let named = 0;
+    const named = new Set<string>();
     for (const file of files) {
       const key = file.key!;
       if (!plan.mailboxDirs.has(file.mailboxId) || this.isInGap(plan, file.mailboxId)) continue;
       if (this.cutoffMs !== undefined && keyDates.get(key)! < this.cutoffMs) continue;
       const row = emitted.get(key);
       if (!row) continue;
-      const ids = [key, ...attachmentChildIds(key, row.attachments, this.ctx)];
-      named += ids.length;
-      if (named > this.limits.maxPresentIds) {
+      const ids = [key, ...attachmentChildIds(key, row.attachments)];
+      for (const id of ids) named.add(id);
+      if (named.size > this.limits.maxPresentIds) {
         throw tooLargeError(
           `The Maildir at ${this.options.root} names more than ${this.limits.maxPresentIds} documents`,
         );
@@ -586,7 +609,6 @@ export class MaildirSource {
       if (gapped.has(mailbox.id)) continue;
       snapshot.cover(mailbox.id, byMailbox.get(mailbox.id) ?? []);
     }
-    const forget = [...emitted.keys()].filter((key) => !keyDates.has(key));
-    return { snapshot, forget };
+    return { snapshot, forget: unnamed ? [] : vanished };
   }
 }

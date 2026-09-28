@@ -468,14 +468,17 @@ describe("the gateway's cursor is the commit point", () => {
     );
     let release: () => void = () => {};
     const gate = new Promise<void>((resolve) => (release = resolve));
+    let extracting: () => void = () => {};
+    const started = new Promise<void>((resolve) => (extracting = resolve));
     const slowExtract: AttachmentExtractFn = async (data) => {
+      extracting();
       await gate;
       return { text: new TextDecoder().decode(data), truncated: false };
     };
     const source = makeSource({ extractAttachment: slowExtract });
     const scan = await source.sync(null);
     const late = source.sync(scan.cursor);
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await started; // The page is mid-build.
     source.onResync();
     release();
     await expect(late).rejects.toThrow(/restarted/);
@@ -515,6 +518,43 @@ describe("data cutoff", () => {
 });
 
 describe("attachments", () => {
+  test("starring or archiving a message does not extract its attachments again", async () => {
+    const inbox = folder("INBOX");
+    const archive = folder("Archive");
+    deliverMessage(
+      inbox,
+      "1.a.host",
+      message({
+        attachments: [{ filename: "scan.pdf", mimeType: "application/pdf", content: "Invoice" }],
+      }),
+      { flags: "S" },
+    );
+    let extractions = 0;
+    const counting: AttachmentExtractFn = (data) => {
+      extractions += 1;
+      return Promise.resolve({ text: new TextDecoder().decode(data), truncated: false });
+    };
+    const gateway = new FakeGateway();
+    const source = makeSource({ extractAttachment: counting });
+    await gateway.cycle(source);
+    expect(extractions).toBe(1);
+    const child = [...gateway.docs.values()].find((d) => d.metadata.documentType === "attachment")!;
+
+    renameSync(
+      join(inbox, "cur", maildirFileName("1.a.host", "cur", "S")),
+      join(archive, "cur", maildirFileName("1.a.host", "cur", "FS")),
+    );
+    const moved = await gateway.cycle(source);
+    expect(extractions).toBe(1);
+    expect(moved.emitted.map((d) => d.metadata.documentType)).toEqual(["email"]);
+    const email = moved.emitted[0]!;
+    expect(email.metadata.tags).toEqual(["Archive"]);
+    expect(email.content).toContain("scan.pdf");
+    // The child document stays, still named.
+    expect(moved.present).toContain(child.externalId);
+    expect(gateway.docs.has(child.externalId)).toBe(true);
+  });
+
   const withAttachment = () =>
     message({
       attachments: [
@@ -669,6 +709,74 @@ describe("gaps withhold the snapshot", () => {
       const healed = await gateway.cycle(source);
       expect(healed.emitted).toEqual([]);
       expect(healed.present).toHaveLength(2);
+    },
+  );
+
+  test.skipIf(isRoot)(
+    "a message whose only new copy cannot be read yet is not taken for deleted",
+    async () => {
+      const inbox = folder("INBOX");
+      const archive = folder("Archive");
+      deliverMessage(inbox, "1.a.host", message(), { flags: "S" });
+      const gateway = new FakeGateway();
+      const source = makeSource();
+      await gateway.cycle(source);
+      // Archived: the copy reappears in another folder under a new name,
+      // and that file will not open this cycle.
+      rmSync(join(inbox, "cur", maildirFileName("1.a.host", "cur", "S")));
+      const moved = deliverMessage(archive, "2.b.host", message(), { flags: "S" });
+      chmodSync(moved, 0o000);
+      try {
+        const impaired = await gateway.cycle(source);
+        expect(impaired.present).toBeUndefined();
+        expect(gateway.docs.size).toBe(1);
+      } finally {
+        chmodSync(moved, 0o644);
+      }
+      const healed = await gateway.cycle(source);
+      expect(healed.present).toHaveLength(1);
+      expect(gateway.byTitle("Welcome to the team").metadata.tags).toEqual(["Archive"]);
+    },
+  );
+
+  test.skipIf(isRoot)(
+    "an unreadable root inbox withholds deletions without holding back other folders",
+    async () => {
+      createMailbox(root);
+      const archive = folder("Archive");
+      deliverMessage(root, "1.a.host", message(), { flags: "S" });
+      deliverMessage(
+        archive,
+        "2.b.host",
+        message({ messageId: "gone@example.org", subject: "Gone" }),
+        {
+          flags: "S",
+        },
+      );
+      const gateway = new FakeGateway();
+      const source = makeSource();
+      await gateway.cycle(source);
+      chmodSync(join(root, "cur"), 0o000);
+      try {
+        rmSync(join(archive, "cur", maildirFileName("2.b.host", "cur", "S")));
+        deliverMessage(
+          archive,
+          "3.c.host",
+          message({ messageId: "new@example.org", subject: "New" }),
+        );
+        const impaired = await gateway.cycle(source);
+        // The root's gap covers the root alone: Archive still ingests.
+        expect(impaired.emitted.map((d) => d.title)).toEqual(["New"]);
+        expect(impaired.present).toBeUndefined();
+        expect(gateway.docs.size).toBe(3);
+      } finally {
+        chmodSync(join(root, "cur"), 0o755);
+      }
+      await gateway.cycle(source);
+      expect([...gateway.docs.values()].map((d) => d.title).sort()).toEqual([
+        "New",
+        "Welcome to the team",
+      ]);
     },
   );
 

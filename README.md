@@ -93,7 +93,7 @@ Every source is opt-in, and once added it syncs by itself. The full catalogue, w
 | Finance & fitness       | Bank accounts (Enable Banking, Lunch Flow, Plaid), Coinbase, Strava                                                                           |
 | Omnesis itself          | Your notes to Omnesis, agent conversations, OpenClaw and Hermes transcripts                                                                   |
 
-The Apple sources need a collector on a Mac. Phone sources are pushed by the iOS and Android apps.
+The Apple sources need a collector on a Mac. Phone sources are pushed by the iOS and Android apps. A further source, Maildir, reads mail that a tool such as mbsync keeps on disk and is [experimental](https://omnesis.dev/docs/sources#maildir).
 
 ## Using Omnesis
 

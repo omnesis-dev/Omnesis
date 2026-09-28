@@ -130,6 +130,33 @@ describe("real Maildir source through a real collector", () => {
     if (!row) throw new Error(`no document titled ${title}`);
     return JSON.parse(row.metadata) as { tags?: string[]; extra?: Record<string, unknown> };
   };
+  const indexPath = () =>
+    join(
+      collectorConfigDir,
+      SOURCE_TYPE,
+      sourceId.slice(SOURCE_TYPE.length + 1),
+      "maildir-index.sqlite",
+    );
+  /** The source's local index, read beside the running collector. */
+  const indexState = () => {
+    const db = new Database(indexPath(), { readonly: true });
+    try {
+      return {
+        generation: (
+          db.prepare("SELECT v FROM meta WHERE k = 'generation'").get() as { v: string } | undefined
+        )?.v,
+        emitted: db.prepare("SELECT key, seq FROM emitted ORDER BY key").all() as Array<{
+          key: string;
+          seq: number;
+        }>,
+        unnamedFiles: (
+          db.prepare("SELECT COUNT(*) AS n FROM files WHERE key IS NULL").get() as { n: number }
+        ).n,
+      };
+    } finally {
+      db.close();
+    }
+  };
   const lastSynced = (): string | null => {
     const db = new Database(harness.getDbPath(), { readonly: true });
     try {
@@ -315,7 +342,7 @@ describe("real Maildir source through a real collector", () => {
           params: { path: join(scratch, "missing") },
         }),
       }),
-    ).rejects.toMatchObject({ status: expect.any(Number) as number });
+    ).rejects.toThrow(/does not exist|not there|must exist|no such/i);
   });
 
   test("added through the portal's path, it indexes one document per message", async () => {
@@ -366,6 +393,7 @@ describe("real Maildir source through a real collector", () => {
   }, 60_000);
 
   test("a delivery, a star and a new label each re-emit only their message", async () => {
+    expect(sourceId, "the source was added by an earlier step").toBeTruthy();
     deliverMessage(
       inbox(),
       "1772611200.8.host",
@@ -402,6 +430,7 @@ describe("real Maildir source through a real collector", () => {
   }, 60_000);
 
   test("archiving keeps a message; deleting its last copy removes it", async () => {
+    expect(sourceId, "the source was added by an earlier step").toBeTruthy();
     rmSync(join(inbox(), "cur", maildirFileName("1772443800.1.host", "cur", "S")));
     rmSync(join(work(), "cur", maildirFileName("1772443800.10.host", "cur", "S")));
     await syncAndWait();
@@ -431,6 +460,7 @@ describe("real Maildir source through a real collector", () => {
   test.skipIf(isRoot)(
     "an unreadable folder withholds deletions until it reads again",
     async () => {
+      expect(sourceId, "the source was added by an earlier step").toBeTruthy();
       chmodSync(work(), 0o000);
       try {
         // The only other copy goes: without the Work folder the source cannot
@@ -451,11 +481,10 @@ describe("real Maildir source through a real collector", () => {
   );
 
   test("a restarted collector resumes from its index without re-emitting", async () => {
-    const accountId = sourceId.slice(SOURCE_TYPE.length + 1);
-    expect(
-      existsSync(join(collectorConfigDir, SOURCE_TYPE, accountId, "maildir-index.sqlite")),
-    ).toBe(true);
+    expect(sourceId, "the source was added by an earlier step").toBeTruthy();
+    expect(existsSync(indexPath())).toBe(true);
     const before = rows();
+    const emittedBefore = indexState().emitted;
     await stopCollector(collector);
     collector = await startCollector();
     await waitForCondition(
@@ -466,9 +495,16 @@ describe("real Maildir source through a real collector", () => {
     collector.engine.stopSyncLoop();
     await syncAndWait();
     expect(rows()).toEqual(before);
+    // Nothing was read or emitted again: every message keeps the page that
+    // emitted it, and every file its name.
+    const after = indexState();
+    expect(after.emitted).toEqual(emittedBefore);
+    expect(after.unnamedFiles).toBe(0);
   }, 60_000);
 
   test("a resync rebuilds the corpus from the tree", async () => {
+    expect(sourceId, "the source was added by an earlier step").toBeTruthy();
+    const generation = indexState().generation;
     const before = rows().map((row) => [row.external_id, row.title]);
     const stamp = lastSynced();
     await admin(`/admin/sources/${encodeURIComponent(sourceId)}/resync`, {
@@ -484,5 +520,9 @@ describe("real Maildir source through a real collector", () => {
       "the resync rebuilt every document",
     );
     expect(rows().map((row) => [row.external_id, row.title])).toEqual(before);
+    // A new generation, re-emitted from its first page.
+    const rebuilt = indexState();
+    expect(rebuilt.generation).not.toBe(generation);
+    expect(rebuilt.emitted.length).toBe(before.length);
   }, 60_000);
 });

@@ -308,11 +308,17 @@
           </p>
         </div>
         <p>
-          Maildir indexes email that another program keeps on the collector's machine: mbsync,
-          offlineimap, getmail, or Thunderbird set to store mail as Maildir. That program talks to
-          the mail server; Omnesis only reads the files it writes. This is the way in for an account
-          that allows only approved mail apps, such as a Google account under Advanced Protection,
-          once one of those apps is mirroring it.
+          Maildir indexes email that another program keeps on the collector's machine, such as
+          mbsync, offlineimap or getmail. That program talks to the mail server; Omnesis only reads
+          the files it writes and never connects to the server itself. That makes it a way in for an
+          account that admits only approved mail apps, when one of them stores the mail as Maildir.
+        </p>
+        <p>
+          Omnesis does not run the mail tool. Schedule it yourself — cron, a launchd agent or a
+          systemd timer — and Omnesis follows what it writes. The account the collector runs as
+          needs read access to the folder; on macOS a folder under Documents, Desktop or an external
+          drive also needs Full Disk Access for the collector, and a sync that cannot read it says
+          so.
         </p>
         <p>
           Add it with the folder that holds one account's mail — the folder, or a folder inside it
@@ -341,12 +347,14 @@
             <strong>Changes follow the files.</strong> A new message, a folder added or removed, and
             a message starred or replied to update the document on the next sync. The collector
             watches the folder, so a sync follows the mail tool's writes. A message leaves the index
-            when its last copy is gone.
+            when its last copy is gone — so deletions follow the mail tool, and a tool set never to
+            remove local copies keeps them in Omnesis too.
           </li>
           <li>
             <strong>What it skips.</strong> Drafts, spam and trash folders, messages marked deleted,
             and any folder matching the <em>Exclude folders</em> setting, which takes folder names
-            or glob patterns such as <code>[Gmail]/All Mail</code>.
+            such as <code>[Gmail]/All Mail</code>; <code>*</code> matches within a folder name and
+            <code>**</code> across folders.
           </li>
           <li>
             <strong>A folder it cannot read.</strong> An unreadable folder, or a Maildir that is not
@@ -355,8 +363,14 @@
           </li>
           <li>
             <strong>Its index.</strong> The source keeps an index of the files it has read in the
-            collector's configuration directory, so a large mailbox is read once. It holds file
-            names and hashes, not message content.
+            collector's configuration directory, so a large mailbox is read once. It holds folder
+            and file names, dates, attachment names and hashes, not message text. Removing the
+            source deletes it.
+          </li>
+          <li>
+            <strong>One machine per mailbox.</strong> Each machine's Maildir is its own source. The
+            same account mirrored on two machines and added on both is two sources with the same
+            messages; add it on one.
           </li>
         </ul>
 

@@ -7,15 +7,20 @@
  */
 
 import { createHash } from "node:crypto";
-import { closeSync, fstatSync, openSync, readSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import PostalMime from "postal-mime";
 import type { Address, Email } from "postal-mime";
 import type { MailAddress } from "@omnesis/core";
 
 /** How much of a file the header scan reads. Headers past this are not consulted. */
-const HEADER_SCAN_BYTES = 256 * 1024;
+const HEADER_SCAN_BYTES = 64 * 1024;
 /** A message larger than this is indexed from its headers alone. */
-const MAX_MESSAGE_BYTES = 64 * 1024 * 1024;
+const MAX_MESSAGE_BYTES = 32 * 1024 * 1024;
+/**
+ * How deep MIME parts may nest. Real mail rarely passes a handful; the
+ * library's own ceiling is far higher than any message needs.
+ */
+const MIME_OPTIONS = { maxNestingDepth: 32 };
 const MAX_ATTACHMENTS = 200;
 const MAX_ATTACHMENT_FILENAME_CHARS = 255;
 
@@ -25,8 +30,6 @@ export interface ScannedMessage {
   key: string;
   /** Milliseconds since the epoch. */
   dateMs: number;
-  /** Bytes on disk. */
-  size: number;
 }
 
 export interface ParsedAttachment {
@@ -56,11 +59,23 @@ export interface ParsedMessage {
   headersOnly: boolean;
 }
 
+/**
+ * Read the start of a message file: `maxBytes` of it, or only the header
+ * scan's share when the whole file is larger than `maxBytes`.
+ *
+ * Opened without following a link and without blocking, and refused unless
+ * it is a regular file: a named pipe would otherwise stall the collector on
+ * the open, and a file swapped for a link since the walk could point anywhere.
+ */
 function readPrefix(path: string, maxBytes: number): { bytes: Buffer; size: number } {
-  const fd = openSync(path, "r");
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
-    const size = fstatSync(fd).size;
-    const length = Math.min(size, maxBytes);
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) {
+      throw Object.assign(new Error("Not a regular file"), { code: "ENOTREGULAR" });
+    }
+    const size = stat.size;
+    const length = size > maxBytes ? Math.min(size, HEADER_SCAN_BYTES) : size;
     const bytes = Buffer.alloc(length);
     let offset = 0;
     while (offset < length) {
@@ -129,11 +144,11 @@ export async function scanMessage(
   uniq: string,
   mtimeMs: () => number,
 ): Promise<ScannedMessage> {
-  const { bytes, size } = readPrefix(path, HEADER_SCAN_BYTES);
-  const headers = await PostalMime.parse(headerBlock(bytes));
+  const { bytes } = readPrefix(path, HEADER_SCAN_BYTES);
+  const headers = await PostalMime.parse(headerBlock(bytes), MIME_OPTIONS);
   const dateMs =
     validDate(headers.date)?.getTime() ?? deliveryTimeMs(uniq) ?? Math.trunc(mtimeMs());
-  return { key: messageKey(headers.messageId, mailboxId, uniq), dateMs, size };
+  return { key: messageKey(headers.messageId, mailboxId, uniq), dateMs };
 }
 
 function flattenAddresses(addresses: Address[] | Address | undefined): MailAddress[] {
@@ -193,7 +208,7 @@ function collectAttachments(email: Email): ParsedAttachment[] {
 export async function parseMessageFile(path: string): Promise<ParsedMessage> {
   const { bytes, size } = readPrefix(path, MAX_MESSAGE_BYTES);
   const headersOnly = size > MAX_MESSAGE_BYTES;
-  const email = await PostalMime.parse(headersOnly ? headerBlock(bytes) : bytes);
+  const email = await PostalMime.parse(headersOnly ? headerBlock(bytes) : bytes, MIME_OPTIONS);
   return {
     subject: email.subject?.trim() || undefined,
     from: flattenAddresses(email.from),

@@ -200,14 +200,17 @@ function readError(err: unknown, dir: string): SyncError {
   return new SyncError("unknown", `Cannot read the Maildir at ${dir}: ${msg}`);
 }
 
-function listDir(dir: string): Array<{ name: string; isDir: boolean; isLink: boolean }> {
+function listDir(dir: string): Array<{ name: string; isDir: boolean; isFile: boolean }> {
   return readdirSync(dir, { withFileTypes: true }).map((entry) => ({
     name: entry.name,
+    // Symbolic links are neither, so they are never followed, as folders or
+    // as messages: no mail tool writes one, and following one would let it
+    // lead the walk outside the tree it was pointed at. Nor are pipes,
+    // sockets or devices messages. A hard link is indistinguishable from the
+    // file it names — Dovecot uses them for copies of one message — and is
+    // read like any other.
     isDir: entry.isDirectory(),
-    // Symbolic links are never followed, as folders or as messages: no mail
-    // tool writes one, and following one would let it lead the walk outside
-    // the tree it was pointed at.
-    isLink: entry.isSymbolicLink(),
+    isFile: entry.isFile(),
   }));
 }
 
@@ -224,10 +227,17 @@ export function walkMaildir(
   exclude: readonly string[],
   limits: WalkLimits,
 ): MaildirWalk {
-  // `*`, `**` and `?` are wildcards; brackets are literal, because folder
-  // names carry them — `[Gmail]/All Mail` means that folder, not a class.
+  // `*`, `**` and `?` are wildcards and nothing else is: brackets, braces,
+  // a leading `!` and extglob groups are literal, because folder names carry
+  // them — `[Gmail]/All Mail` means that folder — and a negation would turn
+  // one excluded folder into every other one excluded.
   const excludeMatchers = exclude.map((pattern) =>
-    picomatch(pattern.replace(/[[\]]/g, "\\$&"), { nocase: true }),
+    picomatch(pattern.replace(/[[\]]/g, "\\$&"), {
+      nocase: true,
+      nonegate: true,
+      nobrace: true,
+      noextglob: true,
+    }),
   );
   const isExcluded = (name: string) => excludeMatchers.some((matches) => matches(name));
   const isLeftOut = (name: string) => isSkippedFolderName(name) || isExcluded(name);
@@ -321,7 +331,7 @@ export function walkMaildir(
         break;
       }
       for (const entry of entries) {
-        if (entry.name.startsWith(".") || entry.isDir || entry.isLink) continue;
+        if (entry.name.startsWith(".") || !entry.isFile) continue;
         const { uniq, flags } = parseMessageFileName(entry.name);
         const file: MessageFile = {
           mailboxId: mailbox.id,

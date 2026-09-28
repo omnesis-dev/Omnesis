@@ -46,6 +46,7 @@ describe("MaildirIndex", () => {
       const row = (key: string, seq: number) => ({
         key,
         signature: "s",
+        contentFingerprint: "f",
         seq,
         attachments: [],
       });
@@ -61,13 +62,37 @@ describe("MaildirIndex", () => {
     }
   });
 
+  test("undoing an uncommitted re-emission restores the version the gateway committed", () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-maildir-index-"));
+    try {
+      const index = new MaildirIndex(join(dir, "index.sqlite"));
+      index.alignWithCursor("g1", 0);
+      const row = (signature: string, seq: number) => ({
+        key: "a",
+        signature,
+        contentFingerprint: "f",
+        seq,
+        attachments: [],
+      });
+      index.recordEmissions("g1", [row("s1", 1)], []);
+      index.alignWithCursor("g1", 1);
+      index.recordEmissions("g1", [row("s2", 2)], []);
+      // The gateway never committed page 2.
+      index.alignWithCursor("g1", 1);
+      expect(index.allEmitted().get("a")).toMatchObject({ signature: "s1", seq: 1 });
+      index.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("keeps what it learned about files across generations", () => {
     const dir = mkdtempSync(join(tmpdir(), "omnesis-maildir-index-"));
     try {
       const path = join(dir, "index.sqlite");
       const index = new MaildirIndex(path);
       index.applyListing([{ mailboxId: "INBOX", uniq: "1", relPath: "cur/1:2,S", flags: "S" }], []);
-      index.recordScans([{ mailboxId: "INBOX", uniq: "1", key: "mid:k", dateMs: 5, size: 10 }]);
+      index.recordScans([{ mailboxId: "INBOX", uniq: "1", key: "mid:k", dateMs: 5 }]);
       index.alignWithCursor("g1", 0);
       index.close();
       const reopened = new MaildirIndex(path);
@@ -80,7 +105,6 @@ describe("MaildirIndex", () => {
           flags: "S",
           key: "mid:k",
           dateMs: 5,
-          size: 10,
         },
       ]);
       reopened.close();

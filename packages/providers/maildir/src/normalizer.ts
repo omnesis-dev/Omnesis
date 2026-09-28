@@ -67,7 +67,7 @@ export interface NormalizeContext {
 
 export interface NormalizedMessage {
   documents: DocumentInput[];
-  /** The attachments the snapshot will name for this message. */
+  /** The attachments as emitted; each extracted one is a child document the snapshot names. */
   attachments: EmittedAttachment[];
 }
 
@@ -75,20 +75,12 @@ function attachmentsEnabled(ctx: NormalizeContext): boolean {
   return ctx.attachmentConfig.enabled && ctx.extractAttachment !== undefined;
 }
 
-/**
- * Whether the current settings extract an attachment, by the same test the
- * snapshot applies to the attachments recorded for a message, so a child
- * document can never exist that the snapshot fails to name.
- */
+/** The child documents a message's emitted attachments made: one per extracted attachment. */
 export function attachmentChildIds(
   key: string,
   attachments: readonly EmittedAttachment[],
-  ctx: Pick<NormalizeContext, "attachmentConfig" | "extractAttachment">,
 ): string[] {
-  if (!ctx.attachmentConfig.enabled || ctx.extractAttachment === undefined) return [];
-  return attachments
-    .filter((a) => shouldExtractAttachment(a.mimeType, a.size, ctx.attachmentConfig).extract)
-    .map((a) => `${key}/att/${a.stableId}`);
+  return attachments.filter((a) => a.info.extracted).map((a) => `${key}/att/${a.stableId}`);
 }
 
 function formatAddresses(addresses: MailAddress[]): string[] {
@@ -132,10 +124,20 @@ async function extractOne(
   }
 }
 
+/**
+ * Build a message's documents.
+ *
+ * `reuse` is what was last emitted for its attachments, passed when only the
+ * message's folders or flags changed since: the markers are kept and no
+ * attachment is extracted again, so starring or archiving a message does not
+ * re-run text extraction or OCR on everything attached to it. Its child
+ * documents are left as they are.
+ */
 export async function normalizeMessage(
   message: ParsedMessage,
   placement: MessagePlacement,
   ctx: NormalizeContext,
+  reuse?: readonly EmittedAttachment[],
 ): Promise<NormalizedMessage> {
   const title = message.subject || "(no subject)";
   const rawBody = message.text || (message.html ? htmlToMarkdown(message.html) : "");
@@ -150,38 +152,39 @@ export async function normalizeMessage(
   const threadId = message.references[0] ?? message.inReplyTo ?? message.messageId ?? placement.key;
   const people = mailPeopleMentions(message, body, MAX_PEOPLE_PER_MESSAGE);
 
-  const attachmentInfos: AttachmentInfo[] = [];
   const recorded: EmittedAttachment[] = [];
   const extracted: Array<{
     attachment: ParsedAttachment;
     mimeType: string;
     result: ExtractionResult;
   }> = [];
-  if (attachmentsEnabled(ctx)) {
+  if (reuse) {
+    recorded.push(...reuse);
+  } else if (attachmentsEnabled(ctx)) {
     for (const attachment of message.attachments) {
       // The real type when the sender labelled the part generically.
       const mimeType = resolveEffectiveMimeType(attachment.filename, attachment.mimeType);
-      recorded.push({
-        stableId: deriveAttachmentStableId(attachment.filename, attachment.size, mimeType),
-        mimeType,
-        size: attachment.size,
-      });
+      const stableId = deriveAttachmentStableId(attachment.filename, attachment.size, mimeType);
       const check = shouldExtractAttachment(mimeType, attachment.size, ctx.attachmentConfig);
       if (!check.extract) {
-        attachmentInfos.push({
-          filename: attachment.filename,
-          mimeType,
-          size: attachment.size,
-          extracted: false,
-          reason: check.reason,
+        recorded.push({
+          stableId,
+          info: {
+            filename: attachment.filename,
+            mimeType,
+            size: attachment.size,
+            extracted: false,
+            reason: check.reason,
+          },
         });
         continue;
       }
       const { info, result } = await extractOne(attachment, mimeType, ctx);
-      attachmentInfos.push(info);
+      recorded.push({ stableId, info });
       if (result) extracted.push({ attachment, mimeType, result });
     }
   }
+  const attachmentInfos: AttachmentInfo[] = recorded.map((a) => a.info);
 
   const from = formatAddresses(message.from);
   const to = formatAddresses(message.to);

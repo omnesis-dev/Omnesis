@@ -10,6 +10,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -159,6 +160,20 @@ describe("walkMaildir", () => {
     const names = walkMaildir(root, ["[Gmail]/All Mail"], LIMITS).mailboxes.map((m) => m.name);
     // As a glob character class the brackets would also match "G/All Mail".
     expect(names.sort()).toEqual(["G/All Mail", "INBOX"]);
+  });
+
+  test("a leading ! or braces in a pattern are part of a folder name, never negation", () => {
+    createMailbox(join(root, "INBOX"));
+    createMailbox(join(root, "Work"));
+    const names = walkMaildir(root, ["!Work", "{INBOX,Work}"], LIMITS).mailboxes.map((m) => m.name);
+    expect(names.sort()).toEqual(["INBOX", "Work"]);
+  });
+
+  test("pipes and other special files are never taken for messages", () => {
+    const inbox = createMailbox(join(root, "INBOX"));
+    execFileSync("mkfifo", [join(inbox, "cur", "300.pipe.host:2,S")]);
+    deliverMessage(inbox, "100.a.host", "Subject: a\r\n\r\nx", { flags: "S" });
+    expect(walkMaildir(root, [], LIMITS).files.map((f) => f.uniq)).toEqual(["100.a.host"]);
   });
 
   test("a message caught in both new and cur resolves to cur", () => {
