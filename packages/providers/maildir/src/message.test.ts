@@ -102,14 +102,14 @@ describe("text that is not UTF-8", () => {
   test("a raw Latin-1 subject is read in the charset the message declares", async () => {
     const raw = Buffer.concat([
       Buffer.from("From: <jamie.lopez@example.org>\r\nSubject: ", "latin1"),
-      Buffer.from("Hébergement réservé", "latin1"),
+      Buffer.from("Crème brûlée prête", "latin1"),
       Buffer.from("\r\nContent-Type: text/plain; charset=iso-8859-1\r\n\r\n", "latin1"),
       Buffer.from("Voilà le détail.", "latin1"),
     ]);
     const path = join(dir, "m");
     writeFileSync(path, raw);
     const parsed = await parseMessageFile(path);
-    expect(parsed.subject).toBe("Hébergement réservé");
+    expect(parsed.subject).toBe("Crème brûlée prête");
     expect(parsed.text?.trim()).toBe("Voilà le détail.");
     expect((await scanMessage(path, "INBOX", "x", () => 0)).key).toMatch(/^file:|^mid:/);
   });

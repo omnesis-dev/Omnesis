@@ -254,12 +254,12 @@ describe("bootstrap", () => {
     deliverMessage(
       folder("INBOX"),
       "1.a.host",
-      message({ text: "Over 150&nbsp;000 members&#8217; votes &amp; more\n\n\n\n\n\nSee you" }),
+      message({ text: "Tickets&nbsp;42 &#8217;n&#8217; pie &amp; tea\n\n\n\n\n\nBring a mug" }),
     );
     const gateway = new FakeGateway();
     await gateway.cycle(makeSource());
     const content = gateway.byTitle("Welcome to the team").content;
-    expect(content).toContain("Over 150\u00a0000 members’ votes & more\n\nSee you");
+    expect(content).toContain("Tickets\u00a042 ’n’ pie & tea\n\nBring a mug");
   });
 
   test("a text part with a wrong charset gives way to a clean HTML part", async () => {
