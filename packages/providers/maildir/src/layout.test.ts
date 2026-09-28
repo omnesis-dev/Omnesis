@@ -9,7 +9,6 @@ import {
   rmSync,
   statSync,
   symlinkSync,
-  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
