@@ -12,6 +12,8 @@ const DOC_MIME = "application/msword";
 const XLS_MIME_TYPES = new Set(["application/vnd.ms-excel", "application/x-msexcel"]);
 const PPT_MIME = "application/vnd.ms-powerpoint";
 
+/** `recVer` of a record whose payload is more records. */
+const PPT_CONTAINER_VERSION = 0x0f;
 const PPT_TEXT_CHARS_ATOM = 0x0fa0;
 const PPT_TEXT_BYTES_ATOM = 0x0fa8;
 const CFB_STREAM_TYPE = 2;
@@ -57,15 +59,72 @@ export async function extractLegacyOfficeText(
   const maxLen = opts?.maxTextLength ?? 512_000;
 
   try {
-    if (mimeType === DOC_MIME) return await extractDoc(data, maxLen);
-    if (XLS_MIME_TYPES.has(mimeType)) return extractXls(data, maxLen);
-    if (mimeType === PPT_MIME) return extractPpt(data, maxLen);
-    return null;
+    const result = await extractByType(data, mimeType, maxLen);
+    if (result && looksGarbled(result.text)) {
+      log.warn(
+        `Legacy Office extraction for ${mimeType} (${data.length} bytes) produced binary noise — treating as failed`,
+      );
+      return null;
+    }
+    return result;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log.warn(`Legacy Office extraction failed for ${mimeType} (${data.length} bytes): ${msg}`);
     return null;
   }
+}
+
+async function extractByType(
+  data: Uint8Array,
+  mimeType: string,
+  maxLen: number,
+): Promise<ExtractionResult | null> {
+  if (mimeType === DOC_MIME) return extractDoc(data, maxLen);
+  if (XLS_MIME_TYPES.has(mimeType)) return extractXls(data, maxLen);
+  if (mimeType === PPT_MIME) return extractPpt(data, maxLen);
+  return null;
+}
+
+/**
+ * Whether extracted text is mostly binary read as characters.
+ *
+ * Replacement characters are what a lone UTF-16 surrogate decodes to, and a
+ * run of random bytes read as UTF-16 lands all over the Basic Multilingual
+ * Plane, so its letters come from many unrelated scripts at once. Real text —
+ * in any language — keeps to one or two.
+ */
+function looksGarbled(text: string): boolean {
+  const replacements = text.match(/\uFFFD/g)?.length ?? 0;
+  if (replacements > Math.max(3, text.length * 0.005)) return true;
+  return !lettersShareAScript(text, 0.7, 20);
+}
+
+/**
+ * The script family of a letter, coarse on purpose: Latin with its accents,
+ * Greek and Cyrillic, Hebrew and Arabic, Indic, East Asian (CJK with kana and
+ * fullwidth forms), Hangul, and everything else.
+ */
+function scriptFamily(cp: number): number {
+  if (cp < 0x0250 || (cp >= 0x1e00 && cp < 0x1f00)) return 0;
+  if (cp >= 0x0370 && cp < 0x0530) return 1;
+  if (cp >= 0x0590 && cp < 0x0780) return 2;
+  if (cp >= 0x0900 && cp < 0x0e00) return 3;
+  if ((cp >= 0x2e80 && cp < 0xa000) || (cp >= 0xff00 && cp < 0xfff0)) return 4;
+  if (cp >= 0xac00 && cp < 0xd7b0) return 5;
+  return 6;
+}
+
+/** Whether at least `share` of the letters belong to one script family; fewer than `minLetters` letters always pass. */
+function lettersShareAScript(text: string, share: number, minLetters: number): boolean {
+  const counts = new Array<number>(7).fill(0);
+  let letters = 0;
+  for (const ch of text) {
+    if (!/\p{L}/u.test(ch)) continue;
+    counts[scriptFamily(ch.codePointAt(0)!)] += 1;
+    letters += 1;
+  }
+  if (letters < minLetters) return true;
+  return Math.max(...counts) >= letters * share;
 }
 
 async function extractDoc(data: Uint8Array, maxLen: number): Promise<ExtractionResult | null> {
@@ -444,16 +503,30 @@ function decodeBiffStringPayload(
   return Buffer.from(slice).toString(isUtf16 ? "utf16le" : "latin1");
 }
 
+/**
+ * Text atoms anywhere in a PowerPoint record stream.
+ *
+ * The stream is a tree: the document and every slide are container records
+ * (`recVer` 0xF) whose payload is more records, and the text atoms live
+ * inside them. A container is entered rather than skipped; any other record
+ * is stepped over by its length.
+ */
 function extractPptTextAtoms(bytes: Uint8Array): string[] {
   const parts: string[] = [];
   let offset = 0;
 
   while (offset + 8 <= bytes.length) {
+    const recordVersion = readU16(bytes, offset) & 0x0f;
     const recordType = readU16(bytes, offset + 2);
     const length = readU32(bytes, offset + 4);
     const dataStart = offset + 8;
     const dataEnd = dataStart + length;
     if (dataEnd > bytes.length) break;
+
+    if (recordVersion === PPT_CONTAINER_VERSION) {
+      offset = dataStart;
+      continue;
+    }
 
     if (recordType === PPT_TEXT_CHARS_ATOM) {
       const text = normalizeText(Buffer.from(bytes.slice(dataStart, dataEnd)).toString("utf16le"));
@@ -497,7 +570,16 @@ function extractOleTextRunsFromContainer(
     parts.push(...extractSingleByteRuns(bytes, Math.max(minRunLength, 8)));
   }
 
-  return clipText(dedupe(parts).join("\n\n"), maxLen);
+  // Printable runs turn up in any binary stream by chance; a document says
+  // something in words somewhere, so recovered text with no phrase at all is
+  // treated as having found nothing.
+  const text = dedupe(parts).join("\n\n");
+  return hasPhrase(text) ? clipText(text, maxLen) : null;
+}
+
+/** Whether text holds three words of three letters or more in a row. */
+function hasPhrase(text: string): boolean {
+  return /\p{L}{3,}[ \t]+\p{L}{3,}[ \t]+\p{L}{3,}/u.test(text);
 }
 
 function streamPriority(name: string, preferredStreams: string[] | undefined): number {
@@ -516,7 +598,7 @@ function extractUtf16Runs(bytes: Uint8Array, minChars: number): string[] {
       const start = offset;
       while (offset + 1 < bytes.length && isTextCodePoint(readU16(bytes, offset))) offset += 2;
       const chars = (offset - start) / 2;
-      if (chars >= minChars) {
+      if (chars >= minChars && !isShiftedSingleByteText(bytes, start, offset)) {
         const text = normalizeText(Buffer.from(bytes.slice(start, offset)).toString("utf16le"));
         if (looksLikeUsefulText(text, minChars)) runs.push(text);
       }
@@ -524,6 +606,19 @@ function extractUtf16Runs(bytes: Uint8Array, minChars: number): string[] {
     }
   }
   return runs;
+}
+
+/**
+ * Whether a UTF-16 run is ASCII text read one byte out of step: each code
+ * unit is then a printable byte followed by the zero high byte of the next
+ * character, which decodes as a CJK ideograph whose low byte is 0x00.
+ */
+function isShiftedSingleByteText(bytes: Uint8Array, start: number, end: number): boolean {
+  let zeroLow = 0;
+  for (let offset = start; offset + 1 < end; offset += 2) {
+    if (bytes[offset] === 0) zeroLow += 1;
+  }
+  return zeroLow * 2 > (end - start) / 2;
 }
 
 function extractSingleByteRuns(bytes: Uint8Array, minChars: number): string[] {
@@ -541,19 +636,45 @@ function extractSingleByteRuns(bytes: Uint8Array, minChars: number): string[] {
   return runs;
 }
 
+/**
+ * A UTF-16 code unit plausible in document text: not a control, a C1
+ * control, a surrogate (a lone one decodes to a replacement character), a
+ * private-use character, or a noncharacter.
+ */
 function isTextCodePoint(value: number): boolean {
-  return value === 0x09 || value === 0x0a || value === 0x0d || (value >= 0x20 && value < 0xfffe);
+  if (value === 0x09 || value === 0x0a || value === 0x0d) return true;
+  if (value < 0x20 || (value >= 0x7f && value < 0xa0)) return false;
+  if (value >= 0xd800 && value < 0xf900) return false;
+  return value < 0xfffd;
 }
 
 function isSingleByteText(value: number): boolean {
   return value === 0x09 || value === 0x0a || value === 0x0d || (value >= 0x20 && value <= 0x7e);
 }
 
+/**
+ * Whether a run recovered from raw stream bytes reads as text.
+ *
+ * Besides enough letters and digits, the letters must come mostly from an
+ * alphabetic script (Latin, Greek, Cyrillic, Hebrew, Arabic, Indic). Random
+ * bytes read as UTF-16 land mostly on CJK and Hangul code points, so without
+ * this an image stream inside the file comes back as pages of ideographs. It
+ * costs a CJK document nothing it had: this is the last-resort path, after the
+ * format's own text records were read.
+ */
 function looksLikeUsefulText(text: string, minChars: number): boolean {
   const trimmed = text.trim();
   if (trimmed.length < minChars) return false;
   const lettersOrDigits = trimmed.match(/[\p{L}\p{N}]/gu)?.length ?? 0;
-  return lettersOrDigits >= Math.max(2, Math.floor(trimmed.length * 0.25));
+  if (lettersOrDigits < Math.max(2, Math.floor(trimmed.length * 0.25))) return false;
+  let letters = 0;
+  let alphabetic = 0;
+  for (const ch of trimmed) {
+    if (!/\p{L}/u.test(ch)) continue;
+    letters += 1;
+    if (scriptFamily(ch.codePointAt(0)!) <= 3) alphabetic += 1;
+  }
+  return letters === 0 || alphabetic >= letters * 0.8;
 }
 
 function decodeRk(raw: number): number {

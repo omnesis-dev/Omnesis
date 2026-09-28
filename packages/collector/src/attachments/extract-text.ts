@@ -4,7 +4,7 @@
 import TurndownService from "turndown";
 import { parseHTML } from "linkedom";
 import ICAL from "ical.js";
-import { createLogger } from "@omnesis/core";
+import { createLogger, decodeMailText } from "@omnesis/core";
 import type { ExtractionResult } from "./types.js";
 
 const log = createLogger("attachments:text");
@@ -13,10 +13,16 @@ const log = createLogger("attachments:text");
  * Extract text from text-based attachments (plain text, CSV, HTML, Markdown, JSON, ICS).
  * Returns null if extraction fails or content is empty.
  */
+/**
+ * `charset` is the one the file's `Content-Type` declares, when the caller
+ * knows it (a mail attachment part does). Bytes that are valid UTF-8 are read
+ * as UTF-8 regardless; see `decodeMailText`.
+ */
 export async function extractTextContent(
   data: Uint8Array,
   mimeType: string,
   opts?: { maxTextLength?: number },
+  charset?: string,
 ): Promise<ExtractionResult | null> {
   if (data.length === 0) return null;
 
@@ -28,11 +34,11 @@ export async function extractTextContent(
       case "text/csv":
       case "text/markdown":
       case "application/json":
-        return extractPlainText(data, maxLen);
+        return extractPlainText(data, maxLen, charset);
       case "text/html":
-        return extractHtmlText(data, maxLen);
+        return extractHtmlText(data, maxLen, charset);
       case "text/calendar":
-        return extractCalendarText(data, maxLen);
+        return extractCalendarText(data, maxLen, charset);
       default:
         return null;
     }
@@ -43,8 +49,12 @@ export async function extractTextContent(
   }
 }
 
-function extractPlainText(data: Uint8Array, maxLen: number): ExtractionResult | null {
-  const text = new TextDecoder("utf-8", { fatal: false }).decode(data);
+function extractPlainText(
+  data: Uint8Array,
+  maxLen: number,
+  charset: string | undefined,
+): ExtractionResult | null {
+  const text = decodeMailText(data, charset);
   if (!text.trim()) return null;
 
   if (text.length > maxLen) {
@@ -70,11 +80,15 @@ const HTML_GUARD_MIN_INPUT_BYTES = 1024;
  */
 const HTML_GUARD_MIN_OUTPUT_RATIO = 0.01;
 
-function extractHtmlText(data: Uint8Array, maxLen: number): ExtractionResult | null {
-  // Decode the bytes. Honour any declared charset (Outlook bank emails arrive
-  // as windows-1252 even when the MIME envelope says text/html). On failure
-  // fall back to UTF-8 with replacement characters — historical behaviour.
-  const html = decodeHtmlBytes(data);
+function extractHtmlText(
+  data: Uint8Array,
+  maxLen: number,
+  charset: string | undefined,
+): ExtractionResult | null {
+  // Decode the bytes. Honour any charset the markup declares (Outlook bank
+  // emails arrive as windows-1252 even when the MIME envelope says
+  // text/html), else the one the envelope declares.
+  const html = decodeHtmlBytes(data, charset);
   if (!html.trim()) return null;
 
   // If the body looks quoted-printable (e.g. mishandled MIME upstream),
@@ -129,7 +143,7 @@ function extractHtmlText(data: Uint8Array, maxLen: number): ExtractionResult | n
  * tags live in the head, well before any high-bit content, so a UTF-8
  * decode of the first 4 KB is enough to find them.
  */
-function decodeHtmlBytes(data: Uint8Array): string {
+function decodeHtmlBytes(data: Uint8Array, envelopeCharset: string | undefined): string {
   const SNIFF_BYTES = Math.min(data.length, 4096);
   const sniff = new TextDecoder("utf-8", { fatal: false }).decode(data.subarray(0, SNIFF_BYTES));
 
@@ -138,9 +152,10 @@ function decodeHtmlBytes(data: Uint8Array): string {
     sniff.match(/content=["'][^"']*charset=([\w-]+)/i);
   const declared = charsetMatch?.[1]?.toLowerCase();
 
-  // utf-8 is the implicit default — no need to re-decode.
+  // Without a declaration in the markup the envelope's charset applies, and
+  // bytes that are not UTF-8 are never decoded as UTF-8.
   if (!declared || declared === "utf-8" || declared === "utf8") {
-    return new TextDecoder("utf-8", { fatal: false }).decode(data);
+    return decodeMailText(data, declared ? undefined : envelopeCharset);
   }
 
   try {
@@ -204,8 +219,12 @@ function decodeQuotedPrintable(qp: string): string {
   }
 }
 
-function extractCalendarText(data: Uint8Array, maxLen: number): ExtractionResult | null {
-  const text = new TextDecoder("utf-8", { fatal: false }).decode(data);
+function extractCalendarText(
+  data: Uint8Array,
+  maxLen: number,
+  charset: string | undefined,
+): ExtractionResult | null {
+  const text = decodeMailText(data, charset);
   if (!text.trim()) return null;
 
   let jcalData: unknown;

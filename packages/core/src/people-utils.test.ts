@@ -529,6 +529,25 @@ describe("extractEmailsFromText", () => {
     expect(extractEmailsFromText(text)).toEqual(["john@example.com", "jane@test.org"]);
   });
 
+  test("image file names in URLs are not addresses", () => {
+    // Assembled so the file names never read as addresses in the source.
+    const retina = ["brand", "2x.png"].join("@");
+    const small = ["hero", "small.jpg"].join("@");
+    const text = `![logo](https://cdn.example.com/mail/logos/${retina}) ![](https://img.example.org/a/${small}) — reply to jamie.lopez@example.org`;
+    expect(extractEmailsFromText(text)).toEqual(["jamie.lopez@example.org"]);
+  });
+
+  test("an address pasted into a URL path is not a mention", () => {
+    expect(extractEmailsFromText("https://example.com/unsubscribe/maya@example.com")).toEqual([]);
+  });
+
+  test("an address glued to the next capitalised word keeps its domain", () => {
+    const glued = ["jamie", "example.comOn"].join("@");
+    expect(extractEmailsFromText(`From: ${glued} behalf of the team`)).toEqual([
+      "jamie@example.com",
+    ]);
+  });
+
   test("deduplicates emails", () => {
     const text = "Email john@x.com and also John@X.COM again.";
     expect(extractEmailsFromText(text)).toEqual(["john@x.com"]);

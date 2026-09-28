@@ -161,6 +161,7 @@ export {
 } from "./rate-limiter.js";
 
 export { htmlToMarkdown } from "./html-to-markdown.js";
+export { chooseMailBody, tidyMailBody, decodeMailText, charsetOfContentType } from "./mail-body.js";
 
 export {
   extractSchemaOrgDatesFromHtml,
@@ -780,6 +781,9 @@ export {
   DEFAULT_ATTACHMENT_TYPES,
   STT_AUDIO_TYPES,
   DEFAULT_MAX_TEXT_LENGTH,
+  extractionOutcome,
+  isInlineDecorationImage,
+  INLINE_DECORATION_MAX_BYTES,
 } from "./attachments.js";
 
 export type {
@@ -787,6 +791,7 @@ export type {
   AttachmentExtractionConfig,
   ExtractionResult,
   AttachmentExtractFn,
+  AttachmentExtractOptions,
 } from "./attachments.js";
 
 export type { AudioTranscribeFn } from "./transcription.js";
