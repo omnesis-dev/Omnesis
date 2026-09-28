@@ -250,6 +250,18 @@ describe("bootstrap", () => {
     expect(markup).not.toContain("<div>");
   });
 
+  test("entities a mailer left in the text are decoded and blank runs collapsed", async () => {
+    deliverMessage(
+      folder("INBOX"),
+      "1.a.host",
+      message({ text: "Over 150&nbsp;000 members&#8217; votes &amp; more\n\n\n\n\n\nSee you" }),
+    );
+    const gateway = new FakeGateway();
+    await gateway.cycle(makeSource());
+    const content = gateway.byTitle("Welcome to the team").content;
+    expect(content).toContain("Over 150\u00a0000 members’ votes & more\n\nSee you");
+  });
+
   test("the header block and the body are separate paragraphs", async () => {
     deliverMessage(folder("INBOX"), "1.a.host", message());
     const gateway = new FakeGateway();
@@ -648,6 +660,98 @@ describe("attachments", () => {
     );
     expect(off.emitted).toHaveLength(1);
     expect(gateway.docs.size).toBe(1);
+  });
+
+  test("an attachment whose extraction failed is tried again later, and only it", async () => {
+    deliverMessage(
+      folder("INBOX"),
+      "1.a.host",
+      message({
+        attachments: [
+          { filename: "scan.png", mimeType: "image/png", content: "Receipt total" },
+          { filename: "notes.pdf", mimeType: "application/pdf", content: "Meeting notes" },
+        ],
+      }),
+    );
+    let clock = Date.parse("2026-03-01T00:00:00Z");
+    let ocrUp = false;
+    const calls: string[] = [];
+    const flaky: AttachmentExtractFn = (data, mime) => {
+      calls.push(mime);
+      if (mime === "image/png" && !ocrUp) return Promise.resolve(null);
+      return Promise.resolve({ text: new TextDecoder().decode(data), truncated: false });
+    };
+    const source = new MaildirSource({
+      sourceId: "maildir:fixture",
+      providerId: "maildir:fixture",
+      root,
+      exclude: [],
+      indexPath: join(scratch, "index.sqlite"),
+      attachmentConfig: resolveAttachmentConfig(undefined, { defaultEnabled: true }),
+      extractAttachment: flaky,
+      now: () => clock,
+    });
+    const gateway = new FakeGateway();
+    await gateway.cycle(source);
+    expect(calls.sort()).toEqual(["application/pdf", "image/png"]);
+    expect(
+      [...gateway.docs.values()].filter((d) => d.metadata.documentType === "attachment"),
+    ).toHaveLength(1);
+
+    // Not due yet: nothing happens.
+    calls.length = 0;
+    clock += 30 * 60 * 1000;
+    expect((await gateway.cycle(source)).emitted).toEqual([]);
+    expect(calls).toEqual([]);
+
+    // Due, and the backend is back: only the image is extracted again.
+    ocrUp = true;
+    clock += 31 * 60 * 1000;
+    const retried = await gateway.cycle(source);
+    expect(calls).toEqual(["image/png"]);
+    expect(retried.emitted.map((d) => d.metadata.documentType).sort()).toEqual([
+      "attachment",
+      "email",
+    ]);
+    expect(
+      [...gateway.docs.values()].filter((d) => d.metadata.documentType === "attachment"),
+    ).toHaveLength(2);
+    expect(retried.present).toHaveLength(3);
+
+    // Settled: no further tries.
+    calls.length = 0;
+    clock += 48 * 60 * 60 * 1000;
+    expect((await gateway.cycle(source)).emitted).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  test("an attachment that keeps failing is tried three more times, then left", async () => {
+    deliverMessage(
+      folder("INBOX"),
+      "1.a.host",
+      message({ attachments: [{ filename: "scan.png", mimeType: "image/png", content: "x" }] }),
+    );
+    let clock = Date.parse("2026-03-01T00:00:00Z");
+    let calls = 0;
+    const source = new MaildirSource({
+      sourceId: "maildir:fixture",
+      providerId: "maildir:fixture",
+      root,
+      exclude: [],
+      indexPath: join(scratch, "index.sqlite"),
+      attachmentConfig: resolveAttachmentConfig(undefined, { defaultEnabled: true }),
+      extractAttachment: () => {
+        calls += 1;
+        return Promise.resolve(null);
+      },
+      now: () => clock,
+    });
+    const gateway = new FakeGateway();
+    for (let cycle = 0; cycle < 8; cycle++) {
+      await gateway.cycle(source);
+      clock += 25 * 60 * 60 * 1000;
+    }
+    expect(calls).toBe(4);
   });
 
   test("an extraction failure is recorded on the message, not retried as a page failure", async () => {

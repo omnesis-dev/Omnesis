@@ -53,17 +53,28 @@ export interface EmittedAttachment {
   info: AttachmentInfo;
 }
 
-export interface EmittedRow {
-  key: string;
+/** What was emitted for one message. */
+export interface EmittedState {
   /** Everything that decides the emitted documents: output, settings, folders and flags. */
   signature: string;
   /** The part of the signature that decides attachment documents: output and settings. */
   contentFingerprint: string;
-  seq: number;
   attachments: EmittedAttachment[];
+  /**
+   * When to emit the message again to retry attachments whose text could not
+   * be extracted (an OCR backend that was paused or down), or null when
+   * nothing is owed. `attempts` counts the tries made so far.
+   */
+  retryAt: number | null;
+  attempts: number;
 }
 
-const SCHEMA_VERSION = "3";
+export interface EmittedRow extends EmittedState {
+  key: string;
+  seq: number;
+}
+
+const SCHEMA_VERSION = "4";
 
 export class MaildirIndex {
   private readonly db: DatabaseSync;
@@ -94,14 +105,10 @@ export class MaildirIndex {
       CREATE INDEX IF NOT EXISTS files_key ON files(key);
       CREATE TABLE IF NOT EXISTS emitted (
         key TEXT PRIMARY KEY,
-        signature TEXT NOT NULL,
-        content_fingerprint TEXT NOT NULL,
         seq INTEGER NOT NULL,
-        attachments TEXT NOT NULL,
-        prev_signature TEXT,
-        prev_content_fingerprint TEXT,
+        state TEXT NOT NULL,
         prev_seq INTEGER,
-        prev_attachments TEXT
+        prev_state TEXT
       );
     `);
     this.setMeta("schema", SCHEMA_VERSION);
@@ -142,10 +149,7 @@ export class MaildirIndex {
       } else {
         this.db
           .prepare(
-            `UPDATE emitted SET signature = prev_signature,
-               content_fingerprint = prev_content_fingerprint, seq = prev_seq,
-               attachments = prev_attachments, prev_signature = NULL,
-               prev_content_fingerprint = NULL, prev_seq = NULL, prev_attachments = NULL
+            `UPDATE emitted SET seq = prev_seq, state = prev_state, prev_seq = NULL, prev_state = NULL
              WHERE seq > ? AND prev_seq IS NOT NULL AND prev_seq <= ?`,
           )
           .run(committedSeq, committedSeq);
@@ -229,25 +233,15 @@ export class MaildirIndex {
   }
 
   allEmitted(): Map<string, EmittedRow> {
-    const rows = this.db
-      .prepare("SELECT key, signature, content_fingerprint, seq, attachments FROM emitted")
-      .all() as Array<{
+    const rows = this.db.prepare("SELECT key, seq, state FROM emitted").all() as Array<{
       key: string;
-      signature: string;
-      content_fingerprint: string;
       seq: number;
-      attachments: string;
+      state: string;
     }>;
     return new Map(
       rows.map((row) => [
         row.key,
-        {
-          key: row.key,
-          signature: row.signature,
-          contentFingerprint: row.content_fingerprint,
-          seq: row.seq,
-          attachments: JSON.parse(row.attachments) as EmittedAttachment[],
-        },
+        { key: row.key, seq: row.seq, ...(JSON.parse(row.state) as EmittedState) },
       ]),
     );
   }
@@ -263,14 +257,10 @@ export class MaildirIndex {
     // The version being replaced is kept, so an uncommitted page can be undone
     // back to it (see `alignWithCursor`).
     const upsert = this.db.prepare(`
-      INSERT INTO emitted (key, signature, content_fingerprint, seq, attachments)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO emitted (key, seq, state) VALUES (?, ?, ?)
       ON CONFLICT(key) DO UPDATE SET
-        prev_signature = emitted.signature,
-        prev_content_fingerprint = emitted.content_fingerprint,
-        prev_seq = emitted.seq, prev_attachments = emitted.attachments,
-        signature = excluded.signature, content_fingerprint = excluded.content_fingerprint,
-        seq = excluded.seq, attachments = excluded.attachments
+        prev_seq = emitted.seq, prev_state = emitted.state,
+        seq = excluded.seq, state = excluded.state
     `);
     const remove = this.db.prepare("DELETE FROM emitted WHERE key = ?");
     this.transaction(() => {
@@ -280,14 +270,8 @@ export class MaildirIndex {
           "The Maildir index was restarted while this page was being built",
         );
       }
-      for (const row of rows) {
-        upsert.run(
-          row.key,
-          row.signature,
-          row.contentFingerprint,
-          row.seq,
-          JSON.stringify(row.attachments),
-        );
+      for (const { key, seq, ...state } of rows) {
+        upsert.run(key, seq, JSON.stringify(state));
       }
       for (const key of forget) remove.run(key);
     });

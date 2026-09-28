@@ -35,7 +35,7 @@ import { SourceId, ProviderId, SyncError } from "@omnesis/types";
 import { MaildirIndex } from "./index-store.js";
 import { folderTag, tooLargeError, walkMaildir } from "./layout.js";
 import { parseMessageFile, scanMessage } from "./message.js";
-import { attachmentChildIds, normalizeMessage } from "./normalizer.js";
+import { attachmentChildIds, isRetryableFailure, normalizeMessage } from "./normalizer.js";
 import type { AttachmentExtractionConfig, AttachmentExtractFn } from "@omnesis/core";
 import type { SyncCursor, SyncOptions, SyncProgress, SyncResult } from "@omnesis/source-sdk";
 import type { DocumentInput } from "@omnesis/types";
@@ -63,6 +63,12 @@ const DEFAULT_LIMITS: MaildirLimits = {
  * folder id: those are relative paths, and this cannot be one.
  */
 const UNNAMED_FILES = "\0unnamed";
+/**
+ * When to try again an attachment whose text could not be extracted — most
+ * often an OCR backend that was paused after a timeout or briefly down — as
+ * delays after each failed try. After the last one the failure stands.
+ */
+const RETRY_BACKOFF_MS = [60 * 60 * 1000, 6 * 60 * 60 * 1000, 24 * 60 * 60 * 1000];
 /** How long a cycle's walk may be reused between its pages. */
 const PLAN_TTL_MS = 10 * 60 * 1000;
 
@@ -107,8 +113,10 @@ interface PlanEntry extends MessagePlacement {
   paths: string[];
   signature: string;
   contentFingerprint: string;
-  /** What was last emitted for its attachments, when only its folders or flags changed since. */
+  /** What was last emitted for its attachments, when the settings deciding them are unchanged. */
   reuse?: EmittedAttachment[];
+  /** Attachment extraction tries already made under those settings. */
+  attempts?: number;
 }
 
 interface CyclePlan {
@@ -460,8 +468,12 @@ export class MaildirSource {
       const entry = this.placement(plan, key, files, fingerprint);
       if (this.cutoffMs !== undefined && entry.dateMs < this.cutoffMs) continue;
       const prior = emitted.get(key);
-      if (prior?.signature === entry.signature) continue;
-      if (prior?.contentFingerprint === fingerprint) entry.reuse = prior.attachments;
+      const retryDue = prior?.retryAt != null && prior.retryAt <= this.now();
+      if (prior?.signature === entry.signature && !retryDue) continue;
+      if (prior?.contentFingerprint === fingerprint) {
+        entry.reuse = prior.attachments;
+        entry.attempts = prior.attempts;
+      }
       pending.push(entry);
     }
     // Oldest first, so an interrupted bootstrap has filled in history in order.
@@ -533,6 +545,9 @@ export class MaildirSource {
         continue;
       }
       const normalized = await normalizeMessage(parsed, entry, this.ctx, entry.reuse);
+      const attempts = (entry.attempts ?? 0) + 1;
+      const owesRetry =
+        normalized.attachments.some(isRetryableFailure) && attempts <= RETRY_BACKOFF_MS.length;
       return {
         documents: normalized.documents,
         row: {
@@ -541,6 +556,8 @@ export class MaildirSource {
           contentFingerprint: entry.contentFingerprint,
           seq,
           attachments: normalized.attachments,
+          retryAt: owesRetry ? this.now() + RETRY_BACKOFF_MS[attempts - 1]! : null,
+          attempts: owesRetry ? attempts : 0,
         },
       };
     }

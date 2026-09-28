@@ -83,6 +83,47 @@ export function attachmentChildIds(
   return attachments.filter((a) => a.info.extracted).map((a) => `${key}/att/${a.stableId}`);
 }
 
+const NAMED_ENTITIES: Record<string, string> = {
+  nbsp: "\u00a0",
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  eacute: "é",
+  egrave: "è",
+  agrave: "à",
+  ccedil: "ç",
+  euro: "€",
+  rsquo: "’",
+  lsquo: "‘",
+  rdquo: "”",
+  ldquo: "“",
+  hellip: "…",
+  ndash: "–",
+  mdash: "—",
+};
+
+/**
+ * Tidy the text a message is read as: HTML entities decoded, and runs of blank
+ * lines cut to one. Mailers that build the plain-text part from HTML often
+ * leave `&nbsp;` and `&#8217;` in it, and layout tables leave dozens of empty
+ * lines; neither is text anyone wrote, and both get in the way of search.
+ */
+function tidyBody(text: string): string {
+  const decoded = text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (entity, name: string) => {
+    if (name.startsWith("#")) {
+      const code =
+        name[1] === "x" || name[1] === "X" ? parseInt(name.slice(2), 16) : Number(name.slice(1));
+      return Number.isInteger(code) && code > 0 && code <= 0x10ffff
+        ? String.fromCodePoint(code)
+        : entity;
+    }
+    return NAMED_ENTITIES[name.toLowerCase()] ?? entity;
+  });
+  return decoded.replace(/[ \t\u00a0]+\n/g, "\n").replace(/\n{3,}/g, "\n\n");
+}
+
 /** A plain-text part shorter than this may be a stand-in for the HTML one. */
 const STUB_TEXT_CHARS = 400;
 
@@ -157,13 +198,23 @@ async function extractOne(
 }
 
 /**
+ * Whether an attachment's extraction failed in a way a later try may not: the
+ * extractor, or the OCR backend behind it, gave nothing back. A type or size
+ * the settings exclude, or a picture that holds no text, is settled.
+ */
+export function isRetryableFailure(attachment: EmittedAttachment): boolean {
+  return !attachment.info.extracted && attachment.info.reason === "extraction-failed";
+}
+
+/**
  * Build a message's documents.
  *
- * `reuse` is what was last emitted for its attachments, passed when only the
- * message's folders or flags changed since: the markers are kept and no
- * attachment is extracted again, so starring or archiving a message does not
- * re-run text extraction or OCR on everything attached to it. Its child
- * documents are left as they are.
+ * `reuse` is what was last emitted for its attachments, passed when the
+ * settings that decide attachment documents have not changed since. Each
+ * attachment that was settled keeps its marker and is not extracted again —
+ * starring or archiving a message does not re-run text extraction or OCR on
+ * what is attached to it, and child documents already made are left as they
+ * are. An attachment whose extraction failed is tried again.
  */
 export async function normalizeMessage(
   message: ParsedMessage,
@@ -172,7 +223,7 @@ export async function normalizeMessage(
   reuse?: readonly EmittedAttachment[],
 ): Promise<NormalizedMessage> {
   const title = message.subject || "(no subject)";
-  const rawBody = messageBody(message);
+  const rawBody = tidyBody(messageBody(message));
   const truncated = message.headersOnly || rawBody.length > MAX_BODY_CHARS;
   const body = rawBody.slice(0, MAX_BODY_CHARS);
   const date = message.date ?? new Date(placement.dateMs);
@@ -190,13 +241,17 @@ export async function normalizeMessage(
     mimeType: string;
     result: ExtractionResult;
   }> = [];
-  if (reuse) {
-    recorded.push(...reuse);
-  } else if (attachmentsEnabled(ctx)) {
+  const reused = new Map((reuse ?? []).map((a) => [a.stableId, a]));
+  if (attachmentsEnabled(ctx)) {
     for (const attachment of message.attachments) {
       // The real type when the sender labelled the part generically.
       const mimeType = resolveEffectiveMimeType(attachment.filename, attachment.mimeType);
       const stableId = deriveAttachmentStableId(attachment.filename, attachment.size, mimeType);
+      const previous = reused.get(stableId);
+      if (previous && !isRetryableFailure(previous)) {
+        recorded.push(previous);
+        continue;
+      }
       const check = shouldExtractAttachment(mimeType, attachment.size, ctx.attachmentConfig);
       if (!check.extract) {
         recorded.push({
