@@ -47,9 +47,16 @@ const log = createLogger("source:maildir");
 
 /**
  * What the emitted documents mean. Part of every message's signature, so
- * raising it re-emits every message on the next cycle.
+ * raising it re-emits every message on the next cycle — reusing what its
+ * attachments gave last time.
  */
-const MAILDIR_OUTPUT_REVISION = 2;
+const MAILDIR_OUTPUT_REVISION = 3;
+/**
+ * What attachment documents mean. Raising it, like changing the attachment
+ * settings, re-extracts every attachment, which for images means OCR; raise it
+ * only for a change to how attachments are read.
+ */
+const MAILDIR_ATTACHMENT_REVISION = 1;
 
 const DEFAULT_LIMITS: MaildirLimits = {
   maxMailboxes: 2_000,
@@ -436,9 +443,10 @@ export class MaildirSource {
     index.recordScans(scans);
   }
 
-  private configFingerprint(): string {
+  /** What decides a message's attachment documents: how they are read, and the settings. */
+  private attachmentFingerprint(): string {
     return JSON.stringify({
-      revision: MAILDIR_OUTPUT_REVISION,
+      revision: MAILDIR_ATTACHMENT_REVISION,
       attachments: this.ctx.extractAttachment ? this.ctx.attachmentConfig : null,
     });
   }
@@ -446,7 +454,7 @@ export class MaildirSource {
   /** Group the indexed files by message and list the messages whose emitted form is out of date. */
   private buildPending(plan: CyclePlan, index: MaildirIndex): PlanEntry[] {
     const emitted = index.allEmitted();
-    const fingerprint = this.configFingerprint();
+    const fingerprint = this.attachmentFingerprint();
     const byKey = new Map<string, FileRow[]>();
     for (const file of index.allFiles()) {
       if (file.key === null) continue;
@@ -501,7 +509,9 @@ export class MaildirSource {
     const folders = [...tags].sort();
     const dateMs = Math.min(...files.map((file) => file.dateMs ?? Number.POSITIVE_INFINITY));
     const signature = createHash("sha256")
-      .update(JSON.stringify([fingerprint, folders, sent, flagged, answered]))
+      .update(
+        JSON.stringify([MAILDIR_OUTPUT_REVISION, fingerprint, folders, sent, flagged, answered]),
+      )
       .digest("hex")
       .slice(0, 32);
     return {

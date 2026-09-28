@@ -124,6 +124,10 @@ function tidyBody(text: string): string {
   return decoded.replace(/[ \t\u00a0]+\n/g, "\n").replace(/\n{3,}/g, "\n\n");
 }
 
+function countReplacements(text: string): number {
+  return text.match(/\uFFFD/g)?.length ?? 0;
+}
+
 /** A plain-text part shorter than this may be a stand-in for the HTML one. */
 const STUB_TEXT_CHARS = 400;
 
@@ -147,6 +151,12 @@ function messageBody(message: ParsedMessage): string {
   const text = message.text?.trim() ?? "";
   const html = () => (message.html ? htmlToMarkdown(message.html).trim() : "");
   if (!text) return html();
+  // A text part whose charset was declared wrong decodes into replacement
+  // characters; the HTML part of the same message is often labelled right.
+  if (text.includes("\uFFFD") && message.html) {
+    const fromHtml = html();
+    if (countReplacements(fromHtml) < countReplacements(text)) return fromHtml;
+  }
   if (looksLikeHtml(text)) return htmlToMarkdown(text).trim();
   if (text.length < STUB_TEXT_CHARS && message.html) {
     const fromHtml = html();

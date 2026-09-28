@@ -543,7 +543,11 @@ export function parseEmailHeader(raw: string): { name?: string; email?: string }
  */
 export function cleanPersonName(name: string | undefined): string | undefined {
   if (!name) return undefined;
-  const stripped = stripSurroundingQuotes(name).replace(/\s+/g, " ").trim();
+  // Some mail clients write the address into the display name as a comment —
+  // `Maya Reeves (maya@example.com)` or `Maya Reeves <maya@example.com>` —
+  // which is the address again, not part of the name.
+  const withoutAddresses = name.replace(/\s*[(<][^()<>]*@[^()<>]*[)>]/g, " ");
+  const stripped = stripSurroundingQuotes(withoutAddresses).replace(/\s+/g, " ").trim();
   if (!stripped) return undefined;
   if (stripped.includes("@") && !stripped.includes(" ")) return undefined;
   return stripped;

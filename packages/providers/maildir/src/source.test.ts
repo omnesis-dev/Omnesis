@@ -262,6 +262,32 @@ describe("bootstrap", () => {
     expect(content).toContain("Over 150\u00a0000 members’ votes & more\n\nSee you");
   });
 
+  test("a text part with a wrong charset gives way to a clean HTML part", async () => {
+    const raw = [
+      "From: <jamie.lopez@example.org>",
+      "Subject: Charset",
+      "Message-ID: <cs@example.org>",
+      'Content-Type: multipart/alternative; boundary="b"',
+      "",
+      "--b",
+      "Content-Type: text/plain; charset=utf-8",
+      "Content-Transfer-Encoding: base64",
+      "",
+      Buffer.from("Caf\xe9 cr\xe8me", "latin1").toString("base64"),
+      "--b",
+      "Content-Type: text/html; charset=iso-8859-1",
+      "Content-Transfer-Encoding: base64",
+      "",
+      Buffer.from("<p>Caf\xe9 cr\xe8me</p>", "latin1").toString("base64"),
+      "--b--",
+      "",
+    ].join("\r\n");
+    deliverMessage(folder("INBOX"), "1.a.host", raw);
+    const gateway = new FakeGateway();
+    await gateway.cycle(makeSource());
+    expect(gateway.byTitle("Charset").content).toContain("Café crème");
+  });
+
   test("the header block and the body are separate paragraphs", async () => {
     deliverMessage(folder("INBOX"), "1.a.host", message());
     const gateway = new FakeGateway();

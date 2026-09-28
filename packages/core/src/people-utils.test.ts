@@ -439,6 +439,18 @@ describe("parseEmailHeader", () => {
 });
 
 describe("cleanPersonName", () => {
+  test("drops an address a mail client wrote into the display name", () => {
+    expect(cleanPersonName("Maya Reeves (maya.reeves@example.com)")).toBe("Maya Reeves");
+    expect(cleanPersonName("Maya Reeves <maya.reeves@example.com> (maya.reeves@example.com)")).toBe(
+      "Maya Reeves",
+    );
+    expect(cleanPersonName("(maya.reeves@example.com)")).toBeUndefined();
+    // A parenthesised part that is not an address is part of the name.
+    expect(cleanPersonName("Maya Reeves (Studio Northstar)")).toBe(
+      "Maya Reeves (Studio Northstar)",
+    );
+  });
+
   test("returns a normal name unchanged", () => {
     expect(cleanPersonName("John Smith")).toBe("John Smith");
   });
