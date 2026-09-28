@@ -97,6 +97,78 @@ function headerBlock(bytes: Buffer): Buffer {
   return ends.length > 0 ? bytes.subarray(0, Math.min(...ends)) : bytes;
 }
 
+const strictUtf8 = new TextDecoder("utf-8", { fatal: true });
+
+function isUtf8(bytes: Uint8Array): boolean {
+  try {
+    strictUtf8.decode(bytes);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The charset a header block declares, when the runtime can decode it. */
+function declaredCharset(header: string): string | undefined {
+  const label = /charset\s*=\s*"?([\w.:-]+)/i.exec(header)?.[1];
+  if (!label) return undefined;
+  try {
+    new TextDecoder(label);
+    return label;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Make 8-bit text that is not UTF-8 readable before the parser sees it.
+ *
+ * Older mail often carries raw Latin-1 in its headers — a subject or a name
+ * sent without the encoded-word form the standard asks for — and some bodies
+ * declare no charset at all. The parser reads such bytes as UTF-8 and turns
+ * every accented letter into a replacement character. Header lines that are
+ * not valid UTF-8 are re-read in the charset the message declares, else
+ * windows-1252 (the superset of Latin-1 mail clients actually wrote); a
+ * single-part body with no declared charset that is not valid UTF-8 is
+ * labelled windows-1252 so the parser decodes it as such. Valid UTF-8 is
+ * never touched.
+ */
+function repairCharsets(bytes: Buffer): Buffer {
+  const head = headerBlock(bytes);
+  const body = bytes.subarray(head.length);
+  const headText = head.toString("latin1");
+  const fallback = declaredCharset(headText) ?? "windows-1252";
+  let changed = false;
+
+  let repairedHead = head;
+  if (!isUtf8(head)) {
+    const decoder = new TextDecoder(fallback);
+    const lines: Buffer[] = [];
+    let start = 0;
+    while (start < head.length) {
+      const nl = head.indexOf(0x0a, start);
+      const end = nl === -1 ? head.length : nl + 1;
+      const line = head.subarray(start, end);
+      lines.push(isUtf8(line) ? line : Buffer.from(decoder.decode(line), "utf8"));
+      start = end;
+    }
+    repairedHead = Buffer.concat(lines);
+    changed = true;
+  }
+
+  const singlePart = !/^content-type:\s*multipart\//im.test(headText);
+  if (singlePart && !/charset\s*=/i.test(headText) && body.length > 0 && !isUtf8(body)) {
+    const label = "; charset=windows-1252";
+    const text = repairedHead.toString("utf8");
+    const withType = /^content-type:[^\r\n]*/im.test(text)
+      ? text.replace(/^(content-type:[^\r\n]*)/im, `$1${label}`)
+      : text.replace(/(\r?\n)(\r?\n)?$/, `$1Content-Type: text/plain${label}$1$2`);
+    repairedHead = Buffer.from(withType, "utf8");
+    changed = true;
+  }
+  return changed ? Buffer.concat([repairedHead, body]) : bytes;
+}
+
 function stripAngles(id: string | undefined): string | undefined {
   const trimmed = id?.trim().replace(/^<|>$/g, "").trim();
   return trimmed ? trimmed : undefined;
@@ -132,11 +204,30 @@ function validDate(value: string | undefined): Date | undefined {
 }
 
 /**
+ * When the message reached its mail server: the date the topmost `Received`
+ * header ends with. The receiving server writes it, so it holds even when the
+ * sender's `Date` header is missing or unreadable.
+ */
+function receivedDate(email: Email): Date | undefined {
+  const received = email.headers.find((header) => header.key === "received")?.value;
+  const stamp = received?.slice(received.lastIndexOf(";") + 1).trim();
+  return validDate(stamp);
+}
+
+/** The first message id in a header that should hold one, ignoring comments and extras. */
+function firstMessageId(value: string | undefined): string | undefined {
+  const bracketed = /<([^<>\s]+)>/.exec(value ?? "")?.[1];
+  return bracketed ?? stripAngles(value?.trim().split(/\s+/)[0]);
+}
+
+/**
  * Read a message's headers and name it.
  *
- * The date is the `Date` header, else the delivery time a Maildir file name
- * begins with, else the file's modification time — every message gets one,
- * because the data cutoff and the document's time both need it.
+ * The date is the `Date` header, else when its mail server received it, else
+ * the time a Maildir file name begins with, else the file's modification time
+ * — every message gets one, because the data cutoff and the document's time
+ * both need it. The file name comes late because a mirroring tool stamps it
+ * with when it downloaded the message, not when the message arrived.
  */
 export async function scanMessage(
   path: string,
@@ -145,9 +236,11 @@ export async function scanMessage(
   mtimeMs: () => number,
 ): Promise<ScannedMessage> {
   const { bytes } = readPrefix(path, HEADER_SCAN_BYTES);
-  const headers = await PostalMime.parse(headerBlock(bytes), MIME_OPTIONS);
+  const headers = await PostalMime.parse(repairCharsets(headerBlock(bytes)), MIME_OPTIONS);
   const dateMs =
-    validDate(headers.date)?.getTime() ?? deliveryTimeMs(uniq) ?? Math.trunc(mtimeMs());
+    (validDate(headers.date) ?? receivedDate(headers))?.getTime() ??
+    deliveryTimeMs(uniq) ??
+    Math.trunc(mtimeMs());
   return { key: messageKey(headers.messageId, mailboxId, uniq), dateMs };
 }
 
@@ -208,7 +301,10 @@ function collectAttachments(email: Email): ParsedAttachment[] {
 export async function parseMessageFile(path: string): Promise<ParsedMessage> {
   const { bytes, size } = readPrefix(path, MAX_MESSAGE_BYTES);
   const headersOnly = size > MAX_MESSAGE_BYTES;
-  const email = await PostalMime.parse(headersOnly ? headerBlock(bytes) : bytes, MIME_OPTIONS);
+  const email = await PostalMime.parse(
+    repairCharsets(headersOnly ? headerBlock(bytes) : bytes),
+    MIME_OPTIONS,
+  );
   return {
     subject: email.subject?.trim() || undefined,
     from: flattenAddresses(email.from),
@@ -216,12 +312,12 @@ export async function parseMessageFile(path: string): Promise<ParsedMessage> {
     cc: flattenAddresses(email.cc),
     bcc: flattenAddresses(email.bcc),
     messageId: stripAngles(email.messageId),
-    inReplyTo: stripAngles(email.inReplyTo),
+    inReplyTo: firstMessageId(email.inReplyTo),
     references: (email.references ?? "")
       .split(/\s+/)
       .map((id) => stripAngles(id))
       .filter((id): id is string => id !== undefined),
-    date: validDate(email.date),
+    date: validDate(email.date) ?? receivedDate(email),
     text: email.text,
     html: email.html,
     listUnsubscribe: headerValue(email, "list-unsubscribe"),

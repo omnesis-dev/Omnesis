@@ -46,7 +46,7 @@ const MAX_REFERENCES = 50;
 /** Where a message lives in the tree, gathered over every copy of it. */
 export interface MessagePlacement {
   key: string;
-  /** Folder names holding a copy, sorted. */
+  /** The tags the folders holding a copy give it (see `folderTag`), sorted. */
   folders: string[];
   /** Whether any of those folders holds sent mail. */
   sent: boolean;
@@ -83,6 +83,37 @@ export function attachmentChildIds(
   return attachments.filter((a) => a.info.extracted).map((a) => `${key}/att/${a.stableId}`);
 }
 
+/** A plain-text part shorter than this may be a stand-in for the HTML one. */
+const STUB_TEXT_CHARS = 400;
+
+/** Whether a "plain text" part is really markup: several tags a person would not type. */
+function looksLikeHtml(text: string): boolean {
+  if (!/<(html|body|div|table|p|br|span|td)\b/i.test(text)) return false;
+  return (text.match(/<\/?[a-z][a-z0-9]*\b[^>]*>/gi)?.length ?? 0) >= 5;
+}
+
+/**
+ * The text a message is read as.
+ *
+ * The plain-text part when it carries the message, since it is what the sender
+ * wrote for reading as text. Two kinds of mail break that: a newsletter whose
+ * plain part is a one-line stand-in ("view this email in your browser") while
+ * the HTML holds everything, and a sender that put markup in the plain part.
+ * The first is read from its HTML when that says much more; the second is
+ * converted as the HTML it is.
+ */
+function messageBody(message: ParsedMessage): string {
+  const text = message.text?.trim() ?? "";
+  const html = () => (message.html ? htmlToMarkdown(message.html).trim() : "");
+  if (!text) return html();
+  if (looksLikeHtml(text)) return htmlToMarkdown(text).trim();
+  if (text.length < STUB_TEXT_CHARS && message.html) {
+    const fromHtml = html();
+    if (fromHtml.length > Math.max(STUB_TEXT_CHARS, text.length * 3)) return fromHtml;
+  }
+  return message.text ?? "";
+}
+
 function formatAddresses(addresses: MailAddress[]): string[] {
   const shown = addresses
     .slice(0, MAX_SHOWN_ADDRESSES)
@@ -95,6 +126,7 @@ function computeRelevanceScore(message: ParsedMessage, placement: MessagePlaceme
   let score = 0.5;
   if (placement.sent) score += 0.4;
   if (placement.flagged) score += 0.15;
+  if (placement.folders.includes("IMPORTANT")) score += 0.15;
   score += mailHeaderRelevancePenalty(message);
   return Math.max(0, Math.min(1, score));
 }
@@ -140,7 +172,7 @@ export async function normalizeMessage(
   reuse?: readonly EmittedAttachment[],
 ): Promise<NormalizedMessage> {
   const title = message.subject || "(no subject)";
-  const rawBody = message.text || (message.html ? htmlToMarkdown(message.html) : "");
+  const rawBody = messageBody(message);
   const truncated = message.headersOnly || rawBody.length > MAX_BODY_CHARS;
   const body = rawBody.slice(0, MAX_BODY_CHARS);
   const date = message.date ?? new Date(placement.dateMs);
@@ -189,20 +221,15 @@ export async function normalizeMessage(
   const from = formatAddresses(message.from);
   const to = formatAddresses(message.to);
   const cc = formatAddresses(message.cc);
-  let content = [
-    `# ${title}`,
-    "",
-    from.length ? `**From:** ${from.join(", ")}` : "",
-    to.length ? `**To:** ${to.join(", ")}` : "",
-    cc.length ? `**Cc:** ${cc.join(", ")}` : "",
+  // Only absent header lines are dropped. The blank line before the rule is
+  // kept: without it Markdown reads the line above `---` as a heading.
+  const headerLines = [
+    from.length ? `**From:** ${from.join(", ")}` : undefined,
+    to.length ? `**To:** ${to.join(", ")}` : undefined,
+    cc.length ? `**Cc:** ${cc.join(", ")}` : undefined,
     `**Date:** ${createdAt}`,
-    "",
-    "---",
-    "",
-    body,
-  ]
-    .filter(Boolean)
-    .join("\n");
+  ].filter((line): line is string => line !== undefined);
+  let content = [`# ${title}`, "", ...headerLines, "", "---", "", body].join("\n");
   if (attachmentInfos.length > 0) content += formatAttachmentMarkers(attachmentInfos);
 
   const emailDoc: DocumentInput = {

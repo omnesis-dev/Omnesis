@@ -77,7 +77,7 @@ describe("Synthetic provider — Maildir", () => {
       tags: string[];
       extra: { flagged?: boolean };
     };
-    expect(workshop.tags).toEqual(["INBOX", "Work", "[Gmail]/All Mail"]);
+    expect(workshop.tags).toEqual(["INBOX", "STARRED", "Work"]);
     expect(workshop.extra.flagged).toBe(true);
   });
 

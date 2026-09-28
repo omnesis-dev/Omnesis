@@ -156,7 +156,7 @@ describe("bootstrap", () => {
     ]);
 
     const reply = gateway.byTitle("Re: Welcome to the team");
-    expect(reply.metadata.tags).toEqual(["Sent"]);
+    expect(reply.metadata.tags).toEqual(["SENT"]);
     expect(reply.metadata.relevanceScore).toBe(0.9);
     expect(reply.metadata.extra?.threadId).toBe(welcome.metadata.extra?.threadId);
     expect(reply.metadata.extra?.inReplyTo).toBe("welcome@example.org");
@@ -199,6 +199,65 @@ describe("bootstrap", () => {
     const gateway = new FakeGateway();
     await gateway.cycle(makeSource());
     expect(gateway.byTitle("Undated").sourceCreatedAt).toBe("2026-01-01T00:00:00.000Z");
+  });
+
+  test("Gmail's folders take the words Gmail uses, and All Mail tags nothing", async () => {
+    const gmail = (name: string) => folder("[Gmail]", name);
+    const welcome = message();
+    deliverMessage(folder("INBOX"), "1.a.host", welcome, { flags: "S" });
+    deliverMessage(gmail("All Mail"), "2.a.host", welcome, { flags: "S" });
+    deliverMessage(gmail("Important"), "3.a.host", welcome, { flags: "S" });
+    deliverMessage(gmail("Starred"), "4.a.host", welcome, { flags: "FS" });
+    deliverMessage(folder("Work"), "5.a.host", welcome, { flags: "FS" });
+    const sent = message({
+      messageId: "sent@example.org",
+      subject: "Sent note",
+      from: SELF,
+      to: [JAMIE],
+    });
+    deliverMessage(gmail("Messages envoyés"), "6.b.host", sent, { flags: "S" });
+    const gateway = new FakeGateway();
+    await gateway.cycle(makeSource());
+    const doc = gateway.byTitle("Welcome to the team");
+    expect(doc.metadata.tags).toEqual(["IMPORTANT", "INBOX", "STARRED", "Work"]);
+    // Starred and important, as Gmail scores them.
+    expect(doc.metadata.relevanceScore).toBe(0.8);
+    expect(gateway.byTitle("Sent note").metadata.tags).toEqual(["SENT"]);
+  });
+
+  test("a plain-text stand-in gives way to the HTML, and markup in the text part is converted", async () => {
+    const inbox = folder("INBOX");
+    const article = "<p>" + "Quarterly product news with the full story. ".repeat(20) + "</p>";
+    deliverMessage(
+      inbox,
+      "1.a.host",
+      message({ subject: "Stand-in", text: "View this email in your browser.", html: article }),
+    );
+    deliverMessage(
+      inbox,
+      "2.b.host",
+      message({
+        messageId: "markup@example.org",
+        subject: "Markup",
+        text: "<html><body><div><p>Hello <b>there</b></p><br><span>from the team</span></div></body></html>",
+      }),
+    );
+    const gateway = new FakeGateway();
+    await gateway.cycle(makeSource());
+    expect(gateway.byTitle("Stand-in").content).toContain("Quarterly product news");
+    const markup = gateway.byTitle("Markup").content;
+    expect(markup).toContain("Hello **there**");
+    expect(markup).not.toContain("<div>");
+  });
+
+  test("the header block and the body are separate paragraphs", async () => {
+    deliverMessage(folder("INBOX"), "1.a.host", message());
+    const gateway = new FakeGateway();
+    await gateway.cycle(makeSource());
+    // A line directly above "---" would render as a heading.
+    expect(gateway.byTitle("Welcome to the team").content).toMatch(
+      /\*\*Date:\*\* [^\n]+\n\n---\n\n/,
+    );
   });
 
   test("HTML-only mail is converted to Markdown", async () => {
@@ -312,20 +371,21 @@ describe("copies in several folders", () => {
     const first = await gateway.cycle(source);
     expect(first.emitted).toHaveLength(1);
     const id = first.emitted[0]!.externalId;
-    expect(gateway.docs.get(id)!.metadata.tags).toEqual(["INBOX", "[Gmail]/All Mail"]);
+    // All Mail holds every message of a Gmail mirror, so it tags nothing.
+    expect(gateway.docs.get(id)!.metadata.tags).toEqual(["INBOX"]);
 
     // A label added in Gmail arrives as a copy in another folder.
     deliverMessage(work, "3.a.host", message(), { flags: "S" });
     const labelled = await gateway.cycle(source);
     expect(labelled.emitted.map((d) => d.externalId)).toEqual([id]);
-    expect(gateway.docs.get(id)!.metadata.tags).toEqual(["INBOX", "Work", "[Gmail]/All Mail"]);
+    expect(gateway.docs.get(id)!.metadata.tags).toEqual(["INBOX", "Work"]);
 
     // Archiving removes the inbox copy; the message stays.
     rmSync(join(inbox, "cur", maildirFileName("1.a.host", "cur", "S")));
     rmSync(join(work, "cur", maildirFileName("3.a.host", "cur", "S")));
     const archived = await gateway.cycle(source);
     expect(archived.present).toEqual([id]);
-    expect(gateway.docs.get(id)!.metadata.tags).toEqual(["[Gmail]/All Mail"]);
+    expect(gateway.docs.get(id)!.metadata.tags).toEqual([]);
 
     // Deleting the last copy removes it.
     rmSync(join(all, "cur", maildirFileName("2.a.host", "cur", "S")));
@@ -548,7 +608,7 @@ describe("attachments", () => {
     expect(extractions).toBe(1);
     expect(moved.emitted.map((d) => d.metadata.documentType)).toEqual(["email"]);
     const email = moved.emitted[0]!;
-    expect(email.metadata.tags).toEqual(["Archive"]);
+    expect(email.metadata.tags).toEqual(["Archive", "STARRED"]);
     expect(email.content).toContain("scan.pdf");
     // The child document stays, still named.
     expect(moved.present).toContain(child.externalId);

@@ -33,7 +33,7 @@ import { createLogger } from "@omnesis/core";
 import { SnapshotEnumeration } from "@omnesis/source-sdk";
 import { SourceId, ProviderId, SyncError } from "@omnesis/types";
 import { MaildirIndex } from "./index-store.js";
-import { tooLargeError, walkMaildir } from "./layout.js";
+import { folderTag, tooLargeError, walkMaildir } from "./layout.js";
 import { parseMessageFile, scanMessage } from "./message.js";
 import { attachmentChildIds, normalizeMessage } from "./normalizer.js";
 import type { AttachmentExtractionConfig, AttachmentExtractFn } from "@omnesis/core";
@@ -49,7 +49,7 @@ const log = createLogger("source:maildir");
  * What the emitted documents mean. Part of every message's signature, so
  * raising it re-emits every message on the next cycle.
  */
-const MAILDIR_OUTPUT_REVISION = 1;
+const MAILDIR_OUTPUT_REVISION = 2;
 
 const DEFAULT_LIMITS: MaildirLimits = {
   maxMailboxes: 2_000,
@@ -478,10 +478,15 @@ export class MaildirSource {
     const named = files
       .map((file) => ({ file, name: plan.mailboxNames.get(file.mailboxId)! }))
       .sort((a, b) => a.name.localeCompare(b.name) || a.file.uniq.localeCompare(b.file.uniq));
-    const folders = [...new Set(named.map((n) => n.name))].sort();
     const sent = files.some((file) => plan.sentMailboxes.has(file.mailboxId));
     const flagged = files.some((file) => file.flags.includes("F"));
     const answered = files.some((file) => file.flags.includes("R"));
+    const tags = new Set(
+      named.map((n) => folderTag(n.name)).filter((tag): tag is string => tag !== null),
+    );
+    // A flag is the star wherever the folders do not already say so.
+    if (flagged) tags.add("STARRED");
+    const folders = [...tags].sort();
     const dateMs = Math.min(...files.map((file) => file.dateMs ?? Number.POSITIVE_INFINITY));
     const signature = createHash("sha256")
       .update(JSON.stringify([fingerprint, folders, sent, flagged, answered]))

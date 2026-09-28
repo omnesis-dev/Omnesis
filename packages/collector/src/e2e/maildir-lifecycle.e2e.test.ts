@@ -377,11 +377,8 @@ describe("real Maildir source through a real collector", () => {
       "Re: Welcome to the team",
       "Welcome to the team",
     ]);
-    expect(metadataOf("Welcome to the team").tags).toEqual(["INBOX", "[Gmail]/All Mail"]);
-    expect(metadataOf("Re: Welcome to the team").tags).toEqual([
-      "[Gmail]/All Mail",
-      "[Gmail]/Sent Mail",
-    ]);
+    expect(metadataOf("Welcome to the team").tags).toEqual(["INBOX"]);
+    expect(metadataOf("Re: Welcome to the team").tags).toEqual(["SENT"]);
     expect(metadataOf("Re: Welcome to the team").extra?.threadId).toBe(
       metadataOf("Welcome to the team").extra?.threadId,
     );
@@ -412,7 +409,7 @@ describe("real Maildir source through a real collector", () => {
     );
     await syncAndWait();
     expect(titles()).toContain("Lunch on Friday");
-    expect(metadataOf("Lunch on Friday").tags).toEqual(["INBOX", "[Gmail]/All Mail"]);
+    expect(metadataOf("Lunch on Friday").tags).toEqual(["INBOX"]);
 
     // Starred in Gmail: mbsync renames every copy with the F flag.
     renameSync(
@@ -425,7 +422,7 @@ describe("real Maildir source through a real collector", () => {
     });
     await syncAndWait();
     expect(metadataOf("Welcome to the team").extra?.flagged).toBe(true);
-    expect(metadataOf("Welcome to the team").tags).toEqual(["INBOX", "Work", "[Gmail]/All Mail"]);
+    expect(metadataOf("Welcome to the team").tags).toEqual(["INBOX", "STARRED", "Work"]);
     expect(titles()).toHaveLength(4);
   }, 60_000);
 
@@ -435,7 +432,8 @@ describe("real Maildir source through a real collector", () => {
     rmSync(join(work(), "cur", maildirFileName("1772443800.10.host", "cur", "S")));
     await syncAndWait();
     await runAbsenceSweep();
-    expect(metadataOf("Welcome to the team").tags).toEqual(["[Gmail]/All Mail"]);
+    // All Mail alone holds it now, and that folder tags nothing; the star stays.
+    expect(metadataOf("Welcome to the team").tags).toEqual(["STARRED"]);
 
     // Deleted in Gmail: it moves to Trash, which is never indexed.
     renameSync(

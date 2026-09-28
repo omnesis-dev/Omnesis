@@ -52,7 +52,7 @@ test("syncs the universe's messages through the real source, one document each",
   expect(documents).toHaveLength(fixtures.length);
   expect(present).toHaveLength(fixtures.length);
   const workshop = documents.find((d) => d.title === "Globex workshop agenda")!;
-  expect(workshop.metadata.tags).toEqual(["INBOX", "Work", "[Gmail]/All Mail"]);
+  expect(workshop.metadata.tags).toEqual(["INBOX", "STARRED", "Work"]);
   expect(workshop.metadata.extra?.flagged).toBe(true);
   const reply = documents.find((d) => d.title === "Re: Bike club ride on Saturday")!;
   const original = documents.find((d) => d.title === "Bike club ride on Saturday")!;

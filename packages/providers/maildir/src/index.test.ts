@@ -241,6 +241,7 @@ describe("document event profile", () => {
     expect(booking.metadata.scheduledAt).toBe("2026-05-01T19:00:00Z");
     expect(booking.metadata.dueAt).toBe("2026-04-30T12:00:00Z");
 
-    expect(receipt.metadata.tags).toEqual(["INBOX"]);
+    // Flagged, so starred as well as in the inbox.
+    expect(receipt.metadata.tags).toEqual(["INBOX", "STARRED"]);
   });
 });

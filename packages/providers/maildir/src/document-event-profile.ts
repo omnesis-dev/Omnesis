@@ -24,10 +24,13 @@ export const maildirDocumentEventProfile: DocumentEventProfile = {
       path: "tags",
       type: "string-array",
       description:
-        "Every Maildir folder holding a copy of the message, by the folder name the mail tool gave it — 'INBOX' for the account's inbox, otherwise names such as 'Archive', 'Work/Travel' or '[Gmail]/All Mail'. A message in several folders (a Gmail message with several labels) lists them all. Drafts, spam and trash folders are never synced. Attachment documents carry no folder tag.",
-      canonicalValues: ["INBOX"],
+        "Where the message is filed, one tag per folder holding a copy. The inbox and Gmail's own folders use the same words as Gmail's labels — INBOX, SENT (any sent-mail folder), STARRED (Gmail's Starred folder, or a copy flagged in any folder) and IMPORTANT — so they match mail from the Gmail source; Gmail's All Mail gives no tag. Any other folder appears by the name the mail tool gave it, such as 'Receipts' or 'Work/Travel'. Drafts, spam and trash folders are never synced. Gmail's inbox categories and unread state are not visible in a Maildir. Attachment documents carry no tags.",
+      canonicalValues: ["INBOX", "SENT", "STARRED", "IMPORTANT"],
       valueAliases: {
         INBOX: ["inbox", "in the inbox"],
+        SENT: ["sent", "sent mail", "mail I sent"],
+        STARRED: ["starred", "flagged"],
+        IMPORTANT: ["important", "marked important"],
       },
     },
     {

@@ -98,6 +98,73 @@ describe("scanMessage", () => {
   });
 });
 
+describe("text that is not UTF-8", () => {
+  test("a raw Latin-1 subject is read in the charset the message declares", async () => {
+    const raw = Buffer.concat([
+      Buffer.from("From: <jamie.lopez@example.org>\r\nSubject: ", "latin1"),
+      Buffer.from("Hébergement réservé", "latin1"),
+      Buffer.from("\r\nContent-Type: text/plain; charset=iso-8859-1\r\n\r\n", "latin1"),
+      Buffer.from("Voilà le détail.", "latin1"),
+    ]);
+    const path = join(dir, "m");
+    writeFileSync(path, raw);
+    const parsed = await parseMessageFile(path);
+    expect(parsed.subject).toBe("Hébergement réservé");
+    expect(parsed.text?.trim()).toBe("Voilà le détail.");
+    expect((await scanMessage(path, "INBOX", "x", () => 0)).key).toMatch(/^file:|^mid:/);
+  });
+
+  test("a body with no charset that is not UTF-8 reads as windows-1252", async () => {
+    const path = join(dir, "m");
+    writeFileSync(
+      path,
+      Buffer.concat([
+        Buffer.from("Subject: plain\r\n\r\n", "latin1"),
+        // 0x96 is an en dash in windows-1252 and not a character in Latin-1.
+        Buffer.from("Café crème ", "latin1"),
+        Buffer.from([0x96]),
+        Buffer.from(" ça va", "latin1"),
+      ]),
+    );
+    expect((await parseMessageFile(path)).text?.trim()).toBe("Café crème – ça va");
+  });
+
+  test("valid UTF-8 is left as it is", async () => {
+    const path = write(
+      "m",
+      "Subject: Été\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nÇa marche.",
+    );
+    const parsed = await parseMessageFile(path);
+    expect(parsed.subject).toBe("Été");
+    expect(parsed.text?.trim()).toBe("Ça marche.");
+  });
+});
+
+describe("dates and threading headers", () => {
+  test("a message without a Date header is dated by its topmost Received header", async () => {
+    const raw = [
+      "Received: from mx.example.net by mail.example.org; Tue, 2 Mar 2010 10:00:00 +0000",
+      "Received: from host.example.com by mx.example.net; Tue, 2 Mar 2010 09:59:00 +0000",
+      "Subject: undated",
+      "",
+      "body",
+    ].join("\r\n");
+    const path = write("m", raw);
+    // The file name carries the time a mirroring tool downloaded it.
+    const scanned = await scanMessage(path, "INBOX", "1790611077.x", () => 0);
+    expect(scanned.dateMs).toBe(Date.parse("2010-03-02T10:00:00Z"));
+    expect((await parseMessageFile(path)).date?.toISOString()).toBe("2010-03-02T10:00:00.000Z");
+  });
+
+  test("In-Reply-To yields its first message id, without comments", async () => {
+    const path = write(
+      "m",
+      "Subject: re\r\nIn-Reply-To: <a@example.org> (message from Jamie) <b@example.org>\r\n\r\nbody",
+    );
+    expect((await parseMessageFile(path)).inReplyTo).toBe("a@example.org");
+  });
+});
+
 describe("parseMessageFile", () => {
   test("flattens address groups and reads threading headers", async () => {
     const raw = [

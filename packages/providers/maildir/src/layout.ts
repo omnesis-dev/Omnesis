@@ -39,7 +39,9 @@ const MAX_DEPTH = 12;
  * drafts, spam, and deleted mail. Matched case-insensitively against the
  * folder's own name, so `[Gmail]/Trash` and a top-level `Trash` are both
  * skipped. A mail server marks these with special-use flags; a Maildir keeps
- * no such flag, so the name is the only evidence there is.
+ * no such flag, so the name is the only evidence there is — and a server
+ * names them in the account's language, so the common translations are here
+ * too (Gmail's French, German and Spanish names among them).
  */
 const SKIPPED_FOLDER_NAMES = new Set([
   "drafts",
@@ -52,10 +54,65 @@ const SKIPPED_FOLDER_NAMES = new Set([
   "bin",
   "deleted items",
   "deleted messages",
+  "brouillons",
+  "corbeille",
+  "pourriel",
+  "courrier indésirable",
+  "éléments supprimés",
+  "entwürfe",
+  "papierkorb",
+  "gelöschte elemente",
+  "borradores",
+  "papelera",
+  "correo no deseado",
 ]);
 
 /** Last path segments of folders holding mail the account owner sent. */
-const SENT_FOLDER_NAMES = new Set(["sent", "sent mail", "sent items", "sent messages"]);
+const SENT_FOLDER_NAMES = new Set([
+  "sent",
+  "sent mail",
+  "sent items",
+  "sent messages",
+  "messages envoyés",
+  "éléments envoyés",
+  "envoyés",
+  "gesendet",
+  "gesendete elemente",
+  "gesendete objekte",
+  "enviados",
+  "elementos enviados",
+]);
+
+/**
+ * Gmail's own folders under `[Gmail]/` (`[Google Mail]/` in some regions),
+ * by the name each has in the account's language. Only folders under that
+ * parent are read this way: a user's own folder called "Important" is theirs.
+ */
+const GMAIL_STARRED = new Set(["starred", "suivis", "markiert", "destacados"]);
+const GMAIL_IMPORTANT = new Set(["important", "wichtig", "importantes"]);
+const GMAIL_ALL_MAIL = new Set(["all mail", "tous les messages", "alle nachrichten", "todos"]);
+
+/**
+ * The tag a folder gives the messages in it.
+ *
+ * The inbox and Gmail's system folders take the words the Gmail source uses
+ * for the same labels — `INBOX`, `SENT`, `STARRED`, `IMPORTANT` — so a search
+ * or a watch that names one finds the message from either source. All Mail
+ * gives none: every message of a Gmail mirror is in it, so as a tag it says
+ * nothing. Any other folder is tagged with its name.
+ */
+export function folderTag(name: string): string | null {
+  if (name === "INBOX") return "INBOX";
+  if (isSentFolderName(name)) return "SENT";
+  const segments = name.split("/");
+  if (segments.length === 2 && /^\[(gmail|google mail)\]$/i.test(segments[0]!)) {
+    const own = segments[1]!.toLowerCase();
+    if (GMAIL_STARRED.has(own)) return "STARRED";
+    if (GMAIL_IMPORTANT.has(own)) return "IMPORTANT";
+    if (GMAIL_ALL_MAIL.has(own)) return null;
+  }
+  return name;
+}
 
 interface Mailbox {
   /** Directory relative to the root (`""` for the root itself). The mailbox's identity. */

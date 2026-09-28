@@ -340,8 +340,11 @@
           <li>
             <strong>One document per message.</strong> A message stored in several folders — Gmail
             labels arrive as one folder each, plus <em>All Mail</em> — is one document tagged with
-            every folder. Messages are matched by their Message-ID; one without it is its own
-            document in each folder.
+            the folders holding it. Gmail's own folders take the words its labels use in the Gmail
+            source — <code>SENT</code>, <code>STARRED</code>, <code>IMPORTANT</code> — and
+            <em>All Mail</em> adds no tag, so a search for starred mail finds it from either source.
+            Messages are matched by their Message-ID; one without it is its own document in each
+            folder.
           </li>
           <li>
             <strong>Changes follow the files.</strong> A new message, a folder added or removed, and

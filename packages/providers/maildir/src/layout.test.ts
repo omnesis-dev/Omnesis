@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SyncError } from "@omnesis/types";
 import {
+  folderTag,
   isIgnoredByFlags,
   isSentFolderName,
   isSkippedFolderName,
@@ -66,10 +67,28 @@ test("trashed and draft files are ignored, other flags are not", () => {
   expect(isIgnoredByFlags("FRS")).toBe(false);
 });
 
+test("folder tags use Gmail's words for Gmail's folders, in the account's language", () => {
+  expect(folderTag("INBOX")).toBe("INBOX");
+  expect(folderTag("[Gmail]/Sent Mail")).toBe("SENT");
+  expect(folderTag("Sent Items")).toBe("SENT");
+  expect(folderTag("[Gmail]/Messages envoyés")).toBe("SENT");
+  expect(folderTag("[Gmail]/Starred")).toBe("STARRED");
+  // The parent is matched without regard to case.
+  expect(folderTag("[google mail]/Markiert")).toBe("STARRED");
+  expect(folderTag("[Gmail]/Important")).toBe("IMPORTANT");
+  expect(folderTag("[Gmail]/All Mail")).toBeNull();
+  expect(folderTag("[Gmail]/Tous les messages")).toBeNull();
+  // A folder of the user's own is theirs, whatever it is called.
+  expect(folderTag("Important")).toBe("Important");
+  expect(folderTag("Work/Travel")).toBe("Work/Travel");
+});
+
 test("drafts, spam and trash folders are skipped by their last segment", () => {
   expect(isSkippedFolderName("[Gmail]/Trash")).toBe(true);
   expect(isSkippedFolderName("Junk E-mail")).toBe(true);
   expect(isSkippedFolderName("Work/Drafts")).toBe(true);
+  expect(isSkippedFolderName("[Gmail]/Corbeille")).toBe(true);
+  expect(isSkippedFolderName("[Gmail]/Entwürfe")).toBe(true);
   expect(isSkippedFolderName("Archive")).toBe(false);
   expect(isSentFolderName("[Gmail]/Sent Mail")).toBe(true);
   expect(isSentFolderName("Sent Items")).toBe(true);
