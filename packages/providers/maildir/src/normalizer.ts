@@ -234,7 +234,7 @@ export async function normalizeMessage(
 ): Promise<NormalizedMessage> {
   const title = message.subject || "(no subject)";
   const rawBody = tidyBody(messageBody(message));
-  const truncated = message.headersOnly || rawBody.length > MAX_BODY_CHARS;
+  const truncated = message.oversized || rawBody.length > MAX_BODY_CHARS;
   const body = rawBody.slice(0, MAX_BODY_CHARS);
   const date = message.date ?? new Date(placement.dateMs);
   const createdAt = date.toISOString();

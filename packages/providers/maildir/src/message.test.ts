@@ -208,8 +208,48 @@ describe("parseMessageFile", () => {
     expect(parsed.references).toEqual(["a@example.org", "b@example.org"]);
     expect(parsed.precedence).toBe("bulk");
     expect(parsed.autoSubmitted).toBe("auto-generated");
-    expect(parsed.headersOnly).toBe(false);
+    expect(parsed.oversized).toBe(false);
   });
+
+  test("a bare calendar invitation is read as invite.ics", async () => {
+    const raw = [
+      "From: <jamie.lopez@example.org>",
+      "Subject: Planning review",
+      "Content-Type: text/calendar; method=REQUEST; charset=utf-8",
+      "",
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "SUMMARY:Planning review",
+      "DTSTART:20260310T100000Z",
+      "END:VEVENT",
+      "END:VCALENDAR",
+      "",
+    ].join("\r\n");
+    const parsed = await parseMessageFile(write("m", raw));
+    expect(parsed.attachments.map((a) => [a.filename, a.mimeType])).toEqual([
+      ["invite.ics", "text/calendar"],
+    ]);
+  });
+
+  test("a message over the size cap keeps its text and leaves out its attachments", async () => {
+    const text = "Holiday video attached, enjoy.";
+    const big = Buffer.alloc(33 * 1024 * 1024, 0x41).toString("base64");
+    const raw = renderMessage({
+      from: { address: "jamie.lopez@example.org" },
+      to: [{ address: "maya.reeves@example.com" }],
+      subject: "Video",
+      date: "2026-02-01T12:00:00Z",
+      text,
+      attachments: [{ filename: "clip.avi", mimeType: "video/avi", content: "placeholder" }],
+    }).replace(
+      /(filename="clip.avi"\r\nContent-Transfer-Encoding: base64\r\n\r\n)[^\r]*/,
+      `$1${big}`,
+    );
+    const parsed = await parseMessageFile(write("m", raw));
+    expect(parsed.oversized).toBe(true);
+    expect(parsed.text?.trim()).toBe(text);
+    expect(parsed.attachments).toEqual([]);
+  }, 30_000);
 
   test("keeps named, non-empty attachments once each", async () => {
     const raw = renderMessage({

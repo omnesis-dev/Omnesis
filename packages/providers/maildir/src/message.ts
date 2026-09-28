@@ -55,13 +55,16 @@ export interface ParsedMessage {
   autoSubmitted?: string;
   precedence?: string;
   attachments: ParsedAttachment[];
-  /** True when the file was too large to parse beyond its headers. */
-  headersOnly: boolean;
+  /**
+   * True when the file was larger than the parse reads: its text comes from
+   * the part of the file that was read — the text parts of a message come
+   * before its attachments — and its attachments are left out.
+   */
+  oversized: boolean;
 }
 
 /**
- * Read the start of a message file: `maxBytes` of it, or only the header
- * scan's share when the whole file is larger than `maxBytes`.
+ * Read the start of a message file: at most `maxBytes` of it.
  *
  * Opened without following a link and without blocking, and refused unless
  * it is a regular file: a named pipe would otherwise stall the collector on
@@ -75,7 +78,7 @@ function readPrefix(path: string, maxBytes: number): { bytes: Buffer; size: numb
       throw Object.assign(new Error("Not a regular file"), { code: "ENOTREGULAR" });
     }
     const size = stat.size;
-    const length = size > maxBytes ? Math.min(size, HEADER_SCAN_BYTES) : size;
+    const length = Math.min(size, maxBytes);
     const bytes = Buffer.alloc(length);
     let offset = 0;
     while (offset < length) {
@@ -272,7 +275,9 @@ function attachmentBytes(content: ArrayBuffer | Uint8Array | string): Uint8Array
  * The attachments worth naming: a part with a filename and some bytes.
  *
  * A part with no filename cannot be named or identified stably, and an empty
- * one holds nothing to read. Deduplicated by filename and size — the shape a
+ * one holds nothing to read. A calendar invitation is the exception: sent as
+ * a bare `text/calendar` part it often has no name, and it is the substance
+ * of the message, so it is read as `invite.ics`. Deduplicated by filename and size — the shape a
  * calendar invite sent both inline and attached takes — first part wins.
  */
 function collectAttachments(email: Email): ParsedAttachment[] {
@@ -280,7 +285,9 @@ function collectAttachments(email: Email): ParsedAttachment[] {
   const out: ParsedAttachment[] = [];
   for (const attachment of email.attachments) {
     if (out.length >= MAX_ATTACHMENTS) break;
-    const filename = attachment.filename?.slice(0, MAX_ATTACHMENT_FILENAME_CHARS);
+    const filename =
+      attachment.filename?.slice(0, MAX_ATTACHMENT_FILENAME_CHARS) ||
+      (attachment.mimeType.toLowerCase() === "text/calendar" ? "invite.ics" : undefined);
     if (!filename) continue;
     const content = attachmentBytes(attachment.content);
     if (content.byteLength === 0) continue;
@@ -312,11 +319,8 @@ function asUtf8Text(content: Uint8Array): Uint8Array {
 /** Parse a whole message file. */
 export async function parseMessageFile(path: string): Promise<ParsedMessage> {
   const { bytes, size } = readPrefix(path, MAX_MESSAGE_BYTES);
-  const headersOnly = size > MAX_MESSAGE_BYTES;
-  const email = await PostalMime.parse(
-    repairCharsets(headersOnly ? headerBlock(bytes) : bytes),
-    MIME_OPTIONS,
-  );
+  const oversized = size > MAX_MESSAGE_BYTES;
+  const email = await PostalMime.parse(repairCharsets(bytes), MIME_OPTIONS);
   return {
     subject: email.subject?.trim() || undefined,
     from: flattenAddresses(email.from),
@@ -335,7 +339,7 @@ export async function parseMessageFile(path: string): Promise<ParsedMessage> {
     listUnsubscribe: headerValue(email, "list-unsubscribe"),
     autoSubmitted: headerValue(email, "auto-submitted"),
     precedence: headerValue(email, "precedence"),
-    attachments: headersOnly ? [] : collectAttachments(email),
-    headersOnly,
+    attachments: oversized ? [] : collectAttachments(email),
+    oversized,
   };
 }
