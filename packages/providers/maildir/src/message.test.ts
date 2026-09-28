@@ -114,6 +114,18 @@ describe("text that is not UTF-8", () => {
     expect((await scanMessage(path, "INBOX", "x", () => 0)).key).toMatch(/^file:|^mid:/);
   });
 
+  test("a raw Latin-1 subject in a message declaring UTF-8 reads as windows-1252", async () => {
+    const raw = Buffer.concat([
+      Buffer.from("From: <jamie.lopez@example.org>\r\nSubject: ", "latin1"),
+      Buffer.from("Réunion d'équipe", "latin1"),
+      Buffer.from('\r\nContent-Type: text/plain; charset="utf-8"\r\n\r\n', "latin1"),
+      Buffer.from("Ordre du jour ci-dessous.", "utf8"),
+    ]);
+    const path = join(dir, "m");
+    writeFileSync(path, raw);
+    expect((await parseMessageFile(path)).subject).toBe("Réunion d'équipe");
+  });
+
   test("a body with no charset that is not UTF-8 reads as windows-1252", async () => {
     const path = join(dir, "m");
     writeFileSync(

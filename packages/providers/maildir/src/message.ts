@@ -130,7 +130,8 @@ function declaredCharset(header: string): string | undefined {
  * sent without the encoded-word form the standard asks for — and some bodies
  * declare no charset at all. The parser reads such bytes as UTF-8 and turns
  * every accented letter into a replacement character. Header lines that are
- * not valid UTF-8 are re-read in the charset the message declares, else
+ * not valid UTF-8 are re-read in the charset the message declares — unless
+ * that is UTF-8, which the line has just shown it is not — else
  * windows-1252 (the superset of Latin-1 mail clients actually wrote); a
  * single-part body with no declared charset that is not valid UTF-8 is
  * labelled windows-1252 so the parser decodes it as such. Valid UTF-8 is
@@ -140,7 +141,9 @@ function repairCharsets(bytes: Buffer): Buffer {
   const head = headerBlock(bytes);
   const body = bytes.subarray(head.length);
   const headText = head.toString("latin1");
-  const fallback = declaredCharset(headText) ?? "windows-1252";
+  const declared = declaredCharset(headText);
+  const fallback =
+    declared && new TextDecoder(declared).encoding !== "utf-8" ? declared : "windows-1252";
   let changed = false;
 
   let repairedHead = head;

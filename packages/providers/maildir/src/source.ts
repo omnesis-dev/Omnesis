@@ -50,7 +50,7 @@ const log = createLogger("source:maildir");
  * raising it re-emits every message on the next cycle — reusing what its
  * attachments gave last time.
  */
-const MAILDIR_OUTPUT_REVISION = 5;
+const MAILDIR_OUTPUT_REVISION = 6;
 /**
  * What attachment documents mean. Raising it, like changing the attachment
  * settings, re-extracts every attachment, which for images means OCR; raise it
