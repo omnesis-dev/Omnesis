@@ -252,6 +252,19 @@
               </tr>
               <tr>
                 <td>
+                  Maildir <span class="pill">experimental</span><br /><span class="pill"
+                    >macOS or Linux collector</span
+                  >
+                  <span class="pill">Folder path</span>
+                </td>
+                <td>
+                  Email that a mail tool such as mbsync or offlineimap keeps on the collector's own
+                  machine as a Maildir. Omnesis reads the files and never connects to the mail
+                  server. See <a href="#maildir">Maildir</a>.
+                </td>
+              </tr>
+              <tr>
+                <td>
                   WhatsApp Messages<br /><span class="pill">any collector</span>
                   <span class="pill">QR pairing</span>
                 </td>
@@ -285,6 +298,67 @@
             </tbody>
           </table>
         </div>
+
+        <h3 id="maildir">Maildir (experimental)</h3>
+        <div class="callout warn">
+          <p>
+            <strong>Maildir is experimental.</strong> Its behaviour, settings and stored data may
+            change between releases. A collector offers it only when it runs with
+            <code>OMNESIS_EXPERIMENTAL=1</code>; see <a href="/docs/experimental">Experimental</a>.
+          </p>
+        </div>
+        <p>
+          Maildir indexes email that another program keeps on the collector's machine: mbsync,
+          offlineimap, getmail, or Thunderbird set to store mail as Maildir. That program talks to
+          the mail server; Omnesis only reads the files it writes. This is the way in for an account
+          that allows only approved mail apps, such as a Google account under Advanced Protection,
+          once one of those apps is mirroring it.
+        </p>
+        <p>
+          Add it with the folder that holds one account's mail — the folder, or a folder inside it
+          such as <code>INBOX</code>, contains <code>cur</code> and <code>new</code> directories.
+          Each folder you add is its own account, so two mail accounts are two sources.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis sources add maildir ~/Mail/example --device &lt;collector&gt;</span
+              >
+            </p>
+          </div>
+        </div>
+        <ul>
+          <li>
+            <strong>One document per message.</strong> A message stored in several folders — Gmail
+            labels arrive as one folder each, plus <em>All Mail</em> — is one document tagged with
+            every folder. Messages are matched by their Message-ID; one without it is its own
+            document in each folder.
+          </li>
+          <li>
+            <strong>Changes follow the files.</strong> A new message, a folder added or removed, and
+            a message starred or replied to update the document on the next sync. The collector
+            watches the folder, so a sync follows the mail tool's writes. A message leaves the index
+            when its last copy is gone.
+          </li>
+          <li>
+            <strong>What it skips.</strong> Drafts, spam and trash folders, messages marked deleted,
+            and any folder matching the <em>Exclude folders</em> setting, which takes folder names
+            or glob patterns such as <code>[Gmail]/All Mail</code>.
+          </li>
+          <li>
+            <strong>A folder it cannot read.</strong> An unreadable folder, or a Maildir that is not
+            there — an unmounted drive, a changed permission — deletes nothing. The sync reports the
+            problem and removals wait until every folder reads again.
+          </li>
+          <li>
+            <strong>Its index.</strong> The source keeps an index of the files it has read in the
+            collector's configuration directory, so a large mailbox is read once. It holds file
+            names and hashes, not message content.
+          </li>
+        </ul>
 
         <h2 id="notes-tasks-meetings">Notes, tasks &amp; meetings</h2>
         <div class="table-wrap">

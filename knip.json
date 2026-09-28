@@ -94,6 +94,8 @@
         "@omnesis/provider-local-files",
         "@omnesis/provider-lunchflow",
         "@omnesis/provider-lunchflow-synth",
+        "@omnesis/provider-maildir",
+        "@omnesis/provider-maildir-synth",
         "@omnesis/provider-notion",
         "@omnesis/provider-notion-synth",
         "@omnesis/provider-obsidian",

@@ -1,0 +1,258 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Adrien Conrath
+
+/**
+ * The source's local index of a Maildir tree.
+ *
+ * A mailbox can hold hundreds of thousands of messages, and knowing what each
+ * file is — which message it holds, when that message was sent — means opening
+ * it. The index remembers that per file, so a cycle opens only files it has
+ * not seen before. It also remembers what each message was last emitted as, so
+ * a cycle re-emits only messages whose folders or flags changed.
+ *
+ * Two tables with two different kinds of truth:
+ *
+ * - `files` describes the disk. It is derived from file contents alone, so it
+ *   is valid whatever the gateway holds, and survives a resync.
+ * - `emitted` describes what the gateway was sent. It is valid only together
+ *   with the cursor the gateway stored: every row carries the `seq` of the page
+ *   that emitted it, and the cursor carries the `seq` of the last page the
+ *   gateway committed. Opening the index against a cursor drops every row
+ *   newer than it — rows from a page the gateway never committed — so a
+ *   failed page is re-emitted rather than forgotten. A cursor from another
+ *   generation (a resync, or a different collector) drops all of them.
+ *
+ * Nothing here is message content: keys and attachment ids are hashes, and the
+ * folder and file names are the ones already on disk beside it.
+ */
+
+import { DatabaseSync } from "node:sqlite";
+
+export interface FileRow {
+  mailboxId: string;
+  uniq: string;
+  relPath: string;
+  flags: string;
+  /** Null until the file's headers have been read. */
+  key: string | null;
+  dateMs: number | null;
+  size: number | null;
+}
+
+/**
+ * An attachment as the snapshot names it: its child-id suffix, and the type
+ * and size that decide whether the current settings extract it.
+ */
+export interface EmittedAttachment {
+  stableId: string;
+  mimeType: string;
+  size: number;
+}
+
+export interface EmittedRow {
+  key: string;
+  signature: string;
+  seq: number;
+  /** Whether a document was emitted; a message that could not be parsed has none. */
+  hasDocument: boolean;
+  attachments: EmittedAttachment[];
+}
+
+const SCHEMA_VERSION = "1";
+
+export class MaildirIndex {
+  private readonly db: DatabaseSync;
+
+  constructor(path: string) {
+    this.db = new DatabaseSync(path);
+    this.db.exec(`
+      PRAGMA journal_mode = WAL;
+      PRAGMA synchronous = NORMAL;
+      CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS files (
+        mailbox_id TEXT NOT NULL,
+        uniq TEXT NOT NULL,
+        rel_path TEXT NOT NULL,
+        flags TEXT NOT NULL,
+        key TEXT,
+        date_ms INTEGER,
+        size INTEGER,
+        PRIMARY KEY (mailbox_id, uniq)
+      );
+      CREATE INDEX IF NOT EXISTS files_key ON files(key);
+      CREATE TABLE IF NOT EXISTS emitted (
+        key TEXT PRIMARY KEY,
+        signature TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        has_document INTEGER NOT NULL,
+        attachments TEXT NOT NULL
+      );
+    `);
+    const version = this.meta("schema");
+    if (version !== undefined && version !== SCHEMA_VERSION) {
+      // Everything here can be rebuilt from the disk and the cursor, so an
+      // index written in another shape is discarded rather than migrated.
+      this.db.exec("DELETE FROM files; DELETE FROM emitted; DELETE FROM meta;");
+    }
+    this.setMeta("schema", SCHEMA_VERSION);
+  }
+
+  close(): void {
+    this.db.close();
+  }
+
+  private meta(key: string): string | undefined {
+    const row = this.db.prepare("SELECT v FROM meta WHERE k = ?").get(key) as
+      | { v: string }
+      | undefined;
+    return row?.v;
+  }
+
+  private setMeta(key: string, value: string): void {
+    this.db
+      .prepare("INSERT INTO meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v")
+      .run(key, value);
+  }
+
+  get generation(): string | undefined {
+    return this.meta("generation");
+  }
+
+  /**
+   * Align the emission record with the cursor the gateway holds.
+   *
+   * A different generation clears it; the same generation drops only what
+   * pages after `committedSeq` wrote.
+   */
+  alignWithCursor(generation: string, committedSeq: number): void {
+    this.transaction(() => {
+      if (this.generation !== generation) {
+        this.db.exec("DELETE FROM emitted");
+        this.setMeta("generation", generation);
+      } else {
+        this.db.prepare("DELETE FROM emitted WHERE seq > ?").run(committedSeq);
+      }
+    });
+  }
+
+  transaction<T>(body: () => T): T {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = body();
+      this.db.exec("COMMIT");
+      return result;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
+  allFiles(): FileRow[] {
+    return (
+      this.db
+        .prepare("SELECT mailbox_id, uniq, rel_path, flags, key, date_ms, size FROM files")
+        .all() as Array<{
+        mailbox_id: string;
+        uniq: string;
+        rel_path: string;
+        flags: string;
+        key: string | null;
+        date_ms: number | null;
+        size: number | null;
+      }>
+    ).map((row) => ({
+      mailboxId: row.mailbox_id,
+      uniq: row.uniq,
+      relPath: row.rel_path,
+      flags: row.flags,
+      key: row.key,
+      dateMs: row.date_ms,
+      size: row.size,
+    }));
+  }
+
+  /** Apply a listing's differences: files that appeared, moved or changed flags, and files that went. */
+  applyListing(
+    upserts: Array<{ mailboxId: string; uniq: string; relPath: string; flags: string }>,
+    removals: Array<{ mailboxId: string; uniq: string }>,
+  ): void {
+    if (upserts.length === 0 && removals.length === 0) return;
+    const upsert = this.db.prepare(`
+      INSERT INTO files (mailbox_id, uniq, rel_path, flags) VALUES (?, ?, ?, ?)
+      ON CONFLICT(mailbox_id, uniq) DO UPDATE SET rel_path = excluded.rel_path, flags = excluded.flags
+    `);
+    const remove = this.db.prepare("DELETE FROM files WHERE mailbox_id = ? AND uniq = ?");
+    this.transaction(() => {
+      for (const file of upserts) upsert.run(file.mailboxId, file.uniq, file.relPath, file.flags);
+      for (const file of removals) remove.run(file.mailboxId, file.uniq);
+    });
+  }
+
+  recordScans(
+    scans: Array<{ mailboxId: string; uniq: string; key: string; dateMs: number; size: number }>,
+  ): void {
+    if (scans.length === 0) return;
+    const update = this.db.prepare(
+      "UPDATE files SET key = ?, date_ms = ?, size = ? WHERE mailbox_id = ? AND uniq = ?",
+    );
+    this.transaction(() => {
+      for (const scan of scans)
+        update.run(scan.key, scan.dateMs, scan.size, scan.mailboxId, scan.uniq);
+    });
+  }
+
+  allEmitted(): Map<string, EmittedRow> {
+    const rows = this.db
+      .prepare("SELECT key, signature, seq, has_document, attachments FROM emitted")
+      .all() as Array<{
+      key: string;
+      signature: string;
+      seq: number;
+      has_document: number;
+      attachments: string;
+    }>;
+    return new Map(
+      rows.map((row) => [
+        row.key,
+        {
+          key: row.key,
+          signature: row.signature,
+          seq: row.seq,
+          hasDocument: row.has_document === 1,
+          attachments: JSON.parse(row.attachments) as EmittedAttachment[],
+        },
+      ]),
+    );
+  }
+
+  /**
+   * Record one page's emissions, and forget messages no longer on disk.
+   *
+   * Refuses when another generation has taken the index since the page began:
+   * that is a resync that started over while this page was being built, and
+   * its rows would claim messages the new generation has not sent.
+   */
+  recordEmissions(generation: string, rows: EmittedRow[], forget: string[]): void {
+    const upsert = this.db.prepare(`
+      INSERT INTO emitted (key, signature, seq, has_document, attachments) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET signature = excluded.signature, seq = excluded.seq,
+        has_document = excluded.has_document, attachments = excluded.attachments
+    `);
+    const remove = this.db.prepare("DELETE FROM emitted WHERE key = ?");
+    this.transaction(() => {
+      if (this.generation !== generation) {
+        throw new Error("The Maildir index was restarted while this page was being built");
+      }
+      for (const row of rows) {
+        upsert.run(
+          row.key,
+          row.signature,
+          row.seq,
+          row.hasDocument ? 1 : 0,
+          JSON.stringify(row.attachments),
+        );
+      }
+      for (const key of forget) remove.run(key);
+    });
+  }
+}

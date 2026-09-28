@@ -6,6 +6,7 @@ import {
   cleanPersonName,
   countryNameToISO2,
   deriveAuthor,
+  mailPeopleMentions,
   extractEmailsAndPhonesFromText,
   normalizeEmail,
   isNonIdentifyingEmail,
@@ -802,5 +803,32 @@ describe("extractEmailsAndPhonesFromText", () => {
       emails: [],
       phones: [],
     });
+  });
+});
+
+describe("mailPeopleMentions", () => {
+  test("names the sender, then recipients, then addresses mentioned in the body, each once", () => {
+    expect(
+      mailPeopleMentions(
+        {
+          from: [{ name: "Jamie Lopez", address: "Jamie.Lopez@Example.org" }],
+          to: [{ name: "Maya Reeves", address: "maya.reeves@example.com" }],
+          cc: [{ address: "jamie.lopez@example.org" }],
+          bcc: [{ address: "david.lin@example.io" }],
+        },
+        "Loop in sarah.mendez@example.net and maya.reeves@example.com.",
+        100,
+      ),
+    ).toEqual([
+      { role: "sender", name: "Jamie Lopez", emails: ["jamie.lopez@example.org"] },
+      { role: "recipient", name: "Maya Reeves", emails: ["maya.reeves@example.com"] },
+      { role: "recipient", name: undefined, emails: ["david.lin@example.io"] },
+      { role: "mentioned", emails: ["sarah.mendez@example.net"] },
+    ]);
+  });
+
+  test("stops at the cap", () => {
+    const to = Array.from({ length: 5 }, (_, i) => ({ address: `member${i}@example.org` }));
+    expect(mailPeopleMentions({ to }, "", 3)).toHaveLength(3);
   });
 });

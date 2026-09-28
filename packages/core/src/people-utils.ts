@@ -720,6 +720,57 @@ export function extractEmailsAndPhonesFromText(
   };
 }
 
+/** One address from a mail header: the display name, when there is one, and the address. */
+export interface MailAddress {
+  name?: string;
+  address: string;
+}
+
+/**
+ * The people one mail message names, for a source that reads raw mail.
+ *
+ * `From` becomes the sender; `To`, `Cc` and `Bcc` become recipients; any
+ * other address or phone number found in the body becomes a mention. Each
+ * address appears once, in core's canonical form, so the same correspondent
+ * read from a mailbox and from another mail source lands on one person. A
+ * phone number quoted in a body is never enough to create a person.
+ *
+ * `maxPeople` bounds a message addressed to an enormous list: past it, the
+ * rest are dropped rather than handed to the people graph one by one.
+ */
+export function mailPeopleMentions(
+  headers: { from?: MailAddress[]; to?: MailAddress[]; cc?: MailAddress[]; bcc?: MailAddress[] },
+  body: string,
+  maxPeople: number,
+): PersonMention[] {
+  const people: PersonMention[] = [];
+  const seenEmails = new Set<string>();
+  const append = (role: "sender" | "recipient", addresses: MailAddress[] | undefined) => {
+    for (const address of addresses ?? []) {
+      if (people.length >= maxPeople) return;
+      const email = normalizeEmail(address.address);
+      if (!email || seenEmails.has(email)) continue;
+      seenEmails.add(email);
+      people.push({ role, name: cleanPersonName(address.name), emails: [email] });
+    }
+  };
+  append("sender", headers.from);
+  append("recipient", [...(headers.to ?? []), ...(headers.cc ?? []), ...(headers.bcc ?? [])]);
+
+  const mentioned = extractEmailsAndPhonesFromText(body);
+  for (const email of mentioned.emails) {
+    if (people.length >= maxPeople) break;
+    if (seenEmails.has(email)) continue;
+    seenEmails.add(email);
+    people.push({ role: "mentioned", emails: [email] });
+  }
+  for (const phone of mentioned.phones) {
+    if (people.length >= maxPeople) break;
+    people.push({ role: "mentioned", phones: [phone], allowPersonCreation: false });
+  }
+  return people;
+}
+
 /**
  * Derive an author display string from a people array.
  * Finds the first person with a "sender", "author", or "owner" role
