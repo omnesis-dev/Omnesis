@@ -17,8 +17,8 @@ describe("Plaid descriptor declares a hosted sign-in contract", () => {
     expect(plaid.widgetRenderer).toBeUndefined();
   });
 
-  test("the source is gated until it has been exercised against real banks", () => {
-    expect(plaid.experimental).toBe(true);
+  test("the source is generally available, not gated behind experimental mode", () => {
+    expect(plaid.experimental).toBeFalsy();
   });
 
   test("credentials are the operator's own Plaid app, collected once", () => {

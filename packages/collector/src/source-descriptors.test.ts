@@ -790,8 +790,8 @@ describe("discovered registry — experimental visibility", () => {
     return descriptors;
   }
 
-  it.each(["openclaw", "hermes"])(
-    "the %s agent transcripts are generally available without experimental mode",
+  it.each(["openclaw", "hermes", "plaid", "local-files"])(
+    "the %s sources are generally available without experimental mode",
     async (providerId) => {
       for (const descriptor of await registryDescriptors(providerId)) {
         expect(descriptor.experimental).toBeFalsy();
@@ -799,13 +799,6 @@ describe("discovered registry — experimental visibility", () => {
       }
     },
   );
-
-  it("an experimental provider such as Plaid stays hidden without experimental mode", async () => {
-    for (const descriptor of await registryDescriptors("plaid")) {
-      expect(descriptor.experimental).toBe(true);
-      expect(experimentalDescriptorHidden(descriptor, false)).toBe(true);
-    }
-  });
 });
 
 describe("discovered registry — web push-based source", () => {
