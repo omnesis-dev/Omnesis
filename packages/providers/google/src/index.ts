@@ -10,6 +10,7 @@ import {
   authenticate as googleAuthenticate,
   authFlow as googleAuthFlow,
 } from "./provider.js";
+import { GMAIL_OUTPUT_REVISION } from "./constants.js";
 import { GmailSource } from "./gmail.js";
 import { GoogleCalendarSource } from "./calendar.js";
 import { GoogleDriveSource } from "./drive.js";
@@ -154,6 +155,9 @@ export default defineProvider<GoogleContext>({
         // runs, so a value from a build that could not read it never reaches
         // `sync`.
         state: gmailStateSpec,
+        // Re-emission is the source's own: a cursor written under an older
+        // revision starts a rewalk of the mailbox beside incremental sync.
+        outputRevision: GMAIL_OUTPUT_REVISION,
       },
       documentEventProfile: gmailDocumentEventProfile,
       documentTemporalProjections: [
@@ -184,8 +188,12 @@ export default defineProvider<GoogleContext>({
         const source = new GmailSource(ctx.auth, accountId, dataCutoff, {
           attachmentConfig,
           extractAttachment: host?.extractAttachment,
+          stateDir: host?.stateDir,
         });
-        return { sync: (cursor) => source.sync(cursor) };
+        return {
+          sync: (cursor) => source.sync(cursor),
+          dispose: async () => source.dispose(),
+        };
       },
     },
     {

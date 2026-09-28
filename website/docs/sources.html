@@ -217,9 +217,11 @@
                   Gmail<br /><span class="pill">any collector</span> <span class="pill">OAuth</span>
                 </td>
                 <td>
-                  Every email as a document, with attachment text extracted (scans and images are
-                  OCR'd when an OCR model is assigned); senders and recipients feed the people
-                  graph.
+                  Every email as a document, dated by when it was sent, with attachment text
+                  extracted (scans and images are OCR'd when an OCR model is assigned; a failed
+                  extraction is retried after an hour, six hours and a day); senders and recipients,
+                  Bcc included, feed the people graph. When an update changes how mail is read, the
+                  collector re-reads the mailbox in the background while new mail keeps arriving.
                 </td>
               </tr>
               <tr>

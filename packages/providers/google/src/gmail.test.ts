@@ -267,10 +267,27 @@ describe("GmailSource", () => {
         recoverAfter: "2026-05-30T00:00:00.000Z",
         lastSyncAt: "2026-05-30T00:00:00.000Z",
         recoveryVouched: true,
+        coverage: "complete",
       } as never);
       expect(result.hasMore).toBe(false);
       expect((result.cursor as any).coverage).toBe("complete");
       expect(result.progress?.coverage).toBe("complete");
+    });
+
+    test("a watermarked recovery does not vouch for a mailbox that was never settled complete", async () => {
+      // The recovery closes the gap since the watermark and nothing more: a
+      // mailbox whose first walk ended early is still missing what that walk
+      // never reached.
+      gmail.users.messages.list = vi.fn(() =>
+        Promise.resolve({ data: { messages: [], nextPageToken: undefined } }),
+      ) as never;
+      const result = await source.sync({
+        phase: "bootstrap",
+        recoverAfter: "2026-05-30T00:00:00.000Z",
+        lastSyncAt: "2026-05-30T00:00:00.000Z",
+        recoveryVouched: true,
+      } as never);
+      expect((result.cursor as any).coverage).toBe("unknown");
     });
 
     test("a watermarked recovery still settles complete when it spans more than one page", async () => {
@@ -291,6 +308,7 @@ describe("GmailSource", () => {
         recoverAfter: "2026-05-30T00:00:00.000Z",
         lastSyncAt: "2026-05-30T00:00:00.000Z",
         recoveryVouched: true,
+        coverage: "complete",
       };
       let result;
       for (let i = 0; i < 3; i++) {

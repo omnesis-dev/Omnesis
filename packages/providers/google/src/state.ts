@@ -23,7 +23,10 @@ import type { CalendarSyncCursor } from "./calendar.js";
 
 /**
  * Gmail's cursor is a `historyId`/pagination bookmark, never an accumulating
- * structure — nothing here grows with the size of the mailbox.
+ * structure — nothing here grows with the size of the mailbox. Beside it sit
+ * the output revision the mailbox was last written under, a rewalk's page
+ * position and the attachment ledger's position; all are optional, so a
+ * cursor without them reads as revision 1 with an empty ledger.
  *
  * `historyId` expiring (Gmail retains history for about a week) or the whole
  * cursor going unreadable both fall back to the existing bootstrap phase,

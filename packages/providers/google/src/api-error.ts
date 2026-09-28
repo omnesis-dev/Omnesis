@@ -36,6 +36,11 @@ function getStatus(e: GaxiosLikeError): number | undefined {
   return undefined;
 }
 
+/** The HTTP status a Google API error carries, when it carries one. */
+export function googleApiStatus(err: unknown): number | undefined {
+  return err && typeof err === "object" ? getStatus(err as GaxiosLikeError) : undefined;
+}
+
 function firstReason(e: GaxiosLikeError): string | undefined {
   if (e.errors?.[0]?.reason) return e.errors[0].reason;
   const nested = e.response?.data?.error;

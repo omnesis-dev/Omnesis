@@ -27,6 +27,29 @@ export const GMAIL_HISTORY_RECOVERY_OVERLAP_MS = 2 * 24 * 60 * 60 * 1000;
 // full-mailbox re-walk while still covering a multi-day token outage.
 export const GMAIL_HISTORY_RECOVERY_FALLBACK_MS = 30 * 24 * 60 * 60 * 1000;
 
+/**
+ * The meaning of what the Gmail source emits. Bumped when the normalizer
+ * starts producing different documents from the same message; a mailbox
+ * indexed under an older revision is walked again, beside incremental sync,
+ * and every message re-emitted.
+ *
+ * 2: the `Date` header dates a message; body charset, text-or-HTML choice
+ * and the blank line before the rule; Bcc and automated senders in people;
+ * inline signature images dropped.
+ */
+export const GMAIL_OUTPUT_REVISION = 2;
+
+/** Waits before retrying a message whose attachment failed to extract: 1 h, 6 h, 24 h, then never. */
+export const GMAIL_ATTACHMENT_RETRY_BACKOFF_MS = [
+  60 * 60 * 1000,
+  6 * 60 * 60 * 1000,
+  24 * 60 * 60 * 1000,
+];
+/** Wait before retrying an attachment skipped while OCR was paused; not counted as a try. */
+export const GMAIL_DEFERRED_RETRY_MS = 60 * 60 * 1000;
+/** Messages re-fetched for due attachment retries per sync, so retries trickle rather than burst. */
+export const GMAIL_RETRIES_PER_SYNC = 20;
+
 export const CALENDAR_MAX_RESULTS = 250;
 
 export const DRIVE_MAX_CONTENT_SIZE = 10 * 1024 * 1024;
