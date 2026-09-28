@@ -439,6 +439,12 @@ describe("parseEmailHeader", () => {
 });
 
 describe("cleanPersonName", () => {
+  test("drops a stray quote left by a broken header", () => {
+    expect(cleanPersonName("Maya Reeves'")).toBe("Maya Reeves");
+    expect(cleanPersonName('"Maya Reeves')).toBe("Maya Reeves");
+    expect(cleanPersonName("O'Brien")).toBe("O'Brien");
+  });
+
   test("drops an address a mail client wrote into the display name", () => {
     expect(cleanPersonName("Maya Reeves (maya.reeves@example.com)")).toBe("Maya Reeves");
     expect(cleanPersonName("Maya Reeves <maya.reeves@example.com> (maya.reeves@example.com)")).toBe(
@@ -873,6 +879,25 @@ describe("mailPeopleMentions", () => {
       },
       { role: "recipient", name: undefined, emails: ["maya.reeves@example.com"] },
       { role: "mentioned", emails: ["mailer-daemon@example.net"], allowPersonCreation: false },
+    ]);
+  });
+
+  test("recovers the address from a broken header, and drops what is not one", () => {
+    const people = mailPeopleMentions(
+      {
+        from: [{ address: "Maya Reeves maya.reeves@example.com" }],
+        to: [
+          { address: "=?utf-8?q?Jamie?= <jamie.lopez@example.org" },
+          { address: "root@localhost" },
+          { address: '"david_lin@example.io"@example.io' },
+        ],
+      },
+      "",
+      10,
+    );
+    expect(people.map((p) => [p.role, p.emails])).toEqual([
+      ["sender", ["maya.reeves@example.com"]],
+      ["recipient", ["jamie.lopez@example.org"]],
     ]);
   });
 
