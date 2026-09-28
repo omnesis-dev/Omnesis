@@ -129,6 +129,24 @@ describe("text that is not UTF-8", () => {
     expect((await parseMessageFile(path)).text?.trim()).toBe("Café crème – ça va");
   });
 
+  test("a Latin-1 text attachment reaches the extractor as UTF-8, keeping its size", async () => {
+    const raw = renderMessage({
+      from: { address: "jamie.lopez@example.org" },
+      to: [{ address: "maya.reeves@example.com" }],
+      subject: "Notes",
+      date: "2026-02-01T12:00:00Z",
+      text: "see attached",
+      attachments: [{ filename: "notes.txt", mimeType: "text/plain", content: "" }],
+    }).replace(
+      /(filename="notes.txt"\r\nContent-Transfer-Encoding: base64\r\n\r\n)/,
+      `$1${Buffer.from("Résumé à jour", "latin1").toString("base64")}`,
+    );
+    const parsed = await parseMessageFile(write("m", raw));
+    const notes = parsed.attachments.find((a) => a.filename === "notes.txt")!;
+    expect(new TextDecoder().decode(notes.content)).toBe("Résumé à jour");
+    expect(notes.size).toBe(13);
+  });
+
   test("valid UTF-8 is left as it is", async () => {
     const path = write(
       "m",

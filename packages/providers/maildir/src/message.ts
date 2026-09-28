@@ -287,14 +287,26 @@ function collectAttachments(email: Email): ParsedAttachment[] {
     const dedupe = `${filename}\0${content.byteLength}`;
     if (seen.has(dedupe)) continue;
     seen.add(dedupe);
+    const mimeType = attachment.mimeType.toLowerCase();
     out.push({
       filename,
-      mimeType: attachment.mimeType.toLowerCase(),
+      mimeType,
       size: content.byteLength,
-      content,
+      content: mimeType === "text/plain" ? asUtf8Text(content) : content,
     });
   }
   return out;
+}
+
+/**
+ * A text attachment as UTF-8, for an extractor that reads text as UTF-8.
+ * The parser hands a part's raw bytes over without its declared charset, and
+ * text attached to older mail is usually windows-1252; bytes that are not
+ * valid UTF-8 are re-read as that.
+ */
+function asUtf8Text(content: Uint8Array): Uint8Array {
+  if (isUtf8(content)) return content;
+  return Buffer.from(new TextDecoder("windows-1252").decode(content), "utf8");
 }
 
 /** Parse a whole message file. */
