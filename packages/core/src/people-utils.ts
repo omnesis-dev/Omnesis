@@ -733,7 +733,9 @@ export interface MailAddress {
  * other address or phone number found in the body becomes a mention. Each
  * address appears once, in core's canonical form, so the same correspondent
  * read from a mailbox and from another mail source lands on one person. A
- * phone number quoted in a body is never enough to create a person.
+ * phone number quoted in a body is never enough to create a person, and
+ * neither is an automated address (`notifications@`, `mailer-daemon@`): a
+ * machine that sends mail is not someone the owner knows.
  *
  * `maxPeople` bounds a message addressed to an enormous list: past it, the
  * rest are dropped rather than handed to the people graph one by one.
@@ -751,7 +753,12 @@ export function mailPeopleMentions(
       const email = normalizeEmail(address.address);
       if (!email || seenEmails.has(email)) continue;
       seenEmails.add(email);
-      people.push({ role, name: cleanPersonName(address.name), emails: [email] });
+      people.push({
+        role,
+        name: cleanPersonName(address.name),
+        emails: [email],
+        ...(isAutomatedSenderAddress(email) ? { allowPersonCreation: false } : {}),
+      });
     }
   };
   append("sender", headers.from);
@@ -762,7 +769,11 @@ export function mailPeopleMentions(
     if (people.length >= maxPeople) break;
     if (seenEmails.has(email)) continue;
     seenEmails.add(email);
-    people.push({ role: "mentioned", emails: [email] });
+    people.push({
+      role: "mentioned",
+      emails: [email],
+      ...(isAutomatedSenderAddress(email) ? { allowPersonCreation: false } : {}),
+    });
   }
   for (const phone of mentioned.phones) {
     if (people.length >= maxPeople) break;

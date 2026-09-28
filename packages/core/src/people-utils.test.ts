@@ -843,6 +843,27 @@ describe("mailPeopleMentions", () => {
     expect(people[0]?.name).toBeUndefined();
   });
 
+  test("an automated address is linked but never creates a person", () => {
+    const people = mailPeopleMentions(
+      {
+        from: [{ name: "Build bot", address: "notifications@example.org" }],
+        to: [{ address: "maya.reeves@example.com" }],
+      },
+      "Bounces go to mailer-daemon@example.net.",
+      10,
+    );
+    expect(people).toEqual([
+      {
+        role: "sender",
+        name: "Build bot",
+        emails: ["notifications@example.org"],
+        allowPersonCreation: false,
+      },
+      { role: "recipient", name: undefined, emails: ["maya.reeves@example.com"] },
+      { role: "mentioned", emails: ["mailer-daemon@example.net"], allowPersonCreation: false },
+    ]);
+  });
+
   test("stops at the cap", () => {
     const to = Array.from({ length: 5 }, (_, i) => ({ address: `member${i}@example.org` }));
     expect(mailPeopleMentions({ to }, "", 3)).toHaveLength(3);
