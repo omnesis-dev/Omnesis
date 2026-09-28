@@ -3,18 +3,16 @@
 
 import {
   buildAttachmentDocument,
-  cleanPersonName,
   computeContentHash,
   createLogger,
   deriveAttachmentStableId,
-  extractEmailsAndPhonesFromText,
   extractSchemaOrgDatesFromHtml,
   formatAttachmentMarkers,
   htmlToMarkdown,
   isAutomatedSenderAddress,
   isAutoSubmittedGenerated,
   mailHeaderRelevancePenalty,
-  normalizeEmail,
+  mailPeopleMentions,
   resolveAttachmentConfig,
   resolveEffectiveMimeType,
   shouldExtractAttachment,
@@ -30,7 +28,6 @@ import type {
 import type { SyncCursor, SyncOptions, SyncProgress, SyncResult } from "@omnesis/source-sdk";
 import type {
   DocumentInput,
-  PersonMention,
   ProviderId as ProviderIdType,
   SourceId as SourceIdType,
 } from "@omnesis/types";
@@ -644,7 +641,7 @@ export class ImapEmailSource {
       message.envelope.inReplyTo ??
       message.envelope.messageId ??
       stableId;
-    const people = collectPeople(message.envelope, body);
+    const people = mailPeopleMentions(message.envelope, body, MAX_PEOPLE_PER_MESSAGE);
     const format = (addresses: ImapAddress[] | undefined) =>
       addresses?.map((address) =>
         address.name ? `${address.name} <${address.address}>` : address.address,
@@ -928,35 +925,4 @@ function externalId(mailbox: string, uidValidity: string, uid: number): string {
 function messageDate(message: ImapMessage): Date | undefined {
   const date = message.internalDate ?? message.envelope.date;
   return date && Number.isFinite(date.getTime()) ? date : undefined;
-}
-
-function collectPeople(envelope: ImapEnvelope, body: string): PersonMention[] {
-  const people: PersonMention[] = [];
-  const seenEmails = new Set<string>();
-  const append = (role: "sender" | "recipient", addresses: ImapAddress[] | undefined) => {
-    for (const address of addresses ?? []) {
-      if (people.length >= MAX_PEOPLE_PER_MESSAGE) return;
-      // Core's canonical form (Gmail dot/+ folding included), so the same
-      // correspondent synced over IMAP and Gmail lands on one person.
-      const email = normalizeEmail(address.address);
-      if (!email || seenEmails.has(email)) continue;
-      seenEmails.add(email);
-      people.push({ role, name: cleanPersonName(address.name), emails: [email] });
-    }
-  };
-  append("sender", envelope.from);
-  append("recipient", [...(envelope.to ?? []), ...(envelope.cc ?? []), ...(envelope.bcc ?? [])]);
-
-  const mentioned = extractEmailsAndPhonesFromText(body);
-  for (const email of mentioned.emails) {
-    if (people.length >= MAX_PEOPLE_PER_MESSAGE) break;
-    if (seenEmails.has(email)) continue;
-    seenEmails.add(email);
-    people.push({ role: "mentioned", emails: [email] });
-  }
-  for (const phone of mentioned.phones) {
-    if (people.length >= MAX_PEOPLE_PER_MESSAGE) break;
-    people.push({ role: "mentioned", phones: [phone], allowPersonCreation: false });
-  }
-  return people;
 }
