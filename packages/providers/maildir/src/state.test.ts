@@ -95,7 +95,10 @@ describe("MaildirIndex", () => {
     try {
       const path = join(dir, "index.sqlite");
       const index = new MaildirIndex(path);
-      index.applyListing([{ mailboxId: "INBOX", uniq: "1", relPath: "cur/1:2,S", flags: "S" }], []);
+      index.applyListing(
+        [{ mailboxId: "INBOX", uniq: "1", relPath: "cur/1:2,S", flags: "S", version: "" }],
+        [],
+      );
       index.recordScans([{ mailboxId: "INBOX", uniq: "1", key: "mid:k", dateMs: 5 }]);
       index.alignWithCursor("g1", 0);
       index.close();
@@ -107,6 +110,7 @@ describe("MaildirIndex", () => {
           uniq: "1",
           relPath: "cur/1:2,S",
           flags: "S",
+          version: "",
           key: "mid:k",
           dateMs: 5,
         },

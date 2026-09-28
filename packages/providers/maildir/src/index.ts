@@ -31,7 +31,8 @@ const INDEX_FILE = "maildir-index.sqlite";
 export default defineSource({
   id: "maildir",
   name: "Maildir",
-  description: "Email a mail tool such as mbsync or offlineimap keeps on this machine as a Maildir",
+  description:
+    "Email a mail tool such as mbsync or offlineimap, or Thunderbird's file-per-message store, keeps on this machine as a Maildir",
   provider: { id: "maildir", name: "Maildir" },
   authType: "local",
   experimental: true,
@@ -109,7 +110,7 @@ export default defineSource({
       required: true,
       placeholder: "~/Mail/example",
       mustExist: "directory",
-      help: "The folder your mail tool writes one account's mail to. It, or a folder inside it such as INBOX, holds cur and new directories.",
+      help: "The folder your mail tool writes one account's mail to. It, or a folder inside it such as INBOX, holds cur and new directories. For Thunderbird, the account's folder in the profile, such as Mail/Local Folders or ImapMail/<server>.",
     }),
     exclude: configSchema.list(configSchema.string({ label: "Folder pattern" }), {
       label: "Exclude folders",
@@ -158,8 +159,8 @@ export default defineSource({
       dispose: () => source.dispose(),
       probeReadAccess: ({ signal }) => probeMaildirReadAccess(root, signal),
       // Every change a mail tool makes is a file appearing, moving between
-      // `new` and `cur`, or being renamed with new flags, anywhere below the
-      // root.
+      // `new` and `cur`, being renamed with new flags or, for Thunderbird,
+      // rewritten with new flags, anywhere below the root.
       watchPaths: [root],
       watchDirectoryPaths: [root],
     });

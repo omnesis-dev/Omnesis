@@ -7,7 +7,7 @@
  * `tmp` then renamed into place, as a delivering tool does.
  */
 
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export interface FixtureAddress {
@@ -151,4 +151,54 @@ export function deliverMessage(
   const destination = join(mailboxDir, subdir, maildirFileName(uniq, subdir, options.flags));
   renameSync(temporary, destination);
   return destination;
+}
+
+/** Create a folder the way Thunderbird's "file per message" store does: `cur` and `tmp`, no `new`. */
+export function createThunderbirdFolder(dir: string): string {
+  for (const sub of ["cur", "tmp"]) mkdirSync(join(dir, sub), { recursive: true });
+  return dir;
+}
+
+/** Thunderbird's flag words: `X-Mozilla-Status` (4 hex digits) and `X-Mozilla-Status2` (8). */
+export interface MozillaStatus {
+  status?: number;
+  status2?: number;
+}
+
+function mozillaStatusHeaders({ status = 0, status2 = 0 }: MozillaStatus): string {
+  const hex = (value: number, width: number) => value.toString(16).padStart(width, "0");
+  return `X-Mozilla-Status: ${hex(status, 4)}\r\nX-Mozilla-Status2: ${hex(status2, 8)}\r\n`;
+}
+
+/**
+ * Store one message in a Thunderbird folder, as Thunderbird names and writes
+ * it: `cur/<name>.eml`, starting with its status headers. Returns its path.
+ */
+export function storeThunderbirdMessage(
+  folderDir: string,
+  name: string,
+  message: FixtureMessage | string,
+  status: MozillaStatus = {},
+): string {
+  createThunderbirdFolder(folderDir);
+  const temporary = join(folderDir, "tmp", `${name}.eml`);
+  const body = typeof message === "string" ? message : renderMessage(message);
+  writeFileSync(temporary, mozillaStatusHeaders(status) + body);
+  const destination = join(folderDir, "cur", `${name}.eml`);
+  renameSync(temporary, destination);
+  return destination;
+}
+
+/**
+ * Change a stored message's flags the way Thunderbird does: its status
+ * headers are rewritten in place, at the same width, so the file keeps its
+ * name and size and only its modification time moves.
+ */
+export function setThunderbirdStatus(path: string, status: MozillaStatus, mtime: Date): void {
+  const text = readFileSync(path, "latin1").replace(
+    /^X-Mozilla-Status: [0-9a-f]{4}\r\nX-Mozilla-Status2: [0-9a-f]{8}\r\n/,
+    mozillaStatusHeaders(status),
+  );
+  writeFileSync(path, text, "latin1");
+  utimesSync(path, mtime, mtime);
 }

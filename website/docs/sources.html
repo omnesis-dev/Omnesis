@@ -258,9 +258,9 @@
                   <span class="pill">Folder path</span>
                 </td>
                 <td>
-                  Email that a mail tool such as mbsync or offlineimap keeps on the collector's own
-                  machine as a Maildir. Omnesis reads the files and never connects to the mail
-                  server. See <a href="#maildir">Maildir</a>.
+                  Email that a mail tool such as mbsync or offlineimap, or Thunderbird, keeps on the
+                  collector's own machine as a Maildir. Omnesis reads the files and never connects
+                  to the mail server. See <a href="#maildir">Maildir</a>.
                 </td>
               </tr>
               <tr>
@@ -336,6 +336,24 @@
             </p>
           </div>
         </div>
+        <p>
+          <strong>Thunderbird.</strong> Thunderbird keeps each account's mail in its profile folder:
+          <code>Mail/Local Folders</code> for local folders and
+          <code>ImapMail/&lt;server&gt;</code> for an IMAP account. Maildir reads an account that
+          uses Thunderbird's <em>File per message (maildir)</em> store; add the account's folder,
+          and its folders and subfolders are read as Thunderbird keeps them. For a local account
+          (Local Folders, or a POP account) stars and replies follow Thunderbird too. An IMAP
+          account keeps those on the server rather than in its files, so for one its folders and
+          deletions follow but a star added later does not; the IMAP source reads the server itself.
+          A folder whose name is too long or has characters the disk does not allow appears under
+          the name Thunderbird gave it on disk, which can be a hash of the original. By default
+          Thunderbird stores an account as one mbox file per folder, which this source does not
+          read; a sync over such a folder says so. To switch an account, back up the profile, then
+          in Thunderbird right-click the account, open <em>Settings</em>, and under
+          <em>Server Settings</em> set <em>Message Store Type</em> to
+          <em>File per message (maildir)</em>. For an IMAP account, Thunderbird has local copies
+          only of the folders it keeps for offline use.
+        </p>
         <ul>
           <li>
             <strong>One document per message.</strong> A message stored in several folders — Gmail
@@ -354,9 +372,10 @@
             remove local copies keeps them in Omnesis too.
           </li>
           <li>
-            <strong>What it skips.</strong> Drafts, spam and trash folders, messages marked deleted,
-            and any folder matching the <em>Exclude folders</em> setting, which takes folder names
-            such as <code>[Gmail]/All Mail</code>; <code>*</code> matches within a folder name and
+            <strong>What it skips.</strong> Drafts, spam and trash folders, Thunderbird's templates
+            and unsent messages, messages marked deleted, and any folder matching the
+            <em>Exclude folders</em> setting, which takes folder names such as
+            <code>[Gmail]/All Mail</code>; <code>*</code> matches within a folder name and
             <code>**</code> across folders.
           </li>
           <li>

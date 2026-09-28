@@ -6,7 +6,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { probeMaildirReadAccess } from "./probe.js";
-import { createMailbox, deliverMessage } from "./testing/maildir-writer.js";
+import {
+  createMailbox,
+  createThunderbirdFolder,
+  deliverMessage,
+  storeThunderbirdMessage,
+} from "./testing/maildir-writer.js";
 
 const isRoot = process.getuid?.() === 0;
 const signal = new AbortController().signal;
@@ -48,4 +53,11 @@ test.skipIf(isRoot)("a message file the process may not open is denied", async (
   const path = deliverMessage(inbox, "1.x", "Subject: x\r\n\r\nx");
   chmodSync(path, 0o000);
   expect(await probeMaildirReadAccess(root, signal)).toEqual({ status: "denied" });
+});
+
+test("Thunderbird's folders, which have no new directory, are readable", async () => {
+  createThunderbirdFolder(join(root, "Inbox"));
+  expect(await probeMaildirReadAccess(root, signal)).toEqual({ status: "readable" });
+  storeThunderbirdMessage(join(root, "Sent"), "1.a", "Subject: x\r\n\r\nx");
+  expect(await probeMaildirReadAccess(root, signal)).toEqual({ status: "readable" });
 });

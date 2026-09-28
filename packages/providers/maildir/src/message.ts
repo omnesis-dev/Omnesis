@@ -9,6 +9,7 @@
 import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import PostalMime from "postal-mime";
+import { parseMessageFileName } from "./layout.js";
 import type { Address, Email } from "postal-mime";
 import type { MailAddress } from "@omnesis/core";
 
@@ -30,6 +31,8 @@ export interface ScannedMessage {
   key: string;
   /** Milliseconds since the epoch. */
   dateMs: number;
+  /** Flag letters read from inside the file, when it carries them there. */
+  flags?: string;
 }
 
 export interface ParsedAttachment {
@@ -234,12 +237,17 @@ function firstMessageId(value: string | undefined): string | undefined {
  * — every message gets one, because the data cutoff and the document's time
  * both need it. The file name comes late because a mirroring tool stamps it
  * with when it downloaded the message, not when the message arrived.
+ *
+ * For a file that carries its flags inside it, they are read too — from its
+ * Thunderbird status headers, or from its name when it has none, as a copy
+ * of a Maildir folder that lost its `new` directory would.
  */
 export async function scanMessage(
   path: string,
   mailboxId: string,
   uniq: string,
   mtimeMs: () => number,
+  flagsInFile = false,
 ): Promise<ScannedMessage> {
   const { bytes } = readPrefix(path, HEADER_SCAN_BYTES);
   const headers = await PostalMime.parse(repairCharsets(headerBlock(bytes)), MIME_OPTIONS);
@@ -247,7 +255,41 @@ export async function scanMessage(
     (validDate(headers.date) ?? receivedDate(headers))?.getTime() ??
     deliveryTimeMs(uniq) ??
     Math.trunc(mtimeMs());
-  return { key: messageKey(headers.messageId, mailboxId, uniq), dateMs };
+  const key = messageKey(headers.messageId, mailboxId, uniq);
+  if (!flagsInFile) return { key, dateMs };
+  return { key, dateMs, flags: mozillaFlags(headers) ?? parseMessageFileName(uniq).flags };
+}
+
+/** Thunderbird's message flag bits, as `X-Mozilla-Status` and `X-Mozilla-Status2` carry them. */
+const MOZILLA_READ = 0x0001;
+const MOZILLA_REPLIED = 0x0002;
+const MOZILLA_MARKED = 0x0004;
+const MOZILLA_EXPUNGED = 0x0008;
+const MOZILLA_FORWARDED = 0x1000;
+const MOZILLA_IMAP_DELETED = 0x0020_0000;
+
+/**
+ * A Thunderbird message's flags, as the Maildir flag letters that mean the
+ * same, sorted: `F` starred, `P` forwarded, `R` replied, `S` read, `T`
+ * deleted (marked deleted, or expunged but not yet removed). Undefined when
+ * the message carries neither status header.
+ */
+function mozillaFlags(email: Email): string | undefined {
+  const bits = (name: string) => {
+    const value = headerValue(email, name)?.trim();
+    if (value === undefined) return undefined;
+    return /^[0-9a-f]{1,8}$/i.test(value) ? Number.parseInt(value, 16) : 0;
+  };
+  const status = bits("x-mozilla-status");
+  const status2 = bits("x-mozilla-status2");
+  if (status === undefined && status2 === undefined) return undefined;
+  let flags = "";
+  if ((status ?? 0) & MOZILLA_MARKED) flags += "F";
+  if ((status ?? 0) & MOZILLA_FORWARDED) flags += "P";
+  if ((status ?? 0) & MOZILLA_REPLIED) flags += "R";
+  if ((status ?? 0) & MOZILLA_READ) flags += "S";
+  if ((status2 ?? 0) & MOZILLA_IMAP_DELETED || (status ?? 0) & MOZILLA_EXPUNGED) flags += "T";
+  return flags;
 }
 
 function flattenAddresses(addresses: Address[] | Address | undefined): MailAddress[] {

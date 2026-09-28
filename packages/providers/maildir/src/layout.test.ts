@@ -7,7 +7,9 @@ import {
   mkdtempSync,
   renameSync,
   rmSync,
+  statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -23,7 +25,12 @@ import {
   parseMessageFileName,
   walkMaildir,
 } from "./layout.js";
-import { createMailbox, deliverMessage } from "./testing/maildir-writer.js";
+import {
+  createMailbox,
+  createThunderbirdFolder,
+  deliverMessage,
+  storeThunderbirdMessage,
+} from "./testing/maildir-writer.js";
 
 const LIMITS = { maxMailboxes: 100, maxFiles: 1000 };
 const isRoot = process.getuid?.() === 0;
@@ -157,8 +164,14 @@ describe("walkMaildir", () => {
     writeFileSync(join(inbox, "cur", ".hidden"), "");
     const files = walkMaildir(root, [], LIMITS).files.sort((a, b) => a.uniq.localeCompare(b.uniq));
     expect(files).toEqual([
-      { mailboxId: "INBOX", uniq: "100.a.host", relPath: "new/100.a.host", flags: "" },
-      { mailboxId: "INBOX", uniq: "101.b.host", relPath: "cur/101.b.host:2,FS", flags: "FS" },
+      { mailboxId: "INBOX", uniq: "100.a.host", relPath: "new/100.a.host", flags: "", version: "" },
+      {
+        mailboxId: "INBOX",
+        uniq: "101.b.host",
+        relPath: "cur/101.b.host:2,FS",
+        flags: "FS",
+        version: "",
+      },
     ]);
   });
 
@@ -168,7 +181,13 @@ describe("walkMaildir", () => {
     renameSync(join(inbox, "cur", "100.a.host:2,S"), join(inbox, "cur", "100.a.host:2,Sdt"));
     symlinkSync(join(root, "elsewhere"), join(inbox, "cur", "200.link.host:2,S"));
     expect(walkMaildir(root, [], LIMITS).files).toEqual([
-      { mailboxId: "INBOX", uniq: "100.a.host", relPath: "cur/100.a.host:2,Sdt", flags: "S" },
+      {
+        mailboxId: "INBOX",
+        uniq: "100.a.host",
+        relPath: "cur/100.a.host:2,Sdt",
+        flags: "S",
+        version: "",
+      },
     ]);
   });
 
@@ -278,5 +297,88 @@ describe("walkMaildir", () => {
     } finally {
       chmodSync(root, 0o755);
     }
+  });
+});
+
+describe("Thunderbird's file-per-message store", () => {
+  test("folders without new are mailboxes, and .sbd directories hold their subfolders", () => {
+    createThunderbirdFolder(join(root, "Inbox"));
+    createThunderbirdFolder(join(root, "Sent"));
+    createThunderbirdFolder(join(root, "Archives.sbd", "2025"));
+    createThunderbirdFolder(join(root, "[Gmail].sbd", "Starred"));
+    writeFileSync(join(root, "[Gmail].msf"), "");
+    createThunderbirdFolder(join(root, "Templates"));
+    createThunderbirdFolder(join(root, "unsent messages"));
+    createThunderbirdFolder(join(root, "Trash"));
+    for (const summary of ["Inbox.msf", "Sent.msf", "Archives.msf", "msgFilterRules.dat"]) {
+      writeFileSync(join(root, summary), "");
+    }
+    const walk = walkMaildir(root, [], LIMITS);
+    expect(walk.mailboxes.map((m) => [m.id, m.name, m.flagsInFile]).sort()).toEqual([
+      ["Archives.sbd/2025", "Archives/2025", true],
+      ["Inbox", "INBOX", true],
+      ["Sent", "Sent", true],
+      ["[Gmail].sbd/Starred", "[Gmail]/Starred", true],
+    ]);
+    expect(walk.mailboxes.find((m) => m.name === "Sent")?.sent).toBe(true);
+    expect(folderTag("[Gmail]/Starred")).toBe("STARRED");
+  });
+
+  test("lists cur only, leaves flags to the file, and versions each file", () => {
+    const inbox = join(root, "Inbox");
+    const path = storeThunderbirdMessage(inbox, "1767225600.M1P2Q3.host", "Subject: a\r\n\r\nx");
+    writeFileSync(join(inbox, "tmp", "1767225601.M1P2Q4.host.eml"), "Subject: half written\r\n");
+    const stat = statSync(path, { bigint: true });
+    expect(walkMaildir(root, [], LIMITS).files).toEqual([
+      {
+        mailboxId: "Inbox",
+        uniq: "1767225600.M1P2Q3.host.eml",
+        relPath: "cur/1767225600.M1P2Q3.host.eml",
+        flags: null,
+        version: `${stat.mtimeNs}:${stat.ctimeNs}:${stat.size}:${stat.ino}`,
+      },
+    ]);
+  });
+
+  test("a Maildir tree beside it keeps reading flags from file names", () => {
+    deliverMessage(join(root, "Work"), "100.a.host", "Subject: a\r\n\r\nx", { flags: "F" });
+    storeThunderbirdMessage(join(root, "Inbox"), "200.b", "Subject: b\r\n\r\nx");
+    const files = walkMaildir(root, [], LIMITS).files.sort((a, b) => a.uniq.localeCompare(b.uniq));
+    expect(files.map((f) => [f.mailboxId, f.flags, f.version !== ""])).toEqual([
+      ["Work", "F", false],
+      ["Inbox", null, true],
+    ]);
+  });
+
+  test("an account stored as mbox is refused with the way to convert it", () => {
+    writeFileSync(join(root, "Inbox"), "From - 2026-01-01 00:00:00\r\nSubject: a\r\n\r\nx\r\n");
+    writeFileSync(join(root, "Inbox.msf"), "");
+    mkdirSync(join(root, "Archives.sbd"));
+    let error: unknown;
+    try {
+      walkMaildir(root, [], LIMITS);
+    } catch (err) {
+      error = err;
+    }
+    expect(error).toBeInstanceOf(SyncError);
+    expect((error as Error).message).toMatch(/Thunderbird mbox files/);
+    expect((error as SyncError).remediation?.steps.join(" ")).toMatch(
+      /File per message \(maildir\)/,
+    );
+  });
+
+  test("Templates is skipped only in Thunderbird's store, and .sbd only beside its folder", () => {
+    createMailbox(join(root, "Templates"));
+    createMailbox(join(root, "Notes.sbd", "2024"));
+    createThunderbirdFolder(join(root, "Tb", "Templates"));
+    const names = walkMaildir(root, [], LIMITS)
+      .mailboxes.map((m) => m.name)
+      .sort();
+    expect(names).toEqual(["Notes.sbd/2024", "Templates"]);
+  });
+
+  test("a folder that is neither Maildir nor mbox gets the general message", () => {
+    mkdirSync(join(root, "Notes"));
+    expect(() => walkMaildir(root, [], LIMITS)).toThrow(/No mail folders found/);
   });
 });

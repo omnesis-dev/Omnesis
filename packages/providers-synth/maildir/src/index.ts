@@ -33,6 +33,9 @@ export default defineSource({
   // run never reaches a real mailbox.
   authenticate: undefined,
   cleanupCredentials: undefined,
+  // The real source's cursor contract is the real decoder's to evolve; the
+  // double's state stays an opaque cursor the host stores as written.
+  contract: undefined,
   async create(options) {
     if (!options.host)
       throw new Error("The synthetic Maildir needs a host state directory to write its tree");

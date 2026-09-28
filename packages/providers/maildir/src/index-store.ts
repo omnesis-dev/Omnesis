@@ -31,13 +31,20 @@
 
 import { DatabaseSync } from "node:sqlite";
 import { SyncError } from "@omnesis/types";
+import { isIgnoredByFlags } from "./layout.js";
 import type { AttachmentInfo } from "@omnesis/core";
 
 export interface FileRow {
   mailboxId: string;
   uniq: string;
   relPath: string;
+  /** Maildir flag letters, from the file's name or, when it carries them inside, its headers. */
   flags: string;
+  /**
+   * Modification time and size of a file that carries its flags inside it;
+   * empty for a Maildir file. A file whose version changes is read again.
+   */
+  version: string;
   /** Null until the file's headers have been read. */
   key: string | null;
   dateMs: number | null;
@@ -54,7 +61,7 @@ export interface EmittedAttachment {
 }
 
 /** What was emitted for one message. */
-export interface EmittedState {
+interface EmittedState {
   /** Everything that decides the emitted documents: output, settings, folders and flags. */
   signature: string;
   /** The part of the signature that decides attachment documents: output and settings. */
@@ -74,7 +81,7 @@ export interface EmittedRow extends EmittedState {
   seq: number;
 }
 
-const SCHEMA_VERSION = "4";
+const SCHEMA_VERSION = "5";
 
 export class MaildirIndex {
   private readonly db: DatabaseSync;
@@ -98,6 +105,8 @@ export class MaildirIndex {
         uniq TEXT NOT NULL,
         rel_path TEXT NOT NULL,
         flags TEXT NOT NULL,
+        version TEXT NOT NULL,
+        scanned_version TEXT,
         key TEXT,
         date_ms INTEGER,
         PRIMARY KEY (mailbox_id, uniq)
@@ -170,21 +179,31 @@ export class MaildirIndex {
     }
   }
 
+  /** Every file the index knows, as the last listing and scan left it. */
   allFiles(): FileRow[] {
     return this.selectFiles(false);
+  }
+
+  /**
+   * The files that hold a message: every known file but those whose flags,
+   * read from inside them, mark them deleted or a draft.
+   */
+  messageFiles(): FileRow[] {
+    return this.selectFiles(false).filter((file) => !isIgnoredByFlags(file.flags));
   }
 
   private selectFiles(unscannedOnly: boolean): FileRow[] {
     return (
       this.db
         .prepare(
-          `SELECT mailbox_id, uniq, rel_path, flags, key, date_ms FROM files${unscannedOnly ? " WHERE key IS NULL" : ""}`,
+          `SELECT mailbox_id, uniq, rel_path, flags, version, key, date_ms FROM files${unscannedOnly ? " WHERE key IS NULL OR scanned_version IS NOT version" : ""}`,
         )
         .all() as Array<{
         mailbox_id: string;
         uniq: string;
         rel_path: string;
         flags: string;
+        version: string;
         key: string | null;
         date_ms: number | null;
       }>
@@ -193,42 +212,65 @@ export class MaildirIndex {
       uniq: row.uniq,
       relPath: row.rel_path,
       flags: row.flags,
+      version: row.version,
       key: row.key,
       dateMs: row.date_ms,
     }));
   }
 
-  /** Files whose headers have not been read yet. */
+  /** Files whose headers have not been read, or have changed since they were. */
   unscannedFiles(): FileRow[] {
     return this.selectFiles(true);
   }
 
-  /** Apply a listing's differences: files that appeared, moved or changed flags, and files that went. */
+  /**
+   * Apply a listing's differences: files that appeared, moved or changed, and
+   * files that went.
+   *
+   * A file listed with `flags: null` carries its flags inside it: they stay
+   * as its last scan read them. A new version sends it back to be read, and
+   * until that read succeeds it keeps naming the message it held, so a file
+   * that changed and then will not open is never taken for a deleted one.
+   */
   applyListing(
-    upserts: Array<{ mailboxId: string; uniq: string; relPath: string; flags: string }>,
+    upserts: Array<{
+      mailboxId: string;
+      uniq: string;
+      relPath: string;
+      flags: string | null;
+      version: string;
+    }>,
     removals: Array<{ mailboxId: string; uniq: string }>,
   ): void {
     if (upserts.length === 0 && removals.length === 0) return;
     const upsert = this.db.prepare(`
-      INSERT INTO files (mailbox_id, uniq, rel_path, flags) VALUES (?, ?, ?, ?)
-      ON CONFLICT(mailbox_id, uniq) DO UPDATE SET rel_path = excluded.rel_path, flags = excluded.flags
+      INSERT INTO files (mailbox_id, uniq, rel_path, flags, version) VALUES (?1, ?2, ?3, coalesce(?4, ''), ?5)
+      ON CONFLICT(mailbox_id, uniq) DO UPDATE SET
+        rel_path = excluded.rel_path,
+        flags = coalesce(?4, files.flags),
+        version = excluded.version
     `);
     const remove = this.db.prepare("DELETE FROM files WHERE mailbox_id = ? AND uniq = ?");
     this.transaction(() => {
-      for (const file of upserts) upsert.run(file.mailboxId, file.uniq, file.relPath, file.flags);
+      for (const file of upserts) {
+        upsert.run(file.mailboxId, file.uniq, file.relPath, file.flags, file.version);
+      }
       for (const file of removals) remove.run(file.mailboxId, file.uniq);
     });
   }
 
+  /** Record what reading files' headers found; `flags` only for a file that carries them inside it. */
   recordScans(
-    scans: Array<{ mailboxId: string; uniq: string; key: string; dateMs: number }>,
+    scans: Array<{ mailboxId: string; uniq: string; key: string; dateMs: number; flags?: string }>,
   ): void {
     if (scans.length === 0) return;
     const update = this.db.prepare(
-      "UPDATE files SET key = ?, date_ms = ? WHERE mailbox_id = ? AND uniq = ?",
+      "UPDATE files SET key = ?, date_ms = ?, flags = coalesce(?, flags), scanned_version = version WHERE mailbox_id = ? AND uniq = ?",
     );
     this.transaction(() => {
-      for (const scan of scans) update.run(scan.key, scan.dateMs, scan.mailboxId, scan.uniq);
+      for (const scan of scans) {
+        update.run(scan.key, scan.dateMs, scan.flags ?? null, scan.mailboxId, scan.uniq);
+      }
     });
   }
 

@@ -1,14 +1,28 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { chmodSync, mkdtempSync, renameSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { resolveAttachmentConfig } from "@omnesis/core";
 import { expectUnchangedUpstreamIsNoOp } from "@omnesis/source-sdk/testing";
 import { MaildirSource } from "./source.js";
-import { createMailbox, deliverMessage, maildirFileName } from "./testing/maildir-writer.js";
+import {
+  createMailbox,
+  deliverMessage,
+  maildirFileName,
+  setThunderbirdStatus,
+  storeThunderbirdMessage,
+} from "./testing/maildir-writer.js";
 import type { AttachmentExtractFn } from "@omnesis/core";
 import type { DocumentInput } from "@omnesis/types";
 import type { MaildirCursor, MaildirLimits } from "./source.js";
@@ -470,6 +484,165 @@ describe("copies in several folders", () => {
     );
     await gateway.cycle(source);
     expect(gateway.docs.size).toBe(0);
+  });
+});
+
+describe("a Thunderbird profile's mail folder", () => {
+  const READ = 0x0001;
+  const REPLIED = 0x0002;
+  const STARRED = 0x0004;
+  const IMAP_DELETED = 0x0020_0000;
+  const later = (seconds: number) => new Date(Date.UTC(2026, 3, 1, 12, 0, seconds));
+
+  test("indexes each folder once, with its flags read from inside the file", async () => {
+    storeThunderbirdMessage(join(root, "Inbox"), "1767225600.M1P1Q1.host", message(), {
+      status: READ | STARRED,
+    });
+    storeThunderbirdMessage(
+      join(root, "[Gmail].sbd", "All Mail"),
+      "1767225600.M1P1Q2.host",
+      message(),
+      { status: READ | STARRED },
+    );
+    storeThunderbirdMessage(
+      join(root, "Sent"),
+      "1767225700.M1P1Q3.host",
+      message({
+        messageId: "reply@example.com",
+        from: SELF,
+        to: [JAMIE],
+        subject: "Re: Welcome to the team",
+        date: "2026-03-02T10:00:00Z",
+        text: "Thanks!",
+      }),
+      { status: READ | REPLIED },
+    );
+    writeFileSync(join(root, "[Gmail].msf"), "");
+    const gateway = new FakeGateway();
+    await gateway.cycle(makeSource());
+    expect(gateway.docs.size).toBe(2);
+    const welcome = gateway.byTitle("Welcome to the team");
+    expect(welcome.metadata.tags).toEqual(["INBOX", "STARRED"]);
+    expect(welcome.metadata.extra?.flagged).toBe(true);
+    const reply = gateway.byTitle("Re: Welcome to the team");
+    expect(reply.metadata.tags).toEqual(["SENT"]);
+    expect(reply.metadata.extra?.answered).toBe(true);
+  });
+
+  test("a flag Thunderbird rewrites in place re-emits that message alone", async () => {
+    const inbox = join(root, "Inbox");
+    const path = storeThunderbirdMessage(inbox, "1.eml-a", message(), { status: READ });
+    storeThunderbirdMessage(
+      inbox,
+      "2.eml-b",
+      message({ messageId: "second@example.org", subject: "Second" }),
+      { status: READ },
+    );
+    const gateway = new FakeGateway();
+    const source = makeSource();
+    await gateway.cycle(source);
+    expect((await gateway.cycle(source)).emitted).toEqual([]);
+
+    setThunderbirdStatus(path, { status: READ | STARRED }, later(1));
+    const starred = await gateway.cycle(source);
+    expect(starred.emitted.map((d) => d.title)).toEqual(["Welcome to the team"]);
+    expect(gateway.byTitle("Welcome to the team").metadata.extra?.flagged).toBe(true);
+    expect(gateway.byTitle("Welcome to the team").metadata.tags).toContain("STARRED");
+
+    setThunderbirdStatus(path, { status: READ }, later(2));
+    expect((await gateway.cycle(source)).emitted).toHaveLength(1);
+    expect(gateway.byTitle("Welcome to the team").metadata.extra?.flagged).toBeUndefined();
+    expect(gateway.byTitle("Welcome to the team").metadata.tags).toEqual(["INBOX"]);
+    expect(gateway.docs.size).toBe(2);
+  });
+
+  test("a message marked deleted, or removed, is deleted", async () => {
+    const inbox = join(root, "Inbox");
+    const marked = storeThunderbirdMessage(inbox, "1.a", message(), { status: READ });
+    const removed = storeThunderbirdMessage(
+      inbox,
+      "2.b",
+      message({ messageId: "second@example.org", subject: "Second" }),
+    );
+    storeThunderbirdMessage(
+      inbox,
+      "3.c",
+      message({ messageId: "third@example.org", subject: "Third" }),
+    );
+    const gateway = new FakeGateway();
+    const source = makeSource();
+    await gateway.cycle(source);
+    expect(gateway.docs.size).toBe(3);
+
+    setThunderbirdStatus(marked, { status: READ, status2: IMAP_DELETED }, later(1));
+    unlinkSync(removed);
+    await gateway.cycle(source);
+    expect([...gateway.docs.values()].map((d) => d.title)).toEqual(["Third"]);
+  });
+
+  test("a rewrite that leaves the size and modification time alone is still seen", async () => {
+    const path = storeThunderbirdMessage(join(root, "Inbox"), "1.a", message(), { status: READ });
+    const gateway = new FakeGateway();
+    const source = makeSource();
+    await gateway.cycle(source);
+    const { mtime } = statSync(path);
+    // A filesystem that keeps whole seconds: the rewrite lands in the same one.
+    setThunderbirdStatus(path, { status: READ | STARRED }, mtime);
+    expect((await gateway.cycle(source)).emitted).toHaveLength(1);
+    expect(gateway.byTitle("Welcome to the team").metadata.extra?.flagged).toBe(true);
+  });
+
+  test.skipIf(isRoot)(
+    "a changed file that will not open keeps its message until it reads again",
+    async () => {
+      const path = storeThunderbirdMessage(join(root, "Inbox"), "1.a", message(), {
+        status: READ,
+      });
+      const gateway = new FakeGateway();
+      const source = makeSource();
+      await gateway.cycle(source);
+      setThunderbirdStatus(path, { status: READ | STARRED }, later(1));
+      chmodSync(path, 0o000);
+      try {
+        const blocked = await gateway.cycle(source);
+        expect(blocked.present).toContain(gateway.byTitle("Welcome to the team").externalId);
+        expect(gateway.docs.size).toBe(1);
+      } finally {
+        chmodSync(path, 0o644);
+      }
+      await gateway.cycle(source);
+      expect(gateway.byTitle("Welcome to the team").metadata.extra?.flagged).toBe(true);
+    },
+  );
+
+  test("a Maildir copied without its new directory keeps the flags in its file names", async () => {
+    const copy = join(root, "Backup");
+    storeThunderbirdMessage(copy, "0", "Subject: placeholder\r\n\r\nx");
+    rmSync(join(copy, "cur", "0.eml"));
+    deliverMessage(copy, "1.a.host", message(), { flags: "FS" });
+    rmSync(join(copy, "new"), { recursive: true, force: true });
+    deliverMessage(
+      copy,
+      "2.b.host",
+      message({ messageId: "second@example.org", subject: "Second" }),
+      { flags: "ST" },
+    );
+    rmSync(join(copy, "new"), { recursive: true, force: true });
+    const gateway = new FakeGateway();
+    await gateway.cycle(makeSource());
+    expect([...gateway.docs.values()].map((d) => d.title)).toEqual(["Welcome to the team"]);
+    expect(gateway.byTitle("Welcome to the team").metadata.extra?.flagged).toBe(true);
+  });
+
+  test("a restarted source reads nothing again", async () => {
+    storeThunderbirdMessage(join(root, "Inbox"), "1.a", message(), { status: READ });
+    const gateway = new FakeGateway();
+    const first = makeSource();
+    await gateway.cycle(first);
+    await first.dispose();
+    const again = await gateway.cycle(makeSource());
+    expect(again.emitted).toEqual([]);
+    expect(again.present).toHaveLength(1);
   });
 });
 

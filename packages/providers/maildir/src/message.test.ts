@@ -98,6 +98,35 @@ describe("scanMessage", () => {
   });
 });
 
+describe("Thunderbird's flags", () => {
+  const scanWith = async (statusHeaders: string) => {
+    const path = join(dir, "m.eml");
+    writeFileSync(path, `${statusHeaders}Message-ID: <a@example.org>\r\nSubject: x\r\n\r\nx`);
+    return scanMessage(path, "Inbox", "m.eml", () => 0, true);
+  };
+
+  test("are read from the status headers as Maildir flag letters", async () => {
+    expect(
+      (await scanWith("X-Mozilla-Status: 1007\r\nX-Mozilla-Status2: 00000000\r\n")).flags,
+    ).toBe("FPRS");
+    expect(
+      (await scanWith("X-Mozilla-Status: 0001\r\nX-Mozilla-Status2: 00200000\r\n")).flags,
+    ).toBe("ST");
+    expect((await scanWith("X-Mozilla-Status: 0009\r\n")).flags).toBe("ST");
+  });
+
+  test("are none when the headers are missing or not hexadecimal", async () => {
+    expect((await scanWith("")).flags).toBe("");
+    expect((await scanWith("X-Mozilla-Status: zz\r\n")).flags).toBe("");
+  });
+
+  test("are not reported for a Maildir file, whose name carries them", async () => {
+    const path = join(dir, "m");
+    writeFileSync(path, "X-Mozilla-Status: 0004\r\nSubject: x\r\n\r\nx");
+    expect((await scanMessage(path, "INBOX", "m", () => 0)).flags).toBeUndefined();
+  });
+});
+
 describe("text that is not UTF-8", () => {
   test("a raw Latin-1 subject is read in the charset the message declares", async () => {
     const raw = Buffer.concat([

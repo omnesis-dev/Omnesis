@@ -64,18 +64,20 @@ async function openOne(path: string): Promise<Outcome> {
   }
 }
 
-/** Whether `dir` is a mailbox whose listing and first message open. */
+/**
+ * Whether `dir` is a mailbox whose listing and first message open. Its `cur`
+ * decides whether it is one; `new` is looked in when present (a mail
+ * client's own Maildir folders have none).
+ */
 async function probeMailbox(dir: string, signal: AbortSignal): Promise<Outcome> {
-  let sawMailbox = false;
   for (const sub of ["cur", "new"]) {
     const listing = await sampleDir(join(dir, sub), 64, signal);
-    if (listing === "missing") return "missing";
+    if (listing === "missing") return sub === "cur" ? "missing" : { status: "readable" };
     if ("status" in listing) return listing;
-    sawMailbox = true;
     const file = listing.names.find((entry) => entry.isFile && !entry.name.startsWith("."));
     if (file) return openOne(join(dir, sub, file.name));
   }
-  return sawMailbox ? { status: "readable" } : "missing";
+  return { status: "readable" };
 }
 
 export async function probeMaildirReadAccess(

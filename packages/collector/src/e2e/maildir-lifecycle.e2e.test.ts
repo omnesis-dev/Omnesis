@@ -12,14 +12,28 @@
  * collector to name the account for a folder, then to add it.
  */
 
-import { chmodSync, existsSync, mkdtempSync, renameSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { GatewayWsClient, HttpGatewayClient } from "@omnesis/gateway-client";
 import maildirDefinition from "@omnesis/provider-maildir";
-import { createMailbox, deliverMessage, maildirFileName } from "@omnesis/provider-maildir/testing";
+import {
+  createMailbox,
+  deliverMessage,
+  maildirFileName,
+  setThunderbirdStatus,
+  storeThunderbirdMessage,
+} from "@omnesis/provider-maildir/testing";
 import { SourceType } from "@omnesis/types";
 import { extractDescriptors } from "../source-descriptors.js";
 import { SourceManager } from "../source-manager.js";
@@ -109,7 +123,7 @@ describe("real Maildir source through a real collector", () => {
     }
   };
 
-  const rows = (): DocumentRow[] => {
+  const rows = (id = sourceId): DocumentRow[] => {
     const db = new Database(harness.getDbPath(), { readonly: true });
     try {
       return db
@@ -117,16 +131,17 @@ describe("real Maildir source through a real collector", () => {
           [string],
           DocumentRow
         >("SELECT external_id, title, metadata FROM documents WHERE source_id = ? ORDER BY title")
-        .all(sourceId);
+        .all(id);
     } finally {
       db.close();
     }
   };
-  const titles = () => rows().map((row) => row.title);
+  const titles = (id = sourceId) => rows(id).map((row) => row.title);
   const metadataOf = (
     title: string,
+    id = sourceId,
   ): { tags?: string[]; extra?: Record<string, unknown>; documentType?: string } => {
-    const row = rows().find((r) => r.title === title);
+    const row = rows(id).find((r) => r.title === title);
     if (!row) throw new Error(`no document titled ${title}`);
     return JSON.parse(row.metadata) as { tags?: string[]; extra?: Record<string, unknown> };
   };
@@ -157,7 +172,7 @@ describe("real Maildir source through a real collector", () => {
       db.close();
     }
   };
-  const lastSynced = (): string | null => {
+  const lastSynced = (id = sourceId): string | null => {
     const db = new Database(harness.getDbPath(), { readonly: true });
     try {
       return (
@@ -166,29 +181,53 @@ describe("real Maildir source through a real collector", () => {
             [string],
             { last_synced_at: string | null }
           >("SELECT last_synced_at FROM sync_state WHERE source_id = ?")
-          .get(sourceId)?.last_synced_at ?? null
+          .get(id)?.last_synced_at ?? null
       );
     } finally {
       db.close();
     }
   };
   /** Trigger one sync and wait until its final page has committed. */
-  const syncAndWait = async (restart = false): Promise<void> => {
-    const before = lastSynced();
-    const triggered = collector.engine.triggerSync(sourceId, { restart });
+  const syncAndWait = async (restart = false, id = sourceId): Promise<void> => {
+    const before = lastSynced(id);
+    const triggered = collector.engine.triggerSync(id, { restart });
     expect(triggered.error).toBeUndefined();
     await waitForCondition(
       () =>
         Promise.resolve(
-          lastSynced() !== before &&
-            collector.engine.getStatuses().find((s) => s.sourceId === sourceId)?.state === "idle",
+          lastSynced(id) !== before &&
+            collector.engine.getStatuses().find((s) => s.sourceId === id)?.state === "idle",
         ),
       30_000,
       "a Maildir sync committed",
     );
     expect(
-      collector.engine.getStatuses().find((s) => s.sourceId === sourceId)?.lastError,
+      collector.engine.getStatuses().find((s) => s.sourceId === id)?.lastError,
     ).toBeUndefined();
+  };
+  /** Add a Maildir source over `path` the way the portal does, and return its id once registered. */
+  const addSource = async (path: string): Promise<string> => {
+    const resolved = await admin<{ accountId: string }>("/admin/sources/resolve-account", {
+      method: "POST",
+      body: JSON.stringify({ deviceId, descriptorId: SOURCE_TYPE, params: { path } }),
+    });
+    await admin("/admin/sources/add", {
+      method: "POST",
+      body: JSON.stringify({
+        deviceId,
+        descriptorId: SOURCE_TYPE,
+        accountIds: [resolved.accountId],
+        params: { path },
+      }),
+    });
+    const id = `${SOURCE_TYPE}:${resolved.accountId}`;
+    await waitForCondition(
+      () => Promise.resolve(collector.engine.getSourcesById(id).length === 1),
+      15_000,
+      "the collector registered the Maildir source",
+    );
+    collector.engine.stopSyncLoop();
+    return id;
   };
   const runAbsenceSweep = async (): Promise<void> => {
     await new Promise((resolve) => setTimeout(resolve, 5));
@@ -522,5 +561,80 @@ describe("real Maildir source through a real collector", () => {
     const rebuilt = indexState();
     expect(rebuilt.generation).not.toBe(generation);
     expect(rebuilt.emitted.length).toBe(before.length);
+  }, 60_000);
+
+  test("a Thunderbird account kept file per message is indexed and follows stars and deletions", async () => {
+    const account = join(scratch, "thunderbird", "Mail", "pop.example.com");
+    const READ = 0x0001;
+    const STARRED = 0x0004;
+    const EXPUNGED = 0x0008;
+    const inboxCopy = storeThunderbirdMessage(
+      join(account, "INBOX"),
+      "1772443800.M1P1Q1.mail-host.example.com",
+      mail("tb-welcome", "Board meeting agenda"),
+      { status: READ },
+    );
+    storeThunderbirdMessage(
+      join(account, "[Gmail].sbd", "All Mail"),
+      "1772443800.M1P1Q2.mail-host.example.com",
+      mail("tb-welcome", "Board meeting agenda"),
+      { status: READ },
+    );
+    const receipt = storeThunderbirdMessage(
+      join(account, "Archives.sbd", "2026"),
+      "1772524800.M1P1Q3.mail-host.example.com",
+      mail("tb-receipt", "Your order has shipped", { from: DAVID }),
+      { status: READ },
+    );
+    for (const summary of ["INBOX.msf", "Archives.msf", "[Gmail].msf"]) {
+      writeFileSync(join(account, summary), "");
+    }
+
+    const tbSource = await addSource(account);
+    await syncAndWait(false, tbSource);
+    expect(titles(tbSource)).toEqual(["Board meeting agenda", "Your order has shipped"]);
+    expect(metadataOf("Board meeting agenda", tbSource).tags).toEqual(["INBOX"]);
+    expect(metadataOf("Your order has shipped", tbSource).tags).toEqual(["Archives/2026"]);
+
+    // Starred in Thunderbird: the status header is rewritten in place.
+    setThunderbirdStatus(inboxCopy, { status: READ | STARRED }, new Date(Date.now() + 2_000));
+    await syncAndWait(false, tbSource);
+    expect(metadataOf("Board meeting agenda", tbSource).extra?.flagged).toBe(true);
+    expect(metadataOf("Board meeting agenda", tbSource).tags).toEqual(["INBOX", "STARRED"]);
+
+    // Deleted and waiting for the folder to be compacted: Thunderbird marks it
+    // expunged in its status header.
+    setThunderbirdStatus(receipt, { status: READ | EXPUNGED }, new Date(Date.now() + 4_000));
+    await syncAndWait(false, tbSource);
+    await runAbsenceSweep();
+    await waitForCondition(
+      () => Promise.resolve(!titles(tbSource).includes("Your order has shipped")),
+      15_000,
+      "the message marked deleted was swept",
+    );
+    expect(titles(tbSource)).toEqual(["Board meeting agenda"]);
+  }, 60_000);
+
+  test("a Thunderbird account still stored as mbox says how to convert it", async () => {
+    const account = join(scratch, "thunderbird", "Mail", "local-folders");
+    mkdirSync(account, { recursive: true });
+    writeFileSync(join(account, "Inbox"), "From - 2026-03-02 09:30:00\r\nSubject: x\r\n\r\nx\r\n");
+    writeFileSync(join(account, "Inbox.msf"), "");
+    const mboxSource = await addSource(account);
+    expect(collector.engine.triggerSync(mboxSource).error).toBeUndefined();
+    await waitForCondition(
+      () =>
+        Promise.resolve(
+          /Thunderbird mbox files/.test(
+            collector.engine.getStatuses().find((s) => s.sourceId === mboxSource)?.lastError ?? "",
+          ),
+        ),
+      30_000,
+      "the sync failed with the mbox explanation",
+    );
+    const status = collector.engine.getStatuses().find((s) => s.sourceId === mboxSource);
+    expect(status?.remediation?.summary).toBe("Thunderbird stores this account as mbox");
+    expect(status?.remediation?.steps.join(" ")).toMatch(/File per message \(maildir\)/);
+    expect(titles(mboxSource)).toEqual([]);
   }, 60_000);
 });

@@ -387,13 +387,20 @@ export class MaildirSource {
    */
   private reconcile(plan: CyclePlan, index: MaildirIndex): void {
     const known = new Map(index.allFiles().map((row) => [fileKey(row.mailboxId, row.uniq), row]));
-    const upserts: Array<{ mailboxId: string; uniq: string; relPath: string; flags: string }> = [];
+    const upserts: MaildirWalk["files"] = [];
     const seen = new Set<string>();
     for (const file of plan.walk.files) {
       const id = fileKey(file.mailboxId, file.uniq);
       seen.add(id);
       const row = known.get(id);
-      if (!row || row.relPath !== file.relPath || row.flags !== file.flags) upserts.push(file);
+      if (
+        !row ||
+        row.relPath !== file.relPath ||
+        row.version !== file.version ||
+        (file.flags !== null && row.flags !== file.flags)
+      ) {
+        upserts.push(file);
+      }
     }
     const removals: Array<{ mailboxId: string; uniq: string }> = [];
     for (const [id, row] of known) {
@@ -413,7 +420,13 @@ export class MaildirSource {
     index: MaildirIndex,
     signal: AbortSignal | undefined,
   ): Promise<void> {
-    const scans: Array<{ mailboxId: string; uniq: string; key: string; dateMs: number }> = [];
+    const scans: Array<{
+      mailboxId: string;
+      uniq: string;
+      key: string;
+      dateMs: number;
+      flags?: string;
+    }> = [];
     for (const file of batch) {
       signal?.throwIfAborted();
       const path = this.filePath(plan, file);
@@ -423,6 +436,7 @@ export class MaildirSource {
           file.mailboxId,
           file.uniq,
           () => lstatSync(path).mtimeMs,
+          file.version !== "",
         );
         scans.push({ mailboxId: file.mailboxId, uniq: file.uniq, ...scanned });
       } catch (err) {
@@ -456,7 +470,7 @@ export class MaildirSource {
     const emitted = index.allEmitted();
     const fingerprint = this.attachmentFingerprint();
     const byKey = new Map<string, FileRow[]>();
-    for (const file of index.allFiles()) {
+    for (const file of index.messageFiles()) {
       if (file.key === null) continue;
       const list = byKey.get(file.key);
       if (list) list.push(file);
@@ -590,7 +604,7 @@ export class MaildirSource {
   ): { snapshot: SnapshotEnumeration; forget: string[] } {
     const emitted = index.allEmitted();
     for (const row of pageRows) emitted.set(row.key, row);
-    const files = index.allFiles().filter((file) => file.key !== null);
+    const files = index.messageFiles().filter((file) => file.key !== null);
     // A message's date is its earliest copy's, as the emit stage decided it.
     const keyDates = new Map<string, number>();
     for (const file of files) {
