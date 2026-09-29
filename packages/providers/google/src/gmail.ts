@@ -202,6 +202,15 @@ export function gmailMessageUrl(messageId: string, accountEmail?: string): strin
 // Don't reintroduce a `googlegmail://` appUrl without device-testing that it
 // actually opens the specific message rather than the inbox or composer.
 
+/**
+ * How long one sync may run before it ends and leaves the rest to the next.
+ * A first sync of a large mailbox pages through every message for hours; the
+ * host stops a sync that runs too long and reports it as an error, while a
+ * sync that ends on its own keeps its pages and reports none. The cursor
+ * already records where the walk stands, so the next sync continues it.
+ */
+const GMAIL_SYNC_BUDGET_MS = 20 * 60 * 1000;
+
 /** What fetching one message came to: its documents, or that Gmail no longer has it. */
 type Fetched = { documents: DocumentInput[] } | { gone: true };
 
@@ -219,6 +228,8 @@ export class GmailSource {
   private extractAttachment?: AttachmentExtractFn;
   private labelMap: Map<string, string> | null = null;
   private labelMapFetchedAt = 0;
+  /** When the current sync's first page began; unset between syncs. */
+  private syncStartedAt: number | undefined;
   // The account email (== accountId for multi-account sources). Used to pin
   // "open in Gmail" links to the right account via `?authuser=`.
   private accountEmail?: string;
@@ -296,11 +307,22 @@ export class GmailSource {
     // it those reach the collector as raw SDK throws: kind `unknown`, and a
     // transport failure reading `fetch failed` with nothing to say which
     // request died.
+    this.syncStartedAt ??= Date.now();
     try {
-      return state.phase === "bootstrap" || !state.historyId
-        ? await this.bootstrapSync(state)
-        : await this.incrementalSync(state);
+      const result =
+        state.phase === "bootstrap" || !state.historyId
+          ? await this.bootstrapSync(state)
+          : await this.incrementalSync(state);
+      if (result.hasMore && Date.now() - this.syncStartedAt >= GMAIL_SYNC_BUDGET_MS) {
+        log.info(
+          `Sync of ${this.id} paused after ${Math.round(GMAIL_SYNC_BUDGET_MS / 60_000)} minutes; the next sync continues it`,
+        );
+        result.hasMore = false;
+      }
+      if (!result.hasMore) this.syncStartedAt = undefined;
+      return result;
     } catch (error: unknown) {
+      this.syncStartedAt = undefined;
       throw mapGoogleApiError(error);
     }
   }

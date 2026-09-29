@@ -72,6 +72,44 @@ describe("Gmail bootstrap", () => {
   });
 });
 
+describe("Gmail sync length", () => {
+  test("a long first sync pauses after twenty minutes and the next sync carries on", async () => {
+    const gmail = createMockGmail();
+    gmail.users.messages.get = vi.fn((params: { id: string }) =>
+      Promise.resolve({ data: makeGmailMessage(params.id) }),
+    );
+    gmail.users.getProfile = vi.fn(() =>
+      Promise.resolve({ data: { messagesTotal: 6, historyId: "h-1" } }),
+    );
+    gmail.users.messages.list = pagedMailbox(["a", "b", "c", "d", "e", "f"], 1);
+    const source = createGmailSource(gmail);
+    let clock = Date.UTC(2026, 0, 1);
+    const now = vi.spyOn(Date, "now").mockImplementation(() => (clock += 8 * 60 * 1000));
+    try {
+      const seen: string[] = [];
+      let cursor: GmailSyncCursor | null = null;
+      let syncs = 0;
+      let pausedMidWalk = false;
+      for (; syncs < 10; syncs++) {
+        for (let page = 0; page < 10; page++) {
+          const result = await source.sync(cursor);
+          seen.push(...result.documents.map((d) => d.externalId));
+          cursor = result.cursor as GmailSyncCursor;
+          if (!result.hasMore) break;
+        }
+        if (cursor!.phase === "incremental") break;
+        pausedMidWalk = true;
+        expect(cursor!.pageToken).toBeDefined();
+      }
+      expect(pausedMidWalk).toBe(true);
+      expect(seen).toEqual(["a", "b", "c", "d", "e", "f"]);
+      expect(cursor!.phase).toBe("incremental");
+    } finally {
+      now.mockRestore();
+    }
+  });
+});
+
 describe("Gmail messages that disappear", () => {
   let gmail: ReturnType<typeof createMockGmail>;
 
