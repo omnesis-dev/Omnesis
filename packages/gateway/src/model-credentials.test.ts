@@ -99,6 +99,18 @@ describe("readAnthropicApiKey / hasAnthropicApiKey", () => {
 });
 
 describe("TypeSafe credentials", () => {
+  // TypeSafe serves only the experimental decision role, so it is listed only
+  // while experimental mode is visible; pin the mode instead of inheriting it.
+  beforeEach(() => {
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+    vi.stubEnv("OMNESIS_SYNTHETIC", "0");
+  });
+
+  test("is hidden while experimental mode is off", () => {
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
+    expect(listModelCredentialEntries(dir).some((e) => e.fileKey === "typesafe")).toBe(false);
+  });
+
   test("lists TypeSafe beside Anthropic", () => {
     const entry = listModelCredentialEntries(dir).find((e) => e.fileKey === "typesafe");
     expect(entry).toMatchObject({
