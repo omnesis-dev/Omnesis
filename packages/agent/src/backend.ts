@@ -223,8 +223,10 @@ export interface ReportArtifactPart {
  * request rather than per turn.
  *
  * `ttftMs` is null when the request produced no content (an early error or
- * abort). Token counts are provider-reported and null when the backend
- * could not attribute them to this request.
+ * abort). Token counts are provider-reported and absent when the backend
+ * could not attribute them to this request. `inputTokens` counts fresh
+ * (uncached) input only; `cacheReadTokens` counts the input the provider
+ * served from its prompt cache.
  */
 export interface LlmRequestTiming {
   requestIndex: number;
@@ -232,6 +234,14 @@ export interface LlmRequestTiming {
   wallMs: number;
   inputTokens?: number;
   outputTokens?: number;
+  cacheReadTokens?: number;
+}
+
+/** The token counts a model request reports when it ends. */
+export interface LlmRequestTokens {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
 }
 
 /** Optional per-request timing sink, threaded through {@link TurnInput}. */
@@ -239,7 +249,7 @@ export type LlmProbe = (timing: LlmRequestTiming) => void;
 
 export interface LlmRequestTracker {
   markContent(): void;
-  end(tokens?: { inputTokens?: number; outputTokens?: number }): void;
+  end(tokens?: LlmRequestTokens): void;
 }
 
 /**
@@ -259,7 +269,7 @@ export async function* probeTurnEvents(
     return;
   }
   const tracker = startLlmRequest(probe, 1);
-  let usage: { inputTokens?: number; outputTokens?: number } | undefined;
+  let usage: LlmRequestTokens | undefined;
   let seenEvent = false;
   try {
     for await (const event of source) {
@@ -276,19 +286,13 @@ export async function* probeTurnEvents(
         case "agent.usage.update":
           if (event.payload.usage) {
             const u = event.payload.usage;
-            usage = {
-              ...(u.inputTokens !== undefined ? { inputTokens: u.inputTokens } : {}),
-              ...(u.outputTokens !== undefined ? { outputTokens: u.outputTokens } : {}),
-            };
+            usage = requestTokensOf(u);
           }
           break;
         case "agent.message.end":
           if (event.payload.usage) {
             const u = event.payload.usage;
-            usage = {
-              ...(u.inputTokens !== undefined ? { inputTokens: u.inputTokens } : {}),
-              ...(u.outputTokens !== undefined ? { outputTokens: u.outputTokens } : {}),
-            };
+            usage = requestTokensOf(u);
           }
           tracker.end(usage);
           break;
@@ -303,6 +307,15 @@ export async function* probeTurnEvents(
     // A stream that yielded nothing at all made no request: no span.
     if (seenEvent) tracker.end(usage);
   }
+}
+
+/** The probe's token fields, copied off a usage payload. */
+function requestTokensOf(u: LlmRequestTokens): LlmRequestTokens {
+  return {
+    ...(u.inputTokens !== undefined ? { inputTokens: u.inputTokens } : {}),
+    ...(u.outputTokens !== undefined ? { outputTokens: u.outputTokens } : {}),
+    ...(u.cacheReadTokens !== undefined ? { cacheReadTokens: u.cacheReadTokens } : {}),
+  };
 }
 
 /**
@@ -322,7 +335,7 @@ export function startLlmRequest(
     markContent(): void {
       if (firstMs === 0) firstMs = Date.now();
     },
-    end(tokens?: { inputTokens?: number; outputTokens?: number }): void {
+    end(tokens?: LlmRequestTokens): void {
       if (ended) return;
       ended = true;
       const endMs = Date.now();
@@ -330,8 +343,7 @@ export function startLlmRequest(
         requestIndex,
         ttftMs: firstMs === 0 ? null : Math.max(0, firstMs - startMs),
         wallMs: Math.max(0, endMs - startMs),
-        ...(tokens?.inputTokens !== undefined ? { inputTokens: tokens.inputTokens } : {}),
-        ...(tokens?.outputTokens !== undefined ? { outputTokens: tokens.outputTokens } : {}),
+        ...(tokens ? requestTokensOf(tokens) : {}),
       });
     },
   };
@@ -360,6 +372,15 @@ export interface TurnInput {
   llmProbe?: LlmProbe;
   /** System prompt to send to the model. */
   systemPrompt: string;
+  /**
+   * A stable key naming the workflow this turn belongs to, so a provider that
+   * routes requests by cache key sends turns sharing a prompt prefix to the
+   * same cache. Stable per workflow, never per turn: a per-turn key would
+   * scatter the very prefix it exists to share. Sent only by backends whose
+   * API accepts it (OpenAI Responses as `prompt_cache_key`); the others
+   * ignore it.
+   */
+  promptCacheKey?: string;
   /**
    * IANA zone of the caller this turn belongs to. Forwarded verbatim onto
    * every {@link ToolContext} the backend builds; see the field there.

@@ -14,6 +14,7 @@ import type {
 } from "./cognition-admin-query-service.js";
 import type { BriefRow, CognitionRunRow, OpenLoopRow, RetiredLoopRow } from "./storage/types.js";
 import type { CognitionTranscriptRef } from "./transcripts.js";
+import type { CognitionDecisionRecord } from "./storage/decisions.js";
 import type { RouteApp } from "../http/routes/types.js";
 
 export interface CognitionAdminRouteContext {
@@ -203,6 +204,48 @@ export function runDto(run: CognitionRunRow, activity: RunActivityReader | undef
     completedAt: iso(run.completedAt),
     usage: run.usage,
   };
+}
+
+/**
+ * One decision-model judgement as the runs page shows it: what was asked
+ * (the exact state and questions sent), what came back, and the verdict it
+ * produced. A reused judgement carries no request of its own — it points at
+ * the decision it repeated.
+ */
+export function decisionDto(
+  decision: CognitionDecisionRecord,
+  subjectDoc: CognitionAdminDocumentRef | undefined,
+) {
+  return {
+    id: decision.id,
+    purpose: decision.purpose,
+    lane: decision.lane,
+    verdict: decision.verdict,
+    score: decision.score,
+    threshold: decision.threshold,
+    modelId: decision.modelId,
+    rubricVersion: decision.rubricVersion,
+    documentId: decision.documentId,
+    subjectDocumentId: decision.subjectDocumentId,
+    inheritedFromParent: decision.subjectDocumentId !== decision.documentId,
+    subjectDoc: subjectDoc ?? null,
+    reusedFrom: decision.reusedFrom,
+    error: decision.error,
+    latencyMs: decision.latencyMs,
+    inputTokens: decision.inputTokens,
+    createdAt: iso(decision.createdAt),
+    request: parseJsonOrNull(decision.requestJson),
+    response: parseJsonOrNull(decision.responseJson),
+  };
+}
+
+function parseJsonOrNull(raw: string | null): unknown {
+  if (raw === null) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
 }
 
 export function transcriptRefDto(ref: CognitionTranscriptRef) {

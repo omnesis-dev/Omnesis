@@ -46,6 +46,7 @@ describe("CAPABILITY_METADATA", () => {
       "agent",
       "background-agent",
       "brief-judge",
+      "decision",
       "entailment-verifier",
       "watch-judge",
     ]);

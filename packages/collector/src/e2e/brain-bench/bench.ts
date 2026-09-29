@@ -40,6 +40,14 @@ import {
   type JudgePolicy,
 } from "./verdict-servers.js";
 import { BrainObs } from "./obs.js";
+import {
+  startDecisionServer,
+  type DecisionServer,
+  type DecisionServerOptions,
+} from "./decision-server.js";
+
+/** The throwaway bearer key the bench hands the gateway for its scripted decision server. */
+const BENCH_TYPESAFE_KEY = "bench_typesafe_key_0123456789";
 
 /**
  * Cognition cadences compressed to test speed. Read by the spawned gateway
@@ -115,6 +123,20 @@ export interface BrainBenchOptions {
   /** Brief-judge verdicts. Omitted → the role is intentionally unassigned. */
   judge?: JudgePolicy;
   /**
+   * Scripted decision model. Starts a System One stand-in
+   * (`decision-server.ts`) and assigns the `decision` role to
+   * `typesafe/<model>` against it — the production TypeSafe client, key
+   * lookup and URL policy all run. Omitted → the role is unassigned and the
+   * worth gate is absent. Mutually exclusive with `decisionBackend`.
+   */
+  decision?: DecisionServerOptions;
+  /**
+   * `"replay"` answers every decision from the universe's recorded decision
+   * cassettes (its `decisionCassettes` directory), with no network — the
+   * harness's `decisionBackend: "replay"`.
+   */
+  decisionBackend?: "replay";
+  /**
    * `"virtual"` enables the cognition virtual clock so `clock.set()` /
    * `clock.advance()` drive day boundaries. Defaults to `"real"`.
    */
@@ -181,6 +203,7 @@ export class BrainBench {
   private readonly puppetServer: PuppetModelServer | null;
   private readonly entailmentServer: VerdictServer | null;
   private readonly judgeServer: VerdictServer | null;
+  private readonly decisionServer: DecisionServer | null;
   private readonly virtualClock: boolean;
   private db: Database.Database | null = null;
 
@@ -189,12 +212,14 @@ export class BrainBench {
     puppet: PuppetModelServer | null;
     entailment: VerdictServer | null;
     judge: VerdictServer | null;
+    decision: DecisionServer | null;
     virtualClock: boolean;
   }) {
     this.harness = init.harness;
     this.puppetServer = init.puppet;
     this.entailmentServer = init.entailment;
     this.judgeServer = init.judge;
+    this.decisionServer = init.decision;
     this.virtualClock = init.virtualClock;
     this.obs = new BrainObs(init.harness);
   }
@@ -202,6 +227,9 @@ export class BrainBench {
   static async start(opts: BrainBenchOptions): Promise<BrainBench> {
     if (opts.behaviors && opts.cassetteDir) {
       throw new Error("BrainBench: `behaviors` and `cassetteDir` are mutually exclusive");
+    }
+    if (opts.decision && opts.decisionBackend) {
+      throw new Error("BrainBench: `decision` and `decisionBackend` are mutually exclusive");
     }
     const virtualClock = opts.clock === "virtual";
     if (virtualClock) process.env.OMNESIS_BRIEFS_VIRTUAL_CLOCK = "1";
@@ -234,13 +262,25 @@ export class BrainBench {
       assignments["brief-judge"] = `judge/${judge.modelId}`;
     }
 
+    let decision: DecisionServer | null = null;
+    if (opts.decision) {
+      decision = await startDecisionServer(opts.decision);
+      assignments.decision = `typesafe/${decision.modelId}`;
+    }
+
     const harness = new SyntheticE2EHarness({
       gatewayMode: opts.experimental ? "experimental" : "stable",
       universe: opts.universe ?? "loops-test-life",
       ...(opts.embedder ? { embedderBackend: "fake" as const } : {}),
       ...(opts.apns ? { apnsBackend: "fake" as const } : {}),
+      ...(opts.decisionBackend ? { decisionBackend: opts.decisionBackend } : {}),
+      // TypeSafe is an off-host provider, so its assignment resolves only with
+      // remote inference allowed; the URL policy still admits the loopback
+      // stand-in either way.
+      ...(decision ? { extraGatewayEnv: { OMNESIS_TYPESAFE_API_KEY: BENCH_TYPESAFE_KEY } } : {}),
       extraInference: {
         ...opts.extraInference,
+        ...(decision ? { allowRemoteInference: true, typesafeUrl: decision.endpoint } : {}),
         backends: { ...backends, ...opts.extraInference?.backends },
         assignments: { ...assignments, ...opts.extraInference?.assignments },
       },
@@ -271,7 +311,7 @@ export class BrainBench {
       await harness.refreshSearchSnapshot();
     }
 
-    return new BrainBench({ harness, puppet, entailment, judge, virtualClock });
+    return new BrainBench({ harness, puppet, entailment, judge, decision, virtualClock });
   }
 
   // ── stimulus ──────────────────────────────────────────────────────────────
@@ -694,6 +734,12 @@ export class BrainBench {
     this.judgeServer.refuseWith(status, message);
   }
 
+  /** The scripted decision model, for assertions on what the worth gate asked. */
+  get decision(): DecisionServer {
+    if (!this.decisionServer) throw new Error("BrainBench: no decision server is running");
+    return this.decisionServer;
+  }
+
   async destroy(): Promise<void> {
     this.db?.close();
     this.db = null;
@@ -701,6 +747,7 @@ export class BrainBench {
     await this.puppetServer?.close();
     await this.entailmentServer?.close();
     await this.judgeServer?.close();
+    await this.decisionServer?.close();
   }
 }
 

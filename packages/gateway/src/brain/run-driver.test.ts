@@ -120,6 +120,37 @@ describe("CognitionRunDriver", () => {
     expect(t.events.map((e) => e.type)).toContain("agent.message.end");
   });
 
+  test("every run of a workflow shares one stable prompt cache key, and each model call is probed", async () => {
+    const inputs: TurnInput[] = [];
+    const driver = makeDriver({
+      resolveBackend: () =>
+        scriptedBackend((input) => {
+          inputs.push(input);
+          return happyScript("ok")(input);
+        }),
+    });
+    const datum = { docId: "doc_a", event: "created", datumAt: 1_700_000_000_000 };
+    await driver.execute(claimed({ id: "run_a", payload: datum }));
+    await driver.execute(
+      claimed({ id: "run_b", attempts: 2, payload: { ...datum, docId: "doc_b" } }),
+    );
+    await driver.execute(claimed({ id: "run_c", kind: "bootstrap" }));
+    // Two workflows of one kind get distinct keys: their tools and instructions differ.
+    await driver.execute(claimed({ id: "run_d", kind: "time_based", payload: { prompt: "p" } }));
+    await driver.execute(
+      claimed({ id: "run_e", kind: "time_based", payload: { decayCheckLoopId: "loop_1" } }),
+    );
+    expect(inputs.map((input) => input.promptCacheKey)).toEqual([
+      "omnesis-cognition:datum-intake",
+      "omnesis-cognition:datum-intake",
+      "omnesis-cognition:source-bootstrap",
+      "omnesis-cognition:time-reaction",
+      "omnesis-cognition:loop-decay-check",
+    ]);
+    // The per-call cache accounting reaches the backend on every run.
+    for (const input of inputs) expect(typeof input.llmProbe).toBe("function");
+  });
+
   test("the transcript persists the run payload, minus the transient fold snapshot", async () => {
     const driver = makeDriver({});
     await driver.execute(

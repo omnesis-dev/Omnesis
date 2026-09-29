@@ -140,6 +140,10 @@ export function loadCompletionFromResolved(
       });
     }
 
+    case "typesafe":
+      // Typed decisions, not text completions: never a completion provider.
+      return null;
+
     default:
       assertNever(resolved);
   }

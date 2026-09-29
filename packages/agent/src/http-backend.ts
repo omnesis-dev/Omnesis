@@ -592,6 +592,7 @@ export class HttpChatBackend implements ChatBackend {
         llmReq.end({
           inputTokens: Math.max(0, iterationUsage.prompt - iterationUsage.cachedInput),
           outputTokens: iterationUsage.completion,
+          cacheReadTokens: iterationUsage.cachedInput,
         });
 
         if (signal?.aborted) {
@@ -707,6 +708,7 @@ export class HttpChatBackend implements ChatBackend {
         llmReq.end({
           inputTokens: Math.max(0, attempt.usage.prompt - attempt.usage.cachedInput),
           outputTokens: attempt.usage.completion,
+          cacheReadTokens: attempt.usage.cachedInput,
         });
       }
 
@@ -1018,6 +1020,8 @@ export class HttpChatBackend implements ChatBackend {
         };
         if (v.stream && v.streamOptions) body.stream_options = { include_usage: true };
         if (tools.length > 0) body.tools = tools;
+        // `TurnInput.promptCacheKey` is deliberately not sent: this backend
+        // serves many OpenAI-compatible servers, and some reject unknown fields.
         Object.assign(body, selectedFields);
         // Reasoning and the answer share `outputTokenBudget`, so the budget is
         // computed against it rather than against what the caller asked for: a

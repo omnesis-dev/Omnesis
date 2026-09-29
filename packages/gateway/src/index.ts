@@ -28,7 +28,12 @@ import {
 import { type OmnesisConfig } from "@omnesis/config";
 import { Ontology } from "@omnesis/watch";
 import { dotEnvKeysAtBoot } from "./load-env.js";
-import { resolveAnthropicApiKey, resolveAnthropicCredential } from "./model-credentials.js";
+import {
+  resolveAnthropicApiKey,
+  resolveAnthropicCredential,
+  resolveTypeSafeApiKey,
+} from "./model-credentials.js";
+import { DecisionService } from "./inference/decision/decision-service.js";
 import { createDatabase, getDocumentTitlesAndSources, openReadOnlyDatabase } from "./db.js";
 import { createServer } from "./server.js";
 import { GATEWAY_VERSION } from "./version.js";
@@ -402,6 +407,7 @@ const inferenceRegistry = new InferenceRegistry({
   configDir,
   manifest: () => loadManifest(manifestPath).manifest,
   hasAnthropicApiKey: () => resolveAnthropicApiKey(configDir) !== null,
+  hasTypeSafeApiKey: () => resolveTypeSafeApiKey(configDir) !== null,
   getCatalogEntry: (id) => anthropicCatalogService.getCatalogEntry(id),
   getAnthropicStatus: () => anthropicCatalogService.status(),
   getModelControls: (backendKey, model, backendUrl, protocol) =>
@@ -1370,6 +1376,8 @@ const watchJudgeReadiness = (): { loadable: boolean; reason: string | null } => 
             ? null
             : (resolved.reason ?? "The assigned Codex model is unavailable"),
       };
+    case "typesafe":
+      return { loadable: false, reason: "TypeSafe cannot serve single-shot Watch completions" };
     default:
       return assertNever(resolved);
   }
@@ -1611,6 +1619,16 @@ const ocrService = new OcrService({
     getGgufConfig: () => configStore.get().inference?.ocr?.gguf,
     getPageConcurrency: () => configStore.get().inference?.ocr?.pageConcurrency,
   },
+});
+
+// Decision model — typed judgements (TypeSafe Jev, or recorded replay). The
+// Brain's worth gate asks it whether an email is worth a background-agent run;
+// unset, the gate is absent. Re-resolved per use, so assigning Jev or pasting
+// a key from the portal takes effect without a restart.
+const decisionService = new DecisionService({
+  resolveAssignment: () => inferenceRegistry.resolve("decision"),
+  readTypeSafeApiKey: () => resolveTypeSafeApiKey(configDir),
+  defaultReplayFixture: () => process.env.OMNESIS_DECISION_FIXTURE || undefined,
 });
 
 // Entailment verifier — the annotation write gate's entailment firewall.
@@ -2466,6 +2484,7 @@ await bootBriefs({
     getSettings: () => resolveBrainSettings(configStore.get().brain),
     activeDerivationStages,
     resolveBackend: resolveBackgroundAgentBackend,
+    getDecision: () => decisionService.get(),
     getOperatorInstructions: () => operatorInstructions.promptText(),
     transcriptsDir: cognitionTranscriptsDir(configDir),
     // Collaborators the Cognition Steward's toolset + prompts are assembled from

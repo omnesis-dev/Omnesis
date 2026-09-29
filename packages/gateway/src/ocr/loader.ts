@@ -157,6 +157,7 @@ export async function loadOcrFromResolved(
       });
     case "disabled":
     case "unresolved":
+    case "typesafe":
       return null;
     default:
       return assertNever(resolved);

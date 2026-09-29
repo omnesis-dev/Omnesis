@@ -5,8 +5,18 @@
  * The Cognition Steward's prompts: the system prompt (identity, the loop/brief
  * data model, the importance gate, reconcile-before-create discipline,
  * one-loop-per-obligation granularity, done-vs-delete close semantics,
- * personal-data guidelines, and the injected agent-notes memory) and the
+ * personal-data guidelines, and how the agent-notes memory works) and the
  * per-kind run prompts (`data` / `daily` / `time_based` / `feedback`).
+ *
+ * Both are laid out for prefix caching. The system prompt is byte-identical
+ * across runs for the same settings and the same `OMNESIS.md`, which it
+ * carries as its tail. A run message opens with the static text it has — the
+ * kind's own rules (for `data` and `bootstrap` runs) and the shared brief
+ * rules (for every kind that can write a brief) — and only then carries the
+ * volatile tail: the envelope, the clock, the self-memory, the notes and the
+ * per-run data. A `data` or `bootstrap` run therefore reuses everything before
+ * that tail across runs of its kind; every other kind reuses the system
+ * prompt, the tool schemas and the brief rules.
  *
  * Prompt-level contracts encoded here, each pinned by tests:
  *   - every run prompt states the run id and attempt, and a re-attempt is
@@ -108,12 +118,21 @@ type Db = Database.Database;
 
 // ── system prompt ──────────────────────────────────────────────────────────
 
+/**
+ * What the system prompt depends on: the settings and the operator's
+ * `OMNESIS.md`. Nothing volatile belongs here: the system prompt is
+ * byte-identical across runs for the same settings and the same `OMNESIS.md`,
+ * so a provider that caches by prompt prefix reuses it (with the tool schemas
+ * behind it) run after run. `OMNESIS.md` changes only when the operator edits
+ * it, and it belongs here rather than in the run message because it carries
+ * the operator's authority, which text in the user role — where untrusted
+ * corpus content also lands — must never be able to imitate. The clock, the
+ * notes and the self-memory ride the run message instead
+ * (`CognitionRunMemory`).
+ */
 export interface CognitionSystemPromptInput {
-  /** Current agent-notes contents (may be empty). */
-  notes: string;
   /** Byte cap on the notes file, stated so the agent budgets its writes. */
   notesMaxBytes: number;
-  now: Date;
   /** Whether the durable-annotation memory is on (adds its guidance + tool). */
   annotationsEnabled?: boolean;
   /**
@@ -121,12 +140,6 @@ export interface CognitionSystemPromptInput {
    * about the user onto it. Null when self is not yet identified.
    */
   selfPersonId?: string | null;
-  /**
-   * Pre-rendered self-memory block (the self person's live annotations,
-   * `renderSelfMemoryBlock`), injected as the standing profile of the user.
-   * Empty when there are none.
-   */
-  selfMemory?: string;
   /**
    * The operator's `OMNESIS.md` — their standing instructions, shared with the
    * interactive agent, as `OperatorInstructionsStore.promptText()` returns them
@@ -136,22 +149,13 @@ export interface CognitionSystemPromptInput {
 }
 
 export function buildCognitionSystemPrompt(input: CognitionSystemPromptInput): string {
-  const todayIso = input.now.toISOString();
   const artifactDecisionDimensions = input.annotationsEnabled
     ? "an obligation, model-derived temporal meaning, a durable document/person fact, or something worth surfacing"
     : "an obligation, model-derived temporal meaning, or something worth surfacing";
-  const notesBlock =
-    input.notes.trim().length > 0
-      ? `Your current notes (verbatim):\n\n<agent-notes>\n${input.notes}\n</agent-notes>`
-      : "Your notes file is currently empty.";
-  const selfMemoryBlock =
-    input.selfMemory && input.selfMemory.trim().length > 0
-      ? `\n\nYour standing profile of the user — the self person's live annotations, injected into every run (re-ground before asserting, exactly like any annotation):\n\n<self-memory>\n${input.selfMemory}\n</self-memory>`
-      : "\n\n(No self-memory yet — build it with annotate_person on the self person (find them with lookup_people) as you learn durable, grounded facts about the user.)";
   const annotationsMemory = input.annotationsEnabled
     ? `\n\n**Document annotations** — durable, evidence-grounded facts, each about ONE specific document, kept as private priors a future run re-reads instead of re-deriving from scratch: the document's topic or purpose, a person's role AS THAT DOCUMENT STATES IT, a status or a key date it records. Persist one with annotate_durable, quoting the exact source text — the quote is mandatory, so an annotation only ever says what the document actually says, **and never more than it says. Read the evidence's modality and do not upgrade it: a quote or estimate means the user *requested a price*, not that they bought; an application means they *applied*, not that they hold it or were accepted; a plan, draft, or intention means they *considered* it, not that they did it. When the source is provisional, keep the claim provisional — record the real status ("requested an insurance quote"), never the accomplished one ("holds insurance cover")** (a prior to reground against, never a fact to trust blindly). Before recording on a subject, **annotation_search that subject first** — revise or supersede what you already believe instead of duplicating or silently contradicting it. Supersession is the reconcile loop's teeth: a create that would sit beside a live same-claimType annotation is refused with the standing candidates — when your claim UPDATES or CONTRADICTS one of them, re-issue it with supersedes:<that id> (the old prior retires, audit-linked to its successor); only a genuinely different aspect warrants a more specific claimType instead. Keep the scope STRICT: an annotation is ABOUT its one document and nothing wider — NOT a task (that is a loop), NOT a fact about the user's life in general, NOT a theme spanning several documents. Every annotation also declares its claimBasis — quoted (the evidence essentially states the claim), inferred (one licensed deduction from that single source), or synthesized (assembled across sources) — confidence is capped tighter the further the claim reasons from its evidence, and a weak synthesized claim that falls below the persistence floor should simply not be recorded. A synthesized claim should carry EACH source it rests on: cite the primary evidenceDocId/evidenceQuote pair plus an additionalEvidence entry (docId + verbatim quote) for every other document grounding it — each atom is verified the same way, and a claim resting on several sources survives one of them changing.
 
-**Person annotations — including the user (self-memory).** A durable fact ABOUT A PERSON — a role, a relationship, a stable preference — persisted with annotate_person, grounded by a verbatim quote from a real source document exactly like a document annotation — **including the modality discipline above: say only what the evidence establishes, never upgrading a quote, application, or intention into a settled fact** (a prior to re-ground, never a fact to trust blindly). **The user is a person too:** durable facts about the USER — their roles, their standing preferences, their life-context — are annotate_person calls on the SELF person${input.selfPersonId ? ` (id \`${input.selfPersonId}\`)` : ""}, and the self person's live annotations are injected into every run (below) as your standing profile of who the user is. A *relationship* belongs on the OTHER person ("David is the user's accountant" → annotate_person on David), not on self — reserve self for facts about the user alone. So the moment you can ground a durable user-fact in a document, record it on self; keep it current with revise/retract when it changes; and never re-derive from scratch what your self-memory already holds. A person annotation is about that ONE person — NOT a task (loop), NOT a temporal interpretation (temporal annotation), NOT a document-scoped fact (annotate_durable), NOT a behavioural lesson (notes).${selfMemoryBlock}`
+**Person annotations — including the user (self-memory).** A durable fact ABOUT A PERSON — a role, a relationship, a stable preference — persisted with annotate_person, grounded by a verbatim quote from a real source document exactly like a document annotation — **including the modality discipline above: say only what the evidence establishes, never upgrading a quote, application, or intention into a settled fact** (a prior to re-ground, never a fact to trust blindly). **The user is a person too:** durable facts about the USER — their roles, their standing preferences, their life-context — are annotate_person calls on the SELF person${input.selfPersonId ? ` (id \`${input.selfPersonId}\`)` : ""}, and the self person's live annotations are given in every run message, beneath its rules, as your standing profile of who the user is. A *relationship* belongs on the OTHER person ("David is the user's accountant" → annotate_person on David), not on self — reserve self for facts about the user alone. So the moment you can ground a durable user-fact in a document, record it on self; keep it current with revise/retract when it changes; and never re-derive from scratch what your self-memory already holds. A person annotation is about that ONE person — NOT a task (loop), NOT a temporal interpretation (temporal annotation), NOT a document-scoped fact (annotate_durable), NOT a behavioural lesson (notes).`
     : "";
 
   return `# Identity
@@ -197,13 +201,7 @@ Everything runs locally on the user's own machine, over the user's own data, for
 
 You carry knowledge across runs in a set of COMPLEMENTARY stores. Each fact lives in exactly ONE place — its most specific home — and duplicating a fact across stores is what rots your memory. The decision is mechanical: a thing needing attention (a task, an unanswered request, an unresolved decision) is an **open loop**; structured source time is already a **temporal projection**, while only a model-derived interpretation that adds meaning belongs in a **temporal annotation**; ${input.annotationsEnabled ? "a durable fact about one document is a **document annotation**; a durable fact about one person — the user included — is a **person annotation** (the user's own facts are your injected self-memory); " : ""}and a behavioural lesson or a user-level preference that rests on no single document is a **note**. Never restate one store's content in another.
 
-**Notes** — your small, durable **operating manual for THIS user**: the lessons you drew from their dismissal feedback ("don't raise certificate-revocation warnings without first checking the source of truth"; "casual social follow-ups don't warrant surfacing") and the user-level preferences or standing decisions that rest on no single document ("treats a self-chat thread as their reminder system"). ${input.annotationsEnabled ? "It is NOT a fact store: a grounded fact about the user is a self annotation, a fact about another person is their annotation, a fact about one document is a document annotation; meaningful model-derived temporal context is a temporal annotation and an obligation is a loop — route each to its own home, not here. " : "It is for LONG-LIVED, user-level truths only — NOT short-term events (a booking, a this-week deadline: those are loops) and NOT a run journal (the loop ledger already records what you did). "}Apply this test before you write a note: **would it still be true AND useful with every loop closed and every source document deleted?** If not, it is not a note — and a note NEVER names a loop id, a price, a booking reference, or a specific future date. Maintain it with notes_append / notes_edit / notes_rewrite — notes_edit replaces one exact span, the tool for targeted upkeep without re-emitting the whole file. The notes file is capped at ${input.notesMaxBytes} bytes and injected below into every run, so keep it curated — compact it with notes_rewrite when it grows stale or nears the cap. An append that lands over the cap is still accepted and schedules a background compaction run — the file may briefly overshoot up to twice the cap while compaction restores it — so never withhold a real lesson because the file is full. Scope every lesson NARROWLY: about the specific thing you misread, never a blanket rule that quarantines a whole source, sender, or category — every source was connected deliberately by the user and stays in scope, so skepticism applies per datum, not per source.${annotationsMemory}
-
-${notesBlock}${renderOperatorInstructionsSection(input.operatorInstructions)}
-
----
-
-Current time: ${todayIso}. (This clock line is kept LAST on purpose — everything above it is identical run-to-run, so a provider that caches by prompt prefix can reuse it; each run's precise timing is also restated in the run message below.)`;
+**Notes** — your small, durable **operating manual for THIS user**: the lessons you drew from their dismissal feedback ("don't raise certificate-revocation warnings without first checking the source of truth"; "casual social follow-ups don't warrant surfacing") and the user-level preferences or standing decisions that rest on no single document ("treats a self-chat thread as their reminder system"). ${input.annotationsEnabled ? "It is NOT a fact store: a grounded fact about the user is a self annotation, a fact about another person is their annotation, a fact about one document is a document annotation; meaningful model-derived temporal context is a temporal annotation and an obligation is a loop — route each to its own home, not here. " : "It is for LONG-LIVED, user-level truths only — NOT short-term events (a booking, a this-week deadline: those are loops) and NOT a run journal (the loop ledger already records what you did). "}Apply this test before you write a note: **would it still be true AND useful with every loop closed and every source document deleted?** If not, it is not a note — and a note NEVER names a loop id, a price, a booking reference, or a specific future date. Maintain it with notes_append / notes_edit / notes_rewrite — notes_edit replaces one exact span, the tool for targeted upkeep without re-emitting the whole file. The notes file is capped at ${input.notesMaxBytes} bytes and given verbatim in every run message, beneath its rules, so keep it curated — compact it with notes_rewrite when it grows stale or nears the cap. An append that lands over the cap is still accepted and schedules a background compaction run — the file may briefly overshoot up to twice the cap while compaction restores it — so never withhold a real lesson because the file is full. Scope every lesson NARROWLY: about the specific thing you misread, never a blanket rule that quarantines a whole source, sender, or category — every source was connected deliberately by the user and stays in scope, so skepticism applies per datum, not per source.${annotationsMemory}${renderOperatorInstructionsSection(input.operatorInstructions)}`;
 }
 
 // ── per-kind run prompts ───────────────────────────────────────────────────
@@ -258,6 +256,24 @@ export interface CognitionRunPromptDeps {
   digestHorizon?: DigestHorizon;
   /** Claim-time structured capture + bounded temporal context for changed addressed entries. */
   nearbyTimeline?: NearbyTimelineContext;
+  /** The agent's standing memory, read at claim time and rendered into the run message's volatile tail. */
+  memory: CognitionRunMemory;
+}
+
+/**
+ * The volatile standing context every run carries. It lives in the run
+ * message, never the system prompt, so a notes edit or a new self fact does
+ * not invalidate the cached system prefix.
+ */
+export interface CognitionRunMemory {
+  /** Current agent-notes contents (may be empty). */
+  notes: string;
+  /**
+   * Pre-rendered self-memory block (the self person's live annotations,
+   * `renderSelfMemoryBlock`), the standing profile of the user. Rendered only
+   * when annotations are enabled. Empty when there are none.
+   */
+  selfMemory: string;
 }
 
 /**
@@ -267,6 +283,40 @@ export interface CognitionRunPromptDeps {
  */
 function envelope(run: ClaimedCognitionRun): string {
   return formatCognitionRunEnvelope({ runId: run.id, kind: run.kind, attempt: run.attempts });
+}
+
+/** The self-memory and notes blocks, in that order. */
+function renderRunMemory(memory: CognitionRunMemory, annotationsEnabled: boolean): string[] {
+  const blocks: string[] = [];
+  if (annotationsEnabled) {
+    blocks.push(
+      memory.selfMemory.trim().length > 0
+        ? `Your standing profile of the user — the self person's live annotations, given in every run message (re-ground before asserting, exactly like any annotation):\n\n<self-memory>\n${memory.selfMemory}\n</self-memory>`
+        : "(No self-memory yet — build it with annotate_person on the self person (find them with lookup_people) as you learn durable, grounded facts about the user.)",
+    );
+  }
+  blocks.push(
+    memory.notes.trim().length > 0
+      ? `Your current notes (verbatim):\n\n<agent-notes>\n${memory.notes}\n</agent-notes>`
+      : "Your notes file is currently empty.",
+  );
+  return blocks;
+}
+
+/**
+ * The head of every run message's volatile tail: the envelope, the clock and
+ * the standing memory, closed by a rule that sets them apart from the per-run
+ * text after them. Every per-kind builder opens its per-run text with it, so
+ * the run id, the current time and the memory reach every kind and every
+ * branch alike.
+ */
+function runHeader(run: ClaimedCognitionRun, deps: CognitionRunPromptDeps): string {
+  return [
+    envelope(run),
+    `Current time: ${new Date(deps.clock()).toISOString()}.`,
+    ...renderRunMemory(deps.memory, deps.cfg.annotations.enabled),
+    "---",
+  ].join("\n\n");
 }
 
 const BACKLOG_RULE =
@@ -322,7 +372,7 @@ const DATA_LANE_BRIEF_BAR = [
 /**
  * The house style — how a brief READS, as opposed to whether it is true.
  *
- * Appended by `buildCognitionRunPrompt` to every lane that can write a brief,
+ * Added by `buildCognitionRunPrompt` to every lane that can write a brief,
  * beside the chain-of-verification hop, so a lane cannot acquire an unwritten
  * style of its own: the card is the only part of this system the user ever
  * sees, and a correct brief written badly is a failed brief.
@@ -353,7 +403,7 @@ const BRIEF_CRAFT_RULE = [
 
 /**
  * The Chain-of-Verification hop briefs get before persist: every lane that
- * can write a brief — appended by `buildCognitionRunPrompt` to each run
+ * can write a brief — added by `buildCognitionRunPrompt` to each run
  * prompt except the three that never create one (verification,
  * merge_adjudication, notes_compaction) — instructs the agent to interrogate
  * its own draft
@@ -536,16 +586,37 @@ function buildDatumNeighbourhoodSection(docId: string, deps: CognitionRunPromptD
   return parts;
 }
 
-function buildDataRunPrompt(run: ClaimedCognitionRun, deps: CognitionRunPromptDeps): string {
+/**
+ * The static rules of a data run whose document exists — the same bytes on
+ * every such run, so they sit in the cacheable part of the run message, ahead
+ * of the envelope and the datum.
+ */
+const DATA_RUN_RULES = [
+  "Data run: a document arrived or changed. The run envelope, the clock, your standing memory and the datum's id, date and context follow after these rules.",
+  "",
+  "Your goal is to MAINTAIN the open loops: does this datum warrant updating your view of the world as materialised in them?",
+  "- A new commitment, request, or intention → reconcile BOTH ways first: open_loop_search over the same people/thread/topic for an existing loop, AND search_many for the datum's distinctive tokens (reference/invoice numbers, amounts, the specific thing asked for — issue them together in one search_many call) for evidence it was already settled — sync order is not event order, so the receipt or confirmation may have arrived before the request itself. Create an open loop only when neither exists; when the corpus shows the obligation already settled, do not track it as open and do not brief it. A DIFFERENT ask from the same person — even for the same day or the same errand run — is its own obligation and gets its own new loop (one brief can still present the related loops together); fold a datum into an existing loop only when it is genuinely the same obligation. The converse also holds: one request naming several parts toward one settlement stays ONE loop — record partial fulfilment in its ledger instead of splitting a loop per part.",
+  "- New information about an existing loop → update it and append a ledger note.",
+  '- A fulfilment or resolution → resolve the matching loop by marking it done (open_loop_update with state "done") and deleting its now-moot briefs — never open_loop_delete a loop that was actually fulfilled; that erases the record instead of closing it. But a RETRACTION is not a fulfilment: when the datum shows the tracked obligation never belonged to the user ("sent by mistake", "meant for someone else", "please disregard"), open_loop_delete the loop — nothing was done, so a done record would be false. Close silently ONLY when the resolution is unambiguous, otherwise attach a confirmation brief.',
+  `- ${BACKLOG_RULE}`,
+  DATA_LANE_BRIEF_BAR,
+  `- ${DATED_REMINDER_RULE}`,
+  "If the datum is unimportant — most are — do nothing and finish.",
+].join("\n");
+
+function buildDataRunPrompt(
+  run: ClaimedCognitionRun,
+  deps: CognitionRunPromptDeps,
+): RunPromptParts {
   const payload = parseCognitionDataRunPayload(run.payload);
-  const parts: string[] = [envelope(run)];
+  const parts: string[] = [runHeader(run, deps)];
   if (!payload) {
     parts.push(
       "",
       "This data run's payload is malformed and its document cannot be identified. Do not guess. Append nothing, create nothing, and finish with a short note on what was wrong.",
       `Raw payload: ${JSON.stringify(run.payload ?? null)}`,
     );
-    return parts.join("\n");
+    return { body: parts.join("\n") };
   }
 
   const now = deps.clock();
@@ -563,7 +634,7 @@ function buildDataRunPrompt(run: ClaimedCognitionRun, deps: CognitionRunPromptDe
       describeAge(payload.datumAt, now),
       "If existing open loops reference this document, reconsider them on their own merits (open_loop_search); otherwise there is nothing to do — finish without creating anything.",
     );
-    return parts.join("\n");
+    return { body: parts.join("\n") };
   }
 
   parts.push(
@@ -671,34 +742,41 @@ function buildDataRunPrompt(run: ClaimedCognitionRun, deps: CognitionRunPromptDe
 
   parts.push(...buildDatumNeighbourhoodSection(payload.docId, deps));
 
-  parts.push(
-    "",
-    "Your goal is to MAINTAIN the open loops: does this datum warrant updating your view of the world as materialised in them?",
-    "- A new commitment, request, or intention → reconcile BOTH ways first: open_loop_search over the same people/thread/topic for an existing loop, AND search_many for the datum's distinctive tokens (reference/invoice numbers, amounts, the specific thing asked for — issue them together in one search_many call) for evidence it was already settled — sync order is not event order, so the receipt or confirmation may have arrived before the request itself. Create an open loop only when neither exists; when the corpus shows the obligation already settled, do not track it as open and do not brief it. A DIFFERENT ask from the same person — even for the same day or the same errand run — is its own obligation and gets its own new loop (one brief can still present the related loops together); fold a datum into an existing loop only when it is genuinely the same obligation. The converse also holds: one request naming several parts toward one settlement stays ONE loop — record partial fulfilment in its ledger instead of splitting a loop per part.",
-    "- New information about an existing loop → update it and append a ledger note.",
-    '- A fulfilment or resolution → resolve the matching loop by marking it done (open_loop_update with state "done") and deleting its now-moot briefs — never open_loop_delete a loop that was actually fulfilled; that erases the record instead of closing it. But a RETRACTION is not a fulfilment: when the datum shows the tracked obligation never belonged to the user ("sent by mistake", "meant for someone else", "please disregard"), open_loop_delete the loop — nothing was done, so a done record would be false. Close silently ONLY when the resolution is unambiguous, otherwise attach a confirmation brief.',
-    `- ${BACKLOG_RULE}`,
-    DATA_LANE_BRIEF_BAR,
-    `- ${DATED_REMINDER_RULE}`,
-    "If the datum is unimportant — most are — do nothing and finish.",
-  );
-
   const addressedMode = addressedDataSteeringMode(docRow.metadata, deps.cfg.annotations.enabled);
   if (addressedMode !== "none") {
     parts.push("", buildAddressedToAgentSteering(addressedMode === "with_annotations"));
   }
-  return parts.join("\n");
+  return { rules: DATA_RUN_RULES, body: parts.join("\n") };
 }
 
-function buildBootstrapRunPrompt(run: ClaimedCognitionRun, deps: CognitionRunPromptDeps): string {
+/**
+ * The static rules of a bootstrap run whose document exists — the same bytes
+ * on every such run, so they sit in the cacheable part of the run message.
+ */
+const BOOTSTRAP_RUN_RULES = [
+  "RETROSPECTIVE BOOTSTRAP. This run's document is a PAST document that still carries a semantic time in the future — you are catching up on history, NOT reacting to a new arrival. Its id and date follow after these rules, beneath the run envelope; fetch it with fetch_many.",
+  "",
+  "Because this is history, reconcile HARD before creating anything — a later document may already have been processed (this sweep runs newest-first), so the fact, loop, or time this document implies may already be recorded:",
+  "- Call temporal_query over the window around each date this document carries AND open_loop_search over the same people/thread/topic first. Do not duplicate a source-owned projection or standing annotation.",
+  "- Add a temporal annotation for every dated fact the document establishes that temporal_query does not already return for its interval — self-authored plans included; the index answers, so its bar is near-exhaustive. Skip only facts a returned projection or annotation already carries.",
+  "- If the document implies a still-OPEN obligation of the user's (something not yet done, due in the future), reconcile-then-create an open loop for it, exactly as a normal run would. If the corpus shows it was already handled, do not track it as open.",
+  `- ${DATED_REMINDER_RULE}`,
+  "",
+  "Backfill discipline: maintain semantic annotations and loops, not deterministic projections, and do not fill the live feed with old news. An empty pass is fine.",
+].join("\n");
+
+function buildBootstrapRunPrompt(
+  run: ClaimedCognitionRun,
+  deps: CognitionRunPromptDeps,
+): RunPromptParts {
   const payload = parseCognitionBootstrapRunPayload(run.payload);
-  const parts: string[] = [envelope(run)];
+  const parts: string[] = [runHeader(run, deps)];
   if (!payload) {
     parts.push(
       "",
       "This bootstrap run's payload is malformed and its document cannot be identified. Do not guess. Create nothing and finish with a short note on what was wrong.",
     );
-    return parts.join("\n");
+    return { body: parts.join("\n") };
   }
   const now = deps.clock();
   const docExists =
@@ -710,22 +788,14 @@ function buildBootstrapRunPrompt(run: ClaimedCognitionRun, deps: CognitionRunPro
       "",
       `The document ${payload.docId} this bootstrap run targets has been DELETED since it was enqueued. There is nothing to do — finish without creating anything.`,
     );
-    return parts.join("\n");
+    return { body: parts.join("\n") };
   }
   parts.push(
     "",
-    `RETROSPECTIVE BOOTSTRAP. This is a PAST document (${payload.docId}) that still carries a semantic time in the future — you are catching up on history, NOT reacting to a new arrival. Fetch it with fetch_many.`,
+    `Bootstrap document: ${payload.docId}. Fetch it with fetch_many.`,
     describeAge(payload.datumAt, now),
-    "",
-    "Because this is history, reconcile HARD before creating anything — a later document may already have been processed (this sweep runs newest-first), so the fact, loop, or time this document implies may already be recorded:",
-    "- Call temporal_query over the window around each date this document carries AND open_loop_search over the same people/thread/topic first. Do not duplicate a source-owned projection or standing annotation.",
-    "- Add a temporal annotation for every dated fact the document establishes that temporal_query does not already return for its interval — self-authored plans included; the index answers, so its bar is near-exhaustive. Skip only facts a returned projection or annotation already carries.",
-    "- If the document implies a still-OPEN obligation of the user's (something not yet done, due in the future), reconcile-then-create an open loop for it, exactly as a normal run would. If the corpus shows it was already handled, do not track it as open.",
-    `- ${DATED_REMINDER_RULE}`,
-    "",
-    "Backfill discipline: maintain semantic annotations and loops, not deterministic projections, and do not fill the live feed with old news. An empty pass is fine.",
   );
-  return parts.join("\n");
+  return { rules: BOOTSTRAP_RUN_RULES, body: parts.join("\n") };
 }
 
 /** Display cap for the injected overnight-brief list. */
@@ -745,7 +815,7 @@ function buildDigestRunPrompt(
   deps: CognitionRunPromptDeps,
 ): string {
   const now = deps.clock();
-  const parts: string[] = [envelope(run)];
+  const parts: string[] = [runHeader(run, deps)];
 
   const horizon: DigestHorizon = deps.digestHorizon ?? {
     items: [],
@@ -796,13 +866,13 @@ function buildDailyRunPrompt(run: ClaimedCognitionRun, deps: CognitionRunPromptD
     // pending across the upgrade. The sweep covers the same ground on its own
     // anchor, so there is nothing for this one to do.
     return [
-      envelope(run),
+      runHeader(run, deps),
       "",
       "This is a day-ahead lookahead enqueued by an older build. That pass is now a scheduled sweep with its own cadence, so this run is superseded — create nothing and finish with a one-line note saying so.",
     ].join("\n");
   }
   const payload = parseCognitionDailyRunPayload(run.payload);
-  const parts: string[] = [envelope(run)];
+  const parts: string[] = [runHeader(run, deps)];
   if (!payload) {
     parts.push(
       "",
@@ -837,7 +907,7 @@ function buildDecayCheckRunPrompt(
   loopId: string,
   deps: CognitionRunPromptDeps,
 ): string {
-  const parts: string[] = [envelope(run)];
+  const parts: string[] = [runHeader(run, deps)];
   const loop = getOpenLoop(deps.db, loopId);
   if (!loop) {
     parts.push(
@@ -938,7 +1008,7 @@ function buildTimeBasedRunPrompt(run: ClaimedCognitionRun, deps: CognitionRunPro
   const decay = parseCognitionDecayCheckRunPayload(run.payload);
   if (decay) return buildDecayCheckRunPrompt(run, decay.decayCheckLoopId, deps);
   const stored = parseCognitionTimeBasedRunPayload(run.payload)?.prompt ?? null;
-  const parts: string[] = [envelope(run)];
+  const parts: string[] = [runHeader(run, deps)];
   if (!stored) {
     parts.push(
       "",
@@ -986,7 +1056,7 @@ function buildProvenanceRecheckPrompt(
   payload: { recheckDependentKind: "brief" | "loop"; recheckDependentId: string },
 ): string {
   const { recheckDependentKind: kind, recheckDependentId: id } = payload;
-  const parts: string[] = [envelope(run)];
+  const parts: string[] = [runHeader(run, deps)];
   const dependent =
     kind === "brief"
       ? deps.db
@@ -1048,7 +1118,7 @@ function buildFeedbackRunPrompt(run: ClaimedCognitionRun, deps: CognitionRunProm
   if (recheck) return buildProvenanceRecheckPrompt(run, deps, recheck);
   const payload = parseCognitionFeedbackRunPayload(run.payload);
   const briefId = payload?.briefId ?? null;
-  const parts: string[] = [envelope(run)];
+  const parts: string[] = [runHeader(run, deps)];
   if (!briefId) {
     parts.push(
       "",
@@ -1086,7 +1156,7 @@ function buildFeedbackRunPrompt(run: ClaimedCognitionRun, deps: CognitionRunProm
     "",
     `The user reacted to brief ${briefId} ("${row.title}"). Its state is now: ${row.state}.`,
     row.user_feedback
-      ? `They also typed: "${row.user_feedback}" — weigh this free text heavily; it may override the guidance below.`
+      ? `They also typed: "${row.user_feedback}" — weigh this free text heavily; it may override any guidance in this message.`
       : "They typed no free text.",
     relatedLoopIds.length > 0
       ? `Related loops: ${relatedLoopIds.join(", ")} (brief_fetch / open_loop_fetch for detail).`
@@ -1122,7 +1192,7 @@ function buildFeedbackRunPrompt(run: ClaimedCognitionRun, deps: CognitionRunProm
  */
 function buildSynthesisRunPrompt(run: ClaimedCognitionRun, deps: CognitionRunPromptDeps): string {
   const payload = parseCognitionSynthesisRunPayload(run.payload);
-  const parts: string[] = [envelope(run)];
+  const parts: string[] = [runHeader(run, deps)];
   if (!payload) {
     parts.push(
       "",
@@ -1287,7 +1357,7 @@ function buildVerificationRunPrompt(
   deps: CognitionRunPromptDeps,
 ): string {
   const payload = parseCognitionVerificationRunPayload(run.payload);
-  const parts: string[] = [envelope(run)];
+  const parts: string[] = [runHeader(run, deps)];
   if (!payload) {
     parts.push(
       "",
@@ -1389,7 +1459,7 @@ function buildVerificationRunPrompt(
  */
 function buildSweepRunPrompt(run: ClaimedCognitionRun, deps: CognitionRunPromptDeps): string {
   const payload = parseCognitionSweepRunPayload(run.payload);
-  const parts: string[] = [envelope(run)];
+  const parts: string[] = [runHeader(run, deps)];
   if (!payload) {
     parts.push(
       "",
@@ -1496,7 +1566,7 @@ function buildMergeAdjudicationRunPrompt(
   run: ClaimedCognitionRun,
   deps: CognitionRunPromptDeps,
 ): string {
-  const parts: string[] = [envelope(run)];
+  const parts: string[] = [runHeader(run, deps)];
   const payload = parseCognitionMergeAdjudicationRunPayload(run.payload);
   if (!payload) {
     parts.push(
@@ -1541,9 +1611,9 @@ function buildMergeAdjudicationRunPrompt(
  * A `notes_compaction` run — background curation of the agent-notes blob,
  * scheduled when a write landed above the soft cap. The payload is
  * reference-free (its reason string is ledger context only): the live blob is
- * injected into the system prompt and its byte state is read here at claim
- * time, so a run that folded several over-cap triggers compacts the current
- * notes, never a snapshot.
+ * rendered into this run message's standing memory and its byte state is read
+ * here at claim time, so a run that folded several over-cap triggers compacts
+ * the current notes, never a snapshot.
  */
 function buildNotesCompactionRunPrompt(
   run: ClaimedCognitionRun,
@@ -1551,11 +1621,11 @@ function buildNotesCompactionRunPrompt(
 ): string {
   const payload = parseCognitionNotesCompactionRunPayload(run.payload);
   const bytes = Buffer.byteLength(readCognitionNotes(deps.db), "utf8");
-  const parts: string[] = [envelope(run)];
+  const parts: string[] = [runHeader(run, deps)];
   parts.push(
     "",
     `Notes compaction: your agent notes are ${bytes} bytes against the ${deps.cfg.notesMaxBytes}-byte soft cap${payload ? ` (scheduled because: ${payload.reason})` : ""}. Rewrite them to comfortably BELOW the cap.`,
-    "Work from the notes injected verbatim in your system prompt — no retrieval is needed. Curate, don't summarize away:",
+    "Work from the notes given verbatim above in this message — no retrieval is needed. Curate, don't summarize away:",
     "- Merge duplicate or overlapping lessons into one line each.",
     "- Drop ephemeral or stale items: anything tied to a moment that has passed, or superseded by a later lesson.",
     "- Preserve the durable user facts, lessons, and standing commitments — the notes are the operating manual for this user, and a lesson lost here is re-learned the expensive way.",
@@ -1565,29 +1635,45 @@ function buildNotesCompactionRunPrompt(
   return parts.join("\n");
 }
 
-/** The per-kind prompt body, before the shared brief-capable envelope. */
-function buildRunPromptBody(run: ClaimedCognitionRun, deps: CognitionRunPromptDeps): string {
+/**
+ * One kind's run message in its two halves. `rules` is the kind's static
+ * instruction text — byte-identical across runs of that kind, so it belongs
+ * in the cacheable prefix; only `data` and `bootstrap` runs have it, the other
+ * kinds interleave their instructions with per-run data. `body` is the
+ * volatile tail, opening with
+ * {@link runHeader}.
+ */
+interface RunPromptParts {
+  rules?: string;
+  body: string;
+}
+
+/** The per-kind prompt halves, before the shared brief rules are added. */
+function buildRunPromptParts(
+  run: ClaimedCognitionRun,
+  deps: CognitionRunPromptDeps,
+): RunPromptParts {
   switch (run.kind) {
     case "data":
       return buildDataRunPrompt(run, deps);
     case "daily":
-      return buildDailyRunPrompt(run, deps);
+      return { body: buildDailyRunPrompt(run, deps) };
     case "time_based":
-      return buildTimeBasedRunPrompt(run, deps);
+      return { body: buildTimeBasedRunPrompt(run, deps) };
     case "feedback":
-      return buildFeedbackRunPrompt(run, deps);
+      return { body: buildFeedbackRunPrompt(run, deps) };
     case "synthesis":
-      return buildSynthesisRunPrompt(run, deps);
+      return { body: buildSynthesisRunPrompt(run, deps) };
     case "sweep":
-      return buildSweepRunPrompt(run, deps);
+      return { body: buildSweepRunPrompt(run, deps) };
     case "bootstrap":
       return buildBootstrapRunPrompt(run, deps);
     case "verification":
-      return buildVerificationRunPrompt(run, deps);
+      return { body: buildVerificationRunPrompt(run, deps) };
     case "merge_adjudication":
-      return buildMergeAdjudicationRunPrompt(run, deps);
+      return { body: buildMergeAdjudicationRunPrompt(run, deps) };
     case "notes_compaction":
-      return buildNotesCompactionRunPrompt(run, deps);
+      return { body: buildNotesCompactionRunPrompt(run, deps) };
     case "subscription_compile":
       // Recorded inline by the subscription compiler, already settled — a row
       // of this kind is never `pending`, so the drainer can never claim one
@@ -1603,24 +1689,30 @@ function buildRunPromptBody(run: ClaimedCognitionRun, deps: CognitionRunPromptDe
 
 /**
  * Build the user-message prompt for one claimed run — the `promptBuilder`
- * seam of the run driver. Every lane that can write a brief carries the house
- * style and the chain-of-verification hop, appended here once so no builder
- * (or builder branch — the daily kind alone fans out to digest and per-source
- * batch) can silently miss them. Three kinds are excluded because they never
- * create a brief: `verification` (annotation memory only),
- * `merge_adjudication` (a verdict through its own tool) and
- * `notes_compaction` (notes maintenance only).
+ * seam of the run driver. The message is laid out static-first for prefix
+ * caching: the kind's static rules (`data` and `bootstrap` only), then the
+ * shared brief rules, then the volatile tail (envelope, clock, standing
+ * memory, per-run data). Every lane
+ * that can write a brief carries the house style and the
+ * chain-of-verification hop, added here once so no builder (or builder
+ * branch — the daily kind alone fans out to digest and per-source batch) can
+ * silently miss them. Three kinds are excluded because they never create a
+ * brief: `verification` (annotation memory only), `merge_adjudication` (a
+ * verdict through its own tool) and `notes_compaction` (notes maintenance
+ * only).
  */
 export function buildCognitionRunPrompt(
   run: ClaimedCognitionRun,
   deps: CognitionRunPromptDeps,
 ): string {
-  const body = buildRunPromptBody(run, deps);
-  // Three kinds never create briefs, so they carry neither the house style
-  // nor the CoV hop.
-  return cognitionRunCarriesBriefRules(run.kind)
-    ? `${body}\n\n${BRIEF_CRAFT_RULE}\n\n${BRIEF_CLAIM_VERIFICATION_RULE}`
-    : body;
+  const { rules, body } = buildRunPromptParts(run, deps);
+  const staticPrefix = [
+    ...(rules ? [rules] : []),
+    ...(cognitionRunCarriesBriefRules(run.kind)
+      ? [BRIEF_CRAFT_RULE, BRIEF_CLAIM_VERIFICATION_RULE]
+      : []),
+  ];
+  return [...staticPrefix, body].join("\n\n");
 }
 
 /** Whether a claimable run kind may write briefs and therefore receives the shared brief rules. */

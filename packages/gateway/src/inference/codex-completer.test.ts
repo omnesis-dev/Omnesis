@@ -146,7 +146,8 @@ describe("Codex completion over the app-server protocol", () => {
         const completer = new CodexCompleter({ backend: model });
         expect(await completer.completeWithUsage("Classify the claim")).toEqual({
           text: "NEUTRAL",
-          usage: { promptTokens: 12, completionTokens: 7 },
+          // The whole turn (`total`), cached input included: 30 in, 11 out.
+          usage: { promptTokens: 30, completionTokens: 11 },
         });
         await completer.dispose();
       } finally {

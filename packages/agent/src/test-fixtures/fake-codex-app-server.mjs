@@ -423,7 +423,11 @@ function notifyUsage() {
   notify("thread/tokenUsage/updated", {
     threadId,
     turnId,
+    // Shaped like the real server: `total` spans the thread (every model
+    // request of the turn), `last` only its final request, and both count
+    // cached input inside inputTokens.
     tokenUsage: {
+      total: { inputTokens: 30, outputTokens: 11, cachedInputTokens: 20 },
       last: { inputTokens: 12, outputTokens: 7, cachedInputTokens: 2 },
     },
   });

@@ -239,6 +239,29 @@ Both gates are unassigned by default. Pass `entailment:` / `judge:` to
 `BrainBench.start` to drive their reject arms. A configured outage is tolerated
 for durable annotations and temporal memory, but a user-facing Brief is held.
 
+### The worth gate (the `decision` role)
+
+Before a claimed `data` or `bootstrap` run about an email starts its agent turn, the
+drainer asks the `decision` model for a worth score and settles a low-scored run with no
+agent turn at all. The role is unassigned by default, so the gate is absent. Two ways to
+drive it:
+
+- `decision: { policy }` starts a scripted stand-in for the TypeSafe decision API
+  (`decision-server.ts`) and assigns `typesafe/jev-1.13.0` against it, so the production
+  client, key lookup and URL policy run. `policy` is a function of the request (answers, or
+  `{ httpError }`) or `{ cassetteDir }`, where a miss is an HTTP 422 naming the fingerprint.
+  `bench.decision.calls` records every request and reply; `bench.decision.refuseWith(529)`
+  opens an outage, which the gate absorbs by failing open (`unavailable`).
+- `decisionBackend: "replay"` answers from the universe's `decisionCassettes` with no
+  server at all.
+
+`worth-gate-mail.ts` is the invented mail table both lanes share: each email's score, the
+exact request the gate sends for it (built with the gateway's own rubric), and the
+`loops-test-life` replay cassette generated from it
+(`npx tsx scripts/write-worth-gate-cassettes.mjs`). A gated run is `completed` with
+`usage: null`, no transcript and no puppet call; `obs.runs()` items carry `gateVerdict`, and
+`obs.run(id).decisions` carries each judgement with its request and reply.
+
 ## Observation
 
 `bench.obs` wraps the production read surface — use it rather than raw SQL wherever a
@@ -246,6 +269,7 @@ route exists, so each bench run doubles as a contract test:
 
 ```
 status() statusOf(path) pulse() runs() run(id) settledRuns(kind) scheduled() runKinds()
+bootstrapStatus() bootstrapTimeline() startBootstrap()
 transcripts() transcript(f) promptFor(runId) decisions()
 executedTools(runId)          <- every tool call a run made, WITH the gateway's answer
 runForDoc(docId) diffFor(runId)

@@ -173,8 +173,9 @@ function loopStateColor(state) {
 
 /**
  * The queue's three stored statuses fanned out into the states an operator
- * actually distinguishes. `pending` splits on the drainer's live word and
- * the row's schedule:
+ * actually distinguishes. A completed run the worth gate turned away
+ * (`gateVerdict: "skip"`) is `gated`: it settled without an agent turn.
+ * `pending` splits on the drainer's live word and the row's schedule:
  *   - running:   the drainer is executing it this instant (`run.running`);
  *   - retrying:  claimed at least once, soft-failed, waiting out back-off;
  *   - scheduled: never claimed, fire time in the future (a future check);
@@ -182,6 +183,7 @@ function loopStateColor(state) {
  * Exported for tests.
  */
 export function runDisplayStatus(run, nowMs = Date.now()) {
+  if (run.status === "completed" && run.gateVerdict === "skip") return "gated";
   if (run.status !== "pending") return run.status; // completed | failed
   if (run.running) return "running";
   const due = run.nextAttemptAt ? new Date(run.nextAttemptAt).getTime() : 0;
@@ -195,6 +197,7 @@ const RUN_STATUS_COLOR = {
   scheduled: "#93c5fd",
   retrying: "#fdba74",
   completed: "#86efac",
+  gated: "#d2a8ff",
   failed: "#fca5a5",
 };
 
@@ -204,7 +207,7 @@ function runStatusColor(displayStatus) {
 
 /**
  * The one timestamp a run row should lead with, per display state: when it
- * fires (scheduled/retrying), when it settled (completed/failed), when it
+ * fires (scheduled/retrying), when it settled (completed/gated/failed), when it
  * started (running) or entered the queue (queued). Exported for tests.
  */
 export function runTimeLabel(run, nowMs = Date.now()) {
@@ -221,6 +224,8 @@ export function runTimeLabel(run, nowMs = Date.now()) {
       const iso = run.completedAt ?? run.lastAttemptAt;
       return { label: `failed ${fmtRel(iso, nowMs)}`, iso };
     }
+    case "gated":
+      return { label: `gated ${fmtRel(run.completedAt, nowMs)}`, iso: run.completedAt };
     default:
       return { label: `completed ${fmtRel(run.completedAt, nowMs)}`, iso: run.completedAt };
   }
@@ -1177,7 +1182,23 @@ export function RunKindDescription({ definition }) {
   </p>`;
 }
 
-function RunListRow({ run, selectedId, nowMs }) {
+/**
+ * A small note beside a run's kind when the worth gate let it through or
+ * could not judge it. A skip needs no marker: the row's status is `gated`.
+ * Exported for tests.
+ */
+export function GateMarker({ verdict }) {
+  if (verdict === "pass") {
+    return html`<span class="cognition-gate-marker" title="The decision model judged this document worth a run">worth a run</span>`;
+  }
+  if (verdict === "unavailable") {
+    return html`<span class="cognition-gate-marker cognition-gate-marker--warn" title="The decision model could not be reached, so the run went ahead unjudged">not judged</span>`;
+  }
+  return null;
+}
+
+/** Exported for tests. */
+export function RunListRow({ run, selectedId, nowMs }) {
   const status = runDisplayStatus(run, nowMs);
   const time = runTimeLabel(run, nowMs);
   return html`
@@ -1187,6 +1208,7 @@ function RunListRow({ run, selectedId, nowMs }) {
           ${status === "running" && html`<span class="cognition-live-dot" aria-hidden="true"></span>`}
           <${Pill} color=${runStatusColor(status)}>${status}</${Pill}>
           <span class="cognition-row-kind">${run.kind}</span>
+          <${GateMarker} verdict=${run.gateVerdict} />
         </span>
         <span class="cognition-row-time" title=${fmtTs(time.iso)}>${time.label}</span>
       </div>
@@ -1277,6 +1299,7 @@ function RunDetail({ id }) {
   useAutoReload(reload, 10_000);
   if (loading || error) return html`<div style="padding:8px;"><${LoadState} loading=${loading} error=${error} /></div>`;
   const { run, transcripts } = data;
+  const decisions = data.decisions ?? [];
   const status = run ? runDisplayStatus(run) : null;
   return html`
     <div class="cognition-detail-body">
@@ -1321,11 +1344,193 @@ function RunDetail({ id }) {
         `
         : html`<div class="debug-empty" style="margin-bottom:12px;">The run row was pruned (retention window) — its transcript survives below.</div>`}
 
+      <${DecisionSection} decisions=${decisions} />
+
       <h3 class="cognition-section">Transcript${transcripts.length > 1 ? "s" : ""} (${transcripts.length})</h3>
-      ${transcripts.length === 0
-        ? html`<div class="debug-empty">No transcript stored for this run.</div>`
-        : html`<${TranscriptViewer} key=${id} refs=${transcripts} />`}
+      <${TranscriptSlot} id=${id} transcripts=${transcripts} gated=${status === "gated"} />
     </div>
+  `;
+}
+
+/**
+ * The transcript area, or why there is none. A gated run settled on the
+ * decision model's skip before any agent turn, so it has nothing to show — the
+ * page says so rather than suggesting a transcript went missing. Exported for
+ * tests.
+ */
+export function TranscriptSlot({ id, transcripts, gated }) {
+  if (transcripts.length > 0) return html`<${TranscriptViewer} key=${id} refs=${transcripts} />`;
+  if (gated) {
+    return html`<div class="debug-empty">
+      The decision model skipped this document, so no agent turn ran and there is no transcript.
+    </div>`;
+  }
+  return html`<div class="debug-empty">No transcript stored for this run.</div>`;
+}
+
+// ── Decision model (the worth gate's judgements for one run) ─────────
+
+const DECISION_VERDICT = {
+  pass: { label: "pass", color: "#86efac", sentence: "Worth a run — the agent turn went ahead." },
+  skip: { label: "skip", color: "#d2a8ff", sentence: "Not worth a run — the run settled with no agent turn." },
+  unavailable: {
+    label: "unavailable",
+    color: "#fdba74",
+    sentence: "The decision model could not answer, so the run went ahead unjudged.",
+  },
+};
+
+const fmtScore = (n) => (typeof n === "number" ? n.toFixed(2) : "—");
+const fmtPct = (n) => (typeof n === "number" ? `${Math.round(n * 100)}%` : "—");
+
+/**
+ * The criterion a probability key names: score answers key their levels
+ * "0", "1", …, which index the question's criteria. Any other key (a choice
+ * option) is its own label.
+ */
+function levelLabel(key, criteria) {
+  const index = /^\d+$/.test(key) ? Number(key) : NaN;
+  const text = Array.isArray(criteria) ? criteria[index] : criteria?.[key];
+  const described = typeof text === "string" ? text : text == null ? null : JSON.stringify(text);
+  return { head: key, text: described };
+}
+
+/** Instructions or criteria: prose as prose, a structured reference as JSON. */
+function decisionText(value) {
+  if (value == null) return null;
+  return typeof value === "string" ? value : html`<code>${JSON.stringify(value)}</code>`;
+}
+
+/** The exact state and questions sent to the decision model. */
+function DecisionRequest({ request }) {
+  const state = request.state;
+  const stateFields = state && typeof state === "object" && !Array.isArray(state) ? Object.entries(state) : null;
+  return html`
+    <div class="cognition-decision-request">
+      <div class="cognition-decision-sub">State</div>
+      ${stateFields
+        ? stateFields.map(
+            ([key, value]) => html`<div key=${key} class="cognition-decision-state">
+              <span class="cognition-decision-state-key">${key}</span>
+              <span class="cognition-decision-state-value">${typeof value === "string" ? value : JSON.stringify(value)}</span>
+            </div>`,
+          )
+        : html`<pre class="cognition-decision-pre">${typeof state === "string" ? state : JSON.stringify(state, null, 2)}</pre>`}
+      ${Object.entries(request.questions ?? {}).map(
+        ([qid, q]) => html`<div key=${qid}>
+          <div class="cognition-decision-sub">Question <code>${qid}</code> · ${q.type}</div>
+          <div class="cognition-decision-instructions">${decisionText(q.instructions)}</div>
+          ${Array.isArray(q.criteria)
+            ? html`<ol class="cognition-decision-criteria" start="0">
+                ${q.criteria.map((c, i) => html`<li key=${i}>${decisionText(c)}</li>`)}
+              </ol>`
+            : q.criteria
+            ? html`<ul class="cognition-decision-criteria">
+                ${Object.entries(q.criteria).map(
+                  ([k, c]) => html`<li key=${k}><strong>${k}</strong>${c == null ? "" : html` — ${decisionText(c)}`}</li>`,
+                )}
+              </ul>`
+            : null}
+        </div>`,
+      )}
+    </div>
+  `;
+}
+
+/** What the decision model answered: the score and its per-level probabilities. */
+function DecisionAnswer({ response, request }) {
+  return html`
+    <div class="cognition-decision-answer">
+      ${response.model ? html`<div class="cognition-dim">answered by <code>${response.model}</code></div>` : null}
+      ${Object.entries(response.answers ?? {}).map(([qid, a]) => {
+        const criteria = request?.questions?.[qid]?.criteria;
+        const probabilities = Object.entries(a.probabilities ?? {});
+        return html`<div key=${qid}>
+          <div class="cognition-decision-sub">
+            <code>${qid}</code> ·
+            ${a.type === "score"
+              ? html` score ${fmtScore(a.score)}`
+              : a.type === "noul"
+              ? html` yes ${fmtPct(a.noul)}`
+              : html` ${a.choice}`}
+            ${typeof a.confidence === "number" ? html` · confidence ${fmtPct(a.confidence)}` : null}
+          </div>
+          ${probabilities.length > 0
+            ? html`<div class="cognition-decision-bars">
+                ${probabilities.map(([key, p]) => {
+                  const level = levelLabel(key, criteria);
+                  return html`<div key=${key} class="cognition-decision-bar" title=${level.text ?? key}>
+                    <span class="cognition-decision-bar-label">
+                      <strong>${level.head}</strong>${level.text ? html` ${level.text}` : null}
+                    </span>
+                    <span class="cognition-decision-bar-track">
+                      <span class="cognition-decision-bar-fill" style=${`width:${Math.max(0, Math.min(100, p * 100))}%;`}></span>
+                    </span>
+                    <span class="cognition-decision-bar-pct">${fmtPct(p)}</span>
+                  </div>`;
+                })}
+              </div>`
+            : null}
+        </div>`;
+      })}
+    </div>
+  `;
+}
+
+/** One decision-model judgement made for a run. Exported for tests. */
+export function DecisionCard({ decision: d }) {
+  const verdict = DECISION_VERDICT[d.verdict] ?? { label: d.verdict, color: "#94a3b8", sentence: null };
+  const subject = d.subjectDoc ?? d.subjectDocumentId;
+  return html`
+    <div class="cognition-decision">
+      <div class="cognition-decision-head">
+        <${Pill} color=${verdict.color}>${verdict.label}</${Pill}>
+        <span class="cognition-decision-score">
+          score <strong>${fmtScore(d.score)}</strong> ${d.score == null ? "" : d.score >= d.threshold ? "≥" : "<"} threshold ${fmtScore(d.threshold)}
+        </span>
+        <span class="cognition-dim">${d.purpose} · ${d.lane}</span>
+      </div>
+      ${verdict.sentence ? html`<div class="cognition-decision-sentence">${verdict.sentence}</div>` : null}
+      ${d.error ? html`<div class="debug-error" style="margin:6px 0;">⚠️ ${d.error}</div>` : null}
+      <${Field} label="Judged">
+        ${d.inheritedFromParent
+          ? html`the document that contains it <${DocChip} doc=${subject} />
+              <span class="cognition-dim"> — this attachment inherits its email's judgement</span>`
+          : html`<${DocChip} doc=${subject} />`}
+      </${Field}>
+      ${d.reusedFrom
+        ? html`<${Field} label="Reused">
+            decision <code>${d.reusedFrom}</code>
+            <span class="cognition-dim"> — same content under the same rubric, so no model call was made</span>
+          </${Field}>`
+        : null}
+      <${Field} label="Model">${d.modelId ? html`<code>${d.modelId}</code>` : "—"}</${Field}>
+      <${Field} label="Rubric"><code>${d.rubricVersion}</code></${Field}>
+      <${Field} label="Latency">${typeof d.latencyMs === "number" ? `${d.latencyMs} ms` : "—"}</${Field}>
+      <${Field} label="Input tokens">${typeof d.inputTokens === "number" ? d.inputTokens.toLocaleString() : "—"}</${Field}>
+      <${Field} label="Decided">${fmtTs(d.createdAt)}</${Field}>
+      ${d.request
+        ? html`<details class="cognition-decision-details">
+            <summary>Request sent</summary>
+            <${DecisionRequest} request=${d.request} />
+          </details>`
+        : null}
+      ${d.response
+        ? html`<details class="cognition-decision-details">
+            <summary>Answer</summary>
+            <${DecisionAnswer} response=${d.response} request=${d.request} />
+          </details>`
+        : null}
+    </div>
+  `;
+}
+
+/** Every decision-model judgement for a run, or nothing when none was made. Exported for tests. */
+export function DecisionSection({ decisions }) {
+  if (!decisions || decisions.length === 0) return null;
+  return html`
+    <h3 class="cognition-section">Decision model${decisions.length > 1 ? ` (${decisions.length})` : ""}</h3>
+    ${decisions.map((d) => html`<${DecisionCard} key=${d.id} decision=${d} />`)}
   `;
 }
 

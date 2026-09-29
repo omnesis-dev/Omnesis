@@ -50,6 +50,7 @@ function healthyInference(): InferenceOverview {
       "watch-judge": { role: "watch-judge", kind: "disabled" },
       "entailment-verifier": { role: "entailment-verifier", kind: "disabled" },
       "brief-judge": { role: "brief-judge", kind: "disabled" },
+      decision: { role: "decision", kind: "disabled" },
     },
   };
 }

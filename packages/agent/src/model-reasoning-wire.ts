@@ -5,6 +5,15 @@ import type { ModelBehaviorValues, ModelControls, ModelControlKey } from "@omnes
 
 export type ReasoningWireProtocol = "chat-completions" | "responses";
 
+/** Whether a base URL is OpenAI's own API host, as opposed to a compatible server. */
+export function isOpenAIApiEndpoint(baseUrl: string): boolean {
+  try {
+    return new URL(baseUrl).hostname.toLowerCase() === "api.openai.com";
+  } catch {
+    return false;
+  }
+}
+
 /** Prefer Responses only for OpenAI's own endpoint when an effort is saved. */
 export function preferredReasoningWireProtocol(
   baseUrl: string,
@@ -14,11 +23,7 @@ export function preferredReasoningWireProtocol(
   if (controls?.providerId !== "openai" || values?.reasoningEffort === undefined) {
     return undefined;
   }
-  try {
-    return new URL(baseUrl).hostname.toLowerCase() === "api.openai.com" ? "responses" : undefined;
-  } catch {
-    return undefined;
-  }
+  return isOpenAIApiEndpoint(baseUrl) ? "responses" : undefined;
 }
 
 /** The catalog's option is offered in pickers only when Omnesis can send it. */

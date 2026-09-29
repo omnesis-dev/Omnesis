@@ -51,6 +51,7 @@ export default defineConfig({
       "scripts/check-parity.test.mjs",
       "scripts/record-replay-scenario.test.mjs",
       "scripts/lib/brain-cassette.test.mjs",
+      "scripts/lib/decision-cassette.test.mjs",
       "scripts/website-docs.test.mjs",
       "scripts/render-arch-substrate.test.mjs",
       "scripts/render-watch-examples.test.mjs",

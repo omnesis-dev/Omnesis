@@ -44,6 +44,7 @@ import {
 } from "@omnesis/types";
 import { GatewayWsClient, HttpGatewayClient } from "@omnesis/gateway-client";
 import {
+  getDecisionCassettesDir,
   hostingDeviceKinds,
   loadUniverse,
   sourceHostAssignments,
@@ -254,6 +255,15 @@ export interface SyntheticHarnessOptions {
    */
   ocrBackend?: "off" | "replay";
   /**
+   * Decision backend to wire on the spawned gateway. Defaults to `"off"` (the
+   * `decision` role stays unassigned, so the Brain's worth gate is absent).
+   * `"replay"` assigns `inference.assignments.decision = "replay"` and points
+   * `OMNESIS_DECISION_FIXTURE` at the universe's `decisionCassettes`
+   * directory, so every decision is answered from recorded cassettes with no
+   * network. The universe must declare `decisionCassettes`.
+   */
+  decisionBackend?: "off" | "replay";
+  /**
    * Extra `inference.backends` / `inference.assignments` merged into the
    * spawned gateway's `omnesis.json` on top of whatever the per-backend
    * flags above produce. Lets a caller wire an arbitrary configured backend
@@ -274,6 +284,12 @@ export interface SyntheticHarnessOptions {
      * briefs scorecard's priced cloud lane.
      */
     allowRemoteInference?: boolean;
+    /**
+     * Sets `inference.typesafe.url` — the System One endpoint a
+     * `typesafe/<model>` decision assignment posts to. A test points it at a
+     * scripted decision server.
+     */
+    typesafeUrl?: string;
   };
   /**
    * Extra top-level `omnesis.json` blocks written verbatim into the spawned
@@ -428,6 +444,7 @@ export class SyntheticE2EHarness {
   private embedderBackend: "off" | "fake";
   private transcriberBackend: "off" | "replay";
   private ocrBackend: "off" | "replay";
+  private decisionBackend: "off" | "replay";
   private fakeEmbedderOptions: FakeEmbedderOptions;
   private fakeEmbedder: FakeEmbedderServer | null = null;
   private apnsBackend: "off" | "fake";
@@ -459,6 +476,7 @@ export class SyntheticE2EHarness {
     this.embedderBackend = opts.embedderBackend ?? "off";
     this.transcriberBackend = opts.transcriberBackend ?? "off";
     this.ocrBackend = opts.ocrBackend ?? "off";
+    this.decisionBackend = opts.decisionBackend ?? "off";
     this.fakeEmbedderOptions = opts.fakeEmbedderOptions ?? {};
     this.apnsBackend = opts.apnsBackend ?? "off";
     this.fakeApnsOptions = opts.fakeApnsOptions ?? {};
@@ -1594,6 +1612,18 @@ export class SyntheticE2EHarness {
       inferenceAssignments.ocr = "replay";
     }
 
+    if (this.decisionBackend === "replay") {
+      const universe = loadUniverse(this.universe);
+      const cassettes = getDecisionCassettesDir(universe);
+      if (!cassettes) {
+        throw new Error(
+          `SyntheticE2EHarness: decisionBackend "replay" needs universe '${universe.manifest.name}' to declare decisionCassettes`,
+        );
+      }
+      env.OMNESIS_DECISION_FIXTURE = cassettes;
+      inferenceAssignments.decision = "replay";
+    }
+
     if (this.fakeApns) {
       // ApnsClient is only wired when `gateway.apns` is present, so we write
       // a throwaway-but-schema-valid block; the JWT it signs is never
@@ -1636,6 +1666,9 @@ export class SyntheticE2EHarness {
         ...(Object.keys(inferenceAssignments).length ? { assignments: inferenceAssignments } : {}),
         ...(this.extraInference?.allowRemoteInference !== undefined
           ? { allowRemoteInference: this.extraInference.allowRemoteInference }
+          : {}),
+        ...(this.extraInference?.typesafeUrl
+          ? { typesafe: { url: this.extraInference.typesafeUrl } }
           : {}),
       };
     }

@@ -347,7 +347,7 @@
           serve <code>background-agent</code> or <code>brief-judge</code>, which need a chat
           backend; it can serve <code>entailment-verifier</code>. The portal's
           <strong>Settings → Models</strong> page lists the same roles under
-          <strong>Cognition</strong>. Two further roles are optional reviewers:
+          <strong>Cognition</strong>. Three further roles are optional:
         </p>
         <div class="table-wrap">
           <table>
@@ -379,16 +379,26 @@
                 <td>Decides whether a candidate brief is worth interrupting you for.</td>
                 <td>Briefs are created without review.</td>
               </tr>
+              <tr>
+                <td><code>decision</code></td>
+                <td>
+                  Scores each email before its agent run and skips the ones the agent would get
+                  nothing from. Served only by TypeSafe Jev (<code>typesafe/jev-1.13.0</code>); see
+                  <a href="#brain-worth-gate">Skipping mail it cannot use</a>.
+                </td>
+                <td>Every email Brain selects gets an agent run.</td>
+              </tr>
             </tbody>
           </table>
         </div>
         <p>
-          Codex can serve all three through the same ChatGPT login. A reviewer runs as its own model
-          turn even when it uses the same model as the agent waiting on its verdict, and every role
-          shares the account's usage allowance. <code>GET /status</code> reports the gate as
-          <code>brain</code>, with <code>visible</code>, <code>enabled</code>,
-          <code>modelAssigned</code> and <code>active</code>; the portal's Cognition page says which
-          of the two conditions is missing.
+          Codex can serve the first three through the same ChatGPT login. The two reviewers each run
+          as their own model turn even when they use the same model as the agent waiting on their
+          verdict, and every role shares the account's usage allowance.
+          <code>GET /status</code> reports the gate as <code>brain</code>, with
+          <code>visible</code>, <code>enabled</code>, <code>modelAssigned</code> and
+          <code>active</code>; the portal's Cognition page says which of the two conditions is
+          missing.
         </p>
 
         <h3 id="brain-how-it-runs">How it runs</h3>
@@ -549,6 +559,44 @@
             re-affirmed, weakened, superseded or retracted.
           </li>
         </ul>
+
+        <h3 id="brain-worth-gate">Skipping mail it cannot use</h3>
+        <p>
+          Most mail gives Brain nothing to record: promotions, newsletters, notifications. Assigning
+          the <code>decision</code> role lets Brain ask a cheap typed-decision model, TypeSafe Jev,
+          whether an email is worth a full agent run before starting one. Jev reads the subject, the
+          sender and the first 2,000 characters of the body and answers with a score; below the
+          threshold, the run ends without an agent turn. An attachment is judged by the email that
+          contains it. Mail you sent to the assistant, and mail carrying a structured booking or due
+          date, is never skipped. Unchanged mail is not scored twice.
+        </p>
+        <p>
+          The check sends each email it scores to TypeSafe, so it needs
+          <code>inference.allowRemoteInference: true</code> and a TypeSafe API key. Enter the key
+          from <strong>Settings → Models → Decision model</strong>, or with
+          <code>omnesis backend key set typesafe</code>, then assign the model:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis model assign decision typesafe/jev-1.13.0</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          If Jev cannot be reached, or rejects the key, the email is processed as if the check were
+          off. Every judgement is kept with the run it was made for: the Runs tab marks a skipped
+          run <strong>gated</strong> and shows the exact request and answer, and the Bootstrap tab
+          counts skipped history separately from reviewed history. Jev's tokens appear on the
+          Overview tab as <strong>Decision model · worth gate</strong> and count toward the daily
+          token budget, not the daily run budget. The request and answer text is cleared after the
+          activity-retention window, and deleting an email deletes its judgements. The key can also
+          come from <code>OMNESIS_TYPESAFE_API_KEY</code> or <code>TYPESAFE_API_KEY</code> in the
+          gateway's environment. To reach a private TypeSafe deployment instead of the public API,
+          set <code>inference.typesafe.url</code>.
+        </p>
 
         <h3 id="brain-spend">Bounding the spend</h3>
         <p>

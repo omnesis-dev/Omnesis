@@ -15,6 +15,7 @@ import * as tl from "./cognition-timeline.js";
 const M = (month: string, o: Record<string, number> = {}) => ({
   month,
   reviewed: 0,
+  gated: 0,
   failed: 0,
   owed: 0,
   discarded: 0,
@@ -44,6 +45,24 @@ describe("monthTotal", () => {
   test("survives a month missing keys entirely", () => {
     expect(tl.monthTotal({ month: "2026-01" })).toBe(0);
     expect(tl.monthTotal(null)).toBe(0);
+  });
+});
+
+describe("the gated band", () => {
+  test("is drawn and counted as its own settled population", () => {
+    const m = M("2026-01", { reviewed: 1, gated: 6, failed: 2, owed: 3, discarded: 4, unscanned: 5 });
+    expect(tl.monthTotal(m)).toBe(17);
+    expect(tl.monthCorpusTotal(m)).toBe(21);
+    expect(tl.timelineTotals([m, M("2026-02", { gated: 4 })])).toMatchObject({ reviewed: 1, gated: 10, total: 25 });
+  });
+
+  test("a month the decision model settled counts as swept", () => {
+    const months = [
+      M("2024-01", { owed: 5 }),
+      M("2024-02", { gated: 7 }),
+      M("2024-03", { reviewed: 2, gated: 9 }),
+    ];
+    expect(tl.frontierMonth(months)).toBe("2024-02");
   });
 });
 

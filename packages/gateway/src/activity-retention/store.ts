@@ -15,6 +15,7 @@ type Db = Database.Database;
 
 export const ACTIVITY_RETENTION_PHASES = [
   "cognitionRuns",
+  "cognitionDecisions",
   "subscriptionFirings",
   "subscriptionAudit",
   "resolvedDevAnnotations",
@@ -78,6 +79,9 @@ export function pruneActivityRetentionBatch(
         )
         .run(cutoff, batchSize).changes;
       break;
+    case "cognitionDecisions":
+      deleted = pruneCognitionDecisions(db, cutoff, batchSize);
+      break;
     case "subscriptionFirings":
       hasMoreThreshold = Math.min(batchSize, 25);
       deleted = pruneSubscriptionFirings(db, cutoff, hasMoreThreshold);
@@ -114,6 +118,45 @@ export function pruneActivityRetentionBatch(
       break;
   }
   return { phase, deleted, hasMore: deleted === hasMoreThreshold };
+}
+
+/**
+ * The decision ledger outlives the runs it was made for: a document's answer
+ * is what lets an unchanged document skip a second decision-model call, and
+ * the bootstrap view reads verdicts from it. So past the cutoff a decision
+ * keeps its verdict and score but loses the request and answer text it was
+ * audited with (the request carries the opening of an email body), and an
+ * unavailable verdict — which carries no answer to reuse — is deleted.
+ * Returns the rows changed, so a full batch reports more work.
+ */
+function pruneCognitionDecisions(db: Db, cutoff: number, limit: number): number {
+  return db.transaction(() => {
+    const dropped = db
+      .prepare<[number, number]>(
+        `DELETE FROM cognition_decisions
+          WHERE id IN (
+            SELECT id FROM cognition_decisions
+             WHERE verdict = 'unavailable' AND created_at < ?
+             ORDER BY created_at, id
+             LIMIT ?
+          )`,
+      )
+      .run(cutoff, limit).changes;
+    if (dropped >= limit) return dropped;
+    const stripped = db
+      .prepare<[number, number]>(
+        `UPDATE cognition_decisions
+            SET request_json = NULL, response_json = NULL
+          WHERE id IN (
+            SELECT id FROM cognition_decisions
+             WHERE created_at < ? AND (request_json IS NOT NULL OR response_json IS NOT NULL)
+             ORDER BY created_at, id
+             LIMIT ?
+          )`,
+      )
+      .run(cutoff, limit - dropped).changes;
+    return dropped + stripped;
+  })();
 }
 
 /**

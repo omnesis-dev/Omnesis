@@ -180,7 +180,8 @@ export type CapabilityRole =
   | "background-agent"
   | "watch-judge"
   | "entailment-verifier"
-  | "brief-judge";
+  | "brief-judge"
+  | "decision";
 
 export const CAPABILITY_ROLES = [
   "embedder",
@@ -192,6 +193,7 @@ export const CAPABILITY_ROLES = [
   "watch-judge",
   "entailment-verifier",
   "brief-judge",
+  "decision",
 ] as const;
 
 /** Roles served by Codex turns. Embedding vectors and audio need other protocols. */
@@ -347,6 +349,19 @@ export const CAPABILITY_METADATA: Readonly<Record<CapabilityRole, CapabilityMeta
     description:
       "The push bar for Omnesis Briefs: a separate model pass that decides whether a candidate brief is worth interrupting you for — is it new, timely, consequential, and a real synthesis? Uses an independent model turn; Codex judges run separately from the background agent, even when both use the same model.",
     icon: "shield-check",
+    experimental: true,
+    section: "cognition",
+  },
+  // Typed, cheap judgements about a document (experimental): the Brain's
+  // worth gate asks it whether a document is worth a background-agent run.
+  // Not a chat model — only typed-decision backends (TypeSafe Jev) serve it.
+  // Never auto-assigned — unset means every candidate document is processed.
+  decision: {
+    role: "decision",
+    title: "Decision model",
+    description:
+      "Answers typed questions about a document — yes/no, a score on described levels, or one choice. The Brain uses it to skip emails it would get nothing from before starting a background-agent run. Supports TypeSafe Jev; each scored email's subject, sender and opening text are sent to TypeSafe.",
+    icon: "scale",
     experimental: true,
     section: "cognition",
   },

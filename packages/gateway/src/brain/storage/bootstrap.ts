@@ -358,8 +358,18 @@ export interface BootstrapMonthRow {
   discarded: number;
   /** A candidate the lane has not reached. */
   owed: number;
-  /** Reviewed: carries the processed marker and was not given up on. */
+  /**
+   * Reviewed: carries the processed marker, was not given up on, and was not
+   * turned away by the worth gate.
+   */
   reviewed: number;
+  /**
+   * Gated: carries the processed marker because the worth gate judged the
+   * email not worth an agent run (its newest decision is a skip). Covered, but
+   * never read by the agent — a separate band so gating is not mistaken for
+   * review.
+   */
+  gated: number;
   /**
    * Given up on: the lane exhausted its re-admissions and abandoned the
    * document. Read from the document's own marker rather than the run ledger,
@@ -413,7 +423,8 @@ export function bootstrapCorpusByMonth(
     .prepare<unknown[], BootstrapMonthRow>(
       `SELECT
          substr(COALESCE(d.source_updated_at, d.source_created_at), 1, 7) AS month,
-         SUM(CASE WHEN d.bootstrap_processed_at IS NOT NULL AND d.bootstrap_failed_at IS NULL THEN 1 ELSE 0 END) AS reviewed,
+         SUM(CASE WHEN d.bootstrap_processed_at IS NOT NULL AND d.bootstrap_failed_at IS NULL AND COALESCE(g.verdict, '') <> 'skip' THEN 1 ELSE 0 END) AS reviewed,
+         SUM(CASE WHEN d.bootstrap_processed_at IS NOT NULL AND d.bootstrap_failed_at IS NULL AND g.verdict = 'skip' THEN 1 ELSE 0 END) AS gated,
          SUM(CASE WHEN d.bootstrap_failed_at IS NOT NULL THEN 1 ELSE 0 END) AS failed,
          SUM(CASE WHEN d.bootstrap_processed_at IS NULL AND d.dates_extracted_at IS NULL THEN 1 ELSE 0 END) AS unscanned,
          SUM(CASE WHEN d.bootstrap_processed_at IS NULL AND d.dates_extracted_at IS NOT NULL AND x.still_future = 1 THEN 1 ELSE 0 END) AS owed,
@@ -425,6 +436,17 @@ export function bootstrapCorpusByMonth(
            FROM document_extracted_dates x
           GROUP BY document_id
        ) x ON x.document_id = d.id
+       -- The newest worth-gate verdict of each covered document, read from the
+       -- covering (document_id, created_at, verdict) index; uncovered documents
+       -- never look.
+       LEFT JOIN cognition_decisions g
+         ON d.bootstrap_processed_at IS NOT NULL
+        AND g.rowid = (
+          SELECT g2.rowid FROM cognition_decisions g2
+           WHERE g2.document_id = d.id
+           ORDER BY g2.created_at DESC, g2.rowid DESC
+           LIMIT 1
+        )
        WHERE COALESCE(d.source_updated_at, d.source_created_at) < ?
          AND json_extract(d.metadata, '$.documentType') NOT IN (${ex})
          AND d.source_id NOT IN (${au})

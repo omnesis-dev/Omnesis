@@ -12,6 +12,8 @@ import {
   resolveAnthropicCredential,
   resolveAnthropicApiKey,
   hasAnthropicApiKey,
+  resolveTypeSafeApiKey,
+  hasTypeSafeApiKey,
 } from "./model-credentials.js";
 
 let dir: string;
@@ -93,5 +95,38 @@ describe("readAnthropicApiKey / hasAnthropicApiKey", () => {
     expect(resolveAnthropicApiKey(dir)).toBe("omnesis-env-key");
     expect(resolveAnthropicCredential(dir)?.source).toBe("environment");
     expect(hasAnthropicApiKey(dir)).toBe(true);
+  });
+});
+
+describe("TypeSafe credentials", () => {
+  test("lists TypeSafe beside Anthropic", () => {
+    const entry = listModelCredentialEntries(dir).find((e) => e.fileKey === "typesafe");
+    expect(entry).toMatchObject({
+      providerName: "TypeSafe",
+      configured: false,
+      environment: false,
+    });
+    expect(getModelProviderSpec("typesafe")?.fileKey).toBe("typesafe");
+  });
+
+  test("reports a key supplied by the environment separately from the file", () => {
+    vi.stubEnv("TYPESAFE_API_KEY", "apikey_env_0123456789abcdef");
+    const entry = listModelCredentialEntries(dir).find((e) => e.fileKey === "typesafe");
+    expect(entry).toMatchObject({ configured: false, environment: true });
+  });
+
+  test("resolves the Omnesis env var, then the standard one, then the file", () => {
+    expect(resolveTypeSafeApiKey(dir)).toBeNull();
+    expect(hasTypeSafeApiKey(dir)).toBe(false);
+    writeFileSync(
+      join(dir, "typesafe-credentials.json"),
+      JSON.stringify({ apiKey: " apikey_file_0123456789 " }),
+    );
+    expect(resolveTypeSafeApiKey(dir)).toBe("apikey_file_0123456789");
+    vi.stubEnv("TYPESAFE_API_KEY", "apikey_std_0123456789");
+    expect(resolveTypeSafeApiKey(dir)).toBe("apikey_std_0123456789");
+    vi.stubEnv("OMNESIS_TYPESAFE_API_KEY", "apikey_omnesis_0123456789");
+    expect(resolveTypeSafeApiKey(dir)).toBe("apikey_omnesis_0123456789");
+    expect(hasTypeSafeApiKey(dir)).toBe(true);
   });
 });

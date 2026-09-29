@@ -98,7 +98,9 @@ export class CodexCompleter implements CompleteCapability {
       text,
       usage: terminal.usage
         ? {
-            promptTokens: terminal.usage.inputTokens ?? 0,
+            // The backend reports fresh and cached input apart; a completion's
+            // prompt count is all input it consumed, as other completers report.
+            promptTokens: (terminal.usage.inputTokens ?? 0) + (terminal.usage.cacheReadTokens ?? 0),
             completionTokens: terminal.usage.outputTokens ?? 0,
           }
         : null,
