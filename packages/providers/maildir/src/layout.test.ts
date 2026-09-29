@@ -148,8 +148,8 @@ describe("walkMaildir", () => {
   test("exclude patterns match folder names case-insensitively", () => {
     createMailbox(join(root, "INBOX"));
     createMailbox(join(root, "[Gmail]", "All Mail"));
-    createMailbox(join(root, "Newsletters", "Weekly"));
-    const names = walkMaildir(root, ["[gmail]/all mail", "Newsletters/**"], LIMITS).mailboxes.map(
+    createMailbox(join(root, "Digests", "Weekly"));
+    const names = walkMaildir(root, ["[gmail]/all mail", "digests/**"], LIMITS).mailboxes.map(
       (m) => m.name,
     );
     expect(names).toEqual(["INBOX"]);
@@ -302,7 +302,7 @@ describe("walkMaildir", () => {
 
 describe("folder names in IMAP's modified UTF-7", () => {
   test("are read as a person reads them", () => {
-    expect(decodeImapUtf7("Newsletter &- Marketing")).toBe("Newsletter & Marketing");
+    expect(decodeImapUtf7("Travel &- Leisure")).toBe("Travel & Leisure");
     expect(decodeImapUtf7("Caf&AOk- &- Bar")).toBe("Café & Bar");
     expect(decodeImapUtf7("&ZeVnLIqe-")).toBe("日本語");
   });
@@ -314,12 +314,12 @@ describe("folder names in IMAP's modified UTF-7", () => {
   });
 
   test("a mirrored folder is tagged with its readable name", () => {
-    createMailbox(join(root, "Newsletter &- Marketing"));
+    createMailbox(join(root, "Travel &- Leisure"));
     createMailbox(join(root, "Caf&AOk-", "Receipts"));
     const names = walkMaildir(root, [], LIMITS)
       .mailboxes.map((m) => m.name)
       .sort();
-    expect(names).toEqual(["Café/Receipts", "Newsletter & Marketing"]);
+    expect(names).toEqual(["Café/Receipts", "Travel & Leisure"]);
   });
 });
 
