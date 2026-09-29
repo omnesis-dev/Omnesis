@@ -2838,6 +2838,13 @@ const ocrSettings = z
      * the host's CPU parallelism). Override only to tune a specific backend.
      */
     pageConcurrency: z.number().int().positive().optional(),
+    /**
+     * How long a collector waits for one attachment's OCR before giving up on
+     * it, in seconds. Unset = 30. Raise it for a backend that needs longer to
+     * read a dense image; an image that runs out of time is recorded as not
+     * extracted and retried later by sources that retry.
+     */
+    requestTimeoutSeconds: z.number().int().positive().max(3600).optional(),
   })
   .strict();
 

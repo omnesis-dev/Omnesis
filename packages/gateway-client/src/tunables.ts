@@ -32,12 +32,19 @@ export const DEFAULT_WS_HEARTBEAT_TIMEOUT_MS = 90_000;
 export const DEFAULT_OCR_REQUEST_TIMEOUT_MS = 30_000;
 
 /**
- * Pause new OCR requests after one reaches the client deadline. The gateway
- * does not yet propagate client disconnects to already-started OCR work, so
- * this rate-limits orphaned work from a page containing many bad attachments
- * while letting primary source documents continue to drain.
+ * Pause new OCR requests once they keep reaching the client deadline. The
+ * gateway does not yet propagate client disconnects to already-started OCR
+ * work, so this rate-limits orphaned work from a page containing many bad
+ * attachments while letting primary source documents continue to drain.
  */
 export const DEFAULT_OCR_TIMEOUT_COOLDOWN_MS = 5 * 60_000;
+
+/**
+ * How many OCR requests must reach the deadline, with no request succeeding
+ * in between, before the pause above starts. One image that is slow to read
+ * fails on its own; a second in a row says the backend itself is struggling.
+ */
+export const OCR_TIMEOUTS_BEFORE_COOLDOWN = 2;
 
 /**
  * Document upsert chunk size. The gateway accepts arbitrarily large

@@ -105,6 +105,46 @@ describe("extractLegacyOfficeText — PPT", () => {
     expect(result!.truncated).toBe(false);
   });
 
+  test("finds text atoms nested in document and slide containers", async () => {
+    const slide = pptContainer(0x03ee, [
+      pptRecord(0x03ef, new Uint8Array(24)),
+      pptTextCharsAtom("Harbor survey timeline"),
+    ]);
+    const data = oleFile({
+      "PowerPoint Document": concat([
+        pptContainer(0x03e8, [pptRecord(0x03e9, new Uint8Array(40)), slide]),
+        pptContainer(0x03ee, [pptTextBytesAtom("second slide: sample budget")]),
+      ]),
+    });
+
+    const result = await extractLegacyOfficeText(data, PPT_MIME);
+
+    expect(result!.text).toContain("Harbor survey timeline");
+    expect(result!.text).toContain("second slide: sample budget");
+  });
+
+  test("binary streams around a slide's text do not come back as noise", async () => {
+    const data = oleFile({
+      "PowerPoint Document": concat([
+        pptContainer(0x03ee, [pptTextCharsAtom("Harbor survey timeline")]),
+      ]),
+      Pictures: noise(64 * 1024, 7),
+    });
+
+    const result = await extractLegacyOfficeText(data, PPT_MIME);
+
+    expect(result!.text).toBe("Harbor survey timeline");
+  });
+
+  test("a presentation with only binary streams is not extracted as text", async () => {
+    const data = oleFile({
+      "PowerPoint Document": noise(32 * 1024, 11),
+      Pictures: noise(64 * 1024, 13),
+    });
+
+    expect(await extractLegacyOfficeText(data, PPT_MIME)).toBeNull();
+  });
+
   test("falls back to printable OLE text runs for non-atom streams", async () => {
     const data = oleFile({
       "PowerPoint Document": utf16("fallback slide text for sample venue"),
@@ -254,6 +294,26 @@ function pptTextCharsAtom(text: string): Uint8Array {
 
 function pptTextBytesAtom(text: string): Uint8Array {
   return pptRecord(0x0fa8, new TextEncoder().encode(text));
+}
+
+function pptContainer(type: number, children: Uint8Array[]): Uint8Array {
+  const body = concat(children);
+  const header = new Uint8Array(8);
+  writeU16(header, 0, 0x000f);
+  writeU16(header, 2, type);
+  writeU32(header, 4, body.length);
+  return concat([header, body]);
+}
+
+/** Deterministic pseudo-random bytes, standing in for images and other binary streams. */
+function noise(length: number, seed: number): Uint8Array {
+  const out = new Uint8Array(length);
+  let state = seed;
+  for (let i = 0; i < length; i++) {
+    state = (state * 1103515245 + 12345) >>> 0;
+    out[i] = state >>> 24;
+  }
+  return out;
 }
 
 function pptRecord(type: number, data: Uint8Array): Uint8Array {

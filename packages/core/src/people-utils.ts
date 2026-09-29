@@ -708,16 +708,43 @@ function trimGluedDomainSuffix(email: string): string {
   return /\.[a-z]{2,24}$/.test(cut.slice(at + 1)) ? cut : email;
 }
 
-function extractEmailsFromUnescaped(unescaped: string): string[] {
-  const matches = unescaped.match(EMAIL_REGEX);
-  if (!matches) return [];
+/**
+ * Endings that make an address-shaped string a file name: an image's
+ * high-resolution variant is named with an `@2x` suffix before its extension,
+ * and mail HTML is full of them.
+ */
+const FILE_NAME_ENDINGS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "svg",
+  "webp",
+  "bmp",
+  "ico",
+  "css",
+  "js",
+]);
 
+/**
+ * Whether an address-shaped match is really part of a URL or a file name:
+ * it sits in a path (right after a `/`) or ends in a file extension.
+ */
+function isFileNameMatch(text: string, index: number, match: string): boolean {
+  if (index > 0 && text[index - 1] === "/") return true;
+  const ending = match.slice(match.lastIndexOf(".") + 1).toLowerCase();
+  return FILE_NAME_ENDINGS.has(ending);
+}
+
+function extractEmailsFromUnescaped(unescaped: string): string[] {
   // Domains that look like emails but aren't (WhatsApp JIDs, etc.)
   const excludedDomains = ["s.whatsapp.net", "g.us", "broadcast", "lid"];
 
   const seen = new Set<string>();
   const result: string[] = [];
-  for (const raw of matches) {
+  for (const found of unescaped.matchAll(EMAIL_REGEX)) {
+    const raw = found[0];
+    if (isFileNameMatch(unescaped, found.index, raw)) continue;
     const m = trimGluedDomainSuffix(raw);
     const domain = m.split("@")[1]?.toLowerCase();
     if (domain && excludedDomains.some((d) => domain === d)) continue;

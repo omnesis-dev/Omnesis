@@ -100,6 +100,12 @@ const PROBE_TIMEOUT_MS = 15_000;
 /** Wallclock cap on draining in-flight syncs before the process stops. */
 const SHUTDOWN_DRAIN_MS = 30_000;
 
+/** The operator's OCR deadline, or undefined for the client's default. */
+function ocrTimeoutMsFromConfig(config: OmnesisConfig): number | undefined {
+  const seconds = config.inference?.ocr?.requestTimeoutSeconds;
+  return seconds === undefined ? undefined : seconds * 1000;
+}
+
 function ocrEnabledFromConfig(config: OmnesisConfig): boolean {
   const assignment = config.inference?.assignments?.ocr;
   return (
@@ -594,6 +600,7 @@ export async function main() {
   };
   const unifiedConfig = await fetchConfigWithBackoff(configFetchContext);
   let ocrEnabled = ocrEnabledFromConfig(unifiedConfig);
+  gateway.setOcrRequestTimeoutMs(ocrTimeoutMsFromConfig(unifiedConfig));
   const config = toLegacyConfig(unifiedConfig);
 
   const engine = new SyncEngine(gateway, { ingestionContext });
@@ -714,6 +721,7 @@ export async function main() {
 
   const refreshConfig = createConfigRefreshQueue(configFetchContext, async (next) => {
     ocrEnabled = ocrEnabledFromConfig(next);
+    gateway.setOcrRequestTimeoutMs(ocrTimeoutMsFromConfig(next));
     await manager.handleConfigChange(toLegacyConfig(next));
   });
   wsClient.onEvent((event, payload) => {

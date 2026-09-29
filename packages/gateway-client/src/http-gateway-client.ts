@@ -9,6 +9,7 @@ import {
   DEFAULT_MAX_BACKPRESSURE_WAITS,
   DEFAULT_OCR_REQUEST_TIMEOUT_MS,
   DEFAULT_OCR_TIMEOUT_COOLDOWN_MS,
+  OCR_TIMEOUTS_BEFORE_COOLDOWN,
   DEFAULT_UPSERT_CHUNK,
   DEFAULT_UPSERT_CHUNK_BYTES,
 } from "./tunables.js";
@@ -105,13 +106,15 @@ function parseRetryAfterMs(header: string | null): number | undefined {
  * Sends documents and sync state to the gateway over REST.
  */
 export class HttpGatewayClient implements GatewayClient {
-  private readonly ocrRequestTimeoutMs: number;
+  private ocrRequestTimeoutMs: number;
   private readonly ocrTimeoutCooldownMs: number;
   private readonly sourceWriteEpoch = new AsyncLocalStorage<{
     sourceId: SourceId;
     writeEpoch: number;
   }>();
   private ocrCooldownUntil = 0;
+  /** OCR requests that reached the deadline since one last succeeded. */
+  private ocrTimeoutsSinceSuccess = 0;
   private readonly beforeRequest?: () => Promise<void>;
 
   constructor(
@@ -338,6 +341,25 @@ export class HttpGatewayClient implements GatewayClient {
     };
   }
 
+  /**
+   * Change the per-request OCR deadline, for an operator whose OCR backend
+   * needs longer than the default to read a dense page. Applies to requests
+   * started after the call.
+   */
+  setOcrRequestTimeoutMs(ms: number | undefined): void {
+    this.ocrRequestTimeoutMs = validateTimerMs(
+      "ocrRequestTimeoutMs",
+      ms ?? DEFAULT_OCR_REQUEST_TIMEOUT_MS,
+    );
+  }
+
+  /**
+   * Recognize text in an image through the gateway.
+   *
+   * A request that is refused because OCR is paused was never sent: it throws
+   * a transient `SyncError` carrying `retryAfterMs`. A request that reached the
+   * deadline throws a transient `SyncError` without one.
+   */
   async ocr(
     image: Uint8Array,
     mimeType: string,
@@ -389,6 +411,7 @@ export class HttpGatewayClient implements GatewayClient {
         pages?: unknown;
         pageTexts?: unknown;
       };
+      this.ocrTimeoutsSinceSuccess = 0;
       if (data.available === false || typeof data.text !== "string") return null;
       return {
         text: data.text,
@@ -400,10 +423,13 @@ export class HttpGatewayClient implements GatewayClient {
       };
     } catch (err) {
       if (timedOut) {
-        this.ocrCooldownUntil = Math.max(
-          this.ocrCooldownUntil,
-          Date.now() + this.ocrTimeoutCooldownMs,
-        );
+        this.ocrTimeoutsSinceSuccess += 1;
+        if (this.ocrTimeoutsSinceSuccess >= OCR_TIMEOUTS_BEFORE_COOLDOWN) {
+          this.ocrCooldownUntil = Math.max(
+            this.ocrCooldownUntil,
+            Date.now() + this.ocrTimeoutCooldownMs,
+          );
+        }
         throw new SyncError(
           "transient",
           `OCR request timed out after ${this.ocrRequestTimeoutMs}ms`,
