@@ -35,7 +35,6 @@ export default defineSource({
     "Email a mail tool such as mbsync or offlineimap, or Thunderbird's file-per-message store, keeps on this machine as a Maildir",
   provider: { id: "maildir", name: "Maildir" },
   authType: "local",
-  experimental: true,
   unitName: "emails",
   icon: maildirIcon,
   contract: {

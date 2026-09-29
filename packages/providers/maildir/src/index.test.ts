@@ -29,10 +29,10 @@ afterEach(() => {
 });
 
 describe("descriptor", () => {
-  test("is an experimental local source with a complete icon", () => {
+  test("is a generally available local source with a complete icon", () => {
     expect(definition.id).toBe("maildir");
     expect(definition.authType).toBe("local");
-    expect(definition.experimental).toBe(true);
+    expect(definition.experimental).toBeFalsy();
     expect(definition.unitName).toBe("emails");
     const icon = definition.icon!;
     expect(icon.sfSymbol).toBeTruthy();

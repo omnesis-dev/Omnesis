@@ -84,7 +84,7 @@ Every source is opt-in, and once added it syncs by itself. The full catalogue, w
 
 | Category                | Sources                                                                                                                                       |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Email & messaging       | Gmail, Outlook, IMAP, WhatsApp, iMessage                                                                                                      |
+| Email & messaging       | Gmail, Outlook, IMAP, Maildir (mbsync, offlineimap, Thunderbird), WhatsApp, iMessage                                                          |
 | Notes, tasks & meetings | Apple Notes, Reminders, Notion pages and databases, Obsidian, Things 3, Granola                                                               |
 | Coding agents & code    | Claude Code, Codex and Pi sessions, GitHub                                                                                                    |
 | Calendar & contacts     | Google, Apple and Outlook calendars; Google and Apple contacts                                                                                |
@@ -93,7 +93,7 @@ Every source is opt-in, and once added it syncs by itself. The full catalogue, w
 | Finance & fitness       | Bank accounts (Enable Banking, Lunch Flow, Plaid), Coinbase, Strava                                                                           |
 | Omnesis itself          | Your notes to Omnesis, agent conversations, OpenClaw and Hermes transcripts                                                                   |
 
-The Apple sources need a collector on a Mac. Phone sources are pushed by the iOS and Android apps. A further source, Maildir, reads mail that a tool such as mbsync, or Thunderbird in its file-per-message mode, keeps on disk and is [experimental](https://omnesis.dev/docs/sources#maildir).
+The Apple sources need a collector on a Mac. Phone sources are pushed by the iOS and Android apps.
 
 ## Using Omnesis
 

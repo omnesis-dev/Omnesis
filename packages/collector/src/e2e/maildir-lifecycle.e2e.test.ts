@@ -311,7 +311,7 @@ describe("real Maildir source through a real collector", () => {
     harness = new MultiCollectorHarness({
       // Synthetic mode is what exposes the route that runs the absence sweep
       // on demand; the source itself is the real one.
-      extraGatewayEnv: { OMNESIS_EXPERIMENTAL: "1", OMNESIS_SYNTHETIC: "1" },
+      extraGatewayEnv: { OMNESIS_SYNTHETIC: "1" },
       gatewayConfig: {
         gateway: { snapshotAbsence: { minObservations: 1, minAge: "1ms", deletionGrace: "1ms" } },
       },
