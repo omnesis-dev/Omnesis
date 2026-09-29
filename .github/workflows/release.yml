@@ -4,12 +4,13 @@ name: release
 # deliberate act (`npm run release -- tag`, then `git push origin vX.Y.Z`); this
 # workflow is everything that follows it.
 #
-# Publication is armed separately from the trigger. Until the repository
-# variable OMNESIS_RELEASE_PUBLISH is set to `1`, every distribution step runs
-# in dry-run: packages are packed rather than published, images are built
-# rather than pushed, and the GitHub Release is described rather than created.
-# So a pushed tag on an unarmed repository proves the whole pipeline and
-# distributes nothing.
+# Every pushed tag gets a GitHub Release carrying its changelog section: a
+# source install builds from the tag, so the release page is the announcement.
+#
+# Package and image distribution is armed separately from the trigger. Until
+# the repository variable OMNESIS_RELEASE_PUBLISH is set to `1`, those steps
+# run in dry-run: packages are packed and proven against a local registry
+# rather than published, and images are built rather than pushed.
 on:
   push:
     tags:
@@ -35,8 +36,8 @@ env:
   # Publication destination and authorization are independent from arming.
   # An unset destination preserves the public npm registry as the default.
   PACKAGE_REGISTRY: ${{ vars.OMNESIS_RELEASE_REGISTRY || 'https://registry.npmjs.org' }}
-  # The single arming switch. Anything other than the exact string `1` leaves
-  # every publishing step in dry-run.
+  # The package and image arming switch. Anything other than the exact string
+  # `1` leaves the npm publish and the image push in dry-run.
   ARMED: ${{ vars.OMNESIS_RELEASE_PUBLISH == '1' }}
 
 jobs:
@@ -105,9 +106,9 @@ jobs:
       - name: Report the arming state
         run: |
           if [ "$ARMED" = "true" ]; then
-            echo "::notice::Publication is ARMED — this run distributes artifacts."
+            echo "::notice::Package and image publication is ARMED — this run publishes them."
           else
-            echo "::notice::Publication is NOT armed (repository variable OMNESIS_RELEASE_PUBLISH != 1). Every distribution step is a dry run."
+            echo "::notice::Package and image publication is NOT armed (repository variable OMNESIS_RELEASE_PUBLISH != 1); they are a dry run. The GitHub Release is still created."
           fi
 
   # ------------------------------------------------------------------
@@ -406,7 +407,9 @@ jobs:
 
   # ------------------------------------------------------------------
   # github-release — the release notes are the changelog section the
-  # release commit generated, with the artifact checksums appended.
+  # release commit generated, with the artifact checksums appended. The
+  # tarball checksums are listed only when the packages were published;
+  # otherwise the notes name only the attached installer.
   # ------------------------------------------------------------------
   github-release:
     needs: [verify, packages, images]
@@ -435,7 +438,13 @@ jobs:
           path: release
 
       - name: Compose the release notes
+        env:
+          PACKAGES_PUBLISHED: ${{ needs.verify.outputs.armed }}
         run: |
+          if [ "$PACKAGES_PUBLISHED" != "true" ]; then
+            grep ' artifacts/install.sh$' release/SHA256SUMS.txt > release/SHA256SUMS.attached.txt
+            mv release/SHA256SUMS.attached.txt release/SHA256SUMS.txt
+          fi
           node --input-type=module -e '
             import { readChangelogSection } from "./scripts/release/changelog.mjs";
             import { readFileSync, writeFileSync } from "node:fs";
@@ -451,7 +460,6 @@ jobs:
           cat release/NOTES.md
 
       - name: Create the GitHub Release
-        if: needs.verify.outputs.armed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY_TOKEN: ${{ github.token }}
@@ -472,12 +480,6 @@ jobs:
             --notes-file release/NOTES.md \
             release/artifacts/install.sh \
             release/SHA256SUMS.txt
-
-      - name: Release dry run (not armed)
-        if: needs.verify.outputs.armed != 'true'
-        run: |
-          echo "Publication is not armed; the notes above and the artifacts attached to this"
-          echo "run are what the GitHub Release would carry."
 
       - name: Next step
         run: |

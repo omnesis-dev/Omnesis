@@ -1695,6 +1695,18 @@ describe("release.yml verification permissions", () => {
     });
     expect(dryRun.if).toBe("needs.verify.outputs.armed != 'true'");
   });
+
+  it("creates the GitHub Release on every tag and lists tarball sums only when they were published", async () => {
+    const { parse } = await import("yaml");
+    const workflow = parse(readFileSync(join(repoRoot, ".github/workflows/release.yml"), "utf8"));
+    const steps = workflow.jobs["github-release"].steps;
+    const create = steps.find((step) => step.name === "Create the GitHub Release");
+    expect(create.if).toBeUndefined();
+    const notes = steps.find((step) => step.name === "Compose the release notes");
+    expect(notes.env.PACKAGES_PUBLISHED).toBe("${{ needs.verify.outputs.armed }}");
+    expect(notes.run).toContain('if [ "$PACKAGES_PUBLISHED" != "true" ]; then');
+    expect(notes.run).toContain("grep ' artifacts/install.sh$' release/SHA256SUMS.txt");
+  });
 });
 
 describe("full-validation workflow topology", () => {
