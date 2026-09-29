@@ -61,6 +61,7 @@ function session(index: number, overrides: Record<string, unknown> = {}) {
     explicitKey: null,
     heuristicKey: "principal-invented|credential-invented",
     principalName: null,
+    clientName: null,
     createdAt: 1_700_000_000_000 + index,
     lastEventAt: 1_700_000_060_000 + index,
     eventCount: 2,
@@ -164,6 +165,18 @@ describe("Direct audit pane, mounted", () => {
     expect(text).toContain("External agent");
     expect(text).toContain("Grouped by activity");
     expect(text).toContain("heuristic");
+  });
+
+  test("a session is drawn with the logo of the app it signed in from", async () => {
+    directMocks().listDirectAuditSessions.mockResolvedValue({
+      sessions: [
+        session(0, { principalName: "Invented Agent", clientName: "claude code" }),
+        session(1, { principalName: "other agent", clientName: "fictional notebook" }),
+      ],
+    });
+    await mountPane();
+    const logos = [...host.querySelectorAll(".privacy-direct-row img")].map((img) => img.getAttribute("src"));
+    expect(logos).toEqual(["/portal/img/agents/claude.svg"]);
   });
 
   test("opening a session renders each call as a timestamped card", async () => {

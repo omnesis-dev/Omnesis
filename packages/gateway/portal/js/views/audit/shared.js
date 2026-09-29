@@ -24,6 +24,7 @@ import { KindIcon } from "../../lib/device-kind-icon.js";
 import { renderMarkdown } from "../../lib/markdown.js";
 import { policyEditorPath } from "../../lib/policy-path.js";
 import { navigate } from "../../lib/router.js";
+import { AgentIcon, agentIconForApp } from "../access/agent-brand.js";
 
 /**
  * The surface every verbatim quote in this section is drawn on: the request as
@@ -270,10 +271,10 @@ export function externalAgentConnectionName(value) {
 /* ── The three fixed actor glyphs ─────────────────────────────────────────── */
 
 /**
- * The external caller. One abstract mark for every caller — openclaw, hermes,
- * anything — because a per-vendor logo would imply a vendor identity that the
- * label alone does not establish. An arrow leaving an
- * enclosure: something outside the boundary, reaching in.
+ * The external caller, when nothing names its app or its device. A vendor logo
+ * is drawn only from the app name an OAuth client registered — never from a
+ * display name, which proves nothing about who is behind it. An arrow leaving
+ * an enclosure: something outside the boundary, reaching in.
  */
 export function ExternalAgentGlyph() {
   return html`<svg
@@ -328,29 +329,46 @@ const ACTOR_GLYPHS = {
 };
 
 /**
- * The actor line at the head of a spine card. The text carries the meaning; the
- * glyph is decorative reinforcement, which is why it is `aria-hidden` and set
- * at a lower weight than the label.
+ * One actor on the spine. The text carries the meaning; the glyph is
+ * decorative reinforcement, which is why it is `aria-hidden` and set at a
+ * lower weight than the label. An external caller is drawn with its own mark
+ * when it has one (see `CallerMark`), so the same caller looks the same here
+ * as on the Access and Devices pages.
  */
-/**
- * One actor on the spine. A caller that is a paired device is drawn with its
- * device kind's icon — the one the Devices page shows — rather than the
- * generic external mark, so the same device looks the same everywhere.
- */
-export function PrivacyActor({ kind, label, deviceKind = null }) {
+export function PrivacyActor({ kind, label, caller = null }) {
   const Glyph = ACTOR_GLYPHS[kind] ?? ExternalAgentGlyph;
   return html`<span class="privacy-actor">
-    ${kind === "external" && deviceKind
-      ? html`<${KindIcon} kind=${deviceKind} size=${16} class="privacy-glyph privacy-glyph--device" />`
+    ${kind === "external"
+      ? html`<${CallerMark} caller=${caller} size=${16} class="privacy-glyph privacy-glyph--device" fallback=${html`<${Glyph} />`} />`
       : html`<${Glyph} />`}
     <span class="privacy-actor-label">${label}</span>
   </span>`;
+}
+
+/**
+ * A caller's own mark: the logo of the app an OAuth caller signed in from —
+ * the one the Access page shows for that connection — or, for a paired
+ * device, its kind's icon from the Devices page. `fallback` (default nothing)
+ * when it has neither. `caller` is an exchange, an approval or a Direct session.
+ */
+export function CallerMark({ caller, size, class: className, fallback = null }) {
+  const icon = externalAgentAppIcon(caller);
+  if (icon) {
+    return html`<span class="privacy-caller-logo" aria-hidden="true"><${AgentIcon} icon=${icon} size=${size} /></span>`;
+  }
+  const deviceKind = externalAgentDeviceKind(caller);
+  return deviceKind ? html`<${KindIcon} kind=${deviceKind} size=${size} class=${className} />` : fallback;
 }
 
 /** The kind of the paired device that asked, when a device did. */
 export function externalAgentDeviceKind(value) {
   const kind = value?.externalAgent?.deviceKind ?? value?.deviceKind;
   return typeof kind === "string" && kind ? kind : null;
+}
+
+/** The bundled logo of the app an OAuth caller signed in from, when Omnesis recognizes it. */
+export function externalAgentAppIcon(value) {
+  return agentIconForApp(value?.externalAgent?.clientName ?? value?.clientName);
 }
 
 /* ── Review copy ──────────────────────────────────────────────────────────── */

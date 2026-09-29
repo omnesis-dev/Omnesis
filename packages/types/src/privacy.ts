@@ -130,6 +130,13 @@ export interface PrivacyExternalAgentIdentity {
   /** The specific OAuth installation using this principal, when known. */
   connectionName?: string | null;
   /**
+   * The app an OAuth principal signed in from, as its client registered itself
+   * (`Claude Code`, `ChatGPT`, …) — the name the Access page draws an agent's
+   * logo from. Absent for a token or integration caller, and null when the
+   * client is no longer registered.
+   */
+  clientName?: string | null;
+  /**
    * The kind of the paired device that asked (`cli`, `ios`, `agent`, …), when
    * a device did — what a client draws its icon from. Absent for an OAuth
    * principal and for a caller no device accounts for.
