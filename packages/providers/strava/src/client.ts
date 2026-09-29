@@ -360,6 +360,8 @@ export class StravaClient {
       }
 
       if (res.status === 429) {
+        // TODO: Take the wait from the tracker, as the quota gates do: this ignores the read
+        // limit, and waits an hour rather than until midnight when the day is spent.
         const waitMs = computeRateLimitBackoff(res.headers);
         if (attempt >= MAX_RETRIES) {
           throw new StravaRateLimitError(

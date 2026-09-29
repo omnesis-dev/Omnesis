@@ -73,6 +73,9 @@ export async function syncAthleteRefresh(
   nextPhase: StravaActivitiesCursor["phase"],
   deps: Deps,
 ): Promise<StructuredSyncResult<StravaActivitiesCursor>> {
+  // FIXME: Past 87 gear ids, callBudget exceeds the 15-minute read cap (90 calls by default), so
+  // once the tracker has seen Strava's limits the gate refuses every window and incremental
+  // listing stalls behind it. Gate on the three fixed calls; the gear loop rechecks per call.
   const callBudget = await estimateCallBudget(deps);
   if (!deps.client.quota.canMakeNCalls(callBudget)) {
     throw quotaDeferral("Athlete-refresh", callBudget, deps.client.quota);

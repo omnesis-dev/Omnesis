@@ -97,6 +97,8 @@ export default defineProvider<StravaContext>({
       name: "Strava Activities",
       description:
         "Runs, rides, swims, and other workouts from Strava — with description, splits, best efforts, comments, kudos, zones, streams",
+      // TODO: Declare a defaultSyncInterval. The collector's 5-minute default polls 288 times a
+      // day against a new app's 1,000 daily reads.
       unitName: "activities",
       icon: stravaIcon,
       attribution: stravaAttribution,

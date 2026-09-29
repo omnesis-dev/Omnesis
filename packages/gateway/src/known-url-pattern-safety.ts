@@ -62,6 +62,9 @@ export function isSafeKnownUrlPattern(source: string): boolean {
     matcher = compileSafeUrlPattern(source);
     return true;
   } catch {
+    // FIXME: Only a SyntaxError means re2-wasm rejected the pattern. Rethrow anything else,
+    // here and in isSafeUrlCanonicalizerPattern, so a gateway fault such as re2-wasm aborting
+    // on an exhausted heap is not reported as a bad pattern (a 400 blaming the client).
     return false;
   } finally {
     if (matcher) disposeSafeUrlPatternMatcher(matcher);
