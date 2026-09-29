@@ -16,7 +16,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { boundDirectAuditValue } from "../agent/direct-mcp.js";
 import { auditDisplay } from "./store-audit.js";
 import { DIRECT_HEURISTIC_SESSION_GAP_MS, directSessionKeys } from "./direct-session.js";
-import type { PrivacyDb } from "./store-types.js";
+import { hasColumn, type PrivacyDb } from "./store-types.js";
 import type { McpInvocationAuditOutcome } from "../access/types.js";
 
 const MAX_DIRECT_AUDIT_EVENT_BYTES = 8 * 1024 * 1024;
@@ -45,6 +45,11 @@ export interface DirectAuditSession {
   principalId: string;
   /** Operator-approved display name, null when the principal row is gone. */
   principalName: string | null;
+  /**
+   * The app the credential signed in from, as its OAuth client registered
+   * itself — what the portal draws the agent's logo from. Null when unknown.
+   */
+  clientName: string | null;
   credentialId: string;
   grantId: string;
   explicitKey: string | null;
@@ -242,6 +247,7 @@ function sessionFromRow(row: SessionRow, principalName: string | null = null): D
     ownerId: row.owner_id,
     principalId: row.principal_id,
     principalName,
+    clientName: null,
     credentialId: row.credential_id,
     grantId: row.grant_id,
     explicitKey: row.explicit_key,
@@ -254,33 +260,43 @@ function sessionFromRow(row: SessionRow, principalName: string | null = null): D
 }
 
 /**
- * Fill each session's operator-approved principal name in one query. A store
- * opened over only the transcript tables is legitimate — the same posture as
- * the Answer identity joins — so a missing access table costs the null name
- * and nothing more.
+ * Fill each session's operator-approved principal name and the app its
+ * credential signed in from, one query each. A store opened over only the
+ * transcript tables is legitimate — the same posture as the Answer identity
+ * joins — so a missing access table costs the null field and nothing more.
  */
 function attachPrincipalNames(db: PrivacyDb, sessions: DirectAuditSession[]): void {
-  const ids = [...new Set(sessions.map((session) => session.principalId))];
-  if (ids.length === 0) return;
-  const hasName = Boolean(
-    db
+  if (sessions.length === 0) return;
+  if (hasColumn(db, "access_principals", "name")) {
+    const ids = [...new Set(sessions.map((session) => session.principalId))];
+    const rows = db
       .prepare<
-        [string],
-        { found: number }
-      >(`SELECT 1 AS found FROM pragma_table_info('access_principals') WHERE name = ?`)
-      .get("name"),
-  );
-  if (!hasName) return;
-  const placeholders = ids.map(() => "?").join(", ");
-  const rows = db
-    .prepare<
-      string[],
-      { id: string; name: string | null }
-    >(`SELECT id, name FROM access_principals WHERE id IN (${placeholders})`)
-    .all(...ids);
-  const names = new Map(rows.map((row) => [row.id, row.name?.trim() || null]));
-  for (const session of sessions) {
-    session.principalName = names.get(session.principalId) ?? null;
+        string[],
+        { id: string; name: string | null }
+      >(`SELECT id, name FROM access_principals WHERE id IN (${ids.map(() => "?").join(", ")})`)
+      .all(...ids);
+    const names = new Map(rows.map((row) => [row.id, row.name?.trim() || null]));
+    for (const session of sessions) {
+      session.principalName = names.get(session.principalId) ?? null;
+    }
+  }
+  if (
+    hasColumn(db, "principal_credentials", "oauth_client_id") &&
+    hasColumn(db, "oauth_clients", "client_name")
+  ) {
+    const ids = [...new Set(sessions.map((session) => session.credentialId))];
+    const rows = db
+      .prepare<string[], { id: string; client_name: string | null }>(
+        `SELECT c.id, oc.client_name
+           FROM principal_credentials c
+           JOIN oauth_clients oc ON oc.client_id = c.oauth_client_id
+          WHERE c.id IN (${ids.map(() => "?").join(", ")})`,
+      )
+      .all(...ids);
+    const clients = new Map(rows.map((row) => [row.id, row.client_name?.trim() || null]));
+    for (const session of sessions) {
+      session.clientName = clients.get(session.credentialId) ?? null;
+    }
   }
 }
 

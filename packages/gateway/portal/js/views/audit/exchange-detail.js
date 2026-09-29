@@ -62,7 +62,6 @@ import {
   exchangeDecisionCopy,
   externalAgentConnectionName,
   externalAgentName,
-  externalAgentDeviceKind,
   externalAgentNarrativeName,
   privacyConversationDocument,
   privacyFailureMessage,
@@ -512,7 +511,7 @@ export function PrivacyExchangeSpine({
             <${PrivacyActor}
               kind="external"
               label=${`${agentName} asked`}
-              deviceKind=${externalAgentDeviceKind(exchange)}
+              caller=${exchange}
             />
             <time datetime=${privacyDateTimeAttribute(order.askedAt)}>
               ${formatPrivacyRelativeDate(order.askedAt)}

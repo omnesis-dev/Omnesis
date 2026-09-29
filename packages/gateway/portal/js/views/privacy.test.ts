@@ -653,6 +653,45 @@ describe("the activity feed", () => {
     );
   });
 
+  test("an OAuth caller is drawn with its app's logo, as the Access page draws it", () => {
+    const appAsked = {
+      ...SHARED_EXCHANGE,
+      externalAgent: { displayName: "Research helper", source: "principal", clientName: "claude code" },
+    };
+    const logos = (nodes: { tag?: unknown; props?: Record<string, unknown> }[]) =>
+      nodes.filter((node) => node.tag === "img").map((node) => node.props?.src);
+    const claude = "/portal/img/agents/claude.svg";
+    expect(logos(expandToHostNodes(PrivacyFeedRow({ exchange: appAsked })))).toEqual([claude]);
+    expect(
+      logos(
+        expandToHostNodes(
+          PrivacyReviewCard({
+            approval: { ...APPROVAL, externalAgent: appAsked.externalAgent },
+            onApprove: vi.fn(),
+            onDeny: vi.fn(),
+          }),
+        ),
+      ),
+    ).toEqual([claude]);
+    const spineNodes = expandToHostNodes(
+      PrivacyExchangeSpine({ exchange: appAsked, events: AUDIT_EVENTS }),
+    );
+    expect(logos(spineNodes)).toEqual([claude]);
+    expect(spineNodes.map((node) => String(node.class ?? ""))).not.toContain(
+      "privacy-glyph privacy-glyph--external",
+    );
+  });
+
+  test("a logo comes from the registered app, never from the caller's own name", () => {
+    const unknownApp = {
+      ...SHARED_EXCHANGE,
+      externalAgent: { displayName: "claude code", source: "principal", clientName: "fictional notebook" },
+    };
+    const nodes = expandToHostNodes(PrivacyFeedRow({ exchange: unknownApp }));
+    expect(nodes.some((node) => node.tag === "img")).toBe(false);
+    expect(nodes.some((node) => String(node.class ?? "").includes("provider-icon"))).toBe(false);
+  });
+
   test("every exchange is one row in one flat run, whatever workflow it came from", () => {
     const other = {
       ...SHARED_EXCHANGE,
@@ -1093,7 +1132,7 @@ describe("the exchange spine", () => {
     expect(text).toContain("This stored transcript is incomplete; some activity could not be shown.");
   });
 
-  test("the actor glyphs are three fixed marks, never a per-vendor logo", () => {
+  test("the actor glyphs are three fixed marks when nothing names the caller's app", () => {
     const nodes = spine();
     const glyphs = nodes.filter((node) => String(node.class).startsWith("privacy-glyph"));
     expect(glyphs).toHaveLength(3);
