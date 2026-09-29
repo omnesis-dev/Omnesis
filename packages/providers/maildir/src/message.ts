@@ -206,10 +206,19 @@ function deliveryTimeMs(uniq: string): number | undefined {
   return match ? Number(match[1]) * 1000 : undefined;
 }
 
+/** The earliest date a message is believed to carry; anything before is a broken clock. */
+const EARLIEST_BELIEVABLE_MS = Date.UTC(1980, 0, 1);
+/** How far past now a date may lie before it is taken for a broken clock (skew, time zones). */
+const FUTURE_SLACK_MS = 24 * 60 * 60 * 1000;
+
+/** A date that parses and falls between 1980 and a day from now. */
 function validDate(value: string | undefined): Date | undefined {
   if (!value) return undefined;
   const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? date : undefined;
+  const ms = date.getTime();
+  return Number.isFinite(ms) && ms >= EARLIEST_BELIEVABLE_MS && ms <= Date.now() + FUTURE_SLACK_MS
+    ? date
+    : undefined;
 }
 
 /**
