@@ -241,7 +241,7 @@ How versioning, migrations, and cross-version compatibility are encoded — the 
 
 Read `docs/releasing.md` before touching anything publish-related. The essentials:
 
-- `npm run release -- <plan|version|pr|tag|status>` is the single entry point; it owns everything from the changeset to the annotated tag (including the iOS and Android version fields) and never pushes. Pushing the tag triggers `.github/workflows/release.yml`, whose publishing steps stay dry-run until the repository variable `OMNESIS_RELEASE_PUBLISH` is `1`.
+- `npm run release -- <plan|version|pr|tag|status>` is the single entry point; it owns everything from the changeset to the annotated tag (including the iOS and Android version fields) and never pushes. Pushing the tag triggers `.github/workflows/release.yml`, which always creates the GitHub Release with the changelog section; its npm and image publishing steps stay dry-run until the repository variable `OMNESIS_RELEASE_PUBLISH` is `1`.
 - All `@omnesis/*` packages version in **lockstep** (one product version, served on `GET /health`, printed by `omnesis --version`, tagged `vX.Y.Z`).
 - Repo manifests stay **src-pointing** (`main`/`exports`/`bin` → `src/*.ts`); `scripts/release/` transforms them to `dist/*.js` at publish-stage time, never in the repo.
 - Code that spawns a sibling worker thread or subprocess must use `resolveWorkerEntry` / `resolveSubprocessEntry` from `@omnesis/core` so it works both under tsx (dev) and compiled (published).

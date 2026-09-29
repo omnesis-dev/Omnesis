@@ -9,9 +9,9 @@ tagged in git as `vX.Y.Z`.
 One command drives a release: `npm run release -- <subcommand>` (§ [The
 release conductor](#the-release-conductor)). It owns everything from the
 changeset to the annotated tag and reads nothing outside the repository.
-Pushing that tag triggers `.github/workflows/release.yml`, which publishes the
-packages, the container images and the GitHub Release (§ [The tag-triggered
-workflow](#the-tag-triggered-workflow)).
+Pushing that tag triggers `.github/workflows/release.yml`, which creates the
+GitHub Release and, once publication is armed, publishes the packages and the
+container images (§ [The tag-triggered workflow](#the-tag-triggered-workflow)).
 
 A release is an annotated `vX.Y.Z` tag on `main`. Both distribution channels
 resolve from it: a source install checks out the tag and builds it, and a
@@ -376,12 +376,15 @@ dispatch against an existing tag). In order:
   is the check that the staged graph installs and runs.
 - **images** — version-tagged multi-arch `omnesis-gateway` and
   `omnesis-collector` images, built every run and pushed when armed.
-- **github-release** — the release notes are the changelog section the release
-  commit generated, plus the SHA-256 of every tarball and of `install.sh`. The
+- **github-release** — created on every run, armed or not. The release notes
+  are the changelog section the release commit generated, plus the SHA-256 of
+  `install.sh` and, when the packages were published, of every tarball. The
   installer and that checksum list are attached to the release, so the script
   served at `https://omnesis.dev/install.sh` has a copy pinned to this version;
   the tarballs stay a workflow artifact, since npm is where they are installed
-  from.
+  from. The release is what appears in the repository's release list, in the
+  GitHub feed of anyone who stars or follows the repository, and in its
+  `releases.atom` feed.
 
 Each job needs the ones before it, so a publication that stops partway
 leaves no release page and no images for that version: the registry holds
@@ -395,11 +398,12 @@ publisher skips every package the registry already holds byte for byte,
 publishes the rest, and refuses to continue past a version whose registry
 artifact differs from the one this tree stages.
 
-**Publication is armed separately from the trigger.** Until the repository
-variable `OMNESIS_RELEASE_PUBLISH` is set to `1`, every distribution step runs in
-dry-run: packages are packed rather than published, images are built rather than
-pushed, and the release notes are printed rather than posted. A pushed tag on an
-unarmed repository therefore proves the whole pipeline and distributes nothing.
+**Package and image publication is armed separately from the trigger.** Until
+the repository variable `OMNESIS_RELEASE_PUBLISH` is set to `1`, those steps run
+in dry-run: packages are packed and proven against a local registry rather than
+published, and images are built rather than pushed. The GitHub Release is not
+gated: a pushed tag always gets its release page and changelog, which is the
+whole release for a source install.
 The package destination is a separate choice, not another arming switch. With
 `OMNESIS_RELEASE_REGISTRY` unset, the packages step uses npmjs,
 `secrets.NPM_TOKEN`, provenance, and the explicit public-publish override. Set
@@ -407,8 +411,8 @@ the repository variable to an HTTPS npm-compatible registry URL (loopback HTTP
 is also accepted) to use that URL for publication instead; that host receives only
 `secrets.OMNESIS_RELEASE_REGISTRY_TOKEN`, which must be nonempty, while the npmjs
 credential and override are never exposed to it. In both cases, publication
-still requires the exact `OMNESIS_RELEASE_PUBLISH=1`. That switch arms the whole
-release, including images and the GitHub Release; a package-only registry
+still requires the exact `OMNESIS_RELEASE_PUBLISH=1`. That switch arms both
+packages and images; a package-only registry
 rehearsal must use the manual publisher below rather than arming the workflow.
 
 ## Native modules and the platform matrix
