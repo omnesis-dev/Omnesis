@@ -215,6 +215,23 @@ describe("dates and threading headers", () => {
     expect((await parseMessageFile(path)).date?.toISOString()).toBe("2010-03-02T10:00:00.000Z");
   });
 
+  test("a Date header centuries away or before 1980 gives way to the Received header", async () => {
+    for (const date of ["Sun, 12 Jan 2612 17:58:50 GMT", "Thu, 01 Jan 1970 00:00:00 +0000"]) {
+      const raw = [
+        "Received: from mx.example.net by mail.example.org; Tue, 2 Mar 2010 10:00:00 +0000",
+        `Date: ${date}`,
+        "Subject: broken clock",
+        "",
+        "body",
+      ].join("\r\n");
+      const path = write("m", raw);
+      expect((await scanMessage(path, "INBOX", "x", () => 0)).dateMs).toBe(
+        Date.parse("2010-03-02T10:00:00Z"),
+      );
+      expect((await parseMessageFile(path)).date?.toISOString()).toBe("2010-03-02T10:00:00.000Z");
+    }
+  });
+
   test("In-Reply-To yields its first message id, without comments", async () => {
     const path = write(
       "m",
