@@ -67,13 +67,6 @@ interface EmittedState {
   /** The part of the signature that decides attachment documents: output and settings. */
   contentFingerprint: string;
   attachments: EmittedAttachment[];
-  /**
-   * When to emit the message again to retry attachments whose text could not
-   * be extracted (an OCR backend that was paused or down), or null when
-   * nothing is owed. `attempts` counts the tries made so far.
-   */
-  retryAt: number | null;
-  attempts: number;
 }
 
 export interface EmittedRow extends EmittedState {

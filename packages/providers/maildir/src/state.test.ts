@@ -49,8 +49,6 @@ describe("MaildirIndex", () => {
         contentFingerprint: "f",
         seq,
         attachments: [],
-        retryAt: null,
-        attempts: 0,
       });
       index.recordEmissions("g1", [row("a", 1), row("b", 2)], []);
       index.alignWithCursor("g1", 1);
@@ -75,8 +73,6 @@ describe("MaildirIndex", () => {
         contentFingerprint: "f",
         seq,
         attachments: [],
-        retryAt: null,
-        attempts: 0,
       });
       index.recordEmissions("g1", [row("s1", 1)], []);
       index.alignWithCursor("g1", 1);

@@ -212,7 +212,7 @@ async function extractOne(
  * extractor, or the OCR backend behind it, gave nothing back. A type or size
  * the settings exclude, or a picture that holds no text, is settled.
  */
-export function isRetryableFailure(attachment: EmittedAttachment): boolean {
+function isRetryableFailure(attachment: EmittedAttachment): boolean {
   return !attachment.info.extracted && attachment.info.reason === "extraction-failed";
 }
 
