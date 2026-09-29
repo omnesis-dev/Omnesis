@@ -15,12 +15,17 @@
  * 403s don't make us spin forever).
  *
  * Rate-limit safety is enforced at page entry: if `client.quota.canMakeNCalls`
- * is false we return `hasMore: true` with the same cursor — the scheduler
- * retries past the next 15-min window reset.
+ * is false the page throws `quotaDeferral(…)` — the collector parks the source
+ * until the window resets, and the next tick resumes from the same cursor.
  */
 
 import { createLogger, toCanonicalInstant, toCanonicalWallClock } from "@omnesis/core";
-import { StravaForbiddenError, StravaNotFoundError, StravaScopeError } from "./client.js";
+import {
+  quotaDeferral,
+  StravaForbiddenError,
+  StravaNotFoundError,
+  StravaScopeError,
+} from "./client.js";
 import {
   splitsFromActivity,
   bestEffortsFromActivity,
@@ -134,8 +139,7 @@ export async function syncDetailBackfill(
     };
   }
   if (!deps.client.quota.canMakeNCalls(pending.length)) {
-    log.warn(`Detail-backfill: quota too low for ${pending.length} calls; deferring`);
-    return { result: structuredEmpty(cur, { hasMore: true }) };
+    throw quotaDeferral("Detail-backfill", pending.length, deps.client.quota);
   }
 
   const records: Record<string, unknown>[] = [];
@@ -264,8 +268,7 @@ export async function syncSocialBackfill(
   }
   // 2 calls per activity (comments + kudos).
   if (!deps.client.quota.canMakeNCalls(pending.length * 2)) {
-    log.warn(`Social-backfill: quota too low for ${pending.length * 2} calls; deferring`);
-    return { result: structuredEmpty(cur, { hasMore: true }) };
+    throw quotaDeferral("Social-backfill", pending.length * 2, deps.client.quota);
   }
 
   const stampRows: Record<string, unknown>[] = [];
@@ -378,7 +381,7 @@ export async function syncZonesBackfill(
     return { result: structuredEmpty({ ...cur, phase: "streams-backfill" }) };
   }
   if (!deps.client.quota.canMakeNCalls(pending.length)) {
-    return { result: structuredEmpty(cur, { hasMore: true }) };
+    throw quotaDeferral("Zones-backfill", pending.length, deps.client.quota);
   }
 
   const stampRows: Record<string, unknown>[] = [];
@@ -448,7 +451,7 @@ export async function syncStreamsBackfill(
     return { result: structuredEmpty({ ...cur, phase: "incremental" }) };
   }
   if (!deps.client.quota.canMakeNCalls(pending.length)) {
-    return { result: structuredEmpty(cur, { hasMore: true }) };
+    throw quotaDeferral("Streams-backfill", pending.length, deps.client.quota);
   }
 
   const stampRows: Record<string, unknown>[] = [];
@@ -727,16 +730,9 @@ async function fetchAllPages<T>(
   return all;
 }
 
-/**
- * A page that writes nothing and only moves the cursor — a phase handing over
- * to the next, or one deferring because the rate-limit window is spent.
- */
+/** A page that writes nothing and only moves the cursor: a phase handing over to the next. */
 function structuredEmpty(
   cursor: StravaActivitiesCursor,
-  opts: { hasMore?: boolean } = {},
 ): StructuredSyncResult<StravaActivitiesCursor> {
-  return {
-    cursor,
-    hasMore: opts.hasMore ?? false,
-  };
+  return { cursor, hasMore: false };
 }

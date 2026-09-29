@@ -19,7 +19,12 @@
  */
 
 import { createLogger } from "@omnesis/core";
-import { StravaForbiddenError, StravaNotFoundError, StravaScopeError } from "./client.js";
+import {
+  quotaDeferral,
+  StravaForbiddenError,
+  StravaNotFoundError,
+  StravaScopeError,
+} from "./client.js";
 import {
   athleteToRecord,
   athleteZonesToRecords,
@@ -70,8 +75,7 @@ export async function syncAthleteRefresh(
 ): Promise<StructuredSyncResult<StravaActivitiesCursor>> {
   const callBudget = await estimateCallBudget(deps);
   if (!deps.client.quota.canMakeNCalls(callBudget)) {
-    log.warn(`Athlete-refresh: quota too low for ${callBudget} calls; deferring`);
-    return { cursor: cur, hasMore: true };
+    throw quotaDeferral("Athlete-refresh", callBudget, deps.client.quota);
   }
 
   const fetchedAt = new Date().toISOString();
