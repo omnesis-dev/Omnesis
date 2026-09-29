@@ -100,6 +100,28 @@ export class StravaRateLimitError extends SyncError {
 }
 
 /**
+ * The error a page throws when the rate-limit budget cannot cover it.
+ *
+ * A page that returned `hasMore` with its cursor unchanged would be fetched
+ * again at once and refused again, each time a round trip to the gateway, for
+ * as long as the window stays spent. A `rate-limit` error that says how long to
+ * wait parks the source instead, and the next tick resumes from the same cursor.
+ */
+export function quotaDeferral(
+  label: string,
+  calls: number,
+  quota: StravaRateLimitTracker,
+): StravaRateLimitError {
+  return new StravaRateLimitError(
+    `${label}: quota too low for ${calls} calls`,
+    // At least 1ms: a rate-limit error without a positive delay takes the
+    // collector's generic error path, and the budget can come back between the
+    // caller's check and this one.
+    Math.max(1, quota.msUntilCanMakeNCalls(calls)),
+  );
+}
+
+/**
  * Thrown when an endpoint returns 403 (Summit-only features like zones or
  * advanced metrics on a non-Summit account) or 402 (a premium-gated
  * sub-resource the athlete's plan doesn't include). Both mean "your account
@@ -338,6 +360,8 @@ export class StravaClient {
       }
 
       if (res.status === 429) {
+        // TODO: Take the wait from the tracker, as the quota gates do: this ignores the read
+        // limit, and waits an hour rather than until midnight when the day is spent.
         const waitMs = computeRateLimitBackoff(res.headers);
         if (attempt >= MAX_RETRIES) {
           throw new StravaRateLimitError(

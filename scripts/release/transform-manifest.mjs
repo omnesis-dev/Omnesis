@@ -93,6 +93,9 @@ export function transformManifest(pkg, version, opts = {}) {
     }
   }
 
+  // FIXME: No published manifest applies patches/ (only the root postinstall and the Dockerfile
+  // do), so an npm package install leaves those dependencies unpatched: libsignal logs private
+  // keys, and re2-wasm leaks its fixed WASM heap on every pattern compile.
   // Published packages carry no dev tooling and no workspace scripts.
   delete out.devDependencies;
   delete out.scripts;
