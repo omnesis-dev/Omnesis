@@ -480,12 +480,13 @@ function stripSurroundingQuotes(s: string): string {
   const trimmed = s.trim();
   const m = trimmed.match(/^(['"`])(.*)\1$/);
   if (m) return m[2].trim();
-  // A quote with no partner at either end is left over from a broken header.
-  const opens = /^['"`]/.test(trimmed) && !/['"`]$/.test(trimmed);
-  const closes = /['"`]$/.test(trimmed) && !/^['"`]/.test(trimmed);
-  const unmatched = (quote: string) => trimmed.split(quote).length === 2;
-  if (opens && unmatched(trimmed[0]!)) return trimmed.slice(1).trim();
-  if (closes && unmatched(trimmed.at(-1)!)) return trimmed.slice(0, -1).trim();
+  // A lone double quote at one end is left over from a broken mail header.
+  // Single quotes are left alone: a name can begin or end with an apostrophe
+  // ('t Hooft).
+  if (trimmed.split('"').length === 2) {
+    if (trimmed.startsWith('"')) return trimmed.slice(1).trim();
+    if (trimmed.endsWith('"')) return trimmed.slice(0, -1).trim();
+  }
   return trimmed;
 }
 
@@ -544,17 +545,74 @@ export function parseEmailHeader(raw: string): { name?: string; email?: string }
 }
 
 /**
- * Normalize a display name: strip surrounding quotes, collapse whitespace,
- * and drop values that are really an email address (contain `@`, no space).
- * Safe to call at ingest time AND at DB insert time — idempotent.
+ * A display name without the address some mail clients write into it as a
+ * comment — `Maya Reeves (maya@example.com)` or `Maya Reeves
+ * <maya@example.com>` — which is the address again, not part of the name.
+ * A bracketed run is removed only when what it holds is an address; a
+ * handle or an organisation (`(@maya)`, `(Sales @ Acme)`) stays. Brackets
+ * the removal leaves empty go too; a name that held no address is returned
+ * untouched. One pass over the text, so a hostile
+ * name cannot make it slow.
+ */
+function withoutAddressComments(name: string): string {
+  const out: string[] = [];
+  let removed = false;
+  let i = 0;
+  while (i < name.length) {
+    const ch = name[i]!;
+    if (ch === "(" || ch === "<") {
+      let j = i + 1;
+      while (j < name.length && !"()<>".includes(name[j]!)) j += 1;
+      if (name[j] === ")" || name[j] === ">") {
+        const inner = name
+          .slice(i + 1, j)
+          .trim()
+          .replace(/^mailto:/i, "");
+        if (isDeliverableAddress(inner)) {
+          out.push(" ");
+          removed = true;
+          i = j + 1;
+          continue;
+        }
+      }
+      out.push(ch);
+      i += 1;
+      continue;
+    }
+    if (ch === ")" || ch === ">") {
+      // Drop the space before a closing bracket, and a pair the removal emptied.
+      while (out.length > 0 && /^\s*$/.test(out.at(-1)!)) out.pop();
+      const last = out.at(-1);
+      if (last === "(" || last === "<") {
+        out.pop();
+        i += 1;
+        continue;
+      }
+    }
+    out.push(ch);
+    i += 1;
+  }
+  // A name that held no address comes back exactly as it was.
+  return removed ? out.join("") : name;
+}
+
+/**
+ * Normalize a display name: drop an address written into it as a comment,
+ * strip surrounding quotes, collapse whitespace, and drop values that are
+ * really an email address (contain `@`, no space). Safe to call at ingest
+ * time AND at DB insert time — idempotent.
  */
 export function cleanPersonName(name: string | undefined): string | undefined {
   if (!name) return undefined;
-  // Some mail clients write the address into the display name as a comment —
-  // `Maya Reeves (maya@example.com)` or `Maya Reeves <maya@example.com>` —
-  // which is the address again, not part of the name.
-  const withoutAddresses = name.replace(/\s*[(<][^()<>]*@[^()<>]*[)>]/g, " ");
-  const stripped = stripSurroundingQuotes(withoutAddresses).replace(/\s+/g, " ").trim();
+  // Removing one layer can expose another (`"'Maya Reeves'`); a few passes
+  // reach what a second call would, so cleaning a cleaned name is a no-op.
+  let unquoted = withoutAddressComments(name);
+  for (let pass = 0; pass < 4; pass += 1) {
+    const next = stripSurroundingQuotes(unquoted);
+    if (next === unquoted) break;
+    unquoted = next;
+  }
+  const stripped = unquoted.replace(/\s+/g, " ").trim();
   if (!stripped) return undefined;
   if (stripped.includes("@") && !stripped.includes(" ")) return undefined;
   return stripped;
@@ -737,8 +795,23 @@ export interface MailAddress {
   address: string;
 }
 
-/** An address a person could be written to: one `@`, a dotted domain, nothing else. */
-const DELIVERABLE_ADDRESS = /^[^\s@"'<>()]+@[^\s@"'<>()]+\.[^\s@"'<>()]+$/;
+/**
+ * An address a person could be written to: one `@`, a local part, and a
+ * domain with a dot that is neither its first nor its last character, with
+ * no whitespace, double quotes or brackets anywhere. Checked character by
+ * character, so a hostile header cannot make it slow.
+ */
+function isDeliverableAddress(candidate: string): boolean {
+  const at = candidate.indexOf("@");
+  if (at <= 0 || at !== candidate.lastIndexOf("@")) return false;
+  // An apostrophe is allowed: O'Brien has an address.
+  for (const ch of candidate) {
+    if (/\s/.test(ch) || '"<>()'.includes(ch)) return false;
+  }
+  const domain = candidate.slice(at + 1);
+  const dot = domain.indexOf(".");
+  return dot > 0 && domain.lastIndexOf(".") < domain.length - 1;
+}
 
 /**
  * The address in what a broken header parsed as one.
@@ -762,7 +835,7 @@ function recoverMailAddress(raw: string): string | undefined {
         .filter((word) => word.includes("@"))
         .at(-1) ?? "";
   }
-  return DELIVERABLE_ADDRESS.test(candidate) ? candidate : undefined;
+  return isDeliverableAddress(candidate) ? candidate : undefined;
 }
 
 /**
@@ -789,6 +862,8 @@ export function mailPeopleMentions(
   const append = (role: "sender" | "recipient", addresses: MailAddress[] | undefined) => {
     for (const address of addresses ?? []) {
       if (people.length >= maxPeople) return;
+      // A group or an empty entry can reach here without an address.
+      if (typeof address.address !== "string") continue;
       const recovered = recoverMailAddress(address.address);
       if (!recovered) continue;
       const email = normalizeEmail(recovered);
