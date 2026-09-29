@@ -482,120 +482,6 @@ private func privacyTechnicalReviewFailed(_ exchange: PrivacyExchangePresentatio
     }
 }
 
-// MARK: - The released answer, against the draft
-
-/// The heading a release's comparison carries, and the sentence under it.
-struct PrivacyAnswerComparisonCopy: Equatable, Sendable {
-    let title: String
-    let detail: String?
-}
-
-/// What the record may say about how a release relates to the draft it came
-/// from. Every branch describes the comparison rather than the answer: Omnesis
-/// declining to present a change as an edit is a statement about what it was
-/// willing to compute, not a finding about what the answer says.
-func privacyAnswerComparisonCopy(
-    _ comparison: PrivacyAnswerComparison
-)
-    -> PrivacyAnswerComparisonCopy {
-    switch comparison {
-    case .identical:
-        PrivacyAnswerComparisonCopy(
-            title: "This answer left exactly as drafted.",
-            detail: nil
-        )
-    case .diff:
-        PrivacyAnswerComparisonCopy(
-            title: "Compared with the draft",
-            detail: nil
-        )
-    case .noDiff(.dissimilar):
-        PrivacyAnswerComparisonCopy(
-            title: "No line-by-line comparison",
-            detail: "Omnesis did not present this release as an edit of the draft, "
-                + "so the released answer is shown in full above."
-        )
-    case .noDiff(.tooLarge):
-        PrivacyAnswerComparisonCopy(
-            title: "No line-by-line comparison",
-            detail: "These answers are longer than this comparison runs on, "
-                + "so the released answer is shown in full above."
-        )
-    case .noDiff(.unspecified):
-        PrivacyAnswerComparisonCopy(
-            title: "No line-by-line comparison",
-            detail: "Omnesis produced no comparison for this release, "
-                + "so the released answer is shown in full above."
-        )
-    }
-}
-
-/// The marker that carries draft-only versus sent without colour. Rendered in a
-/// fixed-width column, so the two glyphs line up whatever font resolves.
-func privacyAnswerDiffMarker(_ op: PrivacyAnswerDiffOp) -> String {
-    switch op {
-    case .equal: " "
-    case .removed: "−"
-    case .added: "+"
-    }
-}
-
-/// The key to the markers, and — only where some line carries a word-level
-/// breakdown — to the decorations inside those lines. Both encodings are
-/// legible without colour, so the key explains shapes rather than hues.
-func privacyAnswerDiffLegend(_ lines: [PrivacyAnswerDiffLine]) -> [String] {
-    var entries = ["− in the draft only", "+ in what was sent"]
-    if lines.contains(where: { $0.spans != nil }) {
-        entries.append("struck-through and underlined words are the change inside a line")
-    }
-    return entries
-}
-
-/// What a listener hears for one line. Draft-only versus sent is spoken, never
-/// left to the marker or the colour, and a line that is nothing but spacing is
-/// announced rather than passed over in silence — a release that dropped a
-/// blank line dropped something.
-func privacyAnswerDiffLineLabel(_ line: PrivacyAnswerDiffLine) -> String {
-    let body = privacyAnswerDiffSpokenText(line.text)
-    switch line.op {
-    case .equal:
-        return "Unchanged. \(body)"
-    case .removed:
-        guard let changed = privacyAnswerDiffChangeSummary(line, op: .removed) else {
-            return "In the draft only. \(body)"
-        }
-        return "Draft line. \(body) Removed: \(changed)."
-    case .added:
-        guard let changed = privacyAnswerDiffChangeSummary(line, op: .added) else {
-            return "In what was sent only. \(body)"
-        }
-        return "Sent line. \(body) Added: \(changed)."
-    }
-}
-
-private func privacyAnswerDiffSpokenText(_ text: String) -> String {
-    text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Blank line." : text
-}
-
-/// The changed words of one side, spoken. A run of spaces has no spoken form,
-/// so it is named instead of read out: dropping it would hide a change that is
-/// exactly that.
-private func privacyAnswerDiffChangeSummary(
-    _ line: PrivacyAnswerDiffLine,
-    op: PrivacyAnswerDiffOp
-)
-    -> String? {
-    guard let spans = line.spans else { return nil }
-    let changed = spans.filter { $0.op == op }
-    guard !changed.isEmpty else { return nil }
-    return changed
-        .map { span in
-            let spoken = span.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return spoken.isEmpty ? "spacing" : spoken
-        }
-        .joined(separator: ", ")
-}
-
 // MARK: - Feed shape
 
 /// A pending item is an exchange, so it lives in the feed rather than behind a
@@ -639,6 +525,11 @@ struct PrivacyPendingReview: Equatable {
     let agentName: String
     let question: String
     let candidateAnswer: String?
+    /// What approving releases beside the held answer.
+    let citations: [AnswerCitation]
+    /// The draft's citations, to mark what the check withheld from
+    /// `citations`; nil when no draft was recorded to compare against.
+    let citationBaseline: [AnswerCitation]?
     let createdAt: Int64
     let pause: PrivacyPauseCopy
     let findings: [PrivacyFinding]
@@ -660,6 +551,8 @@ struct PrivacyPendingReview: Equatable {
         agentName = externalAgentNarrativeName(exchange.externalAgent)
         question = exchange.question
         candidateAnswer = exchange.pendingCandidate
+        citations = exchange.pendingCitations
+        citationBaseline = privacyCitationBaseline(exchange)
         createdAt = exchange.createdAt
         pause = privacyPauseCopy(exchange.review)
         findings = privacyReviewFindings(exchange.review)
@@ -672,6 +565,9 @@ struct PrivacyPendingReview: Equatable {
         agentName = externalAgentNarrativeName(detail.externalAgent)
         question = detail.question
         candidateAnswer = detail.candidateAnswer
+        citations = detail.candidateCitations
+        // The approval record carries no draft to compare against.
+        citationBaseline = nil
         createdAt = detail.createdAt
         pause = privacyPauseCopy(detail.review)
         findings = privacyReviewFindings(detail.review)

@@ -73,6 +73,7 @@ import dev.omnesis.android.designsystem.components.LoadingView
 import dev.omnesis.android.designsystem.theme.OmRadius
 import dev.omnesis.android.designsystem.theme.OmSpacing
 import dev.omnesis.android.designsystem.theme.OmTheme
+import dev.omnesis.android.sources.SourceCatalog
 import dev.omnesis.android.transport.dto.PrivacyExchangePresentation
 import dev.omnesis.android.transport.dto.PrivacySubscriptionApprovalSummary
 import dev.omnesis.android.ui.common.GatewayErrorView
@@ -128,6 +129,7 @@ fun PrivacyScreen(
         onLoadMoreSubscriptionApprovals = vm::loadMoreSubscriptionApprovals,
         onDirectRetry = { directVm.load() },
         onDirectRefresh = { directVm.load(showLoadingIndicator = false) },
+        catalog = vm.catalog,
     )
 }
 
@@ -153,6 +155,7 @@ fun PrivacyContent(
     onDirectRetry: () -> Unit = {},
     onDirectRefresh: () -> Unit = onDirectRetry,
     initialTab: AuditTab = AuditTab.ANSWER,
+    catalog: SourceCatalog = SourceCatalog(),
 ) {
     val c = OmTheme.colors
     Scaffold(
@@ -201,6 +204,7 @@ fun PrivacyContent(
                     onDirectRetry = onDirectRetry,
                     onDirectRefresh = onDirectRefresh,
                     initialActivityFilter = initialActivityFilter,
+                    catalog = catalog,
                     initialTab = initialTab,
                 )
             }
@@ -254,6 +258,7 @@ private fun PrivacyBody(
     onOpenDirectSession: (String) -> Unit,
     onDirectRetry: () -> Unit,
     onDirectRefresh: () -> Unit,
+    catalog: SourceCatalog,
     initialTab: AuditTab,
 ) {
     val c = OmTheme.colors
@@ -305,6 +310,7 @@ private fun PrivacyBody(
                         onLoadMoreExchanges = onLoadMoreExchanges,
                         onLoadMoreSubscriptionApprovals = onLoadMoreSubscriptionApprovals,
                         initialFilter = initialActivityFilter,
+                        catalog = catalog,
                     )
                 }
             }
@@ -325,6 +331,7 @@ private fun PrivacyActivityPane(
     onLoadMoreExchanges: () -> Unit,
     onLoadMoreSubscriptionApprovals: () -> Unit,
     initialFilter: PrivacyFeedFilter,
+    catalog: SourceCatalog,
 ) {
     val context = LocalContext.current
     val locale = context.resources.configuration.locales[0] ?: Locale.getDefault()
@@ -372,6 +379,7 @@ private fun PrivacyActivityPane(
                     error = state.approvalErrors[approvalId],
                     onApprove = { onApprove(approvalId) },
                     onDeny = { onDeny(approvalId) },
+                    catalog = catalog,
                 )
             }
         }

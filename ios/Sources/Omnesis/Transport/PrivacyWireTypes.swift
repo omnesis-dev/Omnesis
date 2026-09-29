@@ -159,6 +159,9 @@ public struct PrivacyApprovalDetail: Decodable, Equatable, Sendable, Identifiabl
     public let workflowPurpose: String
     public let question: String
     public let candidateAnswer: String?
+    /// The citations held beside `candidateAnswer`: what approving releases
+    /// with it. Empty when the agent cited nothing.
+    public let candidateCitations: [AnswerCitation]
     public let review: PrivacyReviewRecord
 
     public init(
@@ -176,6 +179,7 @@ public struct PrivacyApprovalDetail: Decodable, Equatable, Sendable, Identifiabl
         workflowPurpose: String,
         question: String,
         candidateAnswer: String?,
+        candidateCitations: [AnswerCitation] = [],
         review: PrivacyReviewRecord
     ) {
         self.id = id
@@ -192,7 +196,50 @@ public struct PrivacyApprovalDetail: Decodable, Equatable, Sendable, Identifiabl
         self.workflowPurpose = workflowPurpose
         self.question = question
         self.candidateAnswer = candidateAnswer
+        self.candidateCitations = candidateCitations
         self.review = review
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case taskId
+        case workflowId
+        case conversationId
+        case workflowName
+        case externalAgent
+        case status
+        case createdAt
+        case expiresAt
+        case resolvedAt
+        case sharedAt
+        case workflowPurpose
+        case question
+        case candidateAnswer
+        case candidateCitations
+        case review
+    }
+
+    /// Strict on everything the decision rests on; the citations are read
+    /// entry by entry and default to none, so a gateway without citation
+    /// support still yields an approval the operator can decide.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        taskId = try container.decode(String.self, forKey: .taskId)
+        workflowId = try container.decode(String.self, forKey: .workflowId)
+        conversationId = try container.decode(String.self, forKey: .conversationId)
+        workflowName = try container.decode(String.self, forKey: .workflowName)
+        externalAgent = try container.decodeIfPresent(PrivacyExternalAgent.self, forKey: .externalAgent)
+        status = try container.decode(PrivacyApprovalStatus.self, forKey: .status)
+        createdAt = try container.decode(Int64.self, forKey: .createdAt)
+        expiresAt = try container.decode(Int64.self, forKey: .expiresAt)
+        resolvedAt = try container.decodeIfPresent(Int64.self, forKey: .resolvedAt)
+        sharedAt = try container.decodeIfPresent(Int64.self, forKey: .sharedAt)
+        workflowPurpose = try container.decode(String.self, forKey: .workflowPurpose)
+        question = try container.decode(String.self, forKey: .question)
+        candidateAnswer = try container.decodeIfPresent(String.self, forKey: .candidateAnswer)
+        candidateCitations = AnswerCitation.decodeList(from: container, forKey: .candidateCitations)
+        review = try container.decode(PrivacyReviewRecord.self, forKey: .review)
     }
 }
 

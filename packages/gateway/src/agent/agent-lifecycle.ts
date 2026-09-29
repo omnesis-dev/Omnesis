@@ -450,7 +450,14 @@ export function createAgentService(
         memoryWrites: profile !== "answer",
       }),
     externalAnswerScope: async (authorization) => {
-      const safeNames = new Set(["search_many", "fetch_many", "lookup_document_by_url"]);
+      // `annotate_many` resolves each citation through the same restricted
+      // document port, so a restricted caller can cite only what it may read.
+      const safeNames = new Set([
+        "search_many",
+        "fetch_many",
+        "lookup_document_by_url",
+        "annotate_many",
+      ]);
       const tools = buildBuiltinTools({
         experimental: false,
         ports: {

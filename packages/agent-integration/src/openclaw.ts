@@ -52,6 +52,7 @@ import {
   IntegrationHttpError,
   PinnedGatewayHttpClient,
 } from "./http.js";
+import { formatAnswerCitations } from "./answer-citations.js";
 import { NativeAnswerMcpClient, integrationOAuthFetch } from "./native-answer-mcp.js";
 import {
   FORWARDED_TOOL_NAMES,
@@ -457,8 +458,10 @@ export async function sendAnswerCompletion(
 function formatAnswerCompletion(response: AnswerResponse): string {
   switch (response.status) {
     case "released":
-    case "released_with_reductions":
-      return response.answer;
+    case "released_with_reductions": {
+      const sources = formatAnswerCitations(response);
+      return sources ? `${response.answer}\n\n${sources}` : response.answer;
+    }
     case "denied":
       return response.reason === "expired"
         ? "The Omnesis approval expired before an answer could be released."

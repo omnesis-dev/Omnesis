@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import type { AnswerResponse } from "@omnesis/types/privacy";
+import type { AnswerCitation, AnswerResponse } from "@omnesis/types/privacy";
 
 export interface SubmitAnswerInput {
   question: string;
@@ -49,6 +49,9 @@ export class InvalidAnswerResponseError extends Error {
  * `/answer` boundary. It deliberately does not inherit the collector client's
  * retry/backpressure policy: an interactive caller must remain in control of
  * cancellation and idempotency.
+ *
+ * Every request declares that the client accepts `citations`, which
+ * {@link parseAnswerResponse} validates as strictly as the rest of the payload.
  */
 export class AnswerHttpClient {
   private readonly baseUrl: string;
@@ -65,7 +68,7 @@ export class AnswerHttpClient {
     input: SubmitAnswerInput,
     options: AnswerRequestOptions = {},
   ): Promise<AnswerResponse> {
-    return this.request("/answer", {
+    return this.request("/answer?citations=true", {
       method: "POST",
       signal: options.signal,
       body: JSON.stringify({
@@ -80,7 +83,7 @@ export class AnswerHttpClient {
   }
 
   async getTask(taskId: string, options: AnswerRequestOptions = {}): Promise<AnswerResponse> {
-    return this.request(`/answer/tasks/${encodeURIComponent(taskId)}`, {
+    return this.request(`/answer/tasks/${encodeURIComponent(taskId)}?citations=true`, {
       signal: options.signal,
     });
   }
@@ -119,21 +122,27 @@ export function parseAnswerResponse(value: unknown): AnswerResponse {
   const base = parseBase(record);
   switch (record.status) {
     case "released":
-      assertExactKeys(record, [...BASE_KEYS, "releaseId", "answer"]);
+      assertExactKeys(record, [...BASE_KEYS, "releaseId", "answer"], OPTIONAL_RELEASE_KEYS);
       return {
         ...base,
         status: "released",
         releaseId: stringField(record, "releaseId"),
         answer: stringField(record, "answer"),
+        ...citationsField(record),
       };
     case "released_with_reductions":
-      assertExactKeys(record, [...BASE_KEYS, "releaseId", "answer", "reductions"]);
+      assertExactKeys(
+        record,
+        [...BASE_KEYS, "releaseId", "answer", "reductions"],
+        OPTIONAL_RELEASE_KEYS,
+      );
       return {
         ...base,
         status: "released_with_reductions",
         releaseId: stringField(record, "releaseId"),
         answer: stringField(record, "answer"),
         reductions: stringArrayField(record, "reductions"),
+        ...citationsField(record),
       };
     case "approval_required":
       assertExactKeys(record, [...BASE_KEYS, "approvalId", "approvalExpiresAt"]);
@@ -159,6 +168,9 @@ export function parseAnswerResponse(value: unknown): AnswerResponse {
 }
 
 const BASE_KEYS = ["status", "workflowId", "conversationId", "taskId"] as const;
+const OPTIONAL_RELEASE_KEYS = ["citations"] as const;
+const CITATION_REQUIRED_KEYS = ["documentId", "sourceType"] as const;
+const CITATION_OPTIONAL_KEYS = ["title", "timestamp", "sourceUrl", "appUrl"] as const;
 const DENIAL_REASONS = new Set([
   "privacy_policy",
   "hard_stop",
@@ -206,10 +218,40 @@ function stringArrayField(record: Record<string, unknown>, key: string): string[
   return value;
 }
 
-function assertExactKeys(record: Record<string, unknown>, expected: readonly string[]): void {
-  const actual = Object.keys(record).sort();
-  const wanted = [...expected].sort();
-  if (actual.length !== wanted.length || actual.some((key, index) => key !== wanted[index])) {
+/** The released `citations` list, omitted from the result when the payload has none. */
+function citationsField(record: Record<string, unknown>): { citations?: AnswerCitation[] } {
+  if (!("citations" in record)) return {};
+  const value = record.citations;
+  if (!Array.isArray(value)) throw new InvalidAnswerResponseError();
+  return { citations: value.map(parseCitation) };
+}
+
+function parseCitation(value: unknown): AnswerCitation {
+  const record = asRecord(value);
+  if (!record) throw new InvalidAnswerResponseError();
+  assertExactKeys(record, CITATION_REQUIRED_KEYS, CITATION_OPTIONAL_KEYS);
+  const citation: AnswerCitation = {
+    documentId: stringField(record, "documentId"),
+    sourceType: stringField(record, "sourceType"),
+  };
+  for (const key of CITATION_OPTIONAL_KEYS) {
+    if (key in record) citation[key] = stringField(record, key);
+  }
+  return citation;
+}
+
+/**
+ * Requires every `required` key and permits only the `optional` ones beside
+ * them: an unknown key fails closed.
+ */
+function assertExactKeys(
+  record: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[] = [],
+): void {
+  const keys = Object.keys(record);
+  if (!required.every((key) => keys.includes(key))) throw new InvalidAnswerResponseError();
+  if (!keys.every((key) => required.includes(key) || optional.includes(key))) {
     throw new InvalidAnswerResponseError();
   }
 }

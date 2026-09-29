@@ -372,7 +372,7 @@ internal fun PrivacyExchangeSpine(
                 PrivacyMoment(at = momentAt(moment), showsDay = moment.key in dayBreaks) {
                     when (moment) {
                         is PrivacySpineMoment.Draft -> {
-                            PrivacyDraftCard(exchange, moment.event)
+                            PrivacyDraftCard(exchange, moment.event, catalog, onOpenUrl)
                             // Local generation activity sits under the draft
                             // it produced — the portal's PrivacyAgentTranscripts
                             // placement. Renders nothing on old gateways.
@@ -393,6 +393,8 @@ internal fun PrivacyExchangeSpine(
                             onApprove = onApprove,
                             onDeny = onDeny,
                             onOpenPolicy = onOpenPolicy,
+                            catalog = catalog,
+                            onOpenUrl = onOpenUrl,
                         )
                         is PrivacySpineMoment.Step -> PrivacyLedgerStep(moment.step)
                     }
@@ -426,6 +428,19 @@ internal fun PrivacyExchangeSpine(
                             style = MaterialTheme.typography.bodySmall,
                             color = c.textSecondary,
                         )
+                        // What left beside the answer, measured against the
+                        // draft so a citation the check withheld is marked
+                        // withheld rather than simply missing. Without a
+                        // recorded draft the draft card already shows the
+                        // shared answer and these same citations.
+                        if (!exchange.draftAnswer.isNullOrBlank()) {
+                            PrivacyCitationList(
+                                heading = PRIVACY_CITATIONS_SHARED_HEADING,
+                                rows = privacyCitationRows(exchange.sharedCitations, privacyCitationBaseline(exchange)),
+                                catalog = catalog,
+                                onOpenUrl = onOpenUrl,
+                            )
+                        }
                     }
                 }
                 order.afterRelease.forEach { event ->
@@ -481,6 +496,8 @@ private fun PrivacyMoment(
 private fun PrivacyDraftCard(
     exchange: PrivacyExchangePresentation,
     event: PrivacyAuditEventSummary?,
+    catalog: SourceCatalog,
+    onOpenUrl: (String) -> Unit,
 ) {
     val c = OmTheme.colors
     val tones = privacyTones()
@@ -515,6 +532,22 @@ private fun PrivacyDraftCard(
                     "answer that was shared"
                 },
                 style = MaterialTheme.typography.bodyMedium,
+            )
+            // The list beside the answer shown above. Without a recorded
+            // draft that answer is the held candidate or the shared one, and
+            // the list is headed for what it then is.
+            PrivacyCitationList(
+                heading = when {
+                    exchange.draftAnswer != null -> PRIVACY_CITATIONS_DRAFT_HEADING
+                    exchange.pendingCandidate != null -> PRIVACY_CITATIONS_PENDING_HEADING
+                    else -> PRIVACY_CITATIONS_SHARED_HEADING
+                },
+                note = PRIVACY_CITATIONS_PENDING_NOTE.takeIf {
+                    exchange.draftAnswer == null && exchange.pendingCandidate != null
+                },
+                rows = privacyCitationRows(privacyDisplayedCitations(exchange)),
+                catalog = catalog,
+                onOpenUrl = onOpenUrl,
             )
             if (!shared) {
                 Text(
@@ -560,6 +593,8 @@ private fun PrivacyDecisionCard(
     onApprove: () -> Unit,
     onDeny: () -> Unit,
     onOpenPolicy: PrivacyPolicyOpener?,
+    catalog: SourceCatalog,
+    onOpenUrl: (String) -> Unit,
 ) {
     val c = OmTheme.colors
     val tones = privacyTones()
@@ -625,6 +660,19 @@ private fun PrivacyDecisionCard(
             )
         }
         PrivacyReviewedUnderPolicyRow(exchange.review, onOpenPolicy)
+        // What "Share once" would release beside the held answer. When the draft
+        // card above already shows the held answer it lists these citations
+        // under it; otherwise it shows the draft, and the held set, measured
+        // against the draft's, belongs next to the buttons that release it.
+        if (pending && !exchange.draftAnswer.isNullOrBlank()) {
+            PrivacyCitationList(
+                heading = PRIVACY_CITATIONS_PENDING_HEADING,
+                note = PRIVACY_CITATIONS_PENDING_NOTE,
+                rows = privacyCitationRows(exchange.pendingCitations, privacyCitationBaseline(exchange)),
+                catalog = catalog,
+                onOpenUrl = onOpenUrl,
+            )
+        }
         actionError?.let { PrivacyBanner(it, PrivacyBannerKind.ERROR) }
         if (pending) {
             PrivacyDecisionButtons(
@@ -759,6 +807,8 @@ internal fun PrivacyReviewCard(
     onApprove: () -> Unit = {},
     onDeny: () -> Unit = {},
     onOpenPolicy: PrivacyPolicyOpener? = null,
+    catalog: SourceCatalog = SourceCatalog(),
+    onOpenUrl: ((String) -> Unit)? = null,
 ) {
     val c = OmTheme.colors
     val agentName = externalAgentNarrativeName(exchange.externalAgent)
@@ -817,6 +867,18 @@ internal fun PrivacyReviewCard(
                     )
                 }
             }
+        }
+
+        // Every link "Share once" would release, written out, with anything
+        // the check already withheld from a recorded draft marked withheld.
+        if (candidateAvailable) {
+            PrivacyCitationList(
+                heading = PRIVACY_CITATIONS_PENDING_HEADING,
+                note = PRIVACY_CITATIONS_PENDING_NOTE,
+                rows = privacyCitationRows(exchange.pendingCitations, privacyCitationBaseline(exchange)),
+                catalog = catalog,
+                onOpenUrl = onOpenUrl,
+            )
         }
 
         Column(verticalArrangement = Arrangement.spacedBy(OmSpacing.xs)) {

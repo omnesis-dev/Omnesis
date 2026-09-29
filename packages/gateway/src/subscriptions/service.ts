@@ -318,7 +318,7 @@ export class SubscriptionService {
 
   async finalizeFiringAnswerEgress(
     caller: SubscriptionCaller,
-    input: { firingId: string; taskId: string; ownerId: string },
+    input: { firingId: string; taskId: string; ownerId: string; includeCitations?: boolean },
   ) {
     if (!caller.tokenId) {
       throw new SubscriptionServiceError(
@@ -347,6 +347,7 @@ export class SubscriptionService {
       ownerId: input.ownerId,
       egressId: `egress_${this.id()}`,
       recordedAt: this.now(),
+      ...(input.includeCitations ? { includeCitations: true } : {}),
     });
     if (result.outcome !== "recorded") {
       throw new SubscriptionServiceError(

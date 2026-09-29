@@ -294,6 +294,7 @@ export function finalizeSubscriptionFiringAnswerEgress(
       endpoint: "/subscriptions/firings/:id/answer",
       subscriptionFiringId: input.firingId,
       now: input.recordedAt,
+      ...(input.includeCitations ? { includeCitations: true } : {}),
     });
     if (!egress) return { outcome: "task_unreleased" } as const;
 

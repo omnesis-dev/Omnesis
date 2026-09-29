@@ -50,6 +50,7 @@ import {
   privacyInstant,
 } from "../shared/privacy-vocabulary.js";
 import { PrivacyAnswerComparison, answerDiffLines } from "./answer-comparison.js";
+import { PrivacyCitationList } from "./citations.js";
 import { chatMessagesToTurns } from "../agent-reducer.js";
 import {
   PRIVACY_PROSE_QUOTE_CLASS,
@@ -399,6 +400,10 @@ export function PrivacyExchangeSpine({
   ];
   const dayBreaks = privacyDayBreaks(moments);
   const momentAt = new Map(moments.map((moment) => [moment.key, moment.at]));
+  // The draft's citations are the baseline that shows what the check withheld,
+  // but only when the draft was recorded: with no draft there is nothing to
+  // compare against, and every citation would otherwise read as unchanged.
+  const citationBaseline = exchange.draftAnswer ? exchange.draftCitations ?? [] : null;
 
   function draftCard(item) {
     return html`<article class=${`privacy-card privacy-card--inside${generationFailed ? " privacy-card--error" : ""}`}>
@@ -415,6 +420,10 @@ export function PrivacyExchangeSpine({
             <${PrivacyAnswerContent}
               answer=${answer}
               className=${`privacy-card-answer ${PRIVACY_PROSE_QUOTE_CLASS}`}
+            />
+            <${PrivacyCitationList}
+              citations=${exchange.draftCitations}
+              heading="Cited in this draft"
             />
             ${shared
               ? null
@@ -480,6 +489,14 @@ export function PrivacyExchangeSpine({
         : null}
       ${reviewModel
         ? html`<p class="privacy-card-caveat">Checked by ${reviewModel}.</p>`
+        : null}
+      ${pending
+        ? html`<${PrivacyCitationList}
+            citations=${exchange.pendingCitations}
+            baseline=${citationBaseline}
+            heading="Citations that would be shared"
+            note="Share once releases these documents and every link printed here."
+          />`
         : null}
       ${actionError
         ? html`<div class="privacy-banner error" role="alert">${actionError}</div>`
@@ -573,6 +590,13 @@ export function PrivacyExchangeSpine({
                     received an answer before it was let go. */ null}
               ${order.released
                 ? html`<${PrivacyLedgerStep} event=${order.released} />`
+                : null}
+              ${shared
+                ? html`<${PrivacyCitationList}
+                    citations=${exchange.sharedCitations}
+                    baseline=${citationBaseline}
+                    heading="Citations shared"
+                  />`
                 : null}
               ${shared
                 ? html`<p class="privacy-card-outside-note">

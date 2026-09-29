@@ -24,7 +24,11 @@ import {
   loadPrivacyReviewerContext,
 } from "./store.js";
 import { getTaskByClientRequest } from "./store-internals.js";
-import { recordedPolicyFamily, reviewedPolicyFamily } from "./reviewer.js";
+import {
+  recordedPolicyFamily,
+  reviewedPolicyFamily,
+  withholdCredentialCitationFields,
+} from "./reviewer.js";
 import {
   AnswerProfiler,
   runWithAnswerProfiler,
@@ -34,6 +38,7 @@ import {
 import type { McpToolInvocationAuditInput } from "../access/types.js";
 import type { ChatMessage } from "@omnesis/agent";
 import type {
+  AnswerCitation,
   AnswerResponse,
   PrivacyCumulativeDisclosure,
   PrivacyExternalMessage,
@@ -74,6 +79,12 @@ export const DEFAULT_ESCALATION_COOLDOWN_MS = 60 * 1_000;
 export const MAX_ANSWER_CANDIDATE_CHARS = MAX_READ_ONLY_ANSWER_CANDIDATE_CHARS;
 export const MAX_RELEASED_HISTORY_CHARS = 200_000;
 export const MAX_RELEASED_HISTORY_MESSAGES = 40;
+
+/** What one Answer turn proposes to release: the text and the documents it cites. */
+export interface AnswerCandidate {
+  answer: string;
+  citations: AnswerCitation[];
+}
 
 export interface AnswerRequest {
   ownerId: string;
@@ -374,9 +385,12 @@ export class AnswerService {
         },
         Object.keys(candidateOptions).length > 0 ? candidateOptions : undefined,
       );
-      const candidate = candidateResult.answer;
+      const candidate: AnswerCandidate = {
+        answer: candidateResult.answer,
+        citations: withholdCredentialCitationFields(candidateResult.citations),
+      };
       capturedTrace ??= candidateResult.trace;
-      if (candidate.length > MAX_ANSWER_CANDIDATE_CHARS) {
+      if (candidate.answer.length > MAX_ANSWER_CANDIDATE_CHARS) {
         throw new AnswerCandidateLimitError();
       }
       await this.persistGenerationAudit(
@@ -473,9 +487,13 @@ export class AnswerService {
     taskId: string,
     ownerId: string,
     endpoint: AnswerEgressEndpoint,
-    mcpInvocationAudit?: McpToolInvocationAuditInput,
-    deviceAnswerAuthority?: RecordAnswerEgressInput["deviceAnswerAuthority"],
+    options: {
+      mcpInvocationAudit?: McpToolInvocationAuditInput;
+      deviceAnswerAuthority?: RecordAnswerEgressInput["deviceAnswerAuthority"];
+      includeCitations?: boolean;
+    } = {},
   ): Promise<{ response: AnswerResponse; responseJson: string } | null> {
+    const { mcpInvocationAudit, deviceAnswerAuthority, includeCitations } = options;
     return this.deps.writeGate.recordAnswerEgress({
       id: `egress_${randomUUID()}`,
       taskId,
@@ -484,6 +502,7 @@ export class AnswerService {
       now: this.now(),
       ...(mcpInvocationAudit ? { mcpInvocationAudit } : {}),
       ...(deviceAnswerAuthority ? { deviceAnswerAuthority } : {}),
+      ...(includeCitations ? { includeCitations: true } : {}),
     });
   }
 
@@ -493,7 +512,7 @@ export class AnswerService {
       workflowId: string;
       conversationId: string;
       ownerId: string;
-      candidate: string;
+      candidate: AnswerCandidate;
       policy: string;
       policyRevision: string;
       /** Named on the review record; absent when the document carries no family. */
@@ -525,7 +544,8 @@ export class AnswerService {
     const review = await this.deps.reviewer.review(
       {
         currentQuestion: input.currentQuestion,
-        candidateAnswer: input.candidate,
+        candidateAnswer: input.candidate.answer,
+        candidateCitations: input.candidate.citations,
         policy: input.policy,
         policyRevision: input.policyRevision,
         ...(input.policyFamily ? { policyFamily: input.policyFamily } : {}),
@@ -577,7 +597,7 @@ export class AnswerService {
   private async commitReviewedCandidate(
     taskId: string,
     ownerId: string,
-    candidate: string,
+    candidate: AnswerCandidate,
     policy: string,
     workflowPurpose: string | undefined,
     currentQuestion: string,
@@ -615,7 +635,7 @@ export class AnswerService {
         }),
       );
     }
-    if (result.decision === "ask" || !result.reducedAnswer) {
+    if (result.decision === "ask" || result.reducedAnswer === undefined) {
       return this.holdOrDenyWithoutApproval(
         taskId,
         ownerId,
@@ -629,7 +649,10 @@ export class AnswerService {
     }
 
     // Bound here so the narrowed type survives the store-timing closure.
-    const preReductionAnswer: string = result.reducedAnswer;
+    const reduced: AnswerCandidate = {
+      answer: result.reducedAnswer,
+      citations: result.reducedCitations ?? [],
+    };
     await timeAnswerStoreOp("appendAnswerAuditEvents", () =>
       this.deps.writeGate.appendAnswerAuditEvents([
         {
@@ -640,14 +663,15 @@ export class AnswerService {
           display: auditDisplay({
             title: "Reduced candidate",
             status: "reduced",
-            text: preview(preReductionAnswer),
-            digest: digestCandidate(preReductionAnswer),
+            text: preview(reduced.answer),
+            digest: digestCandidate(reduced.answer, reduced.citations),
             reductions: result.reductions,
           }),
           payload: {
-            reducedAnswer: preReductionAnswer,
-            reducedAnswerDigest: digestCandidate(preReductionAnswer),
-            originalCandidateDigest: digestCandidate(candidate),
+            reducedAnswer: reduced.answer,
+            reducedCitations: reduced.citations,
+            reducedAnswerDigest: digestCandidate(reduced.answer, reduced.citations),
+            originalCandidateDigest: digestCandidate(candidate.answer, candidate.citations),
             reductions: result.reductions,
           },
           now: this.now(),
@@ -660,7 +684,8 @@ export class AnswerService {
     const secondReview = await this.deps.reviewer.review(
       {
         currentQuestion,
-        candidateAnswer: result.reducedAnswer,
+        candidateAnswer: reduced.answer,
+        candidateCitations: reduced.citations,
         policy,
         policyRevision: result.review.policyRevision,
         ...(policyFamily ? { policyFamily } : {}),
@@ -678,7 +703,7 @@ export class AnswerService {
       return this.releaseIfPolicyCurrent(
         taskId,
         ownerId,
-        result.reducedAnswer,
+        reduced,
         combinedReview,
         result.reductions.length > 0
           ? result.reductions
@@ -707,7 +732,7 @@ export class AnswerService {
     return this.holdOrDenyWithoutApproval(
       taskId,
       ownerId,
-      result.reducedAnswer,
+      reduced,
       combinedReview,
       this.now(),
       true,
@@ -721,7 +746,7 @@ export class AnswerService {
   private holdForApproval(
     taskId: string,
     ownerId: string,
-    candidate: string,
+    candidate: AnswerCandidate,
     review: PrivacyReviewRecord,
     now: number,
     reduced: boolean,
@@ -736,8 +761,9 @@ export class AnswerService {
         outcome: {
           kind: "approval",
           approvalId: this.idGen("approval"),
-          candidateAnswer: candidate,
-          candidateDigest: digestCandidate(candidate),
+          candidateAnswer: candidate.answer,
+          candidateCitations: candidate.citations,
+          candidateDigest: digestCandidate(candidate.answer, candidate.citations),
           releaseStatus: reduced ? "released_with_reductions" : "released",
           reductions,
           expiresAt: now + this.approvalTtlMs,
@@ -749,7 +775,7 @@ export class AnswerService {
   private holdOrDenyWithoutApproval(
     taskId: string,
     ownerId: string,
-    candidate: string,
+    candidate: AnswerCandidate,
     review: PrivacyReviewRecord,
     now: number,
     reduced: boolean,
@@ -773,7 +799,7 @@ export class AnswerService {
   private async releaseIfPolicyCurrent(
     taskId: string,
     ownerId: string,
-    answer: string,
+    candidate: AnswerCandidate,
     review: PrivacyReviewRecord,
     reductions: string[],
     reduced: boolean,
@@ -802,7 +828,8 @@ export class AnswerService {
               ? {
                   kind: "reduce",
                   releaseId: this.idGen("release"),
-                  answer,
+                  answer: candidate.answer,
+                  citations: candidate.citations,
                   reductions,
                   expectedDisclosureRevision,
                   expectedExistenceDisclosureRevision,
@@ -811,7 +838,8 @@ export class AnswerService {
               : {
                   kind: "release",
                   releaseId: this.idGen("release"),
-                  answer,
+                  answer: candidate.answer,
+                  citations: candidate.citations,
                   expectedDisclosureRevision,
                   expectedExistenceDisclosureRevision,
                   policyGuard,
@@ -833,7 +861,7 @@ export class AnswerService {
     return this.holdOrDenyWithoutApproval(
       taskId,
       ownerId,
-      answer,
+      candidate,
       {
         ...review,
         rationale: policyFamilyId
@@ -850,7 +878,7 @@ export class AnswerService {
   private async releaseUnreviewed(
     taskId: string,
     ownerId: string,
-    answer: string,
+    candidate: AnswerCandidate,
     scopeDigest: string,
     workflowId: string,
     conversationId: string,
@@ -876,7 +904,8 @@ export class AnswerService {
           outcome: {
             kind: "release",
             releaseId: this.idGen("release"),
-            answer,
+            answer: candidate.answer,
+            citations: candidate.citations,
             expectedDisclosureRevision: context.cumulativeDisclosure.revision,
             expectedExistenceDisclosureRevision: context.cumulativeDisclosure.existenceRevision,
           },
@@ -887,7 +916,7 @@ export class AnswerService {
         return this.releaseUnreviewed(
           taskId,
           ownerId,
-          answer,
+          candidate,
           scopeDigest,
           workflowId,
           conversationId,
@@ -902,7 +931,7 @@ export class AnswerService {
     taskId: string,
     ownerId: string,
     trace: AnswerCandidateTrace | undefined,
-    candidate: string | null,
+    candidate: AnswerCandidate | null,
     now: number,
     failure?: { code: string; message: string },
   ): Promise<void> {
@@ -934,10 +963,14 @@ export class AnswerService {
         kind: "candidate_generated" as const,
         display: auditDisplay({
           title: "Candidate inside Omnesis",
-          text: preview(candidate),
-          digest: digestCandidate(candidate),
+          text: preview(candidate.answer),
+          digest: digestCandidate(candidate.answer, candidate.citations),
         }),
-        payload: { candidateAnswer: candidate, candidateDigest: digestCandidate(candidate) },
+        payload: {
+          candidateAnswer: candidate.answer,
+          candidateCitations: candidate.citations,
+          candidateDigest: digestCandidate(candidate.answer, candidate.citations),
+        },
         now,
       });
     }
@@ -974,6 +1007,7 @@ export class AnswerService {
             hardStop: result.hardStop,
             reductions: result.reductions,
             reducedAnswer: result.reducedAnswer ?? null,
+            reducedCitations: result.reducedCitations ?? null,
             review: result.review,
             audit: result.audit,
           },
@@ -1233,7 +1267,13 @@ function boundReviewerHistory(history: ReadonlyArray<PrivacyExternalMessage>): {
   let characters = 0;
   for (let index = history.length - 1; index >= 0; index -= 2) {
     const pair = history.slice(Math.max(0, index - 1), index + 1);
-    const pairCharacters = pair.reduce((total, message) => total + message.content.length, 0);
+    const pairCharacters = pair.reduce(
+      (total, message) =>
+        total +
+        message.content.length +
+        (message.citations ? JSON.stringify(message.citations).length : 0),
+      0,
+    );
     if (
       kept.length + pair.length > MAX_REVIEW_HISTORY_MESSAGES ||
       characters + pairCharacters > MAX_REVIEW_HISTORY_CHARS

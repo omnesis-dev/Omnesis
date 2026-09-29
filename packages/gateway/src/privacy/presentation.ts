@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { createHash } from "node:crypto";
-
 import { assertNever } from "@omnesis/core";
 import { isKnownHarness } from "../sources/agent-conversations/meta.js";
 import {
-  buildReleasedAnswerResponse,
   effectiveApprovalStatus,
   parseReview,
   parseStringArray,
+  releasedResponseDigests,
 } from "./store-internals.js";
+import { digestAnswerCandidate, parseCitations, parseStoredCitations } from "./answer-citations.js";
 import { hasColumn, PrivacyCursorError, type PrivacyDb } from "./store-types.js";
 import { tokenIdOfAnswerOwner } from "./token-answer-owner.js";
 import type {
+  AnswerCitation,
   AnswerTaskAuditStatus,
   PrivacyApprovalStatus,
   PrivacyAnswerAgentTrace,
@@ -45,11 +45,13 @@ interface ExchangeRow {
   workflow_purpose: string;
   release_id: string | null;
   release_answer: string | null;
+  release_citations_json: string | null;
   response_reductions_json: string | null;
   release_reductions_json: string | null;
   approval_id: string | null;
   approval_status: string | null;
   approval_candidate_answer: string | null;
+  approval_candidate_citations_json: string | null;
   approval_reductions_json: string | null;
   approval_expires_at: number | null;
   approval_resolved_at: number | null;
@@ -103,6 +105,7 @@ interface ReleaseEvidenceRow {
   status: string;
   release_id: string | null;
   release_answer: string | null;
+  release_citations_json: string | null;
   response_reductions_json: string | null;
 }
 
@@ -112,7 +115,8 @@ interface ReleaseEvidence {
   conversationId: string;
   status: "released" | "released_with_reductions";
   releaseId: string;
-  responseDigest: string;
+  /** Every shape the release could have left in; see `releasedResponseDigests`. */
+  responseDigests: string[];
 }
 
 type LatestOutcomeRow = ReleaseEvidenceRow & {
@@ -269,8 +273,10 @@ function readExchangeRows(
               t.release_id,
               t.reductions_json AS response_reductions_json,
               r.answer AS release_answer, r.reductions_json AS release_reductions_json,
+              r.citations_json AS release_citations_json,
               a.id AS approval_id, a.status AS approval_status,
               a.candidate_answer AS approval_candidate_answer,
+              a.candidate_citations_json AS approval_candidate_citations_json,
               a.reductions_json AS approval_reductions_json,
               a.expires_at AS approval_expires_at, a.resolved_at AS approval_resolved_at,
               (SELECT candidate.display_json
@@ -596,6 +602,9 @@ function toExchangePresentation(
     row.denial_reason === "hard_stop" ? "hard_stop" : normalizeFallbackCause(review?.fallbackCause);
   const isPending = status === "approval_required" && approvalStatus === "pending";
   const externallyShared = sharedAt !== null;
+  const shared =
+    externallyShared && (status === "released" || status === "released_with_reductions");
+  const draft = recordedDraft(row.candidate_display_json, row.candidate_payload_json);
   const parsedFailure =
     status === "failed" || status === "canceled"
       ? parseFailure(
@@ -627,12 +636,12 @@ function toExchangePresentation(
     createdAt: row.created_at,
     resolvedAt: row.resolved_at,
     sharedAt,
-    sharedAnswer:
-      externallyShared && (status === "released" || status === "released_with_reductions")
-        ? row.release_answer
-        : null,
-    draftAnswer: recordedDraftAnswer(row.candidate_display_json, row.candidate_payload_json),
+    sharedAnswer: shared ? row.release_answer : null,
+    draftAnswer: draft?.answer ?? null,
     pendingCandidate: isPending ? row.approval_candidate_answer : null,
+    sharedCitations: shared ? parseStoredCitations(row.release_citations_json) : [],
+    draftCitations: draft?.citations ?? [],
+    pendingCitations: isPending ? parseStoredCitations(row.approval_candidate_citations_json) : [],
     reductions:
       status === "released" || status === "released_with_reductions"
         ? parseStringArray(row.release_reductions_json)
@@ -868,18 +877,29 @@ function presentedTranscriptText(text: string): string {
   return body.length > 0 ? `${body}\n\n${safe}` : safe;
 }
 
-function recordedDraftAnswer(
+/**
+ * The candidate the agent generated, recovered from its audit record only
+ * when it still matches the digest recorded beside it.
+ */
+function recordedDraft(
   displayJson: string | null,
   payloadJson: string | null,
-): string | null {
+): { answer: string; citations: AnswerCitation[] } | null {
   if (!displayJson || !payloadJson) return null;
   try {
     const display = JSON.parse(displayJson) as { digest?: unknown };
-    const payload = JSON.parse(payloadJson) as { candidateAnswer?: unknown };
+    const payload = JSON.parse(payloadJson) as {
+      candidateAnswer?: unknown;
+      candidateCitations?: unknown;
+    };
     if (typeof display.digest !== "string" || typeof payload.candidateAnswer !== "string") {
       return null;
     }
-    return sha256(payload.candidateAnswer) === display.digest ? payload.candidateAnswer : null;
+    const citations =
+      payload.candidateCitations === undefined ? [] : parseCitations(payload.candidateCitations);
+    return digestAnswerCandidate(payload.candidateAnswer, citations) === display.digest
+      ? { answer: payload.candidateAnswer, citations }
+      : null;
   } catch {
     return null;
   }
@@ -1015,6 +1035,7 @@ export function latestPrivacyExchangeOutcomes(
     .prepare<unknown[], LatestOutcomeRow>(
       `SELECT t.id, t.workflow_id, t.conversation_id, t.status, t.release_id,
               t.reductions_json AS response_reductions_json, r.answer AS release_answer,
+              r.citations_json AS release_citations_json,
               a.status AS approval_status, a.expires_at AS approval_expires_at
          FROM answer_tasks t
          LEFT JOIN answer_releases r ON r.task_id = t.id
@@ -1069,13 +1090,12 @@ function recordedReleaseEgressTimes(
 ): Map<string, number> {
   const evidenceByTaskId = new Map(evidences.map((evidence) => [evidence.taskId, evidence]));
   if (evidenceByTaskId.size === 0) return new Map();
-  const exactResponseClauses = [...evidenceByTaskId].map(
-    () => "(task_id = ? AND response_digest = ?)",
+  const exactResponseClauses = [...evidenceByTaskId.values()].flatMap((evidence) =>
+    evidence.responseDigests.map(() => "(task_id = ? AND response_digest = ?)"),
   );
-  const params = [...evidenceByTaskId.values()].flatMap((evidence) => [
-    evidence.taskId,
-    evidence.responseDigest,
-  ]);
+  const params = [...evidenceByTaskId.values()].flatMap((evidence) =>
+    evidence.responseDigests.flatMap((digest) => [evidence.taskId, digest]),
+  );
   const rows = db
     .prepare<string[], RecordedEgressRow>(
       `SELECT first.task_id, e.created_at
@@ -1103,15 +1123,15 @@ function releaseEvidence(row: ReleaseEvidenceRow): ReleaseEvidence | null {
   ) {
     return null;
   }
-  const reductions = parseStringArray(row.response_reductions_json);
-  const response = buildReleasedAnswerResponse({
+  const responseDigests = releasedResponseDigests({
     workflowId: row.workflow_id,
     conversationId: row.conversation_id,
     taskId: row.id,
     status: row.status,
     releaseId: row.release_id,
     answer: row.release_answer,
-    reductions,
+    reductions: parseStringArray(row.response_reductions_json),
+    citations: parseStoredCitations(row.release_citations_json),
   });
   return {
     taskId: row.id,
@@ -1119,7 +1139,7 @@ function releaseEvidence(row: ReleaseEvidenceRow): ReleaseEvidence | null {
     conversationId: row.conversation_id,
     status: row.status,
     releaseId: row.release_id,
-    responseDigest: sha256(JSON.stringify(response)),
+    responseDigests,
   };
 }
 
@@ -1279,10 +1299,6 @@ function toOutcome(
     default:
       return assertNever(status);
   }
-}
-
-function sha256(value: string): string {
-  return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
 function encodeCursor(createdAt: number, id: string): string {

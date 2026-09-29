@@ -9840,6 +9840,7 @@
         "evals/universes/default/agent-demos/person-catchup.jsonl",
         "evals/universes/default/sources/gmail/messages.json",
         "packages/collector/src/e2e/adjacency-retrieval.e2e.test.ts",
+        "packages/collector/src/e2e/answer-boundary.e2e.test.ts",
         "packages/collector/src/e2e/trail-graph.e2e.test.ts",
         "packages/core/src/agent-protocol.test.ts",
         "packages/gateway/src/agent/ports.test.ts"

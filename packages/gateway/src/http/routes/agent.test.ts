@@ -652,6 +652,45 @@ describe("POST /answer", () => {
     expect(generate.mock.calls[0]?.[2]).toBeUndefined();
   });
 
+  test("releases citations only to a caller that asks with ?citations=true", async () => {
+    const turnService = makeTurnService();
+    const citations = [
+      {
+        documentId: "doc_budget",
+        sourceType: "gmail",
+        title: "Q4 budget review",
+        sourceUrl: "https://mail.example.com/message/budget",
+      },
+    ];
+    const originalGenerate = turnService.generateReadOnlyAnswerCandidate.bind(turnService);
+    vi.spyOn(turnService, "generateReadOnlyAnswerCandidate").mockImplementation(
+      async (...args) => ({ ...(await originalGenerate(...args)), citations }),
+    );
+    const answerApp = buildApp(turnService, { answerService: makeAnswerService(turnService) });
+    const ask = (query: string, clientRequestId: string) =>
+      answerApp.request(`/answer${query}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ question: "A fictional cited question", clientRequestId }),
+      });
+
+    const plain = (await (await ask("", "plain")).json()) as Record<string, unknown>;
+    expect(plain.status).toBe("released");
+    expect(plain).not.toHaveProperty("citations");
+    const cited = (await (await ask("?citations=true", "cited")).json()) as {
+      taskId: string;
+      citations?: unknown;
+    };
+    expect(cited.citations).toEqual(citations);
+
+    const polled = await answerApp.request(`/answer/tasks/${cited.taskId}?citations=true`);
+    expect(((await polled.json()) as { citations?: unknown }).citations).toEqual(citations);
+    expect((await answerApp.request(`/answer/tasks/${cited.taskId}?citations=yes`)).status).toBe(
+      400,
+    );
+    expect((await ask("?citations=maybe", "bad")).status).toBe(400);
+  });
+
   test("does not record egress when the durable task finishes after the client disconnects", async () => {
     const turnService = makeTurnService();
     const answerService = makeAnswerService(turnService);

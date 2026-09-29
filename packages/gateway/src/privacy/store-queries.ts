@@ -1,19 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { createHash } from "node:crypto";
-
 import {
   approvalJoinSql,
-  buildReleasedAnswerResponse,
   effectiveApprovalStatus,
   getApprovalJoined,
   getTask,
   parseReview,
   parseStringArray,
+  releasedResponseDigests,
   responseForTask,
   toApprovalSummary,
 } from "./store-internals.js";
+import { parseStoredCitations } from "./answer-citations.js";
 import {
   AnswerStoreError,
   PrivacyCursorError,
@@ -194,8 +193,8 @@ export function getPrivacyApproval(
     ? db
         .prepare<
           [string],
-          { answer: string }
-        >("SELECT answer FROM answer_releases WHERE task_id = ?")
+          { answer: string; citations_json: string }
+        >("SELECT answer, citations_json FROM answer_releases WHERE task_id = ?")
         .get(row.id)
     : null;
   return {
@@ -203,6 +202,7 @@ export function getPrivacyApproval(
     workflowPurpose: row.workflow_purpose,
     question: row.question,
     candidateAnswer: row.approval_candidate_answer,
+    candidateCitations: parseStoredCitations(row.approval_candidate_citations_json),
     sharedAt:
       release &&
       row.release_id &&
@@ -213,34 +213,31 @@ export function getPrivacyApproval(
             conversationId: row.conversation_id,
             status: row.status,
             releaseId: row.release_id,
-            responseDigest: releaseResponseDigest(row, release.answer),
+            responseDigests: releaseResponseDigests(row, release.answer, release.citations_json),
           })
         : null,
     review: row.denial_reason === "hard_stop" ? { ...review, fallbackCause: "hard_stop" } : review,
   };
 }
 
-function releaseResponseDigest(row: ApprovalJoinedRow, answer: string): string {
+function releaseResponseDigests(
+  row: ApprovalJoinedRow,
+  answer: string,
+  citationsJson: string,
+): string[] {
   if (!row.release_id || (row.status !== "released" && row.status !== "released_with_reductions")) {
     throw new AnswerStoreError("task_state_conflict", "Released answer metadata is incomplete.");
   }
-  return sha256(
-    JSON.stringify(
-      buildReleasedAnswerResponse({
-        workflowId: row.workflow_id,
-        conversationId: row.conversation_id,
-        taskId: row.id,
-        status: row.status,
-        releaseId: row.release_id,
-        answer,
-        reductions: parseStringArray(row.reductions_json),
-      }),
-    ),
-  );
-}
-
-function sha256(value: string): string {
-  return createHash("sha256").update(value, "utf8").digest("hex");
+  return releasedResponseDigests({
+    workflowId: row.workflow_id,
+    conversationId: row.conversation_id,
+    taskId: row.id,
+    status: row.status,
+    releaseId: row.release_id,
+    answer,
+    reductions: parseStringArray(row.reductions_json),
+    citations: parseStoredCitations(citationsJson),
+  });
 }
 
 export function listPrivacyDecisions(

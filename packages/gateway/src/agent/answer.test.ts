@@ -70,6 +70,39 @@ class RecordingBackend implements ChatBackend {
   }
 }
 
+/** Cites the documents it is given through `annotate_many`, then answers. */
+class CitingBackend implements ChatBackend {
+  readonly name = "citing";
+  readonly model = "citing";
+  readonly turns: TurnInput[] = [];
+
+  constructor(private readonly documentIds: readonly string[]) {}
+
+  async *runTurn(input: TurnInput): AsyncIterable<AgentEvent> {
+    this.turns.push(input);
+    const { sessionId, messageId } = input;
+    yield { type: "agent.message.start", payload: { sessionId, messageId, role: "assistant" } };
+    const annotate = input.tools.find((tool) => tool.name === "annotate_many");
+    if (annotate) {
+      const args = { annotations: this.documentIds.map((documentId) => ({ documentId })) };
+      yield {
+        type: "agent.tool.start",
+        payload: { sessionId, messageId, toolCallId: "cite_1", tool: annotate.name, args },
+      };
+      const result = await annotate.invoke(args, { sessionId, messageId });
+      yield {
+        type: "agent.tool.result",
+        payload: { sessionId, messageId, toolCallId: "cite_1", result, durationMs: 0 },
+      };
+    }
+    yield {
+      type: "agent.text.delta",
+      payload: { sessionId, messageId, delta: "The budget review is on Tuesday." },
+    };
+    yield { type: "agent.message.end", payload: { sessionId, messageId, stopReason: "end_turn" } };
+  }
+}
+
 class TerminalBackend implements ChatBackend {
   readonly name = "terminal";
   readonly model = "terminal";
@@ -398,7 +431,50 @@ describe("AgentService.generateReadOnlyAnswerCandidate", () => {
     await service.dispose();
   });
 
-  it("isolates external candidates and withholds citation-only tools", async () => {
+  it("returns the documents the answer cited, resolved by the gateway, once each", async () => {
+    const citedDocument: DocumentPort = {
+      async fetch(documentId) {
+        if (documentId !== "doc_budget") return null;
+        return {
+          ref: {
+            documentId,
+            sourceType: "gmail",
+            sourceId: "gmail:fictional",
+            title: "Q4 budget review",
+            ts: Date.parse("2026-03-02T14:05:00.000Z"),
+            url: "https://mail.example.com/message/budget",
+          },
+          document: { id: documentId },
+        } as unknown as Awaited<ReturnType<DocumentPort["fetch"]>>;
+      },
+    };
+    const backend = new CitingBackend(["doc_budget", "doc_budget", "doc_missing"]);
+    const service = new AgentService({
+      backendFactory: () => backend,
+      ports: { search: stubSearch, document: citedDocument },
+      systemPrompt: "external answer prompt",
+      store: makeStore(),
+      sessionIdGen: () => "S_cited",
+      idleTimeoutMs: 60_000,
+    });
+
+    const result = await service.generateReadOnlyAnswerCandidate("When is the review?", []);
+
+    expect(result.answer).toBe("The budget review is on Tuesday.");
+    expect(result.citations).toEqual([
+      {
+        documentId: "doc_budget",
+        sourceType: "gmail",
+        title: "Q4 budget review",
+        timestamp: "2026-03-02T14:05:00.000Z",
+        sourceUrl: "https://mail.example.com/message/budget",
+      },
+    ]);
+    expect(backend.turns[0]?.systemPrompt).toContain("Citations on the answer surface");
+    await service.dispose();
+  });
+
+  it("isolates external candidates and offers only document citations", async () => {
     const store = makeStore();
     const backend = new RecordingBackend();
     const service = new AgentService({
@@ -437,8 +513,9 @@ describe("AgentService.generateReadOnlyAnswerCandidate", () => {
     expect(backend.turns).toHaveLength(1);
     expect(backend.turns[0]?.tools.map((tool) => tool.name)).toContain("search_many");
     expect(backend.turns[0]?.tools.map((tool) => tool.name)).toContain("fetch_many");
-    expect(backend.turns[0]?.tools.map((tool) => tool.name)).not.toContain("annotate_many");
+    expect(backend.turns[0]?.tools.map((tool) => tool.name)).toContain("annotate_many");
     expect(backend.turns[0]?.tools.map((tool) => tool.name)).not.toContain("cite_record");
+    expect(result.citations).toEqual([]);
     expect(backend.turns[0]?.systemPrompt).toContain("external answer prompt");
     await expect(store.load("S_candidate")).resolves.toBeNull();
   });

@@ -495,6 +495,7 @@ describe("writeGateFromScheduler", () => {
         kind: "approval",
         approvalId: "approval-pending",
         candidateAnswer: candidate,
+        candidateCitations: [],
         candidateDigest: digestCandidate(candidate),
         expiresAt: 5_000,
       },

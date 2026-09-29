@@ -1,6 +1,10 @@
 # The draft Omnesis writes for an external caller asking about supplier reviews.
 # Its privacy review (privacy-supplier-digest-review) allows it unchanged, so the
 # released answer is byte-identical to this draft — the `identical` comparison.
+#
+# The draft cites two synthetic messages through a live annotate_many call, so
+# the release carries citations the reviewer allowed alongside the text.
 {"afterMs":30,"event":{"type":"agent.message.start","payload":{"sessionId":"$SESSION","messageId":"$MSG","role":"assistant"}}}
+{"afterMs":80,"event":{"type":"agent.tool.start","payload":{"sessionId":"$SESSION","messageId":"$MSG","toolCallId":"tc_cite_supplier","tool":"annotate_many","args":{"annotations":[{"documentId":"$DOC_synth-gmail-023"},{"documentId":"$DOC_synth-gmail-maria-002"}]},"intent":"Cite the documents the answer relies on"}}}
 {"afterMs":120,"event":{"type":"agent.text.delta","payload":{"sessionId":"$SESSION","messageId":"$MSG","delta":"Two supplier reviews are still open this week.\nNorthwind Paper is waiting on a signed quality addendum.\nVerity Freight has returned its questionnaire and needs a scoring call."}}}
 {"afterMs":40,"event":{"type":"agent.message.end","payload":{"sessionId":"$SESSION","messageId":"$MSG","stopReason":"end_turn"}}}
