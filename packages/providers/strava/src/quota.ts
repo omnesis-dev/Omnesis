@@ -13,6 +13,17 @@ const HDR_READ_USAGE = "X-ReadRateLimit-Usage";
 /** Conservative default — leave 10% headroom for liveness pings + sibling tokens. */
 export const DEFAULT_SAFETY_PCT = 0.9;
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * How long a count reported just after a reset is still taken for the window
+ * before it: a response crossing the boundary, or a host clock running a little
+ * ahead of Strava's, reports the old window's usage once the new one has begun.
+ * Taken for the new window's, a day spent at 23:59 would read as spent until the
+ * next midnight.
+ */
+const RESET_GRACE_MS = 30_000;
+
 /** A single (short, daily) limit pair from one of Strava's headers. */
 export interface QuotaPair {
   short: number;
@@ -25,11 +36,20 @@ export interface QuotaPair {
  * a 15-min and a daily window packed into one comma-separated header. We track
  * all four budgets and gate calls on the tightest.
  *
+ * Usage is only what the last response said, so it outlives the window it was
+ * counted in unless the tracker lets it go: Strava resets the 15-minute windows
+ * on the quarter hour and the daily one at midnight, both UTC, and a count
+ * observed before the current window began no longer applies. Without that, a
+ * spent budget would stay spent for good — the check that refuses a call is
+ * also what keeps any new response from arriving to correct it.
+ *
  * Implements the core `RateLimitTracker` interface for type-level uniformity,
  * but Strava's header shape is unique so the implementation is local. Callers
- * use `observe()` / `canMakeNCalls(n, safetyPct?)`; `consumeHeaders` is an
- * alias the core interface mandates. `recordCall` is a no-op since usage is
- * always derived from response headers, never inferred client-side.
+ * use `observe()`, `canMakeNCalls(n, safetyPct?, now?)`, and
+ * `msUntilCanMakeNCalls` to learn how long a refused page waits;
+ * `consumeHeaders` is an alias the core interface mandates. `recordCall` is a
+ * no-op since usage is always derived from response headers, never inferred
+ * client-side.
  */
 export class StravaRateLimitTracker implements RateLimitTracker {
   private overall?: { used: QuotaPair; limit: QuotaPair };
@@ -51,29 +71,62 @@ export class StravaRateLimitTracker implements RateLimitTracker {
 
   recordCall(): void {}
 
-  canMakeNCalls(n: number, safetyPct: number = DEFAULT_SAFETY_PCT): boolean {
+  canMakeNCalls(
+    n: number,
+    safetyPct: number = DEFAULT_SAFETY_PCT,
+    now: Date = new Date(),
+  ): boolean {
     if (n <= 0) return true;
-    return this.remainingShort(safetyPct) >= n && this.remainingDaily(safetyPct) >= n;
+    return this.remainingShort(safetyPct, now) >= n && this.remainingDaily(safetyPct, now) >= n;
   }
 
-  remainingShort(safetyPct: number = DEFAULT_SAFETY_PCT): number {
+  /**
+   * How long until `n` calls fit: zero when they fit now, else until the
+   * window that cannot cover them resets — UTC midnight when the day's budget
+   * is spent, the next quarter hour when only the short window's is — plus
+   * `RESET_GRACE_MS`, so the calls made then land after Strava's reset.
+   */
+  msUntilCanMakeNCalls(
+    n: number,
+    safetyPct: number = DEFAULT_SAFETY_PCT,
+    now: Date = new Date(),
+  ): number {
+    if (this.remainingDaily(safetyPct, now) < n) {
+      return startOfUtcDay(now) + DAY_MS + RESET_GRACE_MS - now.getTime();
+    }
+    if (this.remainingShort(safetyPct, now) < n)
+      return this.msUntilWindowReset(now) + RESET_GRACE_MS;
+    return 0;
+  }
+
+  remainingShort(safetyPct: number = DEFAULT_SAFETY_PCT, now: Date = new Date()): number {
+    const inWindow = this.observedSince(startOfUtcQuarterHour(now));
     const overallShort = this.overall
-      ? budget(this.overall.used.short, this.overall.limit.short, safetyPct)
+      ? budget(inWindow ? this.overall.used.short : 0, this.overall.limit.short, safetyPct)
       : Infinity;
     const readShort = this.read
-      ? budget(this.read.used.short, this.read.limit.short, safetyPct)
+      ? budget(inWindow ? this.read.used.short : 0, this.read.limit.short, safetyPct)
       : Infinity;
     return Math.min(overallShort, readShort);
   }
 
-  remainingDaily(safetyPct: number = DEFAULT_SAFETY_PCT): number {
+  remainingDaily(safetyPct: number = DEFAULT_SAFETY_PCT, now: Date = new Date()): number {
+    const inWindow = this.observedSince(startOfUtcDay(now));
     const overallDaily = this.overall
-      ? budget(this.overall.used.daily, this.overall.limit.daily, safetyPct)
+      ? budget(inWindow ? this.overall.used.daily : 0, this.overall.limit.daily, safetyPct)
       : Infinity;
     const readDaily = this.read
-      ? budget(this.read.used.daily, this.read.limit.daily, safetyPct)
+      ? budget(inWindow ? this.read.used.daily : 0, this.read.limit.daily, safetyPct)
       : Infinity;
     return Math.min(overallDaily, readDaily);
+  }
+
+  /**
+   * Whether the usage on record was counted in the window starting at
+   * `windowStart`, rather than reported across its start (`RESET_GRACE_MS`).
+   */
+  private observedSince(windowStart: number): boolean {
+    return this.lastObservedAt !== undefined && this.lastObservedAt >= windowStart + RESET_GRACE_MS;
   }
 
   /**
@@ -123,6 +176,18 @@ export class StravaRateLimitTracker implements RateLimitTracker {
 function budget(used: number, limit: number, safetyPct: number): number {
   const cap = Math.floor(limit * safetyPct);
   return Math.max(0, cap - used);
+}
+
+/** When the 15-minute window `now` falls in began: on the quarter hour, UTC. */
+function startOfUtcQuarterHour(now: Date): number {
+  const start = new Date(now);
+  start.setUTCMinutes(Math.floor(now.getUTCMinutes() / 15) * 15, 0, 0);
+  return start.getTime();
+}
+
+/** When the daily window `now` falls in began: midnight, UTC. */
+function startOfUtcDay(now: Date): number {
+  return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
 }
 
 function parsePair(

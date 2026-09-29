@@ -837,7 +837,40 @@ describe("privacy exchange presentation", () => {
         narrativeName: "Mosaic assistant",
         integrationSlug: null,
         connectionName: "Mosaic on desktop",
+        clientName: null,
         source: "principal",
+      });
+    });
+
+    it("carries the app the OAuth client registered as, for the caller's logo", () => {
+      seedPrincipal();
+      db.exec(`
+        ALTER TABLE principal_credentials ADD COLUMN oauth_client_id TEXT;
+        CREATE TABLE oauth_clients (client_id TEXT PRIMARY KEY, client_name TEXT NOT NULL);
+        INSERT INTO oauth_clients (client_id, client_name) VALUES ('client-example', '  claude code  ');
+        UPDATE principal_credentials SET oauth_client_id = 'client-example';
+      `);
+      const task = begin("Which app is asking?", undefined, principalOwner());
+
+      expect(exchanges(task.conversationId)[0]!.externalAgent).toMatchObject({
+        displayName: "Mosaic assistant",
+        clientName: "claude code",
+        source: "principal",
+      });
+    });
+
+    it("leaves the app unnamed once its OAuth client is no longer registered", () => {
+      seedPrincipal();
+      db.exec(`
+        ALTER TABLE principal_credentials ADD COLUMN oauth_client_id TEXT;
+        CREATE TABLE oauth_clients (client_id TEXT PRIMARY KEY, client_name TEXT NOT NULL);
+        UPDATE principal_credentials SET oauth_client_id = 'client-gone';
+      `);
+      const task = begin("Which app is asking?", undefined, principalOwner());
+
+      expect(exchanges(task.conversationId)[0]!.externalAgent).toMatchObject({
+        displayName: "Mosaic assistant",
+        clientName: null,
       });
     });
 

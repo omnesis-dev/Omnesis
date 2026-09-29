@@ -172,9 +172,10 @@ describe("direct audit store", () => {
     expect(getDirectAuditEvent(db, "owner_other", first.eventId)).toBeNull();
   });
 
-  it("leaves the principal name null when the access tables are absent", () => {
+  it("leaves the principal name and app null when the access tables are absent", () => {
     append();
     expect(listDirectAuditSessions(db, OWNER, 10)[0]?.principalName).toBeNull();
+    expect(listDirectAuditSessions(db, OWNER, 10)[0]?.clientName).toBeNull();
   });
 
   it("attaches the operator-approved principal name to listed sessions", () => {
@@ -186,6 +187,25 @@ describe("direct audit store", () => {
     const { session } = append();
     expect(session.principalName).toBe("Fictional Agent");
     expect(listDirectAuditSessions(db, OWNER, 10)[0]?.principalName).toBe("Fictional Agent");
+  });
+
+  it("attaches the app the session's credential signed in from", () => {
+    db.exec(`
+      CREATE TABLE principal_credentials (id TEXT PRIMARY KEY, oauth_client_id TEXT NOT NULL);
+      CREATE TABLE oauth_clients (client_id TEXT PRIMARY KEY, client_name TEXT NOT NULL);
+      INSERT INTO principal_credentials (id, oauth_client_id)
+        VALUES ('credential_fictional', 'client_fictional');
+      INSERT INTO oauth_clients (client_id, client_name) VALUES ('client_fictional', ' Codex ');
+    `);
+    const { session } = append();
+    expect(session.clientName).toBe("Codex");
+    expect(listDirectAuditSessions(db, OWNER, 10)[0]?.clientName).toBe("Codex");
+
+    append({ credentialId: "credential_unregistered" });
+    const other = listDirectAuditSessions(db, OWNER, 10).find(
+      (listed) => listed.credentialId === "credential_unregistered",
+    );
+    expect(other?.clientName).toBeNull();
   });
 
   it("deletes a session with its events and payloads", () => {

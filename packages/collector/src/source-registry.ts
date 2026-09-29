@@ -667,6 +667,8 @@ export class SourceRegistry {
    * half of the source id, which is what the credential belongs to.
    */
   private quotaBucketOfSource(source: RegisteredSource, kind: QuotaKind): QuotaBucket {
+    // TODO: A provider id includes the account, so this keys the app bucket per account, and
+    // two accounts on one registered application do not park each other.
     if (kind === "app") return { kind, id: String(source.providerId) };
     return { kind, id: parseSourceId(source.id).accountId };
   }
