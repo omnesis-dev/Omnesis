@@ -311,6 +311,24 @@ describe("syncSocialBackfill", () => {
     // the SQL. What it does show is the ordering this test exists for: the
     // mark appears only once the document it describes has been handed over.
   });
+
+  test("404 stamps social_fetched_at on the same page, so the activity is not fetched again", async () => {
+    // Deleted or made private upstream: nothing about it is written on this
+    // page, so there is nothing for the mark to outrun. Unmarked, it would be
+    // pending on every page and the phase could never finish.
+    const { gateway } = makeMockGateway([baseRow]);
+    const client = makeFetchedClient({}); // every URL returns 404
+    const { result } = await syncSocialBackfill(
+      { phase: "social-backfill" },
+      { analytics: gateway, client, sourceId: SOURCE_ID, providerId: PROVIDER_ID, athleteId: 99 },
+    );
+
+    const marked = rowsFor(result, "strava_activities") as Record<string, unknown>[];
+    expect(marked.map((r) => String(r.id))).toEqual(["12345"]);
+    expect(marked[0]!.social_fetched_at).toBeTruthy();
+    expect(result.documents).toHaveLength(0);
+    expect(result.cursor.pendingSocialStamps).toBeUndefined();
+  });
 });
 
 // ── Tier 3 — zones-backfill ──────────────────────────────────────

@@ -319,11 +319,15 @@ export async function syncSocialBackfill(
     `Social-backfill: enriched ${pending.length} activities (${commentRows.length} comments, ${kudoRows.length} kudos)`,
   );
 
+  const marks = [...carriedStamps, ...stampRows];
+
   return {
     result: {
       // The marks in this page belong to the *previous* page's activities,
       // whose documents and cursor have already committed. This page's own
-      // activities are marked on the next one — see `pendingSocialStamps`.
+      // activities are marked on the next one — see `pendingSocialStamps` —
+      // except those Strava would not show: they have no enrichment or document
+      // here, so their mark lands now, or every page would fetch them again.
       //
       // A page's writes share a cursor, not a transaction: analytics is a
       // separate database and cannot join the cursor's commit, and the host
@@ -332,9 +336,7 @@ export async function syncSocialBackfill(
       // the crash comes, the document never stores, and the retry filter skips
       // the activity forever because it looks finished.
       analytics: [
-        ...(carriedStamps.length > 0
-          ? [{ tableName: "strava_activities", records: carriedStamps }]
-          : []),
+        ...(marks.length > 0 ? [{ tableName: "strava_activities", records: marks }] : []),
         // Comments are re-read in full on every pass, so the stored set has to
         // be replaced rather than merged into: a comment deleted upstream is
         // simply missing from the new list, and merging would keep it forever.
