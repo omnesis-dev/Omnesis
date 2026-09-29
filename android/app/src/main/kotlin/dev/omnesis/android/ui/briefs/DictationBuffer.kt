@@ -13,8 +13,8 @@ import dev.omnesis.android.ui.capture.joinUtterances
  * final is *appended*. Collapsing them would make every pause overwrite the sentence
  * before it.
  *
- * Pure data, so the rule that matters — a session ending without a final result must
- * still keep the words it heard — is exercised without a recogniser or an emulator.
+ * A partial the recogniser never finalised reaches this buffer as text from
+ * [dev.omnesis.android.voice.OnDeviceVoiceInput], which commits it before the next session.
  */
 data class DictationBuffer(
     /** Utterances the recogniser has finalised. */
@@ -29,13 +29,4 @@ data class DictationBuffer(
 
     fun withFinal(text: String): DictationBuffer =
         DictationBuffer(committed = joinUtterances(committed, text), partial = "")
-
-    /**
-     * Fold the in-flight guess into the committed text.
-     *
-     * Called whenever a session ends, before any next session starts. A session that ends
-     * without a final result — an error, or the recogniser simply stopping — still heard
-     * those words, and the next session's first partial would otherwise replace them.
-     */
-    fun committing(): DictationBuffer = DictationBuffer(committed = display, partial = "")
 }

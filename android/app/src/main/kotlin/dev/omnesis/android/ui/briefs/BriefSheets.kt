@@ -68,6 +68,9 @@ import dev.omnesis.android.designsystem.theme.OmTheme
 import dev.omnesis.android.transport.dto.BriefDismissReasonDto
 import dev.omnesis.android.transport.dto.BriefKindDto
 import dev.omnesis.android.transport.dto.BriefRecordDto
+import dev.omnesis.android.ui.voice.DictationFailureCard
+import dev.omnesis.android.ui.voice.RecordingMeter
+import dev.omnesis.android.ui.voice.TranscribingStatus
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -81,8 +84,12 @@ fun BriefDetailSheet(
     openingThread: Boolean,
     dictating: Boolean = false,
     dictationText: String = "",
+    dictationProgress: BriefDictationProgress = BriefDictationProgress(),
     onAsk: () -> Unit,
     onDictate: () -> Unit = {},
+    onRetryTranscription: () -> Unit = {},
+    onDictateOnDevice: () -> Unit = {},
+    onDiscardDictation: () -> Unit = {},
     onDismiss: (BriefDismissReasonDto, String?) -> Unit,
     onMoreOptions: (BriefDismissReasonDto?) -> Unit,
     iconFor: (String) -> SourceIconModel = { SourceIconModel() },
@@ -123,8 +130,13 @@ fun BriefDetailSheet(
                 horizontalArrangement = Arrangement.spacedBy(OmSpacing.lg, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                // While the gateway transcribes, or a failure waits on a choice, the mic has
+                // nothing to do: the words and the send are already on their way.
+                val dictationSettling = dictating &&
+                    (dictationProgress.transcribing || dictationProgress.failure != null)
                 BriefGlassAction(
                     label = if (dictating) "Stop and send" else "Dictate a question",
+                    enabled = !dictationSettling,
                     onClick = onDictate,
                 ) { Icon(Icons.Outlined.Mic, null, tint = colors.textPrimary) }
                 BriefGlassAction(
@@ -192,14 +204,26 @@ fun BriefDetailSheet(
                 }
             }
             if (dictating) {
-                Text(
-                    dictationText.ifBlank { "Listening…" },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colors.textSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                val recording = dictationProgress.recording
+                val failure = dictationProgress.failure
+                when {
+                    failure != null -> DictationFailureCard(
+                        notice = failure,
+                        onRetry = onRetryTranscription,
+                        onDictateOnDevice = onDictateOnDevice,
+                        onDismiss = onDiscardDictation,
+                    )
+                    dictationProgress.transcribing -> TranscribingStatus()
+                    recording != null -> RecordingMeter(recording)
+                    else -> Text(
+                        dictationText.ifBlank { "Listening…" },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
             if (!brief.body.isNullOrBlank() || brief.citations.isNotEmpty()) {
                 HorizontalDivider(Modifier.padding(vertical = OmSpacing.sm), color = colors.borderLight)

@@ -13,6 +13,8 @@ import dev.omnesis.android.ui.capture.CaptureContent
 import dev.omnesis.android.ui.capture.CaptureUiState
 import dev.omnesis.android.ui.capture.SaveState
 import dev.omnesis.android.ui.capture.SpeechState
+import dev.omnesis.android.ui.voice.DictationFailureNotice
+import dev.omnesis.android.ui.voice.VoiceRecording
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -185,6 +187,55 @@ class CaptureScreenshotTest {
     @Test
     fun capture_queued_unauthorized_light() = capture("capture_queued_unauthorized_light", dark = false) {
         Screen(CaptureUiState(text = "done", save = SaveState.Done(queued = QueueReason.UNAUTHORIZED)))
+    }
+
+    // --- gateway dictation: recording, transcribing, failed with retry ---
+
+    private val recording = CaptureUiState(
+        text = "Groceries:",
+        speech = SpeechState.RECORDING,
+        recording = VoiceRecording(level = 0.7f, elapsedMs = 12_000),
+    )
+
+    @Test
+    fun capture_gateway_recording_dark() = capture("capture_gateway_recording_dark", dark = true) {
+        Screen(recording)
+    }
+
+    @Test
+    fun capture_gateway_recording_light() = capture("capture_gateway_recording_light", dark = false) {
+        Screen(recording)
+    }
+
+    private val transcribing = CaptureUiState(text = "Groceries:", speech = SpeechState.TRANSCRIBING)
+
+    @Test
+    fun capture_gateway_transcribing_dark() = capture("capture_gateway_transcribing_dark", dark = true) {
+        Screen(transcribing)
+    }
+
+    @Test
+    fun capture_gateway_transcribing_light() = capture("capture_gateway_transcribing_light", dark = false) {
+        Screen(transcribing)
+    }
+
+    private val transcriptionFailed = CaptureUiState(
+        text = "Groceries:",
+        dictationFailure = DictationFailureNotice(
+            "Couldn't reach your gateway.",
+            canRetry = true,
+            canDictateOnDevice = true,
+        ),
+    )
+
+    @Test
+    fun capture_gateway_failed_dark() = capture("capture_gateway_failed_dark", dark = true) {
+        Screen(transcriptionFailed)
+    }
+
+    @Test
+    fun capture_gateway_failed_light() = capture("capture_gateway_failed_light", dark = false) {
+        Screen(transcriptionFailed)
     }
 
     // --- saving in flight ---

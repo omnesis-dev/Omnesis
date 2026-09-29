@@ -4,6 +4,8 @@
 package dev.omnesis.android.ui.capture
 
 import dev.omnesis.android.notes.QueueReason
+import dev.omnesis.android.ui.voice.DictationFailureNotice
+import dev.omnesis.android.ui.voice.VoiceRecording
 
 /** Surface slugs stamped on each captured note so the gateway knows the entry point. */
 object CaptureSurface {
@@ -17,13 +19,19 @@ object CaptureSurface {
     const val SHORTCUT = "android-shortcut"
 }
 
-/** Where speech input currently stands; anything but LISTENING leaves the keyboard as the input path. */
+/** Where speech input currently stands; typing works in every state. */
 enum class SpeechState {
-    /** Mic idle — tap to (re)start listening; typing always works. */
+    /** Mic idle — tap to (re)start listening. */
     IDLE,
 
-    /** Actively recognizing; partial results stream into the text field. */
+    /** Actively recognizing on the phone; partial results stream into the text field. */
     LISTENING,
+
+    /** Recording for the gateway's transcriber; the words arrive after the recording ends. */
+    RECORDING,
+
+    /** The gateway is transcribing the recording. */
+    TRANSCRIBING,
 
     /** No recognition service on this device, or none for its language — keyboard only. */
     UNAVAILABLE,
@@ -63,5 +71,9 @@ data class CaptureUiState(
     /** In-flight partial recognition, displayed after [text] while listening. */
     val partialText: String = "",
     val speech: SpeechState = SpeechState.IDLE,
+    /** The microphone level and running time while [speech] is RECORDING. */
+    val recording: VoiceRecording? = null,
+    /** A gateway transcription that failed, until it is retried, replaced or dismissed. */
+    val dictationFailure: DictationFailureNotice? = null,
     val save: SaveState = SaveState.Idle,
 )

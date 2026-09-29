@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -39,6 +40,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
@@ -50,8 +52,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -81,6 +85,7 @@ import dev.omnesis.android.transport.PermissionHealthEntry
 import dev.omnesis.android.transport.PushHealth
 import dev.omnesis.android.transport.ws.DeviceSocket
 import dev.omnesis.android.transport.ws.DeviceSocket.ConnectionState
+import dev.omnesis.android.ui.common.ExperimentalBadge
 import dev.omnesis.android.ui.common.NotificationHealthBanner
 import dev.omnesis.android.ui.common.NotificationSetupBanner
 import dev.omnesis.android.ui.common.NotificationSetupIssue
@@ -121,6 +126,7 @@ fun SettingsScreen(
     val backgroundSyncing by vm.backgroundSyncing.collectAsStateWithLifecycle()
     val pushPlan by vm.pushPlan.collectAsStateWithLifecycle()
     val pushRegistrationFailed by vm.pushRegistrationFailed.collectAsStateWithLifecycle()
+    val voice by vm.voice.collectAsStateWithLifecycle()
     val notificationIssue = notificationSetupIssue(vm.pushConfigured, pushPlan, notificationHealth, pushRegistrationFailed)
     val context = LocalContext.current
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.refreshPermissions() }
@@ -150,6 +156,8 @@ fun SettingsScreen(
             onOpenPolicies = onOpenPolicies,
             onOpenAccessAuthorization = onOpenAccessAuthorization,
             onOpenPrivacyPolicy = { openMobilePrivacyPolicy(context) },
+            voice = voice,
+            onSetTranscribeOnGateway = vm::setTranscribeOnGateway,
             // Undelivered data from this phone's own sources. The section is drawn
             // here rather than by the banner so a healthy phone shows no chrome at
             // all — no heading over an empty card.
@@ -266,6 +274,9 @@ fun SettingsContent(
     onOpenPolicies: () -> Unit = {},
     onOpenAccessAuthorization: () -> Unit = {},
     onOpenPrivacyPolicy: () -> Unit = {},
+    /** The gateway-dictation switch; null hides the Voice section. */
+    voice: VoiceSettingsState? = null,
+    onSetTranscribeOnGateway: (Boolean) -> Unit = {},
     /**
      * Undelivered data from this phone's own sources. A slot rather than a set
      * of fields, so this screen carries no knowledge of what "undelivered" means.
@@ -380,6 +391,11 @@ fun SettingsContent(
                 )
             }
 
+            if (voice != null) {
+                Spacer(Modifier.height(OmSpacing.md))
+                VoiceSection(voice, onSetTranscribeOnGateway, onOpenModels)
+            }
+
             phoneSection()
             healthSection()
             distributionSection()
@@ -491,6 +507,97 @@ private fun UrlEditor(currentUrl: String, onSave: (String) -> String?) {
             }
         }
     }
+}
+
+/**
+ * Gateway dictation (experimental): whether this app's dictation goes to the
+ * gateway's transcriber. A gateway setting, so the copy says it reaches every device.
+ * The whole row is the switch, so TalkBack reads its label with its state.
+ */
+@Composable
+internal fun VoiceSection(
+    voice: VoiceSettingsState,
+    onSetTranscribeOnGateway: (Boolean) -> Unit,
+    onOpenModels: () -> Unit,
+) {
+    val c = OmTheme.colors
+    SectionLabel("Voice")
+    OmnesisCard(padding = OmSpacing.lg) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .toggleable(
+                    value = voice.transcribeOnGateway,
+                    enabled = voice.canChange && !voice.saving,
+                    role = Role.Switch,
+                    onValueChange = onSetTranscribeOnGateway,
+                ),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                Text("Transcribe on gateway", style = MaterialTheme.typography.bodyMedium, color = c.textPrimary)
+                Spacer(Modifier.width(OmSpacing.sm))
+                ExperimentalBadge()
+            }
+            if (voice.saving) {
+                OmSpinner(modifier = Modifier.size(16.dp).padding(end = OmSpacing.xs), strokeWidth = 2.dp)
+            }
+            Switch(
+                checked = voice.transcribeOnGateway,
+                onCheckedChange = null,
+                enabled = voice.canChange && !voice.saving,
+                modifier = Modifier.scale(0.78f),
+            )
+        }
+        voice.blockedReason?.let { reason ->
+            RowDivider()
+            Row(Modifier.padding(vertical = OmSpacing.xs), verticalAlignment = Alignment.Top) {
+                Icon(Icons.Outlined.WarningAmber, contentDescription = null, tint = c.warning, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(OmSpacing.sm))
+                Column {
+                    Text(
+                        reason,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = c.textPrimary,
+                    )
+                    Text(
+                        "Dictation uses on-device transcription until the gateway's transcriber can run.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = c.textSecondary,
+                    )
+                }
+            }
+            RowDivider()
+            NavigationRow("Configure Models", onOpenModels)
+        }
+        voice.notice?.let { notice ->
+            RowDivider()
+            Text(
+                notice,
+                style = MaterialTheme.typography.bodySmall,
+                color = c.textSecondary,
+                modifier = Modifier.padding(vertical = OmSpacing.xs),
+            )
+        }
+        voice.error?.let { error ->
+            RowDivider()
+            Text(
+                "Couldn't change the setting: $error",
+                style = MaterialTheme.typography.bodySmall,
+                color = c.danger,
+                modifier = Modifier.padding(vertical = OmSpacing.xs),
+            )
+        }
+    }
+    Spacer(Modifier.height(OmSpacing.sm))
+    Text(
+        "When on, the audio you dictate in this app — the agent, Briefs and Tell Omnesis — is sent " +
+            "to your gateway, which transcribes it and returns the text. Nothing is stored. This is " +
+            "a gateway setting, so it applies to every device paired with it.",
+        style = MaterialTheme.typography.labelMedium,
+        color = c.textSecondary,
+    )
 }
 
 /**

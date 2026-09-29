@@ -39,6 +39,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
@@ -59,6 +60,9 @@ import dev.omnesis.android.designsystem.components.OmSpinner
 import dev.omnesis.android.designsystem.theme.OmSpacing
 import dev.omnesis.android.designsystem.theme.OmTheme
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
+import dev.omnesis.android.ui.voice.RecordingMeter
+import dev.omnesis.android.ui.voice.TRANSCRIBING_LABEL
+import dev.omnesis.android.ui.voice.VoiceRecording
 import java.util.Locale
 import java.util.UUID
 
@@ -133,11 +137,21 @@ class AssistantActionActivity : ComponentActivity() {
                         is AssistantActionUiState.AwaitingMicrophonePermission,
                         is AssistantActionUiState.ReadyToListen,
                         is AssistantActionUiState.Confirming,
+                        is AssistantActionUiState.Recording,
+                        is AssistantActionUiState.Transcribing,
+                        is AssistantActionUiState.DictationFailed,
                         is AssistantActionUiState.Working,
                         -> Unit
                     }
                 }
-                AssistantActionContent(state = state, onClose = ::finish, onConfirm = viewModel::confirm)
+                AssistantActionContent(
+                    state = state,
+                    onClose = ::finish,
+                    onConfirm = viewModel::confirm,
+                    onStopRecording = viewModel::finishRecording,
+                    onRetryTranscription = viewModel::retryTranscription,
+                    onDictateOnDevice = viewModel::dictateOnDevice,
+                )
             }
         }
     }
@@ -181,8 +195,14 @@ class AssistantActionActivity : ComponentActivity() {
 
     override fun onPause() {
         // The exported voice surface must never retain or restart capture while obscured.
+        viewModel.onForegroundChanged(false)
         viewModel.stopListening()
         super.onPause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        viewModel.onForegroundChanged(true)
     }
 
     private fun initializeSpeaker() {
@@ -347,6 +367,9 @@ fun AssistantActionContent(
     state: AssistantActionUiState,
     onClose: () -> Unit,
     onConfirm: () -> Unit = {},
+    onStopRecording: () -> Unit = {},
+    onRetryTranscription: () -> Unit = {},
+    onDictateOnDevice: () -> Unit = {},
 ) {
     val colors = OmTheme.colors
     Scaffold(containerColor = colors.bgPrimary) { padding ->
@@ -437,6 +460,55 @@ fun AssistantActionContent(
                         if (state.partialText.isNotBlank()) {
                             Spacer(Modifier.height(OmSpacing.md))
                             Text(state.partialText, color = colors.textSecondary, textAlign = TextAlign.Center)
+                        }
+                    }
+                    is AssistantActionUiState.Recording -> {
+                        Box(
+                            Modifier.size(88.dp).clip(CircleShape).background(colors.accent.copy(alpha = 0.14f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(Icons.Outlined.Mic, "Recording", tint = colors.accent, modifier = Modifier.size(42.dp))
+                        }
+                        Spacer(Modifier.height(OmSpacing.lg))
+                        Text(
+                            if (state.kind == AssistantActionKind.ASK) "What would you like to ask?" else "What should Omnesis remember?",
+                            color = colors.textPrimary,
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.Center,
+                        )
+                        Spacer(Modifier.height(OmSpacing.md))
+                        RecordingMeter(VoiceRecording(state.level, state.elapsedMs))
+                        Spacer(Modifier.height(OmSpacing.xl))
+                        OutlinedButton(onClick = onStopRecording) { Text("Done") }
+                    }
+                    is AssistantActionUiState.Transcribing -> {
+                        OmSpinner(modifier = Modifier.size(48.dp))
+                        Spacer(Modifier.height(OmSpacing.lg))
+                        Text(
+                            TRANSCRIBING_LABEL,
+                            color = colors.textPrimary,
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                    is AssistantActionUiState.DictationFailed -> {
+                        Icon(
+                            Icons.Outlined.ErrorOutline,
+                            contentDescription = null,
+                            tint = colors.warning,
+                            modifier = Modifier.size(56.dp),
+                        )
+                        Spacer(Modifier.height(OmSpacing.lg))
+                        Text("Couldn't transcribe", color = colors.textPrimary, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(OmSpacing.sm))
+                        Text(state.notice.message, color = colors.textSecondary, textAlign = TextAlign.Center)
+                        Spacer(Modifier.height(OmSpacing.xl))
+                        if (state.notice.canRetry) {
+                            Button(onClick = onRetryTranscription) { Text("Retry") }
+                            Spacer(Modifier.height(OmSpacing.sm))
+                        }
+                        if (state.notice.canDictateOnDevice) {
+                            OutlinedButton(onClick = onDictateOnDevice) { Text("Dictate on this phone") }
                         }
                     }
                     is AssistantActionUiState.Working -> {

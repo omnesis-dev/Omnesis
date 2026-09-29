@@ -60,8 +60,8 @@ struct GlassActionCircle: ViewModifier {
 /// The dictation shortcut. Idle: a glass circle matching the other
 /// actions. Listening: the composer's mic language — an accent-filled
 /// circle with pulse rings radiating outward — so "the app is listening"
-/// reads identically everywhere. Finishing shows a short spinner while
-/// the recognizer finalizes the transcript.
+/// reads identically everywhere. A spinner shows while the transcript is
+/// being finalized, on the device or on the gateway.
 @available(iOS 17.0, *)
 struct GlassMicButton: View {
     var speech: SpeechRecognizer
@@ -81,7 +81,7 @@ struct GlassMicButton: View {
                     Image(systemName: "mic.fill")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(.white)
-                } else if speech.state == .finishing {
+                } else if speech.isWrappingUp {
                     ProgressView()
                         .controlSize(.small)
                 } else {
@@ -99,7 +99,7 @@ struct GlassMicButton: View {
         }
         .buttonStyle(.plain)
         .modifier(GlassMicChrome(active: speech.isListening))
-        .disabled(speech.state == .unavailable || speech.state == .finishing)
+        .disabled(speech.state == .unavailable || speech.isWrappingUp)
         // Fire the one-time system permission prompts from the button's
         // first appearance, mirroring the agent composer's mic.
         .onAppear { speech.requestPermissionsIfNeeded() }

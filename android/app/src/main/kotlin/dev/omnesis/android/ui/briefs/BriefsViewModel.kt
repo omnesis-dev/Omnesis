@@ -13,8 +13,13 @@ import dev.omnesis.android.transport.dto.BriefDismissReasonDto
 import dev.omnesis.android.transport.dto.BriefPageDto
 import dev.omnesis.android.transport.dto.BriefRecordDto
 import dev.omnesis.android.transport.dto.OpenBriefThreadDto
-import dev.omnesis.android.ui.capture.SpeechTranscriber
 import dev.omnesis.android.ui.capture.joinUtterances
+import dev.omnesis.android.ui.voice.DictationFailureNotice
+import dev.omnesis.android.ui.voice.VoiceRecording
+import dev.omnesis.android.voice.Endpointing
+import dev.omnesis.android.voice.VoiceInput
+import dev.omnesis.android.voice.VoiceInputEnd
+import dev.omnesis.android.voice.VoiceInputs
 import dev.omnesis.android.ui.common.CursorPagingState
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
@@ -40,11 +45,22 @@ data class BriefsUiState(
     val dictationPartial: String = "",
     /** Set when the mic cannot run at all, so the strip can say why instead of hanging. */
     val dictationUnavailable: String? = null,
+    /** A gateway dictation's recording, transcription or failure; empty for the phone's recognizer. */
+    val dictationProgress: BriefDictationProgress = BriefDictationProgress(),
 ) {
     /** What the strip shows: everything heard so far, including the in-flight guess. */
     val dictationDisplayText: String
         get() = joinUtterances(dictationText, dictationPartial)
 }
+
+/** Where a gateway dictation at a brief stands: at most one field is set. */
+data class BriefDictationProgress(
+    /** Recording for the gateway's transcriber. */
+    val recording: VoiceRecording? = null,
+    /** The recording is with the gateway; the words, and the send, follow. */
+    val transcribing: Boolean = false,
+    val failure: DictationFailureNotice? = null,
+)
 
 /** Generation token preventing a cancelled thread request from navigating on a late reply. */
 internal class BriefThreadRequestGate {
@@ -103,15 +119,15 @@ private class SessionBriefsGateway(private val session: SessionManager) : Briefs
  */
 @HiltViewModel
 class BriefsViewModel internal constructor(
-    private val transcriber: SpeechTranscriber,
+    private val voiceInputs: VoiceInputs,
     private val sourceCatalog: SourceCatalog,
     private val gateway: BriefsGateway,
 ) : ViewModel() {
     @Inject constructor(
         session: SessionManager,
-        transcriber: SpeechTranscriber,
+        voiceInputs: VoiceInputs,
         sourceCatalog: SourceCatalog,
-    ) : this(transcriber, sourceCatalog, SessionBriefsGateway(session))
+    ) : this(voiceInputs, sourceCatalog, SessionBriefsGateway(session))
 
     private val _state = MutableStateFlow(BriefsUiState())
     val state = _state.asStateFlow()
@@ -120,6 +136,7 @@ class BriefsViewModel internal constructor(
 
     init {
         load()
+        voiceInputs.refreshStatus(viewModelScope)
     }
 
     /** Generic gateway-declared source art for brief citations. */
@@ -149,8 +166,7 @@ class BriefsViewModel internal constructor(
                     dictatingBriefId = before.dictatingBriefId,
                 )
                 if (before.dictatingBriefId != null && replacement.discardedDictation) {
-                    wantListening = false
-                    transcriber.cancel()
+                    releaseVoice()
                     buffer = DictationBuffer()
                 }
                 _state.value = before.copy(
@@ -161,6 +177,11 @@ class BriefsViewModel internal constructor(
                     dictatingBriefId = replacement.retainedDictatingBriefId,
                     dictationText = if (replacement.discardedDictation) "" else before.dictationText,
                     dictationPartial = if (replacement.discardedDictation) "" else before.dictationPartial,
+                    dictationProgress = if (replacement.discardedDictation) {
+                        BriefDictationProgress()
+                    } else {
+                        before.dictationProgress
+                    },
                 )
             } catch (cancellation: CancellationException) {
                 throw cancellation
@@ -294,50 +315,77 @@ class BriefsViewModel internal constructor(
 
     // --- Dictation -------------------------------------------------------------
 
-    /**
-     * Start dictating at a brief: its row becomes the recording strip.
-     *
-     * `wantListening` keeps the mic hot across the recognizer's per-utterance sessions —
-     * the platform ends a session on every pause, and without restarting, a moment's
-     * thought would end the recording.
-     */
-    fun startDictation(brief: BriefRecordDto) {
-        if (!transcriber.isAvailable()) {
+    /** The running dictation, or a failed gateway one whose recording awaits a retry. */
+    private var voice: VoiceInput? = null
+
+    /** Where a gateway transcript goes once it arrives: the stop-and-send it was stopped for. */
+    private var pendingSend: ((conversationId: String, spoken: String) -> Unit)? = null
+
+    /** The words heard so far, kept in the shape [DictationBuffer] defines the rules for. */
+    private var buffer = DictationBuffer()
+
+    /** Start dictating at a brief: its row becomes the recording strip. */
+    fun startDictation(brief: BriefRecordDto) = beginDictation(brief.id, voiceInputs.preferred(viewModelScope))
+
+    /** After a failed gateway transcription: dictate to the same brief on the phone's recognizer. */
+    fun dictateOnDevice() {
+        val briefId = _state.value.dictatingBriefId ?: return
+        beginDictation(briefId, voiceInputs.onDevice())
+    }
+
+    private fun beginDictation(briefId: String, input: VoiceInput) {
+        releaseVoice()
+        buffer = DictationBuffer()
+        if (!input.isAvailable()) {
             _state.value = _state.value.copy(
+                dictatingBriefId = null,
+                dictationText = "",
+                dictationPartial = "",
+                dictationProgress = BriefDictationProgress(),
                 dictationUnavailable = "Dictation isn't available on this device.",
             )
             return
         }
-        wantListening = true
-        buffer = DictationBuffer()
+        voice = input
         _state.value = _state.value.copy(
-            dictatingBriefId = brief.id,
+            dictatingBriefId = briefId,
             dictationText = "",
             dictationPartial = "",
+            dictationProgress = BriefDictationProgress(),
             dictationUnavailable = null,
         )
-        transcriber.start(speechListener)
+        input.start(Endpointing.MANUAL, listenerFor(input))
     }
 
     /**
-     * The user finished speaking. Stops the mic and hands whatever was heard to the
-     * brief's thread as its first message.
+     * The user finished speaking. What was heard goes to the brief's thread as its first
+     * message: at once from the phone's recognizer, which already showed the words, or
+     * once the gateway has transcribed the recording.
      *
      * Nothing is sent for an empty transcript — a tap that caught no words should leave
      * the feed exactly as it was, not open a thread saying nothing.
      */
     fun stopDictationAndSend(onOpened: (conversationId: String, spoken: String) -> Unit) {
-        val briefId = _state.value.dictatingBriefId ?: return
-        val brief = _state.value.feed.briefs.firstOrNull { it.id == briefId }
-        wantListening = false
-        transcriber.stop()
-        val text = _state.value.dictationDisplayText.trim()
+        val current = _state.value
+        val briefId = current.dictatingBriefId ?: return
+        val progress = current.dictationProgress
+        if (progress.transcribing || progress.failure != null) return
+        if (progress.recording != null) {
+            pendingSend = onOpened
+            voice?.stop()
+            return
+        }
+        val text = current.dictationDisplayText.trim()
+        releaseVoice()
         clearDictation()
-        if (brief == null || text.isEmpty()) return
-        // The spoken text rides with the callback rather than being parked in a field:
-        // the thread opens asynchronously, and a field would have to be read back at a
-        // moment nothing guarantees.
-        openThread(brief) { conversationId -> onOpened(conversationId, text) }
+        send(briefId, text, onOpened)
+    }
+
+    /** Sends the kept recording to the gateway again; the thread opens when it succeeds. */
+    fun retryTranscription() {
+        if (_state.value.dictationProgress.failure?.canRetry != true) return
+        _state.value = _state.value.copy(dictationProgress = BriefDictationProgress())
+        voice?.retry()
     }
 
     /**
@@ -346,8 +394,7 @@ class BriefsViewModel internal constructor(
      */
     fun discardDictation() {
         if (_state.value.dictatingBriefId == null) return
-        wantListening = false
-        transcriber.cancel()
+        releaseVoice()
         clearDictation()
     }
 
@@ -355,7 +402,20 @@ class BriefsViewModel internal constructor(
         _state.value = _state.value.copy(dictationUnavailable = null)
     }
 
-    private var wantListening = false
+    private fun send(briefId: String, text: String, onOpened: (conversationId: String, spoken: String) -> Unit) {
+        val brief = _state.value.feed.briefs.firstOrNull { it.id == briefId }
+        if (brief == null || text.isEmpty()) return
+        // The spoken text rides with the callback rather than being parked in a field:
+        // the thread opens asynchronously, and a field would have to be read back at a
+        // moment nothing guarantees.
+        openThread(brief) { conversationId -> onOpened(conversationId, text) }
+    }
+
+    private fun releaseVoice() {
+        voice?.cancel()
+        voice = null
+        pendingSend = null
+    }
 
     private fun clearDictation() {
         buffer = DictationBuffer()
@@ -363,11 +423,9 @@ class BriefsViewModel internal constructor(
             dictatingBriefId = null,
             dictationText = "",
             dictationPartial = "",
+            dictationProgress = BriefDictationProgress(),
         )
     }
-
-    /** The words heard so far, kept in the shape [DictationBuffer] defines the rules for. */
-    private var buffer = DictationBuffer()
 
     private fun publish(buffer: DictationBuffer) {
         this.buffer = buffer
@@ -377,37 +435,75 @@ class BriefsViewModel internal constructor(
         )
     }
 
-    private val speechListener = object : SpeechTranscriber.Listener {
-        override fun onPartial(text: String) = publish(buffer.withPartial(text))
+    private fun listenerFor(input: VoiceInput) = object : VoiceInput.Listener {
+        private fun current() = voice === input
 
-        override fun onFinal(text: String) = publish(buffer.withFinal(text))
+        override fun onPartial(text: String) {
+            if (current()) publish(buffer.withPartial(text))
+        }
 
-        override fun onEnded(reason: SpeechTranscriber.EndReason) {
-            // Commit the in-flight partial before anything else — see DictationBuffer.
-            publish(buffer.committing())
-            val committed = _state.value
-            val fatal = when (reason) {
-                SpeechTranscriber.EndReason.NORMAL, SpeechTranscriber.EndReason.FAULT -> null
-                SpeechTranscriber.EndReason.DENIED ->
-                    "Microphone access is off for Omnesis."
-                SpeechTranscriber.EndReason.LANGUAGE_NOT_DOWNLOADED ->
-                    "Dictation runs on-device; install your language pack to use it."
-                SpeechTranscriber.EndReason.LANGUAGE_NOT_SUPPORTED ->
-                    "Dictation isn't available for this language."
+        override fun onText(text: String) {
+            if (current()) publish(buffer.withFinal(text))
+        }
+
+        override fun onRecording(level: Float, elapsedMs: Long) {
+            if (!current()) return
+            _state.value = _state.value.copy(
+                dictationProgress = BriefDictationProgress(recording = VoiceRecording(level, elapsedMs)),
+            )
+        }
+
+        override fun onTranscribing() {
+            if (current()) _state.value = _state.value.copy(dictationProgress = BriefDictationProgress(transcribing = true))
+        }
+
+        override fun onEnded(end: VoiceInputEnd) {
+            if (!current()) return
+            val briefId = _state.value.dictatingBriefId
+            val failure = (end as? VoiceInputEnd.Failed)?.failure
+            if (failure?.retryable != true) voice = null
+            val fatal = when (end) {
+                VoiceInputEnd.Denied -> "Microphone access is off for Omnesis."
+                VoiceInputEnd.LanguageNotDownloaded -> "Dictation runs on-device; install your language pack to use it."
+                VoiceInputEnd.LanguageNotSupported -> "Dictation isn't available for this language."
+                VoiceInputEnd.Unavailable -> "Dictation isn't available on this device."
+                else -> null
             }
-            if (fatal != null) {
-                // None of these clear by retrying, so stop wanting the mic and say what
-                // is wrong rather than holding it visibly hot while every session fails.
-                wantListening = false
-                _state.value = committed.copy(dictatingBriefId = null, dictationUnavailable = fatal)
-                return
+            when {
+                // None of these clear by retrying, so say what is wrong rather than
+                // holding the strip open while nothing can be heard.
+                fatal != null -> {
+                    pendingSend = null
+                    _state.value = _state.value.copy(
+                        dictatingBriefId = null,
+                        dictationProgress = BriefDictationProgress(),
+                        dictationUnavailable = fatal,
+                    )
+                }
+                failure != null -> _state.value = _state.value.copy(
+                    dictationProgress = BriefDictationProgress(
+                        failure = DictationFailureNotice.of(failure, voiceInputs.onDeviceAvailable()),
+                    ),
+                )
+                else -> {
+                    val onOpened = pendingSend
+                    pendingSend = null
+                    if (onOpened != null && briefId != null) {
+                        val text = buffer.display.trim()
+                        clearDictation()
+                        send(briefId, text, onOpened)
+                    } else {
+                        // Ended without a stop-and-send (a recording cap): the words stay on
+                        // the strip, and tapping it sends them.
+                        _state.value = _state.value.copy(dictationProgress = BriefDictationProgress())
+                    }
+                }
             }
-            if (wantListening) transcriber.start(this)
         }
     }
 
     override fun onCleared() {
         super.onCleared()
-        transcriber.cancel()
+        releaseVoice()
     }
 }

@@ -60,6 +60,10 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -77,6 +81,10 @@ import dev.omnesis.android.ui.common.LandingBackdrop
 import dev.omnesis.android.ui.common.LANDING_MIC_CENTRE_Y
 import androidx.compose.material3.TopAppBarDefaults
 import dev.omnesis.android.notes.QueueReason
+import dev.omnesis.android.ui.voice.DictationFailureCard
+import dev.omnesis.android.ui.voice.RecordingMeter
+import dev.omnesis.android.ui.voice.TRANSCRIBING_LABEL
+import dev.omnesis.android.ui.voice.TranscribingStatus
 import kotlinx.coroutines.delay
 
 /**
@@ -120,8 +128,10 @@ fun CaptureScreen(
         state = state,
         onMicTap = {
             when (state.speech) {
-                SpeechState.LISTENING -> vm.stopListening()
+                SpeechState.LISTENING, SpeechState.RECORDING -> vm.stopListening()
                 SpeechState.IDLE -> vm.startListening()
+                // The recording is already on its way; the transcript lands in the field.
+                SpeechState.TRANSCRIBING -> Unit
                 // A tap on the muted mic re-asks; the system remembers a hard denial.
                 SpeechState.DENIED -> permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                 // Neither has an in-app remedy: the language pack is installed
@@ -133,6 +143,9 @@ fun CaptureScreen(
         onSave = vm::save,
         onCancel = onClose,
         onDismissError = vm::dismissError,
+        onRetryTranscription = vm::retryTranscription,
+        onDictateOnDevice = vm::dictateOnDevice,
+        onDismissDictationFailure = vm::dismissDictationFailure,
     )
 }
 
@@ -145,6 +158,9 @@ fun CaptureContent(
     onSave: () -> Unit,
     onCancel: () -> Unit,
     onDismissError: () -> Unit,
+    onRetryTranscription: () -> Unit = {},
+    onDictateOnDevice: () -> Unit = {},
+    onDismissDictationFailure: () -> Unit = {},
 ) {
     val c = OmTheme.colors
     // The same wash the agent landing screen sits on, with the halo centred on the
@@ -182,6 +198,9 @@ fun CaptureContent(
                     onSave = onSave,
                     onCancel = onCancel,
                     onDismissError = onDismissError,
+                    onRetryTranscription = onRetryTranscription,
+                    onDictateOnDevice = onDictateOnDevice,
+                    onDismissDictationFailure = onDismissDictationFailure,
                 )
             }
         }
@@ -198,8 +217,13 @@ private fun CaptureForm(
     onSave: () -> Unit,
     onCancel: () -> Unit,
     onDismissError: () -> Unit,
+    onRetryTranscription: () -> Unit,
+    onDictateOnDevice: () -> Unit,
+    onDismissDictationFailure: () -> Unit,
 ) {
     val c = OmTheme.colors
+    // A gateway dictation's words are still on their way; saving now would drop them.
+    val dictating = state.speech == SpeechState.RECORDING || state.speech == SpeechState.TRANSCRIBING
     Column(
         Modifier
             .fillMaxSize()
@@ -211,18 +235,34 @@ private fun CaptureForm(
         Spacer(Modifier.height(OmSpacing.lg))
         MicVisual(speech = state.speech, onTap = onMicTap)
         Spacer(Modifier.height(OmSpacing.md))
-        Text(
-            statusLine(state.speech),
-            style = MaterialTheme.typography.bodySmall,
-            color = when (state.speech) {
-                SpeechState.LISTENING -> c.accent
-                // The only status line that is an instruction to act on rather
-                // than an aside, so it carries readable weight.
-                SpeechState.LANGUAGE_NOT_DOWNLOADED -> c.textSecondary
-                else -> c.textMuted
-            },
-            textAlign = TextAlign.Center,
-        )
+        val recording = state.recording
+        when {
+            state.speech == SpeechState.RECORDING && recording != null -> Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                RecordingMeter(recording)
+                Spacer(Modifier.height(OmSpacing.xs))
+                Text(
+                    "Recording — tap the mic when you're done",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = c.accent,
+                    textAlign = TextAlign.Center,
+                )
+            }
+            state.speech == SpeechState.TRANSCRIBING -> TranscribingStatus()
+            else -> Text(
+                statusLine(state.speech),
+                style = MaterialTheme.typography.bodySmall,
+                color = when (state.speech) {
+                    SpeechState.LISTENING -> c.accent
+                    // The only status line that is an instruction to act on rather
+                    // than an aside, so it carries readable weight.
+                    SpeechState.LANGUAGE_NOT_DOWNLOADED -> c.textSecondary
+                    else -> c.textMuted
+                },
+                textAlign = TextAlign.Center,
+            )
+        }
         Spacer(Modifier.height(OmSpacing.lg))
 
         OutlinedTextField(
@@ -251,6 +291,16 @@ private fun CaptureForm(
                 cursorColor = c.accent,
             ),
         )
+
+        state.dictationFailure?.let { notice ->
+            Spacer(Modifier.height(OmSpacing.md))
+            DictationFailureCard(
+                notice = notice,
+                onRetry = onRetryTranscription,
+                onDictateOnDevice = onDictateOnDevice,
+                onDismiss = onDismissDictationFailure,
+            )
+        }
 
         val save = state.save
         if (save is SaveState.Failed) {
@@ -288,7 +338,7 @@ private fun CaptureForm(
             Button(
                 onClick = onSave,
                 modifier = Modifier.weight(2f),
-                enabled = state.textWithPartial().isNotBlank() && !saving,
+                enabled = state.textWithPartial().isNotBlank() && !saving && !dictating,
                 colors = ButtonDefaults.buttonColors(containerColor = c.accent, contentColor = Color.White),
             ) {
                 if (saving) {
@@ -309,8 +359,9 @@ private fun CaptureForm(
  */
 @Composable
 private fun MicVisual(speech: SpeechState, onTap: () -> Unit) {
-    val listening = speech == SpeechState.LISTENING
-    val muted = speech != SpeechState.LISTENING && speech != SpeechState.IDLE
+    val listening = speech == SpeechState.LISTENING || speech == SpeechState.RECORDING
+    val transcribing = speech == SpeechState.TRANSCRIBING
+    val muted = !listening && !transcribing && speech != SpeechState.IDLE
 
     Box(contentAlignment = Alignment.Center) {
         // Outside the tap target, which is clipped to a circle — rings drawn inside
@@ -323,12 +374,30 @@ private fun MicVisual(speech: SpeechState, onTap: () -> Unit) {
                 .size(88.dp)
                 .clip(CircleShape)
                 .clickable(
-                    onClickLabel = if (listening) "Stop listening" else "Start listening",
+                    enabled = !transcribing,
+                    onClickLabel = when (speech) {
+                        SpeechState.RECORDING -> "Stop recording"
+                        SpeechState.LISTENING -> "Stop listening"
+                        else -> "Start listening"
+                    },
+                    role = Role.Button,
                     onClick = onTap,
-                ),
+                )
+                .semantics {
+                    contentDescription = "Microphone"
+                    if (transcribing) stateDescription = "Transcribing"
+                },
             contentAlignment = Alignment.Center,
         ) {
-            if (muted) LandingMicUnavailableGlyph() else LandingMicGlyph(listening = listening)
+            when {
+                muted -> LandingMicUnavailableGlyph()
+                // The mic rests while the gateway works; the spinner says the wait is expected.
+                transcribing -> {
+                    LandingMicGlyph(listening = false)
+                    OmSpinner(modifier = Modifier.size(88.dp), color = OmTheme.colors.accent, strokeWidth = 2.dp)
+                }
+                else -> LandingMicGlyph(listening = listening)
+            }
         }
     }
 }
@@ -383,6 +452,8 @@ private fun SavedConfirmation(queued: QueueReason?) {
 
 private fun statusLine(speech: SpeechState): String = when (speech) {
     SpeechState.LISTENING -> "Listening…"
+    SpeechState.RECORDING -> "Recording…"
+    SpeechState.TRANSCRIBING -> TRANSCRIBING_LABEL
     SpeechState.IDLE -> "Tap the mic to talk, or just type"
     SpeechState.DENIED -> "Microphone access is off — type your note, or tap the mic to allow access"
     SpeechState.LANGUAGE_NOT_DOWNLOADED ->

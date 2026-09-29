@@ -36,6 +36,9 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import dev.omnesis.android.designsystem.theme.OmSpacing
 import dev.omnesis.android.designsystem.theme.OmTheme
+import dev.omnesis.android.ui.voice.DictationFailureCard
+import dev.omnesis.android.ui.voice.RecordingMeter
+import dev.omnesis.android.ui.voice.TranscribingStatus
 
 /**
  * A brief's row while it is being dictated to: the row *is* the recording surface.
@@ -46,7 +49,9 @@ import dev.omnesis.android.designsystem.theme.OmTheme
  * rather than on a surface that hides the feed.
  *
  * [displayText] is the committed utterances plus the in-flight guess, so the words appear
- * as they are heard rather than in silence until the recogniser finalises.
+ * as they are heard rather than in silence until the recogniser finalises. A gateway
+ * dictation shows no words until it is transcribed, so the row shows the recording level
+ * instead, then the transcription wait, then — if it failed — the ways forward.
  */
 @Composable
 fun BriefRowDictating(
@@ -54,8 +59,43 @@ fun BriefRowDictating(
     displayText: String,
     onStop: () -> Unit,
     modifier: Modifier = Modifier,
+    progress: BriefDictationProgress = BriefDictationProgress(),
+    onRetry: () -> Unit = {},
+    onDictateOnDevice: () -> Unit = {},
+    onDiscard: () -> Unit = {},
 ) {
     val colors = OmTheme.colors
+    val failure = progress.failure
+    if (failure != null) {
+        Column(
+            modifier.fillMaxWidth().background(colors.bgPrimary).padding(vertical = OmSpacing.md),
+            verticalArrangement = Arrangement.spacedBy(OmSpacing.sm),
+        ) {
+            Text(title, style = MaterialTheme.typography.labelMedium, color = colors.textMuted)
+            DictationFailureCard(
+                notice = failure,
+                onRetry = onRetry,
+                onDictateOnDevice = onDictateOnDevice,
+                onDismiss = onDiscard,
+            )
+        }
+        return
+    }
+    if (progress.transcribing) {
+        Row(
+            modifier.fillMaxWidth().background(colors.bgPrimary).padding(vertical = OmSpacing.md),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(OmSpacing.md),
+        ) {
+            MicDisc(scale = 1f, alpha = 0.45f)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(OmSpacing.xs)) {
+                Text(title, style = MaterialTheme.typography.labelMedium, color = colors.textMuted)
+                TranscribingStatus()
+            }
+        }
+        return
+    }
+    val recording = progress.recording
     Row(
         modifier
             .fillMaxWidth()
@@ -75,11 +115,20 @@ fun BriefRowDictating(
                 style = MaterialTheme.typography.labelMedium,
                 color = colors.textMuted,
             )
-            Text(
-                displayText.ifBlank { "Listening…" },
-                style = MaterialTheme.typography.bodyLarge,
-                color = if (displayText.isBlank()) colors.textMuted else colors.textPrimary,
-            )
+            if (recording != null) {
+                RecordingMeter(recording)
+                Text(
+                    "Tap to stop and send",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.textMuted,
+                )
+            } else {
+                Text(
+                    displayText.ifBlank { "Listening…" },
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (displayText.isBlank()) colors.textMuted else colors.textPrimary,
+                )
+            }
         }
     }
 }
@@ -93,7 +142,6 @@ fun BriefRowDictating(
  */
 @Composable
 private fun PulsingMic() {
-    val colors = OmTheme.colors
     val scale = if (LocalInspectionMode.current) {
         1f
     } else {
@@ -109,12 +157,19 @@ private fun PulsingMic() {
         )
         animated
     }
+    MicDisc(scale = scale, alpha = 1f)
+}
+
+/** The accent-filled mic disc; dimmed while the gateway has the recording. */
+@Composable
+private fun MicDisc(scale: Float, alpha: Float) {
+    val colors = OmTheme.colors
     Box(
         Modifier
             .size(40.dp)
             .scale(scale)
             .clip(CircleShape)
-            .background(colors.accent),
+            .background(colors.accent.copy(alpha = alpha)),
         contentAlignment = Alignment.Center,
     ) {
         Icon(

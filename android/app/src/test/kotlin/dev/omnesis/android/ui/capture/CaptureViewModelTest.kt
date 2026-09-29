@@ -12,8 +12,18 @@ import dev.omnesis.android.notes.PendingNotesStore
 import dev.omnesis.android.notes.QueueReason
 import dev.omnesis.android.transport.client.NotesClient
 import dev.omnesis.android.transport.http.GatewayHttp
+import dev.omnesis.android.ui.voice.DictationFailureNotice
+import dev.omnesis.android.ui.voice.VoiceRecording
+import dev.omnesis.android.voice.DictationFailure
+import dev.omnesis.android.voice.Endpointing
+import dev.omnesis.android.voice.FakeVoiceInput
+import dev.omnesis.android.voice.OnDeviceVoiceInput
+import dev.omnesis.android.voice.ScriptedVoiceInputs
+import dev.omnesis.android.voice.VoiceInputEnd
+import dev.omnesis.android.voice.VoiceInputs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -22,6 +32,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -64,11 +75,20 @@ class CaptureViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun makeVm(gateway: () -> NotesGateway?): CaptureViewModel {
+    private fun makeVm(
+        gateway: () -> NotesGateway?,
+        voiceInputs: VoiceInputs? = null,
+    ): CaptureViewModel {
         val context = ApplicationProvider.getApplicationContext<Context>()
         transcriber = FakeTranscriber(context)
         return CaptureViewModel(
-            transcriber = transcriber,
+            voiceInputs = voiceInputs ?: VoiceInputs(
+                gatewayStatus = MutableStateFlow(null),
+                newOnDevice = { OnDeviceVoiceInput(transcriber) },
+                newGateway = { _, _ -> error("gateway dictation is inactive") },
+                onDeviceAvailable = { true },
+                refreshGatewayStatus = {},
+            ),
             repository = NotesRepository(store = PendingNotesStore(context), gateway = gateway),
             savedStateHandle = SavedStateHandle(),
         )
@@ -214,6 +234,112 @@ class CaptureViewModelTest {
 
         assertEquals(SpeechState.LISTENING, vm.state.value.speech)
         assertEquals(10, transcriber.startCount)
+    }
+
+    @Test
+    fun gateway_dictation_records_then_transcribes_and_appends_the_transcript() {
+        val recording = FakeVoiceInput()
+        val vm = makeVm(gateway = { null }, voiceInputs = ScriptedVoiceInputs(true, gateway = mutableListOf(recording)).inputs)
+        vm.onTextEdited("Groceries:")
+        vm.onMicPermission(true)
+        assertEquals(Endpointing.MANUAL, recording.endpointing)
+
+        recording.listener!!.onRecording(0.4f, 3_200)
+        assertEquals(SpeechState.RECORDING, vm.state.value.speech)
+        assertEquals(VoiceRecording(0.4f, 3_200), vm.state.value.recording)
+
+        vm.stopListening()
+        assertEquals(1, recording.stopCount)
+        recording.listener!!.onTranscribing()
+        assertEquals(SpeechState.TRANSCRIBING, vm.state.value.speech)
+        assertNull(vm.state.value.recording)
+        // Saving now would drop the words on their way.
+        vm.save()
+        assertEquals(SaveState.Idle, vm.state.value.save)
+
+        recording.listener!!.onText("rice, miso and scallions")
+        recording.listener!!.onEnded(VoiceInputEnd.Finished)
+        assertEquals("Groceries: rice, miso and scallions", vm.state.value.text)
+        assertEquals(SpeechState.IDLE, vm.state.value.speech)
+    }
+
+    @Test
+    fun a_failed_transcription_offers_retry_and_retry_resends_the_kept_recording() {
+        val recording = FakeVoiceInput()
+        val vm = makeVm(gateway = { null }, voiceInputs = ScriptedVoiceInputs(true, gateway = mutableListOf(recording)).inputs)
+        vm.onMicPermission(true)
+        vm.stopListening()
+        recording.listener!!.onTranscribing()
+        recording.listener!!.onEnded(VoiceInputEnd.Failed(DictationFailure("Couldn't reach your gateway.", retryable = true)))
+
+        assertEquals(
+            DictationFailureNotice("Couldn't reach your gateway.", canRetry = true, canDictateOnDevice = true),
+            vm.state.value.dictationFailure,
+        )
+        assertEquals(SpeechState.IDLE, vm.state.value.speech)
+
+        vm.retryTranscription()
+        assertEquals(1, recording.retryCount)
+        assertNull(vm.state.value.dictationFailure)
+        recording.listener!!.onTranscribing()
+        recording.listener!!.onText("renew the car insurance")
+        recording.listener!!.onEnded(VoiceInputEnd.Finished)
+        assertEquals("renew the car insurance", vm.state.value.text)
+        assertEquals(0, recording.cancelCount)
+    }
+
+    @Test
+    fun dictating_on_the_phone_after_a_failure_abandons_the_kept_recording() {
+        val recording = FakeVoiceInput()
+        val phone = FakeVoiceInput()
+        val scripted = ScriptedVoiceInputs(true, gateway = mutableListOf(recording), onDevice = mutableListOf(phone))
+        val vm = makeVm(gateway = { null }, voiceInputs = scripted.inputs)
+        vm.onMicPermission(true)
+        recording.listener!!.onEnded(VoiceInputEnd.Failed(DictationFailure("Transcription didn't finish.", retryable = true)))
+
+        vm.dictateOnDevice()
+        assertEquals(1, recording.cancelCount)
+        assertEquals(1, phone.startCount)
+        assertEquals(SpeechState.LISTENING, vm.state.value.speech)
+        assertNull(vm.state.value.dictationFailure)
+        // The abandoned recording can no longer write into the note.
+        recording.listener!!.onText("late transcript")
+        assertEquals("", vm.state.value.text)
+    }
+
+    @Test
+    fun dismissing_a_failure_or_leaving_the_screen_deletes_the_recording() {
+        val recording = FakeVoiceInput()
+        val vm = makeVm(gateway = { null }, voiceInputs = ScriptedVoiceInputs(true, gateway = mutableListOf(recording)).inputs)
+        vm.onMicPermission(true)
+        recording.listener!!.onEnded(VoiceInputEnd.Failed(DictationFailure("Transcription didn't finish.", retryable = true)))
+        vm.dismissDictationFailure()
+        assertEquals(1, recording.cancelCount)
+        assertNull(vm.state.value.dictationFailure)
+        vm.retryTranscription()
+        assertEquals(0, recording.retryCount)
+    }
+
+    @Test
+    fun typing_during_a_gateway_recording_finishes_it_instead_of_discarding_it() {
+        val recording = FakeVoiceInput()
+        val vm = makeVm(gateway = { null }, voiceInputs = ScriptedVoiceInputs(true, gateway = mutableListOf(recording)).inputs)
+        vm.onMicPermission(true)
+        recording.listener!!.onRecording(0.2f, 900)
+        vm.onTextEdited("Note:")
+        assertEquals(1, recording.stopCount)
+        assertEquals(0, recording.cancelCount)
+    }
+
+    @Test
+    fun a_final_gateway_failure_offers_no_retry() {
+        val recording = FakeVoiceInput()
+        val vm = makeVm(gateway = { null }, voiceInputs = ScriptedVoiceInputs(true, gateway = mutableListOf(recording)).inputs)
+        vm.onMicPermission(true)
+        recording.listener!!.onEnded(VoiceInputEnd.Failed(DictationFailure("Gateway dictation is switched off.", retryable = false)))
+        assertEquals(false, vm.state.value.dictationFailure?.canRetry)
+        vm.retryTranscription()
+        assertEquals(0, recording.retryCount)
     }
 
     @Test

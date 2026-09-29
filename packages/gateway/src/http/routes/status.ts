@@ -27,6 +27,7 @@ import { scope } from "../scope.js";
 import { GATEWAY_VERSION } from "../../version.js";
 import { GATEWAY_COMPAT } from "../../compat.js";
 import { BadRequestError, ValidationError } from "../errors.js";
+import { inactiveDictationStatus, type DictationFeatureStatus } from "../../dictation/index.js";
 import type { ReleaseCheckSnapshot } from "@omnesis/core/release-check";
 import type { DiskUsageSnapshot } from "@omnesis/core/doctor";
 import type { BriefsFeatureStatus } from "../../brain/index.js";
@@ -65,6 +66,11 @@ export interface StatusRoutesDeps {
    */
   getBriefsStatus?: () => BriefsFeatureStatus;
   /**
+   * Gateway dictation gate (experimental). When omitted, `/status` advertises
+   * the feature inactive, so clients keep on-device dictation.
+   */
+  getDictationStatus?: () => DictationFeatureStatus;
+  /**
    * The gateway's whole on-disk footprint, by store. When omitted, `/status`
    * reports `diskUsage: null` and clients fall back to `dbSizeBytes`.
    */
@@ -88,6 +94,7 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
     getConfigHealth,
     getReleaseCheck,
     getBriefsStatus,
+    getDictationStatus,
     getDiskUsage,
   } = deps;
   // Health check + version. Public so liveness probes and clients can
@@ -468,6 +475,12 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       // once iOS and Android read `brain`.
       brain: brainGate,
       briefs: brainGate,
+      // Gateway dictation (experimental): whether the setting may show, whether
+      // the operator switched it on, whether a runnable transcriber is
+      // assigned, and whether the mobile apps should send dictation audio to
+      // `POST /dictation/transcribe`. A client that finds no field, or finds it
+      // inactive, keeps its on-device recognizer.
+      dictation: getDictationStatus?.() ?? inactiveDictationStatus(),
       // How long the gateway believes a client's "I am showing this
       // conversation" mark without a refresh. Clients pace their own refresh
       // off this rather than hardcoding a second number that has to stay

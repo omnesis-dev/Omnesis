@@ -83,11 +83,15 @@ import dev.omnesis.android.ui.agent.AgentUnknownPartNotice
 import dev.omnesis.android.ui.agent.AgentWatchCard
 import dev.omnesis.android.ui.agent.AssistantTurn
 import dev.omnesis.android.ui.agent.CitationsDrawer
+import dev.omnesis.android.ui.agent.ComposerDictation
+import dev.omnesis.android.ui.agent.ComposerDictationPhase
+import dev.omnesis.android.ui.agent.ComposerDictationState
 import dev.omnesis.android.ui.agent.ReportArtifact
 import dev.omnesis.android.ui.agent.ResearchWorkspace
 import dev.omnesis.android.ui.agent.SlashCommand
 import dev.omnesis.android.ui.agent.TrailTimeline
 import dev.omnesis.android.ui.agent.UserBubble
+import dev.omnesis.android.ui.voice.DictationFailureNotice
 import dev.omnesis.android.ui.common.CursorPagingState
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -1281,6 +1285,102 @@ class AgentParityScreenshotTest {
             AgentComposer(busy = true, enabled = true, onSend = { _, _ -> }, onStop = {})
         }
     }
+
+    // --- Composer mic: idle, live on-device words, gateway recording / transcribing / failed ---
+
+    private fun composerWithDictation(state: ComposerDictationState, initialText: String = ""): @Composable () -> Unit = {
+        Box(Modifier.fillMaxWidth().background(OmTheme.colors.bgPrimary), contentAlignment = Alignment.BottomCenter) {
+            AgentComposer(
+                busy = false, enabled = true, onSend = { _, _ -> }, onStop = {},
+                initialText = initialText,
+                dictation = ComposerDictation(state = state),
+            )
+        }
+    }
+
+    @Test
+    fun agent_composer_mic_idle_dark() = capture(
+        "agent_parity_composer_mic_idle_dark",
+        dark = true,
+        content = composerWithDictation(ComposerDictationState(available = true)),
+    )
+
+    @Test
+    fun agent_composer_mic_idle_light() = capture(
+        "agent_parity_composer_mic_idle_light",
+        dark = false,
+        content = composerWithDictation(ComposerDictationState(available = true)),
+    )
+
+    @Test
+    fun agent_composer_mic_listening_dark() = capture(
+        "agent_parity_composer_mic_listening_dark",
+        dark = true,
+        content = composerWithDictation(
+            ComposerDictationState(
+                available = true,
+                phase = ComposerDictationPhase.Listening,
+                liveText = "summarize what Jamie Lopez sent",
+            ),
+            initialText = "Please",
+        ),
+    )
+
+    @Test
+    fun agent_composer_mic_recording_dark() = capture(
+        "agent_parity_composer_mic_recording_dark",
+        dark = true,
+        content = composerWithDictation(
+            ComposerDictationState(available = true, phase = ComposerDictationPhase.Recording(0.6f, 7_000)),
+        ),
+    )
+
+    @Test
+    fun agent_composer_mic_recording_light() = capture(
+        "agent_parity_composer_mic_recording_light",
+        dark = false,
+        content = composerWithDictation(
+            ComposerDictationState(available = true, phase = ComposerDictationPhase.Recording(0.6f, 7_000)),
+        ),
+    )
+
+    @Test
+    fun agent_composer_mic_transcribing_dark() = capture(
+        "agent_parity_composer_mic_transcribing_dark",
+        dark = true,
+        content = composerWithDictation(
+            ComposerDictationState(available = true, phase = ComposerDictationPhase.Transcribing),
+            initialText = "Plan for Saturday:",
+        ),
+    )
+
+    @Test
+    fun agent_composer_mic_failed_dark() = capture(
+        "agent_parity_composer_mic_failed_dark",
+        dark = true,
+        content = composerWithDictation(
+            ComposerDictationState(
+                available = true,
+                phase = ComposerDictationPhase.Failed(
+                    DictationFailureNotice("Your gateway couldn't transcribe this recording.", canRetry = true, canDictateOnDevice = true),
+                ),
+            ),
+        ),
+    )
+
+    @Test
+    fun agent_composer_mic_failed_light() = capture(
+        "agent_parity_composer_mic_failed_light",
+        dark = false,
+        content = composerWithDictation(
+            ComposerDictationState(
+                available = true,
+                phase = ComposerDictationPhase.Failed(
+                    DictationFailureNotice("Your gateway couldn't transcribe this recording.", canRetry = true, canDictateOnDevice = true),
+                ),
+            ),
+        ),
+    )
 
     // --- `/`→Deep Research pill: slash typeahead open + armed pill ---
     //

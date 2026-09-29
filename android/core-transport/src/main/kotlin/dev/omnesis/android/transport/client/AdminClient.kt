@@ -28,6 +28,7 @@ import dev.omnesis.android.transport.dto.CreateSourceBody
 import dev.omnesis.android.transport.dto.CreateTokenBody
 import dev.omnesis.android.transport.dto.DeleteAllResponse
 import dev.omnesis.android.transport.dto.DeviceRecord
+import dev.omnesis.android.transport.dto.DictationConfigPatch
 import dev.omnesis.android.transport.dto.InstallModelBody
 import dev.omnesis.android.transport.dto.InstallModelReply
 import dev.omnesis.android.transport.dto.MintedToken
@@ -604,6 +605,18 @@ class AdminClient(private val http: GatewayHttp) {
                     ),
                 ),
             ),
+        )
+    }
+
+    /**
+     * `PATCH /admin/config` — switch gateway dictation (experimental) on or off.
+     * A gateway-wide setting: it applies to every paired phone, and takes effect
+     * only in experimental mode with a runnable transcriber assigned.
+     */
+    suspend fun setTranscribeOnGateway(enabled: Boolean) {
+        http.patchJson<DictationConfigPatch, OkResponse>(
+            "admin/config",
+            DictationConfigPatch.transcribeOnGateway(enabled),
         )
     }
 

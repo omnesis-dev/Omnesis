@@ -3,7 +3,17 @@
 
 package dev.omnesis.android.ui.agent
 
+import android.Manifest
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import android.content.pm.PackageManager
 import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.snap
@@ -87,6 +97,9 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.omnesis.android.designsystem.theme.OmTheme
@@ -114,9 +127,11 @@ fun AgentScreen(
     onOpenSettings: () -> Unit = {},
     onOpenModels: () -> Unit = {},
     vm: AgentViewModel = hiltViewModel(),
+    dictationVm: ComposerDictationViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val experimental by vm.experimentalEnabled.collectAsStateWithLifecycle()
+    val dictation = rememberComposerDictation(dictationVm)
     // This composable is the only thing that knows a transcript is actually
     // rendered. Scoped to the session so switching conversations withdraws the
     // old claim before making the new one, and torn down when the user moves
@@ -149,7 +164,53 @@ fun AgentScreen(
         onOpenModels = onOpenModels,
         experimental = experimental,
         onLoadOlderMessages = vm::loadOlderMessages,
+        dictation = dictation,
     )
+}
+
+/** Binds the composer's mic to its view model, asking for the microphone permission on first use. */
+@Composable
+private fun rememberComposerDictation(vm: ComposerDictationViewModel): ComposerDictation {
+    val state by vm.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            vm.toggle()
+        } else {
+            // Android stops showing its prompt after a refusal it will not repeat; then only
+            // the app's system settings can grant the microphone.
+            val activity = context.findActivity()
+            val permanently = activity != null &&
+                !ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.RECORD_AUDIO)
+            vm.onMicPermissionDenied(permanently)
+        }
+    }
+    return ComposerDictation(
+        state = state,
+        onMicTap = {
+            val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED
+            if (granted) vm.toggle() else permission.launch(Manifest.permission.RECORD_AUDIO)
+        },
+        onDraftEdited = vm::onDraftEdited,
+        onSent = vm::onSent,
+        onRetry = vm::retry,
+        onDictateOnDevice = vm::dictateOnDevice,
+        onDismissFailure = vm::dismissFailure,
+        onOpenSettings = {
+            context.startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)),
+            )
+        },
+        onDraftReplaced = vm::onDraftReplaced,
+        onDeliveryConsumed = vm::onDeliveryConsumed,
+    )
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }
 
 @Composable
@@ -174,6 +235,7 @@ fun AgentContent(
     onTogglePin: (String, Boolean) -> Unit = { _, _ -> },
     onDeleteConversation: (String) -> Unit = {},
     onDismissConversationActionError: () -> Unit = {},
+    dictation: ComposerDictation = ComposerDictation.NONE,
 ) {
     var showCitations by remember { mutableStateOf(false) }
     var conversationMenuOpen by remember(state.sessionId) {
@@ -261,6 +323,7 @@ fun AgentContent(
                             onRestoreConsumed = onAckSendRejected,
                             requestFocus = state.sessionId == null,
                             composerGeneration = state.composerGeneration,
+                            dictation = dictation,
                         )
                     }
                 }

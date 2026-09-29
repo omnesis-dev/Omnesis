@@ -21,7 +21,9 @@ import dev.omnesis.android.setup.flow.notificationPromptAvailable as notificatio
 import dev.omnesis.android.sources.SourceCatalog
 import dev.omnesis.android.transport.PermissionHealthCoordinator
 import dev.omnesis.android.transport.PermissionHealthEntry
+import dev.omnesis.android.transport.dto.DictationStatusDto
 import dev.omnesis.android.transport.ws.DeviceSocket.ConnectionState
+import dev.omnesis.android.ui.common.classifyGatewayError
 import dev.omnesis.android.ui.phonesetup.BackgroundSyncingState
 import dev.omnesis.android.ui.phonesetup.PhoneSetupCoordinator
 import dev.omnesis.android.ui.phonesetup.PhoneSetupSummary
@@ -29,7 +31,9 @@ import dev.omnesis.android.ui.phonesetup.UnusedAppRestrictionsReader
 import dev.omnesis.android.ui.phonesetup.backgroundSyncingState
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -194,4 +198,101 @@ class SettingsViewModel @Inject constructor(
 
     /** Wipe the token and return to the pairing surface to scan a fresh code. */
     fun repair() = session.beginRepair()
+
+    /** A gateway-dictation switch write in flight, or what it left behind. */
+    private val voiceWrite = MutableStateFlow(VoiceWrite())
+
+    /** The Voice section, or null to hide it: only an experimental gateway offers the switch. */
+    val voice: StateFlow<VoiceSettingsState?> = combine(
+        session.experimentalEnabled,
+        session.dictation,
+        session.state,
+        voiceWrite,
+    ) { experimental, dictation, appState, write ->
+        voiceSettingsState(experimental, dictation, write, paired = appState is SessionManager.AppState.Paired)
+    }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /**
+     * Switches gateway dictation for every paired device, then re-reads the gateway's
+     * verdict. When the write landed but the re-read failed, the switch keeps the value
+     * just written rather than snapping back to a status known to be out of date.
+     */
+    fun setTranscribeOnGateway(enabled: Boolean) {
+        val current = session.session ?: return
+        if (voiceWrite.value.pending != null) return
+        voiceWrite.value = VoiceWrite(pending = enabled)
+        viewModelScope.launch {
+            try {
+                current.admin.setTranscribeOnGateway(enabled)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                voiceWrite.value = VoiceWrite(error = classifyGatewayError(e))
+                return@launch
+            }
+            voiceWrite.value = if (session.refreshStatus()) {
+                VoiceWrite()
+            } else {
+                VoiceWrite(saved = enabled, savedOver = session.dictation.value)
+            }
+        }
+    }
 }
+
+/** What the Voice section shows. */
+data class VoiceSettingsState(
+    /** The switch position: the gateway's setting, or the value being or just written. */
+    val transcribeOnGateway: Boolean,
+    /** A write is in flight; the switch waits for it. */
+    val saving: Boolean = false,
+    /** Whether a gateway is paired to write the setting to. */
+    val canChange: Boolean = true,
+    /**
+     * Why dictation still runs on the phone although the switch is on — the
+     * transcriber cannot run. Null when nothing stands in the way, or while the
+     * status it comes from is being rewritten.
+     */
+    val blockedReason: String? = null,
+    /** The setting was saved but the gateway's status could not be re-read. */
+    val notice: String? = null,
+    /** The last write failed. */
+    val error: String? = null,
+)
+
+/**
+ * The switch's own write state. [saved] is a value the gateway accepted while its
+ * status could not be re-read; it holds only as long as the status is still the one it
+ * was saved over ([savedOver]), so the next status the gateway reports wins.
+ */
+internal data class VoiceWrite(
+    val pending: Boolean? = null,
+    val error: String? = null,
+    val saved: Boolean? = null,
+    val savedOver: DictationStatusDto? = null,
+)
+
+internal fun voiceSettingsState(
+    experimental: Boolean,
+    dictation: DictationStatusDto?,
+    write: VoiceWrite,
+    paired: Boolean = true,
+): VoiceSettingsState? {
+    if (!experimental || dictation?.visible != true) return null
+    val saved = write.saved?.takeIf { write.savedOver == dictation }
+    val statusCurrent = write.pending == null && saved == null
+    return VoiceSettingsState(
+        transcribeOnGateway = write.pending ?: saved ?: dictation.enabled,
+        saving = write.pending != null,
+        canChange = paired,
+        blockedReason = if (statusCurrent && dictation.enabled && !dictation.modelAssigned) {
+            dictation.reason?.trim()?.takeIf { it.isNotEmpty() }?.let(::asSentence) ?: "No transcriber model can run."
+        } else {
+            null
+        },
+        notice = if (saved != null) "Saved. Your gateway's status will update when it can be read." else null,
+        error = write.error,
+    )
+}
+
+private fun asSentence(text: String): String = if (text.last() in ".!?") text else "$text."

@@ -53,13 +53,13 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Omnesis uses your location to record the places you spend time when Places is on, and to attach a location to a note you capture. Both are securely sent to your paired gateway.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Omnesis uses the microphone to capture your voice for speech-to-text input in the agent chat.</string>
+	<string>Omnesis uses the microphone when you dictate to the agent, a brief or Tell Omnesis. When gateway dictation is on, the recording is sent to your own Omnesis gateway to be transcribed.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>Omnesis reads the motion-activity history you enable and securely sends it to your paired gateway for your private search and analytics.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Omnesis reads the photos you allow to extract text, captions, and metadata for your private search and analytics. Photos stay on your devices; extracted text and metadata are securely sent to your paired gateway.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Omnesis uses on-device speech recognition to let you dictate queries to the agent instead of typing.</string>
+	<string>Omnesis uses speech recognition to show your words as you dictate to the agent, a brief or Tell Omnesis, instead of typing.</string>
 	<key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>
 	<true/>
 	<key>UIAppFonts</key>

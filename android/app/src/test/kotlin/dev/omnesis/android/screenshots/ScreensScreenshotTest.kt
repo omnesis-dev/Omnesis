@@ -9,6 +9,7 @@ import dev.omnesis.android.designsystem.components.DeleteDocumentDialog
 import dev.omnesis.android.ui.common.CursorPagingState
 import dev.omnesis.android.ui.briefs.BriefsListContent
 import dev.omnesis.android.ui.briefs.BriefsFeedState
+import dev.omnesis.android.ui.briefs.BriefDictationProgress
 import dev.omnesis.android.ui.briefs.BriefDetailSheet
 import dev.omnesis.android.ui.briefs.BriefDismissSheet
 import dev.omnesis.android.transport.dto.BriefRecordDto
@@ -29,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.github.takahirom.roborazzi.captureRoboImage
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalInspectionMode
 import dev.omnesis.android.designsystem.theme.OmSpacing
@@ -81,6 +83,10 @@ import dev.omnesis.android.ui.settings.AboutSection
 import dev.omnesis.android.ui.settings.AppearanceMode
 import dev.omnesis.android.ui.settings.SettingsContent
 import dev.omnesis.android.ui.settings.SettingsViewModel
+import dev.omnesis.android.ui.settings.VoiceSection
+import dev.omnesis.android.ui.voice.DictationFailureNotice
+import dev.omnesis.android.ui.voice.VoiceRecording
+import dev.omnesis.android.ui.settings.VoiceSettingsState
 import dev.omnesis.android.ui.settings.sampleAppVersion
 import dev.omnesis.android.ui.sources.SourceDetailContent
 import dev.omnesis.android.ui.sources.SourceDetailUi
@@ -385,6 +391,53 @@ class ScreensScreenshotTest {
         BriefsSample(briefsFeed, dictatingBriefId = "b1", dictationText = "")
     }
 
+    // --- Gateway dictation at a brief: recording, transcribing, failed ---
+
+    @Test
+    fun briefs_gateway_recording_dark() = capture("briefs_gateway_recording_dark", dark = true) {
+        BriefsSample(
+            briefsFeed,
+            dictatingBriefId = "b1",
+            dictationProgress = BriefDictationProgress(recording = VoiceRecording(0.55f, 6_000)),
+        )
+    }
+
+    @Test
+    fun briefs_gateway_recording_light() = capture("briefs_gateway_recording_light", dark = false) {
+        BriefsSample(
+            briefsFeed,
+            dictatingBriefId = "b1",
+            dictationProgress = BriefDictationProgress(recording = VoiceRecording(0.55f, 6_000)),
+        )
+    }
+
+    @Test
+    fun briefs_gateway_transcribing_dark() = capture("briefs_gateway_transcribing_dark", dark = true) {
+        BriefsSample(briefsFeed, dictatingBriefId = "b1", dictationProgress = BriefDictationProgress(transcribing = true))
+    }
+
+    @Test
+    fun briefs_gateway_failed_dark() = capture("briefs_gateway_failed_dark", dark = true) {
+        BriefsSample(
+            briefsFeed,
+            dictatingBriefId = "b1",
+            dictationProgress = BriefDictationProgress(
+                failure = DictationFailureNotice("Couldn't reach your gateway.", canRetry = true, canDictateOnDevice = true),
+            ),
+        )
+    }
+
+    @Test
+    fun briefs_gateway_failed_light() = capture("briefs_gateway_failed_light", dark = false) {
+        BriefsSample(
+            briefsFeed,
+            dictatingBriefId = "b1",
+            dictationProgress = BriefDictationProgress(
+                failure = DictationFailureNotice("Couldn't reach your gateway.", canRetry = true, canDictateOnDevice = true),
+            ),
+        )
+    }
+
     @Test
     fun briefs_swipe_actions_light() = capture("briefs_swipe_actions_light", dark = false) {
         BriefsSample(briefsFeed, revealedActionsBriefId = "b1")
@@ -438,6 +491,7 @@ class ScreensScreenshotTest {
         paging: CursorPagingState = CursorPagingState(),
         dictatingBriefId: String? = null,
         dictationText: String = "",
+        dictationProgress: BriefDictationProgress = BriefDictationProgress(),
         revealedActionsBriefId: String? = null,
         needsBackgroundAgent: Boolean = false,
     ) {
@@ -455,6 +509,7 @@ class ScreensScreenshotTest {
                 onRetry = {}, onRefresh = {},
                 dictatingBriefId = dictatingBriefId,
                 dictationText = dictationText,
+                dictationProgress = dictationProgress,
                 revealedActionsBriefId = revealedActionsBriefId,
                 needsBackgroundAgent = needsBackgroundAgent,
                 now = briefsNow,
@@ -883,6 +938,58 @@ class ScreensScreenshotTest {
                 .background(OmTheme.colors.bgPrimary)
                 .padding(OmSpacing.lg),
         ) { AboutSection(sampleAppVersion()) }
+    }
+
+    // The Voice section (experimental gateway dictation) renders on its own for the
+    // same reason as About: it sits below the captured viewport.
+    @Composable
+    private fun VoiceSectionAlone(voice: VoiceSettingsState) {
+        Column(
+            Modifier
+                .background(OmTheme.colors.bgPrimary)
+                .padding(OmSpacing.lg),
+        ) { VoiceSection(voice, onSetTranscribeOnGateway = {}, onOpenModels = {}) }
+    }
+
+    @Test
+    fun settings_voice_off_dark() = capture("settings_voice_off_dark", dark = true) {
+        VoiceSectionAlone(VoiceSettingsState(transcribeOnGateway = false))
+    }
+
+    @Test
+    fun settings_voice_off_light() = capture("settings_voice_off_light", dark = false) {
+        VoiceSectionAlone(VoiceSettingsState(transcribeOnGateway = false))
+    }
+
+    @Test
+    fun settings_voice_blocked_dark() = capture("settings_voice_blocked_dark", dark = true) {
+        VoiceSectionAlone(
+            VoiceSettingsState(transcribeOnGateway = true, blockedReason = "No transcriber model is assigned."),
+        )
+    }
+
+    @Test
+    fun settings_voice_blocked_light() = capture("settings_voice_blocked_light", dark = false) {
+        VoiceSectionAlone(
+            VoiceSettingsState(transcribeOnGateway = true, blockedReason = "No transcriber model is assigned."),
+        )
+    }
+
+    @Test
+    fun settings_voice_saved_unconfirmed_light() = capture("settings_voice_saved_unconfirmed_light", dark = false) {
+        VoiceSectionAlone(
+            VoiceSettingsState(
+                transcribeOnGateway = true,
+                notice = "Saved. Your gateway's status will update when it can be read.",
+            ),
+        )
+    }
+
+    @Test
+    fun settings_voice_saving_error_dark() = capture("settings_voice_saving_error_dark", dark = true) {
+        VoiceSectionAlone(
+            VoiceSettingsState(transcribeOnGateway = true, error = "Couldn't reach your gateway."),
+        )
     }
 
     @Test

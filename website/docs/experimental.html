@@ -28,13 +28,13 @@
     </script>
     <meta
       name="description"
-      content="Unstable Omnesis features behind OMNESIS_EXPERIMENTAL=1: how Omnesis Brain and Omnesis Watch work, what they spend, and how to observe and stop them."
+      content="Unstable Omnesis features behind OMNESIS_EXPERIMENTAL=1: how Omnesis Brain, Omnesis Watch and gateway dictation work, what they spend, and how to observe and stop them."
     />
     <link rel="canonical" href="https://omnesis.dev/docs/experimental" />
     <meta property="og:title" content="Experimental — Omnesis Docs" />
     <meta
       property="og:description"
-      content="Unstable Omnesis features behind OMNESIS_EXPERIMENTAL=1: how Omnesis Brain and Omnesis Watch work, what they spend, and how to observe and stop them."
+      content="Unstable Omnesis features behind OMNESIS_EXPERIMENTAL=1: how Omnesis Brain, Omnesis Watch and gateway dictation work, what they spend, and how to observe and stop them."
     />
     <meta property="og:image" content="https://omnesis.dev/og-image.png" />
     <meta property="og:type" content="website" />
@@ -138,6 +138,7 @@
               <ul class="side-sub">
                 <li><a href="#brain">Omnesis Brain</a></li>
                 <li><a href="#watch">Omnesis Watch</a></li>
+                <li><a href="#gateway-dictation">Gateway dictation</a></li>
               </ul>
             </li>
           </ul>
@@ -148,11 +149,13 @@
         <p class="docs-kicker">Experimental</p>
         <h1>Experimental</h1>
         <p class="docs-lead">
-          Omnesis ships two features switched off because they are not yet stable:
+          Omnesis ships three features switched off because they are not yet stable:
           <strong>Omnesis Brain</strong>, which reads your data in the background and keeps cited
-          notes, loops and briefs about it, and <strong>Omnesis Watch</strong>, which tells you or
-          an agent when a condition you describe becomes true. This page is for operators who want
-          to run them: how each works, what it spends, how to observe it and how to stop it.
+          notes, loops and briefs about it, <strong>Omnesis Watch</strong>, which tells you or an
+          agent when a condition you describe becomes true, and <strong>gateway dictation</strong>,
+          which transcribes what you dictate in the mobile apps with the gateway's transcriber. This
+          page is for operators who want to run them: how each works, what it spends, how to observe
+          it and how to stop it.
         </p>
         <div class="callout warn">
           <strong>These features are experimental</strong> as they are unstable and
@@ -160,9 +163,10 @@
         </div>
         <p>
           Nothing here is visible unless the process was started with
-          <code>OMNESIS_EXPERIMENTAL=1</code>. Set it on the gateway to reveal Brain, Watch and
-          their controls; with it unset the gateway serves none of their routes, schedules none of
-          their work and creates none of their files. For a gateway you run in the foreground:
+          <code>OMNESIS_EXPERIMENTAL=1</code>. Set it on the gateway to reveal Brain, Watch, gateway
+          dictation and their controls; with it unset the gateway serves none of their routes,
+          schedules none of their work and creates none of their files. For a gateway you run in the
+          foreground:
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -1930,6 +1934,81 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/admin/watch/compile" \
             </tbody>
           </table>
         </div>
+
+        <h2 id="gateway-dictation">Gateway dictation</h2>
+        <p>
+          The iOS and Android apps turn speech into text with the phone's own recognizer. With
+          gateway dictation on, they record what you dictate and send the audio to your gateway,
+          whose <strong>Transcriber</strong> model — the same local Whisper model that transcribes
+          voice notes from your sources — returns the text. The audio goes only to your gateway, is
+          held for the length of the request and is never stored.
+        </p>
+        <p>It applies where the app itself holds the microphone:</p>
+        <ul>
+          <li>the microphone in an agent conversation;</li>
+          <li>replying to a brief by voice;</li>
+          <li>
+            Tell Omnesis, including its Control Center control, Quick Settings tile and app
+            shortcut;
+          </li>
+          <li>
+            an Ask or Tell Omnesis request from Google Assistant that opens the app to listen.
+          </li>
+        </ul>
+        <p>
+          Siri, Shortcuts, Apple Watch dictation and a Google Assistant request that already carries
+          its words hand the app finished text, so they are unaffected.
+        </p>
+
+        <h3 id="gateway-dictation-turning-on">Turning it on</h3>
+        <p>
+          It needs three things: the gateway in experimental mode, a Transcriber model assigned
+          under <strong>Settings → Models → Transcriber</strong>, and the
+          <strong>Dictation from the mobile apps</strong> switch on that same page. The apps show
+          the same switch under <strong>Settings → Voice</strong>. It is a gateway setting, so it
+          applies to every phone paired with the gateway. In <code>omnesis.json</code> it is:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <pre>
+"inference": {
+  "dictation": { "transcribeOnGateway": true }
+}</pre
+            >
+          </div>
+        </div>
+        <p>
+          <code>GET /status</code> reports the combined verdict as <code>dictation</code>, and the
+          apps use the gateway only while its <code>active</code> field is true. Switched on without
+          a runnable transcriber, the setting shows why it has no effect and the apps keep
+          transcribing on the phone.
+        </p>
+
+        <h3 id="gateway-dictation-behaviour">What changes while you dictate</h3>
+        <p>
+          The text now arrives after you stop speaking rather than word by word, and the app says it
+          is transcribing on your gateway until it does. A recording is capped at five minutes.
+          Dictation goes ahead of voice notes still queued for your sources, but it waits for one
+          already being transcribed, and a transcriber that has been idle loads its model first, so
+          the first dictation after a quiet spell takes longest. While several dictations are
+          already waiting, the gateway turns new ones away at once rather than let them time out.
+        </p>
+        <p>
+          On iOS the phone's recognizer still runs alongside when it can, so your words appear as a
+          draft while you speak, and the gateway's text replaces the draft when it arrives. You can
+          keep the draft instead of waiting, and if the gateway cannot be reached or the
+          transcription fails, the draft is kept and the app says so. Recording for the gateway
+          needs only microphone access, so it works where the phone's recognizer cannot. Android
+          cannot run its recognizer while the app records, so it shows the recording level instead;
+          if the gateway fails, the app keeps the recording and offers to try again or to dictate on
+          the phone.
+        </p>
+        <p>
+          To stop, switch the setting off. The apps return to the phone's recognizer once they next
+          read the gateway's status, which they do at the latest when they come back to the
+          foreground.
+        </p>
 
         <nav class="docs-pager" aria-label="Pages">
           <a href="/docs/building-sources"

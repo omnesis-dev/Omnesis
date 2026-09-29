@@ -41,6 +41,7 @@ import { ReleaseCheckService } from "./release-check/service.js";
 import { createReleaseCheckTask } from "./release-check/task.js";
 import { GatewayHttpShutdown } from "./gateway-http-shutdown.js";
 import { seedWebSourceMeta } from "./sources/web/source-meta.js";
+import { dictationFeatureStatus } from "./dictation/index.js";
 import {
   bootBriefs,
   briefsFeatureStatus,
@@ -2313,6 +2314,11 @@ const app = createServer(db, DB_PATH, {
   getConfigHealth: () => inferenceRegistry.configHealth(),
   getReleaseCheck: () => releaseCheckService.snapshot(),
   getBriefsStatus: () => briefsFeatureStatus(inferenceRegistry, chatRoleReadinessDeps),
+  getDictationStatus: () =>
+    dictationFeatureStatus({
+      transcriberReadiness: () => transcribeService.readiness(),
+      getConfig: () => configStore.get(),
+    }),
   getBriefTalkback: () => briefTalkback.port,
   briefsClock: briefsVirtualClock ?? undefined,
   cognitionActivity,

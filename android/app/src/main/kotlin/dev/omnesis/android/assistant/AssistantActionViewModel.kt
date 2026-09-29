@@ -12,7 +12,11 @@ import dev.omnesis.android.notes.CaptureOutcome
 import dev.omnesis.android.notes.NotesRepository
 import dev.omnesis.android.notes.QueueReason
 import dev.omnesis.android.ui.capture.CaptureSurface
-import dev.omnesis.android.ui.capture.SpeechTranscriber
+import dev.omnesis.android.ui.voice.DictationFailureNotice
+import dev.omnesis.android.voice.Endpointing
+import dev.omnesis.android.voice.VoiceInput
+import dev.omnesis.android.voice.VoiceInputEnd
+import dev.omnesis.android.voice.VoiceInputs
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,7 +27,7 @@ import kotlinx.coroutines.launch
 class AssistantActionViewModel @Inject constructor(
     private val askRunner: VoiceAskRunner,
     private val notes: NotesRepository,
-    private val transcriber: SpeechTranscriber,
+    private val voiceInputs: VoiceInputs,
     private val savedState: SavedStateHandle,
 ) : ViewModel() {
     private val _state = MutableStateFlow<AssistantActionUiState>(
@@ -35,7 +39,24 @@ class AssistantActionViewModel @Inject constructor(
     private var finalTranscript = ""
     private var deliveredInThisProcess = false
     private var requestGeneration = 0L
-    private var recognitionGeneration = 0L
+
+    /** The running dictation, or a failed gateway one whose recording awaits a retry. */
+    private var voice: VoiceInput? = null
+
+    /** Set when the person chose the phone's recognizer after a gateway failure, for this request. */
+    private var dictateOnDevice = false
+
+    /** Whether the Activity is in front; a transcript that lands while it is hidden waits for the person. */
+    private var foreground = true
+
+    init {
+        voiceInputs.refreshStatus(viewModelScope)
+    }
+
+    /** The Activity came to the front or left it. */
+    fun onForegroundChanged(visible: Boolean) {
+        foreground = visible
+    }
 
     fun handle(intent: Intent, freshDelivery: Boolean, trustedDelivery: Boolean = false) {
         if (!freshDelivery && savedState.get<Boolean>(KEY_HANDLED) == true) {
@@ -53,6 +74,7 @@ class AssistantActionViewModel @Inject constructor(
         requestGeneration++
         request = null
         finalTranscript = ""
+        dictateOnDevice = false
         cancelRecognition()
         val parsed = AssistantActionRequest.from(intent) ?: run {
             finish("Couldn't start", "That Omnesis action isn't supported.", successful = false)
@@ -89,11 +111,33 @@ class AssistantActionViewModel @Inject constructor(
 
     fun startListening() {
         if (request == null || _state.value !is AssistantActionUiState.Listening) return
-        if (!transcriber.isAvailable()) {
+        val input = if (dictateOnDevice) voiceInputs.onDevice() else voiceInputs.preferred(viewModelScope)
+        if (!input.isAvailable()) {
             finish("Speech unavailable", "Type your request in Omnesis instead.", successful = false)
             return
         }
-        beginRecognition()
+        beginRecognition(input)
+    }
+
+    /** The person is done speaking before the silence detector noticed. */
+    fun finishRecording() {
+        if (_state.value is AssistantActionUiState.Recording) voice?.stop()
+    }
+
+    /** Sends the kept recording to the gateway again. */
+    fun retryTranscription() {
+        val state = _state.value as? AssistantActionUiState.DictationFailed ?: return
+        if (!state.notice.canRetry) return
+        voice?.retry()
+    }
+
+    /** Abandons the failed recording and listens again on the phone's own recognizer. */
+    fun dictateOnDevice() {
+        val state = _state.value as? AssistantActionUiState.DictationFailed ?: return
+        cancelRecognition()
+        finalTranscript = ""
+        dictateOnDevice = true
+        _state.value = AssistantActionUiState.Listening(state.kind, deliveryId = requestGeneration)
     }
 
     fun awaitMicrophonePermission() {
@@ -110,17 +154,26 @@ class AssistantActionViewModel @Inject constructor(
         _state.value = AssistantActionUiState.Listening(state.kind, deliveryId = state.deliveryId)
     }
 
-    /** A voice action may listen only while its foreground Activity remains visible. */
+    /**
+     * A voice action may capture audio only while its foreground Activity remains
+     * visible. A recording already handed to the gateway is not capture, so its
+     * transcription carries on.
+     */
     fun stopListening() {
-        val state = _state.value as? AssistantActionUiState.Listening ?: return
+        val kind = when (val state = _state.value) {
+            is AssistantActionUiState.Listening -> state.kind
+            is AssistantActionUiState.Recording -> state.kind
+            else -> return
+        }
         cancelRecognition()
         finalTranscript = ""
-        _state.value = AssistantActionUiState.ReadyToListen(state.kind)
+        _state.value = AssistantActionUiState.ReadyToListen(kind)
     }
 
     fun microphoneDenied() {
         if (
             _state.value !is AssistantActionUiState.Listening &&
+            _state.value !is AssistantActionUiState.Recording &&
             _state.value !is AssistantActionUiState.AwaitingMicrophonePermission
         ) return
         cancelRecognition()
@@ -188,29 +241,33 @@ class AssistantActionViewModel @Inject constructor(
         cancelRecognition()
     }
 
-    private fun beginRecognition() {
-        val delivery = requestGeneration
-        recognitionGeneration++
-        val recognition = recognitionGeneration
-        transcriber.start(speechListener(delivery, recognition))
+    private fun beginRecognition(input: VoiceInput) {
+        voice?.cancel()
+        voice = input
+        input.start(Endpointing.SPEECH_END, speechListener(requestGeneration, input))
     }
 
     private fun cancelRecognition() {
-        recognitionGeneration++
-        transcriber.cancel()
+        voice?.cancel()
+        voice = null
     }
 
-    private fun recognitionIsCurrent(delivery: Long, recognition: Long): Boolean =
+    private fun recognitionIsCurrent(delivery: Long, input: VoiceInput): Boolean =
         delivery == requestGeneration &&
-            recognition == recognitionGeneration &&
-            _state.value is AssistantActionUiState.Listening
+            input === voice &&
+            (
+                _state.value is AssistantActionUiState.Listening ||
+                    _state.value is AssistantActionUiState.Recording ||
+                    _state.value is AssistantActionUiState.Transcribing ||
+                    _state.value is AssistantActionUiState.DictationFailed
+                )
 
     private fun speechListener(
         delivery: Long,
-        recognition: Long,
-    ) = object : SpeechTranscriber.Listener {
+        input: VoiceInput,
+    ) = object : VoiceInput.Listener {
         override fun onPartial(text: String) {
-            if (!recognitionIsCurrent(delivery, recognition)) return
+            if (!recognitionIsCurrent(delivery, input)) return
             val kind = request?.kind ?: return
             _state.value = AssistantActionUiState.Listening(
                 kind,
@@ -219,26 +276,51 @@ class AssistantActionViewModel @Inject constructor(
             )
         }
 
-        override fun onFinal(text: String) {
-            if (!recognitionIsCurrent(delivery, recognition)) return
+        override fun onText(text: String) {
+            if (!recognitionIsCurrent(delivery, input)) return
             finalTranscript = joinSpeech(finalTranscript, text)
         }
 
-        override fun onEnded(reason: SpeechTranscriber.EndReason) {
-            if (!recognitionIsCurrent(delivery, recognition)) return
+        override fun onRecording(level: Float, elapsedMs: Long) {
+            if (!recognitionIsCurrent(delivery, input)) return
+            val kind = request?.kind ?: return
+            _state.value = AssistantActionUiState.Recording(kind, level, elapsedMs, delivery)
+        }
+
+        override fun onTranscribing() {
+            if (!recognitionIsCurrent(delivery, input)) return
+            val kind = request?.kind ?: return
+            _state.value = AssistantActionUiState.Transcribing(kind)
+        }
+
+        override fun onEnded(end: VoiceInputEnd) {
+            if (!recognitionIsCurrent(delivery, input)) return
             val current = request ?: return
-            when (reason) {
-                SpeechTranscriber.EndReason.NORMAL -> {
-                    if (finalTranscript.isNotBlank()) execute(current.kind, finalTranscript)
-                    else beginRecognition()
+            if (end !is VoiceInputEnd.Failed || !end.failure.retryable) voice = null
+            when (end) {
+                VoiceInputEnd.Finished -> when {
+                    finalTranscript.isBlank() ->
+                        finish("Didn't catch that", "Nothing was heard. Start the action again to retry.", false)
+                    // A gateway transcript can arrive after the person switched away. Acting on
+                    // it (and speaking the answer) unseen would be a surprise; it waits for them.
+                    !foreground -> _state.value = AssistantActionUiState.Confirming(current.kind, finalTranscript.trim())
+                    else -> execute(current.kind, finalTranscript)
                 }
-                SpeechTranscriber.EndReason.FAULT ->
+                VoiceInputEnd.NoSpeech ->
+                    finish("Didn't catch that", "Nothing was heard. Start the action again to retry.", false)
+                VoiceInputEnd.Fault ->
                     finish("Speech stopped", "Tap the microphone and try again.", successful = false)
-                SpeechTranscriber.EndReason.DENIED -> microphoneDenied()
-                SpeechTranscriber.EndReason.LANGUAGE_NOT_DOWNLOADED ->
+                VoiceInputEnd.Denied -> microphoneDenied()
+                VoiceInputEnd.LanguageNotDownloaded ->
                     finish("Speech model missing", "Install this language in Speech Services by Google.", false)
-                SpeechTranscriber.EndReason.LANGUAGE_NOT_SUPPORTED ->
+                VoiceInputEnd.LanguageNotSupported ->
                     finish("Speech unavailable", "This language isn't available for offline dictation.", false)
+                VoiceInputEnd.Unavailable ->
+                    finish("Speech unavailable", "Type your request in Omnesis instead.", successful = false)
+                is VoiceInputEnd.Failed -> _state.value = AssistantActionUiState.DictationFailed(
+                    current.kind,
+                    DictationFailureNotice.of(end.failure, voiceInputs.onDeviceAvailable()),
+                )
             }
         }
     }

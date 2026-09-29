@@ -11,6 +11,7 @@ import dev.omnesis.android.assistant.AssistantActionContent
 import dev.omnesis.android.assistant.AssistantActionKind
 import dev.omnesis.android.assistant.AssistantActionUiState
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
+import dev.omnesis.android.ui.voice.DictationFailureNotice
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -53,6 +54,38 @@ class AssistantActionScreenshotTest {
     @Test fun confirming_capture_dark() = capture("assistant_confirming_capture_dark", true) {
         AssistantActionContent(
             AssistantActionUiState.Confirming(AssistantActionKind.CAPTURE, "Book the train tickets"),
+            {},
+        )
+    }
+
+    @Test fun gateway_recording_ask_dark() = capture("assistant_gateway_recording_ask_dark", true) {
+        AssistantActionContent(AssistantActionUiState.Recording(AssistantActionKind.ASK, 0.65f, 4_000, 1), {})
+    }
+
+    @Test fun gateway_recording_ask_light() = capture("assistant_gateway_recording_ask_light", false) {
+        AssistantActionContent(AssistantActionUiState.Recording(AssistantActionKind.ASK, 0.65f, 4_000, 1), {})
+    }
+
+    @Test fun gateway_transcribing_dark() = capture("assistant_gateway_transcribing_dark", true) {
+        AssistantActionContent(AssistantActionUiState.Transcribing(AssistantActionKind.CAPTURE), {})
+    }
+
+    @Test fun gateway_failed_dark() = capture("assistant_gateway_failed_dark", true) {
+        AssistantActionContent(
+            AssistantActionUiState.DictationFailed(
+                AssistantActionKind.ASK,
+                DictationFailureNotice("Couldn't reach your gateway.", canRetry = true, canDictateOnDevice = true),
+            ),
+            {},
+        )
+    }
+
+    @Test fun gateway_failed_light() = capture("assistant_gateway_failed_light", false) {
+        AssistantActionContent(
+            AssistantActionUiState.DictationFailed(
+                AssistantActionKind.ASK,
+                DictationFailureNotice("Couldn't reach your gateway.", canRetry = true, canDictateOnDevice = true),
+            ),
             {},
         )
     }

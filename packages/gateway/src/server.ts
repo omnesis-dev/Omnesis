@@ -52,6 +52,7 @@ import { mountPushRoutes } from "./http/routes/push.js";
 import { type EventBus } from "./events.js";
 import { registerModelRoutes } from "./models/routes.js";
 import { mountTranscribeRoutes } from "./http/routes/transcribe.js";
+import { mountDictationRoutes } from "./http/routes/dictation.js";
 import { mountOcrRoutes } from "./http/routes/ocr.js";
 import { HttpError, errorResponse } from "./http/errors.js";
 import { requestIdMiddleware } from "./http/middleware/request-id.js";
@@ -381,6 +382,12 @@ export function createServer(
      * shown-but-needs-a-model. Omitted ⇒ advertised inactive.
      */
     getBriefsStatus?: () => import("./brain/index.js").BriefsFeatureStatus;
+    /**
+     * Gateway dictation gate (experimental) — advertised as `dictation` on
+     * `GET /status` and enforced by `POST /dictation/transcribe`. Omitted ⇒
+     * the route is not mounted and `/status` advertises it inactive.
+     */
+    getDictationStatus?: () => import("./dictation/index.js").DictationFeatureStatus;
     getBriefTalkback?: () =>
       | import("./brain/talkback/talkback-service.js").BriefTalkbackPort
       | null;
@@ -1209,6 +1216,7 @@ export function createServer(
     getConfigHealth: opts?.getConfigHealth,
     getReleaseCheck: opts?.getReleaseCheck,
     getBriefsStatus: opts?.getBriefsStatus,
+    getDictationStatus: opts?.getDictationStatus,
     getDiskUsage: opts?.getDiskUsage,
   });
 
@@ -1245,14 +1253,20 @@ export function createServer(
     });
   }
 
-  // Speech-to-text route (gated behind the `stt` experimental feature inside
-  // the handler). Mounted only when a transcribe service was wired.
+  // Speech-to-text routes: source audio from the collector, and dictation from
+  // the mobile apps (experimental, gated inside its own module). Mounted only
+  // when a transcribe service was wired.
   if (opts?.transcribeService) {
     mountTranscribeRoutes(app, { transcribeService: opts.transcribeService });
+    if (opts.getDictationStatus) {
+      mountDictationRoutes(app, {
+        transcribeService: opts.transcribeService,
+        getStatus: opts.getDictationStatus,
+      });
+    }
   }
 
-  // OCR route (gated behind the `ocr` experimental feature inside the handler).
-  // Mounted only when an OCR service was wired.
+  // OCR route. Mounted only when an OCR service was wired.
   if (opts?.ocrService) {
     mountOcrRoutes(app, { ocrService: opts.ocrService });
   }

@@ -37,6 +37,11 @@ data class StatusSnapshot(
      * reads as "no feature" rather than as a fault.
      */
     val briefs: BriefsStatusDto? = null,
+    /**
+     * The gateway-dictation gate (experimental). Absent on a gateway that predates
+     * the field, which reads as inactive: dictation stays on the phone.
+     */
+    val dictation: DictationStatusDto? = null,
 ) {
     /**
      * What the "on disk" stat shows: the gateway's whole footprint, or the main
@@ -118,3 +123,24 @@ enum class BriefsMenuEntry {
         }
     }
 }
+
+/**
+ * Whether dictation audio from this app goes to the gateway's transcriber
+ * (`dictation` on `GET /status`). Mirrors `DictationFeatureStatus` in
+ * `packages/gateway/src/dictation/feature-gate.ts`.
+ */
+@Serializable
+data class DictationStatusDto(
+    /** The gateway runs in experimental mode, so the setting may be shown. */
+    val visible: Boolean = false,
+    /** The operator switched gateway dictation on. */
+    val enabled: Boolean = false,
+    /** A runnable transcriber model is assigned. */
+    val modelAssigned: Boolean = false,
+    /** All three hold: dictation should record audio and send it to the gateway. */
+    val active: Boolean = false,
+    /** Why the transcriber cannot run, when it cannot; addressed to the settings surface. */
+    val reason: String? = null,
+    /** The largest audio body `POST /dictation/transcribe` accepts. */
+    val maxAudioBytes: Long = 0,
+)

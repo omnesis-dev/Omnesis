@@ -9,6 +9,7 @@ import coil.ImageLoaderFactory
 import coil.decode.SvgDecoder
 import dev.omnesis.android.designsystem.image.DataUriFetcher
 import dev.omnesis.android.transport.MembershipRefusalCoordinator
+import dev.omnesis.android.voice.DictationRecordings
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
 
@@ -28,11 +29,18 @@ class OmnesisApp : Application(), ImageLoaderFactory {
     @Inject
     lateinit var membershipRefusals: MembershipRefusalCoordinator
 
+    @Inject
+    lateinit var dictationRecordings: DictationRecordings
+
     override fun onCreate() {
         super.onCreate()
         // Nothing else resolves this holder, and a refusal that arrives with
         // no settings screen open still has to put the phone's switch back.
         membershipRefusals.start()
+        // Recordings a killed process could not delete are the person's voice; remove
+        // them at start, off the main thread since it lists a directory.
+        val now = System.currentTimeMillis()
+        Thread({ dictationRecordings.sweepStale(now) }, "dictation-sweep").start()
     }
 
     override fun newImageLoader(): ImageLoader =
