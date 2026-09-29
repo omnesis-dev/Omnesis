@@ -40,6 +40,8 @@ function disposeRe2(matcher: RE2): void {
   // RE2 object owns an Emscripten class handle whose public runtime `delete()`
   // is the only deterministic way to return memory to the fixed WASM heap.
   // The package's generated JS and pinned version both provide this wrapper.
+  // Nothing here can reach what the constructor allocates besides the wrapper;
+  // `patches/re2-wasm+1.0.2.patch` makes the constructor free that itself.
   const wrapper = (matcher as unknown as { wrapper: DisposableRe2Wrapper }).wrapper;
   if (!wrapper.isDeleted()) wrapper.delete();
 }
