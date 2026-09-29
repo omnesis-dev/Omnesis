@@ -30,13 +30,13 @@ public struct NoteCaptureTime: Codable, Equatable, Sendable {
         )
     }
 
-    fileprivate var isoString: String {
+    var isoString: String {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter.string(from: capturedAt)
     }
 
-    fileprivate static func parseDate(_ value: String) -> Date? {
+    static func parseDate(_ value: String) -> Date? {
         let fractional = ISO8601DateFormatter()
         fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         if let parsed = fractional.date(from: value) { return parsed }

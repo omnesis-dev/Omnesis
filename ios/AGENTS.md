@@ -38,7 +38,24 @@ contracts `Sources/Omnesis/Intents/SiriAsk.swift` (ask),
 `Sources/Omnesis/Intents/WatchNote.swift` (note) and
 `Sources/Omnesis/Intents/WatchRelayDelivery.swift` (the delivery window, the
 `transferUserInfo` fallback a relay is queued on when the iPhone app never
-picks it up live, and the phone's handling of queued relays).
+picks it up live, and the phone's handling of queued relays) and
+`Sources/Omnesis/Intents/WatchVoice.swift` (gateway dictation on the watch —
+see below).
+
+**Gateway dictation on the watch (experimental).** While the iPhone reports
+gateway dictation on — the gate it keeps in `WatchDictationGateStore` and
+publishes in the WatchConnectivity application context, only once it has
+read the gateway's status — the watch's Ask and Note (complications and
+in-app buttons) record the audio themselves (`WatchVoiceCapture`, which
+needs the watch's microphone permission) instead of opening system
+dictation, hand the file to the phone with `transferFile`, and show "Sent to
+your iPhone." The phone keeps each recording in `WatchVoiceInbox`, transcribes
+it with the gateway — or on the device, strictly on-device, when the gateway
+cannot — and feeds the text to the same note and queued-ask paths
+(`WatchVoicePipeline`). A question's answer arrives as a notification. With
+the gate off or stale, or without microphone access, the watch keeps system
+dictation. Recording and transfer can only be checked on a physical watch
+paired with a phone.
 
 The watch also ships two complications, **Ask Omnesis** and **Omnesis note**,
 from the `OmnesisWatchWidgets` WidgetKit extension embedded in the watch app. A

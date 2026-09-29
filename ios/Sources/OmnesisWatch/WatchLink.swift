@@ -11,6 +11,8 @@ import WatchConnectivity
 /// both surfaces it drives hand off to the paired iPhone:
 ///   - `relayAsk` sends a dictated question and awaits the spoken answer.
 ///   - `relayNote` sends a dictated note and awaits a save confirmation.
+///   - `transferRecording` hands a recording made for gateway dictation to
+///     the phone and returns at once; the phone transcribes and acts on it.
 /// The phone owns the pairing; the watch's whole job is voice in, relay
 /// out, result back.
 ///
@@ -81,6 +83,52 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
         let session = WCSession.default
         session.delegate = self
         session.activate()
+    }
+
+    /// The gateway dictation gate the iPhone last published, once the session
+    /// is active. Nil when there is none — the watch then uses system
+    /// dictation.
+    func dictationGate() async -> WatchDictationGate? {
+        guard WCSession.isSupported() else { return nil }
+        WCSession.default.delegate = self
+        await ensureActivated()
+        return WatchDictationGate(applicationContext: WCSession.default.receivedApplicationContext)
+    }
+
+    /// Hand a recording to the iPhone. WatchConnectivity holds the transfer
+    /// and delivers it when the iPhone app next runs; a transfer alone may
+    /// not start that app, so a reachable phone is also sent a message that
+    /// wakes it. The outcome arrives in `didFinish`, where the file is
+    /// deleted. False when no transfer could be started; the caller then
+    /// still owns the file.
+    func transferRecording(_ file: URL, recording: WatchVoiceRecording) -> Bool {
+        let session = WCSession.default
+        guard WCSession.isSupported(), session.activationState == .activated, session.isCompanionAppInstalled else {
+            return false
+        }
+        session.transferFile(file, metadata: recording.metadata)
+        if session.isReachable {
+            session.sendMessage(WatchVoiceFormat.nudgeMessage, replyHandler: nil) { _ in }
+        }
+        return true
+    }
+
+    /// Delete recordings left in the outbox that no transfer is carrying —
+    /// ones a previous process made but never handed over, or whose transfer
+    /// ended while the app was not running. A file written within the
+    /// longest recording's span may be one being recorded now, and is left.
+    private func sweepOutbox(_ session: WCSession) {
+        let carried = Set(session.outstandingFileTransfers.map(\.file.fileURL.standardizedFileURL))
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: WatchVoiceCapture.outboxDirectory,
+            includingPropertiesForKeys: [.contentModificationDateKey]
+        )) ?? []
+        let recent = Date().addingTimeInterval(-(WatchVoiceFormat.maxDuration + 60))
+        for file in files where !carried.contains(file.standardizedFileURL) {
+            let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+            guard let modified, modified < recent else { continue }
+            try? FileManager.default.removeItem(at: file)
+        }
     }
 
     /// Relay a non-empty, trimmed question to the iPhone and return the
@@ -418,6 +466,19 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
         error: Error?
     ) {
         resumeActivationWaiters()
+        if activationState == .activated { sweepOutbox(session) }
+    }
+
+    /// A recording transfer ended. The watch's copy is no longer needed
+    /// either way. WatchConnectivity already retries delivery itself, so a
+    /// transfer that fails has failed for good: the person is told with a
+    /// buzz and a message, to record it again.
+    func session(_ session: WCSession, didFinish fileTransfer: WCSessionFileTransfer, error: Error?) {
+        if let error {
+            log.error("Recording transfer failed: \(String(describing: error), privacy: .public)")
+            Task { @MainActor in WatchVoiceCapture.shared.transferFailed() }
+        }
+        try? FileManager.default.removeItem(at: fileTransfer.file.fileURL)
     }
 
     /// Mid-turn progress pushed by the phone (no reply expected): the tool the

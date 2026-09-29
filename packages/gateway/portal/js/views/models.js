@@ -456,10 +456,10 @@ export function GatewayDictationSetting() {
         <span role="status">${busy ? "Saving…" : dictation.enabled ? "On" : "Off"}</span>
       </div>
       <p class="cap-detail-desc">
-        The iOS and Android apps send what you dictate — in agent conversations, brief replies and
-        Tell Omnesis — to this transcriber instead of relying on the phone's own speech
-        recognition. Siri, Shortcuts, Apple Watch dictation and assistant requests that already
-        carry their words are unaffected.
+        The iOS and Android apps send what you dictate — in agent conversations, brief replies,
+        Tell Omnesis and from the Apple Watch — to this transcriber instead of relying on the
+        phone's own speech recognition. Siri, Shortcuts and assistant requests that already carry
+        their words are unaffected.
       </p>
       ${dictation.enabled && !dictation.modelAssigned
         ? html`<div class="cap-detail-warn">

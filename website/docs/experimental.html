@@ -1952,12 +1952,20 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/admin/watch/compile" \
             shortcut;
           </li>
           <li>
-            an Ask or Tell Omnesis request from Google Assistant that opens the app to listen.
+            an Ask or Tell Omnesis request from Google Assistant that opens the app to listen;
           </li>
+          <li>the Apple Watch's Ask and Note complications and the watch app's Ask and Dictate.</li>
         </ul>
         <p>
-          Siri, Shortcuts, Apple Watch dictation and a Google Assistant request that already carries
-          its words hand the app finished text, so they are unaffected.
+          Siri, Shortcuts and a Google Assistant request that already carries its words hand the app
+          finished text, so they are unaffected.
+        </p>
+        <p>
+          The watch sends its recording through your iPhone, which transcribes it with the gateway
+          and then saves the note or asks the question. It does not show the words: once you tap
+          Send it says the recording was sent, and a question's answer arrives as a notification. If
+          the gateway cannot transcribe it, the iPhone transcribes it on the phone instead, and if
+          that fails too it says so in a notification.
         </p>
 
         <h3 id="gateway-dictation-turning-on">Turning it on</h3>

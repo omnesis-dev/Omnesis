@@ -3,6 +3,7 @@
 
 #if canImport(SwiftUI) && canImport(UIKit)
 import Foundation
+import Observation
 
 /// Gateway dictation as the app's views see it: the gate the paired gateway
 /// advertises on `GET /status`, and the route a mic session starting now
@@ -35,6 +36,29 @@ extension AppStore {
         await refreshGatewayStats()
     }
 }
+
+#if os(iOS)
+extension AppStore {
+    /// Keep the Apple Watch told whether to record for the gateway: pass the
+    /// gate the paired gateway's status implies to the relay receiver now,
+    /// and again whenever the status or pairing changes. Nothing is passed
+    /// while the status is unknown — a background launch has not read it yet.
+    func publishDictationGateToWatch() {
+        let gate = withObservationTracking {
+            WatchGatePublishing.gate(
+                status: dictationStatus,
+                statusKnown: statusSnapshot != nil,
+                paired: pairing != nil,
+                now: Date()
+            )
+        } onChange: { [weak self] in
+            guard let self else { return }
+            Task { @MainActor in self.publishDictationGateToWatch() }
+        }
+        if let gate { WatchRelayReceiver.shared.update(gate) }
+    }
+}
+#endif
 
 extension SpeechRecognizer {
     /// Route this recognizer's sessions through `store`'s gateway dictation

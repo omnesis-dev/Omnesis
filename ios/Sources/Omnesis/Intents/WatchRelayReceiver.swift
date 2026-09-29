@@ -33,6 +33,14 @@ import WatchConnectivity
 /// user as a notification — the gateway's slow-answer push, or a local one
 /// when the push will not come (`QueuedAskNotice`). Refs make each relay act
 /// at most once, however it arrives.
+///
+/// With gateway dictation on, the watch sends a recording instead of text
+/// (`transferFile`), and does not wait for it. The recording is kept in the
+/// `WatchVoiceInbox`, transcribed — by the gateway, or on this device when
+/// the gateway cannot — and then goes the way a queued relay does. The
+/// receiver also keeps the watch told whether to record for the gateway,
+/// through the session's application context, and goes by the same gate
+/// itself when a recording arrives.
 public final class WatchRelayReceiver: NSObject, WCSessionDelegate, @unchecked Sendable {
     public static let shared = WatchRelayReceiver()
 
@@ -54,6 +62,11 @@ public final class WatchRelayReceiver: NSObject, WCSessionDelegate, @unchecked S
     private let lock = NSLock()
     private var handledRefs = WatchRelayRecentRefs()
     private var liveAsks = LiveAskLedger<([String: Any]) -> Void>()
+    private let voiceInbox = WatchVoiceInbox()
+    private let gateStore = WatchDictationGateStore()
+    /// How long a recording waits for a fresh read of the gateway's status
+    /// when the phone has never known the gate.
+    private static let statusRefreshTimeout: Duration = .seconds(8)
 
     init(
         makeRunner: @escaping @Sendable (@escaping @Sendable (SiriAskActivityEvent) -> Void) -> SiriAskRunner
@@ -77,9 +90,38 @@ public final class WatchRelayReceiver: NSObject, WCSessionDelegate, @unchecked S
     /// (e.g. iPad).
     public func activate() {
         guard WCSession.isSupported() else { return }
+        // Recordings a previous process received but did not finish, claimed
+        // before the session can deliver new ones.
+        for item in voiceInbox.claimLeftovers() {
+            processRecording(item)
+        }
         let session = WCSession.default
         session.delegate = self
         session.activate()
+    }
+
+    /// Record what the phone now knows about gateway dictation, and tell the
+    /// watch when it changed (`WatchGatePublishing`). Called with the gate
+    /// read from the gateway's status — never while that status is unknown.
+    func update(_ gate: WatchDictationGate) {
+        guard WatchGatePublishing.shouldPublish(gate, after: gateStore.load(), now: now()) else { return }
+        gateStore.save(gate)
+        sendGateToWatch()
+    }
+
+    /// Put the stored gate in the session's application context, when a
+    /// watch app can receive it. Repeated at activation and whenever the
+    /// watch's state changes, so a watch app installed or paired later
+    /// learns it too.
+    private func sendGateToWatch() {
+        guard WCSession.isSupported(), let gate = gateStore.load() else { return }
+        let session = WCSession.default
+        guard session.activationState == .activated, session.isPaired, session.isWatchAppInstalled else { return }
+        do {
+            try session.updateApplicationContext(gate.applicationContext)
+        } catch {
+            log.error("Could not publish the dictation gate to the watch: \(String(describing: error), privacy: .public)")
+        }
     }
 
     /// Seconds since this process started listening, for the relay log.
@@ -87,7 +129,7 @@ public final class WatchRelayReceiver: NSObject, WCSessionDelegate, @unchecked S
         String(format: "%.1fs", now().timeIntervalSince(listeningSince))
     }
 
-    /// Record a live note's `ref` as handled; false when it already was.
+    /// Record a relay's `ref` as handled; false when it already was.
     private func claim(_ ref: String?) -> Bool {
         lock.lock()
         defer { lock.unlock() }
@@ -106,7 +148,16 @@ public final class WatchRelayReceiver: NSObject, WCSessionDelegate, @unchecked S
         if let error {
             log.error("Watch session activation failed: \(String(describing: error), privacy: .public)")
         }
+        if activationState == .activated { sendGateToWatch() }
     }
+
+    public func sessionWatchStateDidChange(_ session: WCSession) {
+        sendGateToWatch()
+    }
+
+    /// The watch's wake-up message sent beside a recording transfer. Nothing
+    /// to do: being woken is the point, and the transfer follows.
+    public func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {}
 
     public func sessionDidBecomeInactive(_ session: WCSession) {}
 
@@ -135,7 +186,9 @@ public final class WatchRelayReceiver: NSObject, WCSessionDelegate, @unchecked S
                 replyHandler(WatchNoteWire.reply(for: .reachedPhone))
                 return
             }
-            handleNote(noteText, captureTime: captureTime) { replyHandler(WatchNoteWire.reply(for: $0)) }
+            handleNote(noteText, captureTime: captureTime, id: WatchNoteWire.ref(from: message)) {
+                replyHandler(WatchNoteWire.reply(for: $0))
+            }
             return
         }
         guard let question = SiriAskWire.question(from: message) else {
@@ -213,32 +266,181 @@ public final class WatchRelayReceiver: NSObject, WCSessionDelegate, @unchecked S
         return liveAsks.settle(ref, reply: reply)
     }
 
-    /// Save a watch-dictated note through the shared capture service and
-    /// report the result. The phone attaches its own location (the
-    /// watch relays only text), so a watch note is geotagged like one
-    /// captured on the phone. Best-effort in the background: a locked or
-    /// suspended phone may serve no fix, and the note is saved location
-    /// -less in that case.
+    /// A relay the watch queued after its live sends failed. A note is saved
+    /// like a live one; a question is handed to the gateway, and how it ended
+    /// reaches the person as a notification.
+    public func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any]) {
+        log.info("Queued watch relay received \(self.sinceListening, privacy: .public) after launch")
+        let handler = WatchQueuedRelayHandler(
+            route: { payload in
+                self.lock.lock()
+                defer { self.lock.unlock() }
+                return WatchRelayInbox.route(queued: payload, now: self.now(), handled: &self.handledRefs)
+            },
+            saveNote: { text, captureTime, id in await self.saveNote(text, captureTime: captureTime, id: id) },
+            ask: { await self.handOff($0) },
+            notify: { await self.notify($0) }
+        )
+        let payload = userInfo
+        Task {
+            let assertion = WatchRelayBackgroundAssertion()
+            await assertion.begin()
+            let action = await handler.handle(payload)
+            self.log.info("Queued watch relay settled as \(String(describing: action), privacy: .private)")
+            await assertion.end()
+        }
+    }
+
+    /// A recording the watch made for gateway dictation. WatchConnectivity
+    /// deletes the file once this returns, so it is moved into the inbox
+    /// before anything else.
+    public func session(_ session: WCSession, didReceive file: WCSessionFile) {
+        log.info("Watch recording received \(self.sinceListening, privacy: .public) after launch")
+        guard let item = voiceInbox.admit(file: file.fileURL, metadata: file.metadata ?? [:]) else {
+            log.error("Could not keep a watch recording")
+            return
+        }
+        processRecording(item)
+    }
+
+    private func processRecording(_ item: WatchVoiceInbox.Item) {
+        let pipeline = WatchVoicePipeline(
+            gatewayRoute: { await self.gatewayRoute() },
+            transcribeOnDevice: { await OnDeviceFileTranscriber.transcribe($0, locale: $1) },
+            saveNote: { text, captureTime, id in await self.saveNote(text, captureTime: captureTime, id: id) },
+            ask: { await self.handOff($0) },
+            notify: { await self.notify($0) },
+            claim: { self.claim($0) },
+            now: now
+        )
+        let inbox = voiceInbox
+        Task {
+            let assertion = WatchRelayBackgroundAssertion()
+            await assertion.begin()
+            let outcome = await pipeline.handle(item, inbox: inbox)
+            self.log.info("Watch recording settled as \(String(describing: outcome), privacy: .private)")
+            await assertion.end()
+        }
+    }
+
+    /// The gateway to transcribe a watch recording with: this phone's
+    /// pairing, while the gate it last published is on. A phone that has
+    /// never known the gate reads the gateway's status first, briefly. A gate
+    /// switched off since then answers the upload with a refusal, and the
+    /// recording is transcribed on the device instead.
+    private func gatewayRoute() async -> GatewayDictationRoute? {
+        guard let pairing = (try? PairingService().current()).flatMap({ $0 }) else { return nil }
+        let gate = await WatchVoiceRouting.gate(stored: gateStore.load()) {
+            await self.readGate(pairing: pairing)
+        }
+        return WatchVoiceRouting.route(
+            gate: gate,
+            transcriber: DictationClient(baseURL: pairing.url, token: pairing.token)
+        )
+    }
+
+    /// The gate the gateway's status implies right now, recorded and passed
+    /// on to the watch; nil when the status could not be read in time.
+    private func readGate(pairing: Pairing) async -> WatchDictationGate? {
+        let client = SearchClient(baseURL: pairing.url, token: pairing.token)
+        let status = await withTaskGroup(of: StatusSnapshot?.self) { group in
+            group.addTask { try? await client.getStatus() }
+            group.addTask {
+                try? await Task.sleep(for: Self.statusRefreshTimeout)
+                return nil
+            }
+            let first = await group.next().flatMap { $0 }
+            group.cancelAll()
+            return first
+        }
+        guard let status else { return nil }
+        let gate = WatchGatePublishing.gate(status: status.dictation, statusKnown: true, paired: true, now: now())
+        if let gate { update(gate) }
+        return gate
+    }
+
+    /// A question nobody is waiting on: asked on the gateway, and announced
+    /// by the gateway's slow-answer push or, when that will not come, a
+    /// local notification.
+    private func handOff(_ question: String) async {
+        let (outcome, conversationId) = await makeHandOffRunner().handOff(question: question)
+        log.info("Watch hand-off settled as \(outcome.tag, privacy: .public)")
+        guard let notice = QueuedAskNotice.notice(for: outcome, conversationId: conversationId) else { return }
+        await post(title: notice.title, body: notice.body, userInfo: notice.userInfo)
+    }
+
+    private func notify(_ notice: WatchVoiceNotice) async {
+        switch notice {
+        case .untranscribed(.note):
+            await post(
+                title: "Couldn't transcribe your note",
+                body: "Your watch recording couldn't be turned into text, so nothing was saved.",
+                userInfo: [:]
+            )
+        case .untranscribed(.ask):
+            await post(
+                title: "Couldn't transcribe your question",
+                body: "Your watch recording couldn't be turned into text, so nothing was asked.",
+                userInfo: [:]
+            )
+        case .questionExpired:
+            await post(
+                title: "Your watch question wasn't asked",
+                body: "It reached your iPhone too late to be worth answering. Ask it again if you still need to.",
+                userInfo: [:]
+            )
+        }
+    }
+
+    private func post(title: String, body: String, userInfo: [String: Any]) async {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        content.userInfo = userInfo
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        do {
+            try await notifications.add(request)
+        } catch {
+            log.error("Could not post a watch relay notification: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    /// Save a watch note through the shared capture service. The phone
+    /// attaches its own location (the watch relays none), so a watch note is
+    /// geotagged like one captured on the phone. Background, no UI — never
+    /// prompts; a locked or suspended phone may serve no fix, and the note is
+    /// then saved without one.
+    ///
+    /// `id` is the relay's ref: sent as the note's idempotency key when it
+    /// is a UUID, so a note saved again after an interruption is not saved
+    /// twice.
+    @discardableResult
+    private func saveNote(_ text: String, captureTime: NoteCaptureTime, id: String?) async -> WatchNoteOutcome {
+        let location = await NoteLocationProvider.shared.current(promptIfNeeded: false)
+        let outcome = await WatchNoteOutcome(capture: NoteCaptureService.captureStandalone(
+            text: text,
+            surface: .watch,
+            captureTime: captureTime,
+            location: location,
+            noteId: id.flatMap(UUID.init(uuidString:))?.uuidString.lowercased()
+        ))
+        log.info("Watch note settled as \(outcome.tag, privacy: .public)")
+        return outcome
+    }
+
+    /// Save a note the watch sent live and report the result, holding a
+    /// background assertion for the save.
     private func handleNote(
         _ text: String,
         captureTime: NoteCaptureTime,
+        id: String?,
         completion: @escaping (WatchNoteOutcome) -> Void
     ) {
         Task {
             let assertion = WatchRelayBackgroundAssertion()
             await assertion.begin()
-            // Background, no UI — never prompt; use location only if the
-            // user already granted it in the app.
-            let location = await NoteLocationProvider.shared.current(promptIfNeeded: false)
-            let outcome = await NoteCaptureService.captureStandalone(
-                text: text,
-                surface: .watch,
-                captureTime: captureTime,
-                location: location
-            )
-            let noteOutcome = WatchNoteOutcome(capture: outcome)
-            self.log.info("Watch note settled as \(noteOutcome.tag, privacy: .public)")
-            completion(noteOutcome)
+            await completion(self.saveNote(text, captureTime: captureTime, id: id))
             await assertion.end()
         }
     }

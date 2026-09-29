@@ -67,10 +67,10 @@ struct VoiceSettingsSection: View {
             Text("Voice")
         } footer: {
             Text(
-                "When on, the audio you dictate in this app — the agent, Briefs and Tell Omnesis — is sent "
-                    + "to your gateway, which transcribes it and returns the text. Nothing is stored. This is "
-                    + "a gateway setting, so it applies to every device paired with it. Siri and Apple Watch "
-                    + "dictation are unaffected."
+                "When on, the audio you dictate to the agent, Briefs, Tell Omnesis and the Apple Watch's "
+                    + "Ask and Note is sent to your gateway, which transcribes it and returns the text. Nothing "
+                    + "is stored. This is a gateway setting, so it applies to every device paired with it. "
+                    + "Siri is unaffected."
             )
         }
         .listRowBackground(Theme.bgSecondary)

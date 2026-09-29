@@ -52,10 +52,12 @@ public enum NoteCaptureService {
     /// Try the gateway, fall back to the queue. `captureTime` is supplied
     /// by the entry point before any location or network wait so a queued
     /// note keeps its true instant and local-calendar interpretation.
-    /// A UUID idempotency key is minted per note and sent as the POST
-    /// `id` — and persisted with the queued fallback — so a retry of a
-    /// note whose first POST landed (but whose response was lost) can't
-    /// create a duplicate.
+    /// A UUID idempotency key is sent as the POST `id` — and persisted
+    /// with the queued fallback — so a retry of a note whose first POST
+    /// landed (but whose response was lost) can't create a duplicate.
+    /// `noteId` is that key when the caller already has one that outlives
+    /// this call (a watch recording's ref, retried after a relaunch);
+    /// otherwise one is minted.
     public static func capture(
         text: String,
         surface: NoteSurface,
@@ -63,7 +65,8 @@ public enum NoteCaptureService {
         deviceId: String?,
         store: PendingNoteStore,
         captureTime: NoteCaptureTime = .now(),
-        location: NoteLocation? = nil
+        location: NoteLocation? = nil,
+        noteId: String? = nil
     ) async
         -> Outcome {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -71,7 +74,7 @@ public enum NoteCaptureService {
         guard trimmed.count <= maxTextLength else {
             return .rejected("Too long — notes are capped at \(maxTextLength) characters. Shorten it and try again.")
         }
-        let noteId = UUID().uuidString.lowercased()
+        let noteId = noteId ?? UUID().uuidString.lowercased()
         var reason: QueueReason = .unreachable
         var diagnostics = PendingNoteDeliveryDiagnostics(
             attemptCount: 0,
@@ -132,7 +135,8 @@ public enum NoteCaptureService {
         text: String,
         surface: NoteSurface,
         captureTime: NoteCaptureTime = .now(),
-        location: NoteLocation? = nil
+        location: NoteLocation? = nil,
+        noteId: String? = nil
     ) async
         -> Outcome {
         let pairing = (try? PairingService().current()).flatMap { $0 }
@@ -144,7 +148,8 @@ public enum NoteCaptureService {
             deviceId: pairing?.deviceId,
             store: PendingNoteStore(),
             captureTime: captureTime,
-            location: location
+            location: location,
+            noteId: noteId
         )
     }
 

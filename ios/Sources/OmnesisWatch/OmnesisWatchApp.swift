@@ -55,16 +55,22 @@ final class WatchPresenter {
     var screen: Screen = .ask
 }
 
-/// Top-level switch between the ask and note capture flows.
+/// Top-level switch between the ask and note capture flows, with the
+/// gateway dictation recording screen over either while it is up.
 struct WatchRootView: View {
     private var presenter = WatchPresenter.shared
+    private var capture = WatchVoiceCapture.shared
 
     var body: some View {
-        switch presenter.screen {
-        case .ask:
-            WatchAskView()
-        case .note:
-            WatchNoteView()
+        if capture.state != .idle {
+            WatchVoiceCaptureView()
+        } else {
+            switch presenter.screen {
+            case .ask:
+                WatchAskView()
+            case .note:
+                WatchNoteView()
+            }
         }
     }
 }

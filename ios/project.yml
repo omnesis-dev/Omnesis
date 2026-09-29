@@ -213,10 +213,13 @@ targets:
   # "Ask Omnesis" and "Omnesis note" App Shortcuts dictate a question or a
   # note and relay it to the paired iPhone over WatchConnectivity, which
   # answers the ask via the shared SiriAskRunner and saves the note via the
-  # shared NoteCaptureService, replying with the result. That is why the
-  # only relay sources it shares are SiriAsk.swift, WatchNote.swift and
-  # WatchRelayDelivery.swift (the outcomes, their spoken copy, the relay
-  # wires and the delivery window) — everything else lives on the phone.
+  # shared NoteCaptureService, replying with the result. With gateway
+  # dictation on, it records instead and transfers the recording for the
+  # phone to transcribe. That is why the only relay sources it shares are
+  # SiriAsk.swift, WatchNote.swift, WatchRelayDelivery.swift and
+  # WatchVoice.swift (the outcomes, their spoken copy, the relay wires, the
+  # delivery window and the recording contract) — everything else lives on
+  # the phone.
   # WatchComplication.swift, the complication link contract, is shared
   # with the complications extension.
   OmnesisWatch:
@@ -243,6 +246,9 @@ targets:
       # The delivery window, the queued fallback's wire and the phone's
       # relay dedupe — shared so both ends agree on the queued payload.
       - path: Sources/Omnesis/Intents/WatchRelayDelivery.swift
+      # Gateway dictation on the watch: the recording's metadata, its format
+      # and the gate the phone publishes — shared so both ends agree.
+      - path: Sources/Omnesis/Intents/WatchVoice.swift
       # The complication link contract, shared with OmnesisWatchWidgets so
       # the link a complication opens is the one this app parses.
       - path: Sources/Omnesis/Intents/WatchComplication.swift
