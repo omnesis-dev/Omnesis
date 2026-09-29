@@ -376,6 +376,24 @@ describe("Thunderbird's file-per-message store", () => {
     expect(names).toEqual(["Notes.sbd/2024", "Templates"]);
   });
 
+  test("an account Thunderbird has listed but stored nothing for says so", () => {
+    for (const name of ["INBOX.msf", "Archives.msf", "msgFilterRules.dat"]) {
+      writeFileSync(join(root, name), "");
+    }
+    mkdirSync(join(root, "Archives.sbd"));
+    writeFileSync(join(root, "Archives.sbd", "2025.msf"), "");
+    let error: unknown;
+    try {
+      walkMaildir(root, [], LIMITS);
+    } catch (err) {
+      error = err;
+    }
+    expect((error as Error).message).toMatch(/Thunderbird has not stored any messages/);
+    expect((error as SyncError).remediation?.steps.join(" ")).toMatch(
+      /Keep messages for this account/,
+    );
+  });
+
   test("a folder that is neither Maildir nor mbox gets the general message", () => {
     mkdirSync(join(root, "Notes"));
     expect(() => walkMaildir(root, [], LIMITS)).toThrow(/No mail folders found/);

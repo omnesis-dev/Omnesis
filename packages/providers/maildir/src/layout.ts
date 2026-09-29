@@ -294,6 +294,28 @@ function mboxStoreError(root: string): SyncError {
 }
 
 /**
+ * A Thunderbird account whose folders exist only as `.msf` summaries: it has
+ * listed the mail on the server but kept no message on this machine yet,
+ * because it is still downloading or is set not to keep messages offline.
+ */
+function thunderbirdNothingStoredError(root: string): SyncError {
+  return new SyncError(
+    "unknown",
+    `Thunderbird has not stored any messages under ${root} yet. It keeps mail on this computer only when the account is set to, and fills the folders as it downloads.`,
+    {
+      remediation: {
+        summary: "Thunderbird has no messages stored for this account yet",
+        steps: [
+          "In Thunderbird, right-click the account, open Settings, and under Synchronization & Storage tick Keep messages for this account on this computer.",
+          "Leave Thunderbird open while it downloads; the source picks the messages up on its next sync.",
+        ],
+        restartRequired: false,
+      },
+    },
+  );
+}
+
+/**
  * A tree past one of the walk's limits. Retrying cannot clear it; leaving
  * folders out can.
  */
@@ -375,6 +397,7 @@ export function walkMaildir(
   const mailboxes: Mailbox[] = [];
   const gaps: MaildirWalk["gaps"] = [];
   let mboxFolderSeen = false;
+  let thunderbirdIndexSeen = false;
 
   const visit = (dir: string, relSegments: string[], nameSegments: string[], depth: number) => {
     let entries: ReturnType<typeof listDir>;
@@ -392,6 +415,9 @@ export function walkMaildir(
     }
     const names = new Set(entries.filter((e) => e.isDir).map((e) => e.name));
     if (!mboxFolderSeen) mboxFolderSeen = holdsMboxFolder(entries);
+    if (!thunderbirdIndexSeen) {
+      thunderbirdIndexSeen = entries.some((e) => e.isFile && e.name.endsWith(".msf"));
+    }
     if (isMailboxDir(names)) {
       const name = mailboxName(nameSegments);
       const flagsInFile = !names.has("new");
@@ -453,6 +479,7 @@ export function walkMaildir(
 
   if (mailboxes.length === 0 && gaps.length === 0) {
     if (mboxFolderSeen) throw mboxStoreError(root);
+    if (thunderbirdIndexSeen) throw thunderbirdNothingStoredError(root);
     throw new SyncError(
       "unknown",
       `No mail folders found under ${root}. Point the source at the folder your mail tool writes to: it, or a folder inside it, holds a cur directory beside a new or tmp one.`,
