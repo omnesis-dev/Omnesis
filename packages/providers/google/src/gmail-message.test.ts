@@ -49,6 +49,20 @@ describe("Gmail message normalization", () => {
     });
   });
 
+  test("uses the receiving server's stamp when the header and internalDate are both implausible", () => {
+    const now = Date.UTC(2026, 0, 1);
+    const received = "from mx.example.com by mail.example.org; Tue, 03 Mar 2015 10:15:00 +0000";
+    expect(messageDate("Sun, 12 Jan 2612 17:58:50 GMT", "-1000", now, received)).toBe(
+      "2015-03-03T10:15:00.000Z",
+    );
+    expect(messageDate("Sun, 12 Jan 2612 17:58:50 GMT", "0", now, received)).toBe(
+      "2015-03-03T10:15:00.000Z",
+    );
+    expect(messageDate("Sun, 12 Jan 2612 17:58:50 GMT", "-1000", now, "no date here")).toBe(
+      "1969-12-31T23:59:59.000Z",
+    );
+  });
+
   describe("body", () => {
     test("a text part is read in the charset it declares", async () => {
       const doc = await normalize(

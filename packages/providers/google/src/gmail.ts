@@ -682,7 +682,7 @@ export class GmailSource {
     const parts = messageParts(payload);
     const body = chooseMailBody(parts);
     const schemaDates = parts.html ? extractSchemaOrgDatesFromHtml(parts.html) : {};
-    const sourceDate = messageDate(date, msg.internalDate, Date.now());
+    const sourceDate = messageDate(date, msg.internalDate, Date.now(), getHeader("Received"));
     const people = messagePeople({ from, to, cc, bcc }, body);
 
     // Generic automated-notification marker: a no-reply / notifications sender

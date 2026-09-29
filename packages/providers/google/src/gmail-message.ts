@@ -78,22 +78,26 @@ const FUTURE_SLACK_MS = 24 * 60 * 60 * 1000;
  * `internalDate` is when the message reached this mailbox — for mail imported
  * from another account, the day of the import, which can be years late — so
  * it is used only when the header is missing, unparseable or implausible
- * (before 1980, or more than a day in the future).
+ * (before 1980, or more than a day in the future). When `internalDate` is
+ * implausible too, the time the receiving server stamped on the topmost
+ * `Received` header is used.
  */
 export function messageDate(
   dateHeader: string | undefined,
   internalDate: string | null | undefined,
   now: number,
+  receivedHeader?: string,
 ): string {
-  const parsed = dateHeader ? Date.parse(dateHeader) : Number.NaN;
-  if (
-    Number.isFinite(parsed) &&
-    parsed >= EARLIEST_BELIEVABLE_MS &&
-    parsed <= now + FUTURE_SLACK_MS
-  ) {
-    return new Date(parsed).toISOString();
-  }
+  const believable = (ms: number) =>
+    Number.isFinite(ms) && ms >= EARLIEST_BELIEVABLE_MS && ms <= now + FUTURE_SLACK_MS;
+  const header = dateHeader ? Date.parse(dateHeader) : Number.NaN;
+  if (believable(header)) return new Date(header).toISOString();
   const internal = internalDate ? Number.parseInt(internalDate, 10) : Number.NaN;
+  if (believable(internal)) return new Date(internal).toISOString();
+  // A Received header ends with `; <date>`.
+  const semicolon = receivedHeader?.lastIndexOf(";") ?? -1;
+  const received = semicolon >= 0 ? Date.parse(receivedHeader!.slice(semicolon + 1)) : Number.NaN;
+  if (believable(received)) return new Date(received).toISOString();
   return new Date(Number.isFinite(internal) ? internal : now).toISOString();
 }
 
