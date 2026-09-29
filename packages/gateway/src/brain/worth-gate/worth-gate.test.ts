@@ -21,7 +21,11 @@ import { createCognitionDrainerTasks } from "../run-drainer.js";
 import { CognitionRunDriver } from "../run-driver.js";
 import { FsCognitionTranscriptStore } from "../transcripts.js";
 import { getCognitionRun } from "../storage/run-queue.js";
-import { listDecisionsForRun } from "../storage/decisions.js";
+import {
+  decisionVerdictsForRuns,
+  insertCognitionDecision,
+  listDecisionsForRun,
+} from "../storage/decisions.js";
 import { listCognitionCoverage } from "../storage/coverage.js";
 import { bootstrapCorpusByMonth } from "../storage/bootstrap.js";
 import { getCognitionEngineState, cognitionBootstrapEnqueuedKey } from "../storage/engine-state.js";
@@ -189,6 +193,9 @@ describe("worth gate", () => {
       rubricVersion: WORTH_GATE_RUBRIC_VERSION,
       inputTokens: 300,
       reusedFrom: null,
+      // A document judgement, and a skip that took effect.
+      recordId: null,
+      enforced: true,
     });
     expect(JSON.parse(record!.requestJson!)).toMatchObject({
       model: "jev-test",
@@ -549,6 +556,68 @@ describe("worth gate", () => {
         (m) => m.month === "2024-01",
       );
       expect(jan).toMatchObject({ gated: 0, reviewed: 1 });
+    });
+
+    test("a record check on the same document never overrides its worth-gate verdict", async () => {
+      const doc = seed({ externalId: "rc-1", title: "Weekly deals inside" });
+      futureDate(doc);
+      await gate(scripted()).evaluate(bootstrapRun(doc, "run_rc1"));
+      now += 1000;
+      // A later record check made during some other run, anchored on this document.
+      insertCognitionDecision(db, {
+        id: "dec_record",
+        runId: "run_rc1",
+        documentId: doc,
+        subjectDocumentId: doc,
+        purpose: "record-check",
+        lane: "bootstrap",
+        rubricVersion: "record-belongs-v1",
+        contentHash: null,
+        requestedModelId: "jev-test",
+        modelId: "jev-test",
+        requestJson: null,
+        responseJson: null,
+        score: 2.5,
+        threshold: 0.81,
+        verdict: "pass",
+        error: null,
+        reusedFrom: null,
+        recordId: "ta_1",
+        enforced: false,
+        latencyMs: 1,
+        inputTokens: 10,
+        createdAt: now,
+      });
+      db.prepare("UPDATE documents SET bootstrap_processed_at = ? WHERE id = ?").run(
+        new Date(now).toISOString(),
+        doc,
+      );
+      const jan = bootstrapCorpusByMonth(db, "2025-01-01T00:00:00.000Z", "2026-09-01").find(
+        (m) => m.month === "2024-01",
+      );
+      expect(jan).toMatchObject({ gated: 1 });
+      expect(decisionVerdictsForRuns(db, ["run_rc1"]).get("run_rc1")).toBe("skip");
+      expect(
+        listDecisionsForRun(db, "run_rc1").map((d) => [d.purpose, d.recordId, d.enforced]),
+      ).toEqual([
+        ["worth-gate", null, true],
+        ["record-check", "ta_1", false],
+      ]);
+    });
+
+    test("the newest worth-gate verdict per document is read from the covering index", () => {
+      const plan = db
+        .prepare<[string], { detail: string }>(
+          `EXPLAIN QUERY PLAN SELECT g2.rowid FROM cognition_decisions g2
+            WHERE g2.document_id = ? AND g2.purpose = 'worth-gate'
+            ORDER BY g2.created_at DESC, g2.rowid DESC LIMIT 1`,
+        )
+        .all("doc")
+        .map((row) => row.detail)
+        .join("\n");
+      // A document holds a handful of decisions, so ordering them is trivial;
+      // what matters is that the lookup never reaches the audit text.
+      expect(plan).toContain("COVERING INDEX idx_cognition_decisions_document");
     });
 
     test("an unavailable decision model lets the run execute", async () => {

@@ -443,7 +443,7 @@ export function bootstrapCorpusByMonth(
          ON d.bootstrap_processed_at IS NOT NULL
         AND g.rowid = (
           SELECT g2.rowid FROM cognition_decisions g2
-           WHERE g2.document_id = d.id
+           WHERE g2.document_id = d.id AND g2.purpose = 'worth-gate'
            ORDER BY g2.created_at DESC, g2.rowid DESC
            LIMIT 1
         )

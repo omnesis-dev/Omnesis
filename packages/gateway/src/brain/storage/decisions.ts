@@ -25,12 +25,18 @@ type Db = Database.Database;
 
 export type DecisionVerdict = "pass" | "skip" | "unavailable";
 
+/**
+ * What a decision was asked for: `worth-gate` judges a run's document before
+ * the run, `record-check` a record a run is about to save.
+ */
+export type DecisionPurpose = "worth-gate" | "record-check";
+
 export interface CognitionDecisionRecord {
   id: string;
   runId: string;
   documentId: string;
   subjectDocumentId: string;
-  purpose: "worth-gate";
+  purpose: DecisionPurpose;
   lane: string;
   rubricVersion: string;
   contentHash: string | null;
@@ -45,6 +51,16 @@ export interface CognitionDecisionRecord {
   verdict: DecisionVerdict;
   error: string | null;
   reusedFrom: string | null;
+  /**
+   * The Brain record the decision was about (an annotation id), when it judged
+   * a record rather than a document; null for document judgements.
+   */
+  recordId: string | null;
+  /**
+   * Whether the verdict took effect. False for a judgement recorded while its
+   * check only observes, so a skip there never stopped anything.
+   */
+  enforced: boolean;
   latencyMs: number | null;
   inputTokens: number | null;
   createdAt: number;
@@ -72,6 +88,8 @@ const COGNITION_DECISIONS_DDL = `
     verdict TEXT NOT NULL,
     error TEXT,
     reused_from TEXT,
+    record_id TEXT,
+    enforced INTEGER NOT NULL DEFAULT 1,
     latency_ms INTEGER,
     input_tokens INTEGER,
     created_at INTEGER NOT NULL,
@@ -86,9 +104,9 @@ const COGNITION_DECISIONS_INDEXES = [
   "CREATE INDEX IF NOT EXISTS idx_cognition_decisions_run ON cognition_decisions(run_id)",
   // The reuse lookup: newest answered decision for a subject under one rubric.
   "CREATE INDEX IF NOT EXISTS idx_cognition_decisions_subject ON cognition_decisions(subject_document_id, rubric_version, created_at DESC)",
-  // Bootstrap coverage bands read the newest verdict per document; covering,
-  // so the lookup never touches the audit text.
-  "CREATE INDEX IF NOT EXISTS idx_cognition_decisions_document ON cognition_decisions(document_id, created_at DESC, verdict)",
+  // Bootstrap coverage bands read the newest worth-gate verdict per document;
+  // covering, so the lookup never touches the audit text.
+  "CREATE INDEX IF NOT EXISTS idx_cognition_decisions_document ON cognition_decisions(document_id, purpose, created_at DESC, verdict)",
   // Retention walks old rows by age.
   "CREATE INDEX IF NOT EXISTS idx_cognition_decisions_created ON cognition_decisions(created_at)",
 ];
@@ -111,6 +129,8 @@ interface DecisionRow {
   verdict: string;
   error: string | null;
   reused_from: string | null;
+  record_id: string | null;
+  enforced: number;
   latency_ms: number | null;
   input_tokens: number | null;
   created_at: number;
@@ -122,7 +142,7 @@ function fromRow(row: DecisionRow): CognitionDecisionRecord {
     runId: row.run_id,
     documentId: row.document_id,
     subjectDocumentId: row.subject_document_id,
-    purpose: "worth-gate",
+    purpose: row.purpose as DecisionPurpose,
     lane: row.lane,
     rubricVersion: row.rubric_version,
     contentHash: row.content_hash,
@@ -135,6 +155,8 @@ function fromRow(row: DecisionRow): CognitionDecisionRecord {
     verdict: row.verdict as DecisionVerdict,
     error: row.error,
     reusedFrom: row.reused_from,
+    recordId: row.record_id,
+    enforced: row.enforced === 1,
     latencyMs: row.latency_ms,
     inputTokens: row.input_tokens,
     createdAt: row.created_at,
@@ -147,8 +169,9 @@ export function insertCognitionDecision(db: Db, record: CognitionDecisionRecord)
     `INSERT INTO cognition_decisions (
        id, run_id, document_id, subject_document_id, purpose, lane, rubric_version,
        content_hash, requested_model_id, model_id, request_json, response_json, score,
-       threshold, verdict, error, reused_from, latency_ms, input_tokens, created_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       threshold, verdict, error, reused_from, record_id, enforced, latency_ms, input_tokens,
+       created_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO NOTHING`,
   ).run(
     record.id,
@@ -168,6 +191,8 @@ export function insertCognitionDecision(db: Db, record: CognitionDecisionRecord)
     record.verdict,
     record.error,
     record.reusedFrom,
+    record.recordId,
+    record.enforced ? 1 : 0,
     record.latencyMs,
     record.inputTokens,
     record.createdAt,
@@ -195,7 +220,7 @@ export function decisionVerdictsForRuns(
   const rows = db
     .prepare<string[], { run_id: string; verdict: string }>(
       `SELECT run_id, verdict FROM cognition_decisions
-        WHERE run_id IN (${runIds.map(() => "?").join(",")})
+        WHERE run_id IN (${runIds.map(() => "?").join(",")}) AND purpose = 'worth-gate'
         ORDER BY created_at`,
     )
     .all(...runIds);
