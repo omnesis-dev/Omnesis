@@ -33,9 +33,13 @@ All third-party trademarks, service marks, and logos referenced anywhere in this
 
 A Fastmail IMAP connection hot-links Fastmail's first-party touch icon. An iCloud Mail connection uses a generic Lucide cloud glyph because Apple's trademark guidelines forbid third-party use of its app icons. Other IMAP hosts use a generic [Lucide](https://lucide.dev) `mail` glyph (ISC-licensed) tinted to the IMAP accent.
 
+### Maildir
+
+Maildir is a storage format, not a product, so it has no mark to use. The source uses a generic [Lucide](https://lucide.dev) `inbox` glyph (ISC-licensed) tinted teal.
+
 ## Lucide
 
-Several source packages bundle [Lucide](https://lucide.dev) icons (compass, hourglass, list-checks, message-square, contact-round, notebook-pen, calendar, phone-call, voicemail, globe, heart-pulse, footprints, image, map-pin). Lucide is licensed under the [ISC license](https://github.com/lucide-icons/lucide/blob/main/LICENSE).
+Several source packages bundle [Lucide](https://lucide.dev) icons (compass, hourglass, list-checks, message-square, contact-round, notebook-pen, calendar, phone-call, voicemail, globe, heart-pulse, footprints, image, map-pin, inbox). Lucide is licensed under the [ISC license](https://github.com/lucide-icons/lucide/blob/main/LICENSE).
 
 ## AI model provider marks
 

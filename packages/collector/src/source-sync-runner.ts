@@ -641,6 +641,9 @@ export class SourceSyncRunner {
         }
       }
       let hasMore = true;
+      // TODO: End the tick with a log.error when a structured page carries no rows, deletes or
+      // documents, leaves the cursor unchanged and still says hasMore; it is refetched at once
+      // until the sync times out. A source-sdk/testing conformance check could flag such sources.
       while (hasMore) {
         // Check if source was disabled/unregistered while we were syncing.
         // Re-read from the map because disableSource() may have changed the state

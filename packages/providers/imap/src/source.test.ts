@@ -147,6 +147,33 @@ describe("ImapEmailSource", () => {
     ).toBeNull();
   });
 
+  it("records an automated sender without letting it create a person", async () => {
+    const notice = message(1, "2026-08-02T09:00:00.000Z", "Your receipt", "Thanks for your order.");
+    notice.envelope.from = [{ name: "Receipts", address: "notifications@example.com" }];
+    const client = new FakeImapClient(
+      [{ path: "INBOX", flags: new Set() }],
+      { INBOX: { uidValidity: "41", uidNext: 2 } },
+      { INBOX: [notice] },
+    );
+    const source = new ImapEmailSource(
+      "imap:account@example.com",
+      "imap:account@example.com",
+      () => client,
+    );
+
+    const result = await source.sync(null);
+
+    expect(result.documents[0]?.metadata.people).toEqual([
+      {
+        role: "sender",
+        name: "Receipts",
+        emails: ["notifications@example.com"],
+        allowPersonCreation: false,
+      },
+      { role: "recipient", name: "Recipient", emails: ["recipient@example.org"] },
+    ]);
+  });
+
   it("fails closed when the persisted cursor exceeds the mailbox high-water UID", async () => {
     const client = new FakeImapClient(
       [{ path: "INBOX", flags: new Set() }],

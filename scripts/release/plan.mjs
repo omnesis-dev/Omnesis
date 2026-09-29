@@ -186,7 +186,7 @@ export function buildReleasePlan(state) {
   steps.push(
     step(
       "publish",
-      "Publish packages, images and the GitHub Release",
+      "Create the GitHub Release (and publish packages and images when armed)",
       "external",
       `Pushing ${tag} triggers the release workflow, which republishes nothing locally.`,
     ),
@@ -276,7 +276,7 @@ export function formatReleasePrBody(version, section) {
     "",
     "Merging this lands the release commit on `main`. Once main CI is green at that",
     "commit, cut the tag with `npm run release -- tag` and push it; the tag-triggered",
-    "release workflow publishes the packages, images and GitHub Release.",
+    "release workflow creates the GitHub Release and, when armed, publishes the packages and images.",
   ].join("\n");
 }
 

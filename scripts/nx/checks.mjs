@@ -316,6 +316,8 @@ export function buildPlan({ base = "origin/main", extraBundles = [], files: file
     : portalOnly
       ? ["omnesis-portal"]
       : projects.filter((name) => name !== "omnesis-workspace" && name !== "omnesis-portal").sort();
+  // TODO: A change under patches/ selects only omnesis-workspace, whose unit task tests only
+  // scripts/; also select the projects that depend on the patched package so their tests run.
   if (
     !broad &&
     !portalOnly &&

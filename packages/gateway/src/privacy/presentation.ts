@@ -11,7 +11,7 @@ import {
   parseReview,
   parseStringArray,
 } from "./store-internals.js";
-import { PrivacyCursorError, type PrivacyDb } from "./store-types.js";
+import { hasColumn, PrivacyCursorError, type PrivacyDb } from "./store-types.js";
 import { tokenIdOfAnswerOwner } from "./token-answer-owner.js";
 import type {
   AnswerTaskAuditStatus,
@@ -403,6 +403,12 @@ function resolvePrincipalIdentities(
     byCredential.set(owner.credentialId, owners);
   }
   const placeholders = [...byCredential].map(() => "?").join(", ");
+  // The app name is what the Access page draws the agent's logo from; a store
+  // without the OAuth client table still resolves every other field.
+  const withClients = probeColumns(db, [
+    ["principal_credentials", "oauth_client_id"],
+    ["oauth_clients", "client_name"],
+  ]).every(Boolean);
   const rows = db
     .prepare<
       string[],
@@ -413,14 +419,17 @@ function resolvePrincipalIdentities(
         grant_revision: number;
         principal_id: string;
         principal_name: string;
+        client_name: string | null;
       }
     >(
       `SELECT c.id AS credential_id, c.label AS credential_label,
               g.id AS grant_id, g.revision AS grant_revision,
-              p.id AS principal_id, p.name AS principal_name
+              p.id AS principal_id, p.name AS principal_name,
+              ${withClients ? "oc.client_name" : "NULL"} AS client_name
          FROM principal_credentials c
          JOIN access_grants g ON g.id = c.grant_id
          JOIN access_principals p ON p.id = g.principal_id
+         ${withClients ? "LEFT JOIN oauth_clients oc ON oc.client_id = c.oauth_client_id" : ""}
         WHERE c.id IN (${placeholders})`,
     )
     .all(...byCredential.keys());
@@ -436,6 +445,7 @@ function resolvePrincipalIdentities(
       identities.set(owner.ownerId, {
         ...externalAgentIdentity(row.principal_name, "principal"),
         connectionName: row.credential_label.trim() || null,
+        clientName: row.client_name?.trim() || null,
       });
     }
   }
@@ -1202,17 +1212,6 @@ function probeColumns(db: PrivacyDb, columns: ReadonlyArray<readonly [string, st
     .join(", ");
   const row = db.prepare<[], Record<string, number>>(`SELECT ${select}`).get() ?? {};
   return columns.map((_, index) => row[`c${index}`] === 1);
-}
-
-function hasColumn(db: PrivacyDb, table: string, column: string): boolean {
-  return Boolean(
-    db
-      .prepare<
-        [string],
-        { found: number }
-      >(`SELECT 1 AS found FROM pragma_table_info('${table}') WHERE name = ?`)
-      .get(column),
-  );
 }
 
 function normalizeTaskStatus(status: string): AnswerTaskAuditStatus {

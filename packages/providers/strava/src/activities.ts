@@ -132,6 +132,9 @@ export class StravaActivitiesSource {
       if (shouldRefreshAthlete(cur)) {
         return this.dispatchAthleteRefresh({ ...cur, phase: "athlete-refresh" });
       }
+      // TODO: A quota deferral here parks the source until the budget covers a whole
+      // enrichment page (up to UTC midnight), so listing new activities waits too; fall
+      // through to syncIncremental instead, and likewise for a cursor already in enrich-pending.
       // Nothing time-gated is due — opportunistically run enrich-pending.
       const enriched = await this.dispatchEnrichPending({ ...cur, phase: "enrich-pending" });
       // If nothing was pending, enrich-pending returns to incremental immediately.

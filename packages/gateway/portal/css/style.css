@@ -18681,3 +18681,7 @@ a.agent-loop-row.agent-ephemeral-result-link:hover .agent-loop-state {
 
 .privacy-feed-asker { display: inline-flex; align-items: center; gap: 4px; }
 .privacy-feed-device { flex: none; color: var(--text-muted); }
+/* An agent's logo is its brand mark, drawn at full strength rather than at the
+   muted weight of the generic actor glyphs. */
+.privacy-caller-logo { display: inline-flex; flex: none; }
+.privacy-direct-caller { display: flex; align-items: center; gap: 5px; }

@@ -81,6 +81,7 @@ export const bundles = {
       "finance.e2e.test.ts",
       "github-source.e2e.test.ts",
       "granola.e2e.test.ts",
+      "maildir.e2e.test.ts",
       "onedrive.e2e.test.ts",
       "outlook-calendar.e2e.test.ts",
       "plaid.e2e.test.ts",

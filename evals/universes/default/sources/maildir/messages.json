@@ -1,0 +1,70 @@
+[
+  {
+    "id": "synth-maildir-001",
+    "messageId": "ride-plan.001@example.net",
+    "from": "p_dave",
+    "to": ["self"],
+    "subject": "Bike club ride on Saturday",
+    "body": "Good morning,\n\nThe club is riding the river loop on Saturday at 8 AM. Meet at the bridge car park. Bring a spare tube.\n\nDave",
+    "sentAt": "2025-09-05T07:15:00Z",
+    "folders": ["INBOX", "[Gmail]/All Mail"],
+    "flags": "S"
+  },
+  {
+    "id": "synth-maildir-002",
+    "messageId": "ride-reply.002@example.com",
+    "from": "self",
+    "to": ["p_dave"],
+    "subject": "Re: Bike club ride on Saturday",
+    "body": "Count me in. I'll bring coffee for the regroup stop.\n\nJohn",
+    "sentAt": "2025-09-05T09:40:00Z",
+    "inReplyTo": "ride-plan.001@example.net",
+    "folders": ["[Gmail]/Sent Mail", "[Gmail]/All Mail"],
+    "flags": "S"
+  },
+  {
+    "id": "synth-maildir-003",
+    "messageId": "workshop-agenda.003@globex.example",
+    "from": "p_carol",
+    "to": ["self"],
+    "cc": ["p_alex"],
+    "subject": "Globex workshop agenda",
+    "body": "Hello,\n\nAttached below is the outline for Thursday's workshop: roadmap review, pricing questions, and the integration timeline. Alex will run the pricing section.\n\nCarol",
+    "sentAt": "2025-09-08T14:00:00Z",
+    "folders": ["INBOX", "Work", "[Gmail]/All Mail"],
+    "flags": "FS"
+  },
+  {
+    "id": "synth-maildir-004",
+    "messageId": "tart-recipe.004@example.org",
+    "from": "p_claire",
+    "to": ["self"],
+    "subject": "Recipe for the lemon tart",
+    "body": "Here's the lemon tart recipe you asked about. The trick is blind-baking the shell for fifteen minutes before adding the curd.\n\nClaire",
+    "sentAt": "2025-09-10T19:25:00Z",
+    "folders": ["[Gmail]/All Mail"],
+    "flags": "S"
+  },
+  {
+    "id": "synth-maildir-005",
+    "messageId": "booking-9921.005@meridian-air.example.com",
+    "from": "p_meridian_air",
+    "to": ["self"],
+    "subject": "Your booking confirmation",
+    "body": "Thank you for booking with Meridian Air. Your reference is MX9921. Check-in opens 24 hours before departure.",
+    "sentAt": "2025-09-12T06:05:00Z",
+    "folders": ["INBOX", "[Gmail]/All Mail"],
+    "headers": { "List-Unsubscribe": "<https://meridian-air.example.com/unsubscribe>" }
+  },
+  {
+    "id": "synth-maildir-006",
+    "messageId": "book-club.006@example.com",
+    "from": "p_maya_reeves",
+    "to": ["self"],
+    "subject": "Book club pick for October",
+    "body": "Hello, the group voted for a short novel this month so everyone can finish it. Discussion is on the last Thursday of October.\n\nMaya",
+    "sentAt": "2025-09-14T17:45:00Z",
+    "folders": ["Personal", "[Gmail]/All Mail"],
+    "flags": "RS"
+  }
+]

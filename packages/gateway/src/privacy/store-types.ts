@@ -304,3 +304,15 @@ export function rehydrateAnswerStoreError(error: unknown): AnswerStoreError | nu
   if (typeof code !== "string" || !answerStoreErrorCodes.has(code)) return null;
   return new AnswerStoreError(code as AnswerStoreErrorCode, error.message);
 }
+
+/** Whether `table` has `column` — false when the table itself is absent. */
+export function hasColumn(db: PrivacyDb, table: string, column: string): boolean {
+  return Boolean(
+    db
+      .prepare<
+        [string],
+        { found: number }
+      >(`SELECT 1 AS found FROM pragma_table_info('${table}') WHERE name = ?`)
+      .get(column),
+  );
+}
