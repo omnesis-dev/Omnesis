@@ -653,6 +653,7 @@ export function splitEmailList(raw: string): string[] {
   return results;
 }
 
+// Known bug: #236 — backtracks quadratically on long runs of address characters.
 const EMAIL_REGEX = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
 
 /**
