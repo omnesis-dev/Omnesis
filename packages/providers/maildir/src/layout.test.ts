@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SyncError } from "@omnesis/types";
 import {
+  decodeImapUtf7,
   folderTag,
   isIgnoredByFlags,
   isSentFolderName,
@@ -296,6 +297,29 @@ describe("walkMaildir", () => {
     } finally {
       chmodSync(root, 0o755);
     }
+  });
+});
+
+describe("folder names in IMAP's modified UTF-7", () => {
+  test("are read as a person reads them", () => {
+    expect(decodeImapUtf7("Newsletter &- Marketing")).toBe("Newsletter & Marketing");
+    expect(decodeImapUtf7("Caf&AOk- &- Bar")).toBe("Café & Bar");
+    expect(decodeImapUtf7("&ZeVnLIqe-")).toBe("日本語");
+  });
+
+  test("a local name with a bare ampersand is kept as it is", () => {
+    expect(decodeImapUtf7("Tom & Jerry")).toBe("Tom & Jerry");
+    expect(decodeImapUtf7("R&D")).toBe("R&D");
+    expect(decodeImapUtf7("Invoices")).toBe("Invoices");
+  });
+
+  test("a mirrored folder is tagged with its readable name", () => {
+    createMailbox(join(root, "Newsletter &- Marketing"));
+    createMailbox(join(root, "Caf&AOk-", "Receipts"));
+    const names = walkMaildir(root, [], LIMITS)
+      .mailboxes.map((m) => m.name)
+      .sort();
+    expect(names).toEqual(["Café/Receipts", "Newsletter & Marketing"]);
   });
 });
 

@@ -204,7 +204,39 @@ export function isIgnoredByFlags(flags: string): boolean {
 }
 
 function decodeSegment(segment: string): string {
-  return segment.startsWith(".") ? segment.slice(1).split(".").join("/") : segment;
+  const name = segment.startsWith(".") ? segment.slice(1).split(".").join("/") : segment;
+  return decodeImapUtf7(name);
+}
+
+/**
+ * A folder name as a person reads it, when the tool kept the server's IMAP
+ * spelling on disk. IMAP writes mailbox names in modified UTF-7: `&` becomes
+ * `&-` and non-ASCII runs become `&…-` blocks of base64 UTF-16, so a label
+ * "Café & Bar" arrives as `Caf&AOk- &- Bar`. mbsync, offlineimap and Dovecot
+ * all keep that spelling. A name that is not valid modified UTF-7 — an `&`
+ * followed by anything but such a block — is a local name and is kept as is.
+ */
+export function decodeImapUtf7(name: string): string {
+  if (!name.includes("&")) return name;
+  let valid = true;
+  const decoded = name.replace(/&([^-]*)(-?)/g, (whole, run: string, dash: string) => {
+    if (dash !== "-") {
+      valid = false;
+      return whole;
+    }
+    if (run === "") return "&";
+    if (!/^[A-Za-z0-9+,]+$/.test(run)) {
+      valid = false;
+      return whole;
+    }
+    const bytes = Buffer.from(run.replace(/,/g, "/"), "base64");
+    if (bytes.length === 0 || bytes.length % 2 !== 0) {
+      valid = false;
+      return whole;
+    }
+    return new TextDecoder("utf-16be").decode(bytes);
+  });
+  return valid ? decoded : name;
 }
 
 /**
