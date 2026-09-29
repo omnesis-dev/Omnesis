@@ -118,11 +118,10 @@ describe("GmailSource", () => {
       expect(result.progress?.total).toBe(0);
     });
 
-    test("transitions to incremental once processed >= messagesTotal even if pagination has more", async () => {
-      // Reproduces gmail-cursor-stuck-in-bootstrap-blocks-incremental-sync:
-      // Gmail's listMessages keeps serving past messagesTotal due to in-flight
-      // churn. Without a count-based escape, the cursor stays in bootstrap
-      // forever and never picks up new mail via history.list.
+    test("transitions to incremental at twice messagesTotal even if pagination has more", async () => {
+      // Gmail's listMessages can keep serving past messagesTotal due to
+      // in-flight churn. Without a count-based escape, the cursor could stay
+      // in bootstrap forever and never pick up new mail via history.list.
       gmail.users.messages.list = vi.fn(() =>
         Promise.resolve({
           data: { messages: [{ id: "last-1" }], nextPageToken: "page-99" },
@@ -138,7 +137,7 @@ describe("GmailSource", () => {
         phase: "bootstrap",
         pageToken: "page-50",
         totalMessages: 50,
-        processedDocs: 49,
+        processedDocs: 99,
         bootstrapHistoryId: "history-pinned",
       };
       const result = await source.sync(cursor);
@@ -267,10 +266,27 @@ describe("GmailSource", () => {
         recoverAfter: "2026-05-30T00:00:00.000Z",
         lastSyncAt: "2026-05-30T00:00:00.000Z",
         recoveryVouched: true,
+        coverage: "complete",
       } as never);
       expect(result.hasMore).toBe(false);
       expect((result.cursor as any).coverage).toBe("complete");
       expect(result.progress?.coverage).toBe("complete");
+    });
+
+    test("a watermarked recovery does not vouch for a mailbox that was never settled complete", async () => {
+      // The recovery closes the gap since the watermark and nothing more: a
+      // mailbox whose first walk ended early is still missing what that walk
+      // never reached.
+      gmail.users.messages.list = vi.fn(() =>
+        Promise.resolve({ data: { messages: [], nextPageToken: undefined } }),
+      ) as never;
+      const result = await source.sync({
+        phase: "bootstrap",
+        recoverAfter: "2026-05-30T00:00:00.000Z",
+        lastSyncAt: "2026-05-30T00:00:00.000Z",
+        recoveryVouched: true,
+      } as never);
+      expect((result.cursor as any).coverage).toBe("unknown");
     });
 
     test("a watermarked recovery still settles complete when it spans more than one page", async () => {
@@ -291,6 +307,7 @@ describe("GmailSource", () => {
         recoverAfter: "2026-05-30T00:00:00.000Z",
         lastSyncAt: "2026-05-30T00:00:00.000Z",
         recoveryVouched: true,
+        coverage: "complete",
       };
       let result;
       for (let i = 0; i < 3; i++) {

@@ -161,6 +161,7 @@ export {
 } from "./rate-limiter.js";
 
 export { htmlToMarkdown } from "./html-to-markdown.js";
+export { chooseMailBody, tidyMailBody, decodeMailText, charsetOfContentType } from "./mail-body.js";
 
 export {
   extractSchemaOrgDatesFromHtml,
@@ -759,10 +760,12 @@ export {
   extractEmailsFromText,
   extractPhonesFromText,
   extractEmailsAndPhonesFromText,
+  mailPeopleMentions,
   deriveAuthor,
   cleanPersonName,
   countryNameToISO2,
 } from "./people-utils.js";
+export type { MailAddress } from "./people-utils.js";
 
 export {
   resolveAttachmentConfig,
@@ -777,6 +780,7 @@ export {
   DEFAULT_ATTACHMENT_TYPES,
   STT_AUDIO_TYPES,
   DEFAULT_MAX_TEXT_LENGTH,
+  isInlineDecorationImage,
 } from "./attachments.js";
 
 export type {

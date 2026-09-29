@@ -489,30 +489,64 @@ describe("HttpGatewayClient.ocr", () => {
     });
   });
 
-  test("aborts a pathological request and suppresses OCR during the cooldown", async () => {
+  test("one slow image times out alone; the next image is still read", async () => {
     const shortDeadline = new HttpGatewayClient(`http://localhost:${PORT}`, API_KEY, {
       ocrRequestTimeoutMs: 100,
       ocrTimeoutCooldownMs: 350,
     });
     const requestsBefore = ocrRequestBodies.length;
-    await expect(shortDeadline.ocr(enc("TRIGGER_SLOW"), "image/png")).rejects.toMatchObject({
+    const timedOut = await shortDeadline.ocr(enc("TRIGGER_SLOW"), "image/png").catch((e) => e);
+    expect(timedOut).toMatchObject({
       name: "SyncError",
       kind: "transient",
       message: "OCR request timed out after 100ms",
     });
-    await expect(shortDeadline.ocr(enc("suppressed"), "image/png")).rejects.toMatchObject({
+    expect((timedOut as SyncError).retryAfterMs).toBeUndefined();
+    await expect(shortDeadline.ocr(enc("next image"), "image/png")).resolves.toMatchObject({
+      text: "next image",
+    });
+    expect(ocrRequestBodies.slice(requestsBefore)).toEqual(["TRIGGER_SLOW", "next image"]);
+    // Let the server's abandoned handler settle.
+    await new Promise((resolve) => setTimeout(resolve, 370));
+  });
+
+  test("timeouts in a row pause OCR, and a paused request is never sent", async () => {
+    const shortDeadline = new HttpGatewayClient(`http://localhost:${PORT}`, API_KEY, {
+      ocrRequestTimeoutMs: 100,
+      ocrTimeoutCooldownMs: 350,
+    });
+    const requestsBefore = ocrRequestBodies.length;
+    for (let i = 0; i < 2; i++) {
+      await expect(shortDeadline.ocr(enc("TRIGGER_SLOW"), "image/png")).rejects.toMatchObject({
+        message: "OCR request timed out after 100ms",
+      });
+    }
+    const paused = await shortDeadline.ocr(enc("suppressed"), "image/png").catch((e) => e);
+    expect(paused).toMatchObject({
       name: "SyncError",
       kind: "transient",
       message: "OCR requests paused after a request timeout",
     });
-    expect(ocrRequestBodies.slice(requestsBefore)).toEqual(["TRIGGER_SLOW"]);
+    expect((paused as SyncError).retryAfterMs).toBeGreaterThan(0);
+    expect(ocrRequestBodies.slice(requestsBefore)).toEqual(["TRIGGER_SLOW", "TRIGGER_SLOW"]);
 
-    // Let both the server's abandoned handler and the client cooldown settle.
+    // Let both the server's abandoned handlers and the client cooldown settle.
     await new Promise((resolve) => setTimeout(resolve, 370));
     await expect(shortDeadline.ocr(enc("recovered"), "image/png")).resolves.toMatchObject({
       text: "recovered",
     });
-    expect(ocrRequestBodies.slice(requestsBefore)).toEqual(["TRIGGER_SLOW", "recovered"]);
+  });
+
+  test("the OCR deadline can be changed after construction", async () => {
+    const adjustable = new HttpGatewayClient(`http://localhost:${PORT}`, API_KEY, {
+      ocrRequestTimeoutMs: 100,
+    });
+    adjustable.setOcrRequestTimeoutMs(120);
+    await expect(adjustable.ocr(enc("TRIGGER_SLOW"), "image/png")).rejects.toMatchObject({
+      message: "OCR request timed out after 120ms",
+    });
+    expect(() => adjustable.setOcrRequestTimeoutMs(0)).toThrow(RangeError);
+    await new Promise((resolve) => setTimeout(resolve, 370));
   });
 
   test("keeps concurrent OCR request deadlines isolated", async () => {

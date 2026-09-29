@@ -94,6 +94,7 @@
         "@omnesis/provider-local-files",
         "@omnesis/provider-lunchflow",
         "@omnesis/provider-lunchflow-synth",
+        "@omnesis/provider-maildir-synth",
         "@omnesis/provider-notion",
         "@omnesis/provider-notion-synth",
         "@omnesis/provider-obsidian",
@@ -172,5 +173,5 @@
     "unlisted": "off"
   },
   "ignoreDependencies": ["nx", "patch-package"],
-  "ignoreBinaries": ["python3"]
+  "ignoreBinaries": ["python3", "mkfifo"]
 }

@@ -5129,7 +5129,9 @@
         "packages/watch/universes/poc/analytics/google_calendar_events.json",
         "packages/watch/universes/poc/analytics/people.json",
         "packages/watch/universes/poc/ontology.json",
-        "packages/gateway/src/privacy/reviewer.test.ts"
+        "packages/gateway/src/privacy/reviewer.test.ts",
+        "packages/collector/src/e2e/maildir-lifecycle.e2e.test.ts",
+        "packages/providers/maildir/src/source.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -6427,7 +6429,10 @@
         "packages/providers/whatsapp/src/import/decrypt-parse.test.ts",
         "packages/watch/src/compiler/prompt.test.ts",
         "packages/gateway/src/privacy/reviewer.test.ts",
-        "evals/universes/loops-test-life/decision-cassettes/worth-gate.jsonl"
+        "evals/universes/loops-test-life/decision-cassettes/worth-gate.jsonl",
+        "packages/collector/src/e2e/maildir-lifecycle.e2e.test.ts",
+        "packages/providers/maildir/src/message.test.ts",
+        "packages/providers/maildir/src/source.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -7089,7 +7094,12 @@
         "packages/providers/whatsapp/src/provider.e2e.test.ts",
         "packages/watch/src/compiler/prompt.test.ts",
         "scripts/fixtures/generate-release-upgrade.mjs",
-        "scripts/lib/decision-cassette.test.mjs"
+        "scripts/lib/decision-cassette.test.mjs",
+        "packages/gateway/src/privacy/reviewer.test.ts",
+        "packages/collector/src/e2e/maildir-lifecycle.e2e.test.ts",
+        "packages/providers/maildir/src/index.test.ts",
+        "packages/providers/maildir/src/message.test.ts",
+        "packages/providers/maildir/src/source.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -7131,7 +7141,8 @@
         "evals/universes/default/cast.json",
         "evals/universes/default/sources/enable-banking-accounts/transactions.json",
         "evals/universes/default/sources/gmail/messages.json",
-        "evals/universes/default/sources/google-calendar/events.json"
+        "evals/universes/default/sources/google-calendar/events.json",
+        "evals/universes/default/sources/maildir/messages.json"
       ],
       "reason": "reviewed invented demo fixture"
     },
@@ -8629,7 +8640,9 @@
         "packages/gateway/src/merge-candidates.test.ts",
         "packages/gateway/src/watch/ontology.test.ts",
         "packages/gateway/src/workers/indexer-worker-boot.test.ts",
-        "packages/providers/outlook/src/onedrive.test.ts"
+        "packages/providers/outlook/src/onedrive.test.ts",
+        "packages/collector/src/e2e/maildir-lifecycle.e2e.test.ts",
+        "packages/providers/maildir/src/source.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -8751,7 +8764,8 @@
       "value": "Sent Items",
       "paths": [
         "evals/universes/default/sources/outlook-email/emails.json",
-        "evals/universes/e2e-minimal/sources/outlook-email/emails.json"
+        "evals/universes/e2e-minimal/sources/outlook-email/emails.json",
+        "packages/providers/maildir/src/layout.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -10123,6 +10137,28 @@
         "packages/collector/src/e2e/brain-bench/worth-gate-mail.ts"
       ],
       "reason": "invented worth-gate fixture"
+    },
+    {
+      "value": "All Mail",
+      "paths": [
+        "evals/universes/default/sources/maildir/messages.json",
+        "evals/universes/e2e-minimal/sources/maildir/messages.json",
+        "packages/collector/src/e2e/maildir-lifecycle.e2e.test.ts",
+        "packages/providers-synth/maildir/src/fixtures.ts",
+        "packages/providers/maildir/src/layout.test.ts",
+        "packages/providers/maildir/src/source.test.ts"
+      ],
+      "reason": "Gmail's folder name as mail tools mirror it to a Maildir, not a person"
+    },
+    {
+      "value": "Sent Mail",
+      "paths": [
+        "evals/universes/default/sources/maildir/messages.json",
+        "evals/universes/e2e-minimal/sources/maildir/messages.json",
+        "packages/collector/src/e2e/maildir-lifecycle.e2e.test.ts",
+        "packages/providers/maildir/src/layout.test.ts"
+      ],
+      "reason": "Gmail's folder name as mail tools mirror it to a Maildir, not a person"
     }
   ],
   "secretFixtures": [

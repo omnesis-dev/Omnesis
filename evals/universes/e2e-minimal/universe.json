@@ -137,6 +137,11 @@
       "device": "macbook"
     },
     {
+      "descriptorId": "maildir",
+      "accountIds": ["mail-synth-johnsmith"],
+      "device": "macbook"
+    },
+    {
       "descriptorId": "notion-databases",
       "accountIds": ["user_john_smith"],
       "device": "macbook"

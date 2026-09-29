@@ -217,9 +217,9 @@
                   Gmail<br /><span class="pill">any collector</span> <span class="pill">OAuth</span>
                 </td>
                 <td>
-                  Every email as a document, with attachment text extracted (scans and images are
-                  OCR'd when an OCR model is assigned); senders and recipients feed the people
-                  graph.
+                  Every email as a document, dated by when it was sent, with attachment text
+                  extracted (scans and images are OCR'd when an OCR model is assigned); senders and
+                  recipients, Bcc included, feed the people graph.
                 </td>
               </tr>
               <tr>
@@ -248,6 +248,17 @@
                   feed the people graph, mailboxes become tags, and reply headers link messages into
                   threads. Use <code>omnesis sources reauth imap:&lt;email&gt;</code> to replace the
                   password.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Maildir<br /><span class="pill">any collector</span>
+                  <span class="pill">Folder path</span>
+                </td>
+                <td>
+                  Email that a mail tool such as mbsync or offlineimap, or Thunderbird, keeps on the
+                  collector's own machine as a Maildir. Omnesis reads the files and never connects
+                  to the mail server. See <a href="#maildir">Maildir</a>.
                 </td>
               </tr>
               <tr>
@@ -285,6 +296,96 @@
             </tbody>
           </table>
         </div>
+
+        <h3 id="maildir">Maildir</h3>
+        <p>
+          Maildir indexes email that another program keeps on the collector's machine, such as
+          mbsync, offlineimap or getmail. That program talks to the mail server; Omnesis only reads
+          the files it writes and never connects to the server itself. That makes it a way in for an
+          account that admits only approved mail apps, when one of them stores the mail as Maildir.
+        </p>
+        <p>
+          Omnesis does not run the mail tool. Schedule it yourself — cron, a launchd agent or a
+          systemd timer — and Omnesis follows what it writes. The account the collector runs as
+          needs read access to the folder; on macOS a folder under Documents, Desktop or an external
+          drive also needs Full Disk Access for the collector, and a sync that cannot read it says
+          so.
+        </p>
+        <p>
+          Add it with the folder that holds one account's mail — the folder, or a folder inside it
+          such as <code>INBOX</code>, contains <code>cur</code> and <code>new</code> directories.
+          Each folder you add is its own account, so two mail accounts are two sources.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis sources add maildir ~/Mail/example --device &lt;collector&gt;</span
+              >
+            </p>
+          </div>
+        </div>
+        <p>
+          <strong>Thunderbird.</strong> Thunderbird keeps each account's mail in its profile folder:
+          <code>Mail/Local Folders</code> for local folders and
+          <code>ImapMail/&lt;server&gt;</code> for an IMAP account. Maildir reads an account that
+          uses Thunderbird's <em>File per message (maildir)</em> store; add the account's folder,
+          and its folders and subfolders are read as Thunderbird keeps them. For a local account
+          (Local Folders, or a POP account) stars and replies follow Thunderbird too. An IMAP
+          account keeps those on the server rather than in its files, so for one its folders and
+          deletions follow but a star added later does not; the IMAP source reads the server itself.
+          A folder whose name is too long or has characters the disk does not allow appears under
+          the name Thunderbird gave it on disk, which can be a hash of the original. By default
+          Thunderbird stores an account as one mbox file per folder, which this source does not
+          read; a sync over such a folder says so. To switch an account, back up the profile, then
+          in Thunderbird right-click the account, open <em>Settings</em>, and under
+          <em>Server Settings</em> set <em>Message Store Type</em> to
+          <em>File per message (maildir)</em>. For an IMAP account, Thunderbird has local copies
+          only of the folders it keeps for offline use.
+        </p>
+        <ul>
+          <li>
+            <strong>One document per message.</strong> A message stored in several folders — Gmail
+            labels arrive as one folder each, plus <em>All Mail</em> — is one document tagged with
+            the folders holding it. Gmail's own folders take the words its labels use in the Gmail
+            source — <code>SENT</code>, <code>STARRED</code>, <code>IMPORTANT</code> — and
+            <em>All Mail</em> adds no tag, so a search for starred mail finds it from either source.
+            Messages are matched by their Message-ID; one without it is its own document in each
+            folder.
+          </li>
+          <li>
+            <strong>Changes follow the files.</strong> A new message, a folder added or removed, and
+            a message starred or replied to update the document on the next sync. The collector
+            watches the folder, so a sync follows the mail tool's writes. A message leaves the index
+            when its last copy is gone — so deletions follow the mail tool, and a tool set never to
+            remove local copies keeps them in Omnesis too.
+          </li>
+          <li>
+            <strong>What it skips.</strong> Drafts, spam and trash folders, Thunderbird's templates
+            and unsent messages, messages marked deleted, and any folder matching the
+            <em>Exclude folders</em> setting, which takes folder names such as
+            <code>[Gmail]/All Mail</code>; <code>*</code> matches within a folder name and
+            <code>**</code> across folders.
+          </li>
+          <li>
+            <strong>A folder it cannot read.</strong> An unreadable folder, or a Maildir that is not
+            there — an unmounted drive, a changed permission — deletes nothing. The sync reports the
+            problem and removals wait until every folder reads again.
+          </li>
+          <li>
+            <strong>Its index.</strong> The source keeps an index of the files it has read in the
+            collector's configuration directory, so a large mailbox is read once. It holds folder
+            and file names, dates, attachment names and hashes, not message text. Removing the
+            source deletes it.
+          </li>
+          <li>
+            <strong>One machine per mailbox.</strong> Each machine's Maildir is its own source. The
+            same account mirrored on two machines and added on both is two sources with the same
+            messages; add it on one.
+          </li>
+        </ul>
 
         <h2 id="notes-tasks-meetings">Notes, tasks &amp; meetings</h2>
         <div class="table-wrap">
