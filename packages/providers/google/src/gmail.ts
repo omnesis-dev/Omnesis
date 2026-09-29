@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { join } from "node:path";
 import { google, type gmail_v1 } from "googleapis";
 
 type OAuth2Client = InstanceType<typeof google.auth.OAuth2>;
@@ -22,7 +21,6 @@ import {
   buildAttachmentDocument,
   formatAttachmentMarkers,
   deriveAttachmentStableId,
-  extractionOutcome,
   isInlineDecorationImage,
 } from "@omnesis/core";
 import { makeCursorValidator, applyDataCutoff } from "@omnesis/source-sdk";
@@ -33,13 +31,8 @@ import {
   GOOGLE_FETCH_CONCURRENCY,
   GMAIL_HISTORY_RECOVERY_OVERLAP_MS,
   GMAIL_HISTORY_RECOVERY_FALLBACK_MS,
-  GMAIL_OUTPUT_REVISION,
-  GMAIL_ATTACHMENT_RETRY_BACKOFF_MS,
-  GMAIL_DEFERRED_RETRY_MS,
-  GMAIL_RETRIES_PER_SYNC,
 } from "./constants.js";
 import { googleApiStatus, mapGoogleApiError } from "./api-error.js";
-import { GmailLedger, type LedgerAttachment, type LedgerMark } from "./gmail-ledger.js";
 import {
   messageContent,
   messageDate,
@@ -52,7 +45,7 @@ import type {
   AttachmentExtractionConfig,
   AttachmentExtractFn,
 } from "@omnesis/core";
-import type { SyncCursor, SyncResult, HistoryCoverage, SyncProgress } from "@omnesis/source-sdk";
+import type { SyncCursor, SyncResult, HistoryCoverage } from "@omnesis/source-sdk";
 import type { DocumentInput } from "@omnesis/types";
 
 const log = createLogger("source:gmail");
@@ -101,21 +94,6 @@ export interface GmailSyncCursor extends SyncCursor {
    * below that point and the result keeps the coverage it had.
    */
   recoveryVouched?: boolean;
-  /**
-   * The output revision the whole mailbox was last written under, by a
-   * bootstrap or a completed rewalk. Absent means 1. When it is older than
-   * {@link GMAIL_OUTPUT_REVISION}, a rewalk starts.
-   */
-  outputRevision?: number;
-  /**
-   * A walk of the whole mailbox in progress beside incremental sync: every
-   * listed message is fetched and emitted again. It runs after a normalizer
-   * change, and to finish a bootstrap that ended while Gmail was still
-   * serving pages. One page per sync; resumable from `pageToken`.
-   */
-  rewalk?: { pageToken?: string; processed: number };
-  /** The attachment-ledger position this cursor vouches for; see `GmailLedger`. */
-  ledger?: LedgerMark;
 }
 
 /**
@@ -195,26 +173,9 @@ interface AttachmentPartInfo {
   charset?: string;
 }
 
-/** Whether an attachment outcome is a failure worth fetching the message again for. */
-function isRetryable(info: AttachmentInfo): boolean {
-  return (
-    info.reason === "extraction-failed" ||
-    info.reason === "download-failed" ||
-    info.reason === "extraction-deferred"
-  );
-}
-
 export interface GmailSourceOptions {
   attachmentConfig?: AttachmentExtractionConfig;
   extractAttachment?: AttachmentExtractFn;
-  /**
-   * Directory for the source's attachment ledger (see `GmailLedger`). Without
-   * one, every fetch of a message extracts its attachments again and failed
-   * extractions are not retried.
-   */
-  stateDir?: string;
-  /** Clock, for tests. */
-  now?: () => number;
 }
 
 // Build the user-facing "open in Gmail" URL for a message.
@@ -261,11 +222,6 @@ export class GmailSource {
   // The account email (== accountId for multi-account sources). Used to pin
   // "open in Gmail" links to the right account via `?authuser=`.
   private accountEmail?: string;
-  private readonly ledger: GmailLedger | null;
-  private readonly now: () => number;
-  /** The ledger sequence the current page writes under. */
-  private pageSeq = 0;
-
   constructor(
     auth: OAuth2Client,
     accountId?: string,
@@ -278,19 +234,10 @@ export class GmailSource {
     this.accountEmail = accountId;
     this.attachmentConfig = opts?.attachmentConfig ?? resolveAttachmentConfig();
     this.extractAttachment = opts?.extractAttachment;
-    this.ledger = opts?.stateDir
-      ? GmailLedger.open(join(opts.stateDir, "gmail-ledger.sqlite"))
-      : null;
-    this.now = opts?.now ?? Date.now;
     if (dataCutoff) {
       this.dataCutoff = new Date(dataCutoff);
       log.info(`Data cutoff: ${dataCutoff}`);
     }
-  }
-
-  /** Release the ledger's database handle. */
-  dispose(): void {
-    this.ledger?.close();
   }
 
   /**
@@ -340,10 +287,6 @@ export class GmailSource {
 
   async sync(cursor: SyncCursor | null): Promise<SyncResult> {
     const state = validateGmailSyncCursor(cursor) ?? { phase: "bootstrap" };
-    this.pageSeq = this.ledger?.align(state.ledger) ?? 0;
-    const ledger: LedgerMark | undefined = this.ledger
-      ? { id: this.ledger.id, seq: this.pageSeq }
-      : undefined;
 
     // One typed boundary for both phases. `incrementalSync` maps the errors
     // it handles itself, and the mapper returns an existing `SyncError`
@@ -354,11 +297,9 @@ export class GmailSource {
     // transport failure reading `fetch failed` with nothing to say which
     // request died.
     try {
-      const result =
-        state.phase === "bootstrap" || !state.historyId
-          ? await this.bootstrapSync(state)
-          : await this.incrementalSync(state);
-      return { ...result, cursor: { ...(result.cursor as GmailSyncCursor), ledger } };
+      return state.phase === "bootstrap" || !state.historyId
+        ? await this.bootstrapSync(state)
+        : await this.incrementalSync(state);
     } catch (error: unknown) {
       throw mapGoogleApiError(error);
     }
@@ -455,9 +396,12 @@ export class GmailSource {
 
     // Bootstrap is "done" when any of:
     //   - Gmail's listMessages returns no more pages;
-    //   - we've ingested at least messagesTotal docs (Gmail's listMessages can
-    //     keep serving past messagesTotal due to in-flight churn — without this
-    //     guard the cursor stays stuck in bootstrap forever).
+    //   - we've ingested twice messagesTotal (a runaway guard: Gmail's
+    //     listMessages can keep serving past messagesTotal due to in-flight
+    //     churn, and without a bound the cursor could stay in bootstrap
+    //     forever). The listing serves the oldest mail last, so ending at
+    //     messagesTotal itself would leave whatever churn pushed past it —
+    //     the oldest mail — never read.
     //
     // The `reachedTotal` guard only applies to an *unbounded* bootstrap, where
     // the denominator is the mailbox-wide `messagesTotal` (a hard upper bound).
@@ -467,7 +411,7 @@ export class GmailSource {
     // walks Gmail's pagination naturally exhausts at the `after:` boundary, so
     // `exhausted` is the only correct stopper.
     const reachedTotal =
-      !afterFloor && totalMessages !== undefined && processedDocs >= totalMessages;
+      !afterFloor && totalMessages !== undefined && processedDocs >= 2 * totalMessages;
     const exhausted = !res.data.nextPageToken;
     const hasMore = !reachedTotal && !exhausted;
 
@@ -491,20 +435,10 @@ export class GmailSource {
       } else {
         historyId = bootstrapHistoryId ?? historyId;
         log.info(
-          `Bootstrap complete (processed ${processedDocs}/${totalMessages ?? "?"}), using pinned historyId: ${historyId}; the rest of the mailbox is walked beside incremental sync`,
+          `Bootstrap complete (processed ${processedDocs}/${totalMessages ?? "?"}), using pinned historyId: ${historyId}`,
         );
       }
     }
-
-    // A full walk writes the whole mailbox under the current revision; a
-    // recovery covers only its window, so the mailbox keeps the revision it
-    // had. A walk that ended on the count guard hands its remaining pages to a
-    // rewalk, which carries on from the next page beside incremental sync.
-    const outputRevision = recoverAfter ? state.outputRevision : GMAIL_OUTPUT_REVISION;
-    const rewalk =
-      !hasMore && reachedTotal && !exhausted
-        ? { pageToken: res.data.nextPageToken ?? undefined, processed: processedDocs }
-        : state.rewalk;
 
     return {
       documents: filteredDocuments,
@@ -527,8 +461,6 @@ export class GmailSource {
         // restate it, because a history delta cannot re-derive how far back
         // the mailbox was read.
         coverage: hasMore ? state.coverage : settledReach,
-        outputRevision: hasMore ? state.outputRevision : outputRevision,
-        rewalk: hasMore ? state.rewalk : rewalk,
       } satisfies GmailSyncCursor,
       hasMore,
       progress: {
@@ -609,11 +541,6 @@ export class GmailSource {
       deletedExternalIds.push(id);
     }
 
-    // Messages whose failed attachments are due another try.
-    for (const id of this.ledger?.due(this.now(), GMAIL_RETRIES_PER_SYNC) ?? []) {
-      addedIds.add(id);
-    }
-
     // Don't fetch messages that were both added and deleted
     for (const id of deletedExternalIds) {
       addedIds.delete(id);
@@ -622,7 +549,6 @@ export class GmailSource {
     const fetched = await this.fetchAll([...addedIds]);
     // A message Gmail no longer has was deleted after its history event.
     deletedExternalIds.push(...fetched.gone);
-    this.ledger?.forget(deletedExternalIds);
     const documents = fetched.documents;
 
     // Only advance historyId when we've drained every page. Otherwise keep
@@ -634,107 +560,31 @@ export class GmailSource {
       ? state.historyId
       : (res.data.historyId ?? state.historyId);
 
-    // A rewalk runs one page per sync until it has listed the whole mailbox:
-    // one is owed while the mailbox was last written under an older revision,
-    // or while a bootstrap that ended early still has pages to read.
-    const walkOwed =
-      state.rewalk ??
-      (this.walkedRevision(state) < GMAIL_OUTPUT_REVISION ? { processed: 0 } : undefined);
-    let rewalk = walkOwed;
-    let outputRevision = state.outputRevision;
-    let coverage = state.coverage;
-    if (walkOwed) {
-      const page = await this.rewalkPage(walkOwed);
-      documents.push(...page.documents);
-      deletedExternalIds.push(...page.gone);
-      this.ledger?.forget(page.gone);
-      rewalk = page.next;
-      if (!page.next) {
-        outputRevision = GMAIL_OUTPUT_REVISION;
-        coverage = reachOf(this.dataCutoff, undefined, false, undefined);
-        log.info(
-          `Rewalk complete: ${walkOwed.processed + page.listed} messages written under output revision ${GMAIL_OUTPUT_REVISION}`,
-        );
-      }
-    }
-
     return {
-      documents: dedupeByExternalId(documents),
+      documents,
       deletedExternalIds,
       cursor: {
         historyId: advancedHistoryId,
         phase: "incremental",
         historyPageToken: nextHistoryPageToken,
         lastSyncAt: new Date().toISOString(),
-        coverage,
-        outputRevision,
-        rewalk,
+        coverage: state.coverage,
       } satisfies GmailSyncCursor,
-      hasMore: !!nextHistoryPageToken || rewalk !== undefined,
-      ...this.incrementalProgress(documents.length, coverage, rewalk),
-    };
-  }
-
-  /** The revision the whole mailbox was last written under. */
-  private walkedRevision(state: GmailSyncCursor): number {
-    return state.outputRevision ?? 1;
-  }
-
-  /**
-   * An incremental page's progress. Coverage is restated, not recomputed: an
-   * incremental page sees one history delta and cannot tell how far back the
-   * mailbox was walked; going silent instead would leave whatever was last
-   * said standing forever, which is how a recovery's "cannot tell" outlived
-   * the recovery. While a rewalk runs, the page reports its progress.
-   */
-  private incrementalProgress(
-    processed: number,
-    coverage: HistoryCoverage | undefined,
-    rewalk: GmailSyncCursor["rewalk"],
-  ): { progress?: SyncProgress } {
-    const claim = coverage
-      ? { coverage, ...(reachDetail(coverage) ? { detail: reachDetail(coverage)! } : {}) }
-      : {};
-    if (rewalk) return { progress: { phase: "refresh", processed: rewalk.processed, ...claim } };
-    return coverage ? { progress: { phase: "incremental", processed, ...claim } } : {};
-  }
-
-  /**
-   * One page of a rewalk: the next page of the mailbox listing, every message
-   * on it fetched and emitted again. A page token Gmail no longer accepts
-   * starts the walk over rather than failing the source.
-   */
-  private async rewalkPage(walk: { pageToken?: string; processed: number }): Promise<{
-    documents: DocumentInput[];
-    gone: string[];
-    listed: number;
-    next?: { pageToken?: string; processed: number };
-  }> {
-    const res = await this.gmail.users.messages
-      .list({
-        userId: "me",
-        maxResults: GOOGLE_PAGE_SIZE,
-        pageToken: walk.pageToken,
-        q: listQuery(this.dataCutoff),
-      })
-      .catch((error: unknown) => {
-        if (walk.pageToken && googleApiStatus(error) === 400) return null;
-        throw error;
-      });
-    if (res === null) {
-      log.warn("Rewalk page token no longer accepted; starting the rewalk over");
-      return { documents: [], gone: [], listed: 0, next: { processed: 0 } };
-    }
-    const ids = (res.data.messages ?? [])
-      .map((m) => m.id)
-      .filter((id): id is string => typeof id === "string");
-    const { documents, gone } = await this.fetchAll(ids);
-    const next = res.data.nextPageToken ?? undefined;
-    return {
-      documents: applyDataCutoff(documents, this.dataCutoff, log, "pre-cutoff messages"),
-      gone,
-      listed: ids.length,
-      ...(next ? { next: { pageToken: next, processed: walk.processed + ids.length } } : {}),
+      hasMore: !!nextHistoryPageToken,
+      // Restated, not recomputed. An incremental page sees one history delta
+      // and cannot tell how far back the mailbox was walked; going silent
+      // instead would leave whatever was last said standing forever, which
+      // is how a recovery's "cannot tell" outlived the recovery.
+      ...(state.coverage
+        ? {
+            progress: {
+              phase: "incremental",
+              processed: documents.length,
+              coverage: state.coverage,
+              ...(reachDetail(state.coverage) ? { detail: reachDetail(state.coverage)! } : {}),
+            },
+          }
+        : {}),
     };
   }
 
@@ -765,8 +615,6 @@ export class GmailSource {
         // weaker one from the floor alone.
         recoveryVouched: watermarked,
         coverage: state.coverage,
-        outputRevision: state.outputRevision,
-        rewalk: state.rewalk,
       } satisfies GmailSyncCursor,
       hasMore: true,
       ...(watermarked
@@ -834,7 +682,7 @@ export class GmailSource {
     const parts = messageParts(payload);
     const body = chooseMailBody(parts);
     const schemaDates = parts.html ? extractSchemaOrgDatesFromHtml(parts.html) : {};
-    const sourceDate = messageDate(date, msg.internalDate, this.now());
+    const sourceDate = messageDate(date, msg.internalDate, Date.now());
     const people = messagePeople({ from, to, cc, bcc }, body);
 
     // Generic automated-notification marker: a no-reply / notifications sender
@@ -910,11 +758,8 @@ export class GmailSource {
    * those that became child documents on this fetch.
    *
    * Inline decoration (a signature logo the HTML shows by `cid:`) is not an
-   * attachment and is left out. An attachment the ledger already settled —
-   * extracted, skipped, or found to hold no text — keeps that outcome without
-   * being downloaded again; its child document, if any, is already indexed.
-   * Only new attachments and earlier failures are read. The ledger then
-   * records the outcomes and, when some failed, when to try again.
+   * attachment and is left out. A text attachment is read in the charset its
+   * part declares.
    */
   private async readAttachments(
     messageId: string,
@@ -934,13 +779,6 @@ export class GmailSource {
     const children: Awaited<ReturnType<GmailSource["readAttachments"]>>["children"] = [];
     if (!this.attachmentConfig.enabled || !this.extractAttachment) return { infos, children };
 
-    const prior = this.ledger?.get(messageId);
-    const settled = new Map(
-      (prior?.attachments ?? [])
-        .filter((a) => !isRetryable(a.info))
-        .map((a) => [a.stableId, a.info]),
-    );
-    const recorded: LedgerAttachment[] = [];
     const seqByBase = new Map<string, number>();
 
     for (const part of this.findAttachmentParts(payload)) {
@@ -955,20 +793,11 @@ export class GmailSource {
       const baseId = deriveAttachmentStableId(part.filename, part.size, mimeType);
       const seq = seqByBase.get(baseId) ?? 0;
       seqByBase.set(baseId, seq + 1);
-      const stableId = `${baseId}#${seq}`;
       const base = { filename: part.filename, mimeType, size: part.size };
 
       const check = shouldExtractAttachment(mimeType, part.size, this.attachmentConfig);
       if (!check.extract) {
-        const info: AttachmentInfo = { ...base, extracted: false, reason: check.reason };
-        infos.push(info);
-        recorded.push({ stableId, info });
-        continue;
-      }
-      const known = settled.get(stableId);
-      if (known) {
-        infos.push(known);
-        recorded.push({ stableId, info: known });
+        infos.push({ ...base, extracted: false, reason: check.reason });
         continue;
       }
 
@@ -978,10 +807,13 @@ export class GmailSource {
         const typed = part.charset ? `${mimeType}; charset=${part.charset}` : mimeType;
         const result = await this.extractAttachment(data, typed, {
           maxTextLength: this.attachmentConfig.maxTextLength,
-          reportDeferred: true,
         });
-        info = { ...base, ...extractionOutcome(result) };
-        if (info.extracted && result) {
+        if (!result) {
+          info = { ...base, extracted: false, reason: "extraction-failed" };
+        } else if (result.noText) {
+          info = { ...base, extracted: false, reason: "no-text" };
+        } else {
+          info = { ...base, extracted: true };
           children.push({ filename: part.filename, mimeType, sizeBytes: part.size, seq, result });
         }
       } catch (err) {
@@ -996,38 +828,8 @@ export class GmailSource {
         info = { ...base, extracted: false, reason: "download-failed" };
       }
       infos.push(info);
-      recorded.push({ stableId, info });
     }
-
-    this.ledger?.put(messageId, this.retryPlan(recorded, prior?.attempts ?? 0), this.pageSeq);
     return { infos, children };
-  }
-
-  /**
-   * When to fetch a message again for its failed attachments.
-   *
-   * A failed attachment is always tried again when its message is fetched,
-   * so a fetch that leaves one failed is one more failed try: the waits run
-   * 1 h, 6 h, 24 h, then the message is no longer fetched for it. An
-   * attachment skipped while OCR was paused was not tried at all, so it only
-   * waits, without counting.
-   */
-  private retryPlan(
-    attachments: LedgerAttachment[],
-    attempts: number,
-  ): { attachments: LedgerAttachment[]; retryAt: number | null; attempts: number } {
-    const failed = attachments.some(
-      (a) => a.info.reason === "extraction-failed" || a.info.reason === "download-failed",
-    );
-    const deferred = attachments.some((a) => a.info.reason === "extraction-deferred");
-    const tries = failed ? attempts + 1 : 0;
-    const backoff = failed ? GMAIL_ATTACHMENT_RETRY_BACKOFF_MS[tries - 1] : undefined;
-    const wait = backoff ?? (deferred ? GMAIL_DEFERRED_RETRY_MS : undefined);
-    return {
-      attachments,
-      retryAt: wait === undefined ? null : this.now() + wait,
-      attempts: tries,
-    };
   }
 
   /**
@@ -1116,11 +918,4 @@ export class GmailSource {
     score += mailHeaderRelevancePenalty(headers);
     return Math.max(0, Math.min(1, score));
   }
-}
-
-/** One document per external id, the last one emitted winning. */
-function dedupeByExternalId(documents: DocumentInput[]): DocumentInput[] {
-  const byId = new Map<string, DocumentInput>();
-  for (const doc of documents) byId.set(doc.externalId, doc);
-  return [...byId.values()];
 }

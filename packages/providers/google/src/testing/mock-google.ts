@@ -117,16 +117,12 @@ export function createGmailSource(
     dataCutoff?: string;
     attachmentConfig?: import("@omnesis/core").AttachmentExtractionConfig;
     extractAttachment?: import("@omnesis/core").AttachmentExtractFn;
-    stateDir?: string;
-    now?: () => number;
   },
 ): GmailSource {
   const accountId = opts?.accountId ?? "test@example.com";
   const source = new GmailSource({} as any, accountId, opts?.dataCutoff, {
     attachmentConfig: opts?.attachmentConfig,
     extractAttachment: opts?.extractAttachment,
-    stateDir: opts?.stateDir,
-    now: opts?.now,
   });
   Object.defineProperty(source, "gmail", {
     value: mockGmail,

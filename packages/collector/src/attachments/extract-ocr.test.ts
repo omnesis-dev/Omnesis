@@ -107,30 +107,6 @@ describe("createAttachmentExtractor — OCR", () => {
     expect(await extract(new Uint8Array([1, 2, 3]), "application/pdf")).toBeNull();
     expect(ocr).toHaveBeenCalledTimes(2);
   });
-
-  test("an image skipped while OCR is paused is reported as deferred to a caller that asks", async () => {
-    const ocr: OcrFn = async () => {
-      throw new SyncError("transient", "OCR requests paused after a request timeout", {
-        retryAfterMs: 60_000,
-      });
-    };
-    const extract = createAttachmentExtractor({ ocr });
-    expect(await extract(enc("png"), "image/png", { reportDeferred: true })).toEqual({
-      text: "",
-      truncated: false,
-      deferred: true,
-    });
-    // A caller that does not ask gets the null it always did.
-    expect(await extract(enc("png"), "image/png")).toBeNull();
-  });
-
-  test("an image whose OCR timed out is a failure, not a deferral", async () => {
-    const ocr: OcrFn = async () => {
-      throw new SyncError("transient", "OCR request timed out after 30000ms");
-    };
-    const extract = createAttachmentExtractor({ ocr });
-    expect(await extract(enc("png"), "image/png", { reportDeferred: true })).toBeNull();
-  });
 });
 
 describe("createAttachmentExtractor — text charset", () => {

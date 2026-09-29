@@ -781,9 +781,7 @@ export {
   DEFAULT_ATTACHMENT_TYPES,
   STT_AUDIO_TYPES,
   DEFAULT_MAX_TEXT_LENGTH,
-  extractionOutcome,
   isInlineDecorationImage,
-  INLINE_DECORATION_MAX_BYTES,
 } from "./attachments.js";
 
 export type {
@@ -791,7 +789,6 @@ export type {
   AttachmentExtractionConfig,
   ExtractionResult,
   AttachmentExtractFn,
-  AttachmentExtractOptions,
 } from "./attachments.js";
 
 export type { AudioTranscribeFn } from "./transcription.js";

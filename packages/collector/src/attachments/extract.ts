@@ -4,12 +4,9 @@
 import {
   charsetOfContentType,
   createLogger,
-  type AttachmentExtractOptions,
   type OcrFn,
-  type OcrResult,
   type AudioTranscribeFn,
 } from "@omnesis/core";
-import { SyncError } from "@omnesis/types";
 import { extractPdfText } from "./extract-pdf.js";
 import { extractTextContent } from "./extract-text.js";
 import { extractOfficeText } from "./extract-office.js";
@@ -40,17 +37,6 @@ function ocrToExtraction(text: string, pages?: number): ExtractionResult | null 
   }
   return { text: trimmed, pages, truncated: false, extra: { ocr: true } };
 }
-
-/**
- * Whether an OCR failure means the request was never attempted: the gateway
- * client is pausing OCR after timeouts, or the gateway asked to come back
- * later. Both say nothing about the image itself.
- */
-function isOcrDeferral(err: unknown): boolean {
-  return err instanceof SyncError && err.kind === "transient" && err.retryAfterMs !== undefined;
-}
-
-const DEFERRED = Symbol("ocr-deferred");
 
 /** Map a transcription result onto the shared `ExtractionResult` shape. */
 function transcriptToExtraction(text: string): ExtractionResult | null {
@@ -97,32 +83,19 @@ export function createAttachmentExtractor(deps: AttachmentExtractorDeps = {}) {
   // keep their existing typed retry behavior at the provider boundary.
   const ocr: OcrFn | undefined = deps.ocr
     ? async (data, mime, opts) => {
-        const result = await recognize(data, mime, opts);
-        return result === DEFERRED ? null : result;
+        if (deps.ocrEnabled && !deps.ocrEnabled()) return null;
+        try {
+          return await deps.ocr!(data, mime, opts);
+        } catch (err) {
+          // PDF extraction can preserve its native text and stamp partial OCR
+          // provenance, so let that layer classify the failure itself.
+          if (mime === "application/pdf") throw err;
+          const msg = err instanceof Error ? err.message : String(err);
+          log.warn(`OCR failed for ${mime}, leaving attachment unextracted (non-fatal): ${msg}`);
+          return null;
+        }
       }
     : undefined;
-
-  async function recognize(
-    data: Uint8Array,
-    mime: string,
-    opts?: Parameters<OcrFn>[2],
-  ): Promise<OcrResult | null | typeof DEFERRED> {
-    if (!deps.ocr || (deps.ocrEnabled && !deps.ocrEnabled())) return null;
-    try {
-      return await deps.ocr(data, mime, opts);
-    } catch (err) {
-      // PDF extraction can preserve its native text and stamp partial OCR
-      // provenance, so let that layer classify the failure itself.
-      if (mime === "application/pdf") throw err;
-      const msg = err instanceof Error ? err.message : String(err);
-      if (isOcrDeferral(err)) {
-        log.debug(`OCR deferred for ${mime}: ${msg}`);
-        return DEFERRED;
-      }
-      log.warn(`OCR failed for ${mime}, leaving attachment unextracted (non-fatal): ${msg}`);
-      return null;
-    }
-  }
 
   /**
    * Extract text from an attachment by MIME type.
@@ -135,7 +108,7 @@ export function createAttachmentExtractor(deps: AttachmentExtractorDeps = {}) {
   return async function extractAttachmentText(
     data: Uint8Array,
     mimeType: string,
-    opts?: AttachmentExtractOptions,
+    opts?: { maxTextLength?: number },
   ): Promise<ExtractionResult | null> {
     const base = mimeType.split(";")[0]?.trim().toLowerCase() ?? mimeType;
     switch (base) {
@@ -198,10 +171,7 @@ export function createAttachmentExtractor(deps: AttachmentExtractorDeps = {}) {
         // → the attachment is recorded as extraction-failed and retried on a
         // later resync once a backend is configured.
         if (ocr && isImageMime(base)) {
-          const result = await recognize(data, base);
-          if (result === DEFERRED) {
-            return opts?.reportDeferred ? { text: "", truncated: false, deferred: true } : null;
-          }
+          const result = await ocr(data, base);
           if (!result) return null;
           return ocrToExtraction(result.text, result.pages);
         }

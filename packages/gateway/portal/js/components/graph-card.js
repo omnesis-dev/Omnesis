@@ -582,7 +582,6 @@ export function attachmentStatusLabel(reason) {
     "encrypted": "Encrypted",
     "no-text": "No text found",
     "extraction-failed": "Extraction failed",
-    "extraction-deferred": "Extraction pending",
     "download-failed": "Download failed",
     "reference-only": "External link",
   };

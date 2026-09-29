@@ -31,10 +31,6 @@ export interface AttachmentInfo {
     | "encrypted"
     | "no-text"
     | "extraction-failed"
-    // Extraction was not attempted because the recognizer it needs was
-    // paused (OCR backing off after timeouts). Not a verdict on the file:
-    // a source retrying failures does not count it as an attempt.
-    | "extraction-deferred"
     | "download-failed"
     // Terminal: the media is gone from the source (e.g. evicted from the
     // WhatsApp CDN and no device re-uploaded it) — distinct from a `download-
@@ -68,12 +64,6 @@ export interface ExtractionResult {
   truncated: boolean;
   /** Extraction completed successfully, but the attachment contained no text. */
   noText?: true;
-  /**
-   * Extraction was not attempted: the recognizer it needs is paused. Only
-   * returned to a caller that passed `reportDeferred`; every other caller
-   * receives `null`, as for a failure.
-   */
-  deferred?: true;
   extra?: Record<string, unknown> & {
     /** Native PDF text was preserved, but one or more sparse pages still need OCR. */
     ocrIncomplete?: true;
@@ -300,34 +290,11 @@ export function fileKindName(mimeType: string, overrides?: Record<string, string
 export type AttachmentExtractFn = (
   data: Uint8Array,
   mimeType: string,
-  opts?: AttachmentExtractOptions,
+  opts?: { maxTextLength?: number },
 ) => Promise<ExtractionResult | null>;
 
-export interface AttachmentExtractOptions {
-  maxTextLength?: number;
-  /**
-   * Return a `{ deferred: true }` result, instead of `null`, when extraction
-   * was not attempted because the recognizer it needs is paused. For callers
-   * that retry failed extractions and must not count a skipped one.
-   */
-  reportDeferred?: boolean;
-}
-
-/**
- * What an extraction attempt amounts to, as the `AttachmentInfo` fields a
- * source records for it. `extracted` is true only for a result with text.
- */
-export function extractionOutcome(
-  result: ExtractionResult | null,
-): Pick<AttachmentInfo, "extracted" | "reason"> {
-  if (!result) return { extracted: false, reason: "extraction-failed" };
-  if (result.deferred) return { extracted: false, reason: "extraction-deferred" };
-  if (result.noText) return { extracted: false, reason: "no-text" };
-  return { extracted: true };
-}
-
 /** An inline image at or below this size, shown by the HTML body, is decoration. */
-export const INLINE_DECORATION_MAX_BYTES = 64 * 1024;
+const INLINE_DECORATION_MAX_BYTES = 64 * 1024;
 
 /**
  * Whether an image part is decoration the HTML body displays — a signature
