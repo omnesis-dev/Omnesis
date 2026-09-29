@@ -479,7 +479,15 @@ export function isPlaceholderPersonName(name: string): boolean {
 function stripSurroundingQuotes(s: string): string {
   const trimmed = s.trim();
   const m = trimmed.match(/^(['"`])(.*)\1$/);
-  return m ? m[2].trim() : trimmed;
+  if (m) return m[2].trim();
+  // A lone double quote at one end is left over from a broken mail header.
+  // Single quotes are left alone: a name can begin or end with an apostrophe
+  // ('t Hooft).
+  if (trimmed.split('"').length === 2) {
+    if (trimmed.startsWith('"')) return trimmed.slice(1).trim();
+    if (trimmed.endsWith('"')) return trimmed.slice(0, -1).trim();
+  }
+  return trimmed;
 }
 
 /**
@@ -537,13 +545,74 @@ export function parseEmailHeader(raw: string): { name?: string; email?: string }
 }
 
 /**
- * Normalize a display name: strip surrounding quotes, collapse whitespace,
- * and drop values that are really an email address (contain `@`, no space).
- * Safe to call at ingest time AND at DB insert time — idempotent.
+ * A display name without the address some mail clients write into it as a
+ * comment — `Maya Reeves (maya@example.com)` or `Maya Reeves
+ * <maya@example.com>` — which is the address again, not part of the name.
+ * A bracketed run is removed only when what it holds is an address; a
+ * handle or an organisation (`(@maya)`, `(Sales @ Acme)`) stays. Brackets
+ * the removal leaves empty go too; a name that held no address is returned
+ * untouched. One pass over the text, so a hostile
+ * name cannot make it slow.
+ */
+function withoutAddressComments(name: string): string {
+  const out: string[] = [];
+  let removed = false;
+  let i = 0;
+  while (i < name.length) {
+    const ch = name[i]!;
+    if (ch === "(" || ch === "<") {
+      let j = i + 1;
+      while (j < name.length && !"()<>".includes(name[j]!)) j += 1;
+      if (name[j] === ")" || name[j] === ">") {
+        const inner = name
+          .slice(i + 1, j)
+          .trim()
+          .replace(/^mailto:/i, "");
+        if (isDeliverableAddress(inner)) {
+          out.push(" ");
+          removed = true;
+          i = j + 1;
+          continue;
+        }
+      }
+      out.push(ch);
+      i += 1;
+      continue;
+    }
+    if (ch === ")" || ch === ">") {
+      // Drop the space before a closing bracket, and a pair the removal emptied.
+      while (out.length > 0 && /^\s*$/.test(out.at(-1)!)) out.pop();
+      const last = out.at(-1);
+      if (last === "(" || last === "<") {
+        out.pop();
+        i += 1;
+        continue;
+      }
+    }
+    out.push(ch);
+    i += 1;
+  }
+  // A name that held no address comes back exactly as it was.
+  return removed ? out.join("") : name;
+}
+
+/**
+ * Normalize a display name: drop an address written into it as a comment,
+ * strip surrounding quotes, collapse whitespace, and drop values that are
+ * really an email address (contain `@`, no space). Safe to call at ingest
+ * time AND at DB insert time — idempotent.
  */
 export function cleanPersonName(name: string | undefined): string | undefined {
   if (!name) return undefined;
-  const stripped = stripSurroundingQuotes(name).replace(/\s+/g, " ").trim();
+  // Removing one layer can expose another (`"'Maya Reeves'`); a few passes
+  // reach what a second call would, so cleaning a cleaned name is a no-op.
+  let unquoted = withoutAddressComments(name);
+  for (let pass = 0; pass < 4; pass += 1) {
+    const next = stripSurroundingQuotes(unquoted);
+    if (next === unquoted) break;
+    unquoted = next;
+  }
+  const stripped = unquoted.replace(/\s+/g, " ").trim();
   if (!stripped) return undefined;
   if (stripped.includes("@") && !stripped.includes(" ")) return undefined;
   return stripped;
@@ -584,6 +653,7 @@ export function splitEmailList(raw: string): string[] {
   return results;
 }
 
+// Known bug: #236 — backtracks quadratically on long runs of address characters.
 const EMAIL_REGEX = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
 
 /**
@@ -718,6 +788,115 @@ export function extractEmailsAndPhonesFromText(
     emails: extractEmailsFromUnescaped(unescaped),
     phones: extractPhonesFromUnescaped(unescaped, defaultCountry ?? getSystemRegion()),
   };
+}
+
+/** One address from a mail header: the display name, when there is one, and the address. */
+export interface MailAddress {
+  name?: string;
+  address: string;
+}
+
+/**
+ * An address a person could be written to: one `@`, a local part, and a
+ * domain with a dot that is neither its first nor its last character, with
+ * no whitespace, double quotes or brackets anywhere. Checked character by
+ * character, so a hostile header cannot make it slow.
+ */
+function isDeliverableAddress(candidate: string): boolean {
+  const at = candidate.indexOf("@");
+  if (at <= 0 || at !== candidate.lastIndexOf("@")) return false;
+  // An apostrophe is allowed: O'Brien has an address.
+  for (const ch of candidate) {
+    if (/\s/.test(ch) || '"<>()'.includes(ch)) return false;
+  }
+  const domain = candidate.slice(at + 1);
+  const dot = domain.indexOf(".");
+  return dot > 0 && domain.lastIndexOf(".") < domain.length - 1;
+}
+
+/**
+ * The address in what a broken header parsed as one.
+ *
+ * Mail from misbehaving clients reaches the parser with the display name
+ * glued to the address, an angle bracket left open, or quotes in the wrong
+ * place. The address is the text after the last `<`, else the last word
+ * holding an `@`; what still is not shaped like an address — a local host
+ * with no dotted domain, a mangled quoted part — is not one anyone can be
+ * written to, and yields nothing.
+ */
+function recoverMailAddress(raw: string): string | undefined {
+  let candidate = raw.trim();
+  const open = candidate.lastIndexOf("<");
+  if (open !== -1) candidate = candidate.slice(open + 1);
+  candidate = candidate.replace(/>.*$/, "").trim();
+  if (/\s/.test(candidate)) {
+    candidate =
+      candidate
+        .split(/\s+/)
+        .filter((word) => word.includes("@"))
+        .at(-1) ?? "";
+  }
+  return isDeliverableAddress(candidate) ? candidate : undefined;
+}
+
+/**
+ * The people one mail message names, for a source that reads raw mail.
+ *
+ * `From` becomes the sender; `To`, `Cc` and `Bcc` become recipients; any
+ * other address or phone number found in the body becomes a mention. Each
+ * address appears once, in core's canonical form, so the same correspondent
+ * read from a mailbox and from another mail source lands on one person. A
+ * phone number quoted in a body is never enough to create a person, and
+ * neither is an automated address (`notifications@`, `mailer-daemon@`): a
+ * machine that sends mail is not someone the owner knows.
+ *
+ * `maxPeople` bounds a message addressed to an enormous list: past it, the
+ * rest are dropped rather than handed to the people graph one by one.
+ */
+export function mailPeopleMentions(
+  headers: { from?: MailAddress[]; to?: MailAddress[]; cc?: MailAddress[]; bcc?: MailAddress[] },
+  body: string,
+  maxPeople: number,
+): PersonMention[] {
+  const people: PersonMention[] = [];
+  const seenEmails = new Set<string>();
+  const append = (role: "sender" | "recipient", addresses: MailAddress[] | undefined) => {
+    for (const address of addresses ?? []) {
+      if (people.length >= maxPeople) return;
+      // A group or an empty entry can reach here without an address.
+      if (typeof address.address !== "string") continue;
+      const recovered = recoverMailAddress(address.address);
+      if (!recovered) continue;
+      const email = normalizeEmail(recovered);
+      if (!email || seenEmails.has(email)) continue;
+      seenEmails.add(email);
+      people.push({
+        role,
+        name: cleanPersonName(address.name),
+        emails: [email],
+        ...(isAutomatedSenderAddress(email) ? { allowPersonCreation: false } : {}),
+      });
+    }
+  };
+  append("sender", headers.from);
+  append("recipient", [...(headers.to ?? []), ...(headers.cc ?? []), ...(headers.bcc ?? [])]);
+
+  const mentioned = extractEmailsAndPhonesFromText(body);
+  for (const email of mentioned.emails) {
+    if (people.length >= maxPeople) break;
+    if (seenEmails.has(email)) continue;
+    seenEmails.add(email);
+    people.push({
+      role: "mentioned",
+      emails: [email],
+      ...(isAutomatedSenderAddress(email) ? { allowPersonCreation: false } : {}),
+    });
+  }
+  for (const phone of mentioned.phones) {
+    if (people.length >= maxPeople) break;
+    people.push({ role: "mentioned", phones: [phone], allowPersonCreation: false });
+  }
+  return people;
 }
 
 /**

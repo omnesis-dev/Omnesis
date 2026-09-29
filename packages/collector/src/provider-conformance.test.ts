@@ -104,6 +104,7 @@ const current: Record<string, unknown> = {
     mailboxes: { INBOX: { uidValidity: "1", lastUid: 42 } },
     pendingMailboxPaths: ["Archive"],
   },
+  maildir: { generation: "0f3c2a9e-5b1d-4c7e-9a2f-6d8b1e4c3a70", seq: 12 },
   "local-files": {
     version: 1,
     fileMap: {

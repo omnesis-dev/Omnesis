@@ -1,0 +1,587 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Adrien Conrath
+
+/**
+ * Reading the shape of a Maildir tree: which folders are mailboxes, what each
+ * is called, and which message files each holds.
+ *
+ * A mailbox is any directory holding `cur` and either `new` or `tmp`: a mail
+ * client that stores its folders as Maildirs — Thunderbird's "file per
+ * message" store — writes no `new`, because nothing is ever delivered there
+ * unread. Where a mailbox sits and what it is called depends on the tool that
+ * wrote it, and every tool in common use is covered by three rules:
+ *
+ * - A root that is itself a mailbox is the account's inbox, `INBOX`, and so is
+ *   a top-level folder named `inbox` in any casing.
+ * - A directory name beginning with a dot is a Maildir++ folder: the dot is
+ *   dropped and the dots inside it are hierarchy separators, so `.Work.Travel`
+ *   is `Work/Travel`. Anything else is a folder named verbatim, nested as it
+ *   is on disk (mbsync's `SubFolders Verbatim`, offlineimap's default).
+ * - A directory named `<folder>.sbd` beside that folder, or beside its
+ *   `.msf` summary, holds the subfolders of `<folder>` (Thunderbird's
+ *   layout), so `Archives.sbd/2024` is `Archives/2024`.
+ *
+ * A dot-directory that is not itself a mailbox belongs to some other tool
+ * (`.notmuch`, `.git`) and is not entered.
+ *
+ * Only directory listings happen here, never a file read. In a Maildir a
+ * message file is never rewritten in place — flags change by renaming it — so
+ * its name is everything a walk needs to know about it. Thunderbird instead
+ * keeps a message's flags in its `X-Mozilla-Status` headers and rewrites them
+ * in place, so in a mailbox without `new` the walk also notes each file's
+ * times, size and inode, and a file whose version changes is read again.
+ */
+
+import { lstatSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import picomatch from "picomatch";
+import { fullDiskAccessRemediation } from "@omnesis/core";
+import { SyncError } from "@omnesis/types";
+import type { SyncRemediation } from "@omnesis/types";
+
+/** The deepest a mailbox may sit below the root. */
+const MAX_DEPTH = 12;
+
+/**
+ * Last path segments of folders that hold no mail worth indexing: unsent
+ * drafts, spam, and deleted mail. Matched case-insensitively against the
+ * folder's own name, so `[Gmail]/Trash` and a top-level `Trash` are both
+ * skipped. A mail server marks these with special-use flags; a Maildir keeps
+ * no such flag, so the name is the only evidence there is — and a server
+ * names them in the account's language, so the common translations are here
+ * too (Gmail's French, German and Spanish names among them).
+ */
+const SKIPPED_FOLDER_NAMES = new Set([
+  "drafts",
+  "draft",
+  "spam",
+  "junk",
+  "junk e-mail",
+  "junk email",
+  "trash",
+  "bin",
+  "deleted items",
+  "deleted messages",
+  "brouillons",
+  "corbeille",
+  "pourriel",
+  "courrier indésirable",
+  "éléments supprimés",
+  "entwürfe",
+  "papierkorb",
+  "gelöschte elemente",
+  "borradores",
+  "papelera",
+  "correo no deseado",
+]);
+
+/**
+ * Thunderbird's own folders for message templates and mail waiting to be
+ * sent. Skipped only in Thunderbird's store: in a mirror of a server, a
+ * folder called Templates is one the user made.
+ */
+const THUNDERBIRD_SKIPPED_FOLDER_NAMES = new Set(["templates", "unsent messages"]);
+
+/** Last path segments of folders holding mail the account owner sent. */
+const SENT_FOLDER_NAMES = new Set([
+  "sent",
+  "sent mail",
+  "sent items",
+  "sent messages",
+  "messages envoyés",
+  "éléments envoyés",
+  "envoyés",
+  "gesendet",
+  "gesendete elemente",
+  "gesendete objekte",
+  "enviados",
+  "elementos enviados",
+]);
+
+/**
+ * Gmail's own folders under `[Gmail]/` (`[Google Mail]/` in some regions),
+ * by the name each has in the account's language. Only folders under that
+ * parent are read this way: a user's own folder called "Important" is theirs.
+ */
+const GMAIL_STARRED = new Set(["starred", "suivis", "markiert", "destacados"]);
+const GMAIL_IMPORTANT = new Set(["important", "wichtig", "importantes"]);
+const GMAIL_ALL_MAIL = new Set(["all mail", "tous les messages", "alle nachrichten", "todos"]);
+
+/**
+ * The tag a folder gives the messages in it.
+ *
+ * The inbox and Gmail's system folders take the words the Gmail source uses
+ * for the same labels — `INBOX`, `SENT`, `STARRED`, `IMPORTANT` — so a search
+ * or a watch that names one finds the message from either source. All Mail
+ * gives none: every message of a Gmail mirror is in it, so as a tag it says
+ * nothing. Any other folder is tagged with its name.
+ */
+export function folderTag(name: string): string | null {
+  if (name === "INBOX") return "INBOX";
+  if (isSentFolderName(name)) return "SENT";
+  const segments = name.split("/");
+  if (segments.length === 2 && /^\[(gmail|google mail)\]$/i.test(segments[0]!)) {
+    const own = segments[1]!.toLowerCase();
+    if (GMAIL_STARRED.has(own)) return "STARRED";
+    if (GMAIL_IMPORTANT.has(own)) return "IMPORTANT";
+    if (GMAIL_ALL_MAIL.has(own)) return null;
+  }
+  return name;
+}
+
+interface Mailbox {
+  /** Directory relative to the root (`""` for the root itself). The mailbox's identity. */
+  id: string;
+  /** The folder name a person knows it by, such as `INBOX` or `Work/Travel`. */
+  name: string;
+  /** Absolute directory holding `cur`. */
+  dir: string;
+  /** Whether the folder holds sent mail. */
+  sent: boolean;
+  /**
+   * Whether its files carry their flags inside them rather than in their
+   * names — a mailbox with no `new`, written by a mail client.
+   */
+  flagsInFile: boolean;
+}
+
+/**
+ * One message file as a listing shows it. `uniq` is the part of the file name
+ * the delivering tool chose once and never changes; the rest carries flags,
+ * which change every time the message is read, answered or starred.
+ */
+interface MessageFile {
+  mailboxId: string;
+  uniq: string;
+  /** Path relative to the mailbox directory: `cur/<name>` or `new/<name>`. */
+  relPath: string;
+  /**
+   * Maildir flag letters, sorted: `F` flagged, `R` replied, `S` seen, `P`
+   * passed. Keywords are dropped. Null when the flags are inside the file,
+   * to be read with its headers.
+   */
+  flags: string | null;
+  /**
+   * For a file whose flags are inside it, its times, size and inode: a
+   * different version means its flags, or the file itself, changed. Empty for
+   * a Maildir file, whose name changes instead.
+   */
+  version: string;
+}
+
+export interface MaildirWalk {
+  mailboxes: Mailbox[];
+  files: MessageFile[];
+  /**
+   * Mailboxes whose listing could not be read. Every message under one is
+   * missing from `files`, and a missing message is indistinguishable from a
+   * deleted one, so a walk with gaps cannot vouch for what the tree holds.
+   */
+  gaps: Array<{ mailboxId: string; reason: string }>;
+}
+
+export interface WalkLimits {
+  maxMailboxes: number;
+  maxFiles: number;
+}
+
+/** Split a Maildir file name into the part that never changes and its flag letters. */
+export function parseMessageFileName(fileName: string): { uniq: string; flags: string } {
+  // The info delimiter is `:` everywhere but filesystems that forbid it,
+  // where tools substitute `!` (mbsync on Windows) or `;` (Dovecot's option).
+  const match = /^(.+?)[:!;]2,([A-Za-z]*)$/.exec(fileName);
+  if (!match) return { uniq: fileName, flags: "" };
+  // Only capital letters are flags. Lowercase letters are keywords a tool
+  // assigned (Dovecot writes them a–z), and treating them as flags would read
+  // a keyword `d` or `t` as a draft or a deletion.
+  const flags = [...new Set(match[2]!.replace(/[^A-Z]/g, ""))].sort().join("");
+  return { uniq: match[1]!, flags };
+}
+
+/** Whether a file is marked for deletion or is an unsent draft. */
+export function isIgnoredByFlags(flags: string): boolean {
+  return flags.includes("T") || flags.includes("D");
+}
+
+function decodeSegment(segment: string): string {
+  const name = segment.startsWith(".") ? segment.slice(1).split(".").join("/") : segment;
+  return decodeImapUtf7(name);
+}
+
+/**
+ * A folder name as a person reads it, when the tool kept the server's IMAP
+ * spelling on disk. IMAP writes mailbox names in modified UTF-7: `&` becomes
+ * `&-` and non-ASCII runs become `&…-` blocks of base64 UTF-16, so a label
+ * "Café & Bar" arrives as `Caf&AOk- &- Bar`. mbsync, offlineimap and Dovecot
+ * all keep that spelling. A name that is not valid modified UTF-7 — an `&`
+ * followed by anything but such a block — is a local name and is kept as is.
+ */
+export function decodeImapUtf7(name: string): string {
+  if (!name.includes("&")) return name;
+  let valid = true;
+  const decoded = name.replace(/&([^-]*)(-?)/g, (whole, run: string, dash: string) => {
+    if (dash !== "-") {
+      valid = false;
+      return whole;
+    }
+    if (run === "") return "&";
+    if (!/^[A-Za-z0-9+,]+$/.test(run)) {
+      valid = false;
+      return whole;
+    }
+    const bytes = Buffer.from(run.replace(/,/g, "/"), "base64");
+    if (bytes.length === 0 || bytes.length % 2 !== 0) {
+      valid = false;
+      return whole;
+    }
+    return new TextDecoder("utf-16be").decode(bytes);
+  });
+  return valid ? decoded : name;
+}
+
+/**
+ * The folder whose subfolders a `<folder>.sbd` directory holds, when
+ * Thunderbird wrote it: its folder, or that folder's `.msf` summary, sits
+ * beside it. Any other directory is a folder named as it is.
+ */
+function thunderbirdParentName(name: string, siblings: ReadonlySet<string>): string | undefined {
+  if (!name.endsWith(".sbd") || name.length <= 4) return undefined;
+  const parent = name.slice(0, -4);
+  return siblings.has(parent) || siblings.has(`${parent}.msf`) ? parent : undefined;
+}
+
+/**
+ * The name a mailbox is known by. The inbox is always `INBOX`, the name IMAP
+ * reserves for it, however the tool spelled the folder — mbsync's usual
+ * layout writes it as `Inbox` — so a question about the inbox finds it.
+ */
+function mailboxName(segments: readonly string[]): string {
+  if (segments.length === 0) return "INBOX";
+  if (segments.length === 1 && segments[0]!.toLowerCase() === "inbox") return "INBOX";
+  return segments.join("/");
+}
+
+function lastSegment(name: string): string {
+  return (name.split("/").at(-1) ?? name).toLowerCase();
+}
+
+export function isSkippedFolderName(name: string): boolean {
+  return SKIPPED_FOLDER_NAMES.has(lastSegment(name));
+}
+
+export function isSentFolderName(name: string): boolean {
+  return SENT_FOLDER_NAMES.has(lastSegment(name));
+}
+
+function isMailboxDir(names: ReadonlySet<string>): boolean {
+  return names.has("cur") && (names.has("new") || names.has("tmp"));
+}
+
+/**
+ * What to do about a Maildir the collector may not read. On macOS a folder
+ * under Documents, Desktop or an external volume needs a privacy grant; on
+ * Linux it is the folder's own permissions.
+ */
+function readAccessRemediation(): SyncRemediation {
+  if (process.platform === "darwin") return fullDiskAccessRemediation(process.execPath);
+  return {
+    summary: "The collector cannot read the Maildir",
+    steps: [
+      "Give the account the collector runs as permission to read the Maildir folder and every folder inside it.",
+    ],
+    restartRequired: false,
+  };
+}
+
+/**
+ * Whether a directory holds a Thunderbird folder in its default "file per
+ * folder" store: a regular file holding the whole folder as mbox, beside the
+ * `.msf` summary Thunderbird keeps for it.
+ */
+function holdsMboxFolder(entries: ReturnType<typeof listDir>): boolean {
+  const files = new Set(entries.filter((e) => e.isFile).map((e) => e.name));
+  for (const name of files) {
+    if (name.endsWith(".msf") && files.has(name.slice(0, -4))) return true;
+  }
+  return false;
+}
+
+/** A Thunderbird account that keeps each folder as one mbox file, which this source does not read. */
+function mboxStoreError(root: string): SyncError {
+  return new SyncError(
+    "unknown",
+    `The folders under ${root} are Thunderbird mbox files, not Maildirs. Switch the account's message store to "File per message (maildir)" in Thunderbird, then sync again.`,
+    {
+      remediation: {
+        summary: "Thunderbird stores this account as mbox",
+        steps: [
+          "Back up your Thunderbird profile.",
+          "In Thunderbird, right-click the account, open Settings, and under Server Settings set Message Store Type to File per message (maildir). Thunderbird converts the account's folders and restarts.",
+          "Sync the source again.",
+        ],
+        restartRequired: false,
+      },
+    },
+  );
+}
+
+/**
+ * A Thunderbird account whose folders exist only as `.msf` summaries: it has
+ * listed the mail on the server but kept no message on this machine yet,
+ * because it is still downloading or is set not to keep messages offline.
+ */
+function thunderbirdNothingStoredError(root: string): SyncError {
+  return new SyncError(
+    "unknown",
+    `Thunderbird has not stored any messages under ${root} yet. It keeps mail on this computer only when the account is set to, and fills the folders as it downloads.`,
+    {
+      remediation: {
+        summary: "Thunderbird has no messages stored for this account yet",
+        steps: [
+          "In Thunderbird, right-click the account, open Settings, and under Synchronization & Storage tick Keep messages for this account on this computer.",
+          "Leave Thunderbird open while it downloads; the source picks the messages up on its next sync.",
+        ],
+        restartRequired: false,
+      },
+    },
+  );
+}
+
+/**
+ * A tree past one of the walk's limits. Retrying cannot clear it; leaving
+ * folders out can.
+ */
+export function tooLargeError(message: string): SyncError {
+  return new SyncError(
+    "unknown",
+    `${message}; leave some folders out with the source's exclude setting`,
+    {
+      remediation: {
+        summary: "The Maildir is larger than the source reads",
+        steps: [
+          "Open the source's settings and add the folders you do not need to Exclude folders — for example a folder that holds a copy of every message, such as [Gmail]/All Mail.",
+        ],
+        restartRequired: false,
+      },
+    },
+  );
+}
+
+function readError(err: unknown, dir: string): SyncError {
+  const code = (err as { code?: unknown } | null)?.code;
+  const msg = err instanceof Error ? err.message : String(err);
+  if (code === "EACCES" || code === "EPERM") {
+    return new SyncError("permission", `Cannot read the Maildir at ${dir}: ${msg}`, {
+      remediation: readAccessRemediation(),
+    });
+  }
+  if (code === "ENOENT" || code === "ENOTDIR") {
+    return new SyncError(
+      "unknown",
+      `The Maildir at ${dir} is not there: ${msg}. Check that the drive holding it is mounted, or point the source at the folder your mail tool writes to.`,
+    );
+  }
+  return new SyncError("unknown", `Cannot read the Maildir at ${dir}: ${msg}`);
+}
+
+function listDir(dir: string): Array<{ name: string; isDir: boolean; isFile: boolean }> {
+  return readdirSync(dir, { withFileTypes: true }).map((entry) => ({
+    name: entry.name,
+    // Symbolic links are neither, so they are never followed, as folders or
+    // as messages: no mail tool writes one, and following one would let it
+    // lead the walk outside the tree it was pointed at. Nor are pipes,
+    // sockets or devices messages. A hard link is indistinguishable from the
+    // file it names — Dovecot uses them for copies of one message — and is
+    // read like any other.
+    isDir: entry.isDirectory(),
+    isFile: entry.isFile(),
+  }));
+}
+
+/**
+ * Find every mailbox under `root` and list its message files.
+ *
+ * The root must read, and must hold at least one mailbox: a root that has
+ * gone missing, or an empty directory where a drive used to be mounted, is
+ * reported as an error rather than returned as an empty walk, because an
+ * empty walk says every message was deleted.
+ */
+export function walkMaildir(
+  root: string,
+  exclude: readonly string[],
+  limits: WalkLimits,
+): MaildirWalk {
+  // `*`, `**` and `?` are wildcards and nothing else is: brackets, braces,
+  // a leading `!` and extglob groups are literal, because folder names carry
+  // them — `[Gmail]/All Mail` means that folder — and a negation would turn
+  // one excluded folder into every other one excluded.
+  const excludeMatchers = exclude.map((pattern) =>
+    picomatch(pattern.replace(/[[\]]/g, "\\$&"), {
+      nocase: true,
+      nonegate: true,
+      nobrace: true,
+      noextglob: true,
+    }),
+  );
+  const isExcluded = (name: string) => excludeMatchers.some((matches) => matches(name));
+  const isLeftOut = (name: string) => isSkippedFolderName(name) || isExcluded(name);
+
+  const mailboxes: Mailbox[] = [];
+  const gaps: MaildirWalk["gaps"] = [];
+  let mboxFolderSeen = false;
+  let thunderbirdIndexSeen = false;
+
+  const visit = (dir: string, relSegments: string[], nameSegments: string[], depth: number) => {
+    let entries: ReturnType<typeof listDir>;
+    try {
+      entries = listDir(dir);
+    } catch (err) {
+      if (depth === 0) throw readError(err, dir);
+      // A subfolder that will not list may be a mailbox or may hold some.
+      // Either way its mail is missing from this walk — unless it is one the
+      // source would leave out anyway.
+      if (!isLeftOut(mailboxName(nameSegments))) {
+        gaps.push({ mailboxId: relSegments.join("/"), reason: String((err as Error).message) });
+      }
+      return;
+    }
+    const names = new Set(entries.filter((e) => e.isDir).map((e) => e.name));
+    if (!mboxFolderSeen) mboxFolderSeen = holdsMboxFolder(entries);
+    if (!thunderbirdIndexSeen) {
+      thunderbirdIndexSeen = entries.some((e) => e.isFile && e.name.endsWith(".msf"));
+    }
+    if (isMailboxDir(names)) {
+      const name = mailboxName(nameSegments);
+      const flagsInFile = !names.has("new");
+      const thunderbirdOwn = flagsInFile && THUNDERBIRD_SKIPPED_FOLDER_NAMES.has(lastSegment(name));
+      if (!isLeftOut(name) && !thunderbirdOwn) {
+        if (mailboxes.length >= limits.maxMailboxes) {
+          throw tooLargeError(
+            `The Maildir at ${root} holds more than ${limits.maxMailboxes} folders`,
+          );
+        }
+        mailboxes.push({
+          id: relSegments.join("/"),
+          name,
+          dir,
+          sent: isSentFolderName(name),
+          flagsInFile,
+        });
+      }
+    }
+    if (depth >= MAX_DEPTH) return;
+    const siblings = new Set(entries.map((e) => e.name));
+    for (const entry of entries) {
+      if (!entry.isDir) continue;
+      if (entry.name === "cur" || entry.name === "new" || entry.name === "tmp") continue;
+      const child = join(dir, entry.name);
+      if (entry.name.startsWith(".")) {
+        // A dot-folder is entered only when it is a Maildir++ mailbox; the
+        // rest belong to other tools. One that will not list could be either,
+        // so it is a gap unless its name is one the source leaves out: taking
+        // it for another tool's folder would read its mail as deleted.
+        let childNames: Set<string>;
+        try {
+          childNames = new Set(
+            listDir(child)
+              .filter((e) => e.isDir)
+              .map((e) => e.name),
+          );
+        } catch (err) {
+          const name = mailboxName([...nameSegments, decodeSegment(entry.name)]);
+          if (!isLeftOut(name)) {
+            gaps.push({
+              mailboxId: [...relSegments, entry.name].join("/"),
+              reason: String((err as Error).message),
+            });
+          }
+          continue;
+        }
+        if (!isMailboxDir(childNames)) continue;
+      }
+      visit(
+        child,
+        [...relSegments, entry.name],
+        [...nameSegments, thunderbirdParentName(entry.name, siblings) ?? decodeSegment(entry.name)],
+        depth + 1,
+      );
+    }
+  };
+  visit(root, [], [], 0);
+
+  if (mailboxes.length === 0 && gaps.length === 0) {
+    if (mboxFolderSeen) throw mboxStoreError(root);
+    if (thunderbirdIndexSeen) throw thunderbirdNothingStoredError(root);
+    throw new SyncError(
+      "unknown",
+      `No mail folders found under ${root}. Point the source at the folder your mail tool writes to: it, or a folder inside it, holds a cur directory beside a new or tmp one.`,
+    );
+  }
+
+  const files: MessageFile[] = [];
+  for (const mailbox of mailboxes) {
+    const byUniq = new Map<string, MessageFile>();
+    let unreadable: string | undefined;
+    // `new` first, so a message caught mid-move to `cur` resolves to `cur`.
+    const subs = mailbox.flagsInFile ? (["cur"] as const) : (["new", "cur"] as const);
+    for (const sub of subs) {
+      let entries: ReturnType<typeof listDir>;
+      try {
+        entries = listDir(join(mailbox.dir, sub));
+      } catch (err) {
+        unreadable = String((err as Error).message);
+        break;
+      }
+      for (const entry of entries) {
+        if (entry.name.startsWith(".") || !entry.isFile) continue;
+        const relPath = `${sub}/${entry.name}`;
+        if (mailbox.flagsInFile) {
+          let version: string;
+          try {
+            // Nanosecond times, and the change time a copy tool cannot set,
+            // so a flag rewritten at the same size is seen however soon it
+            // follows the last one.
+            const stat = lstatSync(join(mailbox.dir, relPath), { bigint: true });
+            version = `${stat.mtimeNs}:${stat.ctimeNs}:${stat.size}:${stat.ino}`;
+          } catch (err) {
+            // Gone since the listing: the message was deleted or moved, and
+            // is simply not in this walk. Anything else is a file the walk
+            // cannot vouch for.
+            if ((err as { code?: unknown }).code === "ENOENT") continue;
+            unreadable = String((err as Error).message);
+            break;
+          }
+          byUniq.set(entry.name, {
+            mailboxId: mailbox.id,
+            uniq: entry.name,
+            relPath,
+            flags: null,
+            version,
+          });
+          continue;
+        }
+        const { uniq, flags } = parseMessageFileName(entry.name);
+        byUniq.set(uniq, {
+          mailboxId: mailbox.id,
+          uniq,
+          relPath,
+          flags: sub === "new" ? "" : flags,
+          version: "",
+        });
+      }
+      if (unreadable !== undefined) break;
+    }
+    if (unreadable !== undefined) {
+      gaps.push({ mailboxId: mailbox.id, reason: unreadable });
+      continue;
+    }
+    for (const file of byUniq.values()) {
+      if (file.flags !== null && isIgnoredByFlags(file.flags)) continue;
+      files.push(file);
+      if (files.length > limits.maxFiles) {
+        throw tooLargeError(`The Maildir at ${root} holds more than ${limits.maxFiles} messages`);
+      }
+    }
+  }
+  return { mailboxes, files, gaps };
+}

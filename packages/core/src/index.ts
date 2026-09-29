@@ -760,10 +760,12 @@ export {
   extractEmailsFromText,
   extractPhonesFromText,
   extractEmailsAndPhonesFromText,
+  mailPeopleMentions,
   deriveAuthor,
   cleanPersonName,
   countryNameToISO2,
 } from "./people-utils.js";
+export type { MailAddress } from "./people-utils.js";
 
 export {
   resolveAttachmentConfig,

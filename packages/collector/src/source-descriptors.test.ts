@@ -790,7 +790,7 @@ describe("discovered registry — experimental visibility", () => {
     return descriptors;
   }
 
-  it.each(["openclaw", "hermes", "plaid", "local-files"])(
+  it.each(["openclaw", "hermes", "plaid", "local-files", "maildir"])(
     "the %s sources are generally available without experimental mode",
     async (providerId) => {
       for (const descriptor of await registryDescriptors(providerId)) {
