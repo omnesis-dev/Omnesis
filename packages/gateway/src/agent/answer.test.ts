@@ -76,12 +76,23 @@ class CitingBackend implements ChatBackend {
   readonly model = "citing";
   readonly turns: TurnInput[] = [];
 
-  constructor(private readonly documentIds: readonly string[]) {}
+  constructor(
+    private readonly documentIds: readonly string[],
+    private readonly text: { before?: string; after?: string } = {
+      after: "The budget review is on Tuesday.",
+    },
+  ) {}
 
   async *runTurn(input: TurnInput): AsyncIterable<AgentEvent> {
     this.turns.push(input);
     const { sessionId, messageId } = input;
     yield { type: "agent.message.start", payload: { sessionId, messageId, role: "assistant" } };
+    if (this.text.before) {
+      yield {
+        type: "agent.text.delta",
+        payload: { sessionId, messageId, delta: this.text.before },
+      };
+    }
     const annotate = input.tools.find((tool) => tool.name === "annotate_many");
     if (annotate) {
       const args = { annotations: this.documentIds.map((documentId) => ({ documentId })) };
@@ -95,10 +106,9 @@ class CitingBackend implements ChatBackend {
         payload: { sessionId, messageId, toolCallId: "cite_1", result, durationMs: 0 },
       };
     }
-    yield {
-      type: "agent.text.delta",
-      payload: { sessionId, messageId, delta: "The budget review is on Tuesday." },
-    };
+    if (this.text.after) {
+      yield { type: "agent.text.delta", payload: { sessionId, messageId, delta: this.text.after } };
+    }
     yield { type: "agent.message.end", payload: { sessionId, messageId, stopReason: "end_turn" } };
   }
 }
@@ -471,6 +481,34 @@ describe("AgentService.generateReadOnlyAnswerCandidate", () => {
       },
     ]);
     expect(backend.turns[0]?.systemPrompt).toContain("Citations on the answer surface");
+    await service.dispose();
+  });
+
+  it.each([
+    {
+      shape: "narration before its research",
+      text: { before: "I'm checking your records.", after: "The review is on Tuesday." },
+      answer: "The review is on Tuesday.",
+    },
+    {
+      shape: "an answer written before its citation call",
+      text: { before: "The review is on Tuesday." },
+      answer: "The review is on Tuesday.",
+    },
+  ])("answers with the reply, not $shape", async ({ text, answer }) => {
+    const backend = new CitingBackend(["doc_missing"], text);
+    const service = new AgentService({
+      backendFactory: () => backend,
+      ports: { search: stubSearch, document: stubDocument },
+      systemPrompt: "external answer prompt",
+      store: makeStore(),
+      sessionIdGen: () => "S_narrated",
+      idleTimeoutMs: 60_000,
+    });
+
+    const result = await service.generateReadOnlyAnswerCandidate("When is the review?", []);
+
+    expect(result.answer).toBe(answer);
     await service.dispose();
   });
 

@@ -538,7 +538,9 @@ const ANSWER_CITATIONS_PROMPT = `
 
 # Citations on the answer surface
 
-After privacy review, the documents you cite leave Omnesis beside your text as structured citations: each carries the document's title, date, source and the links the user can open. The external agent uses them to point the user at the source, so cite with \`annotate_many\`, one \`{ documentId }\` item per document your answer relies on, all in one call. Copy each \`documentId\` from a \`search_many\`, \`fetch_many\` or \`lookup_document_by_url\` result. Cite every document a claim rests on and nothing else: a citation discloses that its document exists. Quotes and notes on a citation are not released, so leave them out. Do not paste links or document ids into your text to cite a document: the citations carry them.`;
+After privacy review, the documents you cite leave Omnesis beside your text as structured citations: each carries the document's title, date, source and the links the user can open. The external agent uses them to point the user at the source, so cite with \`annotate_many\`, one \`{ documentId }\` item per document your answer relies on, all in one call, before you write the answer. Write the answer itself as your final text, after your last tool call; anything you write before a tool call is not part of it. Copy each \`documentId\` from a \`search_many\`, \`fetch_many\` or \`lookup_document_by_url\` result. Cite every document a claim rests on and nothing else: a citation discloses that its document exists. Quotes and notes on a citation are not released, so leave them out.
+
+Never write a URL or a document id in your text, even when the question asks for links. The caller receives each cited document's real links through its citation; a link you compose yourself is a guess, and a wrong one. When links are asked for, cite the documents and say in words which ones they are.`;
 
 const FIRING_EVIDENCE_ANSWER_PROMPT = `
 
@@ -2336,6 +2338,7 @@ export class AgentService {
     const childTrace = new AnswerChildTraceCollector();
 
     let text = "";
+    let earlierText = "";
     const citations = new AnswerCitationCollector();
     let candidateLimitExceeded = false;
     let terminal: (AgentEvent & { type: "agent.message.end" }) | undefined;
@@ -2355,6 +2358,14 @@ export class AgentService {
           return;
         }
         text += event.payload.delta;
+      } else if (event.type === "agent.tool.start") {
+        // The answer is what the agent writes after its last tool call. Text
+        // before a call is its narration of the research ("I'm checking…"),
+        // which is not part of the reply the caller asked for. It is kept
+        // aside rather than dropped, for a model that writes its answer
+        // first and only then calls a tool (to cite it, say).
+        if (text.trim().length > 0) earlierText = text;
+        text = "";
       } else if (event.type === "agent.citation") {
         citations.add(event.payload.ref);
       } else if (event.type === "agent.error") agentError = event;
@@ -2415,10 +2426,11 @@ export class AgentService {
     }
     assertSuccessfulAnswerTerminal(terminal);
     if (completionFailure) throw completionFailure;
-    if (text.trim().length === 0) {
+    const answer = text.trim().length > 0 ? text : earlierText;
+    if (answer.trim().length === 0) {
       throw new AgentError("answer_empty", "the agent returned an empty answer");
     }
-    return { answer: text, citations: citations.snapshot(), trace: trace! };
+    return { answer, citations: citations.snapshot(), trace: trace! };
   }
 
   private async resolveFiringEvidence(
