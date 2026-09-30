@@ -93,9 +93,8 @@ describe("privacy-brokered MCP OAuth — spawned replay gateway", () => {
         taskId: released.taskId,
       });
       // The draft cited one message through the agent's real citation tool,
-      // resolved from the synthetic corpus; the reviewer withheld its link. A
-      // generic MCP client receives the reviewed citation unasked, in the
-      // structured result and in the text.
+      // resolved from the synthetic corpus. A generic MCP client receives the
+      // reviewed citation unasked, in the structured result and in the text.
       const citations = (status.structuredContent as { citations?: Array<Record<string, unknown>> })
         .citations;
       expect(citations).toEqual([
@@ -104,12 +103,12 @@ describe("privacy-brokered MCP OAuth — spawned replay gateway", () => {
           sourceType: "gmail",
           title: "Q3 logistics recap",
           timestamp: expect.any(String),
+          sourceUrl: expect.stringMatching(/^https:\/\/mail\.google\.com\//),
         },
       ]);
       expect((status.content as Array<{ text?: string }>)[0]?.text).toContain(
         "Sources:\n1. Q3 logistics recap · gmail",
       );
-      expect(JSON.stringify(status)).not.toContain("mail.google.com");
 
       const db = new Database(harness.getDbPath(), { readonly: true });
       try {

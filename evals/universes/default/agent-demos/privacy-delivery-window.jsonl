@@ -3,8 +3,8 @@
 # contact's name but keeps the rest, so the release is a line edit of this draft
 # — the `diff` comparison.
 #
-# The draft cites one synthetic message through a live annotate_many call; the
-# review withholds its link, so the release carries the citation without it.
+# The draft cites one synthetic message through a live annotate_many call, so
+# a suite that syncs Gmail sees the release carry that citation.
 {"afterMs":30,"event":{"type":"agent.message.start","payload":{"sessionId":"$SESSION","messageId":"$MSG","role":"assistant"}}}
 {"afterMs":80,"event":{"type":"agent.tool.start","payload":{"sessionId":"$SESSION","messageId":"$MSG","toolCallId":"tc_cite_delivery","tool":"annotate_many","args":{"annotations":[{"documentId":"$DOC_synth-gmail-cole-001"}]},"intent":"Cite the documents the answer relies on"}}}
 {"afterMs":120,"event":{"type":"agent.text.delta","payload":{"sessionId":"$SESSION","messageId":"$MSG","delta":"The Halden Press order is booked for delivery on Thursday 14 May. The window is 09:00 to 11:00.\nThe courier is Ridgeway Logistics. The consignment note is RW-40128.\nMaya Reeves at Halden Press is expecting the pallet at the loading bay."}}}
