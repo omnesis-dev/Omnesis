@@ -391,11 +391,12 @@ export class InferenceRegistry {
     const prefixOf = slashIndex === -1 ? value : value.slice(0, slashIndex);
 
     // The decision role takes only typed-decision backends, and TypeSafe
-    // serves no other role: neither is a chat model.
+    // serves no other role: neither is a chat model. A configured HTTP backend
+    // that happens to be named `typesafe` keeps serving the other roles.
     if (role === "decision" && prefixOf !== "typesafe" && prefixOf !== "replay") {
       return { role, kind: "unresolved", reason: DECISION_ONLY_REASON };
     }
-    if (role !== "decision" && prefixOf === "typesafe") {
+    if (role !== "decision" && prefixOf === "typesafe" && !this.httpBackends.has("typesafe")) {
       return {
         role,
         kind: "unresolved",
@@ -428,7 +429,7 @@ export class InferenceRegistry {
     if (prefix === "local") return this.resolveLocalModel(role, suffix);
     if (prefix === "anthropic") return this.resolveAnthropicModel(role, value, suffix);
     if (prefix === "codex") return this.resolveCodex(role, suffix);
-    if (prefix === "typesafe") return this.resolveTypeSafe(role, suffix);
+    if (prefix === "typesafe" && role === "decision") return this.resolveTypeSafe(role, suffix);
     if (prefix === "replay") {
       if (role === "watch-judge") {
         return {

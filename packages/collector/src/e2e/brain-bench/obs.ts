@@ -102,6 +102,10 @@ export interface GateDecisionDto {
   inheritedFromParent: boolean;
   subjectDoc: AdminDocRef | null;
   reusedFrom: string | null;
+  /** The record a record-check decision judged; null for a document judgement. */
+  recordId: string | null;
+  /** False when the verdict was only observed (a record check in shadow mode). */
+  enforced: boolean;
   error: string | null;
   latencyMs: number | null;
   inputTokens: number | null;

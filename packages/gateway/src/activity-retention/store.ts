@@ -125,8 +125,9 @@ export function pruneActivityRetentionBatch(
  * is what lets an unchanged document skip a second decision-model call, and
  * the bootstrap view reads verdicts from it. So past the cutoff a decision
  * keeps its verdict and score but loses the request and answer text it was
- * audited with (the request carries the opening of an email body), and an
- * unavailable verdict — which carries no answer to reuse — is deleted.
+ * audited with (the request carries the opening of an email body). Rows nothing
+ * reuses are deleted instead: an unavailable verdict, which carries no answer,
+ * and every record-check verdict, which judged one record once.
  * Returns the rows changed, so a full batch reports more work.
  */
 function pruneCognitionDecisions(db: Db, cutoff: number, limit: number): number {
@@ -136,7 +137,7 @@ function pruneCognitionDecisions(db: Db, cutoff: number, limit: number): number 
         `DELETE FROM cognition_decisions
           WHERE id IN (
             SELECT id FROM cognition_decisions
-             WHERE verdict = 'unavailable' AND created_at < ?
+             WHERE (verdict = 'unavailable' OR purpose = 'record-check') AND created_at < ?
              ORDER BY created_at, id
              LIMIT ?
           )`,
