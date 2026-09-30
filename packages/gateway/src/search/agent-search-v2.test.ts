@@ -23,6 +23,7 @@ import type { SearchConfig } from "./search-config.js";
 const BODY =
   "The invented Northstar equipment agreement specifies delivery in September, replacement parts, inspection, and a twelve-month warranty.";
 const SOURCE = "archive:fictional";
+const DEVICE = "00000000-0000-4000-8000-000000000099";
 const NOW = "2025-02-01T10:00:00Z";
 let gateway: Database.Database;
 let index: Database.Database;
@@ -32,14 +33,14 @@ beforeEach(() => {
   index = createIndexDatabase(`/tmp/omnesis-test-${randomUUID()}.db`);
   gateway
     .prepare(
-      "INSERT INTO devices (id,name,kind,paired_at) VALUES ('test-device','Example desktop','collector',1)",
+      "INSERT INTO devices (id,name,kind,paired_at) VALUES (?,'Example desktop','collector',1)",
     )
-    .run();
+    .run(DEVICE);
   gateway
     .prepare(
-      "INSERT INTO sources (id,type,account_id,device_id,created_at,updated_at) VALUES (?,'archive','fictional','test-device',1,1)",
+      "INSERT INTO sources (id,type,account_id,device_id,created_at,updated_at) VALUES (?,'archive','fictional',?,1,1)",
     )
-    .run(SOURCE);
+    .run(SOURCE, DEVICE);
   addFile("a", "Agreement", BODY);
   addFile("b", "Agreement copy", BODY);
   addFile("c", "Agreement revised", BODY + " Inspection is now required twice.");
