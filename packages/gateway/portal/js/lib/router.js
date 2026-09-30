@@ -25,6 +25,9 @@ const DEBUG_TAB_ALIASES = {
   "/portal/sql": "sql",
 };
 
+/** Cognition section names that address the Calendar; they redirect to its own Debug tab. */
+const CALENDAR_COGNITION_SECTIONS = new Set(["calendar", "time-index", "temporal-annotations"]);
+
 // Optional unsaved-work guard for editors. The guard returns a message when
 // navigating now would discard edits, or null to allow it. Both in-app
 // navigations run it; a declined guard aborts before touching history.
@@ -433,6 +436,17 @@ export function parseRoute() {
     };
   }
 
+  // The Calendar: the time index, with an addressable annotation id. Its id
+  // nests below the tab, so it needs its own matcher ahead of `debugMatch`.
+  const calendarMatch = path.match(/^\/portal\/debug\/calendar(?:\/(.+?))?\/?$/);
+  if (calendarMatch) {
+    return {
+      view: "debug",
+      tab: "calendar",
+      calendarId: calendarMatch[1] ? decodePathSegment(calendarMatch[1]) : null,
+    };
+  }
+
   // Cognition debug sub-area (experimental): the read-only Cognition Steward
   // cognitive-state inspector. `/portal/debug/cognition[/<section>[/<id>]]`.
   // Nested one level deeper than the other Debug tabs (overview / loops /
@@ -444,6 +458,18 @@ export function parseRoute() {
   const cognitionMatch = path.match(
     /^\/portal\/debug\/cognition(?:\/([a-z-]+)(?:\/(.+))?)?\/?$/,
   );
+  // Cognition section names that address the Calendar redirect to its tab.
+  if (cognitionMatch && CALENDAR_COGNITION_SECTIONS.has(cognitionMatch[1])) {
+    const calendarId = cognitionMatch[2] ? decodePathSegment(cognitionMatch[2]) : null;
+    return {
+      view: "debug",
+      tab: "calendar",
+      calendarId,
+      redirectTo: calendarId
+        ? `/portal/debug/calendar/${encodeURIComponent(calendarId)}`
+        : "/portal/debug/calendar",
+    };
+  }
   if (cognitionMatch) {
     return {
       view: "debug",

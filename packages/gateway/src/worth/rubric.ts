@@ -2,8 +2,12 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The worth gate's rubric: the one question the decision model answers about
- * an email before the Brain spends a background-agent run on it.
+ * The email worth rubric: the one question the decision model answers about
+ * an email — how much an assistant tracking the recipient's life would want
+ * to record from it. Two gates ask it: the Brain's worth gate, before
+ * spending a background-agent run on the email, and the mention worth gate,
+ * before its dates reach the time query. They share one stored answer per
+ * email (`answers.ts`).
  *
  * A single 4-level score beat every multi-question variant tried on labelled
  * mail: with the first 2,000 characters of the body it separates mail worth a
@@ -20,14 +24,11 @@ import type { DecisionQuestion } from "@omnesis/core";
 
 export const WORTH_GATE_RUBRIC_VERSION = "email-worth-v1";
 
-/** Spend mechanism the gate's decision-model tokens are recorded under. */
-export const WORTH_GATE_SPEND_MECHANISM = "worth-gate";
-
 /** Pass when the score is at or above this (levels run 0–3). */
 export const EMAIL_WORTH_THRESHOLD = 1.08;
 
 /** Body characters sent to the decision model. */
-const EMAIL_BODY_CHARS = 2000;
+export const EMAIL_BODY_CHARS = 2000;
 
 export const EMAIL_WORTH_QUESTION_ID = "worth_score";
 
@@ -47,6 +48,19 @@ export const EMAIL_WORTH_QUESTIONS: Readonly<Record<string, DecisionQuestion>> =
 
 /** The document type the gate judges; attachments are judged by their parent of this type. */
 export const WORTH_GATED_DOCUMENT_TYPE = "email";
+
+/** True when a score clears the threshold: the email is worth recording. */
+export function passesWorthThreshold(score: number): boolean {
+  return score >= EMAIL_WORTH_THRESHOLD;
+}
+
+/**
+ * Structured booking or invoice dates (`dueAt` / `scheduledAt`): mail that
+ * carries them is never judged, the exemption the waker already makes.
+ */
+export function hasStructuredDate(meta: Readonly<Record<string, unknown>>): boolean {
+  return typeof meta.dueAt === "string" || typeof meta.scheduledAt === "string";
+}
 
 export interface EmailWorthState {
   subject: string;

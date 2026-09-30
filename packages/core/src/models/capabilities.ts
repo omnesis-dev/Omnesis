@@ -358,17 +358,17 @@ export const CAPABILITY_METADATA: Readonly<Record<CapabilityRole, CapabilityMeta
     experimental: true,
     section: "cognition",
   },
-  // Typed, cheap judgements about a document (experimental): the Brain's
-  // worth gate asks it whether a document is worth a background-agent run.
-  // Not a chat model — only typed-decision backends (TypeSafe Jev) serve it.
-  // Never auto-assigned — unset means every candidate document is processed.
+  // Typed, cheap judgements about a document: whether an email is worth
+  // recording, asked by the mention worth gate (time queries) and by the
+  // Brain's worth gate (background-agent runs). Not a chat model — only
+  // typed-decision backends (TypeSafe Jev) serve it. Never auto-assigned —
+  // unset means neither gate runs.
   decision: {
     role: "decision",
     title: "Decision model",
     description:
-      "Answers typed questions about a document — yes/no, a score on described levels, or one choice. The Brain uses it to skip emails it would get nothing from before starting a background-agent run. Supports TypeSafe Jev; each scored email's subject, sender and opening text are sent to TypeSafe.",
+      "Answers typed questions about a document — yes/no, a score on described levels, or one choice. Judges whether an email is worth recording, so time queries can leave out the dates in marketing and newsletters when the mention worth gate is on. Supports TypeSafe Jev; each scored email's subject, sender and opening text are sent to TypeSafe.",
     icon: "scale",
-    experimental: true,
     section: "cognition",
   },
 };

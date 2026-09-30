@@ -23,6 +23,7 @@ const TABS = [
   { key: "graph", label: "Graph" },
   { key: "metrics", label: "Metrics" },
   { key: "background-jobs", label: "Background Jobs" },
+  { key: "calendar", label: "Calendar" },
   { key: "cognition", label: "Cognition", experimental: true },
   { key: "watch", label: "Watch", experimental: true },
   { key: "doctor", label: "Doctor" },

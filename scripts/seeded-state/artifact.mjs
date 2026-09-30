@@ -140,6 +140,7 @@ const SAFE_TABLES = new Set([
   "devices",
   "doc_annotation_evidence",
   "doc_annotations",
+  "date_mention_judgements",
   "document_absence_observations",
   "document_absence_scopes",
   "document_absences",
@@ -220,6 +221,7 @@ const SAFE_TABLES = new Set([
   "temporal_annotation_projections",
   "temporal_annotations",
   "watermark",
+  "worth_answers",
 ]);
 
 const SENSITIVE_COLUMNS = new Map([

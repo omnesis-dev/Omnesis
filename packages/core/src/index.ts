@@ -67,6 +67,7 @@ export type {
   TemporalQueryInput,
   TemporalProjectionProvenance,
   TemporalAnnotationProvenance,
+  TemporalMentionProvenance,
   TemporalItem,
   TemporalProjectionCoverage,
   TemporalSpecialistCoverage,

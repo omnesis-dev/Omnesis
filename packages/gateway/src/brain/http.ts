@@ -6,29 +6,20 @@
  * gate flips live, like `/status`), but every route re-checks the
  * feature gate per request. Brief feed reads and user triage remain available
  * whenever experimental mode is enabled, even while the background agent is
- * parked. Agent-driven routes still 404 when the feature is not active. The
- * read-only temporal window follows visibility so
- * synthetic demos can inspect seeded time data without enabling agent work;
- * production still requires experimental mode.
+ * parked. Agent-driven routes still 404 when the feature is not active.
  *
  * Routes are `scope.admin()` like the rest of the agent surface. Three
  * groups: Briefs (the ranked feed GET, the cheap
  * unread-count GET for the drawer badge, the per-brief mark-read POST,
- * the dismiss POST, and the talk-back thread-open POST); temporal data (one
- * union window over projections + annotations, plus legacy annotation-only
- * reads); and `/loops*` list + detail reads. The other operator/debug surfaces
- * over the same tables live in admin-http.ts.
+ * the dismiss POST, and the talk-back thread-open POST); the legacy
+ * annotation-only time-index reads; and `/loops*` list + detail reads. The
+ * whole time index — projections, mentions and annotations — is read through
+ * the ungated `/temporal/*` routes (`http/routes/temporal.ts`). The other
+ * operator/debug surfaces over the same tables live in admin-http.ts.
  */
 
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import {
-  ACCEPTED_TEMPORAL_KINDS,
-  canonicalTemporalKind,
-  TEMPORAL_MODALITIES,
-  TEMPORAL_ORIGINS,
-  TEMPORAL_STATUSES,
-} from "@omnesis/core";
 import { buildPage, clampLimit } from "@omnesis/types";
 import { validateJson } from "../http/validate.js";
 import { scope } from "../http/scope.js";
@@ -39,10 +30,7 @@ import {
   StalePageCursorError,
 } from "../http/errors.js";
 import { TEMPORAL_ANNOTATION_READ_MAX_LIMIT } from "../enrichment/temporal-annotations/storage.js";
-import {
-  TemporalQueryInputError,
-  TemporalQueryService,
-} from "../enrichment/temporal/temporal-query-service.js";
+import { FACET_FILTER_MAX, parseTemporalWindowMs } from "../http/temporal-query-params.js";
 import { BRIEF_DISMISS_REASONS } from "./feedback.js";
 import { buildBriefsFeed } from "./feed.js";
 import {
@@ -56,7 +44,6 @@ import {
 import {
   buildTemporalAnnotationEntry,
   buildTemporalAnnotationWindow,
-  TEMPORAL_ANNOTATION_WINDOW_MAX_SPAN_MS,
   type TemporalAnnotationWindowEntry,
 } from "./temporal-annotation-window.js";
 import {
@@ -67,14 +54,12 @@ import {
 } from "./talkback/talkback-service.js";
 import { briefReadSnapshot, countShowableUnreadBriefs } from "./storage/briefs.js";
 import { ProductLoopQueryService } from "./product-loop-query-service.js";
-import type { TemporalKind, TemporalModality, TemporalOrigin, TemporalStatus } from "@omnesis/core";
 import type Database from "better-sqlite3";
 import type { OpenLoopRow } from "./storage/types.js";
 import type { BriefsFeatureStatus } from "./feature-gate.js";
 import type { DismissBriefInput, DismissBriefResult } from "./feedback.js";
 import type { MarkBriefReadResult } from "./storage/briefs.js";
 import type { RouteApp } from "../http/routes/types.js";
-import type { AnalyticsDb } from "../analytics-db.js";
 
 const isoDateTime = z
   .string()
@@ -131,8 +116,6 @@ const dismissBriefBody = z
 export interface MountBriefsRoutesOpts {
   /** Read handle for the feed's selection + ranking-signal queries. */
   db: Database.Database;
-  /** Analytics projections; absent in lightweight tests, where document projections still work. */
-  analyticsDb?: AnalyticsDb | undefined;
   writeGate: {
     dismissBrief(input: DismissBriefInput, now: number): Promise<DismissBriefResult>;
     markBriefRead(id: string, now: number): Promise<MarkBriefReadResult>;
@@ -162,66 +145,7 @@ export function mountBriefsRoutes(app: RouteApp, opts: MountBriefsRoutesOpts): v
   const requireEnabled = (): void => {
     if (!opts.getStatus?.().enabled) throw new NotFoundError("Not found");
   };
-  const requireVisible = (): void => {
-    if (!opts.getStatus?.().visible) throw new NotFoundError("Not found");
-  };
   const now = (): number => (opts.clock ?? Date.now)();
-
-  const parseTemporalWindowMs = (c: {
-    req: { query(name: string): string | undefined };
-  }): { fromMs: number; toMs: number } => {
-    const parseMs = (name: string): number => {
-      const raw = c.req.query(name);
-      const n = raw === undefined || raw.trim() === "" ? NaN : Number(raw);
-      if (!Number.isSafeInteger(n)) {
-        throw new BadRequestError(`"${name}" must be a unix-ms integer`);
-      }
-      return n;
-    };
-    const fromMs = parseMs("from");
-    const toMs = parseMs("to");
-    if (fromMs >= toMs) throw new BadRequestError(`"from" must be earlier than "to"`);
-    if (toMs - fromMs > TEMPORAL_ANNOTATION_WINDOW_MAX_SPAN_MS) {
-      throw new BadRequestError(
-        `window too wide (max ${TEMPORAL_ANNOTATION_WINDOW_MAX_SPAN_MS / 86_400_000} days)`,
-      );
-    }
-    return { fromMs, toMs };
-  };
-
-  /**
-   * Parse one CSV facet filter against the vocabulary it draws from.
-   * `normalize` resolves each accepted spelling to the canonical one the
-   * query layer matches on, so two spellings of the same value collapse to a
-   * single filter entry rather than being passed down twice.
-   */
-  const parseCsv = <T extends string>(
-    raw: string | undefined,
-    allowed: ReadonlySet<string>,
-    name: string,
-    normalize?: (value: string) => T | null,
-  ): T[] | undefined => {
-    if (raw === undefined || raw.trim() === "") return undefined;
-    const values = [
-      ...new Set(
-        raw
-          .split(",")
-          .map((value) => value.trim())
-          .filter(Boolean),
-      ),
-    ];
-    if (values.length > KINDS_FILTER_MAX) throw new BadRequestError(`too many "${name}"`);
-    const invalid = values.find((value) => !allowed.has(value));
-    if (invalid) throw new BadRequestError(`invalid "${name}" value: ${invalid}`);
-    if (!normalize) return values as T[];
-    const canonical: T[] = [];
-    for (const value of values) {
-      // Membership in `allowed` is already established, so this resolves.
-      const resolved = normalize(value);
-      if (resolved !== null) canonical.push(resolved);
-    }
-    return [...new Set(canonical)];
-  };
 
   // The ranked feed the iOS Briefs page renders, first entry on top.
   // Selection + ordering live in feed.ts / ranking.ts; timestamps
@@ -322,94 +246,6 @@ export function mountBriefsRoutes(app: RouteApp, opts: MountBriefsRoutesOpts): v
     }
   });
 
-  // Canonical Calendar read: one ordered, cursor-paginated view over immutable
-  // source projections and LLM annotations. Callers use
-  // unix-ms bounds; TemporalQueryService immediately normalizes them into the
-  // same half-open contract exposed to the agent's `temporal_query` tool.
-  app.get("/briefs/temporal/window", scope.admin(), async (c) => {
-    requireVisible();
-    const { fromMs, toMs } = parseTemporalWindowMs(c);
-    const timeZone = c.req.query("timeZone");
-    if (!timeZone?.trim()) throw new BadRequestError('"timeZone" must be an IANA time zone');
-    const origins = parseCsv<TemporalOrigin>(
-      c.req.query("origins"),
-      new Set(TEMPORAL_ORIGINS),
-      "origins",
-    );
-    // Kinds are the one facet with retired spellings still on the wire: accept
-    // them from older clients and resolve each to its canonical kind here, so
-    // nothing below this boundary sees more than one name for a kind.
-    const kinds = parseCsv<TemporalKind>(
-      c.req.query("kinds"),
-      new Set(ACCEPTED_TEMPORAL_KINDS),
-      "kinds",
-      canonicalTemporalKind,
-    );
-    const modalities = parseCsv<TemporalModality>(
-      c.req.query("modalities"),
-      new Set(TEMPORAL_MODALITIES),
-      "modalities",
-    );
-    const statuses = parseCsv<TemporalStatus>(
-      c.req.query("statuses"),
-      new Set(TEMPORAL_STATUSES),
-      "statuses",
-    );
-    const limitRaw = c.req.query("limit");
-    let limit: number | undefined;
-    if (limitRaw !== undefined) {
-      const parsed = Number(limitRaw);
-      if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 100) {
-        throw new BadRequestError('"limit" must be an integer 1..100');
-      }
-      limit = parsed;
-    }
-    // Only a TemporalQueryInputError is the caller's to fix. Everything else is
-    // the gateway's own and propagates to the sanitized, logged 500 in
-    // `app.onError`, which is where an internal fault belongs.
-    const page = await new TemporalQueryService(opts.db, opts.analyticsDb)
-      .query({
-        from: new Date(fromMs).toISOString(),
-        to: new Date(toMs).toISOString(),
-        timeZone,
-        ...(origins ? { origins } : {}),
-        ...(kinds ? { kinds } : {}),
-        ...(modalities ? { modalities } : {}),
-        ...(statuses ? { statuses } : {}),
-        ...(limit !== undefined ? { limit } : {}),
-        ...(c.req.query("cursor") ? { cursor: c.req.query("cursor") } : {}),
-      })
-      .catch((error: unknown) => {
-        if (error instanceof TemporalQueryInputError) throw new BadRequestError(error.message);
-        throw error;
-      });
-    return c.json({
-      nowMs: now(),
-      window: page.window,
-      items: page.items,
-      coverage: page.coverage,
-      truncated: page.truncated,
-      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
-    });
-  });
-
-  // Addressable Calendar detail. It uses the same timezone-aware service as
-  // the window read, so opening an annotation directly cannot shift a coarse
-  // date merely because its persisted anchor was written in another zone.
-  app.get("/briefs/temporal/annotations/:id", scope.admin(), async (c) => {
-    requireVisible();
-    const timeZone = c.req.query("timeZone");
-    if (!timeZone?.trim()) throw new BadRequestError('"timeZone" must be an IANA time zone');
-    const item = await new TemporalQueryService(opts.db, opts.analyticsDb)
-      .annotationById(c.req.param("id"), timeZone)
-      .catch((error: unknown) => {
-        if (error instanceof TemporalQueryInputError) throw new BadRequestError(error.message);
-        throw error;
-      });
-    if (!item) throw new NotFoundError("Temporal annotation not found");
-    return c.json({ item });
-  });
-
   const serializeWindowEntry = (e: TemporalAnnotationWindowEntry) => ({
     id: e.id,
     intervalStartMs: e.intervalStartMs,
@@ -427,7 +263,7 @@ export function mountBriefsRoutes(app: RouteApp, opts: MountBriefsRoutesOpts): v
   });
 
   // Legacy annotation-only read retained alongside the unified
-  // `/briefs/temporal/window`: live temporal
+  // `/temporal/window`: live temporal
   // entries overlapping [from, to] (unix ms, inclusive), chronological,
   // grounding documents resolved for display. `kinds` (CSV) narrows to a
   // kind subset — the Upcoming rail passes deadline,expiry,reminder — and
@@ -455,7 +291,7 @@ export function mountBriefsRoutes(app: RouteApp, opts: MountBriefsRoutesOpts): v
       ?.split(",")
       .map((k) => k.trim())
       .filter((k) => k.length > 0);
-    if (kinds && kinds.length > KINDS_FILTER_MAX) throw new BadRequestError(`too many "kinds"`);
+    if (kinds && kinds.length > FACET_FILTER_MAX) throw new BadRequestError(`too many "kinds"`);
     const page = buildTemporalAnnotationWindow(opts.db, {
       fromMs,
       toMs,
@@ -596,10 +432,3 @@ export function mountBriefsRoutes(app: RouteApp, opts: MountBriefsRoutesOpts): v
     });
   });
 }
-
-/**
- * Ceiling on a CSV facet filter — comfortably above the accepted kind
- * vocabulary, the widest of the facets, so it only rejects junk, never a
- * legitimate filter.
- */
-const KINDS_FILTER_MAX = 12;

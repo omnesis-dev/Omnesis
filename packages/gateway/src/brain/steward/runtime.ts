@@ -224,6 +224,9 @@ export function buildCognitionToolset(
     ports: deps.basePorts,
     planStore: deps.planStore ?? new PlanStore(),
     experimental: deps.experimental ?? experimentalVisible(),
+    // The steward reconciles against facts and its own annotations; the date
+    // mentions of the documents it reads are a lead it asks for by name.
+    temporalDefaultOrigins: ["projection", "annotation"],
   }).filter((t) => COGNITION_INTERACTIVE_TOOLS.has(t.name));
   // The loop this run is itself scoped to (a loop-scoped time_based / decay
   // check), so `schedule_agent_run` can auto-attach it to a follow-up check.

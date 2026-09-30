@@ -170,6 +170,9 @@ export function buildNotesDayDocument(day: string, entries: readonly NoteEntry[]
       // these notes to the assistant — consumers (the briefs waker)
       // treat the document as maximally high-signal.
       addressedToAgent: true,
+      // The capture-local day the notes were written on: "tomorrow" counts
+      // from it, not from the UTC date of the latest capture.
+      dateAnchorDay: day,
       addressedEntries: entries.map((entry) => ({
         ...(entry.captureContext ? { captureContext: entry.captureContext } : {}),
         id: entry.id,

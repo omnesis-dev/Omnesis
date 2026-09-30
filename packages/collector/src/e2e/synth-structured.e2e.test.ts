@@ -371,7 +371,7 @@ describe("Synthetic providers — structured sources", () => {
       };
       truncated: boolean;
     }>(
-      "/briefs/temporal/window?from=1756684800000&to=1758153600000&timeZone=Europe%2FLondon&origins=projection&limit=100",
+      "/temporal/window?from=1756684800000&to=1758153600000&timeZone=Europe%2FLondon&origins=projection&limit=100",
     );
 
     expect(result.window).toEqual({

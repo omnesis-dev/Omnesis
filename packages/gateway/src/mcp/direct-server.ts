@@ -36,6 +36,7 @@ export const STABLE_DIRECT_TOOL_NAMES = [
   "lookup_people",
   "trace_connections",
   "run_sql",
+  "temporal_query",
   "list_tables",
 ] as const;
 

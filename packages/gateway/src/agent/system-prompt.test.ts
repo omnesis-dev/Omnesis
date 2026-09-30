@@ -24,7 +24,7 @@ describe("buildSystemPrompt — canonical retrieval composition", () => {
       },
     ];
     const sourceTypes = ["fictional-calendar"];
-    const prompt = buildSystemPrompt({ experimental: true, catalog, sourceTypes });
+    const prompt = buildSystemPrompt({ experimental: true, temporal: true, catalog, sourceTypes });
 
     expect(prompt).toContain(
       renderReadOnlyRetrievalPlaybook({
@@ -43,6 +43,7 @@ describe("buildSystemPrompt — canonical retrieval composition", () => {
     const subagentPrompt = buildSystemPrompt({
       audience: "subagent",
       experimental: true,
+      temporal: true,
       catalog,
       sourceTypes,
     });
@@ -65,8 +66,7 @@ describe("buildSystemPrompt — read-only loop tools (experimental)", () => {
     expect(prompt).not.toContain("fetch_loop");
     expect(prompt).not.toContain("list_loops");
     expect(prompt).not.toContain("entity_context");
-    // The temporal port is wired on the same gate, so a non-experimental
-    // gateway must not be told about a tool its registry does not carry.
+    // `temporal` is unset here: the tool is named only when it is wired.
     expect(prompt).not.toContain("temporal_query");
   });
 
@@ -76,9 +76,26 @@ describe("buildSystemPrompt — read-only loop tools (experimental)", () => {
     expect(prompt).toContain("`fetch_loop(loopId)`");
     expect(prompt).toContain("`list_loops(limit?)`");
     expect(prompt).toContain("`entity_context(kind, id, depth?)`");
-    expect(prompt).toContain(
-      "`temporal_query({ from, to, timeZone?, origins?, kinds?, limit?, cursor? })`",
-    );
+    expect(prompt).not.toContain("temporal_query");
+  });
+});
+
+describe("buildSystemPrompt — temporal query", () => {
+  const bullet = "`temporal_query({ from, to, timeZone?, origins?, kinds?, limit?, cursor? })`";
+
+  test("names the tool and the time guidance whenever the tool is wired, experimental or not", () => {
+    for (const experimental of [false, true]) {
+      const prompt = buildSystemPrompt({ experimental, temporal: true });
+      expect(prompt).toContain(bullet);
+      expect(prompt).toContain("## Time-bounded requests");
+      expect(prompt).toContain('origin: "mention"');
+    }
+  });
+
+  test("says nothing about it when the tool is not wired", () => {
+    const prompt = buildSystemPrompt({ experimental: true, temporal: false });
+    expect(prompt).not.toContain("temporal_query");
+    expect(prompt).not.toContain("## Time-bounded requests");
   });
 });
 
@@ -182,6 +199,7 @@ describe("buildSystemPrompt — sub-agent audience", () => {
         },
       ],
       experimental: true,
+      temporal: true,
       selfMemory: "- (role) FICTIONAL-PROFILE-MARKER",
     });
 

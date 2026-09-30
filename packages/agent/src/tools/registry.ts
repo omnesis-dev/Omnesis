@@ -34,6 +34,7 @@ import {
 import { createSearchLoopsTool, createFetchLoopTool, createListLoopsTool } from "./loops.js";
 import { createTemporalQueryTool } from "./temporal.js";
 import { createEntityContextTool } from "./entity-context.js";
+import type { TemporalOrigin } from "@omnesis/core";
 import type { ToolHandle } from "../backend.js";
 import type { ToolPorts } from "./types.js";
 
@@ -45,10 +46,15 @@ export interface BuiltinToolsOptions {
    * Whether the gateway runs in experimental mode. Gates every tool whose
    * feature is hidden behind the experimental flag on the other clients: the
    * watch-authoring tools (`watch_create` / `watch_update`), the
-   * read-only loop tools (`list_loops`/`search_loops`/`fetch_loop`), temporal
-   * query, and `entity_context`. Defaults to false.
+   * read-only loop tools (`list_loops`/`search_loops`/`fetch_loop`), and
+   * `entity_context`. Defaults to false.
    */
   experimental?: boolean;
+  /**
+   * The layers `temporal_query` reads when a call names none; every layer
+   * when omitted.
+   */
+  temporalDefaultOrigins?: readonly TemporalOrigin[];
   /**
    * Per-process plan store. The same instance must be reused across
    * every tool invocation in a session so the `plan` tool can
@@ -131,14 +137,21 @@ export function buildBuiltinTools(opts: BuiltinToolsOptions): ToolHandle[] {
     tools.push(createFetchLoopTool({ port: opts.ports.loopRead }));
     tools.push(createListLoopsTool({ port: opts.ports.loopRead }));
   }
-  // Read-only temporal query over deterministic projections and LLM-owned
-  // annotations. Gated like loopRead: a wired port AND experimental mode.
-  if (opts.ports.temporal && opts.experimental) {
-    tools.push(createTemporalQueryTool({ port: opts.ports.temporal }));
+  // Read-only temporal query over source projections, date mentions and
+  // LLM-owned annotations. Generally available: a wired port is the gate, and
+  // callers whose grant is restricted to some sources are never given one,
+  // because the port reads every source.
+  if (opts.ports.temporal) {
+    tools.push(
+      createTemporalQueryTool({
+        port: opts.ports.temporal,
+        ...(opts.temporalDefaultOrigins ? { defaultOrigins: opts.temporalDefaultOrigins } : {}),
+      }),
+    );
   }
   // Read-only cognitive reap — the neighbourhood (loops/docs/people/time-entries)
   // the background agent linked around one entity, in a single call. Gated like
-  // loopRead/temporal: a wired port AND experimental mode. Both agents get it.
+  // loopRead: a wired port AND experimental mode. Both agents get it.
   if (opts.ports.entityContext && opts.experimental) {
     tools.push(createEntityContextTool({ port: opts.ports.entityContext }));
   }

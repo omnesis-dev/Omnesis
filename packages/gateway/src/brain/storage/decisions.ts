@@ -8,9 +8,10 @@
  * It is the audit trail of the worth gate — the exact request sent (state and
  * questions), the answers, the score, the threshold, the verdict, the model and
  * the latency — so `/debug/cognition/runs` can show what the decision model
- * did for a run even when it stopped the run before any agent turn. It is also
- * the gate's memory: a document whose content and rubric are unchanged reuses
- * its earlier answer instead of paying for a second call (`reused_from`).
+ * did for a run even when it stopped the run before any agent turn. A
+ * worth-gate call that returns a score is also recorded as the email's shared
+ * worth answer (`worth/answers.ts`); a later decision that reuses a stored
+ * answer names it in `reused_from` instead of paying for a second call.
  *
  * Attachments are judged by their parent email: `document_id` is the run's own
  * document, `subject_document_id` the one that was actually scored. Both
@@ -19,6 +20,7 @@
  * (see the `cognitionDecisions` retention phase); verdicts and scores stay.
  */
 
+import { recordWorthAnswers } from "../../worth/answers.js";
 import type Database from "better-sqlite3";
 
 type Db = Database.Database;
@@ -163,8 +165,37 @@ function fromRow(row: DecisionRow): CognitionDecisionRecord {
   };
 }
 
-/** Writer side: append one decision. Idempotent on `id`. */
+/**
+ * Writer side: append one decision. Idempotent on `id`. A worth-gate call
+ * that returned a score becomes the email's shared worth answer in the same
+ * transaction.
+ */
 export function insertCognitionDecision(db: Db, record: CognitionDecisionRecord): void {
+  db.transaction(() => {
+    insertDecisionRow(db, record);
+    if (
+      record.purpose === "worth-gate" &&
+      record.score !== null &&
+      record.reusedFrom === null &&
+      record.contentHash !== null
+    ) {
+      recordWorthAnswers(db, [
+        {
+          id: record.id,
+          subjectDocumentId: record.subjectDocumentId,
+          contentHash: record.contentHash,
+          rubricVersion: record.rubricVersion,
+          requestedModelId: record.requestedModelId,
+          modelId: record.modelId ?? record.requestedModelId,
+          score: record.score,
+          answeredAt: record.createdAt,
+        },
+      ]);
+    }
+  })();
+}
+
+function insertDecisionRow(db: Db, record: CognitionDecisionRecord): void {
   db.prepare(
     `INSERT INTO cognition_decisions (
        id, run_id, document_id, subject_document_id, purpose, lane, rubric_version,
@@ -226,28 +257,4 @@ export function decisionVerdictsForRuns(
     .all(...runIds);
   for (const row of rows) out.set(row.run_id, row.verdict as DecisionVerdict);
   return out;
-}
-
-/**
- * The newest answered decision for `subjectDocumentId` under `rubricVersion`
- * and `modelId` whose content hash still matches — the answer a fresh call
- * would repeat. Unavailable verdicts are never reused: they carry no answer.
- */
-export function findReusableDecision(
-  db: Db,
-  subjectDocumentId: string,
-  rubricVersion: string,
-  contentHash: string,
-  modelId: string,
-): CognitionDecisionRecord | null {
-  const row = db
-    .prepare<[string, string, string, string], DecisionRow>(
-      `SELECT * FROM cognition_decisions
-        WHERE subject_document_id = ? AND rubric_version = ? AND content_hash = ?
-          AND requested_model_id = ?
-          AND verdict IN ('pass', 'skip') AND reused_from IS NULL
-        ORDER BY created_at DESC LIMIT 1`,
-    )
-    .get(subjectDocumentId, rubricVersion, contentHash, modelId);
-  return row ? fromRow(row) : null;
 }

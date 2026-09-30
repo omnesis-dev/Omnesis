@@ -136,6 +136,8 @@ export interface AgentServiceDeps {
   /** Read-worker gate for `lookup_people`. When wired the person port runs the
    *  heavy assembly off the main event loop; absent, it runs synchronously. */
   personLookupGate?: PersonLookupGate;
+  /** Whether the mention worth gate is active, so `temporal_query` hides unworthy mentions. */
+  mentionWorthGateActive?: () => boolean;
   /**
    * The operator's `OMNESIS.md`, re-read per prompt build so an edit made in a
    * terminal editor reaches the next conversation without a restart. Absent on
@@ -388,6 +390,7 @@ export function createAgentService(
       selfMemory,
       selfPersonId,
       memoryWrites: options.memoryWrites === true && !restricted,
+      temporal: !restricted,
       operatorInstructions,
       citationSurface: options.citationSurface,
       copyableValues: options.copyableValues === true,
@@ -425,12 +428,17 @@ export function createAgentService(
       // briefs. Wired only in experimental mode (the loop system exists only
       // then); the registry additionally gates the two tools on experimental.
       loopRead: experimentalVisible() ? createGatewayLoopReadPort(db) : undefined,
-      // Read-only temporal port (experimental): lets the interactive agent
-      // answer "what's coming up?" from BOTH temporal origins in one call —
-      // source-owned dated facts, which the ingest path materializes whether or
-      // not the background agent runs, and that agent's own selective
-      // interpretations. No write surface.
-      temporal: experimentalVisible() ? createGatewayTemporalPort(db, analyticsDb) : undefined,
+      // Read-only temporal port: lets the interactive agent answer "what's
+      // coming up?" in one call — source-owned dated facts and date mentions,
+      // both produced on the ingest path whether or not the background agent
+      // runs, plus that agent's own selective interpretations when it does.
+      // Unscoped, so the source-restricted answer scope below never gets it.
+      // No write surface.
+      temporal: createGatewayTemporalPort(db, analyticsDb, undefined, {
+        ...(deps.mentionWorthGateActive
+          ? { hideUnworthyMentions: deps.mentionWorthGateActive }
+          : {}),
+      }),
       // Read-only cognitive-context (reap) port (experimental): lets the
       // interactive agent pull the whole neighbourhood the background agent
       // linked around one entity in a single call — no write surface.
@@ -586,6 +594,8 @@ export interface AgentLifecycleDeps {
   codexRuntimeService?: CodexRuntimeService | null;
   /** Read-worker gate forwarded to the person port for off-thread `lookup_people`. */
   personLookupGate?: PersonLookupGate;
+  /** Whether the mention worth gate is active, so `temporal_query` hides unworthy mentions. */
+  mentionWorthGateActive?: () => boolean;
   /** Worker-coordinated bounded index cleanup for activity retention. */
   deleteDocumentIndexBatch?: (
     documentId: string,
@@ -847,6 +857,9 @@ export class AgentLifecycle {
         conversationReadState: this.conversationReadState,
         notifyConversation: this.deps.notifyConversation,
         personLookupGate: this.deps.personLookupGate,
+        ...(this.deps.mentionWorthGateActive
+          ? { mentionWorthGateActive: this.deps.mentionWorthGateActive }
+          : {}),
       },
       roleAware,
       this.resolveSubagentCaps(),

@@ -2,11 +2,14 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Shared read model for Omnesis' two temporal layers.
+ * Shared read model for Omnesis' three temporal layers.
  *
  * Projections are deterministic, source-owned facts. Annotations are mutable
- * interpretations owned by the cognition agent. The union is intentionally
- * read-only: mutation ports accept annotation ids and live elsewhere.
+ * interpretations owned by the cognition agent. Mentions are dates written in
+ * a document's text, found by the deterministic date recognizer: they say that
+ * a document refers to a day or a month, and nothing about what happens then.
+ * The union is intentionally read-only: mutation ports accept annotation ids
+ * and live elsewhere.
  *
  * The vocabulary both layers speak lives in `temporal-vocabulary.ts` and is
  * re-exported here so this module stays the one import a reader of the read
@@ -38,6 +41,10 @@ export interface TemporalQueryInput {
   to?: string;
   /** IANA time zone used for date-only and relative expressions. */
   timeZone: string;
+  /**
+   * Which layers to read. Omitted means projections and annotations: mentions
+   * are numerous and unclassified, so a caller asks for them by name.
+   */
   origins?: TemporalOrigin[];
   kinds?: TemporalKind[];
   modalities?: TemporalModality[];
@@ -84,6 +91,20 @@ export interface TemporalAnnotationProvenance {
   updatedAt: string;
 }
 
+export interface TemporalMentionProvenance {
+  documentId: string;
+  sourceId: string;
+  /** The phrase as written in the document, e.g. "next Friday" or "12 October". */
+  text: string;
+  /** True when the phrase was relative and resolved against the document's own date. */
+  relative: boolean;
+  /**
+   * Open-ended phrasing ("before", "after", "since", "until"). The item's
+   * interval is then the one bound the phrase names, not the open range.
+   */
+  mod?: string;
+}
+
 export interface TemporalItem {
   id: string;
   origin: TemporalOrigin;
@@ -108,6 +129,7 @@ export interface TemporalItem {
   status: TemporalStatus;
   projection?: TemporalProjectionProvenance;
   annotation?: TemporalAnnotationProvenance;
+  mention?: TemporalMentionProvenance;
 }
 
 export interface TemporalProjectionCoverage {
@@ -134,6 +156,17 @@ export interface TemporalCoverage {
    * completeness claim over the corpus can be made for them.
    */
   annotations: { selective: true };
+  /**
+   * Present when the query read mentions. Documents still waiting for the
+   * date recognizer contribute no mentions yet, so a non-zero
+   * `pendingDocuments` means a thin mention result may only be incomplete.
+   * `countCapped` means the window holds more mentions than were counted, so
+   * `summary.anchored` is a floor. `unworthyHidden` means the mention worth
+   * gate applied to this read: mentions from email judged not worth recording
+   * (marketing, newsletters, notifications) are left out. It is never set when
+   * the caller names documents, which are always read.
+   */
+  mentions?: { pendingDocuments: number; countCapped?: true; unworthyHidden?: true };
 }
 
 export interface TemporalQueryResult {

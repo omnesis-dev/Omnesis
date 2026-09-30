@@ -64,6 +64,11 @@ export interface SystemPromptInput {
    */
   experimental?: boolean;
   /**
+   * Whether the `temporal_query` tool is wired for this session. Gates the
+   * tool's bullet and the time-bounded retrieval guidance.
+   */
+  temporal?: boolean;
+  /**
    * Pre-rendered durable profile of the user — the self person's live
    * annotations (`renderSelfMemoryBlock`), injected so the agent knows who the
    * user is without re-deriving. Restricted callers receive no profile.
@@ -191,7 +196,7 @@ function buildSubagentSystemPrompt(input: SystemPromptInput): string {
     sourceTypes: input.sourceTypes,
     catalog: input.catalog,
     fetchBatchLimit: 16,
-    includeTemporal: input.experimental === true,
+    includeTemporal: input.temporal === true,
     includeCognition: input.experimental === true,
   });
   const selfMemorySection =
@@ -283,17 +288,20 @@ export function buildSystemPrompt(input: SystemPromptInput = {}): string {
   // the background Cognition Steward (and its open loops) only exist then, and stay
   // behind the experimental gate on every client.
   const loopToolsBullets = input.experimental
-    ? `\n- **\`list_loops(limit?)\`** — open loops (the obligations, requests, and decisions Omnesis tracks), newest-updated first. For "all my open loops" or "what's outstanding", use the maximum limit rather than guessing \`search_loops\` terms, then inspect \`truncated\`; when true, qualify that the capped result is incomplete. READ-ONLY.\n- **\`search_loops(query, limit?)\`** — keyword search across the same open loops, for when you have a specific topic/person and don't want the whole list (e.g. "the deposit refund"). READ-ONLY. Empty results is a clean "nothing tracked matches".\n- **\`fetch_loop(loopId)\`** — open one loop in full: its state, importance, deadline, the people it concerns, its source documents, and its recent history. READ-ONLY.\n- **\`temporal_query({ from, to, timeZone?, origins?, kinds?, limit?, cursor? })\`** — everything dated overlapping a window, from every source that publishes structured time, in ONE call. **For "what's happening today / this week / what's coming up", call this FIRST** rather than issuing a \`run_sql\` per calendar table — a per-table sweep only covers the tables you thought to name. It is a starting point, not the whole answer: entries carry different levels of authority, \`coverage\` names the sources it could not speak for, and results page. READ-ONLY; empty results is a successful call. See **Time** below.\n- **\`entity_context(kind, id, depth?)\`** — reap the whole cognitive neighbourhood around ONE entity (a document, a person, or a loop) in a single call: the loops, source documents, people (with any notes), and dated entries the background agent has **linked** to it. **For "what am I tracking about X" / "what's connected to X", call this FIRST and build your answer from what it returns — don't reconstruct that tracked neighbourhood with a wave of \`search_loops\` / \`fetch_loop\` / \`fetch_many\` calls.** It reflects what the background agent has curated, not the whole corpus, so if the question is genuinely "everything about X" you may add ONE confirming \`search_many\` — but reap first, then build on it. \`fetch_*\` a returned id only when you need a document's full body. READ-ONLY.`
+    ? `\n- **\`list_loops(limit?)\`** — open loops (the obligations, requests, and decisions Omnesis tracks), newest-updated first. For "all my open loops" or "what's outstanding", use the maximum limit rather than guessing \`search_loops\` terms, then inspect \`truncated\`; when true, qualify that the capped result is incomplete. READ-ONLY.\n- **\`search_loops(query, limit?)\`** — keyword search across the same open loops, for when you have a specific topic/person and don't want the whole list (e.g. "the deposit refund"). READ-ONLY. Empty results is a clean "nothing tracked matches".\n- **\`fetch_loop(loopId)\`** — open one loop in full: its state, importance, deadline, the people it concerns, its source documents, and its recent history. READ-ONLY.\n- **\`entity_context(kind, id, depth?)\`** — reap the whole cognitive neighbourhood around ONE entity (a document, a person, or a loop) in a single call: the loops, source documents, people (with any notes), and dated entries the background agent has **linked** to it. **For "what am I tracking about X" / "what's connected to X", call this FIRST and build your answer from what it returns — don't reconstruct that tracked neighbourhood with a wave of \`search_loops\` / \`fetch_loop\` / \`fetch_many\` calls.** It reflects what the background agent has curated, not the whole corpus, so if the question is genuinely "everything about X" you may add ONE confirming \`search_many\` — but reap first, then build on it. \`fetch_*\` a returned id only when you need a document's full body. READ-ONLY.`
     : "";
   const loopsSection = input.experimental ? renderCognitionRetrievalGuidance() : "";
+  const temporalToolBullet = input.temporal
+    ? `\n- **\`temporal_query({ from, to, timeZone?, origins?, kinds?, limit?, cursor? })\`** — everything dated overlapping a window, from every source that publishes structured time, in ONE call. **For "what's happening today / this week / what's coming up", call this FIRST** rather than issuing a \`run_sql\` per calendar table — a per-table sweep only covers the tables you thought to name. It also returns the dates written in the user's documents' text (\`origin: "mention"\`), and for "when is …" about one thing it lists the dates in the documents you pass as \`documentIds\`. It is a starting point, not the whole answer: entries carry different levels of authority, \`coverage\` names the sources it could not speak for, and results page. READ-ONLY; empty results is a successful call. See **Time** below.`
+    : "";
 
   // Time gets its own section rather than living under the background agent's
-  // loops: only one of the two things `temporal_query` returns comes from that
-  // agent. Source-owned dated facts are produced on the ingest path and exist
-  // whether or not the background agent runs at all, so filing them under it
-  // would teach exactly the wrong provenance — and the two carry different
-  // authority, which is the point of the section.
-  const timeSection = input.experimental
+  // loops: only one of the three things `temporal_query` returns comes from
+  // that agent. Source-owned dated facts and date mentions are produced on the
+  // ingest path and exist whether or not the background agent runs at all, so
+  // filing them under it would teach exactly the wrong provenance — and the
+  // three carry different authority, which is the point of the section.
+  const timeSection = input.temporal
     ? `${renderTemporalRetrievalGuidance()}\n\nEvery \`start\` / \`endExclusive\` comes back as a UTC instant; the \`timeZone\` argument bounds the *window* rather than restating results. Convert instants using the caller-zone rules above.`
     : "";
 
@@ -392,7 +400,7 @@ Your tools are listed in the tool catalog, each with its own description — the
 - **\`annotate_many({ annotations: [ { documentId, quote?, quoteAuthor?, note? }, … ] })\`** — mark the **documents** whose information you used in your answer; this is the **only** way a document lands on the Timeline panel. Copy each \`documentId\` from a document result (\`search_many\`, \`fetch_many\`, \`lookup_document_by_url\`, or \`trace_connections\`) — never pass a raw \`run_sql\` row value. If an item returns an error, resolve its canonical id and retry it before answering. Record every citation for the answer in one call (1–16 annotations). See the **Timeline** section below for when and how.
 - **\`cite_record(reference, snapshot)\`** — the structured twin of \`annotate\` for a single analytics **row**. When a fact in your answer traces to one specific row a \`run_sql\` query returned, cite that row: pass the row's \`reference\` exactly as it appeared in the query result's \`rowIdentities[i]\` (only non-null entries are citable — aggregates and joins have no row identity) plus the row's column values you saw as \`snapshot\`. The cited record appears on the same Timeline at its real event time. A row from a timeless table (no event time) cannot be cited.
 - **\`plan(add?, complete?)\`** — show the user a small TODO list of what you're about to do. Use this **instead of prose narration** when a question needs more than one sequential step. See the **Plan panel** section below.
-- **\`spawn_subagent({ title?, task })\`** — launch a generic read-only worker in its own fresh context for one substantial, self-contained branch, then collect it with \`join_subagents\`. See **When to delegate to a sub-agent** below.${watchToolsBullets}${loopToolsBullets}
+- **\`spawn_subagent({ title?, task })\`** — launch a generic read-only worker in its own fresh context for one substantial, self-contained branch, then collect it with \`join_subagents\`. See **When to delegate to a sub-agent** below.${watchToolsBullets}${temporalToolBullet}${loopToolsBullets}
 
 ${retrievalPlaybook}
 
