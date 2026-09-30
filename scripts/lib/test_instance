@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Adrien Conrath
+
+# Optional identification for isolated gateways. Parse and validate before any
+# startup/reaping side effects; empty values are reserved for omitted labels.
+parse_test_instance_args() {
+  TEST_SESSION=""
+  TEST_PURPOSE=""
+  TEST_ARGS=()
+  local session_supplied=0 purpose_supplied=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --session|--purpose)
+        if [[ $# -lt 2 || "$2" == --* ]]; then
+          echo "$1 needs a value." >&2
+          return 2
+        fi
+        case "$1" in
+          --session) TEST_SESSION="$2"; session_supplied=1 ;;
+          --purpose) TEST_PURPOSE="$2"; purpose_supplied=1 ;;
+        esac
+        shift 2
+        ;;
+      --session=*) TEST_SESSION="${1#--session=}"; session_supplied=1; shift ;;
+      --purpose=*) TEST_PURPOSE="${1#--purpose=}"; purpose_supplied=1; shift ;;
+      *) TEST_ARGS+=("$1"); shift ;;
+    esac
+  done
+  # Arguments are data, never JavaScript or shell source. Validate using the
+  # same limits as the gateway; it trims labels before exposing them.
+  node - "${TEST_SESSION}" "${TEST_PURPOSE}" "${session_supplied}" "${purpose_supplied}" <<'JS'
+const labels = [["session", process.argv[2], 200], ["purpose", process.argv[3], 1000]];
+for (const [index, [name, value, max]] of labels.entries()) {
+  if (process.argv[index + 4] === "1" && (!value.trim() || [...value.trim()].length > max || /[\u0000-\u001f\u007f-\u009f]/u.test(value))) {
+    process.stderr.write(`--${name} must be nonblank, at most ${max} characters, and contain no control characters.\n`);
+    process.exit(2);
+  }
+}
+JS
+}
+
+portal_login_url() {
+  node - "${URL}" "$(cat "${TOKEN_FILE}")" <<'JS'
+const url = new URL("/portal/", process.argv[2]);
+url.searchParams.set("token", process.argv[3]);
+process.stdout.write(url.href);
+JS
+}
+
+# A healthy instance keeps its startup labels. Never imply that reusing a
+# process changes the identity displayed by its portal.
+check_test_instance_reuse() {
+  [[ -n "${TEST_SESSION}" || -n "${TEST_PURPOSE}" ]] || return 0
+  local status
+  status="$(curl -fsS --max-time 10 --cacert "${CA_CERT}" -H "Authorization: Bearer $(cat "${TOKEN_FILE}")" "${URL}/status")" || {
+    echo "Cannot verify running instance labels; stop it before starting with labels." >&2
+    return 2
+  }
+  node - "${status}" "${TEST_SESSION}" "${TEST_PURPOSE}" <<'JS'
+try {
+  const instance = JSON.parse(process.argv[2]).testInstance;
+  for (const name of ["session", "purpose"]) {
+    const value = process.argv[name === "session" ? 3 : 4].trim();
+    if (value && value !== instance?.[name]) throw new Error("different labels");
+  }
+} catch {
+  process.stderr.write("Running instance has different or unavailable test labels. Stop it or choose another config directory/port before changing labels.\n");
+  process.exit(2);
+}
+JS
+}

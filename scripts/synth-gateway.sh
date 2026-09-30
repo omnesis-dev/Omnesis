@@ -10,6 +10,8 @@
 #   scripts/synth-gateway.sh start                # boot + seed the active universe's sources
 #   scripts/synth-gateway.sh start --no-seed      # boot empty (add sources via portal)
 #   scripts/synth-gateway.sh start --universe <n> # use a specific universe (default: $OMNESIS_SYNTH_UNIVERSE or `default`)
+#   scripts/synth-gateway.sh start --session "Claude: sidebar review" --purpose "Review navigation"
+#                                               # optional labels, strongly encouraged for feature review
 #   scripts/synth-gateway.sh seed                 # seed the active universe on a running gateway
 #   scripts/synth-gateway.sh seed-privacy         # re-drive just the privacy exchanges
 #   scripts/synth-gateway.sh stop                 # kill PIDs (keeps config dir on disk)
@@ -55,6 +57,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Use the same cold-start allowance as every other gateway-spawning script.
 # shellcheck source=lib/boot_budget
 source "${ROOT}/scripts/lib/boot_budget"
+source "${ROOT}/scripts/lib/test_instance"
 
 READY_TIMEOUT="${OMNESIS_SYNTH_READY_TIMEOUT:-$(gateway_boot_budget_seconds)}"
 
@@ -69,6 +72,9 @@ parse_universe_arg() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --universe)
+        if [[ $# -lt 2 || "$2" == --* ]]; then
+          echo "--universe needs a value." >&2; return 2
+        fi
         UNIVERSE="$2"
         shift 2
         ;;
@@ -134,7 +140,8 @@ start() {
   # `--no-seed` to leave the gateway empty so you can add sources one-by-one
   # via the portal's +Add Source flow — useful for screen-recording the auth
   # screens or just walking through the add wizard.
-  parse_universe_arg "$@"
+  parse_test_instance_args "$@"
+  parse_universe_arg "${TEST_ARGS[@]+"${TEST_ARGS[@]}"}"
   set -- "${REMAINING[@]+"${REMAINING[@]}"}"
   case "${READY_TIMEOUT}" in
     '' | *[!0-9]* | 0)
@@ -146,6 +153,7 @@ start() {
   for arg in "$@"; do
     case "$arg" in
       --no-seed|--bare) seed=0 ;;
+      *) echo "Unknown start argument: ${arg}" >&2; return 2 ;;
     esac
   done
 
@@ -187,6 +195,9 @@ start() {
   echo "Booting gateway on ${URL} (universe=${UNIVERSE})…"
   (
     cd "${ROOT}"
+    export OMNESIS_TEST_INSTANCE=1
+    export OMNESIS_TEST_SESSION="${TEST_SESSION}"
+    export OMNESIS_TEST_PURPOSE="${TEST_PURPOSE}"
     export OMNESIS_CONFIG_DIR="${CONFIG_DIR}"
     export OMNESIS_DB_PATH="${CONFIG_DIR}/omnesis.db"
     export OMNESIS_INDEX_DB_PATH="${CONFIG_DIR}/index.db"
@@ -278,20 +289,20 @@ start() {
     seed_sources
   elif [[ "${REAL_SOURCES}" == "1" ]]; then
     echo ""
-    echo "✓ Gateway ready (real sources — none added yet): ${URL}/portal"
+    echo "✓ Gateway ready (real sources — none added yet): $(portal_login_url)"
     echo "  Token:   $(cat "${TOKEN_FILE}")"
     echo "  Add real sources via the portal '+Add source' flow."
     return 0
   else
     echo ""
-    echo "✓ Synth gateway ready (no sources added): ${URL}/portal"
+    echo "✓ Synth gateway ready (no sources added): $(portal_login_url)"
     echo "  Token:   $(cat "${TOKEN_FILE}")"
     echo "  Add sources via portal '+Add source', or run: scripts/synth-gateway.sh seed"
     return 0
   fi
 
   echo ""
-  echo "✓ Synth gateway ready: ${URL}/portal"
+  echo "✓ Synth gateway ready: $(portal_login_url)"
   echo "  Token:   $(cat "${TOKEN_FILE}")"
   echo "  Pair UI: scripts/synth-gateway.sh pair"
 }
@@ -504,6 +515,9 @@ Commands:
   start --no-seed         Boot gateway + collector with zero sources — add them
                           manually via the portal's +Add Source flow.
   start --universe <name> Use a specific universe (default: \$OMNESIS_SYNTH_UNIVERSE or \`default\`).
+  start --session <name> --purpose <description>
+                          Strongly encouraged: identify the creating agent session
+                          and feature being tested (both labels are optional).
   seed                    Seed the active universe on an already-running gateway.
   seed --universe <name>  Seed a specific universe.
   seed-privacy            Re-drive only the universe's privacy exchanges (no-op

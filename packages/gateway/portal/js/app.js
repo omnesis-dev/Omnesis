@@ -33,6 +33,7 @@ import { useVisiblePoll } from "./lib/use-visible-poll.js";
 import { deleteSidebarConversation } from "./lib/sidebar-conversations.js";
 import { releaseUpdateFromStatus } from "./lib/release-update.js";
 import { FleetHostUpdate } from "./components/fleet-host-update.js";
+import { TestInstanceCard } from "./components/test-instance-card.js";
 
 const DocumentView = lazy(() => import("./views/document.js").then((m) => m.DocumentView));
 const PeopleView = lazy(() => import("./views/people.js").then((m) => m.PeopleView));
@@ -258,6 +259,7 @@ function App() {
   // from experimental; reveals the floating developer-annotation button. Stays
   // false until the /status read resolves, so the affordance never flashes in.
   const [developer, setDeveloper] = useState(false);
+  const [testInstance, setTestInstance] = useState(null);
   // A passive, gateway-owned release result. Null before the first successful
   // check, on malformed data, or when this install is current.
   const [releaseUpdate, setReleaseUpdate] = useState(null);
@@ -304,6 +306,7 @@ function App() {
       if (generation !== statusRequestGeneration.current) return;
       setExperimental(status?.experimental === true);
       setDeveloper(status?.developer === true);
+      setTestInstance(status?.testInstance ?? null);
       const nextReleaseUpdate = releaseUpdateFromStatus(status);
       setReleaseUpdate((current) =>
         current?.currentVersion === nextReleaseUpdate?.currentVersion &&
@@ -548,6 +551,8 @@ function App() {
             <span class="sidebar-brand-sub">Personal index</span>
           </div>
         </a>
+
+        <${TestInstanceCard} instance=${testInstance} />
 
         <nav class="sidebar-nav">
           ${NAV_ITEMS.filter((item) => !item.experimental || experimental).map((item) => {

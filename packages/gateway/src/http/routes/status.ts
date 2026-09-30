@@ -24,6 +24,7 @@ import {
 } from "../../indexer/db.js";
 import { resolveSearchSettings } from "../../search/search-config.js";
 import { scope } from "../scope.js";
+import { readTestInstance } from "../services/test-instance.js";
 import { GATEWAY_VERSION } from "../../version.js";
 import { GATEWAY_COMPAT } from "../../compat.js";
 import { BadRequestError, ValidationError } from "../errors.js";
@@ -451,6 +452,7 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       uptime: Math.floor(process.uptime()),
       configHealth,
       release: getReleaseCheck?.() ?? null,
+      testInstance: readTestInstance(),
       // Gateway-wide experimental mode. Clients (portal / iOS / Android / CLI)
       // read this to decide whether to surface experimental features —
       // experimental sources, Watches, Briefs, and other gated tools. Off by default.
