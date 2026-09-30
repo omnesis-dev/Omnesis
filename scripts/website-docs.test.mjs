@@ -15,6 +15,7 @@ import { execFileSync } from "node:child_process";
 const WEBSITE = join(dirname(fileURLToPath(import.meta.url)), "..", "website");
 const REPO_ROOT = join(WEBSITE, "..");
 const DOCS = join(WEBSITE, "docs");
+const BLOG = join(WEBSITE, "blog");
 
 // Reading order — drives the sidebar and the prev/next pager on every page.
 const ORDER = [
@@ -35,6 +36,10 @@ const ORDER = [
 ];
 
 const docPages = readdirSync(DOCS).filter((f) => f.endsWith(".html"));
+const blogPages = readdirSync(BLOG).filter((f) => f.endsWith(".html"));
+const blogHtml = Object.fromEntries(
+  blogPages.map((f) => [`blog/${f}`, readFileSync(join(BLOG, f), "utf8")]),
+);
 const sharedChromePages = [
   ...docPages,
   "../mobile-privacy-policy.html",
@@ -55,7 +60,7 @@ const redirects = readFileSync(join(WEBSITE, "_redirects"), "utf8");
 const idsOf = (f) => new Set([...html[f].matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]));
 const slug = (f) => (f === "index.html" ? "/docs/" : "/docs/" + f.replace(".html", ""));
 const REPO_URL = "https://github.com/omnesis-dev/Omnesis";
-const NAV_LINKS = ["/", "/brain", "/vision", "/docs/"];
+const NAV_LINKS = ["/", "/brain", "/vision", "/docs/", "/blog/"];
 
 // Resolves URLs the way the Cloudflare static-asset host does
 // (html_handling): /docs/install serves docs/install.html, a trailing
@@ -196,7 +201,12 @@ describe("website docs", () => {
 
   it("gives every public page the same nav and a footer with the docs and the repository", () => {
     const links = (fragment) => [...fragment.matchAll(/<a[^>]*href="([^"]+)"/g)].map((m) => m[1]);
-    for (const [file, page] of Object.entries(publicHtml)) {
+    const pages = {
+      ...publicHtml,
+      ...blogHtml,
+      ...Object.fromEntries(docPages.map((f) => [`docs/${f}`, html[f]])),
+    };
+    for (const [file, page] of Object.entries(pages)) {
       const nav = page.match(/<nav id="nav">[\s\S]*?<\/nav>/)?.[0] ?? "";
       expect(nav, file).toBeTruthy();
 
@@ -206,7 +216,13 @@ describe("website docs", () => {
 
       const footer = page.match(/<footer class="site-footer">[\s\S]*?<\/footer>/)?.[0] ?? "";
       expect(links(footer), file).toEqual(
-        expect.arrayContaining(["/docs/", "/privacy", "mailto:contact@omnesis.dev", REPO_URL]),
+        expect.arrayContaining([
+          "/blog/",
+          "/docs/",
+          "/privacy",
+          "mailto:contact@omnesis.dev",
+          REPO_URL,
+        ]),
       );
       expect(links(footer), file).toContain(`${REPO_URL}/blob/main/LICENSE`);
     }
@@ -215,6 +231,7 @@ describe("website docs", () => {
   it("links GitHub buttons to the repository, never to a placeholder", () => {
     const pages = {
       ...publicHtml,
+      ...blogHtml,
       ...Object.fromEntries(docPages.map((f) => [`docs/${f}`, html[f]])),
       "docs/docs.js": sharedChromeScript,
     };
@@ -228,6 +245,7 @@ describe("website docs", () => {
   it("shows the X account and Discord invite in every page footer", () => {
     const pages = {
       ...publicHtml,
+      ...blogHtml,
       ...Object.fromEntries(docPages.map((f) => [`docs/${f}`, html[f]])),
     };
     const socialLinks = ["https://x.com/Omnesisdev", "https://discord.gg/QeaNZGAs2V"];
@@ -535,10 +553,15 @@ describe("website hosting", () => {
         .filter((f) => f !== "404.html")
         .map((f) => (f === "index.html" ? "/" : `/${f.replace(".html", "")}`)),
       ...docPages.map(slug),
+      ...blogPages.map((f) => (f === "index.html" ? "/blog/" : `/blog/${f.replace(".html", "")}`)),
     ];
     expect([...listed].sort()).toEqual([...pages].sort());
     const indexable = Object.entries(publicHtml).filter(([f]) => f !== "404.html");
-    for (const page of [...indexable.map(([, p]) => p), ...docPages.map((f) => html[f])]) {
+    for (const page of [
+      ...indexable.map(([, p]) => p),
+      ...docPages.map((f) => html[f]),
+      ...Object.values(blogHtml),
+    ]) {
       expect(page).not.toMatch(/<meta[^>]*name="robots"[^>]*noindex/);
     }
   });
