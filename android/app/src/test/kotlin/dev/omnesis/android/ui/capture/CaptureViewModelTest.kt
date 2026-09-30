@@ -15,6 +15,7 @@ import dev.omnesis.android.notes.VoiceNoteFiles
 import dev.omnesis.android.voice.FakeVoiceNoteSession
 import dev.omnesis.android.voice.VoiceNoteSession
 import java.io.File
+import java.time.Instant
 import kotlinx.coroutines.runBlocking
 import dev.omnesis.android.transport.client.NotesClient
 import dev.omnesis.android.transport.http.GatewayHttp
@@ -93,6 +94,7 @@ class CaptureViewModelTest {
                 store = store,
                 gateway = gateway,
                 audioFiles = VoiceNoteFiles(File(context.noBackupFilesDir, "voice-notes")),
+                now = { NOW },
             ),
             voiceNotes = {
                 beginCount++
@@ -108,11 +110,11 @@ class CaptureViewModelTest {
     private fun recordingSession(name: String = "recording-test.wav", captured: Boolean = true): FakeVoiceNoteSession {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val dir = File(context.noBackupFilesDir, "voice-notes").apply { mkdirs() }
-        return FakeVoiceNoteSession(File(dir, name), captured)
+        return FakeVoiceNoteSession(File(dir, name), writtenAtMs = NOW.toEpochMilli(), captured = captured)
     }
 
     private fun awaitQueued(): PendingNote {
-        awaitSaveSettled(vm)
+        assertEquals(SaveState.Done(queued = QueueReason.UNPAIRED), awaitSaveSettled(vm))
         return runBlocking { store.readAll().single() }
     }
 
@@ -248,6 +250,25 @@ class CaptureViewModelTest {
         assertTrue(vm.state.value.save is SaveState.Failed)
         assertNull(vm.state.value.voiceNote)
         assertTrue(runBlocking { store.readAll() }.isEmpty())
+    }
+
+    @Test
+    fun saving_audio_at_repository_start_preserves_it_and_removes_older_orphans() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val session = recordingSession()
+        val orphan = File(context.noBackupFilesDir, "voice-notes/orphan.wav").apply {
+            writeText("RIFF-invented-orphan")
+            assertTrue(setLastModified(NOW.toEpochMilli() - 1))
+        }
+        vm = makeVm(gateway = { null }, session)
+        vm.onMicPermission(true)
+
+        vm.save()
+
+        val queued = awaitQueued()
+        assertEquals(NOW.toString(), queued.capturedAt)
+        assertEquals("RIFF-invented", queued.audio!!.file.readText())
+        assertFalse(orphan.exists())
     }
 
     @Test
@@ -494,5 +515,9 @@ class CaptureViewModelTest {
         } finally {
             server.shutdown()
         }
+    }
+
+    private companion object {
+        val NOW = Instant.parse("2026-07-13T09:00:00.000Z")
     }
 }

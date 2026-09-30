@@ -20,6 +20,7 @@ import dev.omnesis.android.ui.capture.SpeechTranscriber
 import dev.omnesis.android.voice.FakeVoiceNoteSession
 import dev.omnesis.android.voice.VoiceNoteSession
 import java.io.File
+import java.time.Instant
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -255,10 +256,14 @@ class AssistantActionViewModelTest {
         store,
         gateway = { null },
         audioFiles = VoiceNoteFiles(File(context.noBackupFilesDir, "voice-notes")),
+        now = { NOW },
     )
 
     private fun session(): FakeVoiceNoteSession =
-        FakeVoiceNoteSession(File(File(context.noBackupFilesDir, "voice-notes").apply { mkdirs() }, "recording-a.wav"))
+        FakeVoiceNoteSession(
+            File(File(context.noBackupFilesDir, "voice-notes").apply { mkdirs() }, "recording-a.wav"),
+            writtenAtMs = NOW.toEpochMilli(),
+        )
 
     private fun awaitFinished(vm: AssistantActionViewModel) {
         val deadline = System.currentTimeMillis() + 5_000
@@ -404,6 +409,10 @@ class AssistantActionViewModelTest {
             releaseAnswer.await()
             emit(AgentStreamItem("1", AgentEvent.MessageEnd("session-a", "message-a")))
         }
+    }
+
+    private companion object {
+        val NOW = Instant.parse("2026-07-13T09:00:00.000Z")
     }
 
     private class FakeTranscriber(context: Context) : SpeechTranscriber(context) {
