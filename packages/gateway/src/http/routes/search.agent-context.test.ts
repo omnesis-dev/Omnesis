@@ -81,6 +81,32 @@ function request(body: unknown, bearer?: string): RequestInit {
 }
 
 describe("operator agent search context", () => {
+  test.each([undefined, false, true])(
+    "advertises portal graph context only with an enabled pipeline: %s",
+    async (enabled) => {
+      const app = createServer(db, dbPath, {
+        searchPipeline: enabled === undefined ? undefined : pipeline(enabled),
+      });
+      const response = await app.request("/search/readiness", {
+        headers: { Authorization: `Bearer ${token([SCOPE_ADMIN, SCOPE_READ])}` },
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        indexer: { status: "ready" },
+        ...(enabled ? { agentContextAvailable: true } : {}),
+      });
+    },
+  );
+
+  test("does not advertise operator diagnostics to a read-only caller", async () => {
+    const app = createServer(db, dbPath, { searchPipeline: pipeline(true) });
+    const response = await app.request("/search/readiness", {
+      headers: { Authorization: `Bearer ${token([SCOPE_READ])}` },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).not.toHaveProperty("agentContextAvailable");
+  });
+
   test.each([undefined, false])("is absent without an enabled pipeline: %s", async (enabled) => {
     const app = createServer(db, dbPath, {
       searchPipeline: enabled === undefined ? undefined : pipeline(enabled),
@@ -223,6 +249,9 @@ describe("agent context restricted identity and cancellation", () => {
       { search },
     );
     expect((await app.request(PATH, request({ text: "agreement" }))).status).toBe(403);
+    const readiness = await app.request("/search/readiness");
+    expect(readiness.status).toBe(200);
+    expect(await readiness.json()).not.toHaveProperty("agentContextAvailable");
     expect(search).not.toHaveBeenCalled();
   });
 

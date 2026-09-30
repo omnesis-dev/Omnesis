@@ -3,6 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { searchModelContextResult } from "./test-fixtures/search-model-context.js";
 
 import { BACKGROUND_RATE_LIMIT_PATIENCE, type AgentEvent, type ToolResult } from "@omnesis/core";
 import {
@@ -1657,5 +1658,65 @@ describe("OpenAIResponsesBackend.runTurn", () => {
       );
     const events = await collect(newBackend().runTurn(baseInput()));
     expect(textOf(events)).toBe("Hello world");
+  });
+});
+
+describe("model context serialization", () => {
+  it("projects historical tool evidence without mutating canonical history", () => {
+    const result = searchModelContextResult();
+    const canonical = JSON.stringify(result);
+    const input = convertHistoryToResponsesInput(
+      [{ role: "user", parts: [{ kind: "tool_result", toolCallId: "call-model", result }] }],
+      "next",
+    );
+    const output = input.find((item) => item.type === "function_call_output") as { output: string };
+    expect(JSON.parse(output.output).results[0].provenance).toEqual(
+      result.results[0]!.provenance!.modelContext,
+    );
+    expect(JSON.stringify(result)).toBe(canonical);
+  });
+  it("projects live tool output while retaining the canonical emitted event", async () => {
+    const result = searchModelContextResult();
+    const canonical = JSON.stringify(result);
+    const fetchMock = routedFetch(
+      [jsonResponse({ error: { message: "not supported" } }, 404)],
+      [
+        sseResponse([
+          { type: "response.created", response: { id: "resp-model-1" } },
+          {
+            type: "response.output_item.done",
+            item: {
+              id: "fc-model",
+              type: "function_call",
+              call_id: "call-model",
+              name: "search_documents",
+              arguments: '{"query":"agreement"}',
+            },
+          },
+          { type: "response.completed", response: { id: "resp-model-1" } },
+        ]),
+        sseResponse([
+          { type: "response.created", response: { id: "resp-model-2" } },
+          { type: "response.output_text.delta", delta: "Done." },
+          { type: "response.completed", response: { id: "resp-model-2" } },
+        ]),
+      ],
+    );
+    globalThis.fetch = fetchMock;
+    const events = await collect(
+      new OpenAIResponsesBackend({
+        baseUrl: "http://localhost:18083",
+        model: "test",
+        apiKey: "test",
+      }).runTurn(baseInput({ tools: [fakeToolHandle("search_documents", () => result)] })),
+    );
+    const body = JSON.parse((fetchMock.mock.calls[2]![1] as RequestInit).body as string);
+    expect(JSON.parse(body.input[0].output).results[0].provenance).toEqual(
+      result.results[0]!.provenance!.modelContext,
+    );
+    expect(events.find((event) => event.type === "agent.tool.result")?.payload.result).toEqual(
+      result,
+    );
+    expect(JSON.stringify(result)).toBe(canonical);
   });
 });

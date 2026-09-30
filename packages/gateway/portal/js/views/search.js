@@ -10,12 +10,16 @@ import {
   getDocumentsPeopleBulk,
   getPeople,
   getStatus,
+  searchAgentContext,
+  getDocumentSummariesBulk,
 } from "../api.js";
 import { ResultCard } from "../components/result-card.js";
 import { FacetPanel } from "../components/facets.js";
 import { PipelineDebug } from "../components/pipeline-debug.js";
 import { IndexerWarmingCard } from "../components/indexer-warming-card.js";
 import { STORAGE_PREFIXES } from "../lib/storage.js";
+import { SearchProvenance } from "../components/search-provenance.js";
+import { provenanceForResults, provenancePanels, provenanceDocumentIds, graphContextNotice } from "../lib/search-provenance.js";
 
 // Pull the Omnesis prefix from the shared storage module so logout's
 // `clearOmnesisStorage()` and this view's cache key stay in sync — if a
@@ -64,6 +68,13 @@ export function SearchView() {
   const [peopleByDoc, setPeopleByDoc] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [completedQuery, setCompletedQuery] = useState(
+    typeof cached?.response?.query?.original === "string" ? cached.response.query.original : null,
+  );
+  const [provenanceByDoc, setProvenanceByDoc] = useState({});
+  const [contextDocuments, setContextDocuments] = useState({});
+  const [contextNotice, setContextNotice] = useState(null);
+  const searchSequence = useRef(0);
   // Indexer readiness snapshot. Polled every 3s while the
   // embedder is still loading so the "warming up" banner disappears on
   // its own when the worker becomes ready.
@@ -132,6 +143,7 @@ export function SearchView() {
       }
     }
     return () => {
+      searchSequence.current++;
       const s = stateRef.current;
       if (s.results) {
         saveSearchCache({ query: s.query, verbose: s.verbose, results: s.results, response: s.response, scrollY: window.scrollY });
@@ -141,21 +153,34 @@ export function SearchView() {
 
   const doSearch = useCallback(async (text, v) => {
     if (!text.trim()) return;
+    const sequence = ++searchSequence.current;
     setLoading(true);
     setError(null);
+    setCompletedQuery(null);
+    setProvenanceByDoc({});
+    setContextDocuments({});
+    setContextNotice(null);
+    // Capability belongs to this request epoch; do not reuse a previous grant.
+    setReadiness((current) => ({ ...current, agentContextAvailable: false }));
+    getSearchReadiness()
+      .then((current) => { if (sequence === searchSequence.current) setReadiness(current); })
+      .catch(() => {});
     try {
       const res = await search(text, { verbose: v });
+      if (sequence !== searchSequence.current) return;
       setResponse(res);
       setResults(res.results || []);
+      setCompletedQuery(text);
       setPeopleByDoc({});
       saveSearchCache({ query: text, verbose: v, results: res.results || [], response: res, scrollY: 0 });
       const ids = (res.results || []).map((x) => x.documentId).filter(Boolean);
       if (ids.length > 0) {
         getDocumentsPeopleBulk(ids)
-          .then((bulk) => setPeopleByDoc(bulk.docs ?? {}))
+          .then((bulk) => { if (sequence === searchSequence.current) setPeopleByDoc(bulk.docs ?? {}); })
           .catch(() => {});
       }
     } catch (err) {
+      if (sequence !== searchSequence.current) return;
       console.error("Search error:", err);
       // Keep the prior results null so we don't show a misleading
       // "No results found" when the backend actually failed. The UI
@@ -170,9 +195,42 @@ export function SearchView() {
       setError(`${message}${reqId}`);
       clearSearchCache();
     } finally {
-      setLoading(false);
+      if (sequence === searchSequence.current) setLoading(false);
     }
   }, []);
+
+  // Diagnostic context is never cached. A capability change or a newer search
+  // invalidates the in-flight response before it can attach to another query.
+  useEffect(() => {
+    let cancelled = false;
+    const sequence = searchSequence.current;
+    setProvenanceByDoc({});
+    setContextDocuments({});
+    setContextNotice(null);
+    if (readiness?.agentContextAvailable === true && completedQuery && results?.length) {
+      searchAgentContext(completedQuery)
+        .then(async (context) => {
+          if (cancelled || sequence !== searchSequence.current) return;
+          let documents = {};
+          try {
+            documents = (await getDocumentSummariesBulk(provenanceDocumentIds(context))).docs || {};
+          } catch { /* Missing summaries retain linked document placeholders. */ }
+          if (!cancelled && sequence === searchSequence.current) {
+            setContextDocuments(documents);
+            setProvenanceByDoc(provenanceForResults(context, results));
+          }
+        })
+        .catch((err) => {
+          if (!cancelled && sequence === searchSequence.current) {
+            setContextNotice(graphContextNotice(err));
+            if ([403, 404, 405].includes(err?.status)) {
+              setReadiness((current) => ({ ...current, agentContextAvailable: false }));
+            }
+          }
+        });
+    }
+    return () => { cancelled = true; };
+  }, [completedQuery, results, readiness?.agentContextAvailable]);
 
   function handleSubmit(e) {
     e.preventDefault();
@@ -193,10 +251,11 @@ export function SearchView() {
     let cancelled = false;
     let timer = null;
     const tick = async () => {
+      const sequence = searchSequence.current;
       try {
         const r = await getSearchReadiness();
         if (cancelled) return;
-        setReadiness(r);
+        if (sequence === searchSequence.current) setReadiness(r);
         if (r?.indexer?.status === "loading-model" || r?.indexer?.status === "spawning") {
           timer = setTimeout(tick, r?.indexer?.status === "loading-model" ? 1000 : 3000);
         }
@@ -213,6 +272,9 @@ export function SearchView() {
   }, []);
 
   const hasSearched = results !== null;
+  const contextPanels = readiness?.agentContextAvailable === true
+    ? provenancePanels(results, provenanceByDoc)
+    : Object.create(null);
 
   return html`
     <div class="search-view">
@@ -272,17 +334,21 @@ export function SearchView() {
       ${!loading && results && results.length > 0 && html`
         <div>
           ${verbose && response && html`<${PipelineDebug} response=${response} />`}
+          ${contextNotice && html`<p class="search-context-notice" role="status">${contextNotice}</p>`}
           <div class="results-count">${results.length} result${results.length !== 1 ? "s" : ""}</div>
           <div class="results-layout">
             <div class="result-list">
               ${results.map((r) => html`
+                <div class="search-result-with-context" key=${r.documentId}>
                 <${ResultCard}
-                  key=${r.documentId}
                   result=${r}
                   query=${query}
                   verbose=${verbose}
                   peopleSummary=${peopleByDoc[r.documentId]}
                 />
+                ${contextPanels[r.documentId] && !contextPanels[r.documentId].repeated && html`<${SearchProvenance} provenance=${contextPanels[r.documentId].provenance} documents=${contextDocuments} panelId=${contextPanels[r.documentId].panelId} resultDocumentId=${r.documentId} />`}
+
+                </div>
               `)}
             </div>
             <${FacetPanel} results=${results} onFilter=${handleFilter} />

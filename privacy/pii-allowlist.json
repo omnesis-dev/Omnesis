@@ -6438,7 +6438,8 @@
         "evals/universes/graph-search/cast.json",
         "evals/universes/graph-search/sources/whatsapp-messages/messages.json",
         "packages/collector/src/e2e/graph-search-v2.e2e.test.ts",
-        "packages/gateway/src/search/agent-provenance.test.ts"
+        "packages/gateway/src/search/agent-provenance.test.ts",
+        "packages/gateway/src/search/provenance-model-context.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },

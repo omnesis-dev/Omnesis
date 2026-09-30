@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { computeContentHash } from "@omnesis/core";
 import { createDatabase } from "../db.js";
 import { hiddenSourceIdsToExclude } from "./hidden-sources.js";
+import { OMNESIS_CHAT_SOURCE_ID } from "../sources/omnesis-chat/ids.js";
+import { cognitionAuthoredDocumentTypes } from "../brain/cognition-authored.js";
 import { enrichAgentSearch, type AgentSearchProvenanceOptions } from "./agent-provenance.js";
 import type { SearchResultItem } from "./types.js";
 import type Database from "better-sqlite3";
@@ -111,6 +113,97 @@ function search(hits: SearchResultItem[], overrides: Partial<AgentSearchProvenan
 }
 
 describe("agent graph search evidence", () => {
+  test("derived summaries respect the configured character budget", () => {
+    const generated = doc("generated", { source: OMNESIS_CHAT_SOURCE_ID, type: "conversation" });
+    db.prepare("UPDATE documents SET title = ? WHERE id = 'generated'").run("x".repeat(300));
+    const context = search([generated], { maxSummaryChars: 40 })[0].provenance!;
+    expect(context.summary).toHaveLength(40);
+    expect(context.summary).toMatch(/^Omnesis context\./);
+    expect(context.truncated).toBe(true);
+    expect(context.stopReasons).toContain("summary");
+  });
+
+  test("derived file metadata cannot merge into or seed an original copy family", () => {
+    const generated = doc("generated-file", { source: OMNESIS_CHAT_SOURCE_ID });
+    const original = doc("original");
+    const hits = search([generated, original]);
+    expect(hits.map((hit) => hit.documentId)).toEqual(["generated-file", "original"]);
+    expect(hits.map((hit) => hit.provenance?.copies.map((copy) => copy.documentId))).toEqual([
+      ["generated-file"],
+      ["original"],
+    ]);
+    expect(search([original])[0].provenance?.copies.map((copy) => copy.documentId)).toEqual([
+      "original",
+    ]);
+  });
+
+  test("derived off-pool files cannot consume the copy discovery allowance", () => {
+    const original = doc("original");
+    for (let n = 0; n < 12; n++) {
+      doc(`generated-${n}`, { source: OMNESIS_CHAT_SOURCE_ID });
+    }
+    doc("later-original-copy", { source: "archive:another" });
+    const context = search([original], { maxCopies: 2 })[0].provenance!;
+    expect(context.copies.map((copy) => copy.documentId)).toEqual([
+      "original",
+      "later-original-copy",
+    ]);
+    expect(context.truncated).toBe(false);
+  });
+
+  test("generated answers do not crowd out the original sharing trail or make it a hub", () => {
+    const agreement = doc("agreement");
+    doc("sharing-message", { source: "messages:fictional", type: "conversation" });
+    edge("sharing-message", "agreement");
+    doc("catalogue", { body: BODY + " A catalogue with many independent references." });
+    edge("agreement", "catalogue");
+    for (let n = 0; n < 12; n++) {
+      doc(`derived-${n}`, { source: OMNESIS_CHAT_SOURCE_ID, type: "conversation" });
+      edge(`derived-${n}`, "agreement");
+      doc(`item-${n}`, { body: BODY + ` Independent catalogue item ${n}.` });
+      edge("catalogue", `item-${n}`);
+    }
+    // The registry's exclusive types remain derived even under another source.
+    for (const type of cognitionAuthoredDocumentTypes()) {
+      doc(`derived-type-${type}`, { source: "archive:fictional", type });
+      edge(`derived-type-${type}`, "agreement");
+    }
+    const context = search([agreement], { fanout: 2 })[0].provenance!;
+    expect(context.paths.map((path) => path.documentIds)).toEqual([
+      ["agreement", "catalogue"],
+      ["agreement", "sharing-message"],
+    ]);
+    expect(context.summary).toContain("is linked from Title sharing-message");
+    expect(context.summary).not.toContain("derived-");
+    expect(context.stopReasons).toEqual(["hub"]);
+  });
+
+  test("derived roots remain searchable without spending the source trail budget", () => {
+    const generated = Array.from({ length: 3 }, (_, n) =>
+      doc(`generated-${n}`, { source: OMNESIS_CHAT_SOURCE_ID, type: "conversation" }),
+    );
+    const agreement = doc("agreement");
+    doc("sharing-message", { source: "messages:fictional", type: "conversation" });
+    edge("sharing-message", "agreement");
+    for (const hit of generated) edge(hit.documentId, "agreement");
+    const inputs = [...generated, agreement];
+    const hits = search(inputs, { topN: 1 });
+    expect(hits.map((hit) => [hit.documentId, hit.chunkText])).toEqual(
+      inputs.map((hit) => [hit.documentId, hit.chunkText]),
+    );
+    for (const hit of hits.slice(0, 3)) {
+      expect(hit.provenance?.summary).toMatch(/^Omnesis context\./);
+      expect(hit.provenance?.paths).toEqual([]);
+    }
+    expect(hits[3].provenance?.paths).toEqual([
+      {
+        documentIds: ["agreement", "sharing-message"],
+        edges: ["inbound:url"],
+        relations: ["is linked from"],
+      },
+    ]);
+  });
+
   test("groups the ranked pool before limiting and discovers copies outside it", () => {
     const best = doc("best");
     const duplicate = doc("duplicate", { source: "files:fictional", type: "attachment" });
@@ -124,7 +217,7 @@ describe("agent graph search evidence", () => {
       "off-pool",
     ]);
     expect(hits[0].provenance?.copies[1].url).toMatch(/^https:\/\/example\.org\//);
-    expect(hits[0].provenance?.summary).toContain("Matching extracted text");
+    expect(hits[0].provenance?.summary).toContain("documents with matching extracted text");
     expect(best).not.toHaveProperty("provenance");
   });
 
@@ -229,7 +322,7 @@ describe("agent graph search evidence", () => {
     }
     const provenance = search([seed])[0].provenance!;
     expect(provenance.paths).toEqual([
-      { documentIds: ["seed", "hub"], edges: ["outbound:references"] },
+      { documentIds: ["seed", "hub"], edges: ["outbound:references"], relations: ["references"] },
     ]);
     expect(provenance.stopReasons).toContain("hub");
     expect(provenance.truncated).toBe(true);
@@ -242,7 +335,7 @@ describe("agent graph search evidence", () => {
       edge("seed", "target", type);
     const provenance = search([seed], { fanout: 1 })[0].provenance!;
     expect(provenance.paths).toEqual([
-      { documentIds: ["seed", "target"], edges: ["outbound:contains"] },
+      { documentIds: ["seed", "target"], edges: ["outbound:contains"], relations: ["contains"] },
     ]);
     expect(provenance.stopReasons).not.toContain("hub");
     expect(search([seed], { fanout: 1 })[0].provenance).toEqual(provenance);
@@ -270,18 +363,89 @@ describe("agent graph search evidence", () => {
     expect(hits[1].provenance?.stopReasons).toContain("copies");
   });
 
-  test("containment prose preserves evidence without assuming a uniform stored direction", () => {
+  test("containment prose distinguishes attachments from declared parent-child direction", () => {
     const parent = doc("parent", { type: "email", body: "A fictional container document." });
     const child = doc("child", { type: "attachment" });
     edge("child", "parent", "contains");
-    expect(search([child])[0].provenance?.summary).toContain(
-      "has a containment connection to Title parent",
-    );
+    expect(search([child])[0].provenance?.summary).toContain("is attached to Title parent");
     expect(search([parent])[0].provenance?.summary).toContain(
-      "has a containment connection to Title child",
+      "includes the attachment Title child",
     );
     expect(search([parent])[0].provenance?.paths[0].edges).toEqual(["inbound:contains"]);
     expect(search([child])[0].provenance?.paths[0].edges).toEqual(["outbound:contains"]);
+  });
+
+  test("edge aliases with different metadata cannot exhaust sparse neighbor probes", () => {
+    const seed = doc("seed", { type: "note", body: "An invented source note." });
+    doc("first-target", { type: "note", body: "First related note." });
+    doc("second-target", { type: "note", body: "Second related note." });
+    const insert = db.prepare(`INSERT INTO document_links
+      (source_doc_id,link_type,raw_target,normalized_target,target_doc_id,metadata_json,created_at)
+      VALUES ('seed','references',?,?,?,?,?)`);
+    for (let n = 0; n < 40; n++)
+      insert.run(
+        `alias-${n}`,
+        `alias-${n}`,
+        "first-target",
+        JSON.stringify({ role: `example-${n}` }),
+        NOW,
+      );
+    edge("seed", "second-target", "references");
+    const context = search([seed], { fanout: 2 })[0].provenance!;
+    expect(context.paths.map((path) => path.documentIds.at(-1))).toEqual([
+      "first-target",
+      "second-target",
+    ]);
+    expect(context.stopReasons).not.toContain("hub");
+    expect(context.paths.map((path) => path.relations)).toEqual([["references"], ["references"]]);
+  });
+
+  test("attachment role metadata explains a file-to-parent connection without inferring ownership", () => {
+    const child = doc("child", { type: "file" });
+    const parent = doc("parent", { type: "conversation", body: "A fictional parent." });
+    edge("child", "parent", "contains");
+    db.prepare("UPDATE document_links SET metadata_json = ? WHERE source_doc_id = 'child'").run(
+      JSON.stringify({ role: "attachment" }),
+    );
+    expect(search([child])[0].provenance?.summary).toContain("is attached to Title parent");
+    expect(search([parent])[0].provenance?.summary).toContain(
+      "includes the attachment Title child",
+    );
+    expect(search([parent])[0].provenance?.summary).not.toContain("shared by");
+  });
+
+  test.each([
+    ["contains", "contains", "is part of"],
+    ["url", "links to", "is linked from"],
+    ["references", "references", "is referenced by"],
+    ["replies-to", "is a reply to", "has a reply in"],
+    ["part-of-thread", "is in the same conversation as", "is in the same conversation as"],
+    ["calendar-event", "has a calendar connection with", "has a calendar connection with"],
+  ])("%s paths pair readable relations with preserved machine edges", (type, outward, inward) => {
+    const first = doc("first", { type: "note", body: "A fictional starting note." });
+    const second = doc("second", { type: "note", body: "A fictional related note." });
+    edge("first", "second", type);
+    const out = search([first])[0].provenance!;
+    const back = search([second])[0].provenance!;
+    expect(out.paths[0].edges).toEqual([`outbound:${type}`]);
+    expect(out.paths[0].relations).toEqual([outward]);
+    expect(back.paths[0].edges).toEqual([`inbound:${type}`]);
+    expect(back.paths[0].relations).toEqual([inward]);
+    expect(out.summary).toContain(`${outward} Title second`);
+    expect(back.summary).toContain(`${inward} Title first`);
+  });
+
+  test("readable multi-hop paths retain one relation per connection", () => {
+    const first = doc("first", { type: "note", body: "First fictional note." });
+    doc("second", { type: "note", body: "Second fictional note." });
+    doc("third", { type: "note", body: "Third fictional note." });
+    edge("first", "second", "references");
+    edge("second", "third", "replies-to");
+    expect(search([first])[0].provenance?.paths).toContainEqual({
+      documentIds: ["first", "second", "third"],
+      edges: ["outbound:references", "outbound:replies-to"],
+      relations: ["references", "is a reply to"],
+    });
   });
 
   test("prefers authoritative URLs, omits oversized links and bounds metadata", () => {

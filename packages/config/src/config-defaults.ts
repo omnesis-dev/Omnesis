@@ -26,7 +26,11 @@
  */
 
 /** Nested, config-path-shaped defaults. Only fixed-shape (non-record) knobs appear. */
-import { DEFAULT_PUSH_WAKE_RETRY_SETTINGS, DEFAULT_SYNC_LEASE_TTL } from "./config-schema.js";
+import {
+  DEFAULT_PUSH_WAKE_RETRY_SETTINGS,
+  DEFAULT_SEARCH_V2_SETTINGS,
+  DEFAULT_SYNC_LEASE_TTL,
+} from "./config-schema.js";
 
 export const CONFIG_DEFAULTS = {
   agent: {
@@ -118,6 +122,7 @@ export const CONFIG_DEFAULTS = {
     },
   },
   search: {
+    v2: DEFAULT_SEARCH_V2_SETTINGS,
     // Mirrors DEFAULT_SEARCH_PARAMS in the gateway's search-config (config
     // can't import from gateway); the cross-check test pins the two together.
     params: {

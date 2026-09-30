@@ -267,6 +267,10 @@ export async function search(text, { verbose = false, limit = 30 } = {}) {
  */
 export const getSearchReadiness = () => request("GET", "/search/readiness");
 
+/** Supplemental operator diagnostics; ordinary search remains authoritative. */
+export const searchAgentContext = (text, limit = 30) =>
+  request("POST", "/admin/search/agent-context", { body: { text, limit } });
+
 /**
  * GET /status — system-wide snapshot (document counts per source, index
  * status, DB size, uptime, etc.). Used by the search view to pick a

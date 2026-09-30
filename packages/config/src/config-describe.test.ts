@@ -6,6 +6,7 @@ import {
   describeConfigSchema,
   flattenConfigNodes,
   CONFIG_PATHS_OWNED_ELSEWHERE,
+  CONFIG_PATHS_BACKEND_ONLY,
   type ConfigNode,
   type ConfigLeafNode,
 } from "./config-describe.js";
@@ -20,7 +21,8 @@ import { resolveSourceSettings, validateConfig } from "./config-schema.js";
 // The inventory snapshot exists to FORCE A DECISION whenever the config schema
 // gains or loses a knob: when this list changes, you must either (a) accept the
 // new knob on /config (just update the list), or (b) declare it owned by
-// another portal page in `CONFIG_PATHS_OWNED_ELSEWHERE` (then update the list).
+// another portal page in `CONFIG_PATHS_OWNED_ELSEWHERE` (then update the list),
+// or (c) explicitly exclude backend-only settings in `CONFIG_PATHS_BACKEND_ONLY`.
 // A new knob can never silently go missing from the page.
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -330,6 +332,24 @@ function renderedLeaves(node: ConfigNode, acc: ConfigLeafNode[] = []): ConfigLea
 }
 
 describe("describeConfigSchema", () => {
+  it("omits backend-only agent search settings without adding a portal group", () => {
+    const descriptor = describeConfigSchema();
+    const search = descriptor.children.find((node) => node.key === "search");
+    expect(search?.kind).toBe("object");
+    if (search?.kind === "object") {
+      expect(search.children.some((node) => node.key === "v2")).toBe(false);
+    }
+    for (const entry of CONFIG_PATHS_BACKEND_ONLY) {
+      const prefix = "/" + entry.path.join("/");
+      expect(entry.reason).not.toBe("");
+      expect(
+        flattenConfigNodes(descriptor).some(
+          (node) => node.path === prefix || node.path.startsWith(prefix + "/"),
+        ),
+      ).toBe(false);
+    }
+  });
+
   it("matches the config knob inventory (update when you add/remove/relocate a knob)", () => {
     const actual = flattenConfigNodes().map(inventoryLine).sort();
     expect(actual).toEqual(EXPECTED_INVENTORY);

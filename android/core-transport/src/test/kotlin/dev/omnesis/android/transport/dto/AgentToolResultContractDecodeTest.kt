@@ -29,6 +29,49 @@ import org.junit.Test
  */
 class AgentToolResultContractDecodeTest {
 
+    @Test
+    fun additive_search_provenance_preserves_existing_decoder_and_batch_slots() {
+        val legacy = """{"documentId":"agreement-1","sourceType":"files","sourceId":"files:example","title":"Equipment agreement","snippet":"Equipment terms","url":"https://example.com/agreement"}"""
+        val extra = """
+            ,"provenance":{"summary":"The same text appears elsewhere.",
+            "copies":[{"documentId":"agreement-1","sourceId":"files:example"},{"documentId":"agreement-2","sourceId":"files:example"}],
+            "paths":[{"documentIds":["agreement-1","message-1"],"edges":["inbound:url"],"relations":["is linked from"]}],
+            "truncated":false,"stopReasons":[],
+            "modelContext":{"facts":["D1 is linked from D2."],"documents":[{"ref":"D1","documentId":"agreement-1","sourceId":"files:example"},{"ref":"D2","documentId":"message-1","sourceId":"messages:example"}],"limits":[]}}
+        """.trimIndent()
+        val enriched = legacy.dropLast(1) + extra + "}"
+        fun search(reference: String) = """{"kind":"search.results","query":"equipment","durationMs":2,"candidates":3,"results":[$reference]}"""
+        val original = OmnesisJson.decodeFromString<AgentToolResult>(search(legacy))
+        val rows = original as AgentToolResult.SearchResults
+        assertEquals("equipment", rows.query)
+        assertEquals(3, rows.candidates)
+        assertEquals("agreement-1", rows.results.single().documentId)
+        assertEquals("Equipment terms", rows.results.single().snippet)
+        assertEquals("https://example.com/agreement", rows.results.single().url)
+        assertEquals(original, OmnesisJson.decodeFromString<AgentToolResult>(search(enriched)))
+        val batch = OmnesisJson.decodeFromString<AgentToolResult>(
+            """{"kind":"search.batch","items":[${search(legacy)},${search(enriched)},{"kind":"error","code":"batch_child_failed","message":"Unavailable"}]}""",
+        ) as AgentToolResult.SearchBatch
+        assertEquals(3, batch.items.size)
+        assertEquals(original, batch.items[0])
+        assertEquals(original, batch.items[1])
+        assertEquals("batch_child_failed", (batch.items[2] as AgentToolResult.ErrorResult).code)
+    }
+
+    @Test
+    fun ordinary_search_keeps_distinct_matching_text_rows() {
+        val response = OmnesisJson.decodeFromString<SearchResponse>(
+            """{"results":[
+              {"documentId":"agreement-1","sourceId":"files:example","documentType":"file","title":"Equipment agreement","sourceCreatedAt":"2025-02-01T00:00:00Z","chunkText":"Equipment terms","score":0.9},
+              {"documentId":"agreement-2","sourceId":"files:example","documentType":"file","title":"Equipment agreement copy","sourceCreatedAt":"2025-02-01T00:00:00Z","chunkText":"Equipment terms","score":0.8}
+            ],"query":{"original":"equipment","effectiveText":"equipment"}}""",
+        )
+        assertEquals(listOf("agreement-1", "agreement-2"), response.results.map { it.documentId })
+        assertEquals(listOf(0.9, 0.8), response.results.map { it.score })
+        assertEquals(listOf("Equipment terms", "Equipment terms"), response.results.map { it.chunkText })
+        assertEquals("equipment", response.query?.original)
+    }
+
     @Serializable
     private data class Fixture(val cases: List<Case>) {
         @Serializable

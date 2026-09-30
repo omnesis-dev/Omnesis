@@ -473,7 +473,7 @@ export class SearchPipeline {
     }
 
     // Finalize the full ranked pool before limiting. Legacy searches collapse
-    // equal formatted-content hashes. Opt-in unrestricted agent searches group
+    // equal formatted-content hashes. Unrestricted agent searches with v2 group
     // eligible extracted-text identities and retain their provenance. Neither
     // hash establishes identical file bytes. The candidate core already
     // hydrated chunk text and fetched hashes, so neither path rereads index.db.

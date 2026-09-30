@@ -31,6 +31,7 @@ import {
 import { STREAM_COLUMN } from "../analytics/internal.js";
 import { ScopedSqlDeniedError } from "../analytics/sandbox-tables.js";
 import { readDocConnections } from "../brain/doc-connections.js";
+import { isCognitionAuthoredDocument } from "../brain/cognition-authored.js";
 import { assemblePersonLookup, type PersonLookupGate } from "../domain/person-lookup.js";
 import {
   findDocumentIdBySourceExternalId,
@@ -205,7 +206,7 @@ export function createGatewaySearchPort(
       // Breadcrumb is attached here in the AGENT search port only — never on
       // the public /search route — so portal / iOS search payloads stay lean.
       if (db && !authorization?.restricted) {
-        attachBreadcrumbs(db, results, ownConversationDocId);
+        attachBreadcrumbs(db, results, ownConversationDocId, pipeline.agentSearchV2Enabled);
       }
       // Durable memory is generally available; loop and temporal connections
       // remain experimental. Restricted callers receive no memory overlays.
@@ -278,10 +279,29 @@ const BREADCRUMB_FANOUT = 3;
  * conversation reappears as a neighbour of its own citations, handing back the
  * id that was just withheld from the result list.
  */
-function attachBreadcrumbs(db: Db, results: DocRef[], excludeDocId: string | null = null): void {
+function attachBreadcrumbs(
+  db: Db,
+  results: DocRef[],
+  excludeDocId: string | null = null,
+  suppressDerived = false,
+): void {
+  const currentIdentity = suppressDerived
+    ? db.prepare<[string], { sourceId: string; documentType: string | null }>(
+        `SELECT source_id AS sourceId, json_extract(metadata, '$.documentType') AS documentType
+         FROM documents WHERE id = ?`,
+      )
+    : undefined;
   for (let i = 0; i < results.length && i < BREADCRUMB_TOP_N; i++) {
     const r = results[i]!;
     if (r.provenance) continue;
+    if (currentIdentity) {
+      const current = currentIdentity.get(r.documentId);
+      if (
+        isCognitionAuthoredDocument(r.sourceId, r.documentType) ||
+        (current && isCognitionAuthoredDocument(current.sourceId, current.documentType))
+      )
+        continue;
+    }
     const { neighbors } = expandOneHop(db, r.documentId, { fanout: BREADCRUMB_FANOUT });
     const visible = excludeDocId
       ? neighbors.filter((n) => n.documentId !== excludeDocId)

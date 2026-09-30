@@ -5,18 +5,18 @@ import { describe, expect, it } from "vitest";
 import { validateConfig } from "./config-schema.js";
 
 describe("search v2 configuration", () => {
-  it("keeps legacy configurations without v2 valid and unenrolled", () => {
+  it("keeps legacy configurations valid without rewriting an omitted v2 block", () => {
     const result = validateConfig({ search: {} });
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.config.search?.v2).toBeUndefined();
   });
 
-  it("defaults an explicit block to disabled with bounded budgets", () => {
+  it("defaults an explicit block to enabled with bounded budgets", () => {
     const result = validateConfig({ search: { v2: {} } });
     expect(result.ok).toBe(true);
     if (result.ok)
       expect(result.config.search?.v2).toEqual({
-        enabled: false,
+        enabled: true,
         topN: 3,
         maxDepth: 4,
         fanout: 6,
@@ -39,6 +39,12 @@ describe("search v2 configuration", () => {
     const result = validateConfig({ search: { v2 } });
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.config.search?.v2).toEqual(v2);
+  });
+
+  it("preserves an explicit false fallback rather than replacing it with the default", () => {
+    const result = validateConfig({ search: { v2: { enabled: false } } });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.config.search?.v2?.enabled).toBe(false);
   });
 
   it.each([

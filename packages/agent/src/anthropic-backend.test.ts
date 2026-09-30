@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { searchModelContextResult } from "./test-fixtures/search-model-context.js";
 import {
   AnthropicBackend,
   anthropicErrorMetadata,
@@ -1637,5 +1638,48 @@ describe("convertHistoryToAnthropic", () => {
     const blocks = out[0]!.content as Array<{ type: string; text?: string }>;
     expect(blocks[0]!.type).toBe("text");
     expect(blocks[0]!.text).toBe("hello");
+  });
+});
+
+describe("model context serialization", () => {
+  it("projects historical tool evidence without mutating canonical history", () => {
+    const result = searchModelContextResult();
+    const canonical = JSON.stringify(result);
+    const messages = convertHistoryToAnthropic([
+      { role: "user", parts: [{ kind: "tool_result", toolCallId: "call-model", result }] },
+    ]);
+    const content = messages[0]!.content;
+    expect(Array.isArray(content)).toBe(true);
+    const block = (content as Array<{ type: string; content?: string }>).find(
+      (item) => item.type === "tool_result",
+    )!;
+    expect(JSON.parse(block.content!).results[0].provenance).toEqual(
+      result.results[0]!.provenance!.modelContext,
+    );
+    expect(JSON.stringify(result)).toBe(canonical);
+  });
+  it("projects live tool input to the model while retaining its canonical event", async () => {
+    const result = searchModelContextResult();
+    const canonical = JSON.stringify(result);
+    const { client, calls } = stubClient([
+      toolUseStream("search_documents", { query: "agreement" }),
+      textOnlyStream(["Done."]),
+    ]);
+    const events: AgentEvent[] = [];
+    for await (const event of new AnthropicBackend({
+      apiKey: "test",
+      model: "claude-test",
+      client,
+    }).runTurn(baseInput({ tools: [fakeToolHandle("search_documents", () => result)] })))
+      events.push(event);
+    const blocks = calls[1]!.messages.at(-1)!.content as Array<{ type: string; content?: string }>;
+    const block = blocks.find((item) => item.type === "tool_result")!;
+    expect(JSON.parse(block.content!).results[0].provenance).toEqual(
+      result.results[0]!.provenance!.modelContext,
+    );
+    expect(events.find((event) => event.type === "agent.tool.result")?.payload.result).toEqual(
+      result,
+    );
+    expect(JSON.stringify(result)).toBe(canonical);
   });
 });

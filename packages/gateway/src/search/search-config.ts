@@ -6,6 +6,8 @@
  * pipeline, resolved from `omnesis.json` onto defaults.
  */
 
+import { DEFAULT_SEARCH_V2_SETTINGS } from "@omnesis/config";
+
 import { computeIsfPriors, type SourceDocCount } from "./source-isf-prior.js";
 import type {
   ResolvedSourcePriorsConfig,
@@ -279,13 +281,13 @@ export interface SearchV2Config {
 
 export function resolveSearchV2Config(config?: SearchConfig): SearchV2Config {
   return {
-    enabled: config?.v2?.enabled === true,
-    topN: config?.v2?.topN ?? 3,
-    maxDepth: config?.v2?.maxDepth ?? 4,
-    fanout: config?.v2?.fanout ?? 6,
-    maxNodes: config?.v2?.maxNodes ?? 24,
-    maxCopies: config?.v2?.maxCopies ?? 8,
-    maxSummaryChars: config?.v2?.maxSummaryChars ?? 700,
+    enabled: (config?.v2?.enabled ?? DEFAULT_SEARCH_V2_SETTINGS.enabled) === true,
+    topN: config?.v2?.topN ?? DEFAULT_SEARCH_V2_SETTINGS.topN,
+    maxDepth: config?.v2?.maxDepth ?? DEFAULT_SEARCH_V2_SETTINGS.maxDepth,
+    fanout: config?.v2?.fanout ?? DEFAULT_SEARCH_V2_SETTINGS.fanout,
+    maxNodes: config?.v2?.maxNodes ?? DEFAULT_SEARCH_V2_SETTINGS.maxNodes,
+    maxCopies: config?.v2?.maxCopies ?? DEFAULT_SEARCH_V2_SETTINGS.maxCopies,
+    maxSummaryChars: config?.v2?.maxSummaryChars ?? DEFAULT_SEARCH_V2_SETTINGS.maxSummaryChars,
   };
 }
 

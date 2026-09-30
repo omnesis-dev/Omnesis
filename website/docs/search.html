@@ -287,6 +287,22 @@
           with the same query language.
         </p>
 
+        <p>
+          Graph context is enabled by default for unrestricted agent search. Set
+          <code>search.v2.enabled</code> to <code>false</code> in <code>omnesis.json</code> and
+          restart the gateway to restore the legacy projection or run an A/B comparison. Operator
+          portal sessions with read and admin access show additional facts beside search results:
+          other documents with matching text, device paths and observed connections described in
+          ordinary sentences. Up to five other document titles are linked inline, with a source icon
+          before each title. The current document is omitted from that list; IDs and internal edge
+          codes are hidden. The CLI's <code>--agent-context</code> option exposes the corresponding
+          agent search projection. Matching extracted text does not establish identical file bytes,
+          and bounded trails do not establish a complete sharing history. Built-in agents receive
+          readable graph facts with a document reference table and explicit traversal limits.
+          References resolve to document IDs and available links; matching text does not establish
+          identical file bytes.
+        </p>
+
         <h2 id="query-syntax">Query syntax</h2>
         <p>
           Filters are typed inline, mixed freely with search text. Whatever is left after the

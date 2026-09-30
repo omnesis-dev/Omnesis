@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createLogger } from "@omnesis/core";
+import { SCOPE_ADMIN, SCOPE_READ, scopeSatisfies } from "@omnesis/types";
 import { scope } from "../scope.js";
 import { validateJson } from "../validate.js";
 import { agentSearchContextBody, searchBody } from "../schemas/index.js";
@@ -87,7 +88,16 @@ export function mountSearchRoutes(app: RouteApp, deps: SearchRoutesDeps): void {
 
   app.get("/search/readiness", scope.read(), (c) => {
     const indexer = indexerReadiness?.() ?? { status: "ready" as const };
-    return c.json({ indexer });
+    const auth = c.get("auth");
+    const agentContextAvailable =
+      !!deps.agentSearchPort &&
+      auth.authMethod !== "principal-oauth" &&
+      scopeSatisfies(auth.scopes, SCOPE_ADMIN) &&
+      scopeSatisfies(auth.scopes, SCOPE_READ);
+    return c.json({
+      indexer,
+      ...(agentContextAvailable ? { agentContextAvailable: true } : {}),
+    });
   });
 
   app.post("/search", scope.read(), validateJson(searchBody), async (c) => {

@@ -13,11 +13,13 @@ import { ProviderId, SourceId } from "@omnesis/types";
 import { normalizeFile } from "@omnesis/provider-local-files/src/normalizer.js";
 import { authorizeMcpClient, type AuthorizedMcpClient } from "./mcp-oauth-helper.js";
 import { SyntheticE2EHarness } from "./synth-harness.js";
-import type { DocRef, ToolResult } from "@omnesis/core";
+import type { DocRef, SearchProvenance, ToolResult } from "@omnesis/core";
+import { serializeToolResultForModel } from "@omnesis/agent";
 
 const execFileAsync = promisify(execFile);
 const REPO_ROOT = join(import.meta.dirname, "../../../..");
 const UNIVERSE = join(import.meta.dirname, "../../../../evals/universes/graph-search");
+type ModelContext = NonNullable<SearchProvenance["modelContext"]>;
 const QUERY = "LANTERN-482";
 const LOCAL_SOURCE = "local-files:example-contracts";
 interface WireEvent {
@@ -64,7 +66,7 @@ describe("Agent search v2 — synthetic file journey", () => {
       // These tests measure graph contracts, not embedding quality.
       extraGatewayConfig: () => ({
         search: {
-          v2: { enabled },
+          ...(enabled ? {} : { v2: { enabled: false } }),
           params: { vectorWeight: 0 },
           diversity: { enabled: false },
           sourcePriors: { autoInverseFrequency: { enabled: false } },
@@ -190,7 +192,11 @@ describe("Agent search v2 — synthetic file journey", () => {
     await harness?.destroy();
   }, 30_000);
 
-  test("live replay executes search_many and fetch_many with grounded provenance and one matching snippet", async () => {
+  test("default search executes search_many and fetch_many with grounded provenance and one matching snippet", async () => {
+    const config = JSON.parse(
+      readFileSync(join(harness.getConfigDir(), "omnesis.json"), "utf8"),
+    ) as { search?: { v2?: unknown } };
+    expect(config.search?.v2).toBeUndefined();
     const events = await runConversation(harness, "Inspect graph copies");
     expect(events.filter((e) => e.type === "agent.error")).toEqual([]);
     const searchStart = events.find(
@@ -232,10 +238,89 @@ describe("Agent search v2 — synthetic file journey", () => {
     expect(hit.provenance!.paths.some((p) => p.documentIds.includes(chat.id))).toBe(true);
     expect(hit.provenance!.summary).toContain("Jamie Lopez");
     expect(hit.provenance!.summary.length).toBeLessThanOrEqual(700);
+    const context = hit.provenance!.modelContext!;
+    expect(context).toBeDefined();
+    expect(context.facts.reduce((sum, fact) => sum + fact.length, 0)).toBeLessThanOrEqual(700);
+    expect(context.limits.length).toBeLessThanOrEqual(5);
+    expect(context.documents[0]).toMatchObject({ ref: "D1", documentId: hit.documentId });
+    expect(new Set(context.documents.map((document) => document.documentId)).size).toBe(
+      context.documents.length,
+    );
+    for (const document of context.documents) {
+      const stored = db
+        .prepare("SELECT id, source_id FROM documents WHERE id = ?")
+        .get(document.documentId) as { id: string; source_id: string } | undefined;
+      expect(stored).toBeDefined();
+      expect(document.sourceId).toBe(stored!.source_id);
+    }
+    const reference = (documentId: string): string => {
+      const document = context.documents.find((item) => item.documentId === documentId);
+      expect(document, `missing model reference for ${documentId}`).toBeDefined();
+      return `[${document!.ref}]`;
+    };
+    for (const sentence of [...context.facts, ...context.limits]) {
+      for (const match of sentence.matchAll(/\[(D[1-9][0-9]*)\]/g)) {
+        expect(context.documents.some((document) => document.ref === match[1])).toBe(true);
+      }
+    }
+    const copyFact = context.facts.find((fact) =>
+      fact.startsWith("Matching extracted text also appears in "),
+    );
+    expect(copyFact).toBeDefined();
+    expect(copyFact).not.toContain(reference(hit.documentId));
+    for (const copy of copies.filter((copy) => copy.id !== hit.documentId)) {
+      expect(copyFact).toContain(reference(copy.id));
+    }
+    const local = copies.find((copy) => copy.source_id === LOCAL_SOURCE)!;
+    expect(context.documents.find((document) => document.documentId === local.id)).toMatchObject({
+      sourceId: LOCAL_SOURCE,
+      deviceName: "Example-Laptop-collector",
+      path: "~/Contracts/northstar.pdf",
+    });
+    expect(context.facts).toContain(
+      `${reference(local.id)} is indexed on "Example-Laptop-collector" at "~/Contracts/northstar.pdf".`,
+    );
+    const drive = copies.find((copy) => copy.external_id === "graph-contract-1")!;
+    expect(
+      context.facts.some(
+        (fact) =>
+          fact.startsWith(`${reference(drive.id)} `) &&
+          fact.includes(`is linked from ${reference(chat.id)}`),
+      ),
+    ).toBe(true);
+    const attachment = copies.find((copy) => copy.source_id.startsWith("gmail:"))!;
+    const parentMail = db
+      .prepare("SELECT id FROM documents WHERE external_id = 'graph-mail'")
+      .get() as { id: string };
+    expect(
+      context.facts.some((fact) =>
+        fact.includes(`${reference(attachment.id)} is attached to ${reference(parentMail.id)}`),
+      ),
+    ).toBe(true);
+    expect(
+      context.facts.some((fact) =>
+        fact.includes(`${reference(parentMail.id)} is attached to ${reference(attachment.id)}`),
+      ),
+    ).toBe(false);
+    const projected = JSON.parse(serializeToolResultForModel(result)) as {
+      items: Array<{ results: Array<{ documentId: string; provenance?: ModelContext }> }>;
+    };
+    const modelHit = projected.items[0]!.results.find(
+      (item) => item.documentId === hit.documentId,
+    )!;
+    expect(modelHit.provenance).toEqual(context);
+    expect(Object.keys(modelHit.provenance!).sort()).toEqual(["documents", "facts", "limits"]);
+    expect(modelHit.provenance).not.toHaveProperty("copies");
+    expect(modelHit.provenance).not.toHaveProperty("paths");
+    expect(modelHit.provenance).not.toHaveProperty("summary");
+    expect(hit.provenance!.copies).toHaveLength(5);
+    expect(hit.provenance!.paths.length).toBeGreaterThan(0);
+
     const unrelated = db
       .prepare("SELECT id FROM documents WHERE external_id = 'graph-chat-unrelated'")
       .get() as { id: string };
     expect(hit.provenance!.paths.flatMap((p) => p.documentIds)).not.toContain(unrelated.id);
+    expect(context.documents.map((document) => document.documentId)).not.toContain(unrelated.id);
     expect(hit.provenance!.paths.flatMap((p) => p.documentIds)).not.toContain(
       (
         db.prepare("SELECT id FROM documents WHERE external_id = 'graph-leaf-0'").get() as {
@@ -305,6 +390,19 @@ describe("Agent search v2 — synthetic file journey", () => {
     expect(hit.provenance!.paths).toEqual([]);
     expect(hit.provenance!.stopReasons).toContain("hub");
     expect(hit.provenance!.truncated).toBe(true);
+    const context = hit.provenance!.modelContext!;
+    expect(context.documents).toHaveLength(1);
+    expect(context.documents[0]).toMatchObject({ ref: "D1", documentId: hit.documentId });
+    expect(context.limits).toContain(
+      "Further connections of [D1] were not explored because they are highly connected.",
+    );
+    const descendants = db
+      .prepare("SELECT id FROM documents WHERE external_id LIKE 'graph-leaf-%'")
+      .all() as Array<{ id: string }>;
+    expect(descendants.length).toBeGreaterThan(0);
+    for (const document of descendants) {
+      expect(context.documents.some((item) => item.documentId === document.id)).toBe(false);
+    }
   }, 90_000);
 
   test("different extracted-text versions retain separate entries and blank scans never collapse", async () => {
@@ -316,6 +414,24 @@ describe("Agent search v2 — synthetic file journey", () => {
       .prepare("SELECT id FROM documents WHERE external_id = 'graph-revision'")
       .get() as { id: string };
     expect(result.items[0].results.some((h) => h.documentId === revision.id)).toBe(true);
+    const familyHit = result.items[0].results.find((hit) => hit.provenance?.copies.length === 5)!;
+    expect(familyHit).toBeDefined();
+    expect(familyHit.documentId).not.toBe(revision.id);
+    expect(familyHit.provenance!.copies.some((copy) => copy.documentId === revision.id)).toBe(
+      false,
+    );
+    expect(
+      familyHit.provenance!.modelContext!.documents.some(
+        (document) => document.documentId === revision.id,
+      ),
+    ).toBe(false);
+    const revisionHit = result.items[0].results.find((hit) => hit.documentId === revision.id)!;
+    expect(
+      revisionHit.provenance?.copies.some((copy) =>
+        copies.some((original) => original.id === copy.documentId),
+      ) ?? false,
+    ).toBe(false);
+
     expect(
       result.items[0].results
         .flatMap((h) => h.provenance?.copies ?? [])
@@ -335,7 +451,12 @@ describe("Agent search v2 — synthetic file journey", () => {
   test("unrestricted Direct receives the same enrichment while restricted grants reveal no graph or copy metadata", async () => {
     const all = await directSearch(unrestricted, QUERY);
     expect(all.some((h) => h.provenance?.copies.length === 5)).toBe(true);
-    const scoped = await directSearch(restricted, QUERY);
+    const scopedResult = await directSearchResult(restricted, QUERY);
+    if (scopedResult.kind !== "search.batch" || scopedResult.items[0]?.kind !== "search.results")
+      throw new Error("Missing restricted search results");
+    const scoped = scopedResult.items[0].results;
+    expect(serializeToolResultForModel(scopedResult)).toBe(JSON.stringify(scopedResult));
+    expect(serializeToolResultForModel(scopedResult)).not.toContain('"modelContext"');
     expect(scoped.length).toBeGreaterThan(0);
     for (const hit of scoped) {
       expect(hit.sourceId).toBe("google-drive:maya@example.com");
@@ -391,15 +512,38 @@ describe("Agent search v2 — synthetic file journey", () => {
       true,
     );
 
-    const denied = await fetch(`${harness.gatewayUrl}/admin/search/agent-context`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${harness.deviceForSource("google-drive:maya@example.com").token}`,
-        "Content-Type": "application/json",
+    // The harness collector credential includes admin. Mint an explicitly
+    // scoped token so this probe proves authorization, rather than device kind.
+    const readOnly = await harness.gatewayJson<{ id: string; token: string; scopes: string[] }>(
+      "/admin/tokens",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          deviceId: harness.deviceForSource("google-drive:maya@example.com").deviceId,
+          scopes: ["read"],
+          name: "Graph diagnostic read-only probe",
+        }),
       },
-      body: JSON.stringify({ text: QUERY, limit: 20 }),
-    });
-    expect(denied.status).toBe(403);
+    );
+    expect(readOnly.scopes).toEqual(["read"]);
+    try {
+      const identity = await fetch(`${harness.gatewayUrl}/whoami`, {
+        headers: { Authorization: `Bearer ${readOnly.token}` },
+      });
+      expect(identity.status).toBe(200);
+      expect(((await identity.json()) as { scopes: string[] }).scopes).toEqual(["read"]);
+      const denied = await fetch(`${harness.gatewayUrl}/admin/search/agent-context`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${readOnly.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ text: QUERY, limit: 20 }),
+      });
+      expect(denied.status).toBe(403);
+    } finally {
+      await harness.gatewayJson(`/admin/tokens/${readOnly.id}`, { method: "DELETE" });
+    }
   }, 120_000);
 
   test("public search stays legacy and disabling v2 restores separate agent copy entries after restart", async () => {
@@ -423,6 +567,10 @@ describe("Agent search v2 — synthetic file journey", () => {
     const enrichedCopies = await directSearchResult(unrestricted, copyQuery);
     enabled = false;
     await harness.restartGateway();
+    const fallbackConfig = JSON.parse(
+      readFileSync(join(harness.getConfigDir(), "omnesis.json"), "utf8"),
+    ) as { search?: { v2?: { enabled?: boolean } } };
+    expect(fallbackConfig.search?.v2?.enabled).toBe(false);
     const unavailable = await fetch(`${harness.gatewayUrl}/admin/search/agent-context`, {
       method: "POST",
       headers: { Authorization: `Bearer ${harness.apiKey}`, "Content-Type": "application/json" },
@@ -501,12 +649,14 @@ describe("Agent search v2 — synthetic file journey", () => {
     // The source/date filters constrain both retrieval lanes to three roots.
     // Compare the full live tool payload for those roots,
     // including batch envelopes and provenance for copies outside the filter.
-    const enrichedCopyBytes = Buffer.byteLength(JSON.stringify(enrichedCopies));
-    const legacyCopyBytes = Buffer.byteLength(JSON.stringify(legacyCopies));
+    const enrichedCopyBytes = Buffer.byteLength(serializeToolResultForModel(enrichedCopies));
+    const legacyCopyBytes = Buffer.byteLength(serializeToolResultForModel(legacyCopies));
     console.info(
       `[graph-search] focused tool payload bytes: v2=${enrichedCopyBytes}, legacy=${legacyCopyBytes}`,
     );
     expect(enrichedCopyBytes).toBeLessThan(legacyCopyBytes);
+    expect(serializeToolResultForModel(legacyCopies)).toBe(JSON.stringify(legacyCopies));
+    expect(serializeToolResultForModel(legacyCopies)).not.toContain('"modelContext"');
     enabled = true;
     await harness.restartGateway();
     expect(

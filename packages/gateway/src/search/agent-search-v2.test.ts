@@ -7,7 +7,6 @@ import { computeContentHash, type SearchProvenance } from "@omnesis/core";
 import { createDatabase } from "../db.js";
 import { createGatewaySearchPort } from "../agent/ports.js";
 import { createCorpusAuthorization } from "../access/corpus-authorization.js";
-import { buildSystemPrompt } from "../agent/system-prompt.js";
 import { OMNESIS_CHAT_PROVIDER_ID, OMNESIS_CHAT_SOURCE_ID } from "../sources/omnesis-chat/ids.js";
 import {
   createIndexDatabase,
@@ -101,26 +100,79 @@ function pipeline(config?: SearchConfig, wireDb = true): SearchPipeline {
 }
 
 describe("agent search v2 enrollment and compatibility", () => {
-  test.each([undefined, {}, { v2: {} }, { v2: { enabled: false } }])(
-    "omitted and disabled flags preserve the legacy agent result projection: %j",
+  test.each([false, true])(
+    "stale generated answers never regain a legacy trail with indexed source derived=%s",
+    async (indexedDerived) => {
+      addFile("generated", "Prior answer", BODY);
+      gateway
+        .prepare("UPDATE documents SET source_id = ?, metadata = ? WHERE id = 'generated'")
+        .run(OMNESIS_CHAT_SOURCE_ID, JSON.stringify({ documentType: "conversation" }));
+      if (indexedDerived)
+        index
+          .prepare(
+            "UPDATE chunks SET source_id = ?, document_type = 'conversation' WHERE document_id = 'generated'",
+          )
+          .run(OMNESIS_CHAT_SOURCE_ID);
+      setIndexedDocument(index, "generated", computeContentHash("An older indexed answer."), 1);
+      gateway
+        .prepare(
+          `INSERT INTO document_links
+        (source_doc_id,link_type,raw_target,normalized_target,target_doc_id,created_at)
+        VALUES ('generated','url','a','a','a',?)`,
+        )
+        .run(NOW);
+      const query = { query: '"Prior answer"', limit: 1 };
+      const legacy = await createGatewaySearchPort(
+        pipeline({ v2: { enabled: false } }),
+        undefined,
+        gateway,
+      ).search(query);
+      expect(legacy.results[0].breadcrumb?.map((ref) => ref.documentId)).toContain("a");
+      const enriched = await createGatewaySearchPort(
+        pipeline({ v2: { enabled: true, topN: 1 } }),
+        undefined,
+        gateway,
+      ).search(query);
+      expect(enriched.results[0].documentId).toBe("generated");
+      expect(enriched.results[0].provenance).toBeUndefined();
+      expect(enriched.results[0].breadcrumb).toBeUndefined();
+    },
+  );
+
+  test.each([undefined, {}, { v2: {} }])(
+    "omitted settings enable bounded graph-aware agent results: %j",
     async (config) => {
-      const expected = await createGatewaySearchPort(pipeline(), undefined, gateway).search({
-        query: "equipment",
-        limit: 10,
-      });
       const actual = await createGatewaySearchPort(pipeline(config), undefined, gateway).search({
         query: "equipment",
         limit: 10,
       });
-      expect(actual.results).toEqual(expected.results);
-      expect(actual.results).toHaveLength(3);
-      expect(actual.results.every((hit) => !hit.provenance)).toBe(true);
+      expect(pipeline(config).agentSearchV2Enabled).toBe(true);
+      expect(actual.results).toHaveLength(2);
+      const family = actual.results.find((hit) => ["a", "b"].includes(hit.documentId))!;
+      expect(family.provenance!.copies.map((copy) => copy.documentId).sort()).toEqual(["a", "b"]);
+      expect(family.provenance!.modelContext).toBeDefined();
+      expect(actual.results.every((hit) => hit.breadcrumb === undefined)).toBe(true);
     },
   );
 
-  test("enabled agent searches group files before limiting; public results retain their exact legacy shape", async () => {
-    const legacy = pipeline();
-    const enrolled = pipeline({ v2: { enabled: true } });
+  test("explicit false preserves the legacy agent result projection", async () => {
+    const disabled = pipeline({ v2: { enabled: false } });
+    expect(disabled.agentSearchV2Enabled).toBe(false);
+    const expected = await disabled.search({ text: "equipment", limit: 10 });
+    const actual = await createGatewaySearchPort(disabled, undefined, gateway).search({
+      query: "equipment",
+      limit: 10,
+    });
+    expect(actual.results.map((hit) => hit.documentId)).toEqual(
+      expected.results.map((hit) => hit.documentId),
+    );
+    expect(actual.results).toHaveLength(3);
+    expect(actual.results.every((hit) => !hit.provenance)).toBe(true);
+  });
+
+  test("default agent searches group files before limiting; public results retain their exact legacy shape", async () => {
+    const legacy = pipeline({ v2: { enabled: false } });
+    const enrolled = pipeline();
     const expectedPublic = await legacy.search({ text: "equipment", limit: 10 });
     expect((await enrolled.search({ text: "equipment", limit: 10 })).results).toEqual(
       expectedPublic.results,
@@ -141,14 +193,16 @@ describe("agent search v2 enrollment and compatibility", () => {
   });
 
   test("the config alone never changes public search or needs a graph-capable database", async () => {
-    const enabled = pipeline({ v2: { enabled: true } }, false);
+    const enabled = pipeline(undefined, false);
     expect(
       (await enabled.search({ text: "equipment" }, undefined, { agentContext: true })).results,
-    ).toEqual((await pipeline(undefined, false).search({ text: "equipment" })).results);
+    ).toEqual(
+      (await pipeline({ v2: { enabled: false } }, false).search({ text: "equipment" })).results,
+    );
   });
 
-  test("source authorization blocks graph enrichment even if an internal caller asks for agent context", async () => {
-    const p = pipeline({ v2: { enabled: true } });
+  test("source authorization blocks default graph enrichment even if an internal caller asks for agent context", async () => {
+    const p = pipeline();
     const authorization = { sourceIds: [SOURCE] };
     const expected = await p.search({ text: "equipment" }, authorization);
     const actual = await p.search({ text: "equipment" }, authorization, { agentContext: true });
@@ -245,16 +299,4 @@ describe("agent search v2 enrollment and compatibility", () => {
     expect(hit.url).toBe(`https://example.org/${hit.documentId}`);
     expect(hit.snippet).toContain("equipment agreement");
   });
-
-  test.each(["interactive", "subagent"] as const)(
-    "retrieval guidance is unchanged unless enrolled: %s",
-    (audience) => {
-      const base = { audience, now: new Date(NOW), timeZone: "UTC" };
-      expect(buildSystemPrompt({ ...base, searchV2: false })).toBe(buildSystemPrompt(base));
-      const enrolled = buildSystemPrompt({ ...base, searchV2: true });
-      expect(enrolled).toContain("Use the graph provenance already retrieved");
-      expect(enrolled).toContain("equal extracted text does not establish identical file bytes");
-      expect(enrolled).toContain("even when `refCount` is low");
-    },
-  );
 });
