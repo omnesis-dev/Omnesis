@@ -734,7 +734,8 @@ struct CitationsDrawer: View {
 /// the drawer open.
 ///
 /// The background fill comes from the source's provider package via
-/// the registry (`sourceBgColorByType`) — Gmail red, WhatsApp green,
+/// the registry (the account's `sourceBgColorById`, else the family's
+/// `sourceBgColorByType`) — Gmail red, WhatsApp green,
 /// Drive yellow, etc. When the source hasn't shipped a colour the
 /// tab falls back to a neutral Theme token. No outline stroke is
 /// drawn: the tinted fill already telegraphs the source.

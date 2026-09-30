@@ -4897,8 +4897,8 @@ final class PreviewSnapshotTests: XCTestCase {
 
     /// A tab resolves its icon from the event's own source, not its family:
     /// each account carries renderable art while the family's entry is a
-    /// remote SVG the image loader cannot decode. Every tab must show the
-    /// account art, never the placeholder glyph.
+    /// remote SVG the image loader cannot decode. Each tab renders the
+    /// account art rather than the placeholder glyph.
     func testStickyTabsPreferAccountArt() {
         let events = Array(PreviewMocks.trailVoucherJourney.prefix(4))
         let sourceIds = Set(events.compactMap(\.eventSourceId))
