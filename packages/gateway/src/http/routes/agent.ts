@@ -61,6 +61,7 @@ import { AnswerStoreError } from "../../privacy/store.js";
 import { tokenAnswerOwnerId } from "../../privacy/token-answer-owner.js";
 import {
   getAnswerBoundary,
+  parseAnswerCitationsQuery,
   submitAnswerBoundary,
   type DeviceAnswerAuthority,
 } from "../answer-boundary.js";
@@ -433,6 +434,7 @@ export function mountAgentRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
     async (c) => {
       const service = requireAnswerService();
       const body = c.req.valid("json");
+      const includeCitations = parseAnswerCitationsQuery(c.req.query("citations"));
       try {
         const { ownerId, corpusAuthorization, deviceAnswerAuthority } = answerCaller(
           deps,
@@ -457,8 +459,10 @@ export function mountAgentRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
           },
           "/answer",
           c.req.raw.signal,
-          undefined,
-          deviceAnswerAuthority,
+          {
+            ...(deviceAnswerAuthority ? { deviceAnswerAuthority } : {}),
+            ...(includeCitations ? { includeCitations: true } : {}),
+          },
         );
         return exactJsonResponse(egress.responseJson);
       } catch (err) {
@@ -470,6 +474,7 @@ export function mountAgentRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
   app.get("/answer/tasks/:id", answerNoStore, scope.answer(), async (c) => {
     const taskId = c.req.param("id");
     if (!taskId) throw new BadRequestError("task id required");
+    const includeCitations = parseAnswerCitationsQuery(c.req.query("citations"));
     try {
       const service = requireAnswerService();
       // A poll reads a stored outcome and reviews nothing, but it reads under
@@ -482,8 +487,10 @@ export function mountAgentRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
         ownerId,
         "/answer/tasks/:id",
         c.req.raw.signal,
-        undefined,
-        deviceAnswerAuthority,
+        {
+          ...(deviceAnswerAuthority ? { deviceAnswerAuthority } : {}),
+          ...(includeCitations ? { includeCitations: true } : {}),
+        },
       );
       return exactJsonResponse(egress.responseJson);
     } catch (err) {

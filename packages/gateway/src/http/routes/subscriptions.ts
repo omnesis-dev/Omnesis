@@ -26,6 +26,7 @@ import {
   subscriptionFiringOutcomeSchema,
   updateSubscriptionSchema,
 } from "../schemas/subscriptions.js";
+import { parseAnswerCitationsQuery } from "../answer-boundary.js";
 import { scope } from "../scope.js";
 import { validateJson } from "../validate.js";
 import { exactJsonResponse, mapAnswerError } from "./agent.js";
@@ -439,6 +440,7 @@ export function mountSubscriptionRoutes(app: RouteApp, deps: SubscriptionRoutesD
       const authCaller = caller(c.get("auth"));
       const firingId = c.req.param("id");
       const body = c.req.valid("json");
+      const includeCitations = parseAnswerCitationsQuery(c.req.query("citations"));
       try {
         const authority = await requireService().authorizeFiringAnswer(authCaller, firingId);
         const result = await answerService.answer({
@@ -480,6 +482,7 @@ export function mountSubscriptionRoutes(app: RouteApp, deps: SubscriptionRoutesD
           firingId,
           taskId: result.taskId,
           ownerId: authority.ownerId,
+          ...(includeCitations ? { includeCitations: true } : {}),
         });
         return exactJsonResponse(egress.responseJson);
       } catch (err) {

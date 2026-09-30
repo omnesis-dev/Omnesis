@@ -4,6 +4,11 @@
 import { AgentSession, classifyAgentTurn, type ChatBackend, type ToolHandle } from "@omnesis/agent";
 import { z } from "zod";
 import { observeSessionForAnswerProfile, type AnswerProfiler } from "./answer-profile.js";
+import {
+  answerCitationReductionSchema,
+  MAX_ANSWER_CITATIONS,
+  type AnswerCitationReduction,
+} from "./answer-citations.js";
 import type {
   AgentMessageEndEvent,
   AgentTerminalFailure,
@@ -16,6 +21,7 @@ export const MAX_PRIVACY_REVIEW_OUTPUT_BYTES = 256 * 1024;
 export const MAX_PRIVACY_FINDING_DESCRIPTION_CHARACTERS = 2_000;
 
 const NON_REDUCTION_REDUCED_ANSWER_ISSUE = "reducedAnswer is only valid for reduce";
+const NON_REDUCTION_CITATION_REDUCTIONS_ISSUE = "citationReductions is only valid for reduce";
 
 const findingSchema = z
   .object({
@@ -32,42 +38,77 @@ export interface ValidatedReviewerOutput {
   confidence: number;
   findings: PrivacyFinding[];
   rationale: string;
+  /** Present only for `reduce`; absent there means the answer text is released as reviewed. */
   reducedAnswer?: string;
+  /** Present only for `reduce`, naming citations by their one-based envelope position. */
+  citationReductions?: AnswerCitationReduction[];
 }
 
-const reviewerOutputSchema = z
-  .object({
-    decision: z.enum(["allow", "reduce", "ask", "deny"]),
-    confidence: z.number().min(0).max(1),
-    findings: z.array(findingSchema).max(50),
-    rationale: z.string().min(1).max(2_000),
-    reducedAnswer: z.union([z.string().max(200_000), z.null()]).optional(),
-  })
-  .strict()
-  .superRefine((value, ctx) => {
-    const hasReducedAnswer =
-      typeof value.reducedAnswer === "string" && value.reducedAnswer.trim().length > 0;
-    if (value.decision === "reduce" && !hasReducedAnswer) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["reducedAnswer"],
-        message: "reduce requires reducedAnswer",
+/**
+ * The submission schema for one review. It knows how many citations the
+ * envelope carried, so a reduction naming a citation that does not exist is
+ * sent back for correction rather than silently ignored.
+ */
+function reviewerOutputSchema(citationCount: number) {
+  return z
+    .object({
+      decision: z.enum(["allow", "reduce", "ask", "deny"]),
+      confidence: z.number().min(0).max(1),
+      findings: z.array(findingSchema).max(50),
+      rationale: z.string().min(1).max(2_000),
+      reducedAnswer: z.union([z.string().max(200_000), z.null()]).optional(),
+      citationReductions: z
+        .union([z.array(answerCitationReductionSchema).max(MAX_ANSWER_CITATIONS), z.null()])
+        .optional(),
+    })
+    .strict()
+    .superRefine((value, ctx) => {
+      const hasReducedAnswer =
+        typeof value.reducedAnswer === "string" && value.reducedAnswer.trim().length > 0;
+      const hasCitationReductions =
+        Array.isArray(value.citationReductions) && value.citationReductions.length > 0;
+      if (value.decision === "reduce" && !hasReducedAnswer && !hasCitationReductions) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["reducedAnswer"],
+          message: "reduce requires reducedAnswer or citationReductions",
+        });
+      }
+      if (value.decision !== "reduce" && hasReducedAnswer) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["reducedAnswer"],
+          message: NON_REDUCTION_REDUCED_ANSWER_ISSUE,
+        });
+      }
+      if (value.decision !== "reduce" && hasCitationReductions) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["citationReductions"],
+          message: NON_REDUCTION_CITATION_REDUCTIONS_ISSUE,
+        });
+      }
+      value.citationReductions?.forEach((reduction, index) => {
+        if (reduction.citation > citationCount) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["citationReductions", index, "citation"],
+            message: `there are ${citationCount} candidate citations`,
+          });
+        }
       });
-    }
-    if (value.decision !== "reduce" && hasReducedAnswer) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["reducedAnswer"],
-        message: NON_REDUCTION_REDUCED_ANSWER_ISSUE,
-      });
-    }
-  })
-  .transform(({ reducedAnswer, ...value }): ValidatedReviewerOutput => {
-    if (value.decision === "reduce" && typeof reducedAnswer === "string") {
-      return { ...value, reducedAnswer };
-    }
-    return value;
-  });
+    })
+    .transform(({ reducedAnswer, citationReductions, ...value }): ValidatedReviewerOutput => {
+      if (value.decision !== "reduce") return value;
+      return {
+        ...value,
+        ...(typeof reducedAnswer === "string" && reducedAnswer.trim().length > 0
+          ? { reducedAnswer }
+          : {}),
+        ...(citationReductions && citationReductions.length > 0 ? { citationReductions } : {}),
+      };
+    });
+}
 
 export interface PrivacyReviewSubmissionRun {
   rawModelOutput: string | null;
@@ -104,6 +145,8 @@ export async function runPrivacyReviewSubmission(
     profiler?: AnswerProfiler;
     /** How long the review may wait out a provider rate limit; absent keeps the default. */
     rateLimitPatience?: RateLimitPatience;
+    /** How many candidate citations the envelope carries; absent means none. */
+    citationCount?: number;
   },
 ): Promise<PrivacyReviewSubmissionRun> {
   const state: SubmissionState = {
@@ -114,7 +157,7 @@ export async function runPrivacyReviewSubmission(
   const session = new AgentSession({
     sessionId,
     backend,
-    tools: [makeSubmissionTool(state)],
+    tools: [makeSubmissionTool(state, options?.citationCount ?? 0)],
     systemPrompt,
     ...(options?.rateLimitPatience ? { rateLimitPatience: options.rateLimitPatience } : {}),
   });
@@ -169,14 +212,15 @@ export async function runPrivacyReviewSubmission(
   return state;
 }
 
-function makeSubmissionTool(state: SubmissionState): ToolHandle {
+function makeSubmissionTool(state: SubmissionState, citationCount: number): ToolHandle {
+  const schema = reviewerOutputSchema(citationCount);
   return {
     name: "submit_privacy_review",
     description:
       "Submit the final privacy classification. This is the only valid way to complete the " +
       "review. If the tool returns an error, correct the rejected arguments and call it again " +
       "within this same turn.",
-    schema: reviewerOutputSchema,
+    schema,
     summarize: () => "privacy review submission",
     // eslint-disable-next-line @typescript-eslint/require-await -- synchronous state capture behind the async ToolHandle contract
     async invoke(args): Promise<ToolResult> {
@@ -201,7 +245,7 @@ function makeSubmissionTool(state: SubmissionState): ToolHandle {
       }
       state.rawModelOutput = raw;
 
-      const validated = reviewerOutputSchema.safeParse(args);
+      const validated = schema.safeParse(args);
       if (!validated.success) {
         state.invalidReason = formatValidationFailure(validated.error);
         return {

@@ -3,6 +3,7 @@
 
 import type Database from "better-sqlite3";
 import type {
+  AnswerCitation,
   AnswerResponse,
   PrivacyAuditEventDisplay,
   PrivacyAuditEventKind,
@@ -116,6 +117,7 @@ export interface CompleteAnswerTaskInput {
         kind: "release";
         releaseId: string;
         answer: string;
+        citations: AnswerCitation[];
         expectedDisclosureRevision: number;
         expectedExistenceDisclosureRevision?: number;
         policyGuard?: PrivacyPolicyRevisionGuard;
@@ -124,6 +126,7 @@ export interface CompleteAnswerTaskInput {
         kind: "reduce";
         releaseId: string;
         answer: string;
+        citations: AnswerCitation[];
         reductions: string[];
         expectedDisclosureRevision: number;
         expectedExistenceDisclosureRevision?: number;
@@ -133,6 +136,8 @@ export interface CompleteAnswerTaskInput {
         kind: "approval";
         approvalId: string;
         candidateAnswer: string;
+        candidateCitations: AnswerCitation[];
+        /** Covers the answer and its citations; see `digestAnswerCandidate`. */
         candidateDigest: string;
         releaseStatus: "released" | "released_with_reductions";
         reductions: string[];
@@ -196,6 +201,7 @@ export interface ApprovalJoinedRow extends TaskDbRow {
   workflow_name: string;
   workflow_purpose: string;
   approval_candidate_answer: string | null;
+  approval_candidate_citations_json: string;
   approval_release_status: "released" | "released_with_reductions";
   approval_reductions_json: string;
 }
@@ -244,6 +250,8 @@ export interface RecordAnswerEgressInput {
   endpoint: AnswerEgressEndpoint;
   now: number;
   subscriptionFiringId?: string;
+  /** Whether this caller accepts citations; see `AnswerResponseShape`. */
+  includeCitations?: boolean;
   /** External MCP egress atomically revalidates and attributes delegated authority. */
   mcpInvocationAudit?: import("../access/types.js").McpToolInvocationAuditInput;
   /**

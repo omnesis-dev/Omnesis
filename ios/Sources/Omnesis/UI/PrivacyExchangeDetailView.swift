@@ -328,6 +328,16 @@ private func previewLedger(for exchange: PrivacyExchangePresentation)
     .omnesisColorScheme()
 }
 
+// A held answer whose draft cited more than approving would release: the
+// withheld citation and the withheld link stay in view, marked.
+#Preview("Privacy exchange — pending with withheld citations") {
+    NavigationStack {
+        PrivacyExchangeDetailView(previewExchange: PreviewMocks.privacyPendingCitationExchange)
+    }
+    .environment(AppStore.preview())
+    .omnesisColorScheme()
+}
+
 #Preview("Privacy exchange — failed") {
     NavigationStack {
         PrivacyExchangeDetailView(previewExchange: PreviewMocks.privacyFailedExchange)

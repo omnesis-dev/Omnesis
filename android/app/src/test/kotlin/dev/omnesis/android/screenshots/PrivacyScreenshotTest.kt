@@ -24,7 +24,10 @@ import com.github.takahirom.roborazzi.captureRoboImage
 import dev.omnesis.android.designsystem.theme.OmSpacing
 import dev.omnesis.android.designsystem.theme.OmTheme
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
+import dev.omnesis.android.sources.SourceCatalog
+import dev.omnesis.android.transport.dto.AnswerCitation
 import dev.omnesis.android.transport.dto.PrivacyAnswerComparisonWire
+import dev.omnesis.android.transport.dto.SerializedDescriptor
 import dev.omnesis.android.transport.dto.PrivacyAnswerDiffLineWire
 import dev.omnesis.android.transport.dto.PrivacyAnswerDiffSpanWire
 import dev.omnesis.android.transport.dto.PrivacyApprovalDetail
@@ -50,7 +53,11 @@ import dev.omnesis.android.transport.dto.PrivacySubscriptionIntegrationDevice
 import dev.omnesis.android.transport.dto.PrivacySubscriptionReaction
 import dev.omnesis.android.transport.dto.PrivacySubscriptionWorkflow
 import dev.omnesis.android.ui.common.CursorPagingState
+import dev.omnesis.android.ui.privacy.PRIVACY_CITATIONS_SHARED_HEADING
 import dev.omnesis.android.ui.privacy.PrivacyAnswerBlock
+import dev.omnesis.android.ui.privacy.PrivacyCitationList
+import dev.omnesis.android.ui.privacy.PrivacyReviewCard
+import dev.omnesis.android.ui.privacy.privacyCitationRows
 import dev.omnesis.android.ui.privacy.PrivacyApprovalContent
 import dev.omnesis.android.ui.privacy.PrivacyApprovalUiState
 import dev.omnesis.android.ui.privacy.PrivacyContent
@@ -75,6 +82,7 @@ import dev.omnesis.android.ui.privacy.PrivacyAgentTranscripts
 import dev.omnesis.android.ui.privacy.DirectAuditDetailUiState
 import dev.omnesis.android.ui.privacy.DirectAuditUiState
 import dev.omnesis.android.ui.privacy.PrivacyUiState
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -464,6 +472,126 @@ class PrivacyScreenshotTest {
             decodedAnswerComparison = comparison,
         )
 
+    /* Citations: invented documents on reserved example domains. */
+
+    private val citationCatalog = SourceCatalog().apply {
+        runBlocking {
+            load(
+                {
+                    listOf(
+                        SerializedDescriptor(typeId = "gmail", name = "Gmail"),
+                        SerializedDescriptor(typeId = "calendar", name = "Calendar"),
+                        SerializedDescriptor(typeId = "notion", name = "Notion"),
+                    )
+                },
+                { emptyMap() },
+            )
+        }
+    }
+
+    private val budgetCitation = AnswerCitation(
+        documentId = "doc-budget-example",
+        sourceType = "gmail",
+        title = "Q4 budget review",
+        timestamp = "2026-09-12T09:30:00Z",
+        sourceUrl = "https://mail.example.com/mail/u/0/#inbox/thread-q4-budget-review",
+        appUrl = "examplemail://thread/q4-budget-review",
+    )
+
+    private val meetingCitation = AnswerCitation(
+        documentId = "doc-meeting-example",
+        sourceType = "calendar",
+        title = null,
+        timestamp = "2026-09-14T10:00:00Z",
+        sourceUrl = "https://calendar.example.com/event/northstar-review",
+    )
+
+    private val notesCitation = AnswerCitation(
+        documentId = "doc-notes-example",
+        sourceType = "notion",
+        title = "Northstar planning notes",
+        timestamp = "2026-09-08T16:45:00Z",
+        sourceUrl = "https://notes.example.com/page/northstar-planning",
+    )
+
+    private val citedDraft = listOf(budgetCitation, meetingCitation, notesCitation)
+
+    private val citedPendingExchange by lazy {
+        pendingExchange.copy(
+            draftAnswer = "The next invented project review is on 14 September at 10:00, per the planning notes.",
+            draftCitations = citedDraft,
+            pendingCitations = listOf(budgetCitation.copy(appUrl = null), meetingCitation),
+        )
+    }
+
+    private val citedSharedExchange by lazy {
+        sharedExchange.copy(
+            draftCitations = citedDraft,
+            sharedCitations = listOf(budgetCitation.copy(appUrl = null, timestamp = null), meetingCitation),
+        )
+    }
+
+    /** A shared answer from which the check withheld every drafted citation. */
+    private val allWithheldSharedExchange by lazy {
+        sharedExchange.copy(draftCitations = citedDraft, sharedCitations = emptyList())
+    }
+
+    /**
+     * A pending exchange as the feed lists it: its recorded draft cited three
+     * documents, and the held answer keeps two, one without its app link.
+     */
+    private val citedFeedReviewExchange by lazy {
+        pendingExchange.copy(
+            draftAnswer = "The next invented project review is on 14 September at 10:00, per the planning notes.",
+            draftCitations = citedDraft,
+            pendingCitations = listOf(budgetCitation.copy(appUrl = null), meetingCitation),
+        )
+    }
+
+    /** Rows that stress the layout: a wrapping title, a long link and a scheme nothing here opens. */
+    private val citationEdgeRows by lazy {
+        val longTitle = AnswerCitation(
+            documentId = "doc-long-example",
+            sourceType = "notion",
+            title = "Northstar quarterly planning notes: budget, hiring, supplier review and the revised launch timeline",
+            timestamp = "2026-09-03T08:15:00Z",
+            sourceUrl = "https://notes.example.com/workspace/northstar/pages/quarterly-planning-notes-budget-hiring-supplier-review-revised-launch-timeline?view=full&section=appendix",
+        )
+        val customScheme = AnswerCitation(
+            documentId = "doc-scheme-example",
+            sourceType = "gmail",
+            title = "Supplier digest",
+            appUrl = "examplemail://message/supplier-digest-2026-09",
+        )
+        val titleWithheld = budgetCitation.copy(documentId = "doc-title-example", title = null)
+        privacyCitationRows(
+            released = listOf(longTitle, customScheme, titleWithheld),
+            drafted = listOf(longTitle, customScheme, budgetCitation.copy(documentId = "doc-title-example")),
+        )
+    }
+
+    @Composable
+    private fun citationEdgeContent() {
+        Box(Modifier.fillMaxSize().background(OmTheme.colors.bgPrimary).padding(OmSpacing.lg)) {
+            PrivacyCitationList(
+                heading = PRIVACY_CITATIONS_SHARED_HEADING,
+                rows = citationEdgeRows,
+                catalog = citationCatalog,
+            )
+        }
+    }
+
+    @Composable
+    private fun feedReviewContent() {
+        Box(Modifier.fillMaxSize().background(OmTheme.colors.bgPrimary).padding(OmSpacing.lg)) {
+            PrivacyReviewCard(exchange = citedFeedReviewExchange, catalog = citationCatalog)
+        }
+    }
+
+    private val citedApprovalDetail by lazy {
+        approvalDetail.copy(candidateCitations = listOf(budgetCitation, meetingCitation))
+    }
+
     private val approvalDetail = PrivacyApprovalDetail(
         id = "approval-example",
         taskId = "task-pending-example",
@@ -723,6 +851,85 @@ class PrivacyScreenshotTest {
             approvalContent()
         }
 
+    /* ── Citations beside an answer ── */
+
+    /** The held answer on its own screen, with every link "Share once" would release. */
+    @Test
+    fun privacy_citations_approval_light() =
+        capture("privacy_citations_approval_light", false) { approvalContent(citedApprovalDetail) }
+
+    @Test
+    fun privacy_citations_approval_dark() =
+        capture("privacy_citations_approval_dark", true) { approvalContent(citedApprovalDetail) }
+
+    /**
+     * A pending exchange whose recorded draft cited three documents and whose held
+     * answer keeps two, one of them without its app link.
+     */
+    @Test
+    @Config(qualifiers = "w411dp-h1500dp-xxhdpi")
+    fun privacy_citations_spine_pending_light() =
+        capture("privacy_citations_spine_pending_light", false) {
+            spine(citedPendingExchange, events.take(3), catalog = citationCatalog)
+        }
+
+    @Test
+    @Config(qualifiers = "w411dp-h1500dp-xxhdpi")
+    fun privacy_citations_spine_pending_dark() =
+        capture("privacy_citations_spine_pending_dark", true) {
+            spine(citedPendingExchange, events.take(3), catalog = citationCatalog)
+        }
+
+    /** What left beside a shared answer, with the citation the check withheld marked withheld. */
+    @Test
+    @Config(qualifiers = "w411dp-h1700dp-xxhdpi")
+    fun privacy_citations_spine_shared_light() =
+        capture("privacy_citations_spine_shared_light", false) {
+            spine(citedSharedExchange, catalog = citationCatalog)
+        }
+
+    @Test
+    @Config(qualifiers = "w411dp-h1700dp-xxhdpi")
+    fun privacy_citations_spine_shared_dark() =
+        capture("privacy_citations_spine_shared_dark", true) {
+            spine(citedSharedExchange, catalog = citationCatalog)
+        }
+
+    /** A shared answer whose every drafted citation the check withheld. */
+    @Test
+    @Config(qualifiers = "w411dp-h1700dp-xxhdpi")
+    fun privacy_citations_spine_all_withheld_light() =
+        capture("privacy_citations_spine_all_withheld_light", false) {
+            spine(allWithheldSharedExchange, catalog = citationCatalog)
+        }
+
+    @Test
+    @Config(qualifiers = "w411dp-h1700dp-xxhdpi")
+    fun privacy_citations_spine_all_withheld_dark() =
+        capture("privacy_citations_spine_all_withheld_dark", true) {
+            spine(allWithheldSharedExchange, catalog = citationCatalog)
+        }
+
+    /** A wrapping title, a long link, a link nothing here opens, and a withheld title. */
+    @Test
+    fun privacy_citations_edge_rows_light() =
+        capture("privacy_citations_edge_rows_light", false) { citationEdgeContent() }
+
+    @Test
+    fun privacy_citations_edge_rows_dark() =
+        capture("privacy_citations_edge_rows_dark", true) { citationEdgeContent() }
+
+    /** The feed's review card: what Share once would release, measured against the recorded draft. */
+    @Test
+    @Config(qualifiers = "w411dp-h1300dp-xxhdpi")
+    fun privacy_citations_feed_review_light() =
+        capture("privacy_citations_feed_review_light", false) { feedReviewContent() }
+
+    @Test
+    @Config(qualifiers = "w411dp-h1300dp-xxhdpi")
+    fun privacy_citations_feed_review_dark() =
+        capture("privacy_citations_feed_review_dark", true) { feedReviewContent() }
+
     /* ── Policy ── */
 
     @Test
@@ -886,6 +1093,7 @@ class PrivacyScreenshotTest {
     private fun spine(
         exchange: PrivacyExchangePresentation,
         events: List<PrivacyAuditEventSummary> = this.events,
+        catalog: SourceCatalog = SourceCatalog(),
     ) {
         PrivacyExchangeDetailContent(
             state = PrivacyExchangeDetailUiState(
@@ -898,6 +1106,7 @@ class PrivacyScreenshotTest {
             shown = listOf(exchange),
             onBack = {},
             onRetry = {},
+            catalog = catalog,
         )
     }
 
@@ -999,6 +1208,7 @@ class PrivacyScreenshotTest {
             state = PrivacyApprovalUiState(loading = false, detail = detail),
             onBack = {},
             onRetry = {},
+            catalog = citationCatalog,
         )
     }
 

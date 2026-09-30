@@ -213,6 +213,7 @@ internal fun approvalAsExchange(detail: PrivacyApprovalDetail): PrivacyExchangeP
         resolvedAt = detail.resolvedAt,
         sharedAt = detail.sharedAt,
         pendingCandidate = detail.candidateAnswer,
+        pendingCitations = detail.candidateCitations,
         approval = PrivacyExchangeApproval(
             id = detail.id,
             status = detail.status,
@@ -233,6 +234,8 @@ class PrivacyViewModel @Inject constructor(
     private val session: SessionManager,
     private val resolutionBus: PrivacyResolutionBus,
     subscriptionResolutionBus: PrivacySubscriptionResolutionBus,
+    /** The shared loaded catalog, so a held answer's citations name their sources. */
+    val catalog: SourceCatalog,
 ) : ViewModel() {
     private val _state = MutableStateFlow(PrivacyUiState())
     val state = _state.asStateFlow()
@@ -880,6 +883,8 @@ class PrivacyApprovalViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val session: SessionManager,
     private val resolutionBus: PrivacyResolutionBus,
+    /** The shared loaded catalog, so a held answer's citations name their sources. */
+    val catalog: SourceCatalog,
 ) : ViewModel() {
     private val approvalId: String = checkNotNull(savedStateHandle["approvalId"])
     private val _state = MutableStateFlow(PrivacyApprovalUiState())

@@ -288,6 +288,12 @@ function createUnifiedHandler(deps: McpStreamableRoutesDeps): McpHttpHandler {
           ? executionDeviceId
           : null;
 
+      // A generic MCP client validates against the advertised output schema
+      // and so receives citations unasked; a bound native integration only
+      // once it declares it understands them (see ANSWER_CITATIONS_META_KEY).
+      const includeCitations = (citationsDeclared: boolean | undefined) =>
+        !activeExecutionDeviceId || citationsDeclared === true;
+
       if (answerAvailable && answerService) {
         registerAnswerMcpTools(server, {
           async submit(input, options) {
@@ -328,7 +334,12 @@ function createUnifiedHandler(deps: McpStreamableRoutesDeps): McpHttpHandler {
                     },
                     "/mcp",
                     options?.signal,
-                    egressAudit,
+                    {
+                      ...(egressAudit ? { mcpInvocationAudit: egressAudit } : {}),
+                      ...(includeCitations(options?.citationsDeclared)
+                        ? { includeCitations: true }
+                        : {}),
+                    },
                   );
                   return { response: egress.response, profile };
                 } catch (error) {
@@ -354,7 +365,12 @@ function createUnifiedHandler(deps: McpStreamableRoutesDeps): McpHttpHandler {
                     ownerId,
                     "/mcp",
                     options?.signal,
-                    egressAudit,
+                    {
+                      ...(egressAudit ? { mcpInvocationAudit: egressAudit } : {}),
+                      ...(includeCitations(options?.citationsDeclared)
+                        ? { includeCitations: true }
+                        : {}),
+                    },
                   );
                   return egress.response;
                 } catch (error) {

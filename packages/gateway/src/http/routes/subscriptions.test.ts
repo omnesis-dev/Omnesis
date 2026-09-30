@@ -1582,6 +1582,17 @@ describe("subscription routes", () => {
     );
     expect(injectedWorkflow.status).toBe(400);
 
+    const badCitationsFlag = await answerApp.request(
+      "/subscriptions/firings/sfiring_route_fictional/answer?citations=maybe",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ question: "What private evidence supports this fictional firing?" }),
+      },
+    );
+    expect(badCitationsFlag.status).toBe(400);
+    expect(answer).toHaveBeenCalledTimes(1);
+
     expect(
       revokeSubscription(db, {
         subscriptionId: created.subscription.id,

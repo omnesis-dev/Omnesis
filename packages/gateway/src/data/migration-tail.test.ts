@@ -57,7 +57,7 @@ const TAIL_VERSIONS = Array.from(
  * `windBack` to undo; its input is planted by the test that replays it, and
  * it is named here on the same terms as the rest.
  */
-const WOUND_BACK = [172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183];
+const WOUND_BACK = [172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184];
 
 let dir: string;
 let dbPath: string;
@@ -159,6 +159,16 @@ function windBack(db: Db): void {
     db.exec("PRAGMA legacy_alter_table = OFF");
     if (fkWasOn) db.exec("PRAGMA foreign_keys = ON");
   }
+  for (const [table, column] of [
+    ["answer_approvals", "candidate_citations_json"],
+    ["answer_releases", "citations_json"],
+  ] as const) {
+    const has = db
+      .prepare<[], { name: string }>(`SELECT name FROM pragma_table_info('${table}')`)
+      .all()
+      .some((row) => row.name === column);
+    if (has) db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
+  }
   db.exec(`DELETE FROM schema_migrations WHERE version > ${BEFORE_TAIL}`);
   db.exec(`PRAGMA user_version = ${BEFORE_TAIL}`);
 }
@@ -258,6 +268,17 @@ describe("an install several versions behind, upgrading", () => {
           .all()
           .map((row) => row.name),
       ).toEqual(expect.arrayContaining(["approved_audience", "approved_scope"]));
+      for (const [table, column] of [
+        ["answer_approvals", "candidate_citations_json"],
+        ["answer_releases", "citations_json"],
+      ]) {
+        expect(
+          db
+            .prepare<[], { name: string }>(`SELECT name FROM pragma_table_info('${table}')`)
+            .all()
+            .map((row) => row.name),
+        ).toContain(column);
+      }
     } finally {
       (db as unknown as Database.Database).close();
     }

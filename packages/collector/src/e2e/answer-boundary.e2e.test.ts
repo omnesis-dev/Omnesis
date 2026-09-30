@@ -604,6 +604,11 @@ describe("REST Answer boundary — spawned replay gateway", () => {
       },
     });
     await harness.start();
+    // These answer cassettes cite synthetic Gmail messages through the real
+    // citation tool, which resolves each one from the corpus.
+    const gmailSources = harness.getSourceIds().filter((id) => id.startsWith("gmail:"));
+    expect(gmailSources).not.toHaveLength(0);
+    for (const id of gmailSources) await harness.triggerSyncAndWait(id, 60_000);
 
     // A dedicated `answer`-scoped token: `callerOf` derives the owner id from
     // the token, so the per-owner turn budget the poll test measures is this
@@ -734,6 +739,46 @@ describe("REST Answer boundary — spawned replay gateway", () => {
       const assistantTurns = transcript(row!.id).filter((m) => m.role === "assistant");
       expect(assistantTurns.map((m) => m.content)).toEqual([DENIED_TRANSCRIPT_MARKER]);
     }
+  }, 120_000);
+
+  test("a released answer carries its reviewed citations only for a caller that asks with ?citations=true", async () => {
+    reviewer.script(SUPPLIER.question, ALLOW);
+    const plain = await ask(SUPPLIER.question, "citations_e2e");
+    expect(plain.status).toBe(200);
+    const plainBody = (await plain.json()) as { taskId: string; citations?: unknown };
+    expect(plainBody).not.toHaveProperty("citations");
+
+    // The draft's live annotate_many resolved both cited messages from the
+    // synthetic corpus: titles, times and links come from the gateway's own
+    // records, and the reviewer saw every one of them.
+    const cited = await fetch(
+      `${harness.gatewayUrl}/answer/tasks/${encodeURIComponent(plainBody.taskId)}?citations=true`,
+      { headers: { Authorization: `Bearer ${answerToken}` } },
+    );
+    expect(cited.status).toBe(200);
+    const citations = ((await cited.json()) as { citations?: Array<Record<string, unknown>> })
+      .citations;
+    expect(citations?.map((citation) => citation.title)).toEqual([
+      "Q4 Vendor Assessment — final",
+      "Vendor follow-up — Bluestone counter-offer",
+    ]);
+    for (const citation of citations ?? []) {
+      expect(citation).toMatchObject({
+        documentId: expect.any(String),
+        sourceType: "gmail",
+        timestamp: expect.any(String),
+        sourceUrl: expect.stringMatching(/^https:\/\//),
+      });
+    }
+    const release = readDb((db) =>
+      db
+        .prepare<
+          [string],
+          { citations_json: string }
+        >("SELECT citations_json FROM answer_releases WHERE task_id = ?")
+        .get(plainBody.taskId),
+    );
+    expect(JSON.parse(release!.citations_json)).toEqual(citations);
   }, 120_000);
 
   test("a repeat of an in-flight ask is a poll: it attaches to the running task at the owner's turn limit, opens no second turn, and later collects the same bytes", async () => {

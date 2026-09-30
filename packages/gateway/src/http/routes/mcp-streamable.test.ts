@@ -213,8 +213,12 @@ function appFixture(
       _taskId: string,
       _ownerId: string,
       _endpoint: string,
-      mcpInvocationAudit?: McpToolInvocationAuditInput,
+      options: {
+        mcpInvocationAudit?: McpToolInvocationAuditInput;
+        includeCitations?: boolean;
+      } = {},
     ) => {
+      const { mcpInvocationAudit } = options;
       // The production Answer store persists this attribution and the privacy
       // egress event in one writer transaction. Keep the route fixture at the
       // same seam so stale-authority tests exercise the real release boundary.
@@ -381,19 +385,18 @@ describe("gateway-hosted Streamable HTTP MCP", () => {
       sourceMode: "all",
       requireActiveAuthority: true,
     });
-    expect(recordEgress).toHaveBeenCalledWith(
-      "task-test",
-      expect.any(String),
-      "/mcp",
-      expect.objectContaining({
+    expect(recordEgress).toHaveBeenCalledWith("task-test", expect.any(String), "/mcp", {
+      mcpInvocationAudit: expect.objectContaining({
         accessTokenId: `${answerToken}-access`,
         capability: "answer",
         tool: "ask_omnesis",
         requireActiveAuthority: true,
       }),
-      // An MCP caller's authority is its grant; no device authority rides along.
-      undefined,
-    );
+      // A generic MCP client validates against the output schema, so it
+      // receives citations unasked. Its authority is its grant; no device
+      // authority rides along.
+      includeCitations: true,
+    });
   });
 
   it("returns the timing profile in _meta only when ask_omnesis opts in", async () => {
@@ -581,6 +584,33 @@ describe("gateway-hosted Streamable HTTP MCP", () => {
       }),
     );
     auditDb.close();
+  });
+
+  it("gives a bound integration citations only once it declares it accepts them", async () => {
+    const { app, runtime, recordEgress } = appFixture(service());
+    closeables.push(runtime);
+    const integration = await connect(app, agentAnswerToken);
+    closeables.push(integration.client, integration.transport);
+
+    await integration.client.callTool({
+      name: "ask_omnesis",
+      arguments: { question: "What is the fictional answer?", requestId: "undeclared" },
+    });
+    expect(recordEgress.mock.calls.at(-1)?.[3]).not.toHaveProperty("includeCitations");
+
+    await integration.client.callTool({
+      name: "ask_omnesis",
+      arguments: { question: "What is the fictional answer?", requestId: "declared" },
+      _meta: { "dev.omnesis/answerCitations": true },
+    });
+    expect(recordEgress.mock.calls.at(-1)?.[3]).toMatchObject({ includeCitations: true });
+
+    await integration.client.callTool({
+      name: "get_answer_status",
+      arguments: { taskId: "task-test" },
+      _meta: { "dev.omnesis/answerCitations": true },
+    });
+    expect(recordEgress.mock.calls.at(-1)?.[3]).toMatchObject({ includeCitations: true });
   });
 
   it("refuses native completion routing after the operational device is revoked", async () => {

@@ -1,3 +1,6 @@
 {
-  "triggers": ["when is the halden press order due to arrive"]
+  "triggers": ["when is the halden press order due to arrive"],
+  "placeholders": {
+    "docExternalIds": ["synth-gmail-cole-001"]
+  }
 }

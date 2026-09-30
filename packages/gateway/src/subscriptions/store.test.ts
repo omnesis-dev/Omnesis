@@ -449,6 +449,7 @@ describe("subscription store", () => {
         kind: "release",
         releaseId: `release-${taskId}`,
         answer: "A wholly fictional Northstar record matched.",
+        citations: [],
         expectedDisclosureRevision: disclosureRevision,
       },
     });

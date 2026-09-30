@@ -115,6 +115,7 @@ export function createAnswerPrivacyTables(db: PrivacyDb): void {
       task_id TEXT UNIQUE NOT NULL REFERENCES answer_tasks(id) ON DELETE CASCADE,
       candidate_digest TEXT NOT NULL,
       candidate_answer TEXT,
+      candidate_citations_json TEXT NOT NULL DEFAULT '[]',
       policy_revision TEXT NOT NULL,
       release_status TEXT NOT NULL DEFAULT 'released'
         CHECK (release_status IN ('released', 'released_with_reductions')),
@@ -134,6 +135,7 @@ export function createAnswerPrivacyTables(db: PrivacyDb): void {
       owner_id TEXT NOT NULL,
       answer TEXT NOT NULL,
       reductions_json TEXT NOT NULL DEFAULT '[]',
+      citations_json TEXT NOT NULL DEFAULT '[]',
       created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_answer_releases_owner

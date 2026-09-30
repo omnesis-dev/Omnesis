@@ -17,7 +17,9 @@ import {
   type TaskDbRow,
 } from "./store-types.js";
 import { policyRevision } from "./policy-store.js";
+import { digestAnswerCandidate, parseStoredCitations } from "./answer-citations.js";
 import type {
+  AnswerCitation,
   AnswerResponse,
   ReducedAnswerResponse,
   ReleasedAnswerResponse,
@@ -31,9 +33,8 @@ import type {
 
 const MAX_DISCLOSURE_CATEGORIES = 50;
 
-export function digestCandidate(candidate: string): string {
-  return createHash("sha256").update(candidate, "utf8").digest("hex");
-}
+/** See {@link digestAnswerCandidate}. */
+export const digestCandidate = digestAnswerCandidate;
 
 export function answerRequestFingerprint(input: AnswerRequestIdentity): string {
   return createHash("sha256")
@@ -170,13 +171,22 @@ export function insertRelease(
   releaseId: string,
   answer: string,
   reductions: string[],
+  citations: readonly AnswerCitation[],
   now: number,
 ): void {
   db.prepare(
     `INSERT INTO answer_releases
-       (id, task_id, owner_id, answer, reductions_json, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run(releaseId, task.id, task.owner_id, answer, JSON.stringify(reductions), now);
+       (id, task_id, owner_id, answer, reductions_json, citations_json, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    releaseId,
+    task.id,
+    task.owner_id,
+    answer,
+    JSON.stringify(reductions),
+    JSON.stringify(citations),
+    now,
+  );
 }
 
 export function advanceWorkflowDisclosure(
@@ -378,7 +388,20 @@ export function clearActiveTask(
   ).run(now, conversationId, taskId);
 }
 
-export function responseForTask(db: PrivacyDb, taskId: string): AnswerResponse | null {
+/**
+ * How a released response is shaped for one caller. Citations reach only a
+ * caller that declared it accepts them: the Answer clients shipped before
+ * citations existed reject a response with fields they do not know.
+ */
+export interface AnswerResponseShape {
+  includeCitations?: boolean;
+}
+
+export function responseForTask(
+  db: PrivacyDb,
+  taskId: string,
+  shape: AnswerResponseShape = {},
+): AnswerResponse | null {
   const task = getTask(db, taskId);
   if (!task) return null;
   const base = {
@@ -396,6 +419,9 @@ export function responseForTask(db: PrivacyDb, taskId: string): AnswerResponse |
         releaseId: task.release_id,
         answer: release.answer,
         reductions: [],
+        ...(shape.includeCitations
+          ? { citations: parseStoredCitations(release.citations_json) }
+          : {}),
       });
     }
     case "released_with_reductions": {
@@ -407,6 +433,9 @@ export function responseForTask(db: PrivacyDb, taskId: string): AnswerResponse |
         releaseId: task.release_id,
         answer: release.answer,
         reductions: parseStringArray(task.reductions_json),
+        ...(shape.includeCitations
+          ? { citations: parseStoredCitations(release.citations_json) }
+          : {}),
       });
     }
     case "approval_required": {
@@ -454,12 +483,16 @@ export function buildReleasedAnswerResponse(input: {
   releaseId: string;
   answer: string;
   reductions: string[];
+  /** Included only when non-empty, so a release without citations has one shape. */
+  citations?: readonly AnswerCitation[];
 }): ReleasedAnswerResponse | ReducedAnswerResponse {
   const base = {
     workflowId: input.workflowId,
     conversationId: input.conversationId,
     taskId: input.taskId,
   };
+  const citations =
+    input.citations && input.citations.length > 0 ? { citations: [...input.citations] } : {};
   switch (input.status) {
     case "released":
       return {
@@ -467,6 +500,7 @@ export function buildReleasedAnswerResponse(input: {
         status: "released",
         releaseId: input.releaseId,
         answer: input.answer,
+        ...citations,
       };
     case "released_with_reductions":
       return {
@@ -475,16 +509,40 @@ export function buildReleasedAnswerResponse(input: {
         releaseId: input.releaseId,
         answer: input.answer,
         reductions: input.reductions,
+        ...citations,
       };
     default:
       return assertNever(input.status);
   }
 }
 
-function getRelease(db: PrivacyDb, taskId: string): { answer: string } | null {
+/**
+ * The digests of every shape a release can leave in: without citations, and
+ * with them when it has any. The egress ledger records the exact bytes a
+ * caller received, so finding a release there means matching either shape.
+ */
+export function releasedResponseDigests(
+  input: Parameters<typeof buildReleasedAnswerResponse>[0] & {
+    citations: readonly AnswerCitation[];
+  },
+): string[] {
+  const shapes = [buildReleasedAnswerResponse({ ...input, citations: [] })];
+  if (input.citations.length > 0) shapes.push(buildReleasedAnswerResponse(input));
+  return shapes.map((shape) =>
+    createHash("sha256").update(JSON.stringify(shape), "utf8").digest("hex"),
+  );
+}
+
+function getRelease(
+  db: PrivacyDb,
+  taskId: string,
+): { answer: string; citations_json: string } | null {
   return (
     db
-      .prepare<[string], { answer: string }>("SELECT answer FROM answer_releases WHERE task_id = ?")
+      .prepare<
+        [string],
+        { answer: string; citations_json: string }
+      >("SELECT answer, citations_json FROM answer_releases WHERE task_id = ?")
       .get(taskId) ?? null
   );
 }
@@ -502,6 +560,7 @@ export function approvalJoinSql(where: string): string {
            a.expires_at AS approval_expires_at,
            a.resolved_at AS approval_resolved_at,
            a.candidate_answer AS approval_candidate_answer,
+           a.candidate_citations_json AS approval_candidate_citations_json,
            a.release_status AS approval_release_status,
            a.reductions_json AS approval_reductions_json,
            w.name AS workflow_name,
