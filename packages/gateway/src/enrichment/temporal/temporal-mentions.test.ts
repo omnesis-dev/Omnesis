@@ -76,7 +76,9 @@ describe("temporal query — mention layer", () => {
   ) => {
     upsertDocuments(db, [doc(externalId, overrides)]);
     const id = idOf(db, externalId);
-    applyExtractedDates(db, [{ id, dates, mentions: dates.map(mentionDays), threadKey }]);
+    applyExtractedDates(db, [
+      { id, dates, mentions: dates.map((date) => mentionDays(date)), threadKey },
+    ]);
     return id;
   };
 

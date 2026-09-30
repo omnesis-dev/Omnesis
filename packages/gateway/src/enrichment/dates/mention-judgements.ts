@@ -3,19 +3,22 @@
 
 /**
  * Storage for the mention worth gate: one row per document that carries a
- * date mention, holding whether the decision model judged its email worth
- * recording.
+ * date mention, holding whether its email was judged worth recording.
  *
  * - Extraction writes a `pending` row for every document it leaves with at
  *   least one mention, and removes the row when it leaves none, so the gate's
  *   work queue is exactly the mention-bearing documents not yet judged. Each
  *   queueing bumps the row's `generation`, and a verdict settles only the
- *   generation it was fetched for: an answer about content that has since
+ *   generation it was fetched for: a verdict about content that has since
  *   changed is discarded.
- * - The gate settles a row as `keep` or `drop` (a score against the email
- *   worth rubric) or `exempt` (not an email, or carrying structured booking
- *   dates, so never judged). A row it cannot settle yet — the model failed,
- *   or an attachment's email has not arrived — waits with a growing backoff.
+ * - The gate settles a row as `keep` or `drop` (the email's worth score
+ *   against the rubric's threshold) or `exempt` (not an email, or carrying
+ *   structured booking dates, so never judged). A row it cannot settle yet —
+ *   the model failed, or an attachment's email has not arrived — waits with a
+ *   growing backoff.
+ * - The score itself is the email's shared worth answer (`worth/answers.ts`),
+ *   asked once whichever gate needs it; this table keeps only the verdict the
+ *   time query reads.
  * - A row judged under another rubric version returns to `pending`, as does
  *   an attachment whose email was judged again for new content.
  *
@@ -25,14 +28,14 @@
 
 import { documentsMetadataCodec } from "../../data/json-columns.js";
 import { resolveContainingDocument } from "../../domain/LinkGraphService.js";
-import { findReusableDecision } from "../../brain/storage/decisions.js";
+import { findWorthAnswer, recordWorthAnswers, type WorthAnswer } from "../../worth/answers.js";
 import {
   EMAIL_BODY_CHARS,
   WORTH_GATED_DOCUMENT_TYPE,
   emailWorthState,
   hasStructuredDate,
   type EmailWorthState,
-} from "../../brain/worth-gate/rubric.js";
+} from "../../worth/rubric.js";
 import type Database from "better-sqlite3";
 
 type Db = Database.Database;
@@ -51,12 +54,7 @@ export function createMentionJudgementsTable(db: Db): void {
       subject_document_id TEXT,
       content_hash TEXT,
       rubric_version TEXT,
-      requested_model_id TEXT,
-      model_id TEXT,
       score REAL,
-      reused_decision_id TEXT,
-      reused_document_id TEXT,
-      input_tokens INTEGER,
       judged_at INTEGER
     )
   `);
@@ -65,7 +63,7 @@ export function createMentionJudgementsTable(db: Db): void {
     `CREATE INDEX IF NOT EXISTS idx_date_mention_judgements_pending
        ON date_mention_judgements(next_attempt_at) WHERE verdict = 'pending'`,
   );
-  // Scored rows by their email: the same-email reuse and the attachment requeue.
+  // Scored rows by their email: the attachment requeue.
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_date_mention_judgements_subject
        ON date_mention_judgements(subject_document_id, content_hash)
@@ -99,17 +97,8 @@ export type PendingMentionJudgement =
   | (Queued & { kind: "exempt"; subjectDocumentId: string | null })
   /** An attachment whose email has not arrived: judged once it has. */
   | (Queued & { kind: "wait" })
-  | (Queued & {
-      kind: "reuse";
-      subjectDocumentId: string;
-      contentHash: string;
-      score: number;
-      modelId: string;
-      /** The Brain worth gate decision the answer came from. */
-      reusedDecisionId: string | null;
-      /** The document whose judgement the answer came from; null for the document's own. */
-      reusedDocumentId: string | null;
-    })
+  /** The email already has a worth answer. */
+  | (Queued & { kind: "answered"; subjectDocumentId: string; answer: WorthAnswer })
   | (Queued & {
       kind: "ask";
       subjectDocumentId: string;
@@ -121,10 +110,6 @@ interface PendingRow {
   document_id: string;
   generation: number;
   attempts: number;
-  content_hash: string | null;
-  rubric_version: string | null;
-  requested_model_id: string | null;
-  score: number | null;
 }
 
 interface DocHead {
@@ -136,12 +121,8 @@ interface DocHead {
 /**
  * Fetch up to `limit` pending documents due by `now` and resolve each to its
  * subject — the email itself, or the email an attachment belongs to — and to
- * an exemption, an answer to reuse, or the state to ask about. Runs on the io
- * pool's read-only handle.
- *
- * An answer is reused, for the same subject content, rubric and requested
- * model, from the document's own earlier judgement, from the Brain's worth
- * gate, or from another document judged by the same email.
+ * an exemption, the email's stored worth answer, or the state to ask about.
+ * Runs on the io pool's read-only handle.
  */
 export function fetchPendingMentionJudgements(
   db: Db,
@@ -152,8 +133,7 @@ export function fetchPendingMentionJudgements(
 ): PendingMentionJudgement[] {
   const pending = db
     .prepare<[number, number], PendingRow>(
-      `SELECT document_id, generation, attempts, content_hash, rubric_version,
-              requested_model_id, score
+      `SELECT document_id, generation, attempts
          FROM date_mention_judgements
         WHERE verdict = 'pending' AND next_attempt_at <= ?
         ORDER BY next_attempt_at LIMIT ?`,
@@ -164,16 +144,6 @@ export function fetchPendingMentionJudgements(
   );
   const readBody = db.prepare<[number, string], { title: string | null; content: string | null }>(
     "SELECT title, substr(content, 1, ?) AS content FROM documents WHERE id = ?",
-  );
-  const judgedBySubject = db.prepare<
-    [string, string, string, string],
-    { document_id: string; score: number; model_id: string }
-  >(
-    `SELECT document_id, score, model_id FROM date_mention_judgements
-      WHERE subject_document_id = ? AND content_hash = ? AND verdict IN ('keep', 'drop')
-        AND rubric_version = ? AND requested_model_id = ?
-        AND reused_decision_id IS NULL AND reused_document_id IS NULL
-      LIMIT 1`,
   );
 
   const out: PendingMentionJudgement[] = [];
@@ -207,61 +177,22 @@ export function fetchPendingMentionJudgements(
       out.push({ ...queued, kind: "exempt", subjectDocumentId: subject?.id ?? null });
       continue;
     }
-    const scored = { subjectDocumentId: subject.id, contentHash: subject.content_hash };
-    if (
-      row.score !== null &&
-      row.content_hash === subject.content_hash &&
-      row.rubric_version === rubricVersion &&
-      row.requested_model_id === modelId
-    ) {
-      out.push({
-        ...queued,
-        ...scored,
-        kind: "reuse",
-        score: row.score,
-        modelId,
-        reusedDecisionId: null,
-        reusedDocumentId: null,
-      });
-      continue;
-    }
-    const brain = findReusableDecision(
-      db,
-      subject.id,
+    const answer = findWorthAnswer(db, {
+      subjectDocumentId: subject.id,
+      contentHash: subject.content_hash,
       rubricVersion,
-      subject.content_hash,
-      modelId,
-    );
-    if (brain?.score != null) {
-      out.push({
-        ...queued,
-        ...scored,
-        kind: "reuse",
-        score: brain.score,
-        modelId: brain.modelId ?? modelId,
-        reusedDecisionId: brain.id,
-        reusedDocumentId: null,
-      });
-      continue;
-    }
-    const own = judgedBySubject.get(subject.id, subject.content_hash, rubricVersion, modelId);
-    if (own && own.document_id !== row.document_id) {
-      out.push({
-        ...queued,
-        ...scored,
-        kind: "reuse",
-        score: own.score,
-        modelId: own.model_id,
-        reusedDecisionId: null,
-        reusedDocumentId: own.document_id,
-      });
+      requestedModelId: modelId,
+    });
+    if (answer) {
+      out.push({ ...queued, kind: "answered", subjectDocumentId: subject.id, answer });
       continue;
     }
     const body = readBody.get(EMAIL_BODY_CHARS, subject.id);
     out.push({
       ...queued,
-      ...scored,
       kind: "ask",
+      subjectDocumentId: subject.id,
+      contentHash: subject.content_hash,
       state: emailWorthState({
         title: body?.title ?? null,
         content: body?.content ?? null,
@@ -280,12 +211,7 @@ export interface MentionJudgementRecord {
   subjectDocumentId: string | null;
   contentHash: string | null;
   rubricVersion: string | null;
-  requestedModelId: string | null;
-  modelId: string | null;
   score: number | null;
-  reusedDecisionId: string | null;
-  reusedDocumentId: string | null;
-  inputTokens: number | null;
   judgedAt: number;
 }
 
@@ -297,25 +223,25 @@ export interface MentionJudgementDeferral {
 }
 
 /**
- * Settle judgements and push back the ones that must wait. A row changes only
- * while it is still pending at the generation the gate fetched: a document
- * re-extracted meanwhile is judged again for its new content, and one that
- * lost its mentions has no row.
+ * Record the worth answers the gate asked for, settle judgements and push back
+ * the ones that must wait, in one transaction. A row changes only while it is
+ * still pending at the generation the gate fetched: a document re-extracted
+ * meanwhile is judged again for its new content, and one that lost its
+ * mentions has no row.
  *
- * Settling an email's own fresh answer returns its attachments judged for
- * earlier content to the queue, so they follow the email's current verdict.
+ * Settling an email's own row returns its attachments judged for other
+ * content to the queue, so they follow the email's current verdict.
  */
 export function applyMentionJudgements(
   db: Db,
   records: readonly MentionJudgementRecord[],
   deferrals: readonly MentionJudgementDeferral[] = [],
+  answers: readonly WorthAnswer[] = [],
 ): number {
   const settle = db.prepare(
     `UPDATE date_mention_judgements
         SET verdict = ?, subject_document_id = ?, content_hash = ?, rubric_version = ?,
-            requested_model_id = ?, model_id = ?, score = ?, reused_decision_id = ?,
-            reused_document_id = ?, input_tokens = ?, judged_at = ?, attempts = 0,
-            next_attempt_at = 0
+            score = ?, judged_at = ?, attempts = 0, next_attempt_at = 0
       WHERE document_id = ? AND verdict = 'pending' AND generation = ?`,
   );
   const requeueAttachments = db.prepare(
@@ -330,30 +256,22 @@ export function applyMentionJudgements(
   );
   let settled = 0;
   db.transaction(() => {
+    recordWorthAnswers(db, answers);
     for (const r of records) {
       const changed = settle.run(
         r.verdict,
         r.subjectDocumentId,
         r.contentHash,
         r.rubricVersion,
-        r.requestedModelId,
-        r.modelId,
         r.score,
-        r.reusedDecisionId,
-        r.reusedDocumentId,
-        r.inputTokens,
         r.judgedAt,
         r.documentId,
         r.generation,
       ).changes;
       settled += changed;
-      const freshOwnAnswer =
-        changed > 0 &&
-        r.subjectDocumentId === r.documentId &&
-        r.score !== null &&
-        r.reusedDecisionId === null &&
-        r.reusedDocumentId === null;
-      if (freshOwnAnswer) requeueAttachments.run(r.documentId, r.contentHash, r.documentId);
+      if (changed > 0 && r.score !== null && r.subjectDocumentId === r.documentId) {
+        requeueAttachments.run(r.documentId, r.contentHash, r.documentId);
+      }
     }
     for (const d of deferrals) defer.run(d.nextAttemptAt, d.documentId, d.generation);
   })();

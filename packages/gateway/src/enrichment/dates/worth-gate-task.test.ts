@@ -5,9 +5,10 @@ import { describe, it, expect } from "vitest";
 import { createLogger, type DecisionCapability, type DecisionRequest } from "@omnesis/core";
 
 import { QueueTracker } from "../../background-jobs/trackers.js";
-import { WORTH_GATE_RUBRIC_VERSION } from "../../brain/worth-gate/rubric.js";
+import { WORTH_GATE_RUBRIC_VERSION } from "../../worth/rubric.js";
 import { DATE_ENRICHMENT_DEFAULTS } from "./config.js";
 import { mentionWorthGateTask } from "./worth-gate-task.js";
+import type { WorthAnswer } from "../../worth/answers.js";
 import type {
   MentionJudgementDeferral,
   MentionJudgementRecord,
@@ -64,6 +65,7 @@ function build(opts: {
 }) {
   const applied: MentionJudgementRecord[] = [];
   const deferred: MentionJudgementDeferral[] = [];
+  const answered: WorthAnswer[] = [];
   const requeued: string[] = [];
   const spend: Array<{ modelId: string; inputTokens: number }> = [];
   const tracker = new QueueTracker();
@@ -72,9 +74,10 @@ function build(opts: {
       fetchPendingMentionJudgements: async () => opts.batches.shift() ?? [],
     },
     writeGate: {
-      applyMentionJudgements: async (records, deferrals) => {
+      applyMentionJudgements: async (records, deferrals, answers) => {
         applied.push(...records);
         deferred.push(...deferrals);
+        answered.push(...answers);
         return records.length;
       },
       requeueStaleMentionJudgements: async (version) => {
@@ -89,9 +92,10 @@ function build(opts: {
     },
     tracker,
     clock: () => 42,
+    idGen: () => "id-1",
     log,
   });
-  return { task, applied, deferred, requeued, spend };
+  return { task, applied, deferred, answered, requeued, spend };
 }
 
 describe("mentionWorthGateTask", () => {
@@ -110,7 +114,7 @@ describe("mentionWorthGateTask", () => {
 
   it("keeps a document scored at the threshold and drops one below it", async () => {
     const decision = scripted({ keep: 1.08, drop: 1.07 });
-    const { task, applied, requeued, spend } = build({
+    const { task, applied, answered, requeued, spend } = build({
       decision,
       batches: [
         [
@@ -126,10 +130,20 @@ describe("mentionWorthGateTask", () => {
     expect(applied.find((r) => r.documentId === "a")).toMatchObject({
       generation: 3,
       rubricVersion: WORTH_GATE_RUBRIC_VERSION,
+      contentHash: "hash-a",
+      score: 1.08,
+      judgedAt: 42,
+    });
+    // Each fresh answer is recorded as the email's shared answer.
+    expect(answered.find((a) => a.subjectDocumentId === "a")).toEqual({
+      id: "wa_id-1",
+      subjectDocumentId: "a",
+      contentHash: "hash-a",
+      rubricVersion: WORTH_GATE_RUBRIC_VERSION,
       requestedModelId: "jev-test",
       modelId: "jev-test",
-      inputTokens: 1000,
-      judgedAt: 42,
+      score: 1.08,
+      answeredAt: 42,
     });
     expect(spend).toEqual([
       { modelId: "jev-test", inputTokens: 1000 },
@@ -139,30 +153,23 @@ describe("mentionWorthGateTask", () => {
 
   it("asks once for an email and its attachments", async () => {
     const decision = scripted({ [STATE.subject]: 0.3 });
-    const { task, applied, spend } = build({
+    const { task, applied, answered, spend } = build({
       decision,
-      // The attachment comes first; the email still carries the call.
       batches: [[ask("attachment", "email"), ask("email")]],
     });
     await tick(task);
     expect(decision.calls).toHaveLength(1);
     expect(spend).toHaveLength(1);
-    const attachment = applied.find((r) => r.documentId === "attachment");
-    expect(attachment).toMatchObject({
-      verdict: "drop",
-      subjectDocumentId: "email",
-      reusedDocumentId: "email",
-      inputTokens: null,
-    });
-    expect(applied.find((r) => r.documentId === "email")).toMatchObject({
-      reusedDocumentId: null,
-      inputTokens: 1000,
-    });
+    expect(answered).toHaveLength(1);
+    expect(applied.map((r) => [r.documentId, r.subjectDocumentId, r.verdict])).toEqual([
+      ["attachment", "email", "drop"],
+      ["email", "email", "drop"],
+    ]);
   });
 
-  it("settles exemptions and reused answers without asking", async () => {
+  it("settles exemptions and stored answers without asking", async () => {
     const decision = scripted({});
-    const { task, applied } = build({
+    const { task, applied, answered } = build({
       decision,
       batches: [
         [
@@ -177,23 +184,30 @@ describe("mentionWorthGateTask", () => {
             documentId: "seen",
             generation: 1,
             attempts: 0,
-            kind: "reuse",
+            kind: "answered",
             subjectDocumentId: "seen",
-            contentHash: "hash-seen",
-            score: 2.5,
-            modelId: "jev-test",
-            reusedDecisionId: "dec_1",
-            reusedDocumentId: null,
+            answer: {
+              id: "dec_1",
+              subjectDocumentId: "seen",
+              contentHash: "hash-seen",
+              rubricVersion: WORTH_GATE_RUBRIC_VERSION,
+              requestedModelId: "jev-test",
+              modelId: "jev-test",
+              score: 2.5,
+              answeredAt: 1,
+            },
           },
         ],
       ],
     });
     await tick(task);
     expect(decision.calls).toEqual([]);
-    expect(applied.map((r) => [r.documentId, r.verdict, r.reusedDecisionId])).toEqual([
+    expect(applied.map((r) => [r.documentId, r.verdict, r.score])).toEqual([
       ["note", "exempt", null],
-      ["seen", "keep", "dec_1"],
+      ["seen", "keep", 2.5],
     ]);
+    // A stored answer is not recorded again.
+    expect(answered).toEqual([]);
   });
 
   it("defers a document the model failed on, and keeps settling the rest of the batch", async () => {

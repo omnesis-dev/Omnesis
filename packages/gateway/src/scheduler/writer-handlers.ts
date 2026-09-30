@@ -537,6 +537,7 @@ import {
   withPairingGenerationFence,
   type PairingGenerationFence,
 } from "../data/pairing-generation-fence.js";
+import type { WorthAnswer } from "../worth/answers.js";
 import type { SelfIdentitySource } from "../self-identity-sources.js";
 import type {
   AccessPrincipalRenameInput,
@@ -896,7 +897,8 @@ export const writerHandlers = {
     db: Db,
     records: MentionJudgementRecord[],
     deferrals: MentionJudgementDeferral[],
-  ) => applyMentionJudgements(db, records, deferrals),
+    answers: WorthAnswer[],
+  ) => applyMentionJudgements(db, records, deferrals, answers),
   "db.requeueStaleMentionJudgements": (db: Db, rubricVersion: string, limit: number) =>
     requeueStaleMentionJudgements(db, rubricVersion, limit),
   // Drain of source-declared forward-reference edges: resolve parked

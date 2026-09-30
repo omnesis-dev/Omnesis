@@ -578,7 +578,9 @@
           sender and the first 2,000 characters of the body and answers with a score; below the
           threshold, the run ends without an agent turn. An attachment is judged by the email that
           contains it. Mail you sent to the assistant, and mail carrying a structured booking or due
-          date, is never skipped. Unchanged mail is not scored twice.
+          date, is never skipped. An email is scored once for the same content: the answer is shared
+          with the <a href="/docs#documents-and-the-index">mention worth gate</a>, so mail either
+          one has scored is not sent again.
         </p>
         <p>
           The check sends each email it scores to TypeSafe, so it needs

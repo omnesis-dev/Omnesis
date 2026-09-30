@@ -9,7 +9,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createDatabase } from "../../db.js";
 import { upsertDocuments } from "../../data/repositories/DocumentRepository.js";
 import { insertCognitionDecision } from "../../brain/storage/decisions.js";
-import { WORTH_GATE_RUBRIC_VERSION } from "../../brain/worth-gate/rubric.js";
+import { findWorthAnswer } from "../../worth/answers.js";
+import { WORTH_GATE_RUBRIC_VERSION } from "../../worth/rubric.js";
 import { applyExtractedDates } from "./storage.js";
 import {
   applyMentionJudgements,
@@ -93,26 +94,47 @@ describe("mention judgements", () => {
   const fetch = (now = 0, model = MODEL): PendingMentionJudgement[] =>
     fetchPendingMentionJudgements(db, 10, WORTH_GATE_RUBRIC_VERSION, model, now);
 
-  /** Settle a fetched item the way the gate does with a fresh answer. */
-  function settle(item: PendingMentionJudgement, score: number): number {
-    if (item.kind !== "ask" && item.kind !== "reuse") throw new Error(`cannot score ${item.kind}`);
-    return applyMentionJudgements(db, [
-      {
-        documentId: item.documentId,
-        generation: item.generation,
-        verdict: score >= 1.08 ? "keep" : "drop",
-        subjectDocumentId: item.subjectDocumentId,
-        contentHash: item.contentHash,
-        rubricVersion: WORTH_GATE_RUBRIC_VERSION,
-        requestedModelId: MODEL,
-        modelId: MODEL,
-        score,
-        reusedDecisionId: null,
-        reusedDocumentId: null,
-        inputTokens: 900,
-        judgedAt: 1,
-      },
-    ]);
+  let answerSeq = 0;
+
+  /**
+   * Settle a fetched item the way the gate does: a fresh answer for an ask is
+   * recorded as the email's shared answer, a stored answer is only applied.
+   */
+  function settle(item: PendingMentionJudgement, score?: number): number {
+    if (item.kind !== "ask" && item.kind !== "answered")
+      throw new Error(`cannot score ${item.kind}`);
+    const contentHash = item.kind === "ask" ? item.contentHash : item.answer.contentHash;
+    const value = item.kind === "ask" ? score! : item.answer.score;
+    return applyMentionJudgements(
+      db,
+      [
+        {
+          documentId: item.documentId,
+          generation: item.generation,
+          verdict: value >= 1.08 ? "keep" : "drop",
+          subjectDocumentId: item.subjectDocumentId,
+          contentHash,
+          rubricVersion: WORTH_GATE_RUBRIC_VERSION,
+          score: value,
+          judgedAt: 1,
+        },
+      ],
+      [],
+      item.kind === "ask"
+        ? [
+            {
+              id: `wa_${++answerSeq}`,
+              subjectDocumentId: item.subjectDocumentId,
+              contentHash,
+              rubricVersion: WORTH_GATE_RUBRIC_VERSION,
+              requestedModelId: MODEL,
+              modelId: MODEL,
+              score: value,
+              answeredAt: 1,
+            },
+          ]
+        : [],
+    );
   }
 
   const only = (id: string): PendingMentionJudgement =>
@@ -160,7 +182,21 @@ describe("mention judgements", () => {
     expect(kinds).toEqual({ [note]: "exempt", [booking]: "exempt", [invoice]: "exempt" });
   });
 
-  it("judges an attachment by its email and reuses the email's answer", () => {
+  it("records the answer it asked for as the email's shared answer", () => {
+    const id = seed("a");
+    extract(id);
+    settle(only(id), 0.4);
+    expect(
+      findWorthAnswer(db, {
+        subjectDocumentId: id,
+        contentHash: "hash-a",
+        rubricVersion: WORTH_GATE_RUBRIC_VERSION,
+        requestedModelId: MODEL,
+      }),
+    ).toMatchObject({ score: 0.4, modelId: MODEL });
+  });
+
+  it("judges an attachment by its email and applies the email's answer", () => {
     const email = seed("thread-1");
     const attachment = seed("thread-1/att", {
       documentType: "attachment",
@@ -172,10 +208,9 @@ describe("mention judgements", () => {
     extract(email);
     settle(only(email), 0.2);
     expect(only(attachment)).toMatchObject({
-      kind: "reuse",
-      score: 0.2,
-      reusedDocumentId: email,
-      reusedDecisionId: null,
+      kind: "answered",
+      subjectDocumentId: email,
+      answer: { score: 0.2 },
     });
   });
 
@@ -199,7 +234,7 @@ describe("mention judgements", () => {
     expect(fetch(60_000)[0]).toMatchObject({ kind: "ask", subjectDocumentId: email });
   });
 
-  it("reuses the Brain worth gate's answer for the same content and requested model", () => {
+  it("applies the answer the Brain's worth gate recorded for the same content and model", () => {
     const id = seed("a");
     extract(id);
     insertCognitionDecision(db, {
@@ -226,31 +261,26 @@ describe("mention judgements", () => {
       inputTokens: 900,
       createdAt: 1,
     });
-    expect(fetch()[0]).toMatchObject({ kind: "reuse", score: 2.4, reusedDecisionId: "dec_1" });
+    expect(fetch()[0]).toMatchObject({ kind: "answered", answer: { id: "dec_1", score: 2.4 } });
     // Another model's answer is not this model's.
     expect(fetch(0, "jev-other")[0]).toMatchObject({ kind: "ask" });
   });
 
-  it("keeps a document's own answer across a rescan of unchanged content", () => {
+  it("applies the email's stored answer across a rescan of unchanged content", () => {
     const id = seed("a");
     extract(id);
     settle(only(id), 0.4);
     expect(verdictOf(id)).toBe("drop");
     extract(id);
     expect(verdictOf(id)).toBe("pending");
-    expect(only(id)).toMatchObject({
-      kind: "reuse",
-      score: 0.4,
-      reusedDecisionId: null,
-      reusedDocumentId: null,
-    });
+    expect(only(id)).toMatchObject({ kind: "answered", answer: { score: 0.4 } });
     // New content asks again.
     seed("a", { hash: "hash-a-edited" });
     extract(id);
     expect(only(id)).toMatchObject({ kind: "ask" });
   });
 
-  it("discards an answer for content that changed while it was being asked", () => {
+  it("discards a verdict for content that changed while it was being asked", () => {
     const id = seed("a");
     extract(id);
     const inFlight = only(id);
@@ -268,7 +298,7 @@ describe("mention judgements", () => {
     const item = only(id);
     settle(item, 2);
     expect(verdictOf(id)).toBe("keep");
-    // A late answer for a judgement already settled changes nothing.
+    // A late verdict for a judgement already settled changes nothing.
     expect(settle(item, 0.1)).toBe(0);
     expect(verdictOf(id)).toBe("keep");
   });
@@ -282,14 +312,14 @@ describe("mention judgements", () => {
     extract(email);
     extract(attachment);
     settle(only(email), 0.2);
-    settle(only(attachment), 0.2);
+    settle(only(attachment));
     expect(verdictOf(attachment)).toBe("drop");
 
     seed("thread-2", { hash: "hash-thread-2-edited" });
     extract(email);
     settle(only(email), 2.5);
     expect(verdictOf(attachment)).toBe("pending");
-    expect(only(attachment)).toMatchObject({ kind: "reuse", score: 2.5 });
+    expect(only(attachment)).toMatchObject({ kind: "answered", answer: { score: 2.5 } });
   });
 
   it("requeues judgements made under another rubric version, a batch at a time", () => {

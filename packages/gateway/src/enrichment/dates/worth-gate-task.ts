@@ -10,10 +10,11 @@
  * - Active only while `enrichment.dates.worthGate` is on and the decision
  *   model is assigned and ready; otherwise it idles and the query shows every
  *   mention.
- * - It asks the Brain worth gate's own question (`email-worth-v1`) at the same
- *   threshold, and reuses the Brain's stored answer for the same content, so
- *   an email the Brain already scored is not sent again. An attachment rides
- *   on its email's answer.
+ * - It asks the email worth rubric (`email-worth-v1`) at its threshold, the
+ *   question the Brain's worth gate asks too. Both read and record the
+ *   email's shared answer (`worth/answers.ts`), so an email is sent to the
+ *   decision model once whichever gate needs it first. An attachment rides on
+ *   its email's answer.
  * - Only emails are judged; any other document, and a document or email
  *   carrying structured booking dates, is exempt and always shown.
  * - An unreachable model, a rejected key or a malformed reply leaves the
@@ -24,6 +25,7 @@
  * (network only) and settles the batch in one background writer call.
  */
 
+import { randomUUID } from "node:crypto";
 import { assertNever, type DecisionCapability, type Logger } from "@omnesis/core";
 import { runWithPriority } from "../../priority.js";
 import {
@@ -39,13 +41,14 @@ import {
   EMAIL_WORTH_QUESTION_ID,
   WORTH_GATE_RUBRIC_VERSION,
   passesWorthThreshold,
-} from "../../brain/worth-gate/rubric.js";
+} from "../../worth/rubric.js";
 import type { Scheduler } from "../../scheduler/scheduler.js";
 import type { PeriodicTask, TaskOutcome } from "../../scheduler/types.js";
 import type { IoGate } from "../../scheduler/io-ops.js";
 import type { WriteGate } from "../../write-gate.js";
 import type { BackgroundJobsRegistry } from "../../background-jobs/registry.js";
 import type { ResolvedDateEnrichmentSettings } from "./config.js";
+import type { WorthAnswer } from "../../worth/answers.js";
 import type {
   MentionJudgementDeferral,
   MentionJudgementRecord,
@@ -79,6 +82,8 @@ export interface MentionWorthGateDeps {
   recordSpend: (modelId: string, inputTokens: number) => Promise<void>;
   tracker: QueueTracker;
   clock?: () => number;
+  /** Ids for the worth answers this gate records. */
+  idGen?: () => string;
   log: Logger;
 }
 
@@ -92,6 +97,7 @@ export function mentionWorthGateTask(
 ): PeriodicTask<unknown, IdleResult> {
   const { ioGate, writeGate, getSettings, getDecision, tracker, log } = deps;
   const clock = deps.clock ?? Date.now;
+  const judgeDeps = { ...deps, idGen: deps.idGen ?? (() => randomUUID()) };
   let requeued = false;
   let judged = 0;
   return {
@@ -139,8 +145,13 @@ export function mentionWorthGateTask(
             return { idle: true };
           }
 
-          const { records, deferrals, failed } = await judge(pending, decision, deps, clock);
-          const settled = await writeGate.applyMentionJudgements(records, deferrals);
+          const { records, deferrals, answers, failed } = await judge(
+            pending,
+            decision,
+            judgeDeps,
+            clock,
+          );
+          const settled = await writeGate.applyMentionJudgements(records, deferrals, answers);
           judged += settled;
           tracker.recordTick(settled);
           if (failed > 0) {
@@ -159,29 +170,35 @@ type Ask = Extract<PendingMentionJudgement, { kind: "ask" }>;
 async function judge(
   pending: readonly PendingMentionJudgement[],
   decision: DecisionCapability,
-  deps: MentionWorthGateDeps,
+  deps: MentionWorthGateDeps & { idGen: () => string },
   clock: () => number,
 ): Promise<{
   records: MentionJudgementRecord[];
   deferrals: MentionJudgementDeferral[];
+  answers: WorthAnswer[];
   failed: number;
 }> {
   const records: MentionJudgementRecord[] = [];
   const deferrals: MentionJudgementDeferral[] = [];
-  const unscored = {
-    contentHash: null,
-    rubricVersion: null,
-    requestedModelId: null,
-    modelId: null,
-    score: null,
-    reusedDecisionId: null,
-    reusedDocumentId: null,
-    inputTokens: null,
-  };
+  const answers: WorthAnswer[] = [];
   const deferral = (p: PendingMentionJudgement): MentionJudgementDeferral => ({
     documentId: p.documentId,
     generation: p.generation,
     nextAttemptAt: nextAttemptAt(clock(), p.attempts),
+  });
+  const scored = (
+    p: PendingMentionJudgement & { subjectDocumentId: string },
+    contentHash: string,
+    score: number,
+  ): MentionJudgementRecord => ({
+    documentId: p.documentId,
+    generation: p.generation,
+    verdict: passesWorthThreshold(score) ? "keep" : "drop",
+    subjectDocumentId: p.subjectDocumentId,
+    contentHash,
+    rubricVersion: WORTH_GATE_RUBRIC_VERSION,
+    score,
+    judgedAt: clock(),
   });
   // Several documents of one batch can share an email (its attachments);
   // they share its one call.
@@ -190,33 +207,21 @@ async function judge(
     switch (p.kind) {
       case "exempt":
         records.push({
-          ...unscored,
           documentId: p.documentId,
           generation: p.generation,
           verdict: "exempt",
           subjectDocumentId: p.subjectDocumentId,
+          contentHash: null,
+          rubricVersion: null,
+          score: null,
           judgedAt: clock(),
         });
         break;
       case "wait":
         deferrals.push(deferral(p));
         break;
-      case "reuse":
-        records.push({
-          documentId: p.documentId,
-          generation: p.generation,
-          verdict: passesWorthThreshold(p.score) ? "keep" : "drop",
-          subjectDocumentId: p.subjectDocumentId,
-          contentHash: p.contentHash,
-          rubricVersion: WORTH_GATE_RUBRIC_VERSION,
-          requestedModelId: decision.modelId,
-          modelId: p.modelId,
-          score: p.score,
-          reusedDecisionId: p.reusedDecisionId,
-          reusedDocumentId: p.reusedDocumentId,
-          inputTokens: null,
-          judgedAt: clock(),
-        });
+      case "answered":
+        records.push(scored(p, p.answer.contentHash, p.answer.score));
         break;
       case "ask": {
         const key = `${p.subjectDocumentId}:${p.contentHash}`;
@@ -234,42 +239,34 @@ async function judge(
   const worker = async (): Promise<void> => {
     while (next < groups.length) {
       const group = groups[next++]!;
-      // The email itself carries the call when it is in the batch.
-      const owner = group.find((p) => p.documentId === p.subjectDocumentId) ?? group[0]!;
-      const answer = await askScore(
+      const first = group[0]!;
+      const reply = await askScore(
         decision,
-        { state: { ...owner.state }, questions: EMAIL_WORTH_QUESTIONS },
+        { state: { ...first.state }, questions: EMAIL_WORTH_QUESTIONS },
         EMAIL_WORTH_QUESTION_ID,
         { recordSpend: deps.recordSpend, log: deps.log, timeoutMs: CALL_TIMEOUT_MS },
       );
-      const score = answer.score;
+      const score = reply.score;
       if (score === null) {
         failed += group.length;
         deferrals.push(...group.map(deferral));
         continue;
       }
-      for (const p of group) {
-        const own = p === owner;
-        records.push({
-          documentId: p.documentId,
-          generation: p.generation,
-          verdict: passesWorthThreshold(score) ? "keep" : "drop",
-          subjectDocumentId: p.subjectDocumentId,
-          contentHash: p.contentHash,
-          rubricVersion: WORTH_GATE_RUBRIC_VERSION,
-          requestedModelId: decision.modelId,
-          modelId: answer.modelId,
-          score,
-          reusedDecisionId: null,
-          reusedDocumentId: own ? null : owner.documentId,
-          inputTokens: own ? answer.inputTokens : null,
-          judgedAt: clock(),
-        });
-      }
+      answers.push({
+        id: `wa_${deps.idGen()}`,
+        subjectDocumentId: first.subjectDocumentId,
+        contentHash: first.contentHash,
+        rubricVersion: WORTH_GATE_RUBRIC_VERSION,
+        requestedModelId: decision.modelId,
+        modelId: reply.modelId,
+        score,
+        answeredAt: clock(),
+      });
+      for (const p of group) records.push(scored(p, p.contentHash, score));
     }
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, groups.length) }, worker));
-  return { records, deferrals, failed };
+  return { records, deferrals, answers, failed };
 }
 
 export interface BootMentionWorthGateDeps extends Omit<MentionWorthGateDeps, "tracker"> {

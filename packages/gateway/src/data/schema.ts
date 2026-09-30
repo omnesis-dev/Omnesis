@@ -13,6 +13,7 @@ import {
 import { createConversationReadStateTables } from "../agent/conversation-read-state.js";
 import { createDevAnnotationsTables } from "../dev-annotations/store.js";
 import { createExtractedDatesTables } from "../enrichment/dates/storage.js";
+import { createWorthAnswersTable } from "../worth/answers.js";
 import { createTemporalAnnotationTables } from "../enrichment/temporal-annotations/storage.js";
 import { createDocumentTemporalProjectionTables } from "../enrichment/temporal-projections/document-storage.js";
 import { createNoteEntriesTables } from "../sources/omnesis-notes/storage.js";
@@ -1443,6 +1444,9 @@ function runSchemaSetupInTxn(db: Db): void {
   // Omnesis-derived date-enrichment signal: dates extracted from document
   // text, resolved against each document's own date.
   createExtractedDatesTables(db);
+  // The decision model's shared answers to the email worth rubric, read by
+  // every gate that asks it (the mention worth gate and the Brain's).
+  createWorthAnswersTable(db);
   // Temporal annotations (experimental): interval-addressed semantic time the
   // background agent adds to and queries.
   createTemporalAnnotationTables(db);

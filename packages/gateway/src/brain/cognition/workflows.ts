@@ -47,7 +47,7 @@ import {
   parseCognitionProvenanceRecheckPayload,
   parseCognitionSynthesisRunPayload,
 } from "../run-payloads.js";
-import { WORTH_GATE_SPEND_MECHANISM } from "../worth-gate/rubric.js";
+import { WORTH_GATE_SPEND_MECHANISM } from "../worth-gate/gate.js";
 import { RECORD_CHECK_SPEND_MECHANISM } from "../record-check/rubric.js";
 import { MENTION_WORTH_GATE_SPEND_MECHANISM } from "../../enrichment/dates/config.js";
 import type { CognitionRunKind } from "../storage/types.js";
