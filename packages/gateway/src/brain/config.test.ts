@@ -48,7 +48,7 @@ describe("resolveBrainSettings", () => {
         annotationContradictions: { enabled: true, maxPerSweep: 2 },
       },
       digest: { enabled: true, hour: 7, graceMinutes: 45, push: true },
-      annotations: { enabled: true },
+      annotations: { enabled: true, recordCheck: "shadow" },
       reverification: { enabled: true, intervalDays: 14, maxPerSweep: 12, batchSize: 6 },
       provenanceRecheck: { enabled: true },
       judge: { enabled: true },
@@ -212,6 +212,7 @@ describe("CONFIG_DEFAULTS.brain cross-check against the live resolver", () => {
       r.collision.annotationContradictions.maxPerSweep,
     );
     expect(defAt("/brain/annotations/enabled")).toBe(r.annotations.enabled);
+    expect(defAt("/brain/annotations/recordCheck")).toBe(r.annotations.recordCheck);
     expect(defAt("/brain/annotations/basisCeilings/quoted")).toBe(r.annotationBasisCeilings.quoted);
     expect(defAt("/brain/annotations/basisCeilings/inferred")).toBe(
       r.annotationBasisCeilings.inferred,

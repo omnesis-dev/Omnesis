@@ -57,8 +57,8 @@ export interface CognitionDecisionRecord {
    */
   recordId: string | null;
   /**
-   * Whether the verdict took effect. False for a judgement recorded while its
-   * check only observes, so a skip there never stopped anything.
+   * Whether the check acts on its verdicts: false for a record check in shadow
+   * mode, whose skip never stopped anything. A worth-gate decision always is.
    */
   enforced: boolean;
   latencyMs: number | null;

@@ -18327,6 +18327,9 @@ a.agent-loop-row.agent-ephemeral-result-link:hover .agent-loop-state {
   color: var(--text-secondary);
   font-size: 13px;
 }
+.cognition-decision-record {
+  color: var(--text-primary);
+}
 .cognition-decision-details {
   margin-top: 8px;
 }

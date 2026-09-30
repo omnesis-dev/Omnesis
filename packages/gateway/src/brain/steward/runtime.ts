@@ -79,6 +79,7 @@ import type { WriteGate } from "../../write-gate.js";
 import type { DerivationStage } from "../../domain/DocumentDerivation.js";
 import type { ResolvedBrainSettings } from "../config.js";
 import type { CognitionRunExecutionContext } from "../run-driver.js";
+import type { RecordCheck } from "../record-check/check.js";
 
 type Db = Database.Database;
 
@@ -176,6 +177,11 @@ export interface CognitionToolsetDeps {
   getEntailmentVerifier?: () => Promise<EntailCapability | null>;
   validateAnnotationEvidence?: AnnotationToolDeps["validateAnnotationEvidence"];
   /**
+   * The record check, bound per background run to the lanes it covers.
+   * Omitted, every new annotation is saved unchecked.
+   */
+  recordCheck?: RecordCheck;
+  /**
    * Resolve the brief judge (the push bar) for `brief_create`. Omitted, or
    * resolving to null (judge disabled), the gate is absent and briefs ship
    * unjudged.
@@ -223,8 +229,9 @@ export function buildCognitionToolset(
   // check), so `schedule_agent_run` can auto-attach it to a follow-up check.
   const triggeringLoopId = runScopeLoopId(run.payload);
   const sweepId = parseCognitionSweepRunPayload(run.payload)?.sweepId;
-  const own = buildCognitionOwnTools(
-    ownToolsInput(deps, {
+  const checkRecord = deps.recordCheck?.forRun(run) ?? null;
+  const own = buildCognitionOwnTools({
+    ...ownToolsInput(deps, {
       runId: run.id,
       seedDocIds: cognitionSeedDocIds(deps.db, run),
       briefLane: cognitionBriefLane(run),
@@ -235,7 +242,8 @@ export function buildCognitionToolset(
       ...(triggeringLoopId !== undefined ? { triggeringLoopId } : {}),
       ...(opts.consumption ? { consumption: opts.consumption } : {}),
     }),
-  );
+    ...(checkRecord ? { checkRecord } : {}),
+  });
   // A merge-adjudication run gets its one dedicated verdict tool, scoped to
   // the run's own candidate. Background runs only — the interactive own-tools
   // path never carries it.
@@ -398,6 +406,8 @@ export interface CognitionRuntimeDeps {
   /** Entailment verifier resolver for the annotation firewall. Optional. */
   getEntailmentVerifier?: () => Promise<EntailCapability | null>;
   validateAnnotationEvidence?: AnnotationToolDeps["validateAnnotationEvidence"];
+  /** The record check on new background annotations. Optional — absent saves them unchecked. */
+  recordCheck?: RecordCheck;
   /** Brief judge (push bar) resolver for `brief_create`. Optional — absent leaves briefs unjudged. */
   getBriefJudge?: () => BriefJudge | null;
   policyStore?: { get(): Promise<{ revision: string }> };
@@ -502,6 +512,7 @@ export async function createCognitionRuntime(
       ? { validateAnnotationEvidence: deps.validateAnnotationEvidence }
       : {}),
     ...(deps.getEntailmentVerifier ? { getEntailmentVerifier: deps.getEntailmentVerifier } : {}),
+    ...(deps.recordCheck ? { recordCheck: deps.recordCheck } : {}),
     ...(deps.getBriefJudge ? { getBriefJudge: deps.getBriefJudge } : {}),
     clock,
     log: deps.log,

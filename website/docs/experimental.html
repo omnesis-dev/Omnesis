@@ -383,10 +383,12 @@
                 <td><code>decision</code></td>
                 <td>
                   Scores each email before its agent run and skips the ones the agent would get
-                  nothing from. Served only by TypeSafe Jev (<code>typesafe/jev-1.13.0</code>); see
-                  <a href="#brain-worth-gate">Skipping mail it cannot use</a>.
+                  nothing from, and scores each new record a run saves. Served only by TypeSafe Jev
+                  (<code>typesafe/jev-1.13.0</code>); see
+                  <a href="#brain-worth-gate">Skipping mail it cannot use</a> and
+                  <a href="#brain-record-check">Checking what it writes</a>.
                 </td>
-                <td>Every email Brain selects gets an agent run.</td>
+                <td>Every email Brain selects gets an agent run, and every record is saved.</td>
               </tr>
             </tbody>
           </table>
@@ -596,6 +598,23 @@
           come from <code>OMNESIS_TYPESAFE_API_KEY</code> or <code>TYPESAFE_API_KEY</code> in the
           gateway's environment. To reach a private TypeSafe deployment instead of the public API,
           set <code>inference.typesafe.url</code>.
+        </p>
+        <h3 id="brain-record-check">Checking what it writes</h3>
+        <p>
+          The same decision model also checks what Brain writes. When a live or catch-up run saves a
+          new dated entry or annotation drawn from a document, Jev reads that one sentence and
+          scores whether it belongs in your life memory; promotional dates, product news and
+          descriptions of what a document is score low. The agent still reads and searches as much
+          as it wants; only the record it settles on is scored.
+          <code>brain.annotations.recordCheck</code> sets what happens: <code>shadow</code> (the
+          default) saves every record at once and scores it afterwards, <code>enforce</code> scores
+          it first, drops a low-scored record and tells the agent not to retry it, and
+          <code>off</code> asks nothing. If Jev does not answer within 15 seconds, the record is
+          saved. Corrections to an existing record, entries Brain writes for its own scheduling,
+          anything you hand to the assistant, and memory you ask for directly are never checked.
+          Each verdict is shown on the run it was made for, with the record and the document it came
+          from, and its tokens appear as <strong>Decision model · record check</strong>. Verdicts
+          are deleted after the activity-retention window.
         </p>
 
         <h3 id="brain-spend">Bounding the spend</h3>
@@ -1022,7 +1041,9 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
                 <td>
                   Durable notes on documents and people. <code>basisCeilings</code> and
                   <code>confidenceFloor</code> are described in
-                  <a href="#brain-gates">What it will not write</a>.
+                  <a href="#brain-gates">What it will not write</a>;
+                  <code>recordCheck</code> (<code>shadow</code>) in
+                  <a href="#brain-record-check">Checking what it writes</a>.
                 </td>
               </tr>
               <tr>

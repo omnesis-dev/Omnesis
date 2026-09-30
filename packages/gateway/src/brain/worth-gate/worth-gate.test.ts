@@ -31,8 +31,14 @@ import { bootstrapCorpusByMonth } from "../storage/bootstrap.js";
 import { getCognitionEngineState, cognitionBootstrapEnqueuedKey } from "../storage/engine-state.js";
 import { cognitionSpendDay, getCognitionSpendDayTotal } from "../storage/spend.js";
 import { pruneActivityRetentionBatch } from "../../activity-retention/store.js";
-import { WorthGate, recordWorthGateSpend } from "./gate.js";
-import { EMAIL_WORTH_THRESHOLD, WORTH_GATE_RUBRIC_VERSION, emailWorthState } from "./rubric.js";
+import { recordDecisionSpend } from "../decision-call.js";
+import { WorthGate } from "./gate.js";
+import {
+  WORTH_GATE_SPEND_MECHANISM,
+  EMAIL_WORTH_THRESHOLD,
+  WORTH_GATE_RUBRIC_VERSION,
+  emailWorthState,
+} from "./rubric.js";
 import type { ChatBackend, TurnInput } from "@omnesis/agent";
 import type { DocumentInput } from "@omnesis/types";
 import type { Scheduler } from "../../scheduler/scheduler.js";
@@ -376,7 +382,13 @@ describe("worth gate", () => {
 
   test("a decision's tokens never count as a run toward the daily run budget", async () => {
     const writeGate = directWriteGate(db);
-    await recordWorthGateSpend(writeGate, "2026-09-01", "jev-1.13.0", 300);
+    await recordDecisionSpend(
+      writeGate,
+      "2026-09-01",
+      WORTH_GATE_SPEND_MECHANISM,
+      "jev-1.13.0",
+      300,
+    );
     expect(getCognitionSpendDayTotal(db, "2026-09-01")).toMatchObject({
       runs: 0,
       promptTokens: 300,
@@ -431,8 +443,26 @@ describe("worth gate", () => {
   });
 
   describe("in the drainer", () => {
-    function drainerWith(decision: DecisionCapability | null) {
+    function drainerWith(
+      decision: DecisionCapability | null,
+      opts: { failGatedSettle?: boolean } = {},
+    ) {
       const writeGate = directWriteGate(db);
+      // The drainer's writer, optionally refusing the gate's settle (a
+      // finalize with no usage) the way a writer failure would.
+      const drainerWriteGate = opts.failGatedSettle
+        ? (new Proxy(writeGate, {
+            get(target, prop, receiver) {
+              if (prop === "finalizeCognitionRun") {
+                return (input: { usage: unknown }) =>
+                  input.usage === null
+                    ? Promise.reject(new Error("writer unavailable"))
+                    : target.finalizeCognitionRun(input as never);
+              }
+              return Reflect.get(target, prop, receiver) as unknown;
+            },
+          }) as typeof writeGate)
+        : writeGate;
       const agentCalls: string[] = [];
       const backend: ChatBackend = {
         name: "scripted",
@@ -460,7 +490,7 @@ describe("worth gate", () => {
       const bundle = createCognitionDrainerTasks(
         {
           db,
-          writeGate,
+          writeGate: drainerWriteGate,
           driver,
           transcripts,
           log,
@@ -483,6 +513,24 @@ describe("worth gate", () => {
       );
       return { writeGate, drain: bundle.tasks[0]!, agentCalls };
     }
+
+    test("a gated run whose settle fails runs as if ungated instead of staying claimed", async () => {
+      const promo = seed({ externalId: "promo-fail", title: "Weekly deals inside" });
+      futureDate(promo);
+      const { writeGate, drain, agentCalls } = drainerWith(scripted(), { failGatedSettle: true });
+      await writeGate.enqueueCognitionRun(
+        {
+          id: "run_fail",
+          kind: "bootstrap",
+          payload: { docId: promo, datumAt: 1_704_067_200_000 },
+        },
+        now,
+      );
+      await drain.run(undefined, taskCtx);
+      expect(agentCalls).toHaveLength(1);
+      expect(getCognitionRun(db, "run_fail")?.status).toBe("completed");
+      expect(listDecisionsForRun(db, "run_fail")[0]?.verdict).toBe("skip");
+    });
 
     test("a gated bootstrap run settles with no agent turn, stays covered, and refunds its pace slot", async () => {
       const promo = seed({ externalId: "promo-d", title: "Weekly deals inside" });

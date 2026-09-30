@@ -2406,6 +2406,22 @@ describe("InferenceRegistry — decision role and TypeSafe", () => {
     },
   );
 
+  it("leaves a configured HTTP backend named typesafe serving the other roles", () => {
+    const reg = registryWithTypeSafeKey(true);
+    reg.loadConfig({
+      inference: {
+        allowRemoteInference: true,
+        backends: { typesafe: { url: "http://127.0.0.1:18998/v1" } },
+        assignments: { "background-agent": "typesafe/some-chat-model" },
+      },
+    } as OmnesisConfig);
+    expect(reg.resolve("background-agent")).toMatchObject({
+      kind: "http",
+      backendKey: "typesafe",
+      model: "some-chat-model",
+    });
+  });
+
   it("refuses TypeSafe for every other role", () => {
     const reg = registryWithTypeSafeKey(true);
     reg.loadConfig({

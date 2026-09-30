@@ -304,7 +304,7 @@ describe("delta-prime builders", () => {
     );
     const on = buildSynthesisDeltaPrime(db, {
       now: NOW,
-      cfg: cfgWith({ annotations: { enabled: true } }),
+      cfg: cfgWith({ annotations: { enabled: true, recordCheck: "shadow" } }),
     });
     expect(on).toContain("Recent durable observations");
     expect(on).toContain("annotation doc:anno_1");
@@ -333,13 +333,13 @@ describe("delta-prime builders", () => {
     // the knob now defaults on after graduation).
     const off = buildSynthesisDeltaPrime(db, {
       now: NOW,
-      cfg: cfgWith({ annotations: { enabled: false } }),
+      cfg: cfgWith({ annotations: { enabled: false, recordCheck: "shadow" } }),
     });
     expect(off).not.toContain("observations about people");
     // On: the person section renders and references the evidence doc to reground.
     const on = buildSynthesisDeltaPrime(db, {
       now: NOW,
-      cfg: cfgWith({ annotations: { enabled: true } }),
+      cfg: cfgWith({ annotations: { enabled: true, recordCheck: "shadow" } }),
     });
     expect(on).toContain("Recent observations about people");
     expect(on).toContain("annotation person:panno_1");
@@ -351,7 +351,7 @@ describe("delta-prime builders", () => {
     const doc = insertDoc("d1", "gmail-main");
     const evidence = insertDoc("e1", "gmail-main", "alpha beta gamma delta epsilon");
     const cfg = cfgWith({
-      annotations: { enabled: true },
+      annotations: { enabled: true, recordCheck: "shadow" },
       synthesisLookbackMs: 7 * DAY,
       primeMaxAnnotations: 2,
     });

@@ -39,6 +39,7 @@ const EXPECTED_INVENTORY = [
   "/brain/annotations/basisCeilings/synthesized [number]",
   "/brain/annotations/confidenceFloor [number]",
   "/brain/annotations/enabled [boolean]",
+  "/brain/annotations/recordCheck [enum]",
   "/brain/awarenessAxis [boolean]",
   "/brain/bootstrap/activeHours/from [string]",
   "/brain/bootstrap/activeHours/to [string]",

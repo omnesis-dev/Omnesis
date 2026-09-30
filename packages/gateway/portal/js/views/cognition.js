@@ -1368,17 +1368,55 @@ export function TranscriptSlot({ id, transcripts, gated }) {
   return html`<div class="debug-empty">No transcript stored for this run.</div>`;
 }
 
-// ── Decision model (the worth gate's judgements for one run) ─────────
+// ── Decision model (the worth gate's and the record check's judgements) ──
 
-const DECISION_VERDICT = {
-  pass: { label: "pass", color: "#86efac", sentence: "Worth a run — the agent turn went ahead." },
-  skip: { label: "skip", color: "#d2a8ff", sentence: "Not worth a run — the run settled with no agent turn." },
-  unavailable: {
-    label: "unavailable",
-    color: "#fdba74",
-    sentence: "The decision model could not answer, so the run went ahead unjudged.",
-  },
-};
+const UNAVAILABLE_COLOR = "#fdba74";
+
+/**
+ * How a verdict reads, by what the decision was for. The worth gate judges the
+ * run's document before any agent turn; the record check judges a record the
+ * run was about to save, and may only be observing (`enforced` false).
+ */
+function decisionVerdict(d) {
+  if (d.purpose === "record-check") {
+    if (d.verdict === "pass") {
+      return { label: "keep", color: "#86efac", sentence: "Belongs in life memory — the record was kept." };
+    }
+    if (d.verdict === "skip") {
+      return d.enforced
+        ? { label: "dropped", color: "#d2a8ff", sentence: "Judged not to belong in life memory — the record was not saved." }
+        : {
+            label: "would drop",
+            color: "#d2a8ff",
+            sentence: "Judged not to belong in life memory. The check is only observing, so the record was saved anyway.",
+          };
+    }
+    if (d.verdict === "unavailable") {
+      return {
+        label: "unavailable",
+        color: UNAVAILABLE_COLOR,
+        sentence: "The decision model could not answer, so the record was saved unjudged.",
+      };
+    }
+  } else if (d.purpose === "worth-gate") {
+    if (d.verdict === "pass") {
+      return { label: "pass", color: "#86efac", sentence: "Worth a run — the agent turn went ahead." };
+    }
+    if (d.verdict === "skip") {
+      return { label: "skip", color: "#d2a8ff", sentence: "Not worth a run — the run settled with no agent turn." };
+    }
+    if (d.verdict === "unavailable") {
+      return {
+        label: "unavailable",
+        color: UNAVAILABLE_COLOR,
+        sentence: "The decision model could not answer, so the run went ahead unjudged.",
+      };
+    }
+  }
+  return { label: d.verdict, color: "#94a3b8", sentence: null };
+}
+
+const DECISION_PURPOSE_LABEL = { "worth-gate": "worth gate", "record-check": "record check" };
 
 const fmtScore = (n) => (typeof n === "number" ? n.toFixed(2) : "—");
 const fmtPct = (n) => (typeof n === "number" ? `${Math.round(n * 100)}%` : "—");
@@ -1479,8 +1517,9 @@ function DecisionAnswer({ response, request }) {
 
 /** One decision-model judgement made for a run. Exported for tests. */
 export function DecisionCard({ decision: d }) {
-  const verdict = DECISION_VERDICT[d.verdict] ?? { label: d.verdict, color: "#94a3b8", sentence: null };
+  const verdict = decisionVerdict(d);
   const subject = d.subjectDoc ?? d.subjectDocumentId;
+  const recordText = d.request?.state?.record;
   return html`
     <div class="cognition-decision">
       <div class="cognition-decision-head">
@@ -1488,16 +1527,22 @@ export function DecisionCard({ decision: d }) {
         <span class="cognition-decision-score">
           score <strong>${fmtScore(d.score)}</strong> ${d.score == null ? "" : d.score >= d.threshold ? "≥" : "<"} threshold ${fmtScore(d.threshold)}
         </span>
-        <span class="cognition-dim">${d.purpose} · ${d.lane}</span>
+        <span class="cognition-dim">${DECISION_PURPOSE_LABEL[d.purpose] ?? d.purpose} · ${d.lane}</span>
       </div>
       ${verdict.sentence ? html`<div class="cognition-decision-sentence">${verdict.sentence}</div>` : null}
       ${d.error ? html`<div class="debug-error" style="margin:6px 0;">⚠️ ${d.error}</div>` : null}
-      <${Field} label="Judged">
+      ${d.purpose === "record-check"
+        ? html`<${Field} label="Record">
+              ${typeof recordText === "string" ? html`<span class="cognition-decision-record">${recordText}</span> ` : null}
+              <code>${d.recordId}</code>
+            </${Field}>
+            <${Field} label="From"><${DocChip} doc=${subject} /></${Field}>`
+        : html`<${Field} label="Judged">
         ${d.inheritedFromParent
           ? html`the document that contains it <${DocChip} doc=${subject} />
               <span class="cognition-dim"> — this attachment inherits its email's judgement</span>`
           : html`<${DocChip} doc=${subject} />`}
-      </${Field}>
+      </${Field}>`}
       ${d.reusedFrom
         ? html`<${Field} label="Reused">
             decision <code>${d.reusedFrom}</code>

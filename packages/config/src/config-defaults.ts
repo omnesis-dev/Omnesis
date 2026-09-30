@@ -85,6 +85,7 @@ export const CONFIG_DEFAULTS = {
       enabled: true,
       basisCeilings: { quoted: 0.9, inferred: 0.7, synthesized: 0.55 },
       confidenceFloor: 0.25,
+      recordCheck: "shadow",
     },
     reverification: { enabled: true, intervalDays: 14, maxPerSweep: 12, batchSize: 6 },
     provenanceRecheck: { enabled: true },
