@@ -16,6 +16,9 @@ import type { EnrichmentSettings } from "@omnesis/config";
 
 export type NumericDateOrderSetting = NumericDateOrder | "auto";
 
+/** Spend mechanism the mention worth gate's decision-model tokens are recorded under. */
+export const MENTION_WORTH_GATE_SPEND_MECHANISM = "mention-worth-gate";
+
 export interface ResolvedDateEnrichmentSettings {
   enabled: boolean;
   batchSize: number;
@@ -24,6 +27,8 @@ export interface ResolvedDateEnrichmentSettings {
   periodMs: number;
   idlePeriodMs: number;
   numericDateOrder: NumericDateOrderSetting;
+  /** Hide mentions from email the decision model judges not worth recording. */
+  worthGate: boolean;
 }
 
 export const DATE_ENRICHMENT_DEFAULTS: ResolvedDateEnrichmentSettings = {
@@ -34,6 +39,7 @@ export const DATE_ENRICHMENT_DEFAULTS: ResolvedDateEnrichmentSettings = {
   periodMs: 1_500,
   idlePeriodMs: 300_000,
   numericDateOrder: "auto",
+  worthGate: false,
 };
 
 export function resolveDateEnrichmentSettings(
@@ -48,6 +54,7 @@ export function resolveDateEnrichmentSettings(
     periodMs: d?.periodMs ?? DATE_ENRICHMENT_DEFAULTS.periodMs,
     idlePeriodMs: d?.idlePeriodMs ?? DATE_ENRICHMENT_DEFAULTS.idlePeriodMs,
     numericDateOrder: d?.numericDateOrder ?? DATE_ENRICHMENT_DEFAULTS.numericDateOrder,
+    worthGate: d?.worthGate ?? DATE_ENRICHMENT_DEFAULTS.worthGate,
   };
 }
 

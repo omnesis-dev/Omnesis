@@ -152,10 +152,15 @@ export interface MountBriefsRoutesOpts {
    * every other gated route.
    */
   getTalkback?: (() => BriefTalkbackPort | null) | undefined;
+  /** Whether the mention worth gate is active, so the time routes hide unworthy mentions as the agent does. */
+  mentionWorthGateActive?: (() => boolean) | undefined;
 }
 
 export function mountBriefsRoutes(app: RouteApp, opts: MountBriefsRoutesOpts): void {
   const productLoops = new ProductLoopQueryService(opts.db);
+  const temporalOptions = opts.mentionWorthGateActive
+    ? { hideUnworthyMentions: opts.mentionWorthGateActive }
+    : {};
   const requireActive = (): void => {
     if (!opts.getStatus?.().active) throw new NotFoundError("Not found");
   };
@@ -367,7 +372,7 @@ export function mountBriefsRoutes(app: RouteApp, opts: MountBriefsRoutesOpts): v
     // Only a TemporalQueryInputError is the caller's to fix. Everything else is
     // the gateway's own and propagates to the sanitized, logged 500 in
     // `app.onError`, which is where an internal fault belongs.
-    const page = await new TemporalQueryService(opts.db, opts.analyticsDb)
+    const page = await new TemporalQueryService(opts.db, opts.analyticsDb, temporalOptions)
       .query({
         from: new Date(fromMs).toISOString(),
         to: new Date(toMs).toISOString(),
@@ -400,7 +405,7 @@ export function mountBriefsRoutes(app: RouteApp, opts: MountBriefsRoutesOpts): v
     requireVisible();
     const timeZone = c.req.query("timeZone");
     if (!timeZone?.trim()) throw new BadRequestError('"timeZone" must be an IANA time zone');
-    const item = await new TemporalQueryService(opts.db, opts.analyticsDb)
+    const item = await new TemporalQueryService(opts.db, opts.analyticsDb, temporalOptions)
       .annotationById(c.req.param("id"), timeZone)
       .catch((error: unknown) => {
         if (error instanceof TemporalQueryInputError) throw new BadRequestError(error.message);

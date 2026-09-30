@@ -15,7 +15,7 @@ import type { WriteGate } from "../../write-gate.js";
 const log = createLogger("test");
 
 /** Build the task with gates that record the ALS priority active at call time. */
-function buildTask(opts: { enabled: boolean }) {
+function buildTask(opts: { enabled: boolean; onApplied?: () => void }) {
   const seen: Priority[] = [];
   const recordPrio = () => {
     seen.push(getActivePriority() ?? ("__none__" as Priority));
@@ -45,6 +45,7 @@ function buildTask(opts: { enabled: boolean }) {
     writeGate,
     getSettings: () => ({ ...DATE_ENRICHMENT_DEFAULTS, enabled: opts.enabled }),
     tracker: new QueueTracker(),
+    ...(opts.onApplied ? { onApplied: opts.onApplied } : {}),
     log,
   });
   return { task, seen };
@@ -61,6 +62,13 @@ describe("dateExtractionTask — contention guarantee", () => {
     await runWithPriority("realtime", () => task.run());
     expect(seen.length).toBe(3); // io fetch, cpu extract, writer apply
     for (const p of seen) expect(p).toBe("background");
+  });
+
+  it("reports a tick that stored documents, so the worth gate can judge them", async () => {
+    let applied = 0;
+    const { task } = buildTask({ enabled: true, onApplied: () => applied++ });
+    await task.run();
+    expect(applied).toBe(1);
   });
 
   it("does no work (no sub-op calls) when the enabled knob is off", async () => {

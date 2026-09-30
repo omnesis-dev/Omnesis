@@ -330,10 +330,19 @@ const overlaps = intervalOverlapsWindow;
 /** Layers read when a query names none. Mentions are asked for by name. */
 const DEFAULT_ORIGINS: readonly TemporalOrigin[] = ["projection", "annotation"];
 
+export interface TemporalQueryOptions {
+  /**
+   * True while the mention worth gate is active: mentions from email the
+   * decision model judged not worth recording are left out.
+   */
+  hideUnworthyMentions?: () => boolean;
+}
+
 export class TemporalQueryService {
   constructor(
     private readonly db: Db,
     private readonly analyticsDb?: AnalyticsDb,
+    private readonly options: TemporalQueryOptions = {},
   ) {}
 
   /**
@@ -409,10 +418,14 @@ export class TemporalQueryService {
     if (origins.has("annotation")) {
       ranked.push(...this.readAnnotations(effectiveInput, range));
     }
+    // Read once so the page and its coverage agree on whether the gate applied.
+    const hideUnworthy = this.options.hideUnworthyMentions?.() ?? false;
     // Mentions arrive already paged past the cursor and anchored, with their
     // whole-window count alongside: the layer is too large to read in full.
     const mentions = origins.has("mention")
-      ? readMentionPage(this.db, effectiveInput, range, after, limit, compareKeys)
+      ? readMentionPage(this.db, effectiveInput, range, after, limit, compareKeys, {
+          hideUnworthy,
+        })
       : null;
     if (execution?.signal?.aborted) throw execution.signal.reason;
 
@@ -446,6 +459,9 @@ export class TemporalQueryService {
       coverage.mentions = {
         pendingDocuments: countPendingDateExtraction(this.db, effectiveInput.sourceIds),
         ...(mentions.totalCapped ? { countCapped: true as const } : {}),
+        ...(hideUnworthy && !effectiveInput.documentIds?.length && !effectiveInput.entityIds?.length
+          ? { unworthyHidden: true as const }
+          : {}),
       };
     }
     return {

@@ -7039,6 +7039,7 @@
         "packages/gateway/src/brain/storage/consumption-edges.test.ts",
         "packages/gateway/src/brain/temporal-annotation-invalidator.integration.test.ts",
         "packages/gateway/src/brain/worth-gate/worth-gate.test.ts",
+        "packages/gateway/src/enrichment/dates/mention-judgements.test.ts",
         "packages/gateway/src/data/list-revisions.test.ts",
         "packages/gateway/src/data/prune-invalid-email-aliases.test.ts",
         "packages/gateway/src/domain/DocumentGraphService.test.ts",

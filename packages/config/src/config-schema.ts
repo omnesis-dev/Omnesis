@@ -2821,10 +2821,10 @@ const inferenceAssignments = z
     // judge runs independently from the background agent, including when both
     // use Codex. Never assigned by default: unset means briefs ship unjudged.
     "brief-judge": assignmentValue.optional(),
-    // Typed decisions (experimental): "typesafe/<model>" (TypeSafe Jev) or
-    // "replay". Only typed-decision backends serve it — never a chat model.
-    // Never assigned by default: unset means the Brain's worth gate is absent
-    // and every candidate document gets a background-agent run.
+    // Typed decisions: "typesafe/<model>" (TypeSafe Jev) or "replay". Only
+    // typed-decision backends serve it — never a chat model. Never assigned by
+    // default: unset means the mention worth gate and the Brain's worth gate
+    // are both absent.
     decision: assignmentValue.optional(),
   })
   .strict();
@@ -2940,7 +2940,7 @@ const inference = z
           .string()
           .url()
           .describe(
-            "Experimental: the TypeSafe endpoint the Decision model uses. Defaults to https://api.typesafe.ai/v1/systemone; set it to reach a private deployment or a local test server.",
+            "The TypeSafe endpoint the Decision model uses. Defaults to https://api.typesafe.ai/v1/systemone; set it to reach a private deployment or a local test server.",
           )
           .optional(),
       })
@@ -3022,6 +3022,12 @@ const enrichmentDates = z
       .enum(["auto", "day-first", "month-first"])
       .describe(
         'How an all-numeric English date such as "10/07/2026" reads: "day-first" (10 July), "month-first" (7 October), or "auto" — month-first when the gateway host\'s time zone is in the Americas, day-first elsewhere. Applies to documents scanned after the change.',
+      )
+      .optional(),
+    worthGate: z
+      .boolean()
+      .describe(
+        "Hide the date mentions of email the decision model judges not worth recording — marketing, newsletters, notifications — from time queries. Takes effect only while the decision model is assigned (TypeSafe Jev); every email with a date mention, including those already stored, then has its subject, sender and first 2,000 characters sent to TypeSafe, again only when its content changes.",
       )
       .optional(),
   })

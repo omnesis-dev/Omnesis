@@ -61,13 +61,15 @@ interface DateExtractionTaskDeps {
   writeGate: WriteGate;
   getSettings: () => ResolvedDateEnrichmentSettings;
   tracker: QueueTracker;
+  /** Called after a tick stored documents, which may have queued work for the worth gate. */
+  onApplied?: () => void;
   log: Logger;
 }
 
 export function dateExtractionTask(
   deps: DateExtractionTaskDeps,
 ): PeriodicTask<unknown, IdleResult> {
-  const { ioGate, cpuGate, writeGate, getSettings, tracker, log } = deps;
+  const { ioGate, cpuGate, writeGate, getSettings, tracker, onApplied, log } = deps;
   // Cadence is read once at construction (a periodic reads periodMs once);
   // batchSize / maxCharsPerDoc / scanBudgetMs / enabled are read live per tick.
   const { periodMs, idlePeriodMs } = getSettings();
@@ -130,6 +132,7 @@ export function dateExtractionTask(
           const { applied, datesWritten } = await writeGate.applyExtractedDates(results);
           total += applied;
           tracker.recordTick(applied);
+          if (applied > 0) onApplied?.();
           const prev = total - applied;
           if (Math.floor(prev / 1000) !== Math.floor(total / 1000)) {
             log.info(`date extraction progress: ${total} docs (+${datesWritten} dates this tick)`);
@@ -150,6 +153,8 @@ export interface BootDateEnrichmentDeps {
   getSettings: () => ResolvedDateEnrichmentSettings;
   /** Cheap count of documents still needing extraction — seeds the tracker. */
   countPending: () => number;
+  /** Called after a tick stored documents, which may have queued work for the worth gate. */
+  onApplied?: () => void;
   log: Logger;
 }
 
@@ -169,6 +174,7 @@ export function bootDateEnrichment(deps: BootDateEnrichmentDeps): { kick: () => 
     writeGate: deps.writeGate,
     getSettings: deps.getSettings,
     tracker,
+    ...(deps.onApplied ? { onApplied: deps.onApplied } : {}),
     log: deps.log,
   });
   deps.scheduler.schedule(task);

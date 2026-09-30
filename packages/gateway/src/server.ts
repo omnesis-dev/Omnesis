@@ -283,6 +283,8 @@ export function createServer(
     searchPipeline?: SearchPipeline;
     /** Read-worker gate for the Direct MCP `lookup_people` port. */
     personLookupGate?: PersonLookupGate;
+    /** Whether the mention worth gate is active, so Direct `temporal_query` hides unworthy mentions. */
+    mentionWorthGateActive?: () => boolean;
     /** Test/embedding override for the fixed Direct MCP façade. */
     directMcpService?: import("./agent/direct-mcp.js").DirectMcpService;
     /** Receives the stateless MCP HTTP runtime for graceful shutdown. */
@@ -1482,6 +1484,9 @@ export function createServer(
           analyticsDb: opts.analyticsDb,
           syncStatus: opts.syncStatus,
           personLookupGate: opts.personLookupGate,
+          ...(opts.mentionWorthGateActive
+            ? { mentionWorthGateActive: opts.mentionWorthGateActive }
+            : {}),
         })
       : undefined);
   const directMcpBoundary = directMcpService
@@ -1661,6 +1666,7 @@ export function createServer(
     getStatus: opts?.getBriefsStatus,
     clock: opts?.briefsClock,
     getTalkback: opts?.getBriefTalkback,
+    mentionWorthGateActive: opts?.mentionWorthGateActive,
   });
 
   // /admin/brain/* — the operator inspection surface the `omnesis

@@ -95,6 +95,7 @@ const EXPECTED_INVENTORY = [
   "/enrichment/dates/numericDateOrder [enum]",
   "/enrichment/dates/periodMs [number]",
   "/enrichment/dates/scanBudgetMs [number]",
+  "/enrichment/dates/worthGate [boolean]",
   "/gateway/analyticsMemoryLimitMb [number]",
   "/gateway/analyticsStreamRekeyMaxRows [number]",
   "/gateway/analyticsThreads [number]",

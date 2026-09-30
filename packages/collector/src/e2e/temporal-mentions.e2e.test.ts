@@ -7,6 +7,11 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import { authorizeMcpClient, type AuthorizedMcpClient } from "./mcp-oauth-helper.js";
 import { SyntheticE2EHarness } from "./synth-harness.js";
+import {
+  startDecisionServer,
+  type DecisionServer,
+  type DecisionServerRequest,
+} from "./brain-bench/decision-server.js";
 
 /**
  * The mention layer of `temporal_query` end to end on a stable gateway: the
@@ -153,6 +158,199 @@ describe("temporal query mentions — synthetic-corpus gateway", () => {
   ): Promise<AuthorizedMcpClient> {
     return authorizeMcpClient({ gatewayUrl: harness.gatewayUrl, apiKey: harness.apiKey }, input);
   }
+});
+
+/**
+ * The mention worth gate end to end on a stable gateway: the decision role is
+ * served by a scripted stand-in for the TypeSafe endpoint, reached through the production
+ * TypeSafe client, extraction queues every document it leaves with a mention,
+ * the gate judges each email once and the Direct `temporal_query` leaves out
+ * the mentions of email judged not worth recording.
+ *
+ * The score is scripted: an email whose subject has an even number of
+ * characters scores below the threshold, so the corpus splits
+ * deterministically. Whether a score is a good judgement is the rubric's
+ * evaluation, not this suite's.
+ */
+describe("temporal query mentions — the worth gate on a stable gateway", () => {
+  let harness: SyntheticE2EHarness;
+  let decision: DecisionServer;
+  /** A throwaway key for the stand-in, which accepts any. */
+  const TYPESAFE_KEY = "e2e_typesafe_key_0123456789";
+  const LOW = 0.2;
+  const HIGH = 2.4;
+  const scoreOf = (subject: string): number => (subject.length % 2 === 0 ? LOW : HIGH);
+
+  beforeAll(async () => {
+    decision = await startDecisionServer({
+      policy: (request: DecisionServerRequest) => ({
+        worth_score: {
+          type: "score",
+          score: scoreOf(String((request.state as { subject?: unknown }).subject)),
+        },
+      }),
+      inputTokens: 700,
+    });
+    harness = new SyntheticE2EHarness({
+      gatewayMode: "stable",
+      universe: "default",
+      extraGatewayEnv: { OMNESIS_TYPESAFE_API_KEY: TYPESAFE_KEY },
+      extraInference: {
+        allowRemoteInference: true,
+        typesafeUrl: decision.endpoint,
+        assignments: { decision: `typesafe/${decision.modelId}` },
+      },
+      extraGatewayConfig: { enrichment: { dates: { worthGate: true } } },
+    });
+    await harness.start();
+    await harness.syncAllSources();
+  }, 180_000);
+
+  afterAll(async () => {
+    await harness?.destroy();
+    await decision?.close();
+  }, 15_000);
+
+  test("judges each email once and leaves the mentions of unworthy email out of the time query", async () => {
+    const db = new Database(harness.getDbPath(), { readonly: true });
+    try {
+      // Extraction queues, the gate settles: wait until neither has work left.
+      const deadline = Date.now() + 120_000;
+      for (;;) {
+        const { extracting, judging } = db
+          .prepare<[], { extracting: number; judging: number }>(
+            `SELECT (SELECT COUNT(*) FROM documents WHERE dates_extracted_at IS NULL) AS extracting,
+                    (SELECT COUNT(*) FROM date_mention_judgements WHERE verdict = 'pending') AS judging`,
+          )
+          .get()!;
+        if (extracting === 0 && judging === 0) break;
+        if (Date.now() > deadline) {
+          throw new Error(`Still ${extracting} documents to scan and ${judging} to judge`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+
+      const verdicts = db
+        .prepare<
+          [],
+          {
+            document_id: string;
+            verdict: string;
+            score: number | null;
+            document_type: string | null;
+          }
+        >(
+          `SELECT j.document_id, j.verdict, j.score,
+                  json_extract(d.metadata, '$.documentType') AS document_type
+             FROM date_mention_judgements j JOIN documents d ON d.id = j.document_id`,
+        )
+        .all();
+      const dropped = verdicts.filter((v) => v.verdict === "drop");
+      const kept = verdicts.filter((v) => v.verdict === "keep");
+      expect(dropped.length).toBeGreaterThan(0);
+      expect(kept.length).toBeGreaterThan(0);
+      // Only email (and attachments, by their email) is judged.
+      for (const v of [...dropped, ...kept]) {
+        expect(["email", "attachment"]).toContain(v.document_type);
+      }
+      for (const v of verdicts.filter((row) => row.verdict === "exempt")) {
+        expect(v.score).toBeNull();
+      }
+
+      // What was sent: the worth rubric's state, with the bearer key, and each
+      // email asked about once.
+      expect(decision.calls.length).toBeGreaterThan(0);
+      const subjects = decision.calls.map((call) => {
+        expect(call.authorization).toBe(`Bearer ${TYPESAFE_KEY}`);
+        expect(Object.keys(call.request.questions)).toEqual(["worth_score"]);
+        expect(Object.keys(call.request.state as object).sort()).toEqual([
+          "body",
+          "from",
+          "subject",
+        ]);
+        return (call.request.state as { subject: string }).subject;
+      });
+      expect(decision.calls.length).toBeLessThanOrEqual(kept.length + dropped.length);
+      expect(new Set(subjects).size).toBeGreaterThan(0);
+
+      // Its tokens are recorded under their own mechanism.
+      const spent = db
+        .prepare<
+          [],
+          { tokens: number | null }
+        >(`SELECT SUM(prompt_tokens) AS tokens FROM cognition_spend WHERE mechanism = 'mention-worth-gate'`)
+        .get();
+      expect(spent?.tokens).toBe(decision.calls.length * 700);
+
+      // A window holding a dropped email's mention.
+      const target = db
+        .prepare<[], { document_id: string; mention_start_day: string }>(
+          `SELECT x.document_id, x.mention_start_day
+             FROM document_extracted_dates x
+             JOIN date_mention_judgements j ON j.document_id = x.document_id
+            WHERE j.verdict = 'drop' AND x.mention_start_day IS NOT NULL
+            ORDER BY x.id LIMIT 1`,
+        )
+        .get();
+      if (!target) throw new Error("No dropped email carries a mention");
+
+      const authorized = await authorizeMcpClient(
+        { gatewayUrl: harness.gatewayUrl, apiKey: harness.apiKey },
+        {
+          principalName: "Worth gate assistant",
+          grantName: "Worth gate access",
+          credentialLabel: "Fictional worth gate desktop",
+          capabilities: ["direct"],
+        },
+      );
+      try {
+        type Page = {
+          items: Array<{ origin: string; mention?: { documentId: string } }>;
+          nextCursor?: string;
+          coverage: { mentions?: { unworthyHidden?: true } };
+        };
+        const read = async (extra: Record<string, unknown> = {}): Promise<Page[]> => {
+          const pages: Page[] = [];
+          let cursor: string | undefined;
+          do {
+            const result = await authorized.client.callTool({
+              name: "temporal_query",
+              arguments: {
+                from: target.mention_start_day,
+                timeZone: "UTC",
+                origins: ["mention"],
+                limit: 100,
+                ...extra,
+                ...(cursor ? { cursor } : {}),
+              },
+            });
+            expect(result.isError).not.toBe(true);
+            const page = (result.structuredContent as { data: Page }).data;
+            pages.push(page);
+            cursor = page.nextCursor;
+          } while (cursor);
+          return pages;
+        };
+        const window = await read();
+        const shown = new Set(window.flatMap((p) => p.items.map((i) => i.mention?.documentId)));
+        const droppedIds = new Set(dropped.map((v) => v.document_id));
+        expect(shown.has(target.document_id)).toBe(false);
+        expect([...shown].some((id) => id && droppedIds.has(id))).toBe(false);
+        expect(window[0]!.coverage.mentions?.unworthyHidden).toBe(true);
+
+        // Naming the document reads it whatever its worth.
+        const named = await read({ documentIds: [target.document_id] });
+        expect(named.flatMap((p) => p.items.map((i) => i.mention?.documentId))).toContain(
+          target.document_id,
+        );
+        expect(named[0]!.coverage.mentions?.unworthyHidden).toBeUndefined();
+      } finally {
+        await closeAuthorized(authorized);
+      }
+    } finally {
+      db.close();
+    }
+  }, 240_000);
 });
 
 async function closeAuthorized(authorized: AuthorizedMcpClient): Promise<void> {

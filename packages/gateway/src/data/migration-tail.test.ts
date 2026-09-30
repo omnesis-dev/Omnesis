@@ -172,6 +172,7 @@ function windBack(db: Db): void {
   db.exec("DROP INDEX IF EXISTS idx_document_extracted_dates_mention_start");
   db.exec("DROP INDEX IF EXISTS idx_document_extracted_dates_mention_range");
   db.exec("DROP INDEX IF EXISTS idx_document_extracted_dates_mention_thread");
+  db.exec("DROP TABLE IF EXISTS date_mention_judgements");
   const dateColumns = db
     .prepare<[], { name: string }>(
       "SELECT name FROM pragma_table_xinfo('document_extracted_dates')",
@@ -308,6 +309,14 @@ describe("an install several versions behind, upgrading", () => {
           "thread_key",
         ]),
       );
+      expect(
+        db
+          .prepare<
+            [],
+            { name: string }
+          >("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'date_mention_judgements'")
+          .get(),
+      ).toBeDefined();
     } finally {
       (db as unknown as Database.Database).close();
     }

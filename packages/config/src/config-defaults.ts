@@ -115,6 +115,7 @@ export const CONFIG_DEFAULTS = {
       periodMs: 1_500,
       idlePeriodMs: 300_000,
       numericDateOrder: "auto",
+      worthGate: false,
     },
   },
   search: {

@@ -115,7 +115,9 @@ export function createTemporalQueryTool(deps: TemporalQueryToolDeps): ToolHandle
       "source document ids. To learn when something happens, pass the " +
       "documentIds you found about it with a wide window. Mentions are " +
       "numerous: when a result is truncated, follow nextCursor or narrow the " +
-      "window — never stop at the first page of a long one. " +
+      "window — never stop at the first page of a long one. When " +
+      "`coverage.mentions.unworthyHidden` is set, mentions from email judged " +
+      "not worth recording (marketing, newsletters) were left out. " +
       "Each item is marked `anchored` (it starts or ends inside the window) " +
       "or not (it merely spans it), and `summary` counts both across the " +
       "whole window: a window with 0 anchored items is UNDESCRIBED however " +

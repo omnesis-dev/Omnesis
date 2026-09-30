@@ -514,6 +514,8 @@ export interface GatewayDirectMcpDeps {
   analyticsDb: AnalyticsDb;
   syncStatus?: SyncStatusRegistry;
   personLookupGate?: PersonLookupGate;
+  /** Whether the mention worth gate is active, so `temporal_query` hides unworthy mentions. */
+  mentionWorthGateActive?: () => boolean;
 }
 
 /** Build the fixed façade without consulting any agent/model assignment. */
@@ -551,9 +553,14 @@ export function createGatewayDirectMcpService(deps: GatewayDirectMcpDeps): Direc
             person: createGatewayPersonPort(deps.db, { lookupGate: deps.personLookupGate }),
             trail: createGatewayTrailPort(deps.db, deps.analyticsDb),
             sql: createGatewaySqlPort(deps.analyticsDb),
-            temporal: createGatewayTemporalPort(deps.db, deps.analyticsDb, {
-              maxWindowMs: MAX_DIRECT_MCP_TEMPORAL_WINDOW_MS,
-            }),
+            temporal: createGatewayTemporalPort(
+              deps.db,
+              deps.analyticsDb,
+              { maxWindowMs: MAX_DIRECT_MCP_TEMPORAL_WINDOW_MS },
+              deps.mentionWorthGateActive
+                ? { hideUnworthyMentions: deps.mentionWorthGateActive }
+                : {},
+            ),
             entityContext: createGatewayEntityContextPort(deps.db),
             loopRead: createGatewayLoopReadPort(deps.db),
           },

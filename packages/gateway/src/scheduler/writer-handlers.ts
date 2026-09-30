@@ -155,6 +155,12 @@ import {
 } from "../domain/LinkGraphService.js";
 import { applyExtractedDates } from "../enrichment/dates/storage.js";
 import {
+  applyMentionJudgements,
+  requeueStaleMentionJudgements,
+  type MentionJudgementDeferral,
+  type MentionJudgementRecord,
+} from "../enrichment/dates/mention-judgements.js";
+import {
   insertTemporalAnnotation,
   updateTemporalAnnotation,
   invalidateTemporalAnnotation,
@@ -886,6 +892,13 @@ export const writerHandlers = {
   // background repair pass cannot park realtime ingest on the single writer.
   "db.applyExtractedDates": (db: Db, entries: DateExtractionResult[]) =>
     applyExtractedDates(db, entries),
+  "db.applyMentionJudgements": (
+    db: Db,
+    records: MentionJudgementRecord[],
+    deferrals: MentionJudgementDeferral[],
+  ) => applyMentionJudgements(db, records, deferrals),
+  "db.requeueStaleMentionJudgements": (db: Db, rubricVersion: string, limit: number) =>
+    requeueStaleMentionJudgements(db, rubricVersion, limit),
   // Drain of source-declared forward-reference edges: resolve parked
   // edges whose target has since been ingested, promote them into
   // document_links, and TTL-drop ones whose target never arrived.

@@ -45,6 +45,8 @@ import {
   WORTH_GATED_DOCUMENT_TYPE,
   WORTH_GATE_RUBRIC_VERSION,
   emailWorthState,
+  hasStructuredDate,
+  passesWorthThreshold,
 } from "./rubric.js";
 import type { DecisionCapability, Logger } from "@omnesis/core";
 import type { ClaimedCognitionRun } from "../storage/types.js";
@@ -261,7 +263,7 @@ export class WorthGate {
 }
 
 function verdictFor(score: number): "pass" | "skip" {
-  return score >= EMAIL_WORTH_THRESHOLD ? "pass" : "skip";
+  return passesWorthThreshold(score) ? "pass" : "skip";
 }
 
 function parseMetadata(doc: DocRow): Record<string, unknown> {
@@ -269,9 +271,4 @@ function parseMetadata(doc: DocRow): Record<string, unknown> {
     string,
     unknown
   >;
-}
-
-/** Structured booking/invoice dates — the waker's own bulk-mail exemption. */
-function hasStructuredDate(meta: Record<string, unknown>): boolean {
-  return typeof meta.dueAt === "string" || typeof meta.scheduledAt === "string";
 }

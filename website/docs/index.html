@@ -476,6 +476,17 @@
           change.
         </p>
         <p>
+          Marketing mail and newsletters name dates constantly. With
+          <code>enrichment.dates.worthGate</code> on and a
+          <a href="/docs/operating#models">decision model</a> assigned, the gateway asks that model
+          whether each email with a date mention is worth recording, including every such email
+          already stored, and the time query leaves out the dates of email judged not worth it. An
+          attachment follows the email it came with, and other documents are always kept. An email
+          whose judgement is still to come — it is queued, or the model did not answer — keeps its
+          dates, and with the setting off or no decision model assigned every date is shown. The
+          agent can still read any email's dates by naming the document.
+        </p>
+        <p>
           A search queries both indexes and merges the results, so exact terms and paraphrases both
           match. Without an embedding model, search falls back to keywords alone. How ranking works,
           and the query syntax, are on <a href="/docs/search">Search</a>.

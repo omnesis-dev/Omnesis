@@ -27,7 +27,7 @@ export const WORTH_GATE_SPEND_MECHANISM = "worth-gate";
 export const EMAIL_WORTH_THRESHOLD = 1.08;
 
 /** Body characters sent to the decision model. */
-const EMAIL_BODY_CHARS = 2000;
+export const EMAIL_BODY_CHARS = 2000;
 
 export const EMAIL_WORTH_QUESTION_ID = "worth_score";
 
@@ -47,6 +47,19 @@ export const EMAIL_WORTH_QUESTIONS: Readonly<Record<string, DecisionQuestion>> =
 
 /** The document type the gate judges; attachments are judged by their parent of this type. */
 export const WORTH_GATED_DOCUMENT_TYPE = "email";
+
+/** True when a score clears the threshold: the email is worth recording. */
+export function passesWorthThreshold(score: number): boolean {
+  return score >= EMAIL_WORTH_THRESHOLD;
+}
+
+/**
+ * Structured booking or invoice dates (`dueAt` / `scheduledAt`): mail that
+ * carries them is never judged, the exemption the waker already makes.
+ */
+export function hasStructuredDate(meta: Readonly<Record<string, unknown>>): boolean {
+  return typeof meta.dueAt === "string" || typeof meta.scheduledAt === "string";
+}
 
 export interface EmailWorthState {
   subject: string;

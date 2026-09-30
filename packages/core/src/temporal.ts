@@ -161,9 +161,12 @@ export interface TemporalCoverage {
    * date recognizer contribute no mentions yet, so a non-zero
    * `pendingDocuments` means a thin mention result may only be incomplete.
    * `countCapped` means the window holds more mentions than were counted, so
-   * `summary.anchored` is a floor.
+   * `summary.anchored` is a floor. `unworthyHidden` means the mention worth
+   * gate applied to this read: mentions from email judged not worth recording
+   * (marketing, newsletters, notifications) are left out. It is never set when
+   * the caller names documents, which are always read.
    */
-  mentions?: { pendingDocuments: number; countCapped?: true };
+  mentions?: { pendingDocuments: number; countCapped?: true; unworthyHidden?: true };
 }
 
 export interface TemporalQueryResult {

@@ -122,6 +122,32 @@ describe("temporal query — mention layer", () => {
     expect(result.summary).toEqual({ anchored: 1, spanning: 0 });
   });
 
+  it("leaves out mentions from email judged not worth recording while the worth gate is active", async () => {
+    const worth = seed("worth", [date("2026-10-12", { text: "12 October" })]);
+    const promo = seed("promo", [date("2026-10-12", { text: "sale ends 12 October" })]);
+    db.prepare("UPDATE date_mention_judgements SET verdict = 'keep' WHERE document_id = ?").run(
+      worth,
+    );
+    db.prepare("UPDATE date_mention_judgements SET verdict = 'drop' WHERE document_id = ?").run(
+      promo,
+    );
+    let active = true;
+    service = new TemporalQueryService(db, undefined, { hideUnworthyMentions: () => active });
+
+    const gated = await mentions({ from: "2026-10-12" });
+    expect(gated.items.map((item) => item.mention?.documentId)).toEqual([worth]);
+    expect(gated.coverage.mentions).toEqual({ pendingDocuments: 0, unworthyHidden: true });
+    // A document the caller names speaks for itself.
+    const named = await mentions({ from: "2026-10-12", documentIds: [promo] });
+    expect(named.items.map((item) => item.mention?.documentId)).toEqual([promo]);
+    expect(named.coverage.mentions?.unworthyHidden).toBeUndefined();
+    const byEntity = await mentions({ from: "2026-10-12", entityIds: [promo] });
+    expect(byEntity.items.map((item) => item.mention?.documentId)).toEqual([promo]);
+    // With the gate inactive every mention is read.
+    active = false;
+    expect((await mentions({ from: "2026-10-12" })).items).toHaveLength(2);
+  });
+
   it("is read only when asked for", async () => {
     seed("m1", [date("2026-10-12")]);
     const result = await service.query({ from: "2026-10-12", timeZone: "UTC" });

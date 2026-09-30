@@ -136,6 +136,8 @@ export interface AgentServiceDeps {
   /** Read-worker gate for `lookup_people`. When wired the person port runs the
    *  heavy assembly off the main event loop; absent, it runs synchronously. */
   personLookupGate?: PersonLookupGate;
+  /** Whether the mention worth gate is active, so `temporal_query` hides unworthy mentions. */
+  mentionWorthGateActive?: () => boolean;
   /**
    * The operator's `OMNESIS.md`, re-read per prompt build so an edit made in a
    * terminal editor reaches the next conversation without a restart. Absent on
@@ -430,7 +432,11 @@ export function createAgentService(
       // runs, plus that agent's own selective interpretations when it does.
       // Unscoped, so the source-restricted answer scope below never gets it.
       // No write surface.
-      temporal: createGatewayTemporalPort(db, analyticsDb),
+      temporal: createGatewayTemporalPort(db, analyticsDb, undefined, {
+        ...(deps.mentionWorthGateActive
+          ? { hideUnworthyMentions: deps.mentionWorthGateActive }
+          : {}),
+      }),
       // Read-only cognitive-context (reap) port (experimental): lets the
       // interactive agent pull the whole neighbourhood the background agent
       // linked around one entity in a single call — no write surface.
@@ -585,6 +591,8 @@ export interface AgentLifecycleDeps {
   codexRuntimeService?: CodexRuntimeService | null;
   /** Read-worker gate forwarded to the person port for off-thread `lookup_people`. */
   personLookupGate?: PersonLookupGate;
+  /** Whether the mention worth gate is active, so `temporal_query` hides unworthy mentions. */
+  mentionWorthGateActive?: () => boolean;
   /** Worker-coordinated bounded index cleanup for activity retention. */
   deleteDocumentIndexBatch?: (
     documentId: string,
@@ -846,6 +854,9 @@ export class AgentLifecycle {
         conversationReadState: this.conversationReadState,
         notifyConversation: this.deps.notifyConversation,
         personLookupGate: this.deps.personLookupGate,
+        ...(this.deps.mentionWorthGateActive
+          ? { mentionWorthGateActive: this.deps.mentionWorthGateActive }
+          : {}),
       },
       roleAware,
       this.resolveSubagentCaps(),

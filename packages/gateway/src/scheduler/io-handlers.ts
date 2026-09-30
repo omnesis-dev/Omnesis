@@ -75,6 +75,7 @@ import {
   readLinkStatsFromCounters,
 } from "../data/repositories/LinkStatsRepository.js";
 import { fetchLinksForBatch, resolveExtractedLinks } from "../domain/LinkExtraction.js";
+import { fetchPendingMentionJudgements } from "../enrichment/dates/mention-judgements.js";
 import {
   fetchDateExtractionBatch,
   countPendingDateExtraction,
@@ -309,6 +310,13 @@ export const ioHandlers = {
   // ── date-enrichment three-phase pipeline (IO-only fetch) ───────────
   "io.fetchDateExtractionBatch": (db: Db, limit: number, maxChars: number) =>
     fetchDateExtractionBatch(db, limit, maxChars),
+  "io.fetchPendingMentionJudgements": (
+    db: Db,
+    limit: number,
+    rubricVersion: string,
+    modelId: string,
+    now: number,
+  ) => fetchPendingMentionJudgements(db, limit, rubricVersion, modelId, now),
 
   // ── DF snapshot three-phase pipeline (IO-only fetch) ───────────────
   "io.captureDfOccVersion": (db: Db) => captureDfOccVersion(db),

@@ -37,6 +37,7 @@
  */
 
 import { cognitionAuthoredSqlExclusion } from "../../brain/cognition-authored.js";
+import { judgedNotWorthSql } from "../dates/mention-judgements.js";
 import { MENTION_MAX_SPAN_DAYS } from "../dates/mention-bounds.js";
 import { resolveTemporalRange } from "./temporal-range.js";
 import type Database from "better-sqlite3";
@@ -276,6 +277,7 @@ export function readMentionPage(
   after: MentionSortKey | null,
   limit: number,
   compare: (left: MentionSortKey, right: MentionSortKey) => number,
+  options: { hideUnworthy?: boolean } = {},
 ): MentionPage {
   const empty: MentionPage = { items: [], total: 0, totalCapped: false };
   const events = !input.kinds?.length || input.kinds.includes(MENTION_KIND);
@@ -301,7 +303,12 @@ export function readMentionPage(
     ...(authored.sql ? [authored.sql] : []),
     FIRST_OF_ITS_BOUNDS,
   ];
-  if (!input.documentIds?.length && !input.entityIds?.length) shared.push(LATEST_IN_ITS_THREAD);
+  if (!input.documentIds?.length && !input.entityIds?.length) {
+    // Documents the caller names speak for themselves, whatever their worth.
+    // The primary-key lookup goes before the thread's correlated subquery.
+    if (options.hideUnworthy) shared.push(`NOT ${judgedNotWorthSql("x.document_id")}`);
+    shared.push(LATEST_IN_ITS_THREAD);
+  }
   if (!events) shared.push(IS_DEADLINE);
   if (!deadlines) shared.push(`NOT ${IS_DEADLINE}`);
   const sharedValues: unknown[] = [...authored.params];

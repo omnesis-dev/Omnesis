@@ -21,6 +21,7 @@
  * the main read handle for {@link getExtractedDatesForDocument} and the counts.
  */
 
+import { createMentionJudgementsTable } from "./mention-judgements.js";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 import type { ExtractedDate } from "@omnesis/types";
@@ -62,6 +63,7 @@ export function createExtractedDatesTables(db: Db): void {
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_document_extracted_dates_start ON document_extracted_dates(resolved_start)",
   );
+  createMentionJudgementsTable(db);
 }
 
 /** A two-bound range: the one shape that may begin before a window and end inside it. */
@@ -128,7 +130,8 @@ export function ensureMentionDayColumns(db: Db): void {
 /**
  * Migration 185: add the mention columns and rescan every document, so every
  * stored date is read again with the current language routing and mention
- * rules.
+ * rules — and every document with a mention is queued for the worth gate,
+ * whose table schema setup creates.
  */
 export function addDateMentions(db: Db): void {
   ensureMentionDayColumns(db);
@@ -210,6 +213,15 @@ export function applyExtractedDates(
         mention_start_day, mention_end_day, mention_deadline, thread_key)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
+  // Queue a document that keeps a mention for the worth gate, as a new
+  // generation; the previous judgement's answer stays alongside, so unchanged
+  // content is not asked again.
+  const queue = db.prepare(
+    `INSERT INTO date_mention_judgements (document_id, verdict) VALUES (?, 'pending')
+       ON CONFLICT(document_id) DO UPDATE
+         SET verdict = 'pending', generation = generation + 1, attempts = 0, next_attempt_at = 0`,
+  );
+  const unqueue = db.prepare("DELETE FROM date_mention_judgements WHERE document_id = ?");
   const now = new Date().toISOString();
   let applied = 0;
   let datesWritten = 0;
@@ -241,6 +253,8 @@ export function applyExtractedDates(
         );
         datesWritten++;
       }
+      if (e.mentions?.some((m) => m !== null)) queue.run(e.id);
+      else unqueue.run(e.id);
     }
   });
   run(entries);

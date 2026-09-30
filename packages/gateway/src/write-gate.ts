@@ -241,6 +241,12 @@ import {
 import { reconcileLinkStatsCounters } from "./data/repositories/LinkStatsRepository.js";
 import { beginLinkDeclarationUpdate, finishLinkDeclarationUpdate } from "./data/list-revisions.js";
 import { applyExtractedDates as applyExtractedDatesToDb } from "./enrichment/dates/storage.js";
+import {
+  applyMentionJudgements as applyMentionJudgementsToDb,
+  requeueStaleMentionJudgements as requeueStaleMentionJudgementsInDb,
+  type MentionJudgementDeferral,
+  type MentionJudgementRecord,
+} from "./enrichment/dates/mention-judgements.js";
 import type { DateExtractionResult } from "./enrichment/dates/extractor.js";
 import {
   insertTemporalAnnotation,
@@ -1102,6 +1108,16 @@ export interface WriteGate {
   applyExtractedDates(
     entries: DateExtractionResult[],
   ): Promise<{ applied: number; datesWritten: number }>;
+  /**
+   * Settle the mention worth gate's judgements and push back the ones that
+   * must wait; only rows still pending at the fetched generation change.
+   */
+  applyMentionJudgements(
+    records: MentionJudgementRecord[],
+    deferrals: MentionJudgementDeferral[],
+  ): Promise<number>;
+  /** Return up to `limit` judgements made under another rubric version to the gate's queue. */
+  requeueStaleMentionJudgements(rubricVersion: string, limit: number): Promise<number>;
   /**
    * Drain the `pending_edges` backlog: promote forward-reference
    * source-declared edges whose target has since been ingested, and TTL-drop
@@ -2328,6 +2344,10 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     finishLinkDeclarationUpdate: () => call("links.finishDeclarationUpdate", []),
     upsertLinkResolutions: (batch) => call("links.upsertLinkResolutions", [batch]),
     applyExtractedDates: (entries) => call("db.applyExtractedDates", [entries]),
+    applyMentionJudgements: (records, deferrals) =>
+      call("db.applyMentionJudgements", [records, deferrals]),
+    requeueStaleMentionJudgements: (rubricVersion, limit) =>
+      call("db.requeueStaleMentionJudgements", [rubricVersion, limit]),
     drainPendingEdges: (limit) => call("edges.drainPending", [limit]),
     upsertExtractedLinksBatch: (rows) => call("links.upsertExtractedLinksBatch", [rows]),
     markLinkStatsDirty: () => call("links.markLinkStatsDirty", []),
@@ -2888,6 +2908,10 @@ export function directWriteGate(db: Db): WriteGate {
     finishLinkDeclarationUpdate: async () => finishLinkDeclarationUpdate(db),
     upsertLinkResolutions: async (batch) => upsertLinkResolutions(db, batch),
     applyExtractedDates: async (entries) => applyExtractedDatesToDb(db, entries),
+    applyMentionJudgements: async (records, deferrals) =>
+      applyMentionJudgementsToDb(db, records, deferrals),
+    requeueStaleMentionJudgements: async (rubricVersion, limit) =>
+      requeueStaleMentionJudgementsInDb(db, rubricVersion, limit),
     drainPendingEdges: async (limit) => drainPendingEdges(db, { limit }),
     upsertExtractedLinksBatch: async (rows) => upsertExtractedLinksBatch(db, rows),
     markLinkStatsDirty: async () => {
