@@ -360,7 +360,7 @@ describe("Agent search v2 — synthetic file journey", () => {
       expect(body.results.every((hit) => hit.provenance === undefined)).toBe(true);
     } else expect(injection.status).toBe(400);
     const enriched = await directSearch(unrestricted, QUERY);
-    const copyQuery = '"agreement copy" source:google-drive';
+    const copyQuery = "agreement source:google-drive before:2025-02-02";
     const enrichedCopies = await directSearchResult(unrestricted, copyQuery);
     enabled = false;
     await harness.restartGateway();
@@ -408,7 +408,8 @@ describe("Agent search v2 — synthetic file journey", () => {
     expect(grouped.provenance!.copies.map((copy) => copy.documentId).sort()).toEqual(
       copies.map((copy) => copy.id).sort(),
     );
-    // Compare the full live tool payload for the same three matching roots,
+    // The source/date filters constrain both retrieval lanes to three roots.
+    // Compare the full live tool payload for those roots,
     // including batch envelopes and provenance for copies outside the filter.
     const enrichedCopyBytes = Buffer.byteLength(JSON.stringify(enrichedCopies));
     const legacyCopyBytes = Buffer.byteLength(JSON.stringify(legacyCopies));
