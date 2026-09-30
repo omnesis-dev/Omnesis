@@ -34,6 +34,7 @@ import {
 } from "./constants.js";
 import { googleApiStatus, mapGoogleApiError } from "./api-error.js";
 import {
+  addsToMessage,
   messageContent,
   messageDate,
   messageParts,
@@ -689,6 +690,7 @@ export class GmailSource {
     if (labels.includes("SPAM") || labels.includes("TRASH")) return { documents: [] };
 
     const payload = msg.payload;
+    await this.fetchDeferredBodyText(msg.id, payload);
     const getHeader = (name: string) => partHeader(payload, name) ?? "";
 
     const subject = getHeader("subject") || "(no subject)";
@@ -717,7 +719,7 @@ export class GmailSource {
       isAutoSubmittedGenerated(autoSubmitted) ||
       (senderEmail !== undefined && isAutomatedSenderAddress(senderEmail));
 
-    const attachments = await this.readAttachments(msg.id, payload, parts.html);
+    const attachments = await this.readAttachments(msg.id, payload, parts.html, body);
 
     let content = messageContent({ subject, from, to, cc, bcc, date, body });
     if (attachments.infos.length > 0) {
@@ -779,14 +781,17 @@ export class GmailSource {
    * A message's attachments: the marker for each, and the extracted text of
    * those that became child documents on this fetch.
    *
-   * Inline decoration (a signature logo the HTML shows by `cid:`) is not an
-   * attachment and is left out. A text attachment is read in the charset its
-   * part declares.
+   * A small image the HTML shows inline by `cid:` is usually decoration — a
+   * logo, an icon, a badge — and is left out, but only once its text has been
+   * read and adds nothing the message does not already say: a signature sent
+   * as an image can carry the only copy of a phone number or an address. A
+   * text attachment is read in the charset its part declares.
    */
   private async readAttachments(
     messageId: string,
     payload: gmail_v1.Schema$MessagePart,
     html: string | undefined,
+    messageText: string,
   ): Promise<{
     infos: AttachmentInfo[];
     children: Array<{
@@ -807,9 +812,10 @@ export class GmailSource {
       // Recover the real type when the client sent a generic Content-Type
       // (a .pkpass mislabeled application/octet-stream is the common case).
       const mimeType = resolveEffectiveMimeType(part.filename, part.mimeType);
-      if (isInlineDecorationImage({ mimeType, contentId: part.contentId, size: part.size }, html)) {
-        continue;
-      }
+      const decoration = isInlineDecorationImage(
+        { mimeType, contentId: part.contentId, size: part.size },
+        html,
+      );
       // Two attachments with the same name, size and type are told apart by
       // their order; the child document's id derives from the same pair.
       const baseId = deriveAttachmentStableId(part.filename, part.size, mimeType);
@@ -819,7 +825,7 @@ export class GmailSource {
 
       const check = shouldExtractAttachment(mimeType, part.size, this.attachmentConfig);
       if (!check.extract) {
-        infos.push({ ...base, extracted: false, reason: check.reason });
+        if (!decoration) infos.push({ ...base, extracted: false, reason: check.reason });
         continue;
       }
 
@@ -830,6 +836,9 @@ export class GmailSource {
         const result = await this.extractAttachment(data, typed, {
           maxTextLength: this.attachmentConfig.maxTextLength,
         });
+        if (decoration && !(result && !result.noText && addsToMessage(result.text, messageText))) {
+          continue;
+        }
         if (!result) {
           info = { ...base, extracted: false, reason: "extraction-failed" };
         } else if (result.noText) {
@@ -905,6 +914,28 @@ export class GmailSource {
     for (const child of part.parts ?? []) {
       this.walkAttachmentParts(child, result);
     }
+  }
+
+  /**
+   * Fill in body text Gmail left out of the message. A large text or HTML
+   * part comes back with an attachment id in place of its data, and read
+   * without it the message would lose its body. A part with a file name is an
+   * attached file, fetched with the attachments instead.
+   */
+  private async fetchDeferredBodyText(
+    messageId: string,
+    part: gmail_v1.Schema$MessagePart,
+  ): Promise<void> {
+    const isText = part.mimeType === "text/plain" || part.mimeType === "text/html";
+    if (isText && !part.filename && part.body?.attachmentId && !part.body.data) {
+      const res = await this.gmail.users.messages.attachments.get({
+        userId: "me",
+        messageId,
+        id: part.body.attachmentId,
+      });
+      if (res.data.data) part.body.data = res.data.data;
+    }
+    for (const child of part.parts ?? []) await this.fetchDeferredBodyText(messageId, child);
   }
 
   /**

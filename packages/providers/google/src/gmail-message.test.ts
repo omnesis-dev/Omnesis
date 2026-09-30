@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, test, expect, beforeEach, vi } from "vitest";
-import { messageDate } from "./gmail-message.js";
+import { addsToMessage, messageDate } from "./gmail-message.js";
 import { createMockGmail, createGmailSource, makeGmailMessage } from "./testing/mock-google.js";
 import type { DocumentInput } from "@omnesis/types";
 
@@ -107,6 +107,103 @@ describe("Gmail message normalization", () => {
       expect(doc.content).toContain("Crème brûlée ce soir");
     });
 
+    test("text split into several parts around an inline image keeps every part", async () => {
+      const headers = [
+        { name: "Subject", value: "Trip notes" },
+        { name: "From", value: "maya.reeves@example.com" },
+        { name: "To", value: "jamie.lopez@example.org" },
+        { name: "Date", value: "Mon, 01 Jan 2024 00:00:00 +0000" },
+      ];
+      const doc = await normalize(
+        makeGmailMessage("m-10", {
+          payload: {
+            headers,
+            mimeType: "multipart/mixed",
+            parts: [
+              {
+                mimeType: "text/html",
+                body: { data: b64("<p>Day one: we reached the lake.</p>") },
+              },
+              {
+                mimeType: "image/png",
+                filename: "lake.png",
+                body: { attachmentId: "att-1", size: 40_000 },
+              },
+              { mimeType: "text/html", body: { data: b64("<p>Day two: the ridge walk.</p>") } },
+            ],
+          },
+        }),
+      );
+      expect(doc.content).toContain("Day one: we reached the lake.");
+      expect(doc.content).toContain("Day two: the ridge walk.");
+    });
+
+    test("a body Gmail returns by attachment id is fetched and read", async () => {
+      gmail.users.messages.attachments.get = vi.fn((params: { id: string }) =>
+        Promise.resolve({
+          data: {
+            data: params.id === "body-1" ? b64("<p>The full itinerary for the week.</p>") : "",
+          },
+        }),
+      );
+      const doc = await normalize(
+        makeGmailMessage("m-12", {
+          payload: {
+            headers: [
+              { name: "Subject", value: "Itinerary" },
+              { name: "From", value: "maya.reeves@example.com" },
+              { name: "To", value: "jamie.lopez@example.org" },
+              { name: "Date", value: "Mon, 01 Jan 2024 00:00:00 +0000" },
+            ],
+            mimeType: "multipart/alternative",
+            parts: [{ mimeType: "text/html", body: { attachmentId: "body-1", size: 120_000 } }],
+          },
+        }),
+      );
+      expect(doc.content).toContain("The full itinerary for the week.");
+    });
+
+    test("a short first HTML part does not hide the one that carries the message", async () => {
+      // The sender's own text carries a replacement character, in the markup
+      // plain part and in the long HTML part alike; the short one has none.
+      const article = Array.from(
+        { length: 40 },
+        (_, i) => `<p>Paragraph ${i} of the quarterly review \uFFFD see notes.</p>`,
+      ).join("");
+      const doc = await normalize(
+        makeGmailMessage("m-11", {
+          payload: {
+            headers: [
+              { name: "Subject", value: "Quarterly review" },
+              { name: "From", value: "news@example.com" },
+              { name: "To", value: "jamie.lopez@example.org" },
+              { name: "Date", value: "Mon, 01 Jan 2024 00:00:00 +0000" },
+            ],
+            mimeType: "multipart/parallel",
+            parts: [
+              { mimeType: "text/html", body: { data: b64("<p>Sent from our office.</p>") } },
+              {
+                mimeType: "multipart/alternative",
+                parts: [
+                  {
+                    mimeType: "text/plain",
+                    body: { data: b64(`<html><body>${article}</body></html>`) },
+                  },
+                  {
+                    mimeType: "text/html",
+                    body: { data: b64(`<html><body>${article}</body></html>`) },
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      );
+      expect(doc.content).toContain("Paragraph 0 of the quarterly review");
+      expect(doc.content).toContain("Paragraph 39 of the quarterly review");
+      expect(doc.content).not.toContain("<p>");
+    });
+
     test("a 'view in browser' plain part gives way to the HTML that carries the message", async () => {
       const paragraphs = Array.from(
         { length: 60 },
@@ -165,5 +262,34 @@ describe("Gmail message normalization", () => {
       expect(sender?.allowPersonCreation).toBe(false);
       expect(doc.metadata.automatedSender).toBe(true);
     });
+  });
+});
+
+describe("addsToMessage", () => {
+  const message = "Thanks for the call. maya, the design studio, +44 7700 900123, maya@example.com";
+
+  test("text the message already carries adds nothing", () => {
+    expect(addsToMessage("the design studio", message)).toBe(false);
+    expect(addsToMessage("MAYA@EXAMPLE.COM", message)).toBe(false);
+    expect(addsToMessage("", message)).toBe(false);
+  });
+
+  test("a phone number is the same number however its prefix is written", () => {
+    expect(addsToMessage("Tel 07700 900123", message)).toBe(false);
+    expect(addsToMessage("Tel (0)7700-900-123", message)).toBe(false);
+    expect(addsToMessage("Tel +44 7700 900456", message)).toBe(true);
+  });
+
+  test("a date or a short code is not taken for a phone number", () => {
+    expect(addsToMessage("2024-01-15", message)).toBe(false);
+  });
+
+  test("an email address the message lacks is new", () => {
+    expect(addsToMessage("desk@example.org", message)).toBe(true);
+  });
+
+  test("a few words the message never uses are new, one or two are not", () => {
+    expect(addsToMessage("Award winner", message)).toBe(false);
+    expect(addsToMessage("registered office above the old bakery", message)).toBe(true);
   });
 });
