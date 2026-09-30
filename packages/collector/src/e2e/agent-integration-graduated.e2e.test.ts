@@ -80,8 +80,18 @@ describe("managed agent integration on a gateway without Watches", () => {
     harness = new SyntheticE2EHarness({
       gatewayMode: "stable",
       universe: "default",
-      agentBackend: "replay",
-      extraInference: { assignments: { "privacy-reviewer": "replay" } },
+      // Keep the draft cassette shared, but pin this reviewer to a fixture
+      // that explicitly withholds its citation link. No model inference runs.
+      agentBackend: "off",
+      extraGatewayConfig: {
+        agent: { replay: { fixture: join(repositoryRoot, "evals/universes/default/agent-demos") } },
+      },
+      extraInference: {
+        assignments: {
+          agent: "replay",
+          "privacy-reviewer": `replay/${join(repositoryRoot, "packages/collector/src/e2e/fixtures/citation-link-review")}`,
+        },
+      },
     });
     await harness.start();
     // Seed the document annotated by the replay before its citation is privacy-reviewed.

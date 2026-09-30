@@ -5932,6 +5932,7 @@
     {
       "value": "Halden Press",
       "paths": [
+        "packages/collector/src/e2e/fixtures/citation-link-review/delivery-review.jsonl",
         "evals/universes/default/agent-demos/privacy-delivery-window-review.jsonl",
         "evals/universes/default/agent-demos/privacy-delivery-window.jsonl",
         "evals/universes/default/agent-demos/privacy-requests.json",
@@ -8392,6 +8393,7 @@
     {
       "value": "Ridgeway Logistics",
       "paths": [
+        "packages/collector/src/e2e/fixtures/citation-link-review/delivery-review.jsonl",
         "evals/universes/default/agent-demos/privacy-delivery-window-review.jsonl",
         "evals/universes/default/agent-demos/privacy-delivery-window.jsonl",
         "packages/collector/src/e2e/agent-integration-connect.e2e.test.ts",
@@ -9496,6 +9498,7 @@
     {
       "value": "The Halden Press",
       "paths": [
+        "packages/collector/src/e2e/fixtures/citation-link-review/delivery-review.jsonl",
         "evals/universes/default/agent-demos/privacy-delivery-window-review.jsonl",
         "evals/universes/default/agent-demos/privacy-delivery-window.jsonl",
         "packages/collector/src/e2e/agent-integration-connect.e2e.test.ts",
