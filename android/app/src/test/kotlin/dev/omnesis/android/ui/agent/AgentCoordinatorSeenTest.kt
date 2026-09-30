@@ -7,10 +7,15 @@ import dev.omnesis.android.transport.client.AgentClient
 import dev.omnesis.android.transport.client.AgentEventSource
 import dev.omnesis.android.transport.dto.ConversationSummary
 import dev.omnesis.android.transport.http.GatewayHttp
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withTimeout
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
@@ -47,6 +52,7 @@ class AgentCoordinatorSeenTest {
     private lateinit var server: MockWebServer
     private val seenRequests: MutableList<Pair<String, String>> =
         CopyOnWriteArrayList()
+    private val coordinators = mutableListOf<AgentCoordinator>()
 
     @Before fun setUp() {
         Dispatchers.setMain(kotlinx.coroutines.test.UnconfinedTestDispatcher())
@@ -74,9 +80,32 @@ class AgentCoordinatorSeenTest {
     }
 
     @After fun tearDown() {
-        server.shutdown()
-        Dispatchers.resetMain()
+        // Observing a server request does not await its response coroutine. Stop and join
+        // every owned job before replacing Main, including mark/resume jobs that teardown
+        // does not track. Keep this lifecycle access in the fixture, not the product API.
+        val scopeField = AgentCoordinator::class.java.getDeclaredField("scope").apply {
+            isAccessible = true
+        }
+        try {
+            coordinators.forEach { it.teardown() }
+            runBlocking {
+                withTimeout(5_000) {
+                    coordinators.forEach { coordinator ->
+                        val scope = scopeField.get(coordinator) as CoroutineScope
+                        checkNotNull(scope.coroutineContext[Job]).cancelAndJoin()
+                    }
+                }
+            }
+        } finally {
+            try {
+                server.shutdown()
+            } finally {
+                Dispatchers.resetMain()
+            }
+        }
     }
+
+    private fun coordinator() = AgentCoordinator().also { coordinators += it }
 
     private fun client() = AgentClient(GatewayHttp(OkHttpClient(), server.url("/").toString(), "tok"))
     private fun eventSource() = AgentEventSource(OkHttpClient(), server.url("/").toString(), "tok")
@@ -92,7 +121,7 @@ class AgentCoordinatorSeenTest {
 
     @Test
     fun resuming_a_conversation_does_not_claim_it_is_on_screen() {
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(), eventSource(), AgentCoordinator.UiState(hasClient = true),
         )
@@ -107,7 +136,7 @@ class AgentCoordinatorSeenTest {
 
     @Test
     fun the_surface_claims_it_and_withdraws_it() {
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(), eventSource(), AgentCoordinator.UiState(hasClient = true),
         )
@@ -124,7 +153,7 @@ class AgentCoordinatorSeenTest {
 
     @Test
     fun backgrounding_withdraws_the_visible_conversation_and_foregrounding_reclaims_it() {
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(), eventSource(), AgentCoordinator.UiState(hasClient = true),
         )
@@ -144,7 +173,7 @@ class AgentCoordinatorSeenTest {
 
     @Test
     fun a_surface_composed_in_the_background_waits_to_claim_until_foreground() {
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(), eventSource(), AgentCoordinator.UiState(hasClient = true),
         )
@@ -159,7 +188,7 @@ class AgentCoordinatorSeenTest {
 
     @Test
     fun a_retiring_surface_cannot_release_its_replacement() {
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(), eventSource(), AgentCoordinator.UiState(hasClient = true),
         )
@@ -176,7 +205,7 @@ class AgentCoordinatorSeenTest {
 
     @Test
     fun showing_a_conversation_drops_its_dot_before_the_wire_answers() {
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(), eventSource(),
             AgentCoordinator.UiState(
