@@ -8,6 +8,7 @@ import {
   enumParam,
   limitParam,
   listPageInfo,
+  decisionDto,
   runDto,
   scheduledDto,
   timedCursor,
@@ -76,8 +77,12 @@ export function mountCognitionRunAdminRoutes(ctx: CognitionAdminRouteContext): v
       filters,
       revision,
     );
+    const verdicts = query.decisionVerdicts(runs.map((run) => run.id));
     return c.json({
-      items: runs.map((run) => runDto(run, query.activityReader())),
+      items: runs.map((run) => ({
+        ...runDto(run, query.activityReader()),
+        gateVerdict: verdicts.get(run.id) ?? null,
+      })),
       pageInfo: listPageInfo(hasMore, limit, nextCursor),
     });
   });
@@ -98,8 +103,15 @@ export function mountCognitionRunAdminRoutes(ctx: CognitionAdminRouteContext): v
       dto.trigger.docId
         ? { ...dto, trigger: { ...dto.trigger, doc: query.documentRefs([dto.trigger.docId])[0] } }
         : dto;
+    const decisions = query.decisionsForRun(id);
+    const subjectRefs = new Map(
+      query
+        .documentRefs([...new Set(decisions.map((d) => d.subjectDocumentId))])
+        .map((ref) => [ref.id, ref]),
+    );
     return c.json({
-      run: enriched,
+      run: enriched ? { ...enriched, gateVerdict: decisions.at(-1)?.verdict ?? null } : enriched,
+      decisions: decisions.map((d) => decisionDto(d, subjectRefs.get(d.subjectDocumentId))),
       transcripts: refs.map(transcriptRefDto),
       rebuilding: !transcriptPage.indexComplete,
       ...(!transcriptPage.indexComplete ? { retryAfterMs: 100 } : {}),

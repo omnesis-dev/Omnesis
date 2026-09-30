@@ -107,6 +107,11 @@ export interface SessionOptions {
    * Omitted by interactive sessions; see {@link TurnInput.rateLimitPatience}.
    */
   rateLimitPatience?: RateLimitPatience;
+  /**
+   * The prompt-cache routing key every turn of this session carries.
+   * Omitted by interactive sessions; see {@link TurnInput.promptCacheKey}.
+   */
+  promptCacheKey?: string;
 }
 
 export interface SendOptions {
@@ -133,6 +138,7 @@ export class AgentSession {
   /** A ceiling on reasoning for every turn, when this session asked for one. */
   private readonly reasoning: ReasoningBound | undefined;
   private readonly rateLimitPatience: RateLimitPatience | undefined;
+  private readonly promptCacheKey: string | undefined;
   private readonly subscribers = new Set<Subscriber>();
 
   private history: ChatMessage[] = [];
@@ -149,6 +155,7 @@ export class AgentSession {
     this.speaksFor = opts.caller;
     this.reasoning = opts.reasoning;
     this.rateLimitPatience = opts.rateLimitPatience;
+    this.promptCacheKey = opts.promptCacheKey;
     if (opts.initialHistory && opts.initialHistory.length > 0) {
       // Defensive copy: the caller may keep mutating its own copy
       // (we never do, but the API contract says we own the seed).
@@ -475,6 +482,7 @@ export class AgentSession {
             ...(this.rateLimitPatience === undefined
               ? {}
               : { rateLimitPatience: this.rateLimitPatience }),
+            ...(this.promptCacheKey === undefined ? {} : { promptCacheKey: this.promptCacheKey }),
             ...(opts.llmProbe === undefined ? {} : { llmProbe: opts.llmProbe }),
           },
           turn.abortController.signal,

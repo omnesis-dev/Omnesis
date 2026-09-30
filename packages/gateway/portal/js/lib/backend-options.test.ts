@@ -8,6 +8,7 @@ import {
   buildAddBackendOptions,
   isAnthropicConfigured,
   catalogProviderForBackend,
+  isDecisionRole,
 } from "./backend-options.js";
 
 const PRESETS = [
@@ -332,6 +333,39 @@ describe("buildAddBackendOptions", () => {
       loggedIn: false,
       status: "unreachable",
     });
+  });
+});
+
+describe("buildModelPickerOptions — the Decision model", () => {
+  // Every kind of backend configured, so an omission is the rule and not an
+  // empty overview.
+  const everything = overview({
+    inference: {
+      backends: {
+        openai: { type: "http", status: "ok", modelRoles: { "gpt-example": ["agent"] } },
+        "custom-host": { type: "http", status: "ok", modelRoles: { "model-a": ["agent"] } },
+        anthropic: { type: "anthropic", status: "ok", hasApiKey: true },
+      },
+      codex: { configured: true, status: "ok", loggedIn: true, models: ["codex-a"], modelRoles: { "codex-a": ["agent", "decision"] } },
+    },
+  });
+
+  it("offers TypeSafe alone — no chat backend, no custom backend", () => {
+    expect(isDecisionRole("decision")).toBe(true);
+    expect(buildModelPickerOptions(everything, "decision")).toEqual([{ kind: "typesafe" }]);
+  });
+
+  it("offers TypeSafe to no other capability", () => {
+    for (const role of ["embedder", "agent", "privacy-reviewer", "entailment-verifier", "watch-judge", "transcriber", "ocr", "background-agent", "brief-judge"]) {
+      expect(isDecisionRole(role)).toBe(false);
+      const kinds = buildModelPickerOptions(everything, role).map((o: { kind: string }) => o.kind);
+      expect(kinds, role).not.toContain("typesafe");
+    }
+  });
+
+  it("the Add-a-backend grid never lists TypeSafe", () => {
+    const kinds = buildAddBackendOptions(everything).map((o: { kind: string }) => o.kind);
+    expect(kinds).not.toContain("typesafe");
   });
 });
 

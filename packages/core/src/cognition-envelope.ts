@@ -3,7 +3,7 @@
 
 /**
  * The cognition run-prompt envelope — the identity line every background
- * run's prompt opens with, and its parser.
+ * run's prompt carries, and its parser.
  *
  * The envelope states which run a prompt belongs to (id, kind, attempt) so
  * a re-claimed attempt can recognize and adopt work its predecessor left
@@ -13,6 +13,11 @@
  * being asked to perform. A format-only-in-the-writer arrangement drifts —
  * the reader's copy silently stops matching and every scripted run degrades
  * into a no-op — so writer and reader are defined together and cannot.
+ *
+ * The envelope is not the first line of a run prompt: the prompt opens with
+ * its kind's static rules (the part a provider's prefix cache can reuse), and
+ * the envelope heads the volatile tail after them. The parser therefore finds
+ * it on any line, taking the first one.
  *
  * The prose is load-bearing: the model reads it too. Change it only
  * deliberately, and never in a way that drops the id, kind, or attempt.
@@ -38,29 +43,17 @@ export function formatCognitionRunEnvelope(run: CognitionRunEnvelope): string {
   return `Loop agent run ${run.runId} (kind: ${run.kind}, attempt ${run.attempt}).${reAttempt}`;
 }
 
-/** Matches the first line of {@link formatCognitionRunEnvelope}. */
-const ENVELOPE_RE = /^Loop agent run (\S+) \(kind: (\w+), attempt (\d+)\)\./;
+/** Matches the first line of {@link formatCognitionRunEnvelope}, on any line of a prompt. */
+const ENVELOPE_RE = /^Loop agent run (\S+) \(kind: (\w+), attempt (\d+)\)\./m;
 
 /**
- * Read the envelope off a run prompt. Null when the text does not open with
- * one — a caller that scripts runs should treat that as "not a cognition
- * run prompt" and refuse to act, never as a default kind.
+ * Read the envelope off a run prompt — the first line anywhere in it that
+ * carries one. Null when the text carries none — a caller that scripts runs
+ * should treat that as "not a cognition run prompt" and refuse to act, never
+ * as a default kind.
  */
 export function parseCognitionRunEnvelope(prompt: string): CognitionRunEnvelope | null {
   const m = ENVELOPE_RE.exec(prompt);
   if (!m) return null;
   return { runId: m[1]!, kind: m[2]!, attempt: Number.parseInt(m[3]!, 10) };
-}
-
-/**
- * The prompt body beneath the envelope: everything after the envelope line
- * (and its optional re-attempt caution) and the blank line that follows.
- */
-export function cognitionRunPromptBody(prompt: string): string {
-  const lines = prompt.split("\n");
-  if (lines.length === 0 || !ENVELOPE_RE.test(lines[0] ?? "")) return prompt;
-  let i = 1;
-  if (lines[i] === RE_ATTEMPT_NOTE) i++;
-  while (i < lines.length && lines[i] === "") i++;
-  return lines.slice(i).join("\n");
 }

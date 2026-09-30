@@ -123,6 +123,7 @@ const SAFE_TABLES = new Set([
   "chunks",
   "cognition_consumption_edges",
   "cognition_coverage",
+  "cognition_decisions",
   "cognition_engine_state",
   "cognition_notes",
   "cognition_run_attribution",

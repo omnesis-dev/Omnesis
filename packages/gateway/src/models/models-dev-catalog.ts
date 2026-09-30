@@ -182,6 +182,7 @@ function assignmentId(resolved: ResolvedAssignment): string | null {
     case "disabled":
     case "unresolved":
     case "replay":
+    case "typesafe":
       return null;
     default:
       return assertNever(resolved);

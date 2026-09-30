@@ -25,6 +25,7 @@ export const PORTAL_PROVIDER_BRANDS = {
   local: { id: "local", label: "Local" },
   replay: { id: "replay", label: "Replay" },
   codex: { id: "codex", label: "Codex" },
+  typesafe: { id: "typesafe", label: "TypeSafe" },
   http: { id: "http", label: "HTTP" },
   none: { id: "none", label: "Not configured" },
 };

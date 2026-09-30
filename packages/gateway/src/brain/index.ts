@@ -162,6 +162,14 @@ export { addToCognitionEngineCounter, setCognitionEngineState } from "./storage/
 // mechanisms (the entailment gate) fold their token usage into
 // `cognition_spend` through the single writer.
 export { recordCognitionSpend, cognitionSpendDay } from "./storage/spend.js";
+export {
+  insertCognitionDecision,
+  listDecisionsForRun,
+  decisionVerdictsForRuns,
+  findReusableDecision,
+  type CognitionDecisionRecord,
+  type DecisionVerdict,
+} from "./storage/decisions.js";
 export type { ClaimedCognitionRun, CognitionRunUsage } from "./storage/types.js";
 
 // The sweep set — system sweeps layered with the operator's files. Crosses the

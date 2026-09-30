@@ -2188,7 +2188,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
               code: "notes_edit_not_found",
               message:
                 `oldText was not found in the current notes: "${needle}" — copy an ` +
-                `exact span from the notes shown in your system prompt`,
+                `exact span from the notes shown in your prompt`,
             };
           }
           case "ambiguous":

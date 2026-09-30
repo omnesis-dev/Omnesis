@@ -6,11 +6,11 @@
  *
  * Mirrors the collector's per-source credentials registry
  * (`packages/collector/src/source-ws-handlers.ts:listCredentialEntries`)
- * but for *model-provider* credentials — Anthropic today, OpenAI / Mistral
- * later. Lives on the gateway because the gateway is the process that
- * makes these API calls; in multi-host deployments, model-provider
- * credentials must reside on the gateway host even when sources reside
- * on a remote collector.
+ * but for *model-provider* credentials (Anthropic, and TypeSafe when
+ * experimental mode is visible). Lives on the gateway because the gateway
+ * is the process that makes these API calls; in multi-host deployments,
+ * model-provider credentials must reside on the gateway host even when
+ * sources reside on a remote collector.
  *
  * File format, atomic write, and 0600 perms are reused from
  * `@omnesis/core`'s shared `readProviderCredentials` /
@@ -19,6 +19,8 @@
  */
 import {
   ANTHROPIC_CREDENTIALS_SPEC,
+  experimentalVisible,
+  TYPESAFE_CREDENTIALS_SPEC,
   hasProviderCredentials,
   providerCredentialsPath,
   readSecretTextFileSync,
@@ -35,11 +37,23 @@ const MODEL_PROVIDER_SPECS: ReadonlyArray<{
   spec: ProviderCredentialsSpec;
   providerType: string;
   providerName: string;
+  /** Environment variables that supply the key ahead of the file, in precedence order. */
+  envVars: readonly string[];
+  /** Serves only experimental capabilities: listed only while experimental mode is visible. */
+  experimental?: boolean;
 }> = [
   {
     spec: ANTHROPIC_CREDENTIALS_SPEC,
     providerType: "anthropic",
     providerName: "Anthropic",
+    envVars: ["OMNESIS_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY"],
+  },
+  {
+    spec: TYPESAFE_CREDENTIALS_SPEC,
+    providerType: "typesafe",
+    providerName: "TypeSafe",
+    envVars: ["OMNESIS_TYPESAFE_API_KEY", "TYPESAFE_API_KEY"],
+    experimental: true,
   },
 ];
 
@@ -48,23 +62,42 @@ export interface ModelCredentialEntry {
   providerType: string;
   providerName: string;
   spec: SerializedProviderCredentialsSpec;
+  /** A key is stored in the gateway-host credentials file. */
   configured: boolean;
+  /** A key is supplied by the gateway process's environment (it wins over the file). */
+  environment: boolean;
 }
 
 /** All model-provider credential entries plus current configured-state. */
 export function listModelCredentialEntries(configDir: string): ModelCredentialEntry[] {
-  return MODEL_PROVIDER_SPECS.map(({ spec, providerType, providerName }) => ({
+  return visibleProviderSpecs().map(({ spec, providerType, providerName, envVars }) => ({
     fileKey: spec.fileKey,
     providerType,
     providerName,
     spec: serializeCredentialsSpec(spec),
     configured: hasProviderCredentials(spec.fileKey, configDir),
+    environment: envVars.some((name) => (process.env[name]?.trim() ?? "") !== ""),
   }));
 }
 
 /** Look up a spec by fileKey for server-side validation. */
 export function getModelProviderSpec(fileKey: string): ProviderCredentialsSpec | null {
-  return MODEL_PROVIDER_SPECS.find((e) => e.spec.fileKey === fileKey)?.spec ?? null;
+  return visibleProviderSpecs().find((e) => e.spec.fileKey === fileKey)?.spec ?? null;
+}
+
+function visibleProviderSpecs(): typeof MODEL_PROVIDER_SPECS {
+  const experimental = experimentalVisible();
+  return MODEL_PROVIDER_SPECS.filter((e) => experimental || !e.experimental);
+}
+
+/** The first non-empty environment value among a provider's key variables. */
+function envApiKey(fileKey: string): string | null {
+  const entry = MODEL_PROVIDER_SPECS.find((e) => e.spec.fileKey === fileKey);
+  for (const name of entry?.envVars ?? []) {
+    const apiKey = process.env[name]?.trim();
+    if (apiKey) return apiKey;
+  }
+  return null;
 }
 
 /**
@@ -75,7 +108,11 @@ export function getModelProviderSpec(fileKey: string): ProviderCredentialsSpec |
  * per-request.
  */
 export function readAnthropicApiKey(configDir: string): string | null {
-  const path = providerCredentialsPath(ANTHROPIC_CREDENTIALS_SPEC.fileKey, configDir);
+  return readProviderApiKey(ANTHROPIC_CREDENTIALS_SPEC.fileKey, configDir);
+}
+
+function readProviderApiKey(fileKey: string, configDir: string): string | null {
+  const path = providerCredentialsPath(fileKey, configDir);
   try {
     const raw = readSecretTextFileSync(path, { configDir });
     if (raw === null) return null;
@@ -103,10 +140,8 @@ export interface ResolvedAnthropicCredential {
 
 /** Resolve both the effective key and its operator-visible source. */
 export function resolveAnthropicCredential(configDir: string): ResolvedAnthropicCredential | null {
-  for (const value of [process.env.OMNESIS_ANTHROPIC_API_KEY, process.env.ANTHROPIC_API_KEY]) {
-    const apiKey = value?.trim();
-    if (apiKey) return { apiKey, source: "environment" };
-  }
+  const envKey = envApiKey(ANTHROPIC_CREDENTIALS_SPEC.fileKey);
+  if (envKey) return { apiKey: envKey, source: "environment" };
   const fileKey = readAnthropicApiKey(configDir)?.trim();
   return fileKey ? { apiKey: fileKey, source: "file" } : null;
 }
@@ -114,4 +149,21 @@ export function resolveAnthropicCredential(configDir: string): ResolvedAnthropic
 /** True iff a usable Anthropic key is available to the gateway process. */
 export function hasAnthropicApiKey(configDir: string): boolean {
   return resolveAnthropicApiKey(configDir) !== null;
+}
+
+/**
+ * Resolve the effective TypeSafe key: `OMNESIS_TYPESAFE_API_KEY`, then the
+ * standard `TYPESAFE_API_KEY` the TypeSafe SDKs read, then the gateway-host
+ * credentials file written from Settings → Models.
+ */
+export function resolveTypeSafeApiKey(configDir: string): string | null {
+  return (
+    envApiKey(TYPESAFE_CREDENTIALS_SPEC.fileKey) ??
+    (readProviderApiKey(TYPESAFE_CREDENTIALS_SPEC.fileKey, configDir)?.trim() || null)
+  );
+}
+
+/** True iff a usable TypeSafe key is available to the gateway process. */
+export function hasTypeSafeApiKey(configDir: string): boolean {
+  return resolveTypeSafeApiKey(configDir) !== null;
 }

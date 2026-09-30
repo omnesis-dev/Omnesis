@@ -9,10 +9,12 @@
  * is left; this says how far back it has read, which is the question people
  * actually have — and it shows the shape of their corpus while answering it.
  *
- * Every month is one column, oldest on the left, divided into the five things
+ * Every month is one column, oldest on the left, divided into the six things
  * a document can be to this lane:
  *
  *   reviewed   — read, and something was written or deliberately not written
+ *   gated      — covered without a run: the decision model judged it not
+ *                worth one (the worth gate's skip), so the agent never read it
  *   failed     — given up on after repeated failures; permanently skipped
  *   owed       — a candidate the lane has not reached yet
  *   discarded  — read the dates, found nothing still ahead; not its business
@@ -23,6 +25,10 @@
  * being ingested a real share of documents genuinely have no verdict. Folding
  * them into `discarded` would claim the lane had considered and dismissed
  * them, which is the false completeness this whole surface exists to avoid.
+ *
+ * `gated` is its own band rather than part of `reviewed` because it is a
+ * cheaper and blunter verdict: a score on an email's opening, not an agent
+ * reading it. Counting it as reviewed would overstate what the Brain has read.
  *
  * `discarded` is usually the overwhelming majority, and showing it is the
  * point. The lane reads documents carrying a date that is still ahead — that
@@ -54,6 +60,12 @@ const CHART_BANDS = [
     label: "Reviewed",
     color: "var(--success)",
     hint: "The lane read these and recorded what it found.",
+  },
+  {
+    key: "gated",
+    label: "Skipped by the decision model",
+    color: "var(--type-event)",
+    hint: "The decision model judged these not worth a background-agent run, so they are covered without the agent reading them.",
   },
   {
     key: "failed",
@@ -100,7 +112,7 @@ export function monthCorpusTotal(m) {
 
 /** Totals across every month, for the legend. */
 export function timelineTotals(months) {
-  const out = { reviewed: 0, failed: 0, owed: 0, discarded: 0, unscanned: 0, total: 0 };
+  const out = { reviewed: 0, gated: 0, failed: 0, owed: 0, discarded: 0, unscanned: 0, total: 0 };
   for (const m of months ?? []) {
     for (const b of LEGEND_BANDS) out[b.key] += m[b.key] ?? 0;
     out.total += monthCorpusTotal(m);
@@ -119,7 +131,8 @@ export function timelineTotals(months) {
  *
  * The lane walks recent-first and CONTIGUOUSLY, so the honest frontier is the
  * oldest month in an unbroken swept run back from the present: step backwards
- * while each month is either reviewed or had nothing to review, and stop at the
+ * while each month is either settled (reviewed, or skipped by the decision
+ * model) or had nothing to review, and stop at the
  * first month still holding unread candidates. A stray old document does not
  * extend it, because the unread months between it and the present break the
  * run.
@@ -129,12 +142,12 @@ export function frontierMonth(months) {
   let frontier = null;
   for (let i = list.length - 1; i >= 0; i--) {
     const m = list[i];
-    const reviewed = m.reviewed ?? 0;
+    const settled = (m.reviewed ?? 0) + (m.gated ?? 0);
     const pending = (m.owed ?? 0) + (m.unscanned ?? 0);
     // Nothing here to read: the sweep passes straight over it without that
     // saying anything about how far it has got.
-    if (reviewed === 0 && pending === 0) continue;
-    if (reviewed > 0 && pending === 0) {
+    if (settled === 0 && pending === 0) continue;
+    if (settled > 0 && pending === 0) {
       frontier = m.month;
       continue;
     }

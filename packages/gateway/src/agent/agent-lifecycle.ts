@@ -1055,6 +1055,11 @@ export class AgentLifecycle {
         log.warn(`agent disabled: ${agentDisabledReason}`);
         break;
 
+      case "typesafe":
+        agentDisabledReason = "TypeSafe serves only the Decision model capability.";
+        log.warn(`agent disabled: ${agentDisabledReason}`);
+        break;
+
       default: {
         const _exhaustive: never = agentResolved;
         agentDisabledReason = `Unexpected agent assignment kind: ${(agentResolved as { kind: string }).kind}`;
@@ -1271,6 +1276,9 @@ export class AgentLifecycle {
       }
       case "local":
         newReason = "Local GGUF agent models are not yet supported.";
+        break;
+      case "typesafe":
+        newReason = "TypeSafe serves only the Decision model capability.";
         break;
       default: {
         const _exhaustive: never = resolved;

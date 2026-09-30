@@ -398,6 +398,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "cognition.cancelScheduledForLoop", priority: "background" },
   { name: "cognition.engineStateSet", priority: "background" },
   { name: "cognition.recordCognitionSpend", priority: "background" },
+  { name: "cognition.recordDecision", priority: "background" },
   // Loop/brief/notes mutations issued by the Cognition Steward's tools mid-run —
   // background like the rest: agent runs never contend with ingest.
   { name: "cognition.openLoopCreate", priority: "background" },

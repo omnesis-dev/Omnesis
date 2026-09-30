@@ -56,8 +56,8 @@ import { useVisiblePoll } from "../lib/use-visible-poll.js";
 import { ProviderIcon } from "../components/provider-icon.js";
 import { navigate } from "../lib/router.js";
 import { isEnabled, isConfigured, capabilityCardState } from "../lib/capability-state.js";
-import { CAPABILITY_TO_CATALOG, isAnthropicConfigured, catalogProviderForBackend } from "../lib/backend-options.js";
-import { ModelConfigModal, AddBackendModal, CodexConfigModal, codexRuntimeUpdatePresentation, classifyRecentApply } from "./model-config.js";
+import { CAPABILITY_TO_CATALOG, isAnthropicConfigured, catalogProviderForBackend, isDecisionRole } from "../lib/backend-options.js";
+import { ModelConfigModal, AddBackendModal, CodexConfigModal, codexRuntimeUpdatePresentation, classifyRecentApply, typesafeKeyConfigured } from "./model-config.js";
 import { ModelBehaviorEditor, modelBehaviorSummary } from "./model-behavior.js";
 
 // ── Capability grid (the tab's landing view) ──────────────────────────────
@@ -342,7 +342,7 @@ function CapabilityDetail({ role, overview, onOpenPicker, onAddBackend, onDisabl
 
       <div class="cap-detail-actions">
         <button class="btn-primary" onClick=${onOpenPicker}>Choose model</button>
-        <button class="btn-secondary" onClick=${onAddBackend}>Add backend</button>
+        ${isDecisionRole(role) ? null : html`<button class="btn-secondary" onClick=${onAddBackend}>Add backend</button>`}
         ${configured ? html`<button class="btn-secondary" onClick=${onDisable}>Disable</button>` : null}
       </div>
 
@@ -913,6 +913,46 @@ export function ModelsView({ section }) {
     }
   };
 
+  // TypeSafe is the Decision model's only backend. Without a key the
+  // credentials wizard opens first and the assignment completes when it is
+  // saved; with one, the model is assigned straight away.
+  const pickTypeSafe = async (model) => {
+    setShowPicker(false);
+    try {
+      const status = await getModelCredentialsStatus();
+      const credEntry = (status.items || []).find((e) => e.fileKey === "typesafe");
+      if (credEntry && !typesafeKeyConfigured(credEntry, overview.inference.assignments[role])) {
+        setCredsWizard({ entry: credEntry, pendingActivation: { kind: "typesafe", model, capability: role } });
+        return;
+      }
+    } catch (e) {
+      flashErr(e?.message ?? String(e));
+      return;
+    }
+    await assignTypeSafe(role, model);
+  };
+
+  const assignTypeSafe = async (targetRole, model) => {
+    const targetTitle = capabilityFor(overview, targetRole)?.title ?? targetRole;
+    try {
+      const res = await saveAssignment(targetRole, "typesafe", model);
+      if (!res) return;
+      if (!res.ok) {
+        flashErr(res.body?.errors?.[0]?.message ?? res.body?.error ?? "Failed to update config.");
+        return;
+      }
+      flashOk(`${targetTitle} now uses ${model} on TypeSafe.`);
+      await refresh();
+    } catch (e) {
+      flashErr(e?.message ?? String(e));
+    }
+  };
+
+  const onConfigureTypeSafeKey = (credEntry) => {
+    setShowPicker(false);
+    setCredsWizard({ entry: credEntry });
+  };
+
   const pickCodex = async (model) => {
     setShowPicker(false);
     return assignCodexModel(role, model);
@@ -952,6 +992,10 @@ export function ModelsView({ section }) {
           await refresh();
         })
         .catch((e) => flashErr(e?.message ?? String(e)));
+      return;
+    }
+    if (decision.backendKey === "typesafe") {
+      void pickTypeSafe(decision.model);
       return;
     }
     void assignHttp(decision.backendKey, decision.model);
@@ -1122,6 +1166,8 @@ export function ModelsView({ section }) {
             onPickAnthropic=${pickAnthropic}
             onPickHttp=${pickHttp}
             onPickCodex=${pickCodex}
+            onPickTypeSafe=${pickTypeSafe}
+            onConfigureTypeSafeKey=${onConfigureTypeSafeKey}
             onPickRecent=${pickRecent}
             onStartCodexLogin=${onStartCodexLogin}
             onCancelCodexLogin=${onCancelCodexLogin}
@@ -1142,7 +1188,10 @@ export function ModelsView({ section }) {
             onClose=${async (updated) => {
               const pending = credsWizard;
               setCredsWizard(null);
-              if (updated && pending?.pendingActivation) {
+              if (updated && pending?.pendingActivation?.kind === "typesafe") {
+                const { model, capability } = pending.pendingActivation;
+                await assignTypeSafe(capability, model);
+              } else if (updated && pending?.pendingActivation) {
                 const { entry, catalogRole, capability } = pending.pendingActivation;
                 try {
                   const res = entry.kind === "anthropic-api"

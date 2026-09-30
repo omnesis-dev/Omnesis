@@ -27,6 +27,7 @@
  */
 
 import { createServer, type Server } from "node:http";
+import { parseCognitionRunEnvelope } from "@omnesis/core";
 import type { ArcAction, ArcDocBehavior } from "./briefs-arcs.js";
 
 const SCRIPTED_LOOP_MODEL_ID = "scripted-loop-agent-v1";
@@ -98,13 +99,14 @@ interface RunPromptMeta {
 
 /** Parse the run driver's prompt envelope + the data-run body. */
 export function parseRunPrompt(prompt: string): RunPromptMeta {
-  const envelope = /^Loop agent run (\S+) \(kind: (\w+), attempt \d+\)/.exec(prompt);
+  // The envelope follows the static run rules, so it is found on any line.
+  const envelope = parseCognitionRunEnvelope(prompt);
   const created = /A new document arrived: (\S+)\. Fetch/.exec(prompt);
   const updated = /^Document (\S+) was updated\./m.exec(prompt);
   const deleted = /document (\S+) that triggered this run has been DELETED/.exec(prompt);
   return {
-    runId: envelope?.[1] ?? null,
-    kind: envelope?.[2] ?? null,
+    runId: envelope?.runId ?? null,
+    kind: envelope?.kind ?? null,
     event: created ? "created" : updated ? "updated" : null,
     docId: created?.[1] ?? updated?.[1] ?? deleted?.[1] ?? null,
     docDeleted: deleted !== null,

@@ -18298,6 +18298,113 @@ a.agent-loop-row.agent-ephemeral-result-link:hover .agent-loop-state {
   color: var(--text-primary);
 }
 
+/* Cognition runs — the decision model's worth-gate judgements. */
+.cognition-gate-marker {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.cognition-gate-marker--warn {
+  color: var(--warning);
+}
+.cognition-decision {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.cognition-decision-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.cognition-decision-score {
+  font-variant-numeric: tabular-nums;
+}
+.cognition-decision-sentence {
+  margin: 6px 0 4px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.cognition-decision-details {
+  margin-top: 8px;
+}
+.cognition-decision-details > summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.cognition-decision-sub {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.cognition-decision-state {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+.cognition-decision-state-key {
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+}
+.cognition-decision-state-value {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow: auto;
+}
+.cognition-decision-pre {
+  white-space: pre-wrap;
+  font-size: 12px;
+  margin: 0;
+}
+.cognition-decision-instructions {
+  font-size: 13px;
+}
+.cognition-decision-criteria {
+  margin: 4px 0 0;
+  padding-left: 22px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.cognition-decision-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cognition-decision-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px 40px;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+.cognition-decision-bar-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+}
+.cognition-decision-bar-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-tertiary);
+  overflow: hidden;
+}
+.cognition-decision-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.cognition-decision-bar-pct {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ── Tell Omnesis (quick capture) ─────────────────────────────────────────── */
 /* The typed sibling of the mobile capture screens: one composer, one button.
    Page layout stays on `.app-main`; the column only bounds the composer. */

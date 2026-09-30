@@ -1010,12 +1010,12 @@
     {
       "value": "marek.vint+news@gmail.com",
       "paths": ["packages/gateway/src/data/repositories/PersonRepository.match-quality.test.ts"],
-      "reason": "invented address; the gmail.com domain is the fixture under test \u2014 dot and +tag stripping is Gmail-specific, so a reserved domain would not exercise the path"
+      "reason": "invented address; the gmail.com domain is the fixture under test — dot and +tag stripping is Gmail-specific, so a reserved domain would not exercise the path"
     },
     {
       "value": "marekvint@gmail.com",
       "paths": ["packages/gateway/src/data/repositories/PersonRepository.match-quality.test.ts"],
-      "reason": "invented address; the gmail.com domain is the fixture under test \u2014 dot and +tag stripping is Gmail-specific, so a reserved domain would not exercise the path"
+      "reason": "invented address; the gmail.com domain is the fixture under test — dot and +tag stripping is Gmail-specific, so a reserved domain would not exercise the path"
     },
     {
       "value": "maria.smith@acme.com",
@@ -1271,7 +1271,7 @@
         "packages/providers/github/src/normalizer.test.ts",
         "packages/providers/github/src/normalizer.ts"
       ],
-      "reason": "GitHub's public squash-merge committer address \u2014 a code constant, not corpus data"
+      "reason": "GitHub's public squash-merge committer address — a code constant, not corpus data"
     },
     {
       "value": "noreply@vendor.com",
@@ -1452,7 +1452,7 @@
     {
       "value": "someone@a-real-looking-domain.co.uk",
       "paths": ["scripts/lib/brain-cassette.test.mjs"],
-      "reason": "invented, deliberately OFF a reserved domain \u2014 the fixture exists to prove the brain-cassette recorder refuses to write a cassette carrying one"
+      "reason": "invented, deliberately OFF a reserved domain — the fixture exists to prove the brain-cassette recorder refuses to write a cassette carrying one"
     },
     {
       "value": "someone@s.whatsapp.net",
@@ -1751,7 +1751,7 @@
         "packages/gateway/src/domain/LinkGraphService.test.ts",
         "packages/providers/apple/src/call-log.test.ts"
       ],
-      "reason": "reviewed invented fixture \u2014 placeholder phone. Prefer the NANP fiction block in a real area code (NPA 555-01xx), which does validate; area-code 555 and the Ofcom +44 7700 900xxx block do not, so they cannot be used where extraction must find the number."
+      "reason": "reviewed invented fixture — placeholder phone. Prefer the NANP fiction block in a real area code (NPA 555-01xx), which does validate; area-code 555 and the Ofcom +44 7700 900xxx block do not, so they cannot be used where extraction must find the number."
     },
     {
       "value": "+1 415 555 7777",
@@ -1792,7 +1792,7 @@
         "packages/gateway/src/domain/LinkGraphService.test.ts",
         "packages/providers/apple/src/call-log.test.ts"
       ],
-      "reason": "reviewed invented fixture \u2014 placeholder phone, not the reserved 555/Ofcom block (fails libphonenumber-js validation)"
+      "reason": "reviewed invented fixture — placeholder phone, not the reserved 555/Ofcom block (fails libphonenumber-js validation)"
     },
     {
       "value": "+15551111111",
@@ -1881,7 +1881,7 @@
         "packages/providers/apple/src/contacts.test.ts",
         "packages/gateway/src/domain/LinkGraphService.test.ts"
       ],
-      "reason": "reviewed invented fixture \u2014 placeholder phone, not the reserved 555/Ofcom block (fails libphonenumber-js validation)"
+      "reason": "reviewed invented fixture — placeholder phone, not the reserved 555/Ofcom block (fails libphonenumber-js validation)"
     },
     {
       "value": "+442071234567",
@@ -3877,7 +3877,7 @@
     {
       "value": "Alex Cole",
       "paths": ["evals/universes/default/cast.json"],
-      "reason": "invented fixture \u2014 merge-candidate pending demo (Cole cluster)"
+      "reason": "invented fixture — merge-candidate pending demo (Cole cluster)"
     },
     {
       "value": "Alex Doe",
@@ -4206,7 +4206,7 @@
     {
       "value": "Apple Watch",
       "paths": ["evals/universes/wrist/universe.json"],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Apple Watch Series",
@@ -4495,9 +4495,12 @@
         "packages/collector/src/e2e/brain-smoke.e2e.test.ts",
         "packages/collector/src/e2e/brain-time-index.e2e.test.ts",
         "packages/collector/src/e2e/brain-verification.e2e.test.ts",
-        "packages/collector/src/e2e/brain-waker.e2e.test.ts"
+        "packages/collector/src/e2e/brain-waker.e2e.test.ts",
+        "packages/collector/src/e2e/brain-decision-bootstrap.e2e.test.ts",
+        "packages/collector/src/e2e/brain-decision-gate.e2e.test.ts",
+        "packages/collector/src/e2e/brain-decision-replay.e2e.test.ts"
       ],
-      "reason": "product name \u2014 the brain end-to-end test kit, not a person"
+      "reason": "product name — the brain end-to-end test kit, not a person"
     },
     {
       "value": "Bram Halvorsen",
@@ -4697,7 +4700,7 @@
         "packages/collector/src/e2e/brain-observability.e2e.test.ts",
         "packages/collector/src/e2e/brain-verification.e2e.test.ts"
       ],
-      "reason": "invented fixture \u2014 a two-word window of the invented vendor 'Cedar Grove Supplies'"
+      "reason": "invented fixture — a two-word window of the invented vendor 'Cedar Grove Supplies'"
     },
     {
       "value": "Cedar Grove Billing",
@@ -5505,7 +5508,7 @@
     {
       "value": "Eurostar Bookings",
       "paths": ["evals/universes/wrist/cast.json"],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Eve Bond",
@@ -5903,7 +5906,7 @@
         "packages/collector/src/e2e/brain-time-index.e2e.test.ts",
         "packages/collector/src/e2e/brain-verification.e2e.test.ts"
       ],
-      "reason": "invented fixture \u2014 a two-word window of the invented vendor 'Cedar Grove Supplies'"
+      "reason": "invented fixture — a two-word window of the invented vendor 'Cedar Grove Supplies'"
     },
     {
       "value": "Guided Kyoto",
@@ -6016,7 +6019,7 @@
     {
       "value": "Hello Alex",
       "paths": ["packages/collector/src/e2e/brain-verification.e2e.test.ts"],
-      "reason": "invented fixture \u2014 a greeting to the synthetic universe's invented self (Alex Rivera)"
+      "reason": "invented fixture — a greeting to the synthetic universe's invented self (Alex Rivera)"
     },
     {
       "value": "Hello John Smith",
@@ -6050,7 +6053,11 @@
     },
     {
       "value": "Hey Alex",
-      "paths": ["evals/universes/loops-test-life/sources/gmail/messages.json"],
+      "paths": [
+        "evals/universes/loops-test-life/sources/gmail/messages.json",
+        "evals/universes/loops-test-life/decision-cassettes/worth-gate.jsonl",
+        "packages/collector/src/e2e/brain-bench/worth-gate-mail.ts"
+      ],
       "reason": "invented loops-test-life fixture (Briefs epic, fully fictional)"
     },
     {
@@ -6077,9 +6084,12 @@
         "packages/collector/src/e2e/brain-rhythm.e2e.test.ts",
         "packages/collector/src/e2e/brain-smoke.e2e.test.ts",
         "packages/collector/src/e2e/brain-time-index.e2e.test.ts",
-        "packages/collector/src/e2e/brain-waker.e2e.test.ts"
+        "packages/collector/src/e2e/brain-waker.e2e.test.ts",
+        "evals/universes/loops-test-life/decision-cassettes/worth-gate.jsonl",
+        "packages/collector/src/e2e/brain-bench/worth-gate-mail.ts",
+        "packages/collector/src/e2e/brain-decision-replay.e2e.test.ts"
       ],
-      "reason": "invented fixture \u2014 a greeting to the synthetic universe's invented self (Alex Rivera)"
+      "reason": "invented fixture — a greeting to the synthetic universe's invented self (Alex Rivera)"
     },
     {
       "value": "Hi Anton",
@@ -6319,7 +6329,7 @@
     {
       "value": "Iris Kelland",
       "paths": ["evals/universes/wrist/cast.json"],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "JP Bond",
@@ -6419,6 +6429,7 @@
         "packages/providers/whatsapp/src/import/decrypt-parse.test.ts",
         "packages/watch/src/compiler/prompt.test.ts",
         "packages/gateway/src/privacy/reviewer.test.ts",
+        "evals/universes/loops-test-life/decision-cassettes/worth-gate.jsonl",
         "packages/collector/src/e2e/maildir-lifecycle.e2e.test.ts",
         "packages/providers/maildir/src/message.test.ts",
         "packages/providers/maildir/src/source.test.ts"
@@ -6611,7 +6622,7 @@
     {
       "value": "Jordan Cole",
       "paths": ["evals/universes/default/cast.json"],
-      "reason": "invented fixture \u2014 merge-candidate pending demo (Cole cluster)"
+      "reason": "invented fixture — merge-candidate pending demo (Cole cluster)"
     },
     {
       "value": "Juniper Workshop",
@@ -6774,7 +6785,7 @@
     {
       "value": "London Paris",
       "paths": ["evals/universes/wrist/agent-demos/eurostar.jsonl"],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "London St Pancras",
@@ -6783,7 +6794,7 @@
         "evals/universes/wrist/sources/gmail/messages.json",
         "evals/universes/wrist/sources/google-calendar/events.json"
       ],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Lucian Farrow",
@@ -6964,15 +6975,12 @@
     {
       "value": "Maya Reeves",
       "paths": [
-        "scripts/fixtures/generate-release-upgrade.mjs",
-        "packages/collector/src/e2e/interactive-memory.e2e.test.ts",
-        "packages/gateway/src/brain/interactive-memory.test.ts",
-        "packages/collector/src/e2e/self-identity-registry.e2e.test.ts",
         "evals/universes/default/cast.json",
         "evals/universes/japan-trip/cast.json",
         "evals/universes/japan-trip/sources/gmail/messages.json",
         "evals/universes/japan-trip/sources/google-drive/files.json",
         "evals/universes/loops-test-life/cast.json",
+        "evals/universes/loops-test-life/decision-cassettes/worth-gate.jsonl",
         "evals/universes/whatsapp-backfill/cast.json",
         "evals/universes/whatsapp-backfill/sources/whatsapp-messages/fake-corpus.json",
         "evals/universes/wrist/agent-demos/eurostar.jsonl",
@@ -6991,9 +6999,11 @@
         "packages/collector/src/e2e/brain-loops.e2e.test.ts",
         "packages/collector/src/e2e/briefs-cli.e2e.test.ts",
         "packages/collector/src/e2e/identity-resolution.e2e.test.ts",
+        "packages/collector/src/e2e/interactive-memory.e2e.test.ts",
         "packages/collector/src/e2e/mcp-answer.e2e.test.ts",
         "packages/collector/src/e2e/ocr.e2e.test.ts",
         "packages/collector/src/e2e/restart-durability.e2e.test.ts",
+        "packages/collector/src/e2e/self-identity-registry.e2e.test.ts",
         "packages/collector/src/e2e/temporal-substrate.e2e.test.ts",
         "packages/collector/src/e2e/transcribe.e2e.test.ts",
         "packages/core/src/agent-protocol.test.ts",
@@ -7013,6 +7023,7 @@
         "packages/gateway/src/brain/feed-contract.test.ts",
         "packages/gateway/src/brain/http.test.ts",
         "packages/gateway/src/brain/interactive-loop-port.test.ts",
+        "packages/gateway/src/brain/interactive-memory.test.ts",
         "packages/gateway/src/brain/merge-adjudication.test.ts",
         "packages/gateway/src/brain/open-loop-source/document-projection.test.ts",
         "packages/gateway/src/brain/person-refs.test.ts",
@@ -7021,9 +7032,11 @@
         "packages/gateway/src/brain/steward/background-lookup-priority.test.ts",
         "packages/gateway/src/brain/steward/grounding-teeth.test.ts",
         "packages/gateway/src/brain/steward/prompts.test.ts",
+        "packages/gateway/src/brain/steward/runtime.test.ts",
         "packages/gateway/src/brain/steward/tools.test.ts",
         "packages/gateway/src/brain/storage/consumption-edges.test.ts",
         "packages/gateway/src/brain/temporal-annotation-invalidator.integration.test.ts",
+        "packages/gateway/src/brain/worth-gate/worth-gate.test.ts",
         "packages/gateway/src/data/list-revisions.test.ts",
         "packages/gateway/src/data/prune-invalid-email-aliases.test.ts",
         "packages/gateway/src/domain/DocumentGraphService.test.ts",
@@ -7044,6 +7057,7 @@
         "packages/gateway/src/people.test.ts",
         "packages/gateway/src/physical-merge.test.ts",
         "packages/gateway/src/privacy/answer-diff.test.ts",
+        "packages/gateway/src/privacy/reviewer.test.ts",
         "packages/gateway/src/privacy/store-audit.test.ts",
         "packages/gateway/src/search/search-worker-docid-filter.test.ts",
         "packages/gateway/src/search/search-worker-finalize.test.ts",
@@ -7079,6 +7093,8 @@
         "packages/providers/whatsapp/src/message-store.test.ts",
         "packages/providers/whatsapp/src/provider.e2e.test.ts",
         "packages/watch/src/compiler/prompt.test.ts",
+        "scripts/fixtures/generate-release-upgrade.mjs",
+        "scripts/lib/decision-cassette.test.mjs",
         "packages/gateway/src/privacy/reviewer.test.ts",
         "packages/collector/src/e2e/maildir-lifecycle.e2e.test.ts",
         "packages/providers/maildir/src/index.test.ts",
@@ -7286,7 +7302,7 @@
     {
       "value": "My Sweep",
       "paths": ["packages/gateway/src/brain/sweeps/service.test.ts"],
-      "reason": "invented fixture \u2014 a deliberately malformed sweep file name"
+      "reason": "invented fixture — a deliberately malformed sweep file name"
     },
     {
       "value": "My Task",
@@ -7458,7 +7474,7 @@
         "evals/universes/wrist/cast.json",
         "evals/universes/wrist/sources/whatsapp-messages/messages.json"
       ],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "North Quarter",
@@ -7588,7 +7604,7 @@
     {
       "value": "Not An Id",
       "paths": ["packages/gateway/src/brain/sweeps/service.test.ts"],
-      "reason": "invented fixture \u2014 a deliberately malformed sweep file name"
+      "reason": "invented fixture — a deliberately malformed sweep file name"
     },
     {
       "value": "Not Found",
@@ -7736,7 +7752,7 @@
     {
       "value": "Outbound Sunday",
       "paths": ["evals/universes/wrist/agent-demos/eurostar.jsonl"],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Outgoing Phone",
@@ -7781,7 +7797,7 @@
         "evals/universes/wrist/agent-demos/eurostar.jsonl",
         "evals/universes/wrist/sources/gmail/messages.json"
       ],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Paris Riverside Triathlon",
@@ -7790,7 +7806,7 @@
         "evals/universes/wrist/sources/gmail/messages.json",
         "evals/universes/wrist/sources/google-calendar/events.json"
       ],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Parkside Cafe",
@@ -8301,7 +8317,7 @@
       "reason": "reviewed invented fixture"
     },
     {
-      "value": "Ren\u00e9e Vance",
+      "value": "Renée Vance",
       "paths": ["packages/gateway/src/merge-candidates.test.ts"],
       "reason": "reviewed invented fixture"
     },
@@ -8409,7 +8425,7 @@
     {
       "value": "Riverbend Tri Club",
       "paths": ["evals/universes/wrist/cast.json"],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Riverside Bank",
@@ -8463,10 +8479,12 @@
         "packages/collector/src/e2e/brain-adjudication.e2e.test.ts",
         "packages/collector/src/e2e/brain-annotations.e2e.test.ts",
         "packages/collector/src/e2e/brain-briefs.e2e.test.ts",
+        "packages/collector/src/e2e/brain-decision-bootstrap.e2e.test.ts",
         "packages/collector/src/e2e/brain-loops.e2e.test.ts",
         "packages/collector/src/e2e/brain-observability.e2e.test.ts",
         "packages/collector/src/e2e/brain-rhythm.e2e.test.ts",
         "packages/collector/src/e2e/brain-verification.e2e.test.ts",
+        "packages/core/src/models/decision-cassette.test.ts",
         "packages/gateway/src/agent/record-port.test.ts",
         "packages/gateway/src/http/routes/subscriptions.test.ts",
         "packages/gateway/src/sources/omnesis-notes/upsert.test.ts",
@@ -8521,7 +8539,7 @@
         "evals/universes/wrist/sources/gmail/messages.json",
         "evals/universes/wrist/sources/google-calendar/events.json"
       ],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Robin Vale",
@@ -8563,12 +8581,12 @@
     {
       "value": "Sam Cole",
       "paths": ["evals/universes/default/cast.json"],
-      "reason": "invented fixture \u2014 merge-candidate pending demo (Cole cluster)"
+      "reason": "invented fixture — merge-candidate pending demo (Cole cluster)"
     },
     {
       "value": "Sam Diaz",
       "paths": ["evals/universes/default/cast.json"],
-      "reason": "invented fixture \u2014 merge-candidate pending demo (Cole cluster)"
+      "reason": "invented fixture — merge-candidate pending demo (Cole cluster)"
     },
     {
       "value": "Sam Quinn",
@@ -8871,7 +8889,7 @@
     {
       "value": "St Pancras",
       "paths": ["evals/universes/wrist/agent-demos/eurostar.jsonl"],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "St Pancras International",
@@ -8879,7 +8897,7 @@
         "evals/universes/wrist/agent-demos/eurostar.jsonl",
         "evals/universes/wrist/sources/gmail/messages.json"
       ],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Stable Child",
@@ -8907,7 +8925,7 @@
         "evals/universes/wrist/agent-demos/eurostar.jsonl",
         "evals/universes/wrist/sources/gmail/messages.json"
       ],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Standup Recap",
@@ -9066,6 +9084,7 @@
         "evals/universes/japan-trip/sources/google-drive/files.json",
         "evals/universes/japan-trip/sources/whatsapp-messages/messages.json",
         "evals/universes/japan-trip/universe.json",
+        "evals/universes/loops-test-life/decision-cassettes/worth-gate.jsonl",
         "evals/universes/whatsapp-backfill/sources/whatsapp-messages/fake-corpus.json",
         "ios/Sources/Omnesis/UI/PreviewMocks.swift",
         "packages/agent-integration/src/client.test.ts",
@@ -9075,6 +9094,7 @@
         "packages/collector/src/attachments/fixtures/gen-pkpass-fixtures.mjs",
         "packages/collector/src/e2e/brain-adjudication.e2e.test.ts",
         "packages/collector/src/e2e/brain-annotations.e2e.test.ts",
+        "packages/collector/src/e2e/brain-bench/worth-gate-mail.ts",
         "packages/collector/src/e2e/brain-briefs.e2e.test.ts",
         "packages/collector/src/e2e/brain-loops.e2e.test.ts",
         "packages/collector/src/e2e/brain-observability.e2e.test.ts",
@@ -9092,7 +9112,9 @@
         "packages/gateway/src/agent/sql-port.test.ts",
         "packages/gateway/src/brain/__fixtures__/briefs-feed-contract.json",
         "packages/gateway/src/brain/feed-contract.test.ts",
+        "packages/gateway/src/brain/steward/runtime.test.ts",
         "packages/gateway/src/brain/temporal-annotation-invalidator.integration.test.ts",
+        "packages/gateway/src/inference/decision/typesafe-client.test.ts",
         "packages/gateway/src/workers/indexer-worker-boot.test.ts",
         "packages/providers/apple/src/calendar.test.ts",
         "packages/providers/outlook/src/outlook-calendar.test.ts",
@@ -9416,12 +9438,12 @@
         "packages/collector/src/e2e/brain-bench/README.md",
         "packages/collector/src/e2e/brain-bench/index.ts"
       ],
-      "reason": "product name \u2014 the brain end-to-end test kit, not a person"
+      "reason": "product name — the brain end-to-end test kit, not a person"
     },
     {
       "value": "The Brambling",
       "paths": ["packages/collector/src/e2e/brain-loops.e2e.test.ts"],
-      "reason": "invented fixture \u2014 an invented venue used for a lighting-quote arc in the bench's loop tests"
+      "reason": "invented fixture — an invented venue used for a lighting-quote arc in the bench's loop tests"
     },
     {
       "value": "The Briefs",
@@ -9431,7 +9453,7 @@
     {
       "value": "The Cedar Grove",
       "paths": ["packages/collector/src/e2e/brain-verification.e2e.test.ts"],
-      "reason": "invented fixture \u2014 a three-word window of the invented vendor 'Cedar Grove Supplies'"
+      "reason": "invented fixture — a three-word window of the invented vendor 'Cedar Grove Supplies'"
     },
     {
       "value": "The Coinbase",
@@ -9539,7 +9561,7 @@
         "packages/collector/src/e2e/brain-briefs.e2e.test.ts",
         "packages/collector/src/e2e/brain-verification.e2e.test.ts"
       ],
-      "reason": "invented fixture \u2014 a three-word window of the invented venue 'Riverside Estate'"
+      "reason": "invented fixture — a three-word window of the invented venue 'Riverside Estate'"
     },
     {
       "value": "The Studio Northstar",
@@ -9575,7 +9597,7 @@
         "evals/universes/wrist/cast.json",
         "evals/universes/wrist/sources/whatsapp-messages/messages.json"
       ],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Theo Marsh",
@@ -9712,7 +9734,7 @@
     {
       "value": "Tri Club",
       "paths": ["evals/universes/wrist/sources/gmail/messages.json"],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Tuesday James",
@@ -9873,7 +9895,7 @@
     {
       "value": "Wakes Fictional",
       "paths": ["packages/gateway/portal/js/views/watches.test.ts"],
-      "reason": "invented fixture \u2014 two words of a rendered sentence (\"Wakes <integration>\") over an invented integration name, not a person"
+      "reason": "invented fixture — two words of a rendered sentence (\"Wakes <integration>\") over an invented integration name, not a person"
     },
     {
       "value": "Web Crypto",
@@ -10013,7 +10035,7 @@
     {
       "value": "Your Cedar Grove",
       "paths": ["packages/collector/src/e2e/brain-rhythm.e2e.test.ts"],
-      "reason": "invented fixture \u2014 a three-word window of the invented vendor 'Cedar Grove Supplies'"
+      "reason": "invented fixture — a three-word window of the invented vendor 'Cedar Grove Supplies'"
     },
     {
       "value": "Your Japan",
@@ -10059,6 +10081,62 @@
         "packages/gateway/portal/js/components/ios-promo.test.ts"
       ],
       "reason": "public store name in the iOS install promo copy, not a person"
+    },
+    {
+      "value": "System One",
+      "paths": [
+        "packages/collector/src/e2e/brain-bench/bench.ts",
+        "packages/collector/src/e2e/brain-bench/decision-server.ts",
+        "packages/collector/src/e2e/brain-decision-bootstrap.e2e.test.ts",
+        "packages/collector/src/e2e/brain-decision-gate.e2e.test.ts"
+      ],
+      "reason": "invented worth-gate fixture"
+    },
+    {
+      "value": "The System One",
+      "paths": ["packages/collector/src/e2e/brain-bench/decision-server.ts"],
+      "reason": "invented worth-gate fixture"
+    },
+    {
+      "value": "Stellar Outfitters",
+      "paths": [
+        "evals/universes/loops-test-life/decision-cassettes/worth-gate.jsonl",
+        "packages/collector/src/e2e/brain-bench/worth-gate-mail.ts",
+        "packages/collector/src/e2e/brain-decision-bootstrap.e2e.test.ts"
+      ],
+      "reason": "invented worth-gate fixture"
+    },
+    {
+      "value": "The Riverside Weekly",
+      "paths": [
+        "evals/universes/loops-test-life/decision-cassettes/worth-gate.jsonl",
+        "packages/collector/src/e2e/brain-bench/worth-gate-mail.ts"
+      ],
+      "reason": "invented worth-gate fixture"
+    },
+    {
+      "value": "Riverside Weekly",
+      "paths": [
+        "evals/universes/loops-test-life/decision-cassettes/worth-gate.jsonl",
+        "packages/collector/src/e2e/brain-bench/worth-gate-mail.ts"
+      ],
+      "reason": "invented worth-gate fixture"
+    },
+    {
+      "value": "Northstar Air",
+      "paths": [
+        "evals/universes/loops-test-life/decision-cassettes/worth-gate.jsonl",
+        "packages/collector/src/e2e/brain-bench/worth-gate-mail.ts"
+      ],
+      "reason": "invented worth-gate fixture"
+    },
+    {
+      "value": "Your Studio Northstar",
+      "paths": [
+        "evals/universes/loops-test-life/decision-cassettes/worth-gate.jsonl",
+        "packages/collector/src/e2e/brain-bench/worth-gate-mail.ts"
+      ],
+      "reason": "invented worth-gate fixture"
     },
     {
       "value": "All Mail",

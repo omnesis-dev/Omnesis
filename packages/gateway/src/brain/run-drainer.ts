@@ -32,6 +32,7 @@ import { documentDerivationState, derivationStageLabels } from "../domain/Docume
 import {
   countPendingCognitionRuns,
   DEFAULT_COGNITION_RUN_MAX_ATTEMPTS,
+  getCognitionRun,
 } from "./storage/run-queue.js";
 import {
   breakerIsOpen,
@@ -43,7 +44,11 @@ import {
   PROVIDER_BREAKER_OPEN_UNTIL_KEY,
   type ProviderBreakerState,
 } from "./provider-breaker.js";
-import { getCognitionEngineState } from "./storage/engine-state.js";
+import {
+  getCognitionEngineState,
+  cognitionBootstrapEnqueuedKey,
+  COGNITION_BOOTSTRAP_TOTAL_KEY,
+} from "./storage/engine-state.js";
 import { cognitionSpendDay } from "./storage/spend.js";
 import { countRunArtifacts } from "./storage/sweep-tally.js";
 import { newestBriefForRun } from "./storage/briefs.js";
@@ -65,6 +70,7 @@ import type { PeriodicTask, TaskOutcome } from "../scheduler/types.js";
 import type { WriteGate } from "../write-gate.js";
 import type { CognitionRunActivity } from "./run-activity.js";
 import type { CognitionRunDriver } from "./run-driver.js";
+import type { WorthGate } from "./worth-gate/gate.js";
 import type { FsCognitionTranscriptStore } from "./transcripts.js";
 
 type Db = Database.Database;
@@ -130,6 +136,12 @@ export interface CognitionDrainerOpts {
    * right now. Optional: storage-only tests omit it.
    */
   activity?: CognitionRunActivity;
+  /**
+   * The worth gate: asks the decision model, per claimed bootstrap/data run,
+   * whether its email is worth an agent turn. Absent (or inactive) means
+   * every claimed run executes.
+   */
+  worthGate?: WorthGate;
   /** Live worker concurrency N (non-`daily` runs serialize regardless). */
   getWorkerConcurrency: () => number;
   /**
@@ -275,11 +287,82 @@ export function createCognitionDrainerTasks(
     initialRemaining: safeCount(opts.db, maxAttempts, log),
   });
 
+  /**
+   * Ask the worth gate about a claimed bootstrap/data run. On a skip, settle
+   * the run as completed with no agent turn: the document is marked covered so
+   * no lane selects it again, coverage tallies it as skipped, and a bootstrap
+   * run hands its slot back to the lane's daily and lifetime pace counters —
+   * a gated document costs a decision, not an agent run, so it must not use
+   * up the agent-run budget. Returns null when the run should execute.
+   */
+  async function settleIfGatedOut(
+    run: ClaimedCognitionRun,
+    signal: AbortSignal,
+  ): Promise<"completed" | null> {
+    if (!opts.worthGate || (run.kind !== "data" && run.kind !== "bootstrap")) return null;
+    const gate = await opts.worthGate.evaluate(run, signal);
+    if (gate?.verdict !== "skip") return null;
+    const now = clock();
+    const enqueuedAt = getCognitionRun(opts.db, run.id)?.enqueuedAt ?? now;
+    const mechanism = cognitiveWorkflowIdForRun(run.kind, run.payload);
+    await opts.writeGate.finalizeCognitionRun({
+      runId: run.id,
+      now,
+      day: cognitionSpendDay(now),
+      mechanism,
+      // Attributed to the decision model that settled it, so a gated run is
+      // never mistaken for an agent run of its workflow.
+      modelId: gate.modelId,
+      usage: null,
+      claimedPayloadJson: run.payloadJson,
+      debounceMs: 0,
+      outcome: { kind: "completed" },
+    });
+    const docId = runDocId(run);
+    if (docId !== null) {
+      await opts.writeGate.markDocsBootstrapProcessed([docId], new Date(now).toISOString());
+      const sourceId = documentSourceId(opts.db, docId);
+      if (sourceId !== null) {
+        await opts.writeGate.recordCognitionCoverage(
+          [
+            {
+              sourceId,
+              workflowId: mechanism,
+              workflowVersion: cognitiveWorkflowVersion(mechanism),
+              processed: 0,
+              skipped: 1,
+              promptTokens: 0,
+              completionTokens: 0,
+            },
+          ],
+          now,
+        );
+      }
+    }
+    if (run.kind === "bootstrap") {
+      // Handed back to the day that counted it, and never below zero.
+      for (const key of [
+        cognitionBootstrapEnqueuedKey(cognitionSpendDay(enqueuedAt)),
+        COGNITION_BOOTSTRAP_TOTAL_KEY,
+      ]) {
+        if ((Number(getCognitionEngineState(opts.db, key) ?? "0") || 0) > 0) {
+          await opts.writeGate.addToCognitionEngineCounter(key, -1);
+        }
+      }
+    }
+    log.info(
+      `run ${run.id} (${run.kind}) gated out: worth score ${gate.score?.toFixed(2) ?? "?"} < ${gate.threshold}`,
+    );
+    return "completed";
+  }
+
   /** Execute one claimed run and settle its row + spend. Never throws. */
   async function processOne(
     run: ClaimedCognitionRun,
     signal: AbortSignal,
   ): Promise<"completed" | "retry" | "failed"> {
+    const gated = await settleIfGatedOut(run, signal);
+    if (gated) return gated;
     let outcome;
     opts.activity?.start(run.id, clock());
     try {

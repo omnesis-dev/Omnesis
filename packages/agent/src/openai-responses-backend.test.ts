@@ -10,7 +10,7 @@ import {
   convertHistoryToResponsesInput,
   convertToolsToResponses,
 } from "./openai-responses-backend.js";
-import type { ToolContext, ToolHandle } from "./backend.js";
+import type { LlmRequestTiming, ToolContext, ToolHandle } from "./backend.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
@@ -319,6 +319,82 @@ describe("OpenAIResponsesBackend.runTurn", () => {
     expect(body.stream).toBe(true);
     expect(body.truncation).toBe("disabled");
     expect(body.max_output_tokens).toBe(4096);
+  });
+
+  it("sends the prompt cache key to OpenAI on generation requests only, and reports cached input per request", async () => {
+    const fetchMock = routedFetch(
+      [jsonResponse({ input_tokens: 4000 })],
+      [
+        sseResponse([
+          { type: "response.created", response: { id: "r" } },
+          { type: "response.output_text.delta", delta: "hi" },
+          {
+            type: "response.completed",
+            response: {
+              id: "r",
+              usage: {
+                input_tokens: 4000,
+                output_tokens: 9,
+                input_tokens_details: { cached_tokens: 3500 },
+              },
+            },
+          },
+        ]),
+      ],
+    );
+    globalThis.fetch = fetchMock;
+    const timings: LlmRequestTiming[] = [];
+    const openai = new OpenAIResponsesBackend({
+      baseUrl: "https://api.openai.com",
+      model: "o1-pro",
+      apiKey: "k",
+      allowRemoteInference: true,
+    });
+    await collect(
+      openai.runTurn(
+        baseInput({
+          promptCacheKey: "omnesis-cognition:data",
+          llmProbe: (timing) => timings.push(timing),
+        }),
+      ),
+    );
+    const bodies = fetchMock.mock.calls.map(([url, init]) => ({
+      url: String(url),
+      body: JSON.parse((init as { body: string }).body) as Record<string, unknown>,
+    }));
+    const generation = bodies.find((b) => b.url.endsWith("/responses"));
+    const count = bodies.find((b) => b.url.endsWith("/responses/input_tokens"));
+    expect(generation?.body.prompt_cache_key).toBe("omnesis-cognition:data");
+    expect(count?.body).not.toHaveProperty("prompt_cache_key");
+    expect(timings).toHaveLength(1);
+    expect(timings[0]).toMatchObject({ inputTokens: 500, cacheReadTokens: 3500, outputTokens: 9 });
+  });
+
+  it("omits the prompt cache key for a Responses server that is not OpenAI's own API", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      sseResponse([
+        { type: "response.output_text.delta", delta: "ok" },
+        { type: "response.completed", response: { id: "r", usage: {} } },
+      ]),
+    );
+    globalThis.fetch = fetchMock;
+    await collect(newBackend().runTurn(baseInput({ promptCacheKey: "omnesis-cognition:data" })));
+    const generation = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/responses"));
+    const body = JSON.parse((generation![1] as { body: string }).body);
+    expect(body).not.toHaveProperty("prompt_cache_key");
+  });
+
+  it("omits the prompt cache key when the turn names none", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      sseResponse([
+        { type: "response.output_text.delta", delta: "ok" },
+        { type: "response.completed", response: { id: "r", usage: {} } },
+      ]),
+    );
+    globalThis.fetch = fetchMock;
+    await collect(newBackend().runTurn(baseInput()));
+    const body = JSON.parse((fetchMock.mock.calls[1]![1] as { body: string }).body);
+    expect(body).not.toHaveProperty("prompt_cache_key");
   });
 
   it("uses a configured output-token cap while keeping truncation disabled", async () => {

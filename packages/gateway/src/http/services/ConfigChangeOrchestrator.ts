@@ -238,5 +238,7 @@ function resolvedModelIdentity(r: ResolvedAssignment): string {
       return "unresolved";
     case "replay":
       return "replay";
+    case "typesafe":
+      return `typesafe:${r.model}`;
   }
 }

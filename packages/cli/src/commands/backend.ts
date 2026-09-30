@@ -441,6 +441,8 @@ interface CredentialEntry {
   fileKey: string;
   providerName: string;
   configured: boolean;
+  /** A key supplied by the gateway process's environment (it wins over the file). */
+  environment?: boolean;
 }
 
 const backendKeyStatusCommand = defineCommand({
@@ -458,9 +460,11 @@ const backendKeyStatusCommand = defineCommand({
     console.log();
     console.log(`${c.bold}${"PROVIDER".padEnd(20)} STATUS${c.reset}`);
     for (const entry of res.items) {
-      const status = entry.configured
-        ? `${c.green}configured${c.reset}`
-        : `${c.dim}not configured${c.reset}`;
+      const status = entry.environment
+        ? `${c.green}configured (environment)${c.reset}`
+        : entry.configured
+          ? `${c.green}configured${c.reset}`
+          : `${c.dim}not configured${c.reset}`;
       console.log(`${entry.providerName.padEnd(20)} ${status}`);
     }
     console.log();

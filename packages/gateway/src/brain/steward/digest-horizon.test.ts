@@ -473,7 +473,13 @@ describe("digest horizon over the real temporal query service", () => {
         payloadJson: '{"digest":true,"date":"2026-07-02"}',
         attempts: 1,
       },
-      { db, clock: () => now, cfg: resolveBrainSettings(), digestHorizon: horizon },
+      {
+        db,
+        clock: () => now,
+        cfg: resolveBrainSettings(),
+        memory: { notes: "", selfMemory: "" },
+        digestHorizon: horizon,
+      },
     );
     expect(prompt).toContain("Quarterly planning sync");
     // 14:00Z in July is 15:00 in London — the time the user actually has.

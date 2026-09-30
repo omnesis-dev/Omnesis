@@ -5,9 +5,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { formatDecisionCassetteEntry } from "@omnesis/core/models";
 import {
   UniverseError,
   getAgentDemosDir,
+  getDecisionCassettesDir,
   getUniversesDir,
   hostingDeviceKinds,
   loadActiveUniverse,
@@ -1030,5 +1032,109 @@ describe("universe validator", () => {
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
+  });
+});
+
+describe("universe validator — decision cassettes", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "omnesis-universe-decisions-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const request = {
+    state: { subject: "Quarterly budget review", from: "Maya Reeves", body: "Draft attached." },
+    questions: {
+      worth: { type: "score" as const, instructions: "Worth it?", criteria: ["no", "yes"] },
+    },
+  };
+  const response = {
+    model: "jev-test",
+    answers: { worth: { type: "score" as const, score: 0.9 } },
+  };
+
+  /** A clean universe declaring `decision-cassettes/` with the given files. */
+  function writeUniverse(files: Record<string, string>): Universe {
+    mkdirSync(join(dir, "sources", "gmail"), { recursive: true });
+    writeFileSync(
+      join(dir, "sources", "gmail", "messages.json"),
+      JSON.stringify([{ from: "maya.reeves@example.com", subject: "Quarterly budget review" }]),
+    );
+    writeFileSync(
+      join(dir, "cast.json"),
+      JSON.stringify({
+        self: "p_a",
+        people: [{ id: "p_a", name: "Maya Reeves", emails: ["maya.reeves@example.com"] }],
+        orgs: [],
+      }),
+    );
+    writeFileSync(
+      join(dir, "universe.json"),
+      JSON.stringify({
+        name: "decisions",
+        cast: "cast.json",
+        decisionCassettes: "decision-cassettes",
+        devices: [{ id: "laptop", name: "Mayas-laptop", kind: "collector" }],
+        sources: [
+          { descriptorId: "gmail", accountIds: ["maya.reeves@example.com"], device: "laptop" },
+        ],
+      }),
+    );
+    mkdirSync(join(dir, "decision-cassettes"), { recursive: true });
+    for (const [name, text] of Object.entries(files)) {
+      writeFileSync(join(dir, "decision-cassettes", name), text);
+    }
+    return loadUniverse(dir);
+  }
+
+  const errors = (u: Universe) => validateUniverse(u).filter((i) => i.severity === "error");
+
+  it("resolves the declared directory and accepts a well-formed cassette", () => {
+    const u = writeUniverse({
+      "gate.jsonl": `${formatDecisionCassetteEntry(request, response)}\n`,
+    });
+    expect(getDecisionCassettesDir(u)).toBe(join(dir, "decision-cassettes"));
+    expect(errors(u)).toEqual([]);
+  });
+
+  it("rejects an entry whose fingerprint does not match its request", () => {
+    const entry = JSON.parse(formatDecisionCassetteEntry(request, response)) as {
+      request: { state: { body: string } };
+    };
+    entry.request.state.body = "Edited by hand after recording.";
+    const u = writeUniverse({ "gate.jsonl": `${JSON.stringify(entry)}\n` });
+    expect(
+      errors(u)
+        .map((i) => i.message)
+        .join("\n"),
+    ).toMatch(/fp does not match its request/);
+  });
+
+  it("rejects the same request recorded in two cassettes", () => {
+    const line = `${formatDecisionCassetteEntry(request, response)}\n`;
+    const u = writeUniverse({ "a.jsonl": line, "b.jsonl": line });
+    expect(
+      errors(u)
+        .map((i) => i.message)
+        .join("\n"),
+    ).toMatch(/also recorded in/);
+  });
+
+  it("rejects a declared directory that does not exist", () => {
+    const u = writeUniverse({});
+    rmSync(join(dir, "decision-cassettes"), { recursive: true, force: true });
+    expect(
+      errors(u)
+        .map((i) => i.message)
+        .join("\n"),
+    ).toMatch(/directory missing/);
+  });
+
+  it("the loops-test-life cassettes are validator-clean", () => {
+    const u = loadUniverse("loops-test-life");
+    expect(getDecisionCassettesDir(u)).toMatch(/decision-cassettes$/);
+    expect(errors(u)).toEqual([]);
   });
 });

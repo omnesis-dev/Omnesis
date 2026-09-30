@@ -51,6 +51,7 @@ export type {
   ToolResultView,
   DecisionDto,
   DecisionAction,
+  GateDecisionDto,
   PageOf,
 } from "./obs.js";
 
@@ -89,6 +90,18 @@ export type {
   EntailmentLabel,
   JudgePolicy,
 } from "./verdict-servers.js";
+
+export { startDecisionServer, DECISION_SERVER_MODEL_ID } from "./decision-server.js";
+export type {
+  DecisionServer,
+  DecisionServerCall,
+  DecisionServerOptions,
+  DecisionServerRequest,
+  DecisionPolicy,
+  DecisionPolicyReply,
+} from "./decision-server.js";
+
+export * from "./worth-gate-mail.js";
 
 export { snapshotBrainState } from "./snapshot.js";
 export type { BrainSnapshot } from "./snapshot.js";

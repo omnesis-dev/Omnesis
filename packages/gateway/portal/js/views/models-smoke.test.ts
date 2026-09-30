@@ -77,4 +77,13 @@ describe("models view module", () => {
     // Fallback path still yields a vnode (the neutral dot), never throws.
     expect(CapabilityIcon({ icon: "totally-unknown" })).toBeTruthy();
   });
+
+  it("every capability icon slug the gateway serves has a real glyph", async () => {
+    const { CAPABILITY_METADATA } = await import("@omnesis/core");
+    // @ts-expect-error — portal JS module.
+    const { hasCapabilityGlyph } = await import("../components/capability-icon.js");
+    for (const meta of Object.values(CAPABILITY_METADATA) as Array<{ role: string; icon: string }>) {
+      expect(hasCapabilityGlyph(meta.icon), `${meta.role} → ${meta.icon}`).toBe(true);
+    }
+  });
 });

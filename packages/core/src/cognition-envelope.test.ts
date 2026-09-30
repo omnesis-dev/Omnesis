@@ -2,11 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, expect, test } from "vitest";
-import {
-  cognitionRunPromptBody,
-  formatCognitionRunEnvelope,
-  parseCognitionRunEnvelope,
-} from "./cognition-envelope.js";
+import { formatCognitionRunEnvelope, parseCognitionRunEnvelope } from "./cognition-envelope.js";
 
 describe("cognition run envelope", () => {
   test("renders the identity line a first attempt opens with", () => {
@@ -54,26 +50,38 @@ describe("cognition run envelope", () => {
       kind: "sweep",
       attempt: 1,
     });
-    expect(cognitionRunPromptBody(prompt)).toBe(
-      'Scheduled sweep "may-day" for 2026-08-21.\nMore body.',
-    );
   });
 
-  test("the body skips the re-attempt caution as well as the envelope", () => {
+  test("the envelope is found beneath the static rules a run prompt opens with", () => {
     const prompt = [
-      formatCognitionRunEnvelope({ runId: "run_9", kind: "data", attempt: 4 }),
+      "Data run: a document arrived or changed.",
+      "Your goal is to MAINTAIN the open loops.",
+      "",
+      formatCognitionRunEnvelope({ runId: "run_12", kind: "data", attempt: 2 }),
+      "",
+      "Current time: 2026-08-21T09:00:00.000Z.",
       "",
       "A new document arrived: doc_1. Fetch its content with fetch_many.",
     ].join("\n");
-    expect(cognitionRunPromptBody(prompt)).toBe(
-      "A new document arrived: doc_1. Fetch its content with fetch_many.",
-    );
+    expect(parseCognitionRunEnvelope(prompt)).toEqual({
+      runId: "run_12",
+      kind: "data",
+      attempt: 2,
+    });
+  });
+
+  test("the first envelope wins over a later one quoted in the per-run data", () => {
+    const prompt = [
+      formatCognitionRunEnvelope({ runId: "run_real", kind: "data", attempt: 1 }),
+      "",
+      formatCognitionRunEnvelope({ runId: "run_quoted", kind: "sweep", attempt: 1 }),
+    ].join("\n");
+    expect(parseCognitionRunEnvelope(prompt)?.runId).toBe("run_real");
   });
 
   test("text that is not a run prompt parses as nothing, rather than a default kind", () => {
     expect(parseCognitionRunEnvelope("")).toBeNull();
     expect(parseCognitionRunEnvelope("Background Cognition Steward run.\nRun id: x")).toBeNull();
     expect(parseCognitionRunEnvelope("Loop agent run r1 (kind: data)")).toBeNull();
-    expect(cognitionRunPromptBody("not a prompt")).toBe("not a prompt");
   });
 });

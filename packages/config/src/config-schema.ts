@@ -2706,7 +2706,8 @@ const brain = z
 // inference runs; assignments map capability slots to backend + model.
 // Assignment values use "backend/model" string format:
 //   "local/<catalogId>", "anthropic/<modelId>", "codex/<modelId>",
-//   "<httpKey>/<model>", "replay" (agent only), or null (disabled).
+//   "typesafe/<modelId>" (decision only), "<httpKey>/<model>", "replay"
+//   (roles with a replay backend), or null (disabled).
 
 const httpBackendConfig = z
   .object({
@@ -2777,6 +2778,7 @@ const inferenceModelSettings = z
     "watch-judge": modelSettingsEntry.optional(),
     "entailment-verifier": modelSettingsEntry.optional(),
     "brief-judge": modelSettingsEntry.optional(),
+    decision: modelSettingsEntry.optional(),
   })
   .strict();
 
@@ -2813,6 +2815,11 @@ const inferenceAssignments = z
     // judge runs independently from the background agent, including when both
     // use Codex. Never assigned by default: unset means briefs ship unjudged.
     "brief-judge": assignmentValue.optional(),
+    // Typed decisions (experimental): "typesafe/<model>" (TypeSafe Jev) or
+    // "replay". Only typed-decision backends serve it — never a chat model.
+    // Never assigned by default: unset means the Brain's worth gate is absent
+    // and every candidate document gets a background-agent run.
+    decision: assignmentValue.optional(),
   })
   .strict();
 
@@ -2863,9 +2870,13 @@ const entailmentSettings = z
 const backendKey = z
   .string()
   .min(1)
-  .refine((k) => !["local", "anthropic", "codex", "replay"].includes(k) && !k.includes("/"), {
-    message: "Backend name cannot be 'local', 'anthropic', 'codex', 'replay', or contain '/'",
-  });
+  .refine(
+    (k) => !["local", "anthropic", "codex", "typesafe", "replay"].includes(k) && !k.includes("/"),
+    {
+      message:
+        "Backend name cannot be 'local', 'anthropic', 'codex', 'typesafe', 'replay', or contain '/'",
+    },
+  );
 
 const inference = z
   .object({
@@ -2901,6 +2912,18 @@ const inference = z
       .optional(),
     ocr: ocrSettings.optional(),
     entailment: entailmentSettings,
+    typesafe: z
+      .object({
+        url: z
+          .string()
+          .url()
+          .describe(
+            "TypeSafe System One endpoint. Defaults to https://api.typesafe.ai/v1/systemone; set it to reach a private deployment or a local test server.",
+          )
+          .optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 

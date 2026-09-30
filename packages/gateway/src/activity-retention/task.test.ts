@@ -111,7 +111,7 @@ describe("activity retention task", () => {
     const h = harness({ activityRetention: { maxAge: "1s" } });
     // One run advances one phase, so reaching a given phase takes as many runs
     // as its place in the rotation.
-    for (let i = 0; i < 6; i += 1) await h.task.run(undefined, context);
+    for (let i = 0; i < 7; i += 1) await h.task.run(undefined, context);
 
     expect(h.pruneConversations).toHaveBeenCalledWith(9_000, 1);
     expect(h.conversationPriorities).toEqual(["background"]);
@@ -122,7 +122,7 @@ describe("activity retention task", () => {
     h.pruneTranscripts
       .mockResolvedValueOnce({ deleted: 0, hasMore: true })
       .mockResolvedValueOnce({ deleted: 0, hasMore: false });
-    for (let i = 0; i < 5; i += 1) await h.task.run(undefined, context);
+    for (let i = 0; i < 6; i += 1) await h.task.run(undefined, context);
     expect(h.pruneTranscripts).toHaveBeenCalledTimes(1);
     await h.task.run(undefined, context);
     expect(h.pruneTranscripts).toHaveBeenCalledTimes(2);

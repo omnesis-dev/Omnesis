@@ -55,6 +55,7 @@ const RECENT_MODEL_REFERENCE_GROUPS: Readonly<Record<CapabilityRole, readonly Ca
   transcriber: ["transcriber"],
   embedder: ["embedder"],
   "entailment-verifier": [],
+  decision: ["decision"],
 };
 
 /** Roles consulted for `reference`, reference first. */

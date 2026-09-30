@@ -16,8 +16,15 @@
  * generic envelope that keeps the driver testable on its own.
  */
 
-import { AgentSession, classifyAgentTurn, type ChatBackend, type ToolHandle } from "@omnesis/agent";
+import {
+  AgentSession,
+  classifyAgentTurn,
+  type ChatBackend,
+  type LlmProbe,
+  type ToolHandle,
+} from "@omnesis/agent";
 import { transcriptSafeRunPayload } from "./run-payloads.js";
+import { cognitiveWorkflowIdForRun } from "./cognition/workflows.js";
 import {
   systemClock,
   type Clock,
@@ -110,7 +117,7 @@ export interface CognitionRunDriverDeps {
   buildTools?: (run: ClaimedCognitionRun, context: CognitionRunExecutionContext) => ToolHandle[];
   /** Seam for the per-kind run prompts. Default: the generic envelope. */
   promptBuilder?: CognitionPromptBuilder;
-  /** Seam for the Cognition Steward system prompt (incl. agent-notes injection). */
+  /** Seam for the Cognition Steward system prompt — static across runs for the same settings. */
   systemPrompt?: () => string;
   /**
    * Post-turn completion barrier. A successful model turn is not allowed to
@@ -134,12 +141,29 @@ export class CognitionRunDriver {
   private readonly promptBuilder: CognitionPromptBuilder;
   private readonly systemPrompt: () => string;
   private readonly clock: Clock;
+  /** Per-model-call prompt-cache accounting, at debug level. */
+  private readonly cacheLog: Logger;
 
   constructor(private readonly deps: CognitionRunDriverDeps) {
     this.buildTools = deps.buildTools ?? (() => []);
     this.promptBuilder = deps.promptBuilder ?? defaultCognitionPrompt;
     this.systemPrompt = deps.systemPrompt ?? defaultCognitionSystemPrompt;
     this.clock = deps.clock ?? systemClock;
+    this.cacheLog = deps.log.child("cache");
+  }
+
+  /**
+   * One debug line per model request of a run: how much of its input was
+   * fresh and how much the provider served from its prompt cache. A backend
+   * that cannot attribute tokens to a request reports them as unknown.
+   */
+  private cacheProbe(run: ClaimedCognitionRun): LlmProbe {
+    const count = (n: number | undefined): string => (n === undefined ? "?" : String(n));
+    return (timing) => {
+      this.cacheLog.debug(
+        `${run.kind} run ${run.id} request ${timing.requestIndex}: fresh input ${count(timing.inputTokens)}, cached ${count(timing.cacheReadTokens)}, output ${count(timing.outputTokens)}`,
+      );
+    };
   }
 
   /**
@@ -194,6 +218,10 @@ export class CognitionRunDriver {
       backend,
       tools: this.buildTools(run, { modelId: backend.model }),
       systemPrompt: this.systemPrompt(),
+      // Stable per workflow, never per run: every run of one workflow shares
+      // the system prompt, the tool schemas and its static rules, and a
+      // provider that routes by this key keeps that prefix warm for them all.
+      promptCacheKey: cognitionPromptCacheKey(run),
     });
 
     const events: Array<{ type: string; payload: unknown }> = [];
@@ -255,7 +283,10 @@ export class CognitionRunDriver {
     let failure: AgentTerminalFailure | undefined;
     let context: AgentContextAssessment | undefined;
     try {
-      const { completion } = session.send(prompt, opts.signal ? { signal: opts.signal } : {});
+      const { completion } = session.send(prompt, {
+        ...(opts.signal ? { signal: opts.signal } : {}),
+        llmProbe: this.cacheProbe(run),
+      });
       const terminal = await completion;
       context = terminal.context;
       const turn = classifyAgentTurn(terminal);
@@ -328,6 +359,17 @@ export class CognitionRunDriver {
       openedDocIds: [...openedDocIds],
     };
   }
+}
+
+/**
+ * The prompt-cache routing key shared by every run of one workflow. Keyed on
+ * the workflow rather than the kind because the workflows within one kind
+ * differ in their tools and instructions, so they share no cacheable prefix.
+ */
+export function cognitionPromptCacheKey(
+  run: Pick<ClaimedCognitionRun, "kind" | "payload">,
+): string {
+  return `omnesis-cognition:${cognitiveWorkflowIdForRun(run.kind, run.payload)}`;
 }
 
 /**

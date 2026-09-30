@@ -38,6 +38,8 @@ import {
   type MultiDeviceMode,
 } from "@omnesis/types";
 
+import { parseDecisionCassette } from "@omnesis/core/models";
+
 import type { Cast } from "./types.js";
 
 /**
@@ -84,6 +86,13 @@ export interface UniverseManifest {
    * `null` or omitted disables the replay agent for this universe.
    */
   readonly agentDemos?: string | null;
+  /**
+   * Path to a directory of decision cassettes (`.jsonl`, see `@omnesis/core`'s
+   * `decision-cassette`) relative to the universe directory — what a `replay`
+   * assignment of the `decision` role answers from. `null` or omitted means
+   * the universe records no decisions.
+   */
+  readonly decisionCassettes?: string | null;
   /** The synthetic devices of this universe; every source names one of them. */
   readonly devices: ReadonlyArray<UniverseDeviceEntry>;
   /** Sources that the demo gateway should seed for this universe. */
@@ -318,6 +327,17 @@ function validateManifest(raw: unknown, path: string): UniverseManifest {
   } else {
     throw new UniverseError(`${path}: 'agentDemos' must be a string, null, or omitted`);
   }
+  const decisionCassettesRaw = raw["decisionCassettes"];
+  if (
+    decisionCassettesRaw !== undefined &&
+    decisionCassettesRaw !== null &&
+    (typeof decisionCassettesRaw !== "string" || decisionCassettesRaw.length === 0)
+  ) {
+    throw new UniverseError(
+      `${path}: 'decisionCassettes' must be a non-empty string, null, or omitted`,
+    );
+  }
+  const decisionCassettes = decisionCassettesRaw as string | null | undefined;
   const devicesRaw = raw["devices"];
   if (!Array.isArray(devicesRaw) || devicesRaw.length === 0) {
     throw new UniverseError(`${path}: 'devices' must be a non-empty array (the device roster)`);
@@ -419,6 +439,7 @@ function validateManifest(raw: unknown, path: string): UniverseManifest {
     description,
     cast,
     agentDemos,
+    ...(decisionCassettes !== undefined ? { decisionCassettes } : {}),
     devices,
     sources,
     ...(multiDeviceModes ? { multiDeviceModes } : {}),
@@ -568,6 +589,74 @@ export function getAgentDemosDir(universe: Universe): string | null {
   return join(universe.dir, rel);
 }
 
+/** Absolute path to the universe's decision-cassettes directory, or null if not declared. */
+export function getDecisionCassettesDir(universe: Universe): string | null {
+  const rel = universe.manifest.decisionCassettes;
+  if (!rel) return null;
+  return join(universe.dir, rel);
+}
+
+/**
+ * Every `.jsonl` in a declared decision-cassettes directory must parse with
+ * the same reader the gateway's replay backend uses — each line a
+ * `{fp, request, response}` entry whose `fp` is the fingerprint of its own
+ * request — so a hand edit that desynchronises a request from its key fails
+ * here instead of as a silent replay miss (which the worth gate absorbs by
+ * failing open).
+ */
+function validateDecisionCassettes(universe: Universe): UniverseIssue[] {
+  const dir = getDecisionCassettesDir(universe);
+  if (!dir) return [];
+  const where = universe.manifest.decisionCassettes ?? "decision-cassettes";
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) {
+    return [
+      {
+        severity: "error",
+        where,
+        message: `decision-cassettes directory missing — expected at ${dir}`,
+      },
+    ];
+  }
+  const files = readdirSync(dir)
+    .filter((f) => f.endsWith(".jsonl"))
+    .sort();
+  if (files.length === 0) {
+    return [{ severity: "warn", where, message: "no .jsonl decision cassettes found" }];
+  }
+  const issues: UniverseIssue[] = [];
+  const seen = new Map<string, string>();
+  for (const file of files) {
+    const fileWhere = `${where}/${file}`;
+    let entries: Map<string, unknown>;
+    try {
+      entries = parseDecisionCassette(readFileSync(join(dir, file), "utf-8"), fileWhere);
+    } catch (err) {
+      issues.push({
+        severity: "error",
+        where: fileWhere,
+        message: err instanceof Error ? err.message : String(err),
+      });
+      continue;
+    }
+    if (entries.size === 0) {
+      issues.push({ severity: "warn", where: fileWhere, message: "cassette has no entries" });
+    }
+    for (const fp of entries.keys()) {
+      const other = seen.get(fp);
+      if (other) {
+        issues.push({
+          severity: "error",
+          where: fileWhere,
+          message: `${fp} is also recorded in ${other} — one request, one answer`,
+        });
+      } else {
+        seen.set(fp, fileWhere);
+      }
+    }
+  }
+  return issues;
+}
+
 // ── Validator ──────────────────────────────────────────────────────────────
 
 /**
@@ -652,6 +741,7 @@ export function validateUniverse(universe: Universe): UniverseIssue[] {
   }
 
   issues.push(...validateSyntheticIdentityLiterals(universe, cast));
+  issues.push(...validateDecisionCassettes(universe));
 
   // Agent demos — if declared, every .jsonl has a sibling .meta.json that parses.
   const demosDir = getAgentDemosDir(universe);

@@ -509,6 +509,8 @@ import {
   type EnqueueCognitionRunResult,
   type FinalizeCognitionRunInput,
   type RecordSettledCognitionRunInput,
+  type CognitionDecisionRecord,
+  insertCognitionDecision,
   type ClaimedCognitionRun,
   type CreateOpenLoopInput,
   type UpdateOpenLoopInput,
@@ -1605,6 +1607,8 @@ export interface WriteGate {
     usage: CognitionRunUsage,
     opts?: { countRun?: boolean },
   ): Promise<void>;
+  /** Append one decision-model answer to the decision ledger (idempotent on id). */
+  recordCognitionDecision(record: CognitionDecisionRecord): Promise<void>;
   // Open-loop / brief / notes mutations — the Cognition Steward's tool layer is
   // the only production caller (only the agent mutates loops/briefs in
   // V1). The mirror-document upsert is a separate `upsertDocuments` call.
@@ -2498,6 +2502,7 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     addToCognitionEngineCounter: (key, delta) => call("cognition.engineCounterAdd", [key, delta]),
     recordCognitionSpend: (day, mechanism, modelId, usage, opts) =>
       call("cognition.recordCognitionSpend", [day, mechanism, modelId, usage, opts]),
+    recordCognitionDecision: (record) => call("cognition.recordDecision", [record]),
     createOpenLoop: (input, dependencies, now) =>
       call("cognition.openLoopCreate", [input, dependencies, now]),
     updateOpenLoop: (id, input, dependencies, now) =>
@@ -3124,6 +3129,9 @@ export function directWriteGate(db: Db): WriteGate {
     },
     recordCognitionSpend: async (day, mechanism, modelId, usage, opts) => {
       recordCognitionSpend(db, day, mechanism, modelId, usage, opts);
+    },
+    recordCognitionDecision: async (record) => {
+      insertCognitionDecision(db, record);
     },
     createOpenLoop: async (input, dependencies, now) =>
       mutateWithConsumptionDependencies(db, dependencies, "loop", input.id, now, () =>

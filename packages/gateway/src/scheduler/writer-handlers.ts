@@ -456,6 +456,8 @@ import {
   mutateWithConsumptionDependencies,
   retractAnnotationWithDependentRechecks,
   recordCognitionSpend,
+  insertCognitionDecision,
+  type CognitionDecisionRecord,
   type ConsumptionDependencyContext,
   type CognitionRunUsage,
   type EnqueueCognitionRunInput,
@@ -1328,6 +1330,9 @@ export const writerHandlers = {
   // already settled, with attribution + spend in the same transaction.
   "cognition.recordSettledRun": (db: Db, input: RecordSettledCognitionRunInput): void =>
     recordSettledCognitionRun(db, input),
+  // One decision-model answer (the worth gate's audit + reuse ledger).
+  "cognition.recordDecision": (db: Db, record: CognitionDecisionRecord): void =>
+    insertCognitionDecision(db, record),
   // Readiness barrier: atomically revalidate and release deferred data runs
   // whose datum finished deriving or disappeared. One writer trip per pass.
   "cognition.pullForward": (

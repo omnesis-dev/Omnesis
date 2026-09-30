@@ -20,7 +20,7 @@ import type {
 
 import type { AgentEvent, ToolResult } from "@omnesis/core";
 
-import type { ToolContext, ToolHandle } from "./backend.js";
+import type { LlmRequestTiming, ToolContext, ToolHandle } from "./backend.js";
 
 interface RecordedCall {
   messages: MessageCreateParamsStreaming["messages"];
@@ -447,6 +447,27 @@ describe("AnthropicBackend", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]!.model).toBe("claude-test");
     expect(calls[0]!.system).toBeDefined();
+  });
+
+  it("reports the request's cache reads to the llmProbe beside its fresh input", async () => {
+    const stream = textOnlyStream(["ok"]);
+    const start = stream[0];
+    if (start?.type !== "message_start") throw new Error("expected message_start");
+    start.message.usage.cache_read_input_tokens = 22_000;
+    const { client } = stubClient([stream]);
+    const backend = new AnthropicBackend({ apiKey: "test", model: "claude-test", client });
+    const timings: LlmRequestTiming[] = [];
+    for await (const _ of backend.runTurn(
+      baseInput({ llmProbe: (timing) => timings.push(timing) }),
+    )) {
+      // drain
+    }
+    expect(timings).toHaveLength(1);
+    expect(timings[0]).toMatchObject({
+      inputTokens: 50,
+      cacheReadTokens: 22_000,
+      outputTokens: 20,
+    });
   });
 
   it("runs the tool-use loop, invokes the handle, and feeds the result back", async () => {

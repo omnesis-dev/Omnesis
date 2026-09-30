@@ -259,19 +259,26 @@ export function createCompilerSession(
   return { model, toolNames: tools.map((tool) => tool.name) };
 }
 
-/** The turn's billed usage, in the shape the compiler's report sums. */
+/**
+ * The turn's billed usage, in the shape the compiler's report sums. A backend
+ * reports fresh input apart from cache reads and cache writes, while the
+ * report's `promptTokens` is the whole input side with `cachedPromptTokens` a
+ * subset of it, so the three are summed.
+ */
 function usageOf(
   usage:
     | {
         inputTokens?: number;
         outputTokens?: number;
         cacheReadTokens?: number;
+        cacheCreationTokens?: number;
       }
     | undefined,
 ): ModelReply["usage"] {
   if (!usage) return NO_USAGE;
   return {
-    promptTokens: usage.inputTokens ?? 0,
+    promptTokens:
+      (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0) + (usage.cacheCreationTokens ?? 0),
     cachedPromptTokens: usage.cacheReadTokens ?? 0,
     completionTokens: usage.outputTokens ?? 0,
   };

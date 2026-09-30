@@ -497,3 +497,50 @@ describe("what a compile leaves behind", () => {
     ).toBe("{}");
   });
 });
+
+describe("what a compile costs", () => {
+  it("counts cached and cache-written input inside the prompt total", async () => {
+    // A backend reports fresh input apart from the cache; the report's
+    // promptTokens is the whole input side, and the cost model subtracts the
+    // cached share from it. Counting only fresh input would make that
+    // difference understate the uncached share, down to nothing once the
+    // cache covers most of the prompt.
+    const backend = {
+      name: "scripted",
+      model: "scripted-model",
+      dispose: () => Promise.resolve(),
+      async *runTurn() {
+        yield { type: "agent.text.delta", payload: { delta: "{}" } };
+        yield {
+          type: "agent.message.end",
+          payload: {
+            sessionId: "s",
+            messageId: "m",
+            stopReason: "end_turn",
+            usage: {
+              inputTokens: 100,
+              cacheReadTokens: 800,
+              cacheCreationTokens: 50,
+              outputTokens: 7,
+            },
+          },
+        };
+      },
+    };
+    const { model } = createCompilerSession(
+      { backend: () => backend as never, tools: () => [], timeoutMs: 60_000 },
+      "compile-usage",
+    )!;
+
+    const reply = await model.complete([
+      { role: "system", content: "the contract" },
+      { role: "user", content: "Request: tell me when a parcel ships" },
+    ]);
+
+    expect(reply.usage).toEqual({
+      promptTokens: 950,
+      cachedPromptTokens: 800,
+      completionTokens: 7,
+    });
+  });
+});

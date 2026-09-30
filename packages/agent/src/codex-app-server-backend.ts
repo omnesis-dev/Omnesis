@@ -781,6 +781,8 @@ export class CodexAppServerRuntime {
       if (!this.acceptTurnScopedParams(state, params)) return;
       const p = asRecord(params);
       state.usage = parseCodexUsage(p?.tokenUsage);
+      const contextInputTokens = parseCodexContextInputTokens(p?.tokenUsage);
+      if (contextInputTokens !== undefined) state.contextInputTokens = contextInputTokens;
       if (Object.keys(state.usage).length > 0) {
         state.queue.push(
           wrapEvent("agent.usage.update", {
@@ -931,7 +933,7 @@ export class CodexAppServerRuntime {
           }),
         );
     }
-    const inputTokens = state.usage.inputTokens;
+    const inputTokens = state.contextInputTokens;
     state.queue.push(
       wrapEvent("agent.message.end", {
         sessionId: state.sessionId,
@@ -1195,6 +1197,8 @@ interface ActiveCodexTurn {
   handles: Map<string, ToolHandle>;
   queue: AsyncQueue<AgentEvent>;
   usage: AgentEndUsage;
+  /** The input size of the turn's latest model request, cached input included. */
+  contextInputTokens?: number;
   completed: boolean;
   answer?: { deltas: string; phased: boolean; final?: string; unphased?: string };
   toolCalls: number;
@@ -1440,15 +1444,43 @@ function turnIdFromParams(params: Record<string, unknown>): string | null {
   return stringField(params, "turnId") ?? stringField(turn, "id");
 }
 
-function parseCodexUsage(value: unknown): AgentEndUsage {
+/**
+ * Read Codex's `tokenUsage` into the agent usage shape.
+ *
+ * `total` is the whole turn: every turn runs on a fresh ephemeral thread, so
+ * the thread total is exactly this turn's spend across all its model requests,
+ * whereas `last` covers only the final request. `last` is read only when a
+ * server omits `total`.
+ *
+ * Codex's `inputTokens` includes the cached input. The agent usage convention
+ * (the chat-completions and Responses backends follow it too) reports fresh
+ * input and cache reads as disjoint counts, so the cached portion is
+ * subtracted here, once, at the boundary.
+ */
+export function parseCodexUsage(value: unknown): AgentEndUsage {
   const usage = asRecord(value);
-  const last = asRecord(usage?.last) ?? asRecord(usage?.total);
-  if (!last) return {};
+  const counts = asRecord(usage?.total) ?? asRecord(usage?.last);
+  if (!counts) return {};
+  const input = numberField(counts, "inputTokens");
+  const cached = numberField(counts, "cachedInputTokens");
+  const output = numberField(counts, "outputTokens");
   return {
-    inputTokens: numberField(last, "inputTokens"),
-    outputTokens: numberField(last, "outputTokens"),
-    cacheReadTokens: numberField(last, "cachedInputTokens"),
+    ...(input !== undefined ? { inputTokens: Math.max(0, input - (cached ?? 0)) } : {}),
+    ...(output !== undefined ? { outputTokens: output } : {}),
+    ...(cached !== undefined ? { cacheReadTokens: cached } : {}),
   };
+}
+
+/**
+ * The context-window reading of Codex's `tokenUsage`: the full input of the
+ * latest model request (`last`, cached input included), which is how much of
+ * the window the conversation occupies — unlike the spend counts, a sum over
+ * requests would overstate it.
+ */
+export function parseCodexContextInputTokens(value: unknown): number | undefined {
+  const usage = asRecord(value);
+  const counts = asRecord(usage?.last) ?? asRecord(usage?.total);
+  return counts ? numberField(counts, "inputTokens") : undefined;
 }
 
 function isNativeCodexNotification(method: string): boolean {

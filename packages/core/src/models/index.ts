@@ -55,6 +55,21 @@ export type {
 export { CAPABILITY_ROLES, CODEX_SUPPORTED_ROLES, CAPABILITY_METADATA } from "./capabilities.js";
 
 export type {
+  DecisionAnswer,
+  DecisionCapability,
+  DecisionChoiceAnswer,
+  DecisionChoiceQuestion,
+  DecisionNoulAnswer,
+  DecisionNoulQuestion,
+  DecisionQuestion,
+  DecisionRequest,
+  DecisionResult,
+  DecisionScoreAnswer,
+  DecisionScoreQuestion,
+  DecisionText,
+} from "./decision.js";
+
+export type {
   BackendType,
   ModelTokenLimits,
   HttpBackendConfig,
@@ -70,6 +85,7 @@ export type {
   ResolvedUnresolved,
   ResolvedReplay,
   ResolvedCodex,
+  ResolvedTypeSafe,
   BackendStatus,
   CodexBackendStatus,
   CodexLoginFlow,
@@ -124,6 +140,14 @@ export {
 export type { LoadResult } from "./manifest.js";
 
 export { ANTHROPIC_CREDENTIALS_SPEC } from "./anthropic-credentials.js";
+export { TYPESAFE_CREDENTIALS_SPEC } from "./typesafe-credentials.js";
+export type { DecisionCassetteEntry } from "./decision-cassette.js";
+export {
+  canonicalJson,
+  decisionFingerprint,
+  formatDecisionCassetteEntry,
+  parseDecisionCassette,
+} from "./decision-cassette.js";
 
 export type { ProviderPreset } from "./provider-presets.js";
 export { PROVIDER_PRESETS, getPreset } from "./provider-presets.js";
