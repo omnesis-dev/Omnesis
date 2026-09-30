@@ -81,6 +81,7 @@
   var nav = document.getElementById("nav");
   var navLinks = nav && nav.querySelector(".nav-links");
   var path = window.location.pathname;
+  var blogPage = path === "/blog" || path.indexOf("/blog/") === 0;
   var docsPage = path === "/docs" || path.indexOf("/docs/") === 0;
   if (navLinks && !navLinks.id) navLinks.id = "primary-navigation";
   if (navLinks) {
@@ -96,12 +97,16 @@
       ">Vision</a></li>" +
       '<li><a href="/docs/"' +
       (docsPage ? ' aria-current="page"' : "") +
-      ">Docs</a></li>";
+      ">Docs</a></li>" +
+      '<li><a href="/blog/"' +
+      (blogPage ? ' aria-current="page"' : "") +
+      ">Blog</a></li>";
   }
 
   var footerLinks = document.querySelector(".site-footer .footer-links");
   if (footerLinks) {
     footerLinks.innerHTML =
+      '<a href="/blog/">Blog</a>' +
       '<a href="/docs/">Docs</a>' +
       '<a href="/privacy">Privacy</a>' +
       '<a class="footer-mail" href="mailto:contact@omnesis.dev" aria-label="Email Omnesis support">' +

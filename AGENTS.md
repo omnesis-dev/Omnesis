@@ -36,7 +36,7 @@ docs/                  internal design docs, process docs (e.g. issue-labels.md)
 
 ## Documentation maintenance — your obligation
 
-The public docs are fourteen hand-written static HTML pages under `website/docs/`, published with the landing site at https://omnesis.dev/docs (the `site` workflow deploys `website/` to Cloudflare on every push to `main` that touches it — no build step, no generated reference). `website/docs/docs.css` + `docs.js` carry the shared chrome (design tokens extracted from `website/index.html`); every page embeds the same nav / sidebar / footer, so structural changes must be applied to all pages.
+The public docs are fourteen hand-written static HTML pages under `website/docs/`, published with the landing site at https://omnesis.dev/docs (the `site` workflow deploys `website/` to Cloudflare on every push to `main` that touches it — the site workflow verifies the generated blog, with no generated documentation reference). `website/docs/docs.css` + `docs.js` carry the shared chrome (design tokens extracted from `website/index.html`); every page embeds the same nav / sidebar / footer, so structural changes must be applied to all pages.
 
 When you change user-visible behavior — defaults, CLI commands, source semantics, setup flows, new or removed features — check the affected page and update it **in the same commit**:
 
