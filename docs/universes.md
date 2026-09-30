@@ -279,3 +279,34 @@ Exit code is 0 with only warnings, non-zero on any `error`-severity issue. `npm 
 - **No procedural generation.** All fixtures are hand-authored JSON committed to the repo; there is no fixture generator.
 - **No versioning / compat checking.** There is no `version` field and no schema-mismatch detection. Universes are read at face value.
 - **No universe registry beyond the in-tree `evals/universes/` directory.** External universes work via path-mode but aren't discoverable as names.
+
+## Starting an isolated portal for feature review
+
+Use `scripts/dev-instance.sh start` to boot a separate gateway and collector,
+seeded from the default synthetic universe. Strongly prefer supplying both
+optional labels so parallel review portals identify the creating agent session
+and the feature under test in their sidebar:
+
+```sh
+scripts/dev-instance.sh start --session "Codex: search filters" --purpose "Review the filter controls"
+# Choose another corpus with --universe <name>, or omit seeding with --bare.
+# --real starts an isolated instance without synthetic data or seeded sources.
+```
+
+The same optional `--session` and `--purpose` arguments work with
+`scripts/synth-gateway.sh start`. Session labels accept up to 200 characters,
+purpose descriptions up to 1000; supplied values must be nonblank and contain
+no control characters. Labels are display text: use a recognizable session
+name and concise feature description, without credentials or private corpus
+content. An unlabeled test gateway still displays the test-instance card.
+Labels stay with the running gateway; stop and restart it to change them.
+
+The startup output and `scripts/dev-instance.sh info` include a `/portal/?token=…`
+one-click login link. When handing a test instance to the operator, provide
+that complete link so they can sign in without minting a token or pairing code.
+Treat the link as a credential and keep it out of committed files. The portal
+consumes the token and removes it from the browser URL after opening it.
+
+For parallel instances, choose distinct `OMNESIS_CONFIG_DIR` and
+`OMNESIS_GATEWAY_PORT` values. Use `scripts/dev-instance.sh stop` with those
+same values to retire your instance when review finishes.

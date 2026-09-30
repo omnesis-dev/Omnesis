@@ -289,6 +289,27 @@ a:hover { text-decoration: underline; }
 .sidebar-brand-name { font-size: 14px; font-weight: 700; letter-spacing: 1px; color: var(--text-primary); }
 .sidebar-brand-sub { font-size: 10px; color: var(--text-muted); letter-spacing: 0.5px; margin-top: 2px; text-transform: uppercase; }
 
+.sidebar-test-instance {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+  min-width: 0;
+  margin: 12px 10px 0;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.sidebar-test-instance strong { color: var(--text-primary); }
+.sidebar-test-instance > div { display: flex; flex-direction: column; gap: 2px; }
+.sidebar-test-label { color: var(--text-muted); font-size: 10px; }
+
 .sidebar-nav {
   padding: 12px 10px 8px;
   display: flex;

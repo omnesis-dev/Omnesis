@@ -748,11 +748,21 @@ describe("scripts/dev-instance.sh one-command isolated instance", () => {
     const configDir = tmpDir("omnesis-dev-instance-");
     // --bare: synthetic mode but no seeding, so the boot is fast and needs no
     // real provider data. The readiness gate still proves /health serves.
-    const { code, out } = await runDevInstance(["start", "--bare"], {
-      configDir,
-      port: PORT,
-      extraEnv: { OMNESIS_DEV_READY_TIMEOUT: "100", OMNESIS_LOG_LEVEL: "warn" },
-    });
+    const { code, out } = await runDevInstance(
+      [
+        "start",
+        "--bare",
+        "--session",
+        "Codex: search filters",
+        "--purpose",
+        "Check filter controls",
+      ],
+      {
+        configDir,
+        port: PORT,
+        extraEnv: { OMNESIS_DEV_READY_TIMEOUT: "100", OMNESIS_LOG_LEVEL: "warn" },
+      },
+    );
     // Ensure the instance is torn down even if an assertion below throws.
     cleanups.push(() => {
       try {
@@ -812,6 +822,30 @@ describe("scripts/dev-instance.sh one-command isolated instance", () => {
     const info = await runDevInstance(["info"], { configDir, port: PORT, timeout: 15000 });
     expect(info.code).toBe(0);
     expect(parseTriple(info.out)).toEqual({ url, token, caCert });
+    const portal = new URL(info.out.match(/^# PORTAL \(one-click login\): (.+)$/m)[1]);
+    expect(portal.pathname).toBe("/portal/");
+    expect(portal.searchParams.get("token") === token).toBe(true);
+    const statusProbe = `fetch(process.argv[1] + "/status", {headers: {Authorization: "Bearer " + process.argv[2]}}).then(r => r.json()).then(s => process.stdout.write(JSON.stringify(s.testInstance)));`;
+    const metadata = execFileSync(process.execPath, ["-e", statusProbe, url, token], {
+      env: { ...process.env, NODE_EXTRA_CA_CERTS: caCert },
+      encoding: "utf8",
+    });
+    expect(JSON.parse(metadata)).toEqual({
+      session: "Codex: search filters",
+      purpose: "Check filter controls",
+    });
+    const reuse = await runDevInstance(["start", "--session", "Codex: search filters"], {
+      configDir,
+      port: PORT,
+    });
+    expect(reuse.code).toBe(0);
+    expect(reuse.out.includes("reusing")).toBe(true);
+    const changed = await runDevInstance(["start", "--session", "Claude: another feature"], {
+      configDir,
+      port: PORT,
+    });
+    expect(changed.code).toBe(2);
+    expect(changed.out).toContain("different or unavailable test labels");
   }, 150000);
 
   it("propagates its timeout to synth boot and reaps a gateway that never becomes ready", async () => {
@@ -925,6 +959,115 @@ describe("scripts/dev-instance.sh one-command isolated instance", () => {
     expect(onLivePort.out).toContain("REFUSING TO START");
     expect(onLivePort.code).toBe(4);
   }, 20000);
+});
+
+describe("isolated gateway labels", () => {
+  for (const script of ["dev-instance.sh", "synth-gateway.sh"]) {
+    for (const args of [
+      ["--session"],
+      ["--purpose", "--bare"],
+      ["--session="],
+      ["--purpose", " "],
+      ["--session", "x".repeat(201)],
+      ["--purpose", "x".repeat(1001)],
+      ["--purpose", "line\nbreak"],
+    ]) {
+      it(`${script} rejects invalid ${args[0]} before touching instance state`, () => {
+        const root = tmpDir("omnesis-label-guard-");
+        const configDir = join(root, "new-instance");
+        const bin = join(root, "bin");
+        mkdirSync(bin);
+        const mutation = join(root, "mutation");
+        writeFileSync(join(bin, "date"), `#!/usr/bin/env bash\ntouch '${mutation}'\nexit 1\n`, {
+          mode: 0o755,
+        });
+        const result = spawnSync("bash", [join(repoRoot, "scripts", script), "start", ...args], {
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH}`,
+            OMNESIS_CONFIG_DIR: configDir,
+            OMNESIS_GATEWAY_PORT: "19990",
+          },
+          encoding: "utf8",
+          timeout: 10_000,
+        });
+        expect(result.status).toBe(2);
+        expect(existsSync(configDir)).toBe(false);
+        expect(existsSync(mutation)).toBe(false);
+      });
+    }
+  }
+
+  it("encodes a portal token as URL data", () => {
+    const configDir = tmpDir("omnesis-label-link-");
+    mkdirSync(join(configDir, "tls"));
+    writeFileSync(join(configDir, "tls", "cert.pem"), "fixture-ca");
+    const token = "fixture+token&scope=read#fragment";
+    writeFileSync(join(configDir, "token"), token);
+    const result = spawnSync("bash", [join(repoRoot, "scripts/dev-instance.sh"), "info"], {
+      env: { ...process.env, OMNESIS_CONFIG_DIR: configDir, OMNESIS_GATEWAY_PORT: "19990" },
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    expect(result.status).toBe(0);
+    const portal = new URL(result.stdout.match(/^# PORTAL \(one-click login\): (.+)$/m)[1]);
+    expect([...portal.searchParams.keys()]).toEqual(["token"]);
+    expect(portal.searchParams.get("token") === token).toBe(true);
+    expect(portal.hash).toBe("");
+  });
+
+  it("passes optional labels and the test marker to a real-sources gateway", async () => {
+    const root = tmpDir("omnesis-label-real-");
+    const configDir = join(root, "instance");
+    const bin = join(root, "bin");
+    mkdirSync(bin);
+    const captured = join(root, "gateway-env.json");
+    const fixture = join(root, "gateway.mjs");
+    writeFileSync(
+      fixture,
+      `import { writeFileSync } from "node:fs";
+writeFileSync(process.argv[2], JSON.stringify({test: process.env.OMNESIS_TEST_INSTANCE, session: process.env.OMNESIS_TEST_SESSION, purpose: process.env.OMNESIS_TEST_PURPOSE}));
+setInterval(() => {}, 1000);`,
+    );
+    writeFileSync(
+      join(bin, "npx"),
+      `#!/usr/bin/env bash\nexec '${process.execPath}' '${fixture}' '${captured}'\n`,
+      { mode: 0o755 },
+    );
+    writeFileSync(join(bin, "curl"), "#!/usr/bin/env bash\nprintf '503'\n", { mode: 0o755 });
+    const result = await new Promise((resolve) =>
+      execFile(
+        "bash",
+        [
+          join(repoRoot, "scripts/dev-instance.sh"),
+          "start",
+          "--real",
+          "--session=Claude: review",
+          "--purpose",
+          "Check layout",
+        ],
+        {
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH}`,
+            OMNESIS_CONFIG_DIR: configDir,
+            OMNESIS_GATEWAY_PORT: "19990",
+            OMNESIS_DEV_READY_TIMEOUT: "2",
+          },
+          timeout: 15_000,
+        },
+        (err, stdout, stderr) => resolve({ code: err?.code ?? 0, out: `${stdout}\n${stderr}` }),
+      ),
+    );
+    expect(result.code).not.toBe(0);
+    expect(result.out).toContain("SYNTH_GATEWAY_NOT_READY");
+    expect(JSON.parse(readFileSync(captured, "utf8"))).toEqual({
+      test: "1",
+      session: "Claude: review",
+      purpose: "Check layout",
+    });
+    expect(existsSync(join(configDir, "gateway.pid"))).toBe(false);
+  }, 20_000);
 });
 
 describe("scripts/lib/safe_kill helper (C7)", () => {
