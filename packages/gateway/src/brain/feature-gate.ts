@@ -44,7 +44,7 @@ import { chatRoleReadiness } from "../models/chat-role-readiness.js";
 import { DERIVATION_STAGES, type DerivationStage } from "../domain/DocumentDerivation.js";
 import { cognitionBudgetVerdict } from "./cognition/budget.js";
 import { seedOpenLoopSourceMeta } from "./open-loop-source/source-meta.js";
-import { WorthGate, WORTH_GATE_SPEND_MECHANISM  } from "./worth-gate/gate.js";
+import { WorthGate, WORTH_GATE_SPEND_MECHANISM } from "./worth-gate/gate.js";
 import { RecordCheck } from "./record-check/check.js";
 import { RECORD_CHECK_SPEND_MECHANISM } from "./record-check/rubric.js";
 import { recordDecisionSpend } from "./decision-call.js";
