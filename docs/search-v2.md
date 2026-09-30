@@ -17,8 +17,30 @@ Omitting the block, using an empty block, or setting `enabled` to `false`
 preserves the existing search behaviour and retrieval guidance. This switch is
 independent of experimental mode. It changes unrestricted built-in agent and
 Direct searches, including each `search_many` query. Source-restricted grants
-keep their existing projection. The ordinary public `/search` endpoint and all
-user interfaces keep their existing contracts and behaviour.
+keep their existing projection. The ordinary public `/search` endpoint, normal CLI search, portal and mobile
+interfaces keep their existing contracts and behaviour.
+
+## Inspecting agent context from the CLI
+
+With the flag enabled, use the explicit CLI diagnostic projection:
+
+```sh
+omnesis search "contract" --agent-context
+omnesis search "contract" --agent-context --json
+```
+
+Pretty output shows the generated summary, available copy locations, device
+labels, document IDs and source/app URLs. JSON output is the canonical
+`search.results` tool result with document references and optional provenance.
+This is useful for inspecting the context the agent receives; ordinary
+`omnesis search` continues to use public search.
+
+The diagnostic calls `POST /admin/search/agent-context` with `text` and `limit`.
+The route requires operator credentials with both read and admin scopes;
+principal OAuth grants cannot use it. It exists only when `search.v2.enabled` is true. When a gateway does not offer it (HTTP 404 or 405),
+the CLI falls back to ordinary search and writes a notice to stderr. JSON stdout
+remains valid and carries the legacy public-search shape after fallback.
+Authentication and other server failures are reported rather than downgraded.
 
 ## Grouped content and evidence
 
@@ -87,5 +109,5 @@ trail, a reference hub and unrelated activity by the same person. Replay
 conversations execute live search and document tools rather than returning
 recorded search payloads. The end-to-end suite verifies real ingestion, graph
 resolution, context reduction, source restrictions and flag-off/public-search
-compatibility. Unit tests exercise adversarial extraction, paths, budgets and
+compatibility, real CLI rendering, JSON output and disabled-route fallback. Unit tests exercise adversarial extraction, paths, budgets and
 cross-version wire decoding.

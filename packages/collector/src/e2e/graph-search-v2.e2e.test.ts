@@ -3,8 +3,10 @@
 
 /** Real provider ingestion + live-tool replay; no model inference or canned search results. */
 import "./synth-env.js";
+import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { ProviderId, SourceId } from "@omnesis/types";
@@ -13,6 +15,8 @@ import { authorizeMcpClient, type AuthorizedMcpClient } from "./mcp-oauth-helper
 import { SyntheticE2EHarness } from "./synth-harness.js";
 import type { DocRef, ToolResult } from "@omnesis/core";
 
+const execFileAsync = promisify(execFile);
+const REPO_ROOT = join(import.meta.dirname, "../../../..");
 const UNIVERSE = join(import.meta.dirname, "../../../../evals/universes/graph-search");
 const QUERY = "LANTERN-482";
 const LOCAL_SOURCE = "local-files:example-contracts";
@@ -343,6 +347,61 @@ describe("Agent search v2 — synthetic file journey", () => {
     expect(JSON.stringify(scoped)).not.toContain("https://mail.google.com/");
   }, 60_000);
 
+  test("CLI agent context renders live provenance and canonical JSON while normal search remains legacy", async () => {
+    const json = await runCli(harness, [
+      "search",
+      QUERY,
+      "--agent-context",
+      "--limit",
+      "20",
+      "--json",
+    ]);
+    // Parse all stdout: diagnostics must never contaminate the machine payload.
+    const result = JSON.parse(json.stdout) as ToolResult;
+    expect(result.kind).toBe("search.results");
+    if (result.kind !== "search.results") throw new Error("Missing CLI agent context");
+    expect(result.candidates).toEqual(expect.any(Number));
+    expect(result).not.toHaveProperty("totalCandidates");
+    const grouped = result.results.find((hit) => hit.provenance?.copies.length === 5);
+    expect(grouped).toBeDefined();
+    expect(grouped!.provenance!.copies.map((copy) => copy.documentId).sort()).toEqual(
+      copies.map((copy) => copy.id).sort(),
+    );
+    expect(grouped!.provenance!.paths.length).toBeGreaterThan(0);
+    expect(json.stderr).not.toMatch(/falling back|unavailable/i);
+
+    const pretty = await runCli(harness, ["search", QUERY, "--agent-context", "--limit", "20"]);
+    expect(pretty.stdout).toContain(grouped!.provenance!.summary);
+    expect(pretty.stdout).toContain("Example-Laptop-collector");
+    expect(pretty.stdout).toContain("~/Contracts/northstar.pdf");
+    for (const copy of grouped!.provenance!.copies) {
+      expect(pretty.stdout).toContain(copy.documentId);
+      if (copy.url) expect(pretty.stdout).toContain(copy.url);
+      if (copy.appUrl) expect(pretty.stdout).toContain(copy.appUrl);
+    }
+    for (const path of grouped!.provenance!.paths)
+      for (const documentId of path.documentIds) expect(pretty.stdout).toContain(documentId);
+    const normal = await runCli(harness, ["search", QUERY, "--limit", "20", "--json"]);
+    const legacy = JSON.parse(normal.stdout) as { results: PublicHit[] };
+    expect(legacy.results.every((hit) => hit.provenance === undefined)).toBe(true);
+    expect(
+      legacy.results.filter((hit) => copies.some((copy) => copy.id === hit.documentId)).length,
+    ).toBeGreaterThan(1);
+    expect((await publicSearch(harness)).results.every((hit) => hit.provenance === undefined)).toBe(
+      true,
+    );
+
+    const denied = await fetch(`${harness.gatewayUrl}/admin/search/agent-context`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${harness.deviceForSource("google-drive:maya@example.com").token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ text: QUERY, limit: 20 }),
+    });
+    expect(denied.status).toBe(403);
+  }, 120_000);
+
   test("public search stays legacy and disabling v2 restores separate agent copy entries after restart", async () => {
     expect(beforePublic.every((hit) => hit.provenance === undefined)).toBe(true);
     const injection = await fetch(`${harness.gatewayUrl}/search`, {
@@ -364,6 +423,37 @@ describe("Agent search v2 — synthetic file journey", () => {
     const enrichedCopies = await directSearchResult(unrestricted, copyQuery);
     enabled = false;
     await harness.restartGateway();
+    const unavailable = await fetch(`${harness.gatewayUrl}/admin/search/agent-context`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${harness.apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ text: QUERY, limit: 20 }),
+    });
+    expect(unavailable.status).toBe(404);
+    const fallback = await runCli(harness, [
+      "search",
+      QUERY,
+      "--agent-context",
+      "--limit",
+      "20",
+      "--json",
+    ]);
+    const fallbackJson = JSON.parse(fallback.stdout) as { results: PublicHit[] };
+    expect(fallbackJson.results.every((hit) => hit.provenance === undefined)).toBe(true);
+    expect(
+      fallbackJson.results.filter((hit) => copies.some((copy) => copy.id === hit.documentId))
+        .length,
+    ).toBeGreaterThan(1);
+    expect(fallback.stderr).toMatch(/ordinary search/i);
+    const fallbackPretty = await runCli(harness, [
+      "search",
+      QUERY,
+      "--agent-context",
+      "--limit",
+      "20",
+    ]);
+    expect(fallbackPretty.stdout).toContain("Northstar");
+    expect(fallbackPretty.stdout).not.toContain("Example-Laptop-collector");
+    expect(fallbackPretty.stderr).toMatch(/ordinary search/i);
     const publicAfter = (await publicSearch(harness)).results;
     expect(
       publicAfter
@@ -512,4 +602,24 @@ async function waitUntil(check: () => boolean | Promise<boolean>, label: string)
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(`Timed out waiting for ${label}`);
+}
+
+async function runCli(
+  harness: SyntheticE2EHarness,
+  args: string[],
+): Promise<{ stdout: string; stderr: string }> {
+  return execFileAsync("npx", ["tsx", "packages/cli/src/index.ts", ...args], {
+    cwd: REPO_ROOT,
+    env: {
+      ...process.env,
+      OMNESIS_GATEWAY_URL: harness.gatewayUrl,
+      OMNESIS_TOKEN: harness.apiKey,
+      OMNESIS_CONFIG_DIR: harness.getConfigDir(),
+      NODE_TLS_REJECT_UNAUTHORIZED: "0",
+      NO_COLOR: "1",
+      CI: "1",
+    },
+    timeout: 30_000,
+    maxBuffer: 8 * 1024 * 1024,
+  });
 }
