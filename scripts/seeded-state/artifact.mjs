@@ -51,6 +51,9 @@ const FORBIDDEN_TABLES = new Set([
   // Exact unfinished source output is live write authority, never a seed.
   "pending_source_pages",
   "pending_source_page_observations",
+  // Voice notes waiting on the transcriber hold the raw recordings; a clone
+  // gets the notes' text, never the audio or the unfinished work.
+  "voice_note_transcriptions",
   "access_audit_events",
   "access_grant_capabilities",
   "access_grants",
