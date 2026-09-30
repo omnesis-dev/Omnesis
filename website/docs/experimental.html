@@ -274,10 +274,12 @@
               <tr>
                 <td>Time index</td>
                 <td>
-                  Temporal annotations: dates and intervals mentioned in text (“the lease renews on
-                  14 March”), each with the document it came from. The agent can query it.
+                  Temporal annotations: Brain's reading of what a date means and when it applies
+                  (“the kitchen fitting starts the week after the deposit clears”), each with the
+                  documents it came from. The agent's time query returns them beside source dates
+                  and date mentions.
                 </td>
-                <td>Debug → Cognition → Calendar</td>
+                <td>Debug → Calendar</td>
               </tr>
               <tr>
                 <td>Open loops</td>
@@ -391,7 +393,8 @@
                   nothing from, and scores each new record a run saves. Served only by TypeSafe Jev
                   (<code>typesafe/jev-1.13.0</code>); see
                   <a href="#brain-worth-gate">Skipping mail it cannot use</a> and
-                  <a href="#brain-record-check">Checking what it writes</a>.
+                  <a href="#brain-record-check">Checking what it writes</a>. The role itself is
+                  stable; <a href="/docs/operating#models">Models</a> covers its setup.
                 </td>
                 <td>Every email Brain selects gets an agent run, and every record is saved.</td>
               </tr>
@@ -575,7 +578,9 @@
           sender and the first 2,000 characters of the body and answers with a score; below the
           threshold, the run ends without an agent turn. An attachment is judged by the email that
           contains it. Mail you sent to the assistant, and mail carrying a structured booking or due
-          date, is never skipped. Unchanged mail is not scored twice.
+          date, is never skipped. An email is scored once for the same content: the answer is shared
+          with the <a href="/docs#documents-and-the-index">mention worth gate</a>, so mail either
+          one has scored is not sent again.
         </p>
         <p>
           The check sends each email it scores to TypeSafe, so it needs
@@ -828,11 +833,10 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
           The portal's <strong>Debug → Cognition</strong> page is the main view. Its tabs are
           <strong>Overview</strong> (gate status, today's budget and spend by mechanism),
           <strong>Loops</strong>, <strong>Runs</strong> (the queue, each run's transcript and
-          decisions), <strong>Briefs</strong>, <strong>Calendar</strong> (the time index),
-          <strong>Memory</strong> (annotations), <strong>Calibration</strong> and
-          <strong>Bootstrap</strong> (catch-up state, limits, pause control and backend health).
-          <strong>Debug → Background jobs</strong> shows when each scheduled task last ran. The same
-          data is available from the CLI:
+          decisions), <strong>Briefs</strong>, <strong>Memory</strong> (annotations),
+          <strong>Calibration</strong> and <strong>Bootstrap</strong> (catch-up state, limits, pause
+          control and backend health). <strong>Debug → Background jobs</strong> shows when each
+          scheduled task last ran. The same data is available from the CLI:
         </p>
         <div class="table-wrap">
           <table>

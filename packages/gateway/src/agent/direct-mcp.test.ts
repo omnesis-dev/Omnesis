@@ -278,7 +278,9 @@ describe("DirectMcpService", () => {
     const service = new DirectMcpService(stableHandles);
 
     expect(service.manifest().map((tool) => tool.name)).toEqual(STABLE_DIRECT_MCP_TOOL_NAMES);
-    await expect(service.instructions()).resolves.not.toContain("temporal_query");
+    const instructions = await service.instructions();
+    expect(instructions).toContain("temporal_query");
+    expect(instructions).not.toContain("entity_context");
   });
 
   it("publishes scoped safe tools — including a scoped run_sql — for a restricted grant", async () => {

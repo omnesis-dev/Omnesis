@@ -7,6 +7,7 @@ import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 import { createDatabase } from "../../db.js";
+import { MENTION_WORTH_GATE_SPEND_MECHANISM } from "../../enrichment/dates/config.js";
 import {
   getCognitionSpendDayTotal,
   listCognitionSpend,
@@ -126,6 +127,29 @@ describe("cognition spend tracking", () => {
       cacheCreationTokens: 0,
     });
     expect(getCognitionSpendDayTotal(db, "2026-06-30")).toBeNull();
+  });
+
+  test("the day total the cognition budget reads leaves out the mention worth gate", () => {
+    recordCognitionSpend(db, "2026-07-03", "data", "model-x", {
+      promptTokens: 50,
+      completionTokens: 5,
+    });
+    recordCognitionSpend(
+      db,
+      "2026-07-03",
+      MENTION_WORTH_GATE_SPEND_MECHANISM,
+      "jev-test",
+      { promptTokens: 90_000, completionTokens: 0 },
+      { countRun: false },
+    );
+    expect(getCognitionSpendDayTotal(db, "2026-07-03")).toMatchObject({
+      runs: 1,
+      promptTokens: 50,
+    });
+    // The gate's spend is still recorded, and listed.
+    expect(
+      listCognitionSpend(db).some((row) => row.mechanism === MENTION_WORTH_GATE_SPEND_MECHANISM),
+    ).toBe(true);
   });
 
   test("cache-read and cache-creation tokens fold into the bucket's totals", () => {

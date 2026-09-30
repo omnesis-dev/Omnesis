@@ -39,8 +39,6 @@ describe("deriveDevTarget", () => {
       ["loops", "open_loop"],
       ["runs", "agent_run"],
       ["briefs", "brief"],
-      ["temporal-annotations", "temporal_annotation"],
-      ["time-index", "temporal_annotation"],
     ];
     for (const [tab, type] of cases) {
       expect(
@@ -64,8 +62,8 @@ describe("deriveDevTarget", () => {
   test("does not infer a Calendar item's origin from its id", () => {
     expect(
       deriveDevTarget(
-        { view: "debug", tab: "cognition", cognitionTab: "calendar", cognitionId: "tp_1" },
-        "/portal/debug/cognition/calendar/tp_1",
+        { view: "debug", tab: "calendar", calendarId: "tp_1" },
+        "/portal/debug/calendar/tp_1",
       ),
     ).toMatchObject({ targetType: "route", targetId: null });
   });

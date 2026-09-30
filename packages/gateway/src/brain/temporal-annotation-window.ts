@@ -37,9 +37,6 @@ export interface TemporalAnnotationWindowEntry {
   documents: FeedCitation[];
 }
 
-/** Hard cap on a window's span — a year-plus view is a misuse, not a zoom. */
-export const TEMPORAL_ANNOTATION_WINDOW_MAX_SPAN_MS = 400 * 24 * 60 * 60 * 1000;
-
 /** One assembled window page. `truncated` = more live entries overlap the
  * window than `limit` allowed — the client narrows the window (or raises
  * `limit`) rather than trusting an invisibly clipped calendar. */

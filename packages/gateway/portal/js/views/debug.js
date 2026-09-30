@@ -39,6 +39,7 @@ import { debugTabs, DEFAULT_DEBUG_TAB } from "../lib/debug-tabs.js";
 import { lazy } from "../lib/lazy.js";
 import { GraphView } from "./graph.js";
 import { CognitionView } from "./cognition.js";
+import { CalendarTab } from "./calendar.js";
 import { DoctorTab } from "./doctor.js";
 import { WatchDebugTab } from "./watch-debug.js";
 
@@ -140,6 +141,7 @@ export function DebugView({
   developer = false,
   cognitionTab,
   cognitionId,
+  calendarId,
   watchDebugId,
   watchDebugSeq,
 } = {}) {
@@ -178,8 +180,8 @@ export function DebugView({
             Internal-state inspector for the gateway. Switch tabs to
             browse the stored tables, query them in SQL, walk the
             document graph, view scheduler metrics and route-level
-            timings, watch every background loop in the process, or run
-            the health check.
+            timings, watch every background loop in the process, browse
+            the time index on the Calendar, or run the health check.
           </p>
         </div>
       </div>
@@ -200,6 +202,10 @@ export function DebugView({
       ${activeTab === "metrics" && html`<${MetricsTab} />`}
       ${activeTab === "background-jobs" && html`<${BackgroundJobsTab} />`}
       ${activeTab === "doctor" && html`<${DoctorTab} />`}
+      ${activeTab === "calendar" && html`<${CalendarTab}
+        selectedId=${calendarId ?? null}
+        developer=${developer}
+      />`}
       ${activeTab === "cognition" && experimental && html`<${CognitionView}
         subTab=${cognitionTab}
         selectedId=${cognitionId}

@@ -18,9 +18,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../api.js", () => ({
-  getCognitionCalendarWindow: mocks.getWindow,
+  getCalendarWindow: mocks.getWindow,
   getDocumentSummariesBulk: mocks.getDocuments,
-  getCognitionCalendarAnnotation: mocks.getAnnotation,
+  getCalendarAnnotation: mocks.getAnnotation,
   getStatus: mocks.getStatus,
 }));
 vi.mock("../lib/router.js", () => ({ navigate: mocks.navigate, replaceRoute: mocks.replaceRoute }));
@@ -28,7 +28,7 @@ vi.mock("../lib/format.js", () => ({
   sourceIconUrl: (sourceId) => sourceId ? `/icons/${encodeURIComponent(sourceId)}.svg` : null,
 }));
 
-import { CalendarTab } from "./cognition-calendar.js";
+import { CalendarTab } from "./calendar.js";
 
 function deferred() {
   let resolve;
@@ -58,7 +58,7 @@ function entry(id, label, origin = "projection") {
   };
 }
 
-describe("Cognition Calendar loading and addressability", () => {
+describe("Calendar loading and addressability", () => {
   let host;
   let originalDocument;
   let originalWindow;
@@ -175,11 +175,11 @@ describe("Cognition Calendar loading and addressability", () => {
     expect(host.querySelector(".dev-annotate-inline")).toBeNull();
     const rows = [...host.querySelectorAll(".calendar-entry")];
     await act(async () => { rows.find((row) => row.textContent.includes("Agent note")).click(); });
-    expect(mocks.navigate).toHaveBeenLastCalledWith("/portal/debug/cognition/calendar/ta_1");
+    expect(mocks.navigate).toHaveBeenLastCalledWith("/portal/debug/calendar/ta_1");
     expect(host.querySelector(".modal-panel .dev-annotate-inline")).not.toBeNull();
 
     await act(async () => { host.querySelector(".modal-close").click(); });
-    expect(mocks.replaceRoute).toHaveBeenCalledWith("/portal/debug/cognition/calendar");
+    expect(mocks.replaceRoute).toHaveBeenCalledWith("/portal/debug/calendar");
     mocks.navigate.mockClear();
     await act(async () => { rows.find((row) => row.textContent.includes("Source fact")).click(); });
     expect(mocks.navigate).not.toHaveBeenCalled();

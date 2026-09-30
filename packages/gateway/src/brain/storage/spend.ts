@@ -9,6 +9,7 @@
  * accounting record the operator surfaces read).
  */
 
+import { MENTION_WORTH_GATE_SPEND_MECHANISM } from "../../enrichment/dates/config.js";
 import type Database from "better-sqlite3";
 import type { CognitionSpendRow, CognitionRunUsage, CognitionDayTotalRow } from "./types.js";
 
@@ -163,19 +164,23 @@ export function listCognitionSpendDayTotals(
     .map(toSpendDayTotal);
 }
 
-/** One day's totals aggregated across all mechanisms and models; null when nothing was recorded. */
+/**
+ * One day's totals aggregated across the mechanisms the cognition budget
+ * governs; null when nothing was recorded. The mention worth gate is a stable
+ * ingest-side feature outside that budget, so its tokens are left out.
+ */
 export function getCognitionSpendDayTotal(db: Db, day: string): CognitionDayTotalRow | null {
   const row = db
-    .prepare<[string], SpendDayTotalDbRow & { day: string | null }>(
+    .prepare<[string, string], SpendDayTotalDbRow & { day: string | null }>(
       `SELECT day,
               SUM(runs) AS runs,
               SUM(prompt_tokens) AS prompt_tokens,
               SUM(completion_tokens) AS completion_tokens,
               SUM(cache_read_tokens) AS cache_read_tokens,
               SUM(cache_creation_tokens) AS cache_creation_tokens
-         FROM cognition_spend WHERE day = ?`,
+         FROM cognition_spend WHERE day = ? AND mechanism <> ?`,
     )
-    .get(day);
+    .get(day, MENTION_WORTH_GATE_SPEND_MECHANISM);
   // An aggregate over zero rows yields one all-NULL row; `day` is the marker.
   if (!row || row.day === null) return null;
   return toSpendDayTotal(row as SpendDayTotalDbRow);

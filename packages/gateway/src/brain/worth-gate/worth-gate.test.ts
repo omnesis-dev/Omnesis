@@ -32,13 +32,13 @@ import { getCognitionEngineState, cognitionBootstrapEnqueuedKey } from "../stora
 import { cognitionSpendDay, getCognitionSpendDayTotal } from "../storage/spend.js";
 import { pruneActivityRetentionBatch } from "../../activity-retention/store.js";
 import { recordDecisionSpend } from "../decision-call.js";
-import { WorthGate } from "./gate.js";
+import { recordWorthAnswers } from "../../worth/answers.js";
 import {
-  WORTH_GATE_SPEND_MECHANISM,
   EMAIL_WORTH_THRESHOLD,
   WORTH_GATE_RUBRIC_VERSION,
   emailWorthState,
-} from "./rubric.js";
+} from "../../worth/rubric.js";
+import { WORTH_GATE_SPEND_MECHANISM, WorthGate } from "./gate.js";
 import type { ChatBackend, TurnInput } from "@omnesis/agent";
 import type { DocumentInput } from "@omnesis/types";
 import type { Scheduler } from "../../scheduler/scheduler.js";
@@ -296,6 +296,37 @@ describe("worth gate", () => {
     seed({ externalId: "promo-3", title: "Weekly deals inside", contentHash: "hash-edited" });
     await g.evaluate(bootstrapRun(docId, "run_3"));
     expect(decision.calls).toHaveLength(2);
+  });
+
+  test("reuses the answer the mention worth gate recorded for the same email", async () => {
+    const docId = seed({ externalId: "promo-4", title: "Weekly deals inside" });
+    const doc = db
+      .prepare<
+        [string],
+        { content_hash: string }
+      >("SELECT content_hash FROM documents WHERE id = ?")
+      .get(docId)!;
+    const decision = scripted();
+    recordWorthAnswers(db, [
+      {
+        id: "wa_from-mention-gate",
+        subjectDocumentId: docId,
+        contentHash: doc.content_hash,
+        rubricVersion: WORTH_GATE_RUBRIC_VERSION,
+        requestedModelId: decision.modelId,
+        modelId: decision.modelId,
+        score: 0.3,
+        answeredAt: 1,
+      },
+    ]);
+    const outcome = await gate(decision).evaluate(bootstrapRun(docId, "run_shared"));
+    expect(decision.calls).toHaveLength(0);
+    expect(outcome).toMatchObject({ verdict: "skip", score: 0.3 });
+    expect(listDecisionsForRun(db, "run_shared")[0]).toMatchObject({
+      reusedFrom: "wa_from-mention-gate",
+      requestJson: null,
+      inputTokens: null,
+    });
   });
 
   test("runs judging the same email at the same time share one call", async () => {

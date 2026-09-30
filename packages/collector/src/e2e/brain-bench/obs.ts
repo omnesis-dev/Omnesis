@@ -649,7 +649,7 @@ export class BrainObs {
     limit?: number;
   }): Promise<{ nowMs: number; items: unknown[]; coverage: unknown; truncated: boolean }> {
     return this.h.gatewayJson(
-      `/briefs/temporal/window${this.q({ timeZone: "UTC", limit: 100, ...opts })}`,
+      `/temporal/window${this.q({ timeZone: "UTC", limit: 100, ...opts })}`,
     );
   }
 

@@ -11,7 +11,9 @@ import {
   MAX_TIME_ZONE_SHIFT_MS,
 } from "@omnesis/core";
 import { TEMPORAL_STATUSES } from "@omnesis/types";
+import { countPendingDateExtraction } from "../dates/storage.js";
 import { projectionRevision } from "../temporal-projections/derive.js";
+import { MENTION_ORIGIN_RANK, readMentionPage } from "./temporal-mentions.js";
 import { resolveTemporalRange } from "./temporal-range.js";
 import type Database from "better-sqlite3";
 import type {
@@ -136,7 +138,7 @@ function decodeCursor(value: string | undefined, expectedFingerprint: string): C
       parsed.fingerprint !== expectedFingerprint ||
       !Number.isFinite(parsed.key?.startMs) ||
       !Number.isFinite(parsed.key?.endExclusiveMs) ||
-      (parsed.key?.originRank !== 0 && parsed.key?.originRank !== 1) ||
+      ![0, 1, MENTION_ORIGIN_RANK].includes(parsed.key?.originRank) ||
       typeof parsed.key?.id !== "string"
     ) {
       throw new Error("mismatch");
@@ -325,10 +327,22 @@ function normalizedAnnotationBounds(
 
 const overlaps = intervalOverlapsWindow;
 
+/** Layers read when a query names none. Mentions are asked for by name. */
+const DEFAULT_ORIGINS: readonly TemporalOrigin[] = ["projection", "annotation"];
+
+export interface TemporalQueryOptions {
+  /**
+   * True while the mention worth gate is active: mentions from email the
+   * decision model judged not worth recording are left out.
+   */
+  hideUnworthyMentions?: () => boolean;
+}
+
 export class TemporalQueryService {
   constructor(
     private readonly db: Db,
     private readonly analyticsDb?: AnalyticsDb,
+    private readonly options: TemporalQueryOptions = {},
   ) {}
 
   /**
@@ -383,7 +397,7 @@ export class TemporalQueryService {
     }
     const fingerprintValue = fingerprint(normalizedFingerprintInput(effectiveInput, range));
     const after = decodeCursor(effectiveInput.cursor, fingerprintValue);
-    const origins = new Set<TemporalOrigin>(effectiveInput.origins ?? ["projection", "annotation"]);
+    const origins = new Set<TemporalOrigin>(effectiveInput.origins ?? DEFAULT_ORIGINS);
     const documentIdentities = readDocumentIdentities(this.db, effectiveInput.documentIds ?? []);
     const documentRefs =
       effectiveInput.documentIds === undefined
@@ -404,6 +418,15 @@ export class TemporalQueryService {
     if (origins.has("annotation")) {
       ranked.push(...this.readAnnotations(effectiveInput, range));
     }
+    // Read once so the page and its coverage agree on whether the gate applied.
+    const hideUnworthy = this.options.hideUnworthyMentions?.() ?? false;
+    // Mentions arrive already paged past the cursor and anchored, with their
+    // whole-window count alongside: the layer is too large to read in full.
+    const mentions = origins.has("mention")
+      ? readMentionPage(this.db, effectiveInput, range, after, limit, compareKeys, {
+          hideUnworthy,
+        })
+      : null;
     if (execution?.signal?.aborted) throw execution.signal.reason;
 
     // Every matching row is read and ordered here rather than paginated in the
@@ -424,9 +447,23 @@ export class TemporalQueryService {
       if (anchored) anchoredCount += 1;
     }
     const visible = ranked.filter((entry) => !after || compareKeys(entry.key, after) > 0);
+    if (mentions) {
+      visible.push(...mentions.items);
+      visible.sort((left, right) => compareKeys(left.key, right.key));
+      anchoredCount += mentions.total;
+    }
     const page = visible.slice(0, limit);
     const truncated = visible.length > limit;
     const coverage = await this.coverage(effectiveInput.sourceIds);
+    if (mentions) {
+      coverage.mentions = {
+        pendingDocuments: countPendingDateExtraction(this.db, effectiveInput.sourceIds),
+        ...(mentions.totalCapped ? { countCapped: true as const } : {}),
+        ...(hideUnworthy && !effectiveInput.documentIds?.length && !effectiveInput.entityIds?.length
+          ? { unworthyHidden: true as const }
+          : {}),
+      };
+    }
     return {
       type: "temporal.results",
       window: {
@@ -435,7 +472,10 @@ export class TemporalQueryService {
         timeZone: effectiveInput.timeZone,
       },
       items: page.map((entry) => entry.item),
-      summary: { anchored: anchoredCount, spanning: ranked.length - anchoredCount },
+      summary: {
+        anchored: anchoredCount,
+        spanning: ranked.length + (mentions?.total ?? 0) - anchoredCount,
+      },
       coverage,
       truncated,
       nextCursor:

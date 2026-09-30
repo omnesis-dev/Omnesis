@@ -25,7 +25,7 @@ export const TYPESAFE_CREDENTIALS_SPEC: ProviderCredentialsSpec = {
   wizard: {
     intro:
       "Configure a TypeSafe API key so the gateway can assign Jev to the Decision model capability.",
-    why: "Jev answers typed questions about a document for a fraction of a cent. The Brain uses it to skip documents it would get nothing from, before starting a full background-agent run. Each scored document's text is sent to TypeSafe.",
+    why: "Jev answers typed questions about a document for a fraction of a cent. With the mention worth gate on, it judges whether each email with a date mention is worth recording, so time queries leave out the dates in marketing and newsletters. Each scored email's subject, sender and opening text are sent to TypeSafe.",
     estMinutes: 2,
     steps: [
       {

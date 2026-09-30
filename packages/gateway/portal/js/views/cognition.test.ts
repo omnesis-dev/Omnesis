@@ -15,7 +15,15 @@ describe("Cognition debug tab — experimental gating", () => {
     const { debugTabs } = await import("../lib/debug-tabs.js");
     const off = debugTabs(false).map((t) => t.key);
     const on = debugTabs(true).map((t) => t.key);
-    expect(off).toEqual(["data", "sql", "graph", "metrics", "background-jobs", "doctor"]);
+    expect(off).toEqual([
+      "data",
+      "sql",
+      "graph",
+      "metrics",
+      "background-jobs",
+      "calendar",
+      "doctor",
+    ]);
     expect(off).not.toContain("cognition");
     // Flipping experimental ONLY inserts the experimental tabs — the stock ones
     // keep both their membership and their relative order, with Doctor still last.
@@ -25,6 +33,7 @@ describe("Cognition debug tab — experimental gating", () => {
       "graph",
       "metrics",
       "background-jobs",
+      "calendar",
       "cognition",
       "watch",
       "doctor",

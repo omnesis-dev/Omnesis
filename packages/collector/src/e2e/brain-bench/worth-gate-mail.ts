@@ -28,7 +28,7 @@ import {
   EMAIL_WORTH_QUESTION_ID,
   EMAIL_WORTH_THRESHOLD,
   emailWorthState,
-} from "@omnesis/gateway/src/brain/worth-gate/rubric.js";
+} from "@omnesis/gateway/src/worth/rubric.js";
 import { CAST } from "./docs.js";
 import type { BenchDoc } from "./bench.js";
 

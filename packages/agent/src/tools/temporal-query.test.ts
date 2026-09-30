@@ -42,6 +42,15 @@ function recordingPort(): {
 }
 
 describe("temporal_query contract", () => {
+  it("reads every layer, mentions included, unless the caller names some", async () => {
+    const { port, seenInput } = recordingPort();
+    const tool = createTemporalQueryTool({ port });
+    await tool.invoke({ from: "2026-07-23", timeZone: "UTC" }, ctx);
+    expect(seenInput()?.origins).toEqual(["projection", "annotation", "mention"]);
+    await tool.invoke({ from: "2026-07-23", timeZone: "UTC", origins: ["projection"] }, ctx);
+    expect(seenInput()?.origins).toEqual(["projection"]);
+  });
+
   it("delegates the exact temporal query to the gateway port", async () => {
     const { port, seenInput } = recordingPort();
     const tool = createTemporalQueryTool({ port });

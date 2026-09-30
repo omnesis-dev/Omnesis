@@ -49,22 +49,13 @@ export function deriveDevTarget(route, pathname, activeConvoId = null) {
       break;
     }
     case "debug":
-      // The cognition inspector renders loops / runs / briefs / calendar
-      // annotations in addressable panes; a selected id maps to that entity.
+      // The cognition inspector renders loops / runs / briefs in addressable
+      // panes; a selected id maps to that entity.
       if (route.tab === "cognition" && route.cognitionId) {
         const map = {
           loops: { type: "open_loop", noun: "Loop" },
           runs: { type: "agent_run", noun: "Run" },
           briefs: { type: "brief", noun: "Brief" },
-          "temporal-annotations": {
-            type: "temporal_annotation",
-            noun: "Temporal annotation",
-          },
-          // Compatibility for deep links created before the terminology split.
-          "time-index": {
-            type: "temporal_annotation",
-            noun: "Temporal annotation",
-          },
         };
         const entry = map[route.cognitionTab];
         if (entry) {
