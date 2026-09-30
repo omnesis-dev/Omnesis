@@ -148,6 +148,24 @@ function notesDocId(): Promise<string> {
   );
 }
 
+/** Wait until the day's notes document carries `text` (its debounced projection landed). */
+function dayDocumentContains(text: string): Promise<true> {
+  return waitFor(
+    `the notes document to contain "${text}"`,
+    () =>
+      (bench.sql
+        .prepare<
+          [string],
+          { content: string }
+        >("SELECT content FROM documents WHERE source_id = 'omnesis-notes' AND external_id = ?")
+        .get(DAY)
+        ?.content.includes(text) ?? false)
+        ? true
+        : null,
+    30_000,
+  );
+}
+
 /** Every `data` run the notes document has had, oldest first. */
 function dataRuns(docId: string): RunRow[] {
   return bench.sql
@@ -290,6 +308,9 @@ describe("voice notes and the Brain's readiness hold (brain bench)", () => {
   test("a typed note after the hold is again read at once", async () => {
     const before = dataRuns(docId).length;
     await captureTypedNote(randomUUID(), "Return the library books on Monday.");
+    // The capture reaches the corpus through the notes day's debounced
+    // projection; drain only once it has, or the wake may not exist yet.
+    await dayDocumentContains("Return the library books on Monday.");
     await bench.drainUntilQuiet();
 
     const runs = dataRuns(docId);
