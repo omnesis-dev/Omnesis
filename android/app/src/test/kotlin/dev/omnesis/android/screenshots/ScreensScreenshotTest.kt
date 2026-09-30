@@ -29,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.github.takahirom.roborazzi.captureRoboImage
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalInspectionMode
 import dev.omnesis.android.designsystem.theme.OmSpacing
@@ -81,6 +82,8 @@ import dev.omnesis.android.ui.settings.AboutSection
 import dev.omnesis.android.ui.settings.AppearanceMode
 import dev.omnesis.android.ui.settings.SettingsContent
 import dev.omnesis.android.ui.settings.SettingsViewModel
+import dev.omnesis.android.ui.settings.VoiceSection
+import dev.omnesis.android.ui.settings.VoiceSettingsState
 import dev.omnesis.android.ui.settings.sampleAppVersion
 import dev.omnesis.android.ui.sources.SourceDetailContent
 import dev.omnesis.android.ui.sources.SourceDetailUi
@@ -883,6 +886,58 @@ class ScreensScreenshotTest {
                 .background(OmTheme.colors.bgPrimary)
                 .padding(OmSpacing.lg),
         ) { AboutSection(sampleAppVersion()) }
+    }
+
+    // The Voice section (experimental gateway dictation) renders on its own for the
+    // same reason as About: it sits below the captured viewport.
+    @Composable
+    private fun VoiceSectionAlone(voice: VoiceSettingsState) {
+        Column(
+            Modifier
+                .background(OmTheme.colors.bgPrimary)
+                .padding(OmSpacing.lg),
+        ) { VoiceSection(voice, onSetTranscribeOnGateway = {}, onOpenModels = {}) }
+    }
+
+    @Test
+    fun settings_voice_off_dark() = capture("settings_voice_off_dark", dark = true) {
+        VoiceSectionAlone(VoiceSettingsState(transcribeOnGateway = false))
+    }
+
+    @Test
+    fun settings_voice_off_light() = capture("settings_voice_off_light", dark = false) {
+        VoiceSectionAlone(VoiceSettingsState(transcribeOnGateway = false))
+    }
+
+    @Test
+    fun settings_voice_blocked_dark() = capture("settings_voice_blocked_dark", dark = true) {
+        VoiceSectionAlone(
+            VoiceSettingsState(transcribeOnGateway = true, blockedReason = "No transcriber model is assigned."),
+        )
+    }
+
+    @Test
+    fun settings_voice_blocked_light() = capture("settings_voice_blocked_light", dark = false) {
+        VoiceSectionAlone(
+            VoiceSettingsState(transcribeOnGateway = true, blockedReason = "No transcriber model is assigned."),
+        )
+    }
+
+    @Test
+    fun settings_voice_saved_unconfirmed_light() = capture("settings_voice_saved_unconfirmed_light", dark = false) {
+        VoiceSectionAlone(
+            VoiceSettingsState(
+                transcribeOnGateway = true,
+                notice = "Saved. Your gateway's status will update when it can be read.",
+            ),
+        )
+    }
+
+    @Test
+    fun settings_voice_saving_error_dark() = capture("settings_voice_saving_error_dark", dark = true) {
+        VoiceSectionAlone(
+            VoiceSettingsState(transcribeOnGateway = true, error = "Couldn't reach your gateway."),
+        )
     }
 
     @Test

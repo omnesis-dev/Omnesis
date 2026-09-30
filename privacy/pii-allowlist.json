@@ -664,6 +664,7 @@
         "extension/store/listing.md",
         "scripts/website-docs.test.mjs",
         "website/404.html",
+        "website/blog/index.html",
         "website/brain.html",
         "website/browser-extension-privacy-policy.html",
         "website/docs/agent.html",

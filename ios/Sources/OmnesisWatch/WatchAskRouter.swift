@@ -36,6 +36,11 @@ final class WatchAskRouter {
 
     private(set) var state: State = .idle
 
+    var isAsking: Bool {
+        if case .asking = state { return true }
+        return false
+    }
+
     /// The privacy-safe aggregate state streamed from the phone. Progress is
     /// best-effort, so the UI remains useful when this is nil.
     private(set) var activity: SiriAskActivitySnapshot?
@@ -142,10 +147,17 @@ final class WatchSpeaker: NSObject, AVSpeechSynthesizerDelegate {
         synthesizer.delegate = self
     }
 
+    /// Speak `text`. While the microphone is recording for gateway
+    /// dictation the text is only kept for Replay: taking the audio session
+    /// for playback would end the recording.
     func speak(_ text: String) {
         guard !text.isEmpty else { return }
         self.text = text
         spokenUpTo = 0
+        guard !WatchVoiceCapture.shared.isRecording else {
+            spokenUpTo = text.utf16.count
+            return
+        }
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playback, mode: .spokenAudio)
         try? session.setActive(true)

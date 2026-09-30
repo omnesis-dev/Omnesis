@@ -43,6 +43,7 @@ import dev.omnesis.android.transport.client.SearchClient
 import dev.omnesis.android.transport.client.WatchesClient
 import dev.omnesis.android.transport.dto.BriefsMenuEntry
 import dev.omnesis.android.transport.dto.ClaimedNotificationDelivery
+import dev.omnesis.android.transport.dto.DictationStatusDto
 import dev.omnesis.android.transport.dto.PushPlan
 import dev.omnesis.android.transport.http.GatewayHttp
 import dev.omnesis.android.transport.tls.PinnedOkHttp
@@ -319,6 +320,14 @@ class SessionManager @Inject constructor(
      */
     private val _briefsMenuEntry = MutableStateFlow(BriefsMenuEntry.HIDDEN)
     val briefsMenuEntry: StateFlow<BriefsMenuEntry> = _briefsMenuEntry.asStateFlow()
+
+    /**
+     * The gateway-dictation gate from the same `/status` probe; null until it lands and
+     * for a gateway that predates the field. Cleared on every rebuild, so a new pairing
+     * starts on on-device dictation until its own gateway says otherwise.
+     */
+    private val _dictation = MutableStateFlow<DictationStatusDto?>(null)
+    val dictation: StateFlow<DictationStatusDto?> = _dictation.asStateFlow()
     private val _relayConsentPrompt = MutableStateFlow<RelayConsentPrompt?>(null)
     override val relayConsentPrompt: StateFlow<RelayConsentPrompt?> = _relayConsentPrompt.asStateFlow()
     private val _pushPlan = MutableStateFlow<PushPlanState>(PushPlanState.Checking)
@@ -472,6 +481,7 @@ class SessionManager @Inject constructor(
         _experimentalEnabled.value = false
         _developerEnabled.value = false
         _briefsMenuEntry.value = BriefsMenuEntry.HIDDEN
+        _dictation.value = null
         _relayConsentPrompt.value = null
         _pushPlan.value = PushPlanState.Checking
         _pushRegistrationFailed.value = false
@@ -756,21 +766,23 @@ class SessionManager @Inject constructor(
         current.notifications?.confirm(deliveryId)
     }
 
-    /** Refresh feature-gate state after a settings mutation that can change readiness. */
-    suspend fun refreshStatus() {
-        session?.let { probeStatus(it) }
-    }
+    /**
+     * Refresh feature-gate state after a settings mutation that can change readiness, or
+     * when a surface that depends on it opens. False when no status could be read.
+     */
+    suspend fun refreshStatus(): Boolean = session?.let { probeStatus(it) } ?: false
 
-    private suspend fun probeStatus(current: GatewaySession) {
+    private suspend fun probeStatus(current: GatewaySession): Boolean =
         statusProbeSerializer.run probe@{
-            if (session !== current) return@probe
-            val status = runCatching { current.gateway.status() }.getOrElse { return@probe }
-            if (session !== current) return@probe
+            if (session !== current) return@probe false
+            val status = runCatching { current.gateway.status() }.getOrElse { return@probe false }
+            if (session !== current) return@probe false
             _experimentalEnabled.value = status.experimental
             _developerEnabled.value = status.developer
             _briefsMenuEntry.value = BriefsMenuEntry.from(status.briefs)
+            _dictation.value = status.dictation
+            true
         }
-    }
 
     private companion object {
         const val NOTIFICATION_DRAIN_LIMIT = 20

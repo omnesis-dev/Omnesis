@@ -6353,6 +6353,72 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view, name: "96-composer-speech-unavailable", size: CGSize(width: 393, height: 140))
     }
 
+    // MARK: - Gateway dictation
+
+    /// Tell Omnesis as a voice note, recording: the recording and its length,
+    /// never the phone's transcript.
+    func testCaptureVoiceNoteRecording() {
+        let view = CaptureView(
+            speech: .preview(state: .listening),
+            previewVoiceNote: .previewRecording(seconds: 12)
+        )
+        .environment(AppStore.preview())
+        snapshot(view, name: "299a-capture-voice-note-recording")
+    }
+
+    /// Stopped: the voice note's length, record more, discard to type.
+    func testCaptureVoiceNoteRecorded() {
+        let view = CaptureView(
+            speech: .preview(state: .idle),
+            previewVoiceNote: .previewRecorded(seconds: 72)
+        )
+        .environment(AppStore.preview())
+        snapshot(view, name: "299b-capture-voice-note-recorded")
+    }
+
+    /// Settings → Voice in each state the gateway can advertise.
+    func testSettingsVoiceSectionStates() {
+        struct VoiceCase {
+            let status: DictationStatus
+            var writeError: String?
+            let name: String
+        }
+        let cases = [
+            VoiceCase(status: PreviewMocks.dictationStatusOff, name: "296a-settings-voice-off"),
+            VoiceCase(status: PreviewMocks.dictationStatusActive, name: "296b-settings-voice-on"),
+            VoiceCase(status: PreviewMocks.dictationStatusBlocked, name: "296c-settings-voice-blocked"),
+            VoiceCase(
+                status: PreviewMocks.dictationStatusOff,
+                writeError: "Check that the gateway is running and this phone has internet.",
+                name: "296d-settings-voice-write-failed"
+            ),
+        ]
+        for voiceCase in cases {
+            let form = Form {
+                VoiceSettingsSection(status: voiceCase.status, previewWriteError: voiceCase.writeError)
+            }
+            .scrollContentBackground(.hidden)
+            .background(Theme.bgPrimary)
+            .environment(AppStore.preview())
+            snapshot(form, name: voiceCase.name, size: CGSize(width: 393, height: 420))
+        }
+    }
+
+    /// The Voice section in place: an experimental gateway advertising the
+    /// setting, switched on with a transcriber that cannot run. Tall canvas so
+    /// the render reaches it below Notifications.
+    func testSettingsWithVoiceSection() {
+        let store = AppStore.preview(
+            statusSnapshot: PreviewMocks.statusSnapshotDictationBlocked,
+            indexStats: PreviewMocks.indexStats
+        )
+        snapshot(
+            SettingsView(initialDestination: .root, previewData: true).environment(store),
+            name: "297-settings-with-voice-section",
+            size: CGSize(width: 393, height: 1600)
+        )
+    }
+
     // MARK: - Composer slash-command / Deep Research pill
 
     /// Typing `/` opens the extensible slash-command menu (one seeded "Deep

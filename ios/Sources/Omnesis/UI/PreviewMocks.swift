@@ -1081,6 +1081,50 @@ enum PreviewMocks {
         experimental: true
     )
 
+    // MARK: - Gateway dictation (experimental)
+
+    /// 25 MB, the gateway's audio body limit.
+    static let dictationMaxAudioBytes = 25 * 1024 * 1024
+
+    /// Experimental gateway; the operator has not switched dictation on.
+    static let dictationStatusOff = DictationStatus(
+        visible: true,
+        enabled: false,
+        modelAssigned: true,
+        active: false,
+        maxAudioBytes: dictationMaxAudioBytes
+    )
+
+    /// Switched on with a runnable transcriber: mics record for the gateway.
+    static let dictationStatusActive = DictationStatus(
+        visible: true,
+        enabled: true,
+        modelAssigned: true,
+        active: true,
+        maxAudioBytes: dictationMaxAudioBytes
+    )
+
+    /// Switched on, but the transcriber model is missing.
+    static let dictationStatusBlocked = DictationStatus(
+        visible: true,
+        enabled: true,
+        modelAssigned: false,
+        active: false,
+        reason: "The transcriber model is not installed.",
+        maxAudioBytes: dictationMaxAudioBytes
+    )
+
+    /// An experimental gateway advertising the dictation setting, switched
+    /// on with its transcriber unable to run — Settings shows the Voice
+    /// section with the gateway's reason.
+    static let statusSnapshotDictationBlocked = StatusSnapshot(
+        documents: statusSnapshot.documents,
+        dbSizeBytes: statusSnapshot.dbSizeBytes,
+        latestActivityBySource: nil,
+        experimental: true,
+        dictation: dictationStatusBlocked
+    )
+
     /// A `/status` snapshot with the Omnesis Briefs feature active —
     /// exercises the Briefs menu entry (experimental mode on AND a
     /// background-agent model assigned).

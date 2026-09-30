@@ -200,6 +200,32 @@ export function updateNoteEntryText(db: Db, id: string, text: string, nowIso: st
 }
 
 /**
+ * Replace an entry's text only while it still reads `expected`, bumping
+ * `updated_at`. A background writer (a voice note's transcript) uses it so an
+ * edit the user made in the meantime is never overwritten. Returns the entry's
+ * day on success, so the caller can re-render it; `changed` when the text no
+ * longer matches, `missing` when the entry is gone.
+ */
+export function replaceNoteEntryTextIf(
+  db: Db,
+  id: string,
+  expected: string,
+  text: string,
+  nowIso: string,
+): { outcome: "replaced"; day: string } | { outcome: "changed" | "missing" } {
+  const row = db
+    .prepare<
+      [string],
+      { day: string; text: string }
+    >(`SELECT day, text FROM note_entries WHERE id = ?`)
+    .get(id);
+  if (!row) return { outcome: "missing" };
+  if (row.text !== expected) return { outcome: "changed" };
+  db.prepare(`UPDATE note_entries SET text = ?, updated_at = ? WHERE id = ?`).run(text, nowIso, id);
+  return { outcome: "replaced", day: row.day };
+}
+
+/**
  * Hard-delete one entry. Returns whether a row was deleted plus its day,
  * so the caller can re-render (or drop) that day's projected document
  * without a separate read.

@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>Omnesis</string>
+	<string>$(OMNESIS_WATCH_DISPLAY_NAME)</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -29,12 +29,14 @@
 			</array>
 		</dict>
 	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>When gateway dictation is on, Omnesis records your notes and sends the recording through your iPhone to your own Omnesis gateway to be transcribed.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>WKApplication</key>
 	<true/>
 	<key>WKCompanionAppBundleIdentifier</key>
-	<string>$(OMNESIS_BUNDLE_ID)</string>
+	<string>$(OMNESIS_WATCH_COMPANION_BUNDLE_ID)</string>
 	<key>WKRunsIndependentlyOfCompanionApp</key>
 	<false/>
 </dict>

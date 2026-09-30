@@ -13,6 +13,7 @@ import dev.omnesis.android.ui.capture.CaptureContent
 import dev.omnesis.android.ui.capture.CaptureUiState
 import dev.omnesis.android.ui.capture.SaveState
 import dev.omnesis.android.ui.capture.SpeechState
+import dev.omnesis.android.ui.capture.VoiceNoteUi
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -185,6 +186,35 @@ class CaptureScreenshotTest {
     @Test
     fun capture_queued_unauthorized_light() = capture("capture_queued_unauthorized_light", dark = false) {
         Screen(CaptureUiState(text = "done", save = SaveState.Done(queued = QueueReason.UNAUTHORIZED)))
+    }
+
+    // --- voice note for the gateway: recording, then recorded (words never shown) ---
+
+    private val voiceNoteRecording = CaptureUiState(
+        speech = SpeechState.RECORDING,
+        voiceNote = VoiceNoteUi(recording = true, elapsedMs = 7_000, level = 0.7f),
+    )
+
+    @Test
+    fun capture_voice_note_recording_dark() = capture("capture_voice_note_recording_dark", dark = true) {
+        Screen(voiceNoteRecording)
+    }
+
+    @Test
+    fun capture_voice_note_recording_light() = capture("capture_voice_note_recording_light", dark = false) {
+        Screen(voiceNoteRecording)
+    }
+
+    private val voiceNoteRecorded = CaptureUiState(voiceNote = VoiceNoteUi(recording = false, elapsedMs = 12_000))
+
+    @Test
+    fun capture_voice_note_recorded_dark() = capture("capture_voice_note_recorded_dark", dark = true) {
+        Screen(voiceNoteRecorded)
+    }
+
+    @Test
+    fun capture_voice_note_recorded_light() = capture("capture_voice_note_recorded_light", dark = false) {
+        Screen(voiceNoteRecorded)
     }
 
     // --- saving in flight ---

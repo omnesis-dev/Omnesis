@@ -88,6 +88,30 @@ public enum WatchRelayQueue {
         )
     }
 
+    static let requeuesKey = "relayRequeues"
+    /// How many times a queued note the system failed to deliver is queued
+    /// again.
+    public static let maxRequeues = 5
+    /// How long a queued note keeps being queued again after failures.
+    public static let noteRetention: TimeInterval = 7 * 24 * 60 * 60
+
+    /// Watch side: a queued note the system reported undelivered, queued
+    /// again — the same message and ref, so the phone saves it once — or nil
+    /// when it has been retried enough, is too old, or is not a note. A
+    /// question is never queued again: its answer would come long after it
+    /// mattered.
+    public static func requeued(_ payload: [String: String], now: Date) -> [String: String]? {
+        guard WatchNoteWire.text(from: payload) != nil,
+              let envelope = envelope(from: payload),
+              now.timeIntervalSince(envelope.queuedAt) < noteRetention
+        else { return nil }
+        let requeues = payload[requeuesKey].flatMap { Int($0) } ?? 0
+        guard requeues < maxRequeues else { return nil }
+        var again = payload
+        again[requeuesKey] = String(requeues + 1)
+        return again
+    }
+
     /// Whether a queued question is too old to answer. A queued time in the
     /// future (the two clocks disagree) is treated as fresh: the question was
     /// just asked, and dropping it would lose it for a clock skew.

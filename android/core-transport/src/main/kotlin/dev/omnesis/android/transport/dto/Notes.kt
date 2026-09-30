@@ -41,6 +41,30 @@ data class NoteEntryDto(
     val deviceId: String? = null,
 )
 
+/**
+ * The `note` part of a `POST /notes/voice` upload: the `POST /notes` fields plus the
+ * device [language] (a BCP 47 tag the gateway turns into its transcriber's hint).
+ * [text] is the phone's own transcript, the note's text until the gateway replaces it,
+ * and may be empty.
+ */
+@Serializable
+data class VoiceNoteBody(
+    val id: String,
+    val text: String,
+    val capturedAt: String,
+    val surface: String,
+    val deviceId: String? = null,
+    val language: String? = null,
+)
+
+/** `POST /notes/voice` 202: the note is saved and its transcription queued. */
+@Serializable
+data class VoiceNoteAcceptedDto(
+    val id: String,
+    /** `pending` while the gateway transcribes. */
+    val transcription: String? = null,
+)
+
 /** `POST /notes` request body. [id] is the client idempotency key (see the contract above). */
 @Serializable
 data class CreateNoteBody(

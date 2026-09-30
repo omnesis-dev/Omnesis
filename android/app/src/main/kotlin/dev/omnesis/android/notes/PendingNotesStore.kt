@@ -9,6 +9,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -31,6 +32,14 @@ data class PendingNote(
     val lastFailure: String? = null,
     /** Failed redelivery attempts after the note first entered the queue. */
     val retryCount: Int = 0,
+    /**
+     * The audio the note was dictated from, delivered with it for the gateway to
+     * transcribe; null for a typed note. [text] is then the phone's transcript, possibly
+     * empty.
+     */
+    val audio: VoiceNoteAudio? = null,
+    /** The device language tag recorded with a voice note, for the transcriber's hint. */
+    val language: String? = null,
 )
 
 /** A queued note warrants operator attention after one failed retry or five minutes. */
@@ -55,7 +64,7 @@ internal val PENDING_WARNING_AGE: Duration = Duration.ofMillis(PENDING_WARNING_A
  */
 class PendingNotesStore(context: Context) {
 
-    private val helper: SQLiteOpenHelper = object : SQLiteOpenHelper(context, DB_NAME, null, 3) {
+    private val helper: SQLiteOpenHelper = object : SQLiteOpenHelper(context, DB_NAME, null, 4) {
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL(
                 """CREATE TABLE $TABLE (
@@ -66,7 +75,10 @@ class PendingNotesStore(context: Context) {
                     $COL_SURFACE TEXT NOT NULL,
                     $COL_LAST_ATTEMPT_AT TEXT,
                     $COL_LAST_FAILURE TEXT,
-                    $COL_RETRY_COUNT INTEGER NOT NULL DEFAULT 0
+                    $COL_RETRY_COUNT INTEGER NOT NULL DEFAULT 0,
+                    $COL_AUDIO_PATH TEXT,
+                    $COL_AUDIO_MIME TEXT,
+                    $COL_LANGUAGE TEXT
                 )""",
             )
         }
@@ -91,6 +103,11 @@ class PendingNotesStore(context: Context) {
                 db.execSQL("ALTER TABLE $TABLE ADD COLUMN $COL_LAST_FAILURE TEXT")
                 db.execSQL("ALTER TABLE $TABLE ADD COLUMN $COL_RETRY_COUNT INTEGER NOT NULL DEFAULT 0")
             }
+            if (oldVersion < 4) {
+                db.execSQL("ALTER TABLE $TABLE ADD COLUMN $COL_AUDIO_PATH TEXT")
+                db.execSQL("ALTER TABLE $TABLE ADD COLUMN $COL_AUDIO_MIME TEXT")
+                db.execSQL("ALTER TABLE $TABLE ADD COLUMN $COL_LANGUAGE TEXT")
+            }
         }
     }
 
@@ -101,6 +118,8 @@ class PendingNotesStore(context: Context) {
         surface: String,
         lastAttemptAt: String? = null,
         lastFailure: String? = null,
+        audio: VoiceNoteAudio? = null,
+        language: String? = null,
     ): Unit =
         withContext(Dispatchers.IO) {
             val values = ContentValues().apply {
@@ -110,6 +129,9 @@ class PendingNotesStore(context: Context) {
                 put(COL_SURFACE, surface)
                 put(COL_LAST_ATTEMPT_AT, lastAttemptAt)
                 put(COL_LAST_FAILURE, lastFailure)
+                put(COL_AUDIO_PATH, audio?.file?.absolutePath)
+                put(COL_AUDIO_MIME, audio?.mimeType)
+                put(COL_LANGUAGE, language)
             }
             helper.writableDatabase.insertOrThrow(TABLE, null, values)
             Unit
@@ -129,6 +151,9 @@ class PendingNotesStore(context: Context) {
                 COL_LAST_ATTEMPT_AT,
                 COL_LAST_FAILURE,
                 COL_RETRY_COUNT,
+                COL_AUDIO_PATH,
+                COL_AUDIO_MIME,
+                COL_LANGUAGE,
             ),
             null,
             null,
@@ -144,6 +169,9 @@ class PendingNotesStore(context: Context) {
             val attemptIdx = cursor.getColumnIndexOrThrow(COL_LAST_ATTEMPT_AT)
             val failureIdx = cursor.getColumnIndexOrThrow(COL_LAST_FAILURE)
             val retryIdx = cursor.getColumnIndexOrThrow(COL_RETRY_COUNT)
+            val audioIdx = cursor.getColumnIndexOrThrow(COL_AUDIO_PATH)
+            val mimeIdx = cursor.getColumnIndexOrThrow(COL_AUDIO_MIME)
+            val languageIdx = cursor.getColumnIndexOrThrow(COL_LANGUAGE)
             while (cursor.moveToNext()) {
                 rows += PendingNote(
                     id = cursor.getLong(idIdx),
@@ -154,6 +182,12 @@ class PendingNotesStore(context: Context) {
                     lastAttemptAt = if (cursor.isNull(attemptIdx)) null else cursor.getString(attemptIdx),
                     lastFailure = if (cursor.isNull(failureIdx)) null else cursor.getString(failureIdx),
                     retryCount = cursor.getInt(retryIdx),
+                    audio = if (cursor.isNull(audioIdx) || cursor.isNull(mimeIdx)) {
+                        null
+                    } else {
+                        VoiceNoteAudio(File(cursor.getString(audioIdx)), cursor.getString(mimeIdx))
+                    },
+                    language = if (cursor.isNull(languageIdx)) null else cursor.getString(languageIdx),
                 )
             }
         }
@@ -172,6 +206,17 @@ class PendingNotesStore(context: Context) {
             )
         }
 
+    /**
+     * Keeps a voice note as a plain text note: its audio was refused (the gateway cannot
+     * transcribe voice notes) and has been deleted, so later drains send the text alone.
+     */
+    suspend fun dropAudio(id: Long): Unit = withContext(Dispatchers.IO) {
+        helper.writableDatabase.execSQL(
+            "UPDATE $TABLE SET $COL_AUDIO_PATH = NULL, $COL_AUDIO_MIME = NULL WHERE $COL_ID = ?",
+            arrayOf<Any>(id),
+        )
+    }
+
     /** Deletes one drained (or user-discarded) note. */
     suspend fun delete(id: Long): Unit = withContext(Dispatchers.IO) {
         helper.writableDatabase.delete(TABLE, "$COL_ID = ?", arrayOf(id.toString()))
@@ -189,5 +234,8 @@ class PendingNotesStore(context: Context) {
         const val COL_LAST_ATTEMPT_AT = "last_attempt_at"
         const val COL_LAST_FAILURE = "last_failure"
         const val COL_RETRY_COUNT = "retry_count"
+        const val COL_AUDIO_PATH = "audio_path"
+        const val COL_AUDIO_MIME = "audio_mime"
+        const val COL_LANGUAGE = "language"
     }
 }

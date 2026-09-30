@@ -1,11 +1,11 @@
 name: site
 
 # Publishes omnesis.dev: the static assets under website/, configured by
-# wrangler.jsonc. The site has no build step, so neither job installs the
-# monorepo — wrangler reads website/ as it is checked out.
+# wrangler.jsonc. Blog tooling is isolated; neither job installs the monorepo.
+# Generated blog pages are verified before wrangler reads website/.
 #
 # A pull request that touches the site gets a dry run, which validates the
-# Worker configuration and the asset set without uploading anything; a push to
+# generated blog, Worker configuration and asset set without uploading anything; a push to
 # main that touches it deploys. Commits that leave these paths alone start no
 # run at all.
 on:
@@ -13,11 +13,13 @@ on:
     branches: [main]
     paths:
       - "website/**"
+      - "scripts/blog/**"
       - "wrangler.jsonc"
       - ".github/workflows/site.yml"
   pull_request:
     paths:
       - "website/**"
+      - "scripts/blog/**"
       - "wrangler.jsonc"
       - ".github/workflows/site.yml"
   workflow_dispatch:
@@ -48,6 +50,17 @@ jobs:
         with:
           node-version: "24"
 
+      - name: Install blog tooling
+        run: npm ci --prefix scripts/blog --ignore-scripts --no-audit --no-fund
+
+      - name: Test blog builder
+        working-directory: scripts/blog
+        run: exec node node_modules/vitest/vitest.mjs run --config vitest.config.mjs
+
+      - name: Verify blog pages
+        working-directory: scripts/blog
+        run: exec node build.mjs --check
+
       - name: wrangler deploy --dry-run
         run: npx --yes "wrangler@${WRANGLER_VERSION}" deploy --dry-run --outdir "$RUNNER_TEMP/site"
 
@@ -70,6 +83,17 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24"
+
+      - name: Install blog tooling
+        run: npm ci --prefix scripts/blog --ignore-scripts --no-audit --no-fund
+
+      - name: Test blog builder
+        working-directory: scripts/blog
+        run: exec node node_modules/vitest/vitest.mjs run --config vitest.config.mjs
+
+      - name: Verify blog pages
+        working-directory: scripts/blog
+        run: exec node build.mjs --check
 
       - name: wrangler deploy
         env:

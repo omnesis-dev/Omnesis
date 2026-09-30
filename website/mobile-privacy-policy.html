@@ -61,6 +61,7 @@
             <li><a href="/brain">Omnesis Brain</a></li>
             <li><a href="/vision">Vision</a></li>
             <li><a href="/docs/">Docs</a></li>
+            <li><a href="/blog/">Blog</a></li>
           </ul>
           <a
             class="nav-icon-btn"
@@ -117,7 +118,7 @@
       <main id="main" class="docs-content">
         <p class="docs-kicker">Legal</p>
         <h1>Omnesis Mobile App Privacy Policy</h1>
-        <p class="docs-lead"><strong>Last updated:</strong> 2026-09-25</p>
+        <p class="docs-lead"><strong>Last updated:</strong> 2026-09-29</p>
 
         <h2 id="summary">Summary</h2>
         <p>
@@ -199,7 +200,14 @@
             Android, Omnesis requests offline recognition, but the installed recognition service
             decides whether processing is local or remote. Siri, Google Assistant, or Gemini may
             also process the invocation and supplied phrase under Apple or Google's terms. The
-            resulting text is sent to your gateway when you submit the action.
+            resulting text is sent to your gateway when you submit the action. If the operator of
+            your gateway turns on gateway dictation, an experimental setting that is off by default,
+            the app also records the audio of Tell Omnesis voice notes, including ones dictated on
+            Apple Watch, whose recording passes through your iPhone, and sends it with the note to
+            your gateway, which transcribes it and replaces the note's text. The recording goes only
+            to your gateway. The app deletes its copy once the gateway has it; the gateway keeps it
+            in its database, alongside the rest of your data, only until it has transcribed it, for
+            at most a week, and deleting the note deletes it.
           </li>
           <li>
             <strong>Location</strong> — on iOS, a location can be attached to a note captured in the
@@ -473,6 +481,7 @@
             <a href="https://github.com/omnesis-dev/Omnesis/blob/main/LICENSE">AGPL-3.0</a>
           </div>
           <nav class="footer-links" aria-label="Footer">
+            <a href="/blog/">Blog</a>
             <a href="/docs/">Docs</a>
             <a href="/privacy">Privacy</a>
             <a href="https://github.com/omnesis-dev/Omnesis/blob/main/CONTRIBUTING.md"

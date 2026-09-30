@@ -2942,6 +2942,23 @@ const entailmentSettings = z
   .strict()
   .default({ promptStyle: "judge" });
 
+// Tell Omnesis voice notes (experimental). When on, the mobile apps send the
+// audio of a voice note — dictated on the phone or the Apple Watch — with the
+// note, and the gateway's `transcriber` replaces the phone's own transcript
+// once it has transcribed it. Has effect only in experimental mode and with a
+// runnable transcriber assigned; the gateway advertises the combined verdict as
+// `dictation` on `GET /status`.
+const dictationSettings = z
+  .object({
+    transcribeOnGateway: z
+      .boolean()
+      .describe(
+        "Experimental. The mobile apps send the audio of Tell Omnesis voice notes with the note, and the gateway's transcriber replaces the phone's own transcript. Off by default; needs experimental mode and an assigned transcriber.",
+      )
+      .optional(),
+  })
+  .strict();
+
 // `typesafe` is not reserved here: a configured backend of that name keeps
 // serving the roles it did, and the built-in TypeSafe backend answers only the
 // decision role (see the inference registry). Clients avoid it for new names.
@@ -2998,6 +3015,7 @@ const inference = z
       })
       .strict()
       .optional(),
+    dictation: dictationSettings.optional(),
   })
   .strict();
 

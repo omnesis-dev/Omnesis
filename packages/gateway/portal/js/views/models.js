@@ -46,6 +46,7 @@ import {
   rebuildIndex,
   getAdminConfig,
   patchAdminConfig,
+  getStatus,
 } from "../api.js";
 import { CredentialsWizard } from "./credentials-wizard.js";
 import { CloudInferenceConsentModal } from "../components/cloud-inference-consent.js";
@@ -352,7 +353,8 @@ function CapabilityDetail({ role, overview, onOpenPicker, onAddBackend, onDisabl
         ? html`<div class="cap-detail-hint">Switching the embedder rebuilds the vector index gracefully — search stays live on the current model and switches automatically when the new index is ready. A hard cutover (offered when switching) stops the old model immediately, leaving keyword-only search until the rebuild finishes.</div>`
         : null}
       ${role === "transcriber"
-        ? html`<div class="cap-detail-hint">Voice notes are transcribed as sources sync. Already-ingested voice notes are <strong>not</strong> re-transcribed automatically; resync a source to reprocess it.</div>`
+        ? html`<div class="cap-detail-hint">Voice notes are transcribed as sources sync. Already-ingested voice notes are <strong>not</strong> re-transcribed automatically; resync a source to reprocess it.</div>
+            <${GatewayDictationSetting} />`
         : null}
       ${role === "ocr"
         ? html`<div class="cap-detail-hint">Images and scanned PDFs are OCR'd as sources sync. Already-ingested attachments are <strong>not</strong> re-OCR'd automatically; resync a source to reprocess them.</div>`
@@ -398,6 +400,73 @@ function EntailmentPromptStyle() {
         MiniCheck convention — for MiniCheck-family fact checkers
       </label>
       ${error ? html`<div class="cap-detail-warn">${error}</div>` : null}
+    </div>
+  `;
+}
+
+// Tell Omnesis voice-note opt-in (experimental). The gateway's `dictation`
+// verdict on /status decides whether the setting shows at all (`visible` =
+// experimental mode) and carries the live state, so this control never reasons
+// about experimental mode or the assignment itself. With it on, the mobile apps
+// send voice notes' audio for this transcriber to transcribe.
+export function GatewayDictationSetting() {
+  const [dictation, setDictation] = useState(null); // null = loading or hidden
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  // A failed read keeps the last verdict, so one transient error never hides
+  // the section.
+  async function refresh() {
+    try {
+      const status = await getStatus();
+      setDictation(status?.dictation ?? null);
+    } catch {
+      // keep the current verdict
+    }
+  }
+  useEffect(() => { refresh(); }, []);
+
+  if (!dictation?.visible) return null;
+
+  async function toggle() {
+    const next = !dictation.enabled;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await patchAdminConfig({ inference: { dictation: { transcribeOnGateway: next } } });
+      if (!res.ok) setError(res.body?.error ?? "Failed to save the setting.");
+      await refresh();
+    } catch {
+      setError("Failed to save the setting.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return html`
+    <div class="detail-section cap-dictation">
+      <div class="models-cloud-control">
+        <h2>Tell Omnesis voice notes <span class="experimental-tag" title="Experimental feature">Experimental</span></h2>
+        <button type="button" class="models-cloud-switch" role="switch"
+          aria-checked=${dictation.enabled}
+          aria-label="Transcribe Tell Omnesis voice notes on the gateway" disabled=${busy}
+          onClick=${toggle}>
+          <span class="models-cloud-switch-thumb" aria-hidden="true"></span>
+        </button>
+        <span role="status">${busy ? "Saving…" : dictation.enabled ? "On" : "Off"}</span>
+      </div>
+      <p class="cap-detail-desc">
+        The iOS and Android apps send the audio of what you dictate in Tell Omnesis, on the
+        phone or the Apple Watch, with the note. The note is saved right away with the phone's
+        own transcript and updated once this transcriber has transcribed it. Agent
+        conversations, Siri, and assistant requests that already carry their words are unaffected.
+      </p>
+      ${dictation.enabled && !dictation.modelAssigned
+        ? html`<div class="cap-detail-warn">
+            <strong>Not in use.</strong> ${dictation.reason ?? "No transcriber model can run."} Notes keep the phone's own transcript until a transcriber is available.
+          </div>`
+        : null}
+      ${error ? html`<div class="cap-detail-warn" role="alert">${error}</div>` : null}
     </div>
   `;
 }

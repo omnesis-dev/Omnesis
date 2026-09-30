@@ -28,20 +28,19 @@ export function partHeader(part: gmail_v1.Schema$MessagePart, name: string): str
 }
 
 /**
- * The first part of a type that is the message's own text rather than an
- * attached file: a part with a file name or an attachment id is a file the
- * sender attached, even when it is `text/plain`.
+ * Every part of a type that is the message's own text rather than an
+ * attached file, in the order they appear: a part with a file name is a file
+ * the sender attached, even when it is `text/plain`. A message can carry its
+ * text in several parts — one per stretch between inline images, or nested
+ * in parallel and mixed parts by an unusual mailer — and each holds part of
+ * what the sender wrote.
  */
-function bodyPart(
+function bodyParts(
   part: gmail_v1.Schema$MessagePart,
   mimeType: string,
-): gmail_v1.Schema$MessagePart | null {
-  if (part.mimeType === mimeType && !part.filename && part.body?.data) return part;
-  for (const child of part.parts ?? []) {
-    const found = bodyPart(child, mimeType);
-    if (found) return found;
-  }
-  return null;
+): gmail_v1.Schema$MessagePart[] {
+  if (part.mimeType === mimeType && !part.filename && part.body?.data) return [part];
+  return (part.parts ?? []).flatMap((child) => bodyParts(child, mimeType));
 }
 
 /**
@@ -49,10 +48,15 @@ function bodyPart(
  * transfer decoding, in the charset the part declares; they are read in that
  * charset, or as windows-1252 when they are not UTF-8 and it names none.
  */
-function partText(part: gmail_v1.Schema$MessagePart | null): string | undefined {
-  if (!part?.body?.data) return undefined;
-  const bytes = Buffer.from(part.body.data, "base64url");
+function partText(part: gmail_v1.Schema$MessagePart): string {
+  const bytes = Buffer.from(part.body!.data!, "base64url");
   return decodeMailText(bytes, charsetOfContentType(partHeader(part, "Content-Type")));
+}
+
+/** The decoded text of every body part of a type, joined in order; undefined when there is none. */
+function joinedText(payload: gmail_v1.Schema$MessagePart, mimeType: string, separator: string) {
+  const parts = bodyParts(payload, mimeType);
+  return parts.length > 0 ? parts.map(partText).join(separator) : undefined;
 }
 
 /** The message's plain-text and HTML body parts, decoded. */
@@ -61,8 +65,8 @@ export function messageParts(payload: gmail_v1.Schema$MessagePart): {
   html?: string;
 } {
   return {
-    text: partText(bodyPart(payload, "text/plain")),
-    html: partText(bodyPart(payload, "text/html")),
+    text: joinedText(payload, "text/plain", "\n\n"),
+    html: joinedText(payload, "text/html", "\n"),
   };
 }
 
@@ -165,3 +169,29 @@ export function messageContent(fields: {
   if (fields.body) lines.push(fields.body);
   return lines.join("\n");
 }
+
+/**
+ * Whether an inline image's text says something its message does not: a
+ * phone number or an email address missing from the message, or at least a
+ * few words the message never uses. A logo repeating the sender's name adds
+ * nothing; a signature block sent as an image does.
+ */
+export function addsToMessage(imageText: string, messageText: string): boolean {
+  const messageDigits = messageText.replace(/\D/g, "");
+  const phones = (imageText.match(/\+?\d[\d ().-]{7,}\d/g) ?? [])
+    .map((p) => p.replace(/\D/g, ""))
+    .filter((digits) => digits.length >= 9);
+  // The last nine digits match a number however its country code is written.
+  if (phones.some((digits) => !messageDigits.includes(digits.slice(-9)))) return true;
+  const lowerMessage = messageText.toLowerCase();
+  const emails = imageText.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g) ?? [];
+  if (emails.some((e) => !lowerMessage.includes(e.toLowerCase()))) return true;
+  const known = new Set(lowerMessage.match(/[\p{L}]{3,}/gu) ?? []);
+  const fresh = new Set(
+    (imageText.toLowerCase().match(/[\p{L}]{3,}/gu) ?? []).filter((w) => !known.has(w)),
+  );
+  return fresh.size >= MIN_FRESH_WORDS;
+}
+
+/** How many words an inline image must add to its message to be kept. */
+const MIN_FRESH_WORDS = 4;

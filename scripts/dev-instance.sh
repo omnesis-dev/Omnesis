@@ -21,7 +21,9 @@
 #   scripts/dev-instance.sh start --bare     # boot synthetic but add sources yourself via the portal
 #   scripts/dev-instance.sh start --real     # boot with REAL sources (synthetic mode OFF, nothing seeded)
 #   scripts/dev-instance.sh start --universe <name>   # a specific synthetic universe
-#   scripts/dev-instance.sh info             # print URL / TOKEN / CA-cert triple (copy-paste form)
+#   scripts/dev-instance.sh start --session "Codex: search filters" --purpose "Review filters"
+#                                            # optional labels, strongly encouraged for feature review
+#   scripts/dev-instance.sh info             # print one-click portal login URL + URL / TOKEN / CA-cert triple
 #   scripts/dev-instance.sh stop             # stop gateway + collector (keeps config dir on disk)
 #
 # Configuration (all optional, generic defaults — nothing operator-private):
@@ -41,6 +43,7 @@ SYNTH="${ROOT}/scripts/synth-gateway.sh"
 # in scripts/lib/gateway-boot-budget.json.
 # shellcheck source=lib/boot_budget
 source "${ROOT}/scripts/lib/boot_budget"
+source "${ROOT}/scripts/lib/test_instance"
 
 # Isolated defaults. The high port keeps us clear of the live gateway (7600)
 # and the OAuth callback ports (3000-3003). Override via env for parallel
@@ -205,8 +208,9 @@ print_triple() {
     echo "Start one first: scripts/dev-instance.sh start" >&2
     exit 6
   fi
-  local token
+  local token portal
   token="$(cat "${TOKEN_FILE}")"
+  portal="$(portal_login_url)"
   # Copy-paste form: paste this block into another shell and immediately drive
   # `cli`/curl at the isolated instance. The CA path is absolute so it resolves
   # from any working directory; the URL is https; the token is the live one.
@@ -216,6 +220,7 @@ export OMNESIS_GATEWAY_URL=${URL}
 export OMNESIS_TOKEN=${token}
 export NODE_EXTRA_CA_CERTS=${CA_CERT}
 
+# PORTAL (one-click login): ${portal}
 # URL:   ${URL}
 # TOKEN: ${token}
 # CA:    ${CA_CERT}
@@ -223,6 +228,26 @@ TRIPLE
 }
 
 start() {
+  parse_test_instance_args "$@"
+  local real=0
+  local passthrough=()
+  set -- "${TEST_ARGS[@]+"${TEST_ARGS[@]}"}"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --real) real=1; shift ;;
+      --bare|--no-seed) passthrough+=("$1"); shift ;;
+      --universe)
+        if [[ $# -lt 2 || "$2" == --* ]]; then
+          echo "--universe needs a value." >&2; return 2
+        fi
+        passthrough+=("$1" "$2"); shift 2 ;;
+      --universe=*) passthrough+=("$1"); shift ;;
+      *) echo "Unknown start argument: $1" >&2; return 2 ;;
+    esac
+  done
+  local labels=()
+  [[ -z "${TEST_SESSION}" ]] || labels+=(--session "${TEST_SESSION}")
+  [[ -z "${TEST_PURPOSE}" ]] || labels+=(--purpose "${TEST_PURPOSE}")
   guard_isolation
   reap_stale 24
 
@@ -233,6 +258,7 @@ start() {
   cpid="$(cat "${CONFIG_DIR}/collector.pid" 2>/dev/null || true)"
   if [[ -n "${gpid}" && -n "${cpid}" ]] &&
     kill -0 "${gpid}" 2>/dev/null && kill -0 "${cpid}" 2>/dev/null && health_ok; then
+    check_test_instance_reuse
     echo "Instance already running and healthy at ${URL} — reusing."
     echo
     print_triple
@@ -255,15 +281,6 @@ start() {
     exit 7
   fi
 
-  local real=0
-  local passthrough=()
-  for arg in "$@"; do
-    case "$arg" in
-      --real) real=1 ;;
-      *) passthrough+=("$arg") ;;
-    esac
-  done
-
   if [[ "${real}" == "1" ]]; then
     echo "Standing up an isolated REAL-sources instance on ${URL} …"
     # Real mode: synthetic OFF, nothing seeded. --bare keeps synth-gateway from
@@ -272,13 +289,13 @@ start() {
     OMNESIS_CONFIG_DIR="${CONFIG_DIR}" \
     OMNESIS_GATEWAY_PORT="${PORT}" \
     OMNESIS_SYNTH_READY_TIMEOUT="${READY_TIMEOUT}" \
-      bash "${SYNTH}" start --bare
+      bash "${SYNTH}" start --bare "${labels[@]+"${labels[@]}"}"
   else
     echo "Standing up an isolated SYNTHETIC instance on ${URL} …"
     OMNESIS_CONFIG_DIR="${CONFIG_DIR}" \
     OMNESIS_GATEWAY_PORT="${PORT}" \
     OMNESIS_SYNTH_READY_TIMEOUT="${READY_TIMEOUT}" \
-      bash "${SYNTH}" start "${passthrough[@]+"${passthrough[@]}"}"
+      bash "${SYNTH}" start "${labels[@]+"${labels[@]}"}" "${passthrough[@]+"${passthrough[@]}"}"
   fi
 
   # Re-assert readiness at this wrapper boundary so a gateway that stopped
@@ -320,8 +337,11 @@ Commands:
   start --real     Boot with REAL sources: synthetic mode OFF, nothing seeded;
                    add your real sources via the portal '+Add source' flow.
   start --universe <name>   Use a specific synthetic universe.
-  info             Print the URL / TOKEN / CA-cert triple in copy-paste form so
-                   another shell can immediately drive cli/curl at the instance.
+  start --session <name> --purpose <description>
+                   Strongly encouraged: identify the creating agent session and
+                   feature being tested in the portal sidebar (both optional).
+  info             Print a one-click portal login URL plus the URL / TOKEN /
+                   CA-cert triple for another shell to drive cli/curl.
   stop             Stop the gateway + collector (leaves the config dir on disk).
   reap [hours]     Kill + remove stale /tmp/omnesis-dev-instance* and
                    /tmp/omnesis-shot-portal* instances older than [hours]

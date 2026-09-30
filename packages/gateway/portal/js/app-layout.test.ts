@@ -194,6 +194,45 @@ describe("decisions waiting, badged on the nav item where each is decided", () =
     expect(host.querySelector(".sidebar-badge")).toBeNull();
   });
 
+  test("normal gateways have no test card", async () => {
+    await mount();
+    expect(host.querySelector(".sidebar-test-instance")).toBeNull();
+  });
+
+  test("an unlabelled test gateway still identifies itself", async () => {
+    getStatus.mockResolvedValue({ testInstance: {} } as never);
+    await mount();
+    await vi.waitFor(() => expect(host.querySelector(".sidebar-test-instance")).not.toBeNull());
+    const card = host.querySelector(".sidebar-test-instance");
+    expect(card?.textContent?.trim()).toBe("Test gateway");
+    expect(card?.previousElementSibling?.className).toBe("sidebar-brand");
+    expect(card?.nextElementSibling?.className).toBe("sidebar-nav");
+  });
+
+  test("shows session and purpose as text, including HTML-looking labels", async () => {
+    const session = '<img src=x onerror="alert(1)">';
+    const purpose = "Review the new filters & keyboard navigation";
+    getStatus.mockResolvedValue({ testInstance: { session, purpose } } as never);
+    await mount();
+    await vi.waitFor(() => expect(host.querySelector(".sidebar-test-instance")).not.toBeNull());
+    const card = host.querySelector(".sidebar-test-instance");
+    expect(card?.textContent).toContain(session);
+    expect(card?.textContent).toContain(purpose);
+    expect(card?.querySelector("img")).toBeNull();
+    expect(card?.textContent).toContain("Session");
+    expect(card?.textContent).toContain("Purpose");
+  });
+
+  test("partial labels omit empty fields and preserve long labels", async () => {
+    const purpose = "test-feature-".repeat(40);
+    getStatus.mockResolvedValue({ testInstance: { session: "  ", purpose } } as never);
+    await mount();
+    await vi.waitFor(() => expect(host.querySelector(".sidebar-test-instance")).not.toBeNull());
+    const card = host.querySelector(".sidebar-test-instance");
+    expect(card?.textContent).not.toContain("Session");
+    expect(card?.textContent).toContain(purpose);
+  });
+
   test("shows a quiet sidebar notice for a newer release", async () => {
     getStatus.mockResolvedValue({
       experimental: false,
