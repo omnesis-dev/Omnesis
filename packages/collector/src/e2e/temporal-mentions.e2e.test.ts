@@ -410,6 +410,7 @@ describe("temporal query mentions — the worth gate on a stable gateway", () =>
       },
     );
     try {
+      // `to` is exclusive: a window of one day ends at the next.
       const mentionsOf = async (from: string, to: string) => {
         const result = await authorized.client.callTool({
           name: "temporal_query",
@@ -425,10 +426,10 @@ describe("temporal query mentions — the worth gate on a stable gateway", () =>
           .map((item) => item.mention!.text);
       };
       // "tomorrow" lands on Thursday 1 October, not on the UTC date's next day.
-      expect(await mentionsOf("2026-10-01", "2026-10-01")).toContain("tomorrow");
-      expect(await mentionsOf("2026-09-30", "2026-09-30")).not.toContain("tomorrow");
+      expect(await mentionsOf("2026-10-01", "2026-10-02")).toContain("tomorrow");
+      expect(await mentionsOf("2026-09-30", "2026-10-01")).not.toContain("tomorrow");
       // "next week" names no day, yet counts for a note: the week of 5 October.
-      expect(await mentionsOf("2026-10-05", "2026-10-11")).toContain("next week");
+      expect(await mentionsOf("2026-10-05", "2026-10-12")).toContain("next week");
     } finally {
       await closeAuthorized(authorized);
     }
