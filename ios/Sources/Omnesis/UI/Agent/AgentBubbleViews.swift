@@ -506,7 +506,12 @@ struct AgentPartView: View {
             // for the user's own message bubble. The fixed-axis fallback
             // chain is for older devices where the variable font name
             // resolves differently.
-            MarkdownView(text: raw, bodyFont: assistantBodyFont(size: 15))
+            MarkdownView(
+                text: raw,
+                bodyFont: assistantBodyFont(size: 15),
+                copyValues: turnDone,
+                copyFont: UIFont(name: "InterVariable", size: 15) ?? .systemFont(ofSize: 15)
+            )
         case .thinking(let raw):
             AgentThinkingBlock(text: raw, active: thinkingActive)
         case .tool(let call):

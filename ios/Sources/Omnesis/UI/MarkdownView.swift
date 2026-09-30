@@ -24,6 +24,9 @@ struct MarkdownView: View {
     /// rather than off `bodyFont`, so a caller setting the body in a
     /// non-default face passes the face here too and the block reads as one.
     var headingDesign: Font.Design = .default
+    /// Enabled only for completed assistant answers.
+    var copyValues: Bool = false
+    var copyFont: UIFont = .systemFont(ofSize: 14)
 
     @State private var cache = MarkdownCache()
 
@@ -41,11 +44,11 @@ struct MarkdownView: View {
     private func view(for block: MarkdownBlock) -> some View {
         switch block {
         case .heading(let level, let raw):
-            Text(cache.inline(raw))
+            inlineText(raw, font: headingUIFont(level))
                 .font(headingFont(level))
                 .foregroundStyle(Theme.textPrimary)
         case .paragraph(let raw):
-            Text(cache.inline(raw))
+            inlineText(raw)
                 .font(bodyFont)
                 .foregroundStyle(Theme.textPrimary)
                 .textSelection(.enabled)
@@ -53,7 +56,7 @@ struct MarkdownView: View {
         case .bulletList(let items):
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                    Text(cache.inline(item))
+                    inlineText(item)
                         .font(bodyFont)
                         .foregroundStyle(Theme.textPrimary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -67,7 +70,7 @@ struct MarkdownView: View {
         case .orderedList(let items):
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(Array(items.enumerated()), id: \.offset) { idx, item in
-                    Text(cache.inline(item))
+                    inlineText(item)
                         .font(bodyFont)
                         .foregroundStyle(Theme.textPrimary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -82,7 +85,7 @@ struct MarkdownView: View {
                 }
             }
         case .quote(let raw):
-            Text(cache.inline(raw))
+            inlineText(raw, font: italicCopyFont, color: Theme.textSecondary)
                 .font(bodyFont)
                 .italic()
                 .foregroundStyle(Theme.textSecondary)
@@ -92,18 +95,52 @@ struct MarkdownView: View {
                         .fill(Theme.borderLight)
                         .frame(width: 3)
                 }
-        case .code(let raw):
-            Text(raw)
-                .font(Theme.monospace(size: 13))
-                .foregroundStyle(Theme.textPrimary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(10)
-                .background(Theme.bgTertiary)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .textSelection(.enabled)
+        case .code(let raw, let closed):
+            VStack(alignment: .leading, spacing: 0) {
+                if copyValues, closed {
+                    HStack {
+                        Spacer()
+                        MarkdownCodeCopyButton(value: raw)
+                    }
+                }
+                Text(raw.hasSuffix("\n") ? String(raw.dropLast()) : raw)
+                    .font(Theme.monospace(size: 13))
+            }
+            .foregroundStyle(Theme.textPrimary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(Theme.bgTertiary)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .textSelection(.enabled)
         case .table(let headers, let rows):
-            MarkdownTable(headers: headers, rows: rows, bodyFont: bodyFont, cache: cache)
+            MarkdownTable(headers: headers, rows: rows, bodyFont: bodyFont, cache: cache, copyValues: copyValues, copyFont: copyFont)
         }
+    }
+
+    @ViewBuilder
+    private func inlineText(_ raw: String, font: UIFont? = nil, color: Color = Theme.textPrimary) -> some View {
+        if copyValues, !MarkdownCopyContent.values(in: raw).isEmpty {
+            MarkdownCopyText(raw: raw, font: font ?? copyFont, color: color)
+        } else {
+            Text(cache.inline(raw))
+        }
+    }
+
+    private var italicCopyFont: UIFont {
+        let descriptor = copyFont.fontDescriptor.withSymbolicTraits(.traitItalic) ?? copyFont.fontDescriptor
+        return UIFont(descriptor: descriptor, size: copyFont.pointSize)
+    }
+
+    private func headingUIFont(_ level: Int) -> UIFont {
+        let size: CGFloat = level == 1 ? 22 : level == 2 ? 19 : level == 3 ? 17 : 15
+        let base = UIFont.systemFont(ofSize: size, weight: level <= 2 ? .bold : .semibold)
+        let design: UIFontDescriptor.SystemDesign = switch headingDesign {
+        case .serif: .serif
+        case .rounded: .rounded
+        case .monospaced: .monospaced
+        default: .default
+        }
+        return UIFont(descriptor: base.fontDescriptor.withDesign(design) ?? base.fontDescriptor, size: size)
     }
 
     private func headingFont(_ level: Int) -> Font {
@@ -112,180 +149,6 @@ struct MarkdownView: View {
         case 2: .system(size: 19, weight: .bold, design: headingDesign)
         case 3: .system(size: 17, weight: .semibold, design: headingDesign)
         default: .system(size: 15, weight: .semibold, design: headingDesign)
-        }
-    }
-}
-
-/// Render a GFM table as a flat, borderless grid: no background, no rules
-/// between rows, the header set apart by a muted semibold face and one
-/// hairline beneath it. Columns line up across rows, a long cell wraps
-/// instead of stretching its column to a single line, and a table still wider
-/// than the container scrolls horizontally inside its own bounds.
-@available(iOS 17.0, *)
-struct MarkdownTable: View {
-    let headers: [String]
-    let rows: [[String]]
-    var bodyFont: Font = .system(size: 13)
-    let cache: MarkdownCache
-
-    /// The widest a cell may grow before its text wraps. A single sentence in
-    /// one cell must not push every other column off the screen, and this is
-    /// about the width the phone has left for the other columns.
-    static let maxCellWidth: CGFloat = 220
-
-    private var columnCount: Int {
-        max(headers.count, rows.map(\.count).max() ?? 0)
-    }
-
-    var body: some View {
-        if columnCount > 0 {
-            ScrollView(.horizontal, showsIndicators: false) {
-                MarkdownTableLayout(
-                    columns: columnCount,
-                    maxCellWidth: Self.maxCellWidth,
-                    spacing: MarkdownTableSpacing(horizontal: 20, vertical: 7)
-                ) {
-                    ForEach(0 ..< columnCount, id: \.self) { column in
-                        cellText(cell(headers, column))
-                            .font(bodyFont.weight(.semibold))
-                            .foregroundStyle(Theme.textSecondary)
-                    }
-                    Rectangle()
-                        .fill(Theme.borderLight)
-                        .frame(height: 1)
-                        .layoutValue(key: MarkdownTableRole.self, value: .headerRule)
-                    ForEach(Array(rows.enumerated()), id: \.offset) { _, cells in
-                        ForEach(0 ..< columnCount, id: \.self) { column in
-                            cellText(cell(cells, column))
-                                .font(bodyFont)
-                                .foregroundStyle(Theme.textPrimary)
-                        }
-                    }
-                }
-                .padding(.vertical, 2)
-            }
-            .menuRevealExcluded()
-            .accessibilityRepresentation { accessibilityRows }
-        }
-    }
-
-    /// What VoiceOver reads: the header as one element, then each row as one
-    /// element that pairs every cell with its column heading. The cells are
-    /// laid out flat so the columns can line up, which leaves no row view to
-    /// group, so the rows are described here instead.
-    private var accessibilityRows: some View {
-        VStack(alignment: .leading) {
-            Text((0 ..< columnCount).map { plain(cell(headers, $0)) }.joined(separator: ", "))
-            ForEach(Array(rows.enumerated()), id: \.offset) { _, cells in
-                Text(
-                    (0 ..< columnCount)
-                        .map { "\(plain(cell(headers, $0))): \(plain(cell(cells, $0)))" }
-                        .joined(separator: ", ")
-                )
-            }
-        }
-    }
-
-    private func cell(_ cells: [String], _ column: Int) -> String {
-        column < cells.count ? cells[column] : ""
-    }
-
-    private func cellText(_ raw: String) -> Text {
-        Text(cache.inline(raw))
-    }
-
-    private func plain(_ raw: String) -> String {
-        String(cache.inline(raw).characters)
-    }
-}
-
-/// What a subview of `MarkdownTableLayout` is: a cell, filling the grid in
-/// reading order, or the one rule drawn beneath the header row.
-private enum MarkdownTableRole: LayoutValueKey {
-    case cell
-    case headerRule
-
-    static let defaultValue = MarkdownTableRole.cell
-}
-
-/// Lays cells out as a grid whose columns line up across rows, with the
-/// arithmetic in `MarkdownTableMetrics` and only the measuring here.
-///
-/// A horizontal `ScrollView` proposes an unbounded width to its content, and
-/// `Grid` hands that proposal on to every cell, so one long cell becomes a
-/// single line wider than the screen and the other columns land out of view.
-/// This layout measures the cells itself and never passes a proposal through:
-/// a cell is offered its column's width, capped, whatever the container
-/// proposed. The metrics therefore depend on the cells alone, and are cached
-/// per subview set — a streamed reply lays this out on every token, and the
-/// cells are measured once rather than twice per pass.
-@available(iOS 17.0, *)
-private struct MarkdownTableLayout: Layout {
-    let columns: Int
-    let maxCellWidth: CGFloat
-    let spacing: MarkdownTableSpacing
-
-    func makeCache(subviews: Subviews) -> MarkdownTableMetrics {
-        let cells = subviews.filter { $0[MarkdownTableRole.self] == .cell }
-        return MarkdownTableMetrics.measure(
-            columns: columns,
-            cellCount: cells.count,
-            maxCellWidth: maxCellWidth,
-            spacing: spacing,
-            cells: MarkdownTableCellMeasure(
-                naturalWidth: { cells[$0].sizeThatFits(.unspecified).width },
-                height: { cells[$0].sizeThatFits(ProposedViewSize(width: $1, height: nil)).height }
-            )
-        )
-    }
-
-    func updateCache(_ cache: inout MarkdownTableMetrics, subviews: Subviews) {
-        cache = makeCache(subviews: subviews)
-    }
-
-    func sizeThatFits(
-        proposal _: ProposedViewSize,
-        subviews _: Subviews,
-        cache: inout MarkdownTableMetrics
-    )
-        -> CGSize {
-        CGSize(width: cache.width, height: cache.height)
-    }
-
-    func placeSubviews(
-        in bounds: CGRect,
-        proposal _: ProposedViewSize,
-        subviews: Subviews,
-        cache: inout MarkdownTableMetrics
-    ) {
-        let rightToLeft = subviews.layoutDirection == .rightToLeft
-        var cellIndex = 0
-        for subview in subviews {
-            switch subview[MarkdownTableRole.self] {
-            case .headerRule:
-                // Centred in the gap after the header row, which is the first
-                // row by construction, spanning every column.
-                let ruleY = bounds.minY + (cache.rowHeights.first ?? 0) + spacing.vertical / 2
-                subview.place(
-                    at: CGPoint(x: bounds.minX, y: ruleY),
-                    anchor: .leading,
-                    proposal: ProposedViewSize(width: cache.width, height: nil)
-                )
-            case .cell:
-                let (row, column) = cache.position(ofCell: cellIndex)
-                subview.place(
-                    at: CGPoint(
-                        x: bounds.minX + cache.columnMinX(column, rightToLeft: rightToLeft),
-                        y: bounds.minY + cache.rowMinY(row)
-                    ),
-                    anchor: .topLeading,
-                    proposal: ProposedViewSize(
-                        width: cache.columnWidths[column],
-                        height: cache.rowHeights[row]
-                    )
-                )
-                cellIndex += 1
-            }
         }
     }
 }
@@ -326,7 +189,8 @@ final class MarkdownCache {
     private var inlineCache: [String: AttributedString] = [:]
     private let inlineCacheCap = 512
 
-    func blocks(for text: String) -> [MarkdownBlock] {
+    func blocks(for source: String) -> [MarkdownBlock] {
+        let text = MarkdownParser.normalize(source)
         if text == lastText { return lastBlocks }
 
         if text.hasPrefix(stableText), text.count >= stableText.count {
@@ -386,15 +250,26 @@ final class MarkdownCache {
         stableText = String(text[..<boundary])
     }
 
-    /// Index just after the last `\n\n` in `text`, or nil if none.
-    /// Caveat: doesn't track unclosed fenced code blocks — a `\n\n`
-    /// inside an open ```...``` is wrongly treated as a boundary.
-    /// That's a perf miss (the code block gets re-parsed on each
-    /// later delta), not a correctness bug: the parser yields the
-    /// same blocks once the fence closes.
+    /// A stable boundary must be outside fenced content; blank lines inside
+    /// a fence belong to that same block even after its closing line arrives.
     private func lastBlankLineBoundary(in text: String) -> String.Index? {
-        guard let range = text.range(of: "\n\n", options: .backwards) else { return nil }
-        return range.upperBound
+        var fence: MarkdownFence?
+        var boundary: String.Index?
+        var cursor = text.startIndex
+        for line in text.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if let active = fence {
+                if MarkdownParser.closesFence(line, fence: active) { fence = nil }
+            } else if let opening = MarkdownParser.fenceOpening(line) {
+                fence = opening
+            } else if trimmed.isEmpty, cursor > text.startIndex,
+                      let end = text.index(cursor, offsetBy: line.count, limitedBy: text.endIndex), end < text.endIndex {
+                boundary = text.index(after: end)
+            }
+            cursor = text.index(cursor, offsetBy: line.count, limitedBy: text.endIndex) ?? text.endIndex
+            if cursor < text.endIndex { cursor = text.index(after: cursor) }
+        }
+        return boundary
     }
 }
 
@@ -404,7 +279,7 @@ enum MarkdownBlock: Equatable {
     case bulletList([String])
     case orderedList([String])
     case quote(String)
-    case code(String)
+    case code(String, closed: Bool)
     /// GFM-style table — headers then rows of cells. The alignment row
     /// (`---|---`) is consumed by the parser and dropped; alignment
     /// rendering is left to the renderer (currently left-aligned for
@@ -412,11 +287,21 @@ enum MarkdownBlock: Equatable {
     case table(headers: [String], rows: [[String]])
 }
 
+struct MarkdownFence {
+    let marker: Character
+    let count: Int
+    let indent: Int
+}
+
 enum MarkdownParser {
+    static func normalize(_ source: String) -> String {
+        source.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+    }
+
     /// Split markdown into block-level chunks. Block boundaries are blank
     /// lines, fenced-code openers, list-item runs, and heading lines.
     static func parse(_ source: String) -> [MarkdownBlock] {
-        let lines = source.components(separatedBy: "\n")
+        let lines = normalize(source).components(separatedBy: "\n")
         var blocks: [MarkdownBlock] = []
         var i = 0
         while i < lines.count {
@@ -426,15 +311,8 @@ enum MarkdownParser {
                 i += 1
                 continue
             }
-            if trimmed.hasPrefix("```") {
-                i += 1
-                var codeLines: [String] = []
-                while i < lines.count, !lines[i].trimmingCharacters(in: .whitespaces).hasPrefix("```") {
-                    codeLines.append(lines[i])
-                    i += 1
-                }
-                if i < lines.count { i += 1 } // skip closing fence
-                blocks.append(.code(codeLines.joined(separator: "\n")))
+            if let fence = fenceOpening(line) {
+                blocks.append(parseFence(lines, index: &i, fence: fence))
                 continue
             }
             if let h = headingLevel(trimmed) {
@@ -457,14 +335,7 @@ enum MarkdownParser {
                 continue
             }
             if trimmed.hasPrefix("> ") {
-                var quoteLines: [String] = []
-                while i < lines.count {
-                    let t = lines[i].trimmingCharacters(in: .whitespaces)
-                    guard t.hasPrefix("> ") else { break }
-                    quoteLines.append(String(t.dropFirst(2)))
-                    i += 1
-                }
-                blocks.append(.quote(quoteLines.joined(separator: " ")))
+                blocks.append(parseQuote(lines, index: &i))
                 continue
             }
             if isBullet(trimmed) {
@@ -503,7 +374,7 @@ enum MarkdownParser {
                 if t.isEmpty
                     || headingLevel(t) != nil
                     || t.hasPrefix("> ")
-                    || t.hasPrefix("```")
+                    || fenceOpening(lines[i]) != nil
                     || isBullet(t)
                     || isOrderedItem(t)
                     || isTableHeader(line: t, next: next) {
@@ -515,6 +386,53 @@ enum MarkdownParser {
             blocks.append(.paragraph(paraLines.joined(separator: "\n")))
         }
         return blocks
+    }
+
+    private static func parseQuote(_ lines: [String], index: inout Int) -> MarkdownBlock {
+        var quoteLines: [String] = []
+        while index < lines.count {
+            let trimmed = lines[index].trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("> ") else { break }
+            quoteLines.append(String(trimmed.dropFirst(2)))
+            index += 1
+        }
+        return .quote(quoteLines.joined(separator: " "))
+    }
+
+    private static func parseFence(
+        _ lines: [String], index: inout Int, fence: MarkdownFence
+    )
+        -> MarkdownBlock {
+        index += 1
+        var codeLines: [String] = []
+        while index < lines.count, !closesFence(lines[index], fence: fence) {
+            let leading = lines[index].prefix { $0 == " " }.count
+            codeLines.append(String(lines[index].dropFirst(min(leading, fence.indent))))
+            index += 1
+        }
+        let closed = index < lines.count
+        if closed { index += 1 }
+        let payload = codeLines.isEmpty ? "" : codeLines.joined(separator: "\n") + "\n"
+        return .code(payload, closed: closed)
+    }
+
+    static func fenceOpening(_ line: String) -> MarkdownFence? {
+        let indent = line.prefix { $0 == " " }.count
+        guard indent <= 3 else { return nil }
+        let content = line.dropFirst(indent)
+        guard let marker = content.first, marker == "`" || marker == "~" else { return nil }
+        let count = content.prefix { $0 == marker }.count
+        guard count >= 3 else { return nil }
+        if marker == "`", content.dropFirst(count).contains("`") { return nil }
+        return MarkdownFence(marker: marker, count: count, indent: indent)
+    }
+
+    static func closesFence(_ line: String, fence: MarkdownFence) -> Bool {
+        let indent = line.prefix { $0 == " " }.count
+        guard indent <= 3 else { return false }
+        let content = line.dropFirst(indent)
+        let count = content.prefix { $0 == fence.marker }.count
+        return count >= fence.count && content.dropFirst(count).allSatisfy { $0 == " " || $0 == "\t" }
     }
 
     private static func headingLevel(_ s: String) -> Int? {
@@ -674,6 +592,24 @@ enum MarkdownStreaming {
 
 #if DEBUG
 @available(iOS 17.0, *)
+#Preview("Markdown — copyable assistant answer") {
+    ScrollView {
+        MarkdownView(text: PreviewMocks.copyableMarkdown, copyValues: true)
+            .padding()
+    }
+    .background(Theme.bgPrimary)
+}
+
+#Preview("Markdown — copyable answer, dark and narrow") {
+    ScrollView {
+        MarkdownView(text: PreviewMocks.copyableMarkdown, copyValues: true)
+            .padding()
+    }
+    .frame(width: 320)
+    .background(Theme.bgPrimary)
+    .preferredColorScheme(.dark)
+}
+
 #Preview("Markdown — kitchen sink") {
     ScrollView {
         MarkdownView(text: """

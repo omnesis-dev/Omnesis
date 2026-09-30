@@ -15,7 +15,7 @@ import { html } from "htm/preact";
 import { useState, useRef, useEffect } from "preact/hooks";
 import { sourceIcon, sourceLabel } from "../../lib/format.js";
 import { navigate } from "../../lib/router.js";
-import { renderMarkdown } from "../../lib/markdown.js";
+import { AssistantMarkdown } from "./assistant-markdown.js";
 import { DocChip } from "../doc-chip.js";
 import { Modal } from "../modal.js";
 import { TimelineColumn } from "../timeline.js";
@@ -92,7 +92,7 @@ export function MessageBubble({ turn, citations, dispatch }) {
             pillRuns,
             !turn.done && i === turn.parts.length - 1,
             true,
-            turn.done === true,
+            turn.role === "assistant" && turn.done === true,
           ))}
       </div>
       ${turn.error
@@ -233,8 +233,7 @@ export function renderPart(part, key, citations, dispatch, pillRuns, thinkingAct
       // Assistant text is markdown — tables, bold, lists, code fences.
       // User-side text is in agent-msg-user (rendered elsewhere); the
       // markdown path is harmless either way and DOMPurify sanitises.
-      return html`<div key=${key} class="agent-part-text"
-        dangerouslySetInnerHTML=${{ __html: renderMarkdown(part.text) }} />`;
+      return html`<${AssistantMarkdown} key=${key} text=${part.text} copyable=${turnDone} />`;
     case "thinking":
       return html`<${ThinkingBlock} key=${key} text=${part.text} active=${thinkingActive} />`;
     case "subagent":

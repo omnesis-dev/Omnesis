@@ -155,6 +155,7 @@ fun AssistantTurn(
                 is AgentPart.Text ->
                     MarkdownText(
                         part.text,
+                        copyableCode = turn.stopReason != null,
                         style = MaterialTheme.typography.bodyMedium.copy(fontFamily = OmFonts.inter),
                         color = OmTheme.colors.textPrimary,
                     )

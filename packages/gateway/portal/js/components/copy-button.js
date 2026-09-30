@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { html } from "htm/preact";
-import { useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 
 // The two glyphs a copy button toggles between: the clipboard (idle) and the
 // checkmark (just-copied). Shared so every copy affordance in the portal shows
@@ -39,30 +39,37 @@ const CHECK_SVG = html`<svg
  * @param {object} props
  * @param {string} props.text - The text written to the clipboard.
  * @param {string} [props.class] - Class applied to the <button>.
- * @param {string} [props.title] - Tooltip / accessible label (default "Copy to clipboard").
+ * @param {string} [props.title] - Tooltip (default "Copy to clipboard").
+ * @param {string} [props.label] - Accessible label (defaults to title).
  */
-export function CopyIconButton({ text, class: className, title = "Copy to clipboard" }) {
+export function CopyIconButton({ text, class: className, title = "Copy to clipboard", label = title }) {
   const [copied, setCopied] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const timer = useRef(null);
+  useEffect(() => () => clearTimeout(timer.current), []);
 
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(text);
+      setFailed(false);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      clearTimeout(timer.current);
+      timer.current = setTimeout(() => setCopied(false), 1500);
     } catch {
-      // Clipboard access may be denied by browser policy. Leave the idle icon
-      // in place so it never falsely reports success.
+      setCopied(false);
+      setFailed(true);
     }
   };
 
   return html`
-    <button
-      class=${className}
+    <button type="button"
+      class=${`${className ?? ""}${failed ? " has-copy-error" : ""}`}
       onClick=${copy}
-      title=${title}
-      aria-label=${copied ? "Copied" : title}
+      title=${failed ? "Could not copy. Select the text and copy it manually." : title}
+      aria-label=${failed ? "Could not copy. Select the text and copy it manually." : copied ? "Copied" : label}
     >
       ${copied ? CHECK_SVG : COPY_SVG}
+      <span class=${failed ? "copy-feedback-error" : "sr-only"} role="status">${failed ? "Could not copy. Select the text and copy it manually." : copied ? "Copied" : ""}</span>
     </button>
   `;
 }
