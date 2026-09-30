@@ -100,9 +100,8 @@ describe("resolveSection", () => {
     expect(cognition.resolveSection("scheduled")).toBe("runs");
     expect(cognition.resolveSection("runs")).toBe("runs");
     expect(cognition.resolveSection("memory")).toBe("memory");
-    expect(cognition.resolveSection("calendar")).toBe("calendar");
-    expect(cognition.resolveSection("temporal-annotations")).toBe("calendar");
-    expect(cognition.resolveSection("time-index")).toBe("calendar");
+    // The Calendar is a Debug tab of its own, not a Cognition section.
+    expect(cognition.resolveSection("calendar")).toBe("overview");
     expect(cognition.resolveSection(undefined)).toBe("overview");
     expect(cognition.resolveSection("bogus")).toBe("overview");
   });

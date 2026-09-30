@@ -731,7 +731,7 @@ function App() {
               watchFiringId=${route.watchFiringId}
             />`
           : route.view === "debug"
-          ? html`<${DebugView} tab=${route.tab} graphParams=${route.graph} dataParams=${route.data} sqlParams=${route.sql} experimental=${experimental} developer=${developer} cognitionTab=${route.cognitionTab} cognitionId=${route.cognitionId} watchDebugId=${route.watchDebugId} watchDebugSeq=${route.watchDebugSeq} />`
+          ? html`<${DebugView} tab=${route.tab} graphParams=${route.graph} dataParams=${route.data} sqlParams=${route.sql} experimental=${experimental} developer=${developer} cognitionTab=${route.cognitionTab} cognitionId=${route.cognitionId} calendarId=${route.calendarId} watchDebugId=${route.watchDebugId} watchDebugSeq=${route.watchDebugSeq} />`
           : route.view === "agent"
           ? html`<${AgentView} convoId=${route.convoId} experimental=${experimental} developer=${developer} />`
           : html`<${SearchView} />`

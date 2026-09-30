@@ -9,6 +9,7 @@ import {
   extractDatesFromText,
   neutralizeDenseSpans,
   scanDatesFromText,
+  unquoted,
 } from "./extractor.js";
 
 /** Emission date used across the anchored cases: 2022-01-21 (a Friday). */
@@ -468,5 +469,31 @@ describe("dense-span neutralization and the scan budget", () => {
     );
     expect(out[0].truncated).toBe(true);
     expect(out[0].dates.map((d) => d.resolvedStart)).toContain("2026-07-01");
+  });
+});
+
+describe("unquoted", () => {
+  it("blanks reply quote markers character for character", () => {
+    const text = "Confirmed for *11\r\n> Sep, 2026*.\n>> nested\nplain > not a marker";
+    const out = unquoted(text);
+    expect(out).toHaveLength(text.length);
+    expect(out).toBe("Confirmed for *11\r\n  Sep, 2026*.\n   nested\nplain > not a marker");
+  });
+
+  it("lets a date that quoting split across lines read as one", () => {
+    const [result] = extractDatesForDocs(
+      [
+        {
+          id: "quoted",
+          title: "Re: Survey booked",
+          content: "> Your survey is confirmed for *11\r\n> Sep, 2026*.\r\n>\r\n> Thanks",
+          anchorAt: "2026-09-02T10:00:00Z",
+        },
+      ],
+      { numericDateOrder: "day-first" },
+    );
+    expect(result!.mentions?.filter(Boolean)).toEqual([
+      { startDay: "2026-09-11", endDay: "2026-09-12", deadline: false },
+    ]);
   });
 });

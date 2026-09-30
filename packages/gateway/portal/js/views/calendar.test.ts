@@ -15,9 +15,10 @@ import {
   fetchCalendarEvidence,
   fetchCalendarPages,
   isSemanticBanner,
+  oneMentionPerDocument,
   overlapsVisibleDays,
   visibleCalendarDays,
-} from "./cognition-calendar.js";
+} from "./calendar.js";
 
 const day = (value) => `${value}T00:00:00.000Z`;
 
@@ -42,7 +43,7 @@ function renderedText(vnode) {
   return renderedText(vnode.props?.children);
 }
 
-describe("Cognition Calendar", () => {
+describe("Calendar", () => {
   it("uses a Monday-first week and a complete six-week month grid", () => {
     const anchor = new Date(2026, 6, 15);
     const week = visibleCalendarDays("week", anchor);
@@ -188,6 +189,78 @@ describe("Cognition Calendar", () => {
       },
     });
     expect(hydrated).toEqual(["doc-1", "doc-2"]);
+  });
+
+  it("labels a date mention as one and links the document that wrote it", () => {
+    const mention = {
+      ...projection,
+      id: "dm_0000000000000001",
+      origin: "mention",
+      kind: "deadline",
+      label: "Renewal notice — “by 15 July”",
+      projection: undefined,
+      mention: { documentId: "doc-9", sourceId: "fictional-mail:primary", text: "by 15 July", relative: false },
+    };
+    expect(evidenceDocumentIds(mention)).toEqual(["doc-9"]);
+    const text = renderedText(CalendarEntryRow({ entry: mention, onOpen: () => {} }));
+    expect(text).toContain("Mention");
+    expect(text).not.toContain("Agent");
+    expect(text).toContain("▤ 1");
+  });
+
+  it("banners a long mention span and shows one mention per document on a day", () => {
+    const mention = (id, documentId, start, end) => ({
+      ...projection,
+      id,
+      origin: "mention",
+      precision: "range",
+      allDay: true,
+      start: day(start),
+      endExclusive: day(end),
+      projection: undefined,
+      mention: { documentId, text: "phrase", relative: false },
+    });
+    expect(isSemanticBanner(mention("dm_1", "doc-1", "2026-09-01", "2026-10-01"))).toBe(true);
+    expect(isSemanticBanner(mention("dm_2", "doc-1", "2026-09-01", "2026-09-04"))).toBe(false);
+    // A projection's month-long span stays on its days, as before.
+    expect(isSemanticBanner({ ...projection, precision: "range", start: day("2026-09-01"), endExclusive: day("2026-10-01") })).toBe(false);
+
+    const sameDoc = [
+      mention("dm_a", "doc-7", "2026-09-29", "2026-09-30"),
+      mention("dm_b", "doc-7", "2026-09-29", "2026-09-30"),
+      mention("dm_c", "doc-8", "2026-09-29", "2026-09-30"),
+      projection,
+    ];
+    expect(oneMentionPerDocument(sameDoc).map((entry) => entry.id)).toEqual(["dm_a", "dm_c", "tp_1"]);
+    // Across days, a document keeps one entry per day.
+    const nextDay = mention("dm_d", "doc-7", "2026-09-30", "2026-10-01");
+    expect(
+      oneMentionPerDocument([...sameDoc, nextDay], (entry) => entry.start.slice(0, 10)).map(
+        (entry) => entry.id,
+      ),
+    ).toEqual(["dm_a", "dm_c", "tp_1", "dm_d"]);
+  });
+
+  it("stops after its page budget and says the view is capped, keeping the first coverage", async () => {
+    let page = 0;
+    const result = await fetchCalendarPages(
+      { from: 1, to: 2, timeZone: "UTC" },
+      {
+        maxPages: 2,
+        fetchPage: async () => {
+          page += 1;
+          return {
+            items: [{ ...projection, id: `tp_${page}` }],
+            nextCursor: `next-${page}`,
+            coverage: { mentions: { pendingDocuments: 0, unworthyHidden: true } },
+          };
+        },
+      },
+    );
+    expect(page).toBe(2);
+    expect(result.capped).toBe(true);
+    expect(result.items.map((entry) => entry.id)).toEqual(["tp_1", "tp_2"]);
+    expect(result.coverage.mentions.unworthyHidden).toBe(true);
   });
 
   it("fails loudly on a cursor cycle instead of silently returning a partial calendar", async () => {

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, expect, it } from "vitest";
-import { MENTION_MAX_SPAN_DAYS, mentionDays } from "./mention-bounds.js";
+import { MENTION_MAX_SPAN_DAYS, isMessageHeaderDate, mentionDays } from "./mention-bounds.js";
 import type { ExtractedDate } from "@omnesis/types";
 
 function date(overrides: Partial<ExtractedDate>): ExtractedDate {
@@ -285,5 +285,210 @@ describe("mentionDays", () => {
         addressed,
       ),
     ).toBeNull();
+  });
+
+  it("drops a duration counted from the document's date, unless the user addressed it", () => {
+    const at = (text: string) =>
+      date({ resolvedStart: "2026-10-21", text, timex: "2026-10-21", relative: true });
+    for (const text of ["in 20 days", "72 hours", "a month ago", "next day", "30 jours"]) {
+      expect(mentionDays(at(text)), text).toBeNull();
+    }
+    expect(mentionDays(at("in 20 days"), { addressed: true })).toEqual(
+      days("2026-10-21", "2026-10-22"),
+    );
+    // Weekday and day words are not durations.
+    expect(mentionDays(at("next Monday"))).toEqual(days("2026-10-21", "2026-10-22"));
+    expect(mentionDays(at("today"))).toEqual(days("2026-10-21", "2026-10-22"));
+  });
+
+  it("drops a yearless day resolved more than six months past the document", () => {
+    const yearless = (resolvedStart: string) =>
+      date({ resolvedStart, text: "23 June", timex: "XXXX-06-23" });
+    const reading = { anchorDay: "2026-09-30" };
+    // Past the six months, the writer meant the one just gone.
+    expect(mentionDays(yearless("2027-06-23"), reading)).toEqual(days("2026-06-23", "2026-06-24"));
+    expect(mentionDays(yearless("2026-12-23"), reading)).toEqual(days("2026-12-23", "2026-12-24"));
+    // With its year written, the day stands however far ahead it is.
+    expect(
+      mentionDays(
+        date({ resolvedStart: "2027-06-23", text: "23 June 2027", timex: "2027-06-23" }),
+        reading,
+      ),
+    ).toEqual(days("2027-06-23", "2027-06-24"));
+    // A note's "23 June" is the one the user means.
+    expect(mentionDays(yearless("2027-06-23"), { ...reading, addressed: true })).toEqual(
+      days("2027-06-23", "2027-06-24"),
+    );
+  });
+
+  it("drops implausible years, a few letters, tokens and runaway matches", () => {
+    expect(
+      mentionDays(date({ resolvedStart: "1107-06", text: "6-1107", timex: "1107-06" })),
+    ).toBeNull();
+    expect(
+      mentionDays(date({ resolvedStart: "2026-10-12", text: " h", timex: "2026-10-12" })),
+    ).toBeNull();
+    expect(
+      mentionDays(date({ resolvedStart: "2026-10-12", text: "> now", timex: "PRESENT_REF" })),
+    ).toBeNull();
+    expect(
+      mentionDays(
+        date({
+          resolvedStart: "2026-10-12",
+          text: "7LE1FXmcY1lBsUlJThIbq54 12 October",
+          timex: "XXXX-10-12",
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      mentionDays(
+        date({
+          resolvedStart: "2026-10-12",
+          text: "until the offer ends.\n\nOur partners have confirmed it will be 12 October",
+          timex: "XXXX-10-12",
+        }),
+      ),
+    ).toBeNull();
+    // A short phrase with a digit is still a date.
+    expect(
+      mentionDays(date({ resolvedStart: "2026-10-12", text: "12/10", timex: "XXXX-10-12" })),
+    ).toEqual(days("2026-10-12", "2026-10-13"));
+  });
+
+  it("drops the date of a message header or a reply's attribution", () => {
+    const header = (content: string, phrase: string) => {
+      const start = content.indexOf(phrase);
+      return isMessageHeaderDate(content, start, start + phrase.length);
+    };
+    expect(
+      header(
+        "**From:** Maya Reeves <maya@example.com>\n**Date:** Tue, 29 Sep 2026 06:01:40\n---\nBody",
+        "Tue, 29 Sep 2026",
+      ),
+    ).toBe(true);
+    // Alone, a `Date:` line is an event's date.
+    expect(
+      header("Your tickets\nDate: Saturday 10 October 2026\nDoors 7pm", "Saturday 10 October 2026"),
+    ).toBe(false);
+    expect(
+      header("> Sent: Monday, 5 October 2026 09:12\n> To: team", "Monday, 5 October 2026"),
+    ).toBe(true);
+    expect(
+      header(
+        "On Tue, 22 Sep 2026 at 18:43, Maya Reeves <maya@example.com> wrote:\n> hi",
+        "Tue, 22 Sep 2026",
+      ),
+    ).toBe(true);
+    // The attribution's "wrote:" can wrap onto a later line.
+    expect(
+      header(
+        "On Mon, Oct 27, 2025 at 12:07 PM, Jamie Lopez <\njamie@example.org>\nwrote:",
+        "Mon, Oct 27, 2025",
+      ),
+    ).toBe(true);
+    expect(header("Le mar. 23 juin 2026, 16:33, David Lin a écrit :", "mar. 23 juin 2026")).toBe(
+      true,
+    );
+    // A sentence that happens to start with "On" is not an attribution.
+    expect(header("On 12 October we meet at the station.", "12 October")).toBe(false);
+    expect(header("The delivery is on 12 October.", "12 October")).toBe(false);
+    expect(
+      mentionDays(date({ resolvedStart: "2026-09-22", text: "22 Sep", timex: "2026-09-22" }), {
+        inMessageHeader: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("names the month an open-ended phrase writes, not where its range begins", () => {
+    expect(
+      mentionDays(
+        date({
+          kind: "range",
+          resolvedStart: "2026-10-01",
+          mod: "after",
+          text: "after Sep, 2026",
+          timex: "2026-09",
+        }),
+      ),
+    ).toEqual(days("2026-09-01", "2026-10-01"));
+  });
+
+  it("reads a deadline from its word when the recognizer drops the modifier", () => {
+    const point = (text: string) =>
+      mentionDays(date({ resolvedStart: "2026-09-30", text, timex: "XXXX-09-30" }));
+    expect(point("e before sept 30th")?.deadline).toBe(true);
+    expect(point(" complete before sept 30th")?.deadline).toBe(true);
+    expect(point("jusqu'au 30 septembre")?.deadline).toBe(true);
+    expect(point("30 September")?.deadline).toBe(false);
+    // "by" names a deadline only as the word before a date.
+    expect(point("Standby 30 September")?.deadline).toBe(false);
+  });
+
+  it("keeps the dates the noise rules must not catch", () => {
+    // A long invite phrase is one date, not a runaway match.
+    expect(
+      mentionDays(
+        date({
+          kind: "range",
+          resolvedStart: "2026-09-28",
+          resolvedEnd: "2026-10-02",
+          text: "from Monday 28 September 2026 at 9:00 am to Friday 2 October 2026 at 5:00 pm",
+          timex: "(2026-09-28T09:00,2026-10-02T17:00,PT104H)",
+        }),
+      ),
+    ).toEqual(days("2026-09-28", "2026-10-03"));
+    // A short month name in a note is a month.
+    expect(
+      mentionDays(date({ resolvedStart: "2027-05", text: "May", timex: "XXXX-05" }), {
+        addressed: true,
+      }),
+    ).toEqual(days("2027-05-01", "2027-06-01"));
+    // A duration word beside a written date is anchored to that date.
+    expect(
+      mentionDays(
+        date({
+          resolvedStart: "2026-10-05",
+          text: "the next day, 5 October 2026",
+          timex: "2026-10-05",
+        }),
+      ),
+    ).toEqual(days("2026-10-05", "2026-10-06"));
+    // A closed range with "until" is a span, not a deadline.
+    expect(
+      mentionDays(
+        date({
+          kind: "range",
+          resolvedStart: "2026-10-01",
+          resolvedEnd: "2026-10-05",
+          text: "from 1 Oct until 5 Oct 2026",
+          timex: "(2026-10-01,2026-10-05,P4D)",
+        }),
+      )?.deadline,
+    ).toBe(false);
+    // A yearless open-ended month names that month, whichever side the bound falls.
+    const open = (resolvedStart: string, timex: string, text: string) =>
+      mentionDays(date({ kind: "range", resolvedStart, mod: "after", text, timex }), {
+        addressed: true,
+      });
+    expect(open("2026-11-01", "XXXX-10", "after October")).toEqual(
+      days("2026-10-01", "2026-11-01"),
+    );
+    expect(open("2027-01-01", "XXXX-12", "after December")).toEqual(
+      days("2026-12-01", "2027-01-01"),
+    );
+  });
+
+  it("does not read a body sentence above a quoted reply as its attribution", () => {
+    const at = (content: string, phrase: string) => {
+      const start = content.indexOf(phrase);
+      return isMessageHeaderDate(content, start, start + phrase.length);
+    };
+    const reply =
+      "On Friday 2 October we sign the lease.\n\nOn Tue, 22 Sep 2026 at 18:43, Maya Reeves <maya@example.com> wrote:\n> Great";
+    expect(at(reply, "Friday 2 October")).toBe(false);
+    expect(at(reply, "Tue, 22 Sep 2026")).toBe(true);
+    const french =
+      "Le 12 octobre 2026 on signe.\n\nLe mar. 22 sept. 2026, David Lin a écrit :\n> Parfait";
+    expect(at(french, "12 octobre 2026")).toBe(false);
   });
 });

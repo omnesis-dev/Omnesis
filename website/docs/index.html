@@ -463,13 +463,18 @@
           “12 October”, and resolves each against the document's own date. The agent's time query
           uses them to find documents that mention a given day: a day, a span the text lays out by
           day (“1 to 3 October”), or a month named with its year. Years, month names without a year,
-          vague spans such as “the next few weeks” or “Q4”, and bare digit runs are left out, and a
-          conversation that repeats a date in every reply counts it once. A phrase such as “before
-          30 September” or “by 12 October” reads as a deadline. Notes you tell Omnesis are read more
-          loosely, since they are meant to be followed up: “next week”, “in October” or “within ten
-          days” counts there, and “tomorrow” counts from the day you wrote the note in your own time
-          zone. A document's page in the portal lists all of its dates under
-          <strong>Enriched by Omnesis</strong>.
+          vague spans such as “the next few weeks” or “Q4”, durations counted from the document's
+          own date (“in 20 days”), and bare digit runs are left out, as are the dates that only date
+          a message — its header and the “On …, … wrote:” line above a quoted reply. A day written
+          without a year that would fall more than six months after the document is read as the one
+          just gone. A conversation that repeats a date in every reply counts it once. A phrase such
+          as “before 30 September” or “by 12 October” reads as a deadline. Notes you tell Omnesis
+          are read more loosely, since they are meant to be followed up: “next week”, “in October”
+          or “within ten days” counts there, and “tomorrow” counts from the day you wrote the note
+          in your own time zone. A document's page in the portal lists all of its dates under
+          <strong>Enriched by Omnesis</strong>, and <strong>Debug → Calendar</strong> shows the time
+          index itself: the dates sources record and the mentions above, by day, week or month, and
+          the deadlines coming up.
         </p>
         <p>
           All-numeric English dates such as “10/07/2026” read day-first (10 July) unless the gateway

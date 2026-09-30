@@ -222,3 +222,34 @@ describe("Cognition sub-routes", () => {
     });
   });
 });
+
+describe("Calendar route", () => {
+  test("is its own Debug tab, with an addressable annotation", () => {
+    expect(route("/portal/debug/calendar")).toEqual({
+      view: "debug",
+      tab: "calendar",
+      calendarId: null,
+    });
+    expect(route("/portal/debug/calendar/ta_42")).toEqual({
+      view: "debug",
+      tab: "calendar",
+      calendarId: "ta_42",
+    });
+  });
+
+  test("answers its old Cognition paths with a redirect", () => {
+    expect(route("/portal/debug/cognition/calendar")).toEqual({
+      view: "debug",
+      tab: "calendar",
+      calendarId: null,
+      redirectTo: "/portal/debug/calendar",
+    });
+    for (const section of ["calendar", "time-index", "temporal-annotations"]) {
+      expect(route(`/portal/debug/cognition/${section}/ta_42`)).toMatchObject({
+        tab: "calendar",
+        calendarId: "ta_42",
+        redirectTo: "/portal/debug/calendar/ta_42",
+      });
+    }
+  });
+});

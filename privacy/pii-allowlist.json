@@ -2788,8 +2788,8 @@
         "packages/gateway/portal/js/views/cognition-bootstrap.js",
         "packages/gateway/portal/js/views/cognition-bootstrap.test.ts",
         "packages/gateway/portal/js/views/cognition-briefclaims.test.ts",
-        "packages/gateway/portal/js/views/cognition-calendar-loading.test.ts",
-        "packages/gateway/portal/js/views/cognition-calendar.test.ts",
+        "packages/gateway/portal/js/views/calendar-loading.test.ts",
+        "packages/gateway/portal/js/views/calendar.test.ts",
         "packages/gateway/portal/js/views/cognition-calibration.test.ts",
         "packages/gateway/portal/js/views/cognition-doclist.test.ts",
         "packages/gateway/portal/js/views/cognition-personlist.test.ts",
@@ -4885,14 +4885,6 @@
       "reason": "reviewed product test label"
     },
     {
-      "value": "Cognition Calendar",
-      "paths": [
-        "packages/gateway/portal/js/views/cognition-calendar-loading.test.ts",
-        "packages/gateway/portal/js/views/cognition-calendar.test.ts"
-      ],
-      "reason": "reviewed product test-suite title"
-    },
-    {
       "value": "Cognition Steward",
       "paths": [
         "evals/universes/loops-test-life/universe.json",
@@ -5132,7 +5124,8 @@
         "packages/watch/universes/poc/ontology.json",
         "packages/gateway/src/privacy/reviewer.test.ts",
         "packages/collector/src/e2e/maildir-lifecycle.e2e.test.ts",
-        "packages/providers/maildir/src/source.test.ts"
+        "packages/providers/maildir/src/source.test.ts",
+        "packages/gateway/src/enrichment/dates/mention-bounds.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -6433,7 +6426,8 @@
         "evals/universes/loops-test-life/decision-cassettes/worth-gate.jsonl",
         "packages/collector/src/e2e/maildir-lifecycle.e2e.test.ts",
         "packages/providers/maildir/src/message.test.ts",
-        "packages/providers/maildir/src/source.test.ts"
+        "packages/providers/maildir/src/source.test.ts",
+        "packages/gateway/src/enrichment/dates/mention-bounds.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -7102,7 +7096,8 @@
         "packages/collector/src/e2e/maildir-lifecycle.e2e.test.ts",
         "packages/providers/maildir/src/index.test.ts",
         "packages/providers/maildir/src/message.test.ts",
-        "packages/providers/maildir/src/source.test.ts"
+        "packages/providers/maildir/src/source.test.ts",
+        "packages/gateway/src/enrichment/dates/mention-bounds.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -10166,6 +10161,31 @@
         "packages/providers/maildir/src/layout.test.ts"
       ],
       "reason": "Gmail's folder name as mail tools mirror it to a Maildir, not a person"
+    },
+    {
+      "value": "On Tue",
+      "paths": ["packages/gateway/src/enrichment/dates/mention-bounds.test.ts"],
+      "reason": "ordinary words, not a name"
+    },
+    {
+      "value": "On Mon",
+      "paths": ["packages/gateway/src/enrichment/dates/mention-bounds.test.ts"],
+      "reason": "ordinary words, not a name"
+    },
+    {
+      "value": "On Friday",
+      "paths": ["packages/gateway/src/enrichment/dates/mention-bounds.test.ts"],
+      "reason": "ordinary words, not a name"
+    },
+    {
+      "value": "The Calendar",
+      "paths": ["packages/gateway/portal/js/views/cognition-runs.test.ts"],
+      "reason": "ordinary words, not a name"
+    },
+    {
+      "value": "The Brain",
+      "paths": ["packages/gateway/src/http/routes/temporal.test.ts"],
+      "reason": "ordinary words, not a name"
     }
   ],
   "secretFixtures": [

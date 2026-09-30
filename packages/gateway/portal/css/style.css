@@ -11278,6 +11278,8 @@ div.source-activity-popover-link:hover {
 }
 .calendar-origin { white-space: nowrap; }
 .calendar-banners { margin-bottom: 14px; }
+.calendar-banners-toggle { justify-self: start; background: none; border: none; padding: 2px 0; color: var(--accent); cursor: pointer; font-size: 13px; }
+.calendar-banners-toggle:hover { text-decoration: underline; }
 .calendar-month-wrap { overflow-x: auto; }
 .calendar-weekdays, .calendar-month-grid { display: grid; grid-template-columns: repeat(7, minmax(56px, 1fr)); }
 .calendar-weekdays span { padding: 4px; color: var(--text-muted); font-size: 10px; font-weight: 650; text-align: center; }

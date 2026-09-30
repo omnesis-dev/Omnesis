@@ -33,7 +33,7 @@ import {
   type DateCulture,
   type NumericDateOrder,
 } from "./language-route.js";
-import { mentionDays, type MentionDays } from "./mention-bounds.js";
+import { isMessageHeaderDate, mentionDays, type MentionDays } from "./mention-bounds.js";
 import type { ExtractedDate } from "@omnesis/types";
 
 /** A document row handed to the extractor (pre-fetched; no DB access here). */
@@ -691,11 +691,24 @@ export function extractDatesFromText(
   return scanDatesFromText(content, anchor, opts, culture).dates;
 }
 
+/** Reply quote markers at the start of a line: `>`, `> >`, `>>`. */
+const QUOTE_MARKERS = /^[ \t]*>(?:[ \t]*>)*/gm;
+
+/**
+ * The text with each line's reply quote markers blanked, character for
+ * character, so a date that quoting split across two lines ("11\n> Sep 2026")
+ * reads as one while every offset still points into the original text.
+ */
+export function unquoted(text: string): string {
+  return text.replace(QUOTE_MARKERS, (markers) => " ".repeat(markers.length));
+}
+
 /**
  * The `cpu.extractDatesFromDocs` handler. Synchronous (the CPU worker invokes
  * handlers inline). Routes each pre-fetched document row to its language's
  * recognizer culture, then extracts dates against the row's own anchor
- * (last edit, else emission), and marks which of them read as mentions. A
+ * (its source's anchor day, else last edit, else emission), and marks which of
+ * them read as mentions. A
  * row with an unparseable timestamp yields an empty date list (still marked
  * processed by the writer so it isn't retried forever).
  */
@@ -711,12 +724,19 @@ export function extractDatesForDocs(
     const charTruncated = (row.contentLength ?? 0) > maxChars || row.content.length > maxChars;
     const anchor = anchorFromIso(row.anchorAt);
     if (!anchor) return { id: row.id, dates: [], truncated: charTruncated };
+    const anchorDay = isoDay(anchor);
     const culture = routeDateCulture(row.title, row.content, opts.numericDateOrder);
-    const scan = scanDatesFromText(row.content, anchor, opts, culture);
+    const scan = scanDatesFromText(unquoted(row.content), anchor, opts, culture);
     return {
       id: row.id,
       dates: scan.dates,
-      mentions: scan.dates.map((date) => mentionDays(date, { addressed: row.addressed === true })),
+      mentions: scan.dates.map((date) =>
+        mentionDays(date, {
+          addressed: row.addressed === true,
+          anchorDay,
+          inMessageHeader: isMessageHeaderDate(row.content, date.charStart, date.charEnd),
+        }),
+      ),
       threadKey: row.threadKey ?? null,
       truncated: charTruncated || scan.budgetExhausted,
     };
