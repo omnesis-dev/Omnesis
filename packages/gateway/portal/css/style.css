@@ -13405,6 +13405,19 @@ div.source-activity-popover-link:hover {
 .codex-runtime-result--bad { border-color: rgba(248, 81, 73, 0.32); background: rgba(248, 81, 73, 0.07); }
 .codex-runtime-assignment { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .codex-runtime-actions { display: flex; justify-content: flex-end; }
+.codex-login-code { display: inline-flex; align-items: center; gap: 6px; }
+.codex-login-copy {
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.codex-login-copy svg { width: 1em; height: 1em; }
+.codex-login-copy:hover { color: var(--text-primary); }
 .codex-update-confirm p { margin: 0 0 10px; }
 .codex-update-confirm p:last-child { margin-bottom: 0; }
 .codex-model-target {

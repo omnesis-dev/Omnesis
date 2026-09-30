@@ -20,6 +20,7 @@ import { html } from "htm/preact";
 import { useEffect, useState } from "preact/hooks";
 import { getModelCredentialsStatus, getRecentModels } from "../api.js";
 import { CloudInferenceConsentModal } from "../components/cloud-inference-consent.js";
+import { CopyIconButton } from "../components/copy-button.js";
 import { isLoopbackInferenceUrl } from "../lib/cloud-inference.js";
 import { Modal } from "../components/modal.js";
 import { ProviderIcon } from "../components/provider-icon.js";
@@ -583,7 +584,12 @@ function CodexModelList({ overview, role, loginFlow, refreshing, runtimeUpdate, 
                   ${loginFlow.verificationUri
                     ? html`<a href=${loginFlow.verificationUri} target="_blank" rel="noreferrer">${loginFlow.verificationUri}</a>`
                     : html`<span>Waiting for Codex to return the login link…</span>`}
-                  <span><strong>${loginFlow.userCode ?? "Code pending…"}</strong></span>
+                  <span class="codex-login-code">
+                    <strong>${loginFlow.userCode ?? "Code pending…"}</strong>
+                    ${loginFlow.userCode
+                      ? html`<${CopyIconButton} text=${loginFlow.userCode} class="codex-login-copy" title="Copy login code" />`
+                      : null}
+                  </span>
                   ${loginFlow.expiresAt ? html`<span>expires ${new Date(loginFlow.expiresAt).toLocaleTimeString()}</span>` : null}
                 </div>
               </div>
