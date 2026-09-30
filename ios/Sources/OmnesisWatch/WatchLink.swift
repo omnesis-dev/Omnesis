@@ -11,8 +11,9 @@ import WatchConnectivity
 /// both surfaces it drives hand off to the paired iPhone:
 ///   - `relayAsk` sends a dictated question and awaits the spoken answer.
 ///   - `relayNote` sends a dictated note and awaits a save confirmation.
-///   - `transferRecording` hands a recording made for gateway dictation to
-///     the phone and returns at once; the phone transcribes and acts on it.
+///   - `flushOutbox` hands the notes recorded for gateway dictation, which
+///     wait in the durable `WatchVoiceOutbox`, to the phone as file
+///     transfers, and sends them again until one is delivered.
 /// The phone owns the pairing; the watch's whole job is voice in, relay
 /// out, result back.
 ///
@@ -57,6 +58,10 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
 
     private let log = Logger(subsystem: "dev.omnesis.watch", category: "relay")
     private let lock = NSLock()
+    /// Serializes outbox passes, which run from the main actor and from
+    /// WatchConnectivity's delegate queue.
+    private let outboxLock = NSLock()
+    private var retryTask: Task<Void, Never>?
     private var activationWaiters: [CheckedContinuation<Void, Never>] = []
     /// The in-flight relay, resumed by whichever of the reply, the phone's
     /// fire-and-forget result, or the timeout arrives first. Every resolver
@@ -95,39 +100,60 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
         return WatchDictationGate(applicationContext: WCSession.default.receivedApplicationContext)
     }
 
-    /// Hand a recording to the iPhone. WatchConnectivity holds the transfer
-    /// and delivers it when the iPhone app next runs; a transfer alone may
-    /// not start that app, so a reachable phone is also sent a message that
-    /// wakes it. The outcome arrives in `didFinish`, where the file is
-    /// deleted. False when no transfer could be started; the caller then
-    /// still owns the file.
-    func transferRecording(_ file: URL, recording: WatchVoiceRecording) -> Bool {
+    /// Hand every waiting note that no transfer carries to WatchConnectivity,
+    /// drop those that waited too long, and wake a reachable iPhone app so it
+    /// receives what is outstanding (`WatchOutboxPolicy`). WatchConnectivity
+    /// holds a transfer until the iPhone app runs, and carries it on after
+    /// this app exits; the note leaves the outbox only when `didFinish`
+    /// reports it delivered. Returns the refs a transfer now carries.
+    @discardableResult
+    func flushOutbox(_ trigger: WatchOutboxPolicy.Trigger) -> Set<String> {
+        guard WCSession.isSupported() else { return [] }
         let session = WCSession.default
-        guard WCSession.isSupported(), session.activationState == .activated, session.isCompanionAppInstalled else {
-            return false
+        guard session.activationState == .activated else { return [] }
+        outboxLock.lock()
+        defer { outboxLock.unlock() }
+        let outbox = WatchVoiceOutbox.shared
+        let transfers = session.outstandingFileTransfers
+        var carried = Set(transfers.compactMap { $0.file.metadata?[WatchVoiceRecording.refKey] as? String })
+        let entries = outbox.entries()
+        var dropped = 0
+        for (ref, action) in WatchOutboxPolicy.plan(entries, carried: carried, trigger: trigger, now: Date()) {
+            switch action {
+            case .send:
+                guard session.isCompanionAppInstalled, let entry = entries.first(where: { $0.ref == ref }) else { continue }
+                session.transferFile(outbox.audioURL(ref), metadata: entry.metadata)
+                carried.insert(ref)
+            case .drop:
+                transfers.filter { $0.file.metadata?[WatchVoiceRecording.refKey] as? String == ref }.forEach { $0.cancel() }
+                carried.remove(ref)
+                outbox.drop(ref)
+                dropped += 1
+            case .wait:
+                break
+            }
         }
-        session.transferFile(file, metadata: recording.metadata)
-        if session.isReachable {
+        if dropped > 0 {
+            log.error("Dropped \(dropped, privacy: .public) recorded notes that waited too long for the iPhone")
+            Task { @MainActor in WatchVoiceCapture.shared.showDroppedIfNeeded() }
+        }
+        // A transfer alone may not start the iPhone app; a message does.
+        if !carried.isEmpty, session.isReachable {
             session.sendMessage(WatchVoiceFormat.nudgeMessage, replyHandler: nil) { _ in }
         }
-        return true
+        scheduleRetry(WatchOutboxPolicy.nextRetry(outbox.entries(), carried: carried, now: Date()))
+        return carried
     }
 
-    /// Delete recordings left in the outbox that no transfer is carrying —
-    /// ones a previous process made but never handed over, or whose transfer
-    /// ended while the app was not running. A file written within the
-    /// longest recording's span may be one being recorded now, and is left.
-    private func sweepOutbox(_ session: WCSession) {
-        let carried = Set(session.outstandingFileTransfers.map(\.file.fileURL.standardizedFileURL))
-        let files = (try? FileManager.default.contentsOfDirectory(
-            at: WatchVoiceCapture.outboxDirectory,
-            includingPropertiesForKeys: [.contentModificationDateKey]
-        )) ?? []
-        let recent = Date().addingTimeInterval(-(WatchVoiceFormat.maxDuration + 60))
-        for file in files where !carried.contains(file.standardizedFileURL) {
-            let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
-            guard let modified, modified < recent else { continue }
-            try? FileManager.default.removeItem(at: file)
+    /// Run the outbox again when the next backed-off note falls due, while
+    /// the app is running; a relaunch or the link coming back does it too.
+    private func scheduleRetry(_ due: Date?) {
+        retryTask?.cancel()
+        guard let due else { return }
+        retryTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(max(1, due.timeIntervalSinceNow)))
+            guard !Task.isCancelled else { return }
+            self?.flushOutbox(.retry)
         }
     }
 
@@ -466,19 +492,44 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
         error: Error?
     ) {
         resumeActivationWaiters()
-        if activationState == .activated { sweepOutbox(session) }
+        if activationState == .activated { flushOutbox(.linkMayHaveChanged) }
     }
 
-    /// A recording transfer ended. The watch's copy is no longer needed
-    /// either way. WatchConnectivity already retries delivery itself, so a
-    /// transfer that fails has failed for good: the person is told with a
-    /// buzz and a message, to record it again.
+    /// A recording transfer ended. Delivered, the note leaves the outbox; a
+    /// failed one stays, and is sent again after a backoff — the next launch,
+    /// the iPhone becoming reachable, or the backoff running out.
     func session(_ session: WCSession, didFinish fileTransfer: WCSessionFileTransfer, error: Error?) {
+        guard let ref = fileTransfer.file.metadata?[WatchVoiceRecording.refKey] as? String else { return }
         if let error {
-            log.error("Recording transfer failed: \(String(describing: error), privacy: .public)")
-            Task { @MainActor in WatchVoiceCapture.shared.transferFailed() }
+            log.error("Recording transfer failed, will retry: \(String(describing: error), privacy: .public)")
+            WatchVoiceOutbox.shared.recordFailure(ref)
+            flushOutbox(.retry)
+        } else {
+            WatchVoiceOutbox.shared.remove(ref)
         }
-        try? FileManager.default.removeItem(at: fileTransfer.file.fileURL)
+    }
+
+    /// The iPhone app became reachable: hand over what waits, and wake it
+    /// for what is outstanding.
+    func sessionReachabilityDidChange(_ session: WCSession) {
+        guard session.isReachable else { return }
+        flushOutbox(.linkMayHaveChanged)
+    }
+
+    func sessionCompanionAppInstalledDidChange(_ session: WCSession) {
+        flushOutbox(.linkMayHaveChanged)
+    }
+
+    /// A queued relay the system could not deliver. A note is queued again,
+    /// a bounded number of times while it is recent; a question is not — its
+    /// answer would come long after it mattered.
+    func session(_ session: WCSession, didFinish userInfoTransfer: WCSessionUserInfoTransfer, error: Error?) {
+        guard error != nil,
+              let payload = userInfoTransfer.userInfo as? [String: String],
+              let requeued = WatchRelayQueue.requeued(payload, now: Date())
+        else { return }
+        log.error("Queued note transfer failed; queueing it again")
+        session.transferUserInfo(requeued)
     }
 
     /// Mid-turn progress pushed by the phone (no reply expected): the tool the

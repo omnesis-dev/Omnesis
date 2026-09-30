@@ -86,4 +86,109 @@ final class WatchVoiceTests: XCTestCase {
         unknownKind["voiceKind"] = "ask"
         XCTAssertNil(WatchVoiceRecording(metadata: unknownKind))
     }
+
+    // MARK: - Returning to the watch face
+
+    func testLeavesOnlyOnceTheTransferCarriesTheNoteAndNothingElseRuns() {
+        XCTAssertTrue(WatchVoiceDismissal.shouldLeave(showingSent: true, carriedByTransfer: true, otherWorkInFlight: false))
+        XCTAssertFalse(
+            WatchVoiceDismissal.shouldLeave(showingSent: false, carriedByTransfer: true, otherWorkInFlight: false),
+            "a failure, a tap on the confirmation or a new recording keeps the app"
+        )
+        XCTAssertFalse(
+            WatchVoiceDismissal.shouldLeave(showingSent: true, carriedByTransfer: false, otherWorkInFlight: false),
+            "a note still waiting for the link keeps the app running to hand it over"
+        )
+        XCTAssertFalse(
+            WatchVoiceDismissal.shouldLeave(showingSent: true, carriedByTransfer: true, otherWorkInFlight: true),
+            "an ask, a dictated note or a spoken answer would be cut off"
+        )
+        XCTAssertGreaterThanOrEqual(WatchVoiceDismissal.confirmationDelay, 1.5)
+    }
+
+    // MARK: - Outbox
+
+    private func entry(_ ref: String, queuedAt: Date, failures: Int = 0, lastFailureAt: Date? = nil) -> WatchOutboxPolicy.Entry {
+        WatchOutboxPolicy.Entry(
+            metadata: WatchVoiceRecording(
+                ref: ref,
+                captureTime: NoteCaptureTime(capturedAt: queuedAt, timeZoneId: "Europe/London", utcOffsetSeconds: 0),
+                locale: "en_GB"
+            ).metadata,
+            queuedAt: queuedAt,
+            failures: failures,
+            lastFailureAt: lastFailureAt
+        )
+    }
+
+    func testEveryWaitingNoteNoTransferCarriesIsSent() {
+        let plan = WatchOutboxPolicy.plan(
+            [entry("a", queuedAt: now), entry("b", queuedAt: now.addingTimeInterval(-60))],
+            carried: ["b"],
+            trigger: .linkMayHaveChanged,
+            now: now
+        )
+        XCTAssertEqual(plan, ["a": .send, "b": .wait], "a note already carried is never sent twice")
+    }
+
+    func testAFailedNoteWaitsOutItsBackoffOnARetry() {
+        let failed = entry("f", queuedAt: now.addingTimeInterval(-600), failures: 1, lastFailureAt: now.addingTimeInterval(-10))
+        XCTAssertEqual(WatchOutboxPolicy.plan([failed], carried: [], trigger: .retry, now: now), ["f": .wait])
+        let later = now.addingTimeInterval(WatchOutboxPolicy.backoff(afterFailures: 1))
+        XCTAssertEqual(WatchOutboxPolicy.plan([failed], carried: [], trigger: .retry, now: later), ["f": .send])
+        XCTAssertEqual(
+            WatchOutboxPolicy.nextRetry([failed], carried: [], now: now),
+            now.addingTimeInterval(-10 + WatchOutboxPolicy.backoff(afterFailures: 1))
+        )
+    }
+
+    /// The link coming back is worth trying at once, backoff or not.
+    func testTheLinkComingBackSendsAFailedNoteAtOnce() {
+        let failed = entry("f", queuedAt: now, failures: 3, lastFailureAt: now)
+        XCTAssertEqual(WatchOutboxPolicy.plan([failed], carried: [], trigger: .linkMayHaveChanged, now: now), ["f": .send])
+    }
+
+    func testBackoffGrowsAndIsBounded() {
+        let steps = (1 ... 8).map { WatchOutboxPolicy.backoff(afterFailures: $0) }
+        XCTAssertEqual(steps, steps.sorted())
+        XCTAssertEqual(steps.first, 30)
+        XCTAssertEqual(steps.last, 60 * 60)
+    }
+
+    func testNotesPastRetentionOrTheCapAreDropped() {
+        let old = entry("old", queuedAt: now.addingTimeInterval(-WatchOutboxPolicy.retention - 1))
+        XCTAssertEqual(WatchOutboxPolicy.plan([old], carried: ["old"], trigger: .linkMayHaveChanged, now: now), ["old": .drop])
+
+        let many = (0 ... WatchOutboxPolicy.maxEntries).map { entry("n\($0)", queuedAt: now.addingTimeInterval(TimeInterval(-$0))) }
+        let plan = WatchOutboxPolicy.plan(many, carried: [], trigger: .linkMayHaveChanged, now: now)
+        XCTAssertEqual(plan["n\(WatchOutboxPolicy.maxEntries)"], .drop, "the oldest beyond the cap")
+        XCTAssertEqual(plan["n0"], .send)
+        XCTAssertEqual(plan.values.filter { $0 == .drop }.count, 1)
+    }
+
+    // MARK: - Queued text notes
+
+    func testAFailedQueuedNoteIsQueuedAgainABoundedNumberOfTimes() throws {
+        let note = WatchNoteWire.request(text: "Water the tomatoes", captureTime: .now(date: now), ref: "q-ref")
+        var payload = WatchRelayQueue.queued(note, envelope: .init(queuedAt: now, attempts: 3, lastErrorCode: nil))
+        for round in 1 ... WatchRelayQueue.maxRequeues {
+            payload = try XCTUnwrap(WatchRelayQueue.requeued(payload, now: now), "round \(round)")
+            XCTAssertEqual(payload["ref"], "q-ref", "the same ref, so the phone saves it once")
+        }
+        XCTAssertNil(WatchRelayQueue.requeued(payload, now: now))
+    }
+
+    func testOnlyRecentNotesAreQueuedAgain() {
+        let note = WatchNoteWire.request(text: "Water the tomatoes", captureTime: .now(date: now), ref: "q-ref")
+        let old = WatchRelayQueue.queued(
+            note,
+            envelope: .init(queuedAt: now.addingTimeInterval(-WatchRelayQueue.noteRetention - 1), attempts: 1, lastErrorCode: nil)
+        )
+        XCTAssertNil(WatchRelayQueue.requeued(old, now: now))
+        let question = WatchRelayQueue.queued(
+            SiriAskWire.request(question: "Is it raining?", ref: "ask"),
+            envelope: .init(queuedAt: now, attempts: 1, lastErrorCode: nil)
+        )
+        XCTAssertNil(WatchRelayQueue.requeued(question, now: now), "a question is never queued again")
+    }
 }

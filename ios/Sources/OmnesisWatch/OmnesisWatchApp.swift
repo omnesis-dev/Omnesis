@@ -62,16 +62,20 @@ struct WatchRootView: View {
     private var capture = WatchVoiceCapture.shared
 
     var body: some View {
-        if capture.state != .idle {
-            WatchVoiceCaptureView()
-        } else {
-            switch presenter.screen {
-            case .ask:
-                WatchAskView()
-            case .note:
-                WatchNoteView()
+        Group {
+            if capture.state != .idle {
+                WatchVoiceCaptureView()
+            } else {
+                switch presenter.screen {
+                case .ask:
+                    WatchAskView()
+                case .note:
+                    WatchNoteView()
+                }
             }
         }
+        // Recorded notes the outbox had to drop are told on the next visit.
+        .onAppear { capture.showDroppedIfNeeded() }
     }
 }
 

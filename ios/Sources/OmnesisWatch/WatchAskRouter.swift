@@ -36,6 +36,11 @@ final class WatchAskRouter {
 
     private(set) var state: State = .idle
 
+    var isAsking: Bool {
+        if case .asking = state { return true }
+        return false
+    }
+
     /// The privacy-safe aggregate state streamed from the phone. Progress is
     /// best-effort, so the UI remains useful when this is nil.
     private(set) var activity: SiriAskActivitySnapshot?

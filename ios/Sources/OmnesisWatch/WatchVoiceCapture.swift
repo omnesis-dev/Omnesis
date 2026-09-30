@@ -20,17 +20,15 @@ import WatchKit
 final class WatchVoiceCapture: NSObject, AVAudioRecorderDelegate {
     static let shared = WatchVoiceCapture()
 
-    /// Where recordings wait for their transfer. Not backed up.
-    nonisolated static let outboxDirectory = FileManager.default
-        .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("WatchVoiceOutbox", isDirectory: true)
-
     enum State: Equatable {
         case idle
         case recording(startedAt: Date, limit: TimeInterval)
+        /// The note is safely in the outbox, on its way to the iPhone.
         case sent
-        /// The recording could not be handed to the iPhone.
+        /// The recording could not be kept.
         case failed
+        /// Recorded notes that waited too long for the iPhone were removed.
+        case dropped(count: Int)
     }
 
     private(set) var state: State = .idle
@@ -68,7 +66,7 @@ final class WatchVoiceCapture: NSObject, AVAudioRecorderDelegate {
         if isRecording { return true }
         guard await AVAudioApplication.requestRecordPermission() else { return false }
         let ref = UUID().uuidString
-        let file = Self.outboxDirectory.appendingPathComponent("\(ref).\(WatchVoiceFormat.fileExtension)")
+        guard let file = try? WatchVoiceOutbox.shared.recordingURL(ref: ref) else { return false }
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatMPEG4AAC,
             AVSampleRateKey: WatchVoiceFormat.sampleRate,
@@ -78,7 +76,6 @@ final class WatchVoiceCapture: NSObject, AVAudioRecorderDelegate {
         let session = AVAudioSession.sharedInstance()
         let recorder: AVAudioRecorder
         do {
-            try Self.prepareOutbox()
             try session.setCategory(.record, mode: .default)
             try session.setActive(true)
             recorder = try AVAudioRecorder(url: file, settings: settings)
@@ -138,14 +135,18 @@ final class WatchVoiceCapture: NSObject, AVAudioRecorderDelegate {
         send()
     }
 
-    /// A transfer the iPhone never received.
-    func transferFailed() {
-        WKInterfaceDevice.current().play(.failure)
-        if !isRecording { show(.failed) }
+    /// Tell the person about notes the outbox dropped, when nothing else is
+    /// on this screen.
+    func showDroppedIfNeeded() {
+        let count = WatchVoiceOutbox.shared.droppedCount
+        guard count > 0, state == .idle else { return }
+        dismissal?.cancel()
+        state = .dropped(count: count)
     }
 
     func dismiss() {
         dismissal?.cancel()
+        if case .dropped = state { WatchVoiceOutbox.shared.acknowledgeDropped() }
         state = .idle
     }
 
@@ -188,15 +189,37 @@ final class WatchVoiceCapture: NSObject, AVAudioRecorderDelegate {
             try? FileManager.default.removeItem(at: file)
             return
         }
-        let handedOver = successfully && WatchLink.shared.transferRecording(file, recording: recording)
-        if !handedOver { try? FileManager.default.removeItem(at: file) }
-        WKInterfaceDevice.current().play(handedOver ? .success : .failure)
+        // Sent means safely in the outbox, whatever the link is doing: the
+        // outbox hands it to the iPhone now or when the link comes back.
+        let kept = successfully && (try? WatchVoiceOutbox.shared.add(recording)) != nil
+        if !kept { try? FileManager.default.removeItem(at: file) }
+        WKInterfaceDevice.current().play(kept ? .success : .failure)
+        let carried = kept && WatchLink.shared.flushOutbox(.linkMayHaveChanged).contains(recording.ref)
         // Only the recording on screen changes the screen.
         guard current else { return }
-        show(handedOver ? .sent : .failed)
+        show(kept ? .sent : .failed)
+        if kept { leaveAfterConfirmation(carried: carried) }
+    }
+
+    /// Return to the watch face once "Sent" has been seen, when that is safe
+    /// (`WatchVoiceDismissal`). watchOS has no call for it, so the app ends
+    /// its process; WatchConnectivity carries the transfer on.
+    private func leaveAfterConfirmation(carried: Bool) {
+        Task {
+            try? await Task.sleep(for: .seconds(WatchVoiceDismissal.confirmationDelay))
+            let otherWork = WatchAskRouter.shared.isAsking || WatchNoteRouter.shared.isRelaying
+                || WatchSpeaker.shared.isSpeaking || self.isRecording
+            guard WatchVoiceDismissal.shouldLeave(
+                showingSent: self.state == .sent,
+                carriedByTransfer: carried,
+                otherWorkInFlight: otherWork
+            ) else { return }
+            exit(0)
+        }
     }
 
     private func show(_ confirmation: State) {
+        guard confirmation != .idle else { return }
         state = confirmation
         dismissal?.cancel()
         dismissal = Task {
@@ -233,15 +256,6 @@ final class WatchVoiceCapture: NSObject, AVAudioRecorderDelegate {
             Task { @MainActor in WatchVoiceCapture.shared.send() }
         }
     }
-
-    private static func prepareOutbox() throws {
-        guard !FileManager.default.fileExists(atPath: outboxDirectory.path) else { return }
-        try FileManager.default.createDirectory(at: outboxDirectory, withIntermediateDirectories: true)
-        var values = URLResourceValues()
-        values.isExcludedFromBackup = true
-        var excluded = outboxDirectory
-        try? excluded.setResourceValues(values)
-    }
 }
 
 struct WatchVoiceCaptureView: View {
@@ -257,6 +271,8 @@ struct WatchVoiceCaptureView: View {
             sent
         case .failed:
             failed
+        case .dropped(let count):
+            dropped(count: count)
         }
     }
 
@@ -309,15 +325,33 @@ struct WatchVoiceCaptureView: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 30))
                 .foregroundStyle(.orange)
-            Text("Couldn't send")
+            Text("Couldn't save")
                 .font(.headline)
-            Text("Your recording didn't reach your iPhone. Try again.")
+            Text("Your recording couldn't be saved. Try again.")
                 .font(.footnote)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
         }
         .padding()
         .onTapGesture { capture.dismiss() }
+    }
+
+    private func dropped(count: Int) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 30))
+                .foregroundStyle(.orange)
+            Text(count == 1 ? "A note wasn't sent" : "\(count) notes weren't sent")
+                .font(.headline)
+                .multilineTextAlignment(.center)
+            Text("They couldn't reach your iPhone for a week and were removed.")
+                .font(.footnote)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+            Button("OK") { capture.dismiss() }
+                .buttonStyle(.bordered)
+        }
+        .padding()
     }
 
     private func elapsed(from start: Date, to now: Date, limit: TimeInterval) -> String {
@@ -343,9 +377,14 @@ struct WatchVoiceCaptureView: View {
         .onAppear { WatchVoiceCapture.shared.stage(.sent) }
 }
 
-#Preview("Couldn't send") {
+#Preview("Couldn't save") {
     WatchVoiceCaptureView()
         .onAppear { WatchVoiceCapture.shared.stage(.failed) }
+}
+
+#Preview("Notes dropped") {
+    WatchVoiceCaptureView()
+        .onAppear { WatchVoiceCapture.shared.stage(.dropped(count: 2)) }
 }
 #endif
 #endif

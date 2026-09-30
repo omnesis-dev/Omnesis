@@ -54,8 +54,13 @@ gateway, and the offline queue carries the recording like the note. On the
 watch, Note (complication and in-app button) records instead of opening
 system dictation while the gate the phone publishes in the WatchConnectivity
 application context (`WatchDictationGateStore`) is on — `WatchVoiceCapture`,
-which needs the watch's microphone permission — hands the file to the phone
-with `transferFile`, and shows "Sent to your iPhone." The phone keeps it in
+which needs the watch's microphone permission — keeps the note in a durable
+outbox (`WatchVoiceOutbox`, policy in `WatchOutboxPolicy`) until a
+`transferFile` reports it delivered, handing it over again at launch, when the
+iPhone becomes reachable and after failures; shows "Sent to your iPhone."; and
+then ends its own process to return to the watch face once the transfer
+carries the note (`WatchVoiceDismissal` — watchOS has no public
+return-to-watch-face call). The phone keeps it in
 `WatchVoiceInbox`, transcribes it strictly on-device for the text shown at
 once, and saves it as a voice note (`WatchVoicePipeline`). Ask always uses
 system dictation. Recording and transfer can only be checked on a physical

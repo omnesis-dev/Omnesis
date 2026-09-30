@@ -143,3 +143,138 @@ public struct WatchVoiceRecording: Equatable, Sendable {
         )
     }
 }
+
+/// When the watch app leaves the screen by itself after sending a recorded
+/// note, so a complication tap reads as one gesture: tap, speak, send, back
+/// to the watch face.
+///
+/// watchOS offers no public call that returns to the watch face — no
+/// suspend, no scene or window dismissal (`DismissWindowAction` is
+/// unavailable on watchOS) — so the app ends its own process. That is safe
+/// for the note only once WatchConnectivity carries it: a queued file
+/// transfer continues after the sending app exits and reports how it ended
+/// on the next launch, and the outbox sends again anything a transfer does
+/// not carry. It is not safe for anything else the app is doing, so the app
+/// leaves only while the "Sent" confirmation is still what it shows and
+/// nothing else is under way. Pure, so the logic lane covers the rule.
+public enum WatchVoiceDismissal {
+    /// How long "Sent" stays on screen before the app leaves.
+    public static let confirmationDelay: TimeInterval = 1.8
+
+    /// Whether to leave now.
+    /// - `showingSent`: the confirmation is still on screen — a failure, a
+    ///   tap on it, or a new recording keeps the app.
+    /// - `carriedByTransfer`: WatchConnectivity has the note. One still
+    ///   waiting for the link keeps the app running, so the outbox can hand
+    ///   it over when the link comes back.
+    /// - `otherWorkInFlight`: an ask or a dictated note is still relaying,
+    ///   or an answer is being spoken.
+    public static func shouldLeave(showingSent: Bool, carriedByTransfer: Bool, otherWorkInFlight: Bool) -> Bool {
+        showingSent && carriedByTransfer && !otherWorkInFlight
+    }
+}
+
+/// The watch's durable outbox of recorded notes, and what to do with each.
+///
+/// A recorded note counts as sent once it is safely in the outbox — the
+/// recording and its metadata on disk — whatever the state of the link to
+/// the iPhone. From there it is handed to WatchConnectivity, and handed again
+/// whenever no transfer carries it: at launch, when the iPhone becomes
+/// reachable, when the iPhone app is installed, and after a transfer fails
+/// (then after a backoff, so a failing link is not hammered). It leaves the
+/// outbox only when a transfer reports success, or when it has waited so long
+/// it is dropped — and the person is told. Every copy carries the same ref,
+/// so the phone saves the note once however many copies reach it. Pure, so
+/// the logic lane covers the policy.
+public enum WatchOutboxPolicy {
+    /// How long a note may wait for the iPhone before it is dropped.
+    public static let retention: TimeInterval = 7 * 24 * 60 * 60
+    /// The most notes kept waiting; the oldest beyond it are dropped. Two
+    /// minutes of speech at the watch's bit rate is about 360 KB, so this
+    /// bounds the outbox to a few tens of megabytes.
+    public static let maxEntries = 50
+
+    /// One waiting note, as the outbox records it beside the recording.
+    public struct Entry: Codable, Equatable, Sendable {
+        public let metadata: [String: String]
+        public let queuedAt: Date
+        /// Transfers that ended in an error.
+        public var failures: Int
+        public var lastFailureAt: Date?
+
+        public init(metadata: [String: String], queuedAt: Date, failures: Int = 0, lastFailureAt: Date? = nil) {
+            self.metadata = metadata
+            self.queuedAt = queuedAt
+            self.failures = failures
+            self.lastFailureAt = lastFailureAt
+        }
+
+        public var ref: String? {
+            metadata[WatchVoiceRecording.refKey]
+        }
+    }
+
+    /// What set the outbox moving.
+    public enum Trigger: Equatable, Sendable {
+        /// Launch, the iPhone becoming reachable, the iPhone app installed:
+        /// the link may have just come back, so every waiting note is sent.
+        case linkMayHaveChanged
+        /// A transfer failed, or the backoff after one ran out: notes that
+        /// failed are sent again only once their backoff has passed.
+        case retry
+    }
+
+    public enum Action: Equatable, Sendable {
+        /// Hand it to WatchConnectivity.
+        case send
+        /// A transfer carries it, or it is waiting out a backoff.
+        case wait
+        /// Waited too long, or pushed out by newer notes: delete it and say so.
+        case drop
+    }
+
+    /// The pause before a note that failed `failures` times is sent again.
+    public static func backoff(afterFailures failures: Int) -> TimeInterval {
+        let steps: [TimeInterval] = [30, 2 * 60, 10 * 60, 30 * 60, 60 * 60]
+        return steps[min(max(failures, 1), steps.count) - 1]
+    }
+
+    /// What to do with each waiting note, by ref. `carried` are the refs a
+    /// transfer is already carrying — never sent twice.
+    public static func plan(
+        _ entries: [Entry],
+        carried: Set<String>,
+        trigger: Trigger,
+        now: Date
+    )
+        -> [String: Action] {
+        let newestFirst = entries.filter { $0.ref != nil }.sorted { $0.queuedAt > $1.queuedAt }
+        var actions: [String: Action] = [:]
+        for (index, entry) in newestFirst.enumerated() {
+            guard let ref = entry.ref else { continue }
+            if index >= maxEntries || now.timeIntervalSince(entry.queuedAt) > retention {
+                actions[ref] = .drop
+            } else if carried.contains(ref) {
+                actions[ref] = .wait
+            } else if trigger == .retry, entry.failures > 0, let failed = entry.lastFailureAt,
+                      now.timeIntervalSince(failed) < backoff(afterFailures: entry.failures) {
+                actions[ref] = .wait
+            } else {
+                actions[ref] = .send
+            }
+        }
+        return actions
+    }
+
+    /// When the next backed-off note falls due, if any is waiting on one.
+    public static func nextRetry(_ entries: [Entry], carried: Set<String>, now: Date) -> Date? {
+        let dues = entries.compactMap { entry -> Date? in
+            guard let ref = entry.ref, !carried.contains(ref), entry.failures > 0,
+                  let failed = entry.lastFailureAt
+            else { return nil }
+            let due = failed.addingTimeInterval(backoff(afterFailures: entry.failures))
+            return due > now ? due : nil
+        }
+        return dues.min()
+    }
+}

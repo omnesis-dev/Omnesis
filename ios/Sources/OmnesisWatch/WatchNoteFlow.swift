@@ -27,6 +27,11 @@ final class WatchNoteRouter {
 
     private(set) var state: State = .idle
 
+    var isRelaying: Bool {
+        if case .relaying = state { return true }
+        return false
+    }
+
     /// True once the first send found the iPhone app unreachable and the
     /// watch is retrying while iOS launches it.
     private(set) var isWakingPhone = false
