@@ -3,9 +3,18 @@
 
 package dev.omnesis.android.transport.dto
 
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * Answer privacy administration DTOs. These mirror
@@ -34,9 +43,64 @@ data class PrivacyApprovalDetail(
     val workflowPurpose: String = "",
     val question: String = "",
     val candidateAnswer: String? = null,
+    /** The citations held beside [candidateAnswer]; empty when none, and on an older gateway. */
+    @Serializable(with = LenientAnswerCitationListSerializer::class)
+    val candidateCitations: List<AnswerCitation> = emptyList(),
     val sharedAt: Long? = null,
     val review: PrivacyReviewRecord = PrivacyReviewRecord(),
 )
+
+/**
+ * One document the answering agent cited, carried beside an answer as
+ * structured metadata. Mirrors `AnswerCitation` in `@omnesis/types/privacy`.
+ * The privacy check may withhold a whole citation or any optional field, so
+ * every field but the document id and source type may be absent. Lists of
+ * citations decode through [LenientAnswerCitationListSerializer].
+ */
+@Serializable
+data class AnswerCitation(
+    val documentId: String,
+    val sourceType: String,
+    val title: String? = null,
+    /** When the document happened, as ISO 8601. */
+    val timestamp: String? = null,
+    /** The document's canonical web or desktop destination. */
+    val sourceUrl: String? = null,
+    /** A native-app deep link, preferred over [sourceUrl] on a phone. */
+    val appUrl: String? = null,
+)
+
+/**
+ * Decodes a citation list one element at a time. A null or non-array list reads
+ * as empty; an element that is not an object, or lacks a non-blank string
+ * `documentId` or `sourceType`, is skipped; an optional field that is not a
+ * string reads as absent. Citations describe an answer rather than make it up,
+ * so a malformed one must never cost the exchange or approval it rides on.
+ */
+object LenientAnswerCitationListSerializer : KSerializer<List<AnswerCitation>> {
+    private val delegate = ListSerializer(AnswerCitation.serializer())
+    override val descriptor: SerialDescriptor = delegate.descriptor
+
+    override fun serialize(encoder: Encoder, value: List<AnswerCitation>) = delegate.serialize(encoder, value)
+
+    override fun deserialize(decoder: Decoder): List<AnswerCitation> {
+        val json = decoder as? JsonDecoder ?: return delegate.deserialize(decoder)
+        val array = json.decodeJsonElement() as? JsonArray ?: return emptyList()
+        return array.mapNotNull { element -> (element as? JsonObject)?.let(::citationFrom) }
+    }
+
+    private fun citationFrom(o: JsonObject): AnswerCitation? {
+        fun str(key: String): String? = (o[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        return AnswerCitation(
+            documentId = str("documentId")?.takeIf(String::isNotBlank) ?: return null,
+            sourceType = str("sourceType")?.takeIf(String::isNotBlank) ?: return null,
+            title = str("title"),
+            timestamp = str("timestamp"),
+            sourceUrl = str("sourceUrl"),
+            appUrl = str("appUrl"),
+        )
+    }
+}
 
 @Serializable
 data class PrivacyApprovalEnvelope(
@@ -390,6 +454,18 @@ data class PrivacyExchangePresentation(
     /** Local operator-visible draft; its presence does not imply external egress. */
     val draftAnswer: String? = null,
     val pendingCandidate: String? = null,
+    /**
+     * The citations recorded beside [sharedAnswer], [draftAnswer] and
+     * [pendingCandidate] respectively. Each is empty when its answer carried
+     * none, and all three are empty from a gateway that predates citations.
+     * A malformed list or element is dropped rather than failing the exchange.
+     */
+    @Serializable(with = LenientAnswerCitationListSerializer::class)
+    val sharedCitations: List<AnswerCitation> = emptyList(),
+    @Serializable(with = LenientAnswerCitationListSerializer::class)
+    val draftCitations: List<AnswerCitation> = emptyList(),
+    @Serializable(with = LenientAnswerCitationListSerializer::class)
+    val pendingCitations: List<AnswerCitation> = emptyList(),
     val reductions: List<String> = emptyList(),
     val approval: PrivacyExchangeApproval? = null,
     val userDecision: String? = null,

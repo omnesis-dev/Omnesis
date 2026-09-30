@@ -4677,6 +4677,29 @@ export const MIGRATIONS: readonly Migration[] = [
       "an interactive credential keeps its approved audience and scope after its authorization request is reaped",
     up: addCredentialApprovedAudience,
   },
+  {
+    // The documents an Answer cites travel beside its text: held with the
+    // candidate an approval would release, and recorded with the release.
+    // Existing rows carry no citations, which the '[]' default says exactly.
+    // Idempotent via the pragma_table_info guards, and a no-op on a fresh DB
+    // whose tables already carry the columns.
+    version: 184,
+    description: "record the citations held with an Answer approval and released with an Answer",
+    up(db) {
+      for (const [table, column] of [
+        ["answer_approvals", "candidate_citations_json"],
+        ["answer_releases", "citations_json"],
+      ] as const) {
+        const cols = db
+          .prepare<[], { name: string }>(`SELECT name FROM pragma_table_info('${table}')`)
+          .all()
+          .map((r) => r.name);
+        if (!cols.includes(column)) {
+          db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT NOT NULL DEFAULT '[]'`);
+        }
+      }
+    },
+  },
 ];
 
 /**

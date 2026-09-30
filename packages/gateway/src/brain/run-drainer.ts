@@ -318,6 +318,28 @@ export function createCognitionDrainerTasks(
       debounceMs: 0,
       outcome: { kind: "completed" },
     });
+    // The run is settled; what follows is bookkeeping, and a failure there is
+    // logged rather than unwinding a settle that already happened.
+    try {
+      await settleGatedBookkeeping(run, mechanism, now, enqueuedAt);
+    } catch (err) {
+      log.warn(
+        `run ${run.id} gated out, but its bookkeeping failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    log.info(
+      `run ${run.id} (${run.kind}) gated out: worth score ${gate.score?.toFixed(2) ?? "?"} < ${gate.threshold}`,
+    );
+    return "completed";
+  }
+
+  /** Coverage, the covered marker and the pace refund for a run the gate settled. */
+  async function settleGatedBookkeeping(
+    run: ClaimedCognitionRun,
+    mechanism: ReturnType<typeof cognitiveWorkflowIdForRun>,
+    now: number,
+    enqueuedAt: number,
+  ): Promise<void> {
     const docId = runDocId(run);
     if (docId !== null) {
       await opts.writeGate.markDocsBootstrapProcessed([docId], new Date(now).toISOString());
@@ -350,10 +372,6 @@ export function createCognitionDrainerTasks(
         }
       }
     }
-    log.info(
-      `run ${run.id} (${run.kind}) gated out: worth score ${gate.score?.toFixed(2) ?? "?"} < ${gate.threshold}`,
-    );
-    return "completed";
   }
 
   /** Execute one claimed run and settle its row + spend. Never throws. */
@@ -361,7 +379,15 @@ export function createCognitionDrainerTasks(
     run: ClaimedCognitionRun,
     signal: AbortSignal,
   ): Promise<"completed" | "retry" | "failed"> {
-    const gated = await settleIfGatedOut(run, signal);
+    let gated: "completed" | null = null;
+    try {
+      gated = await settleIfGatedOut(run, signal);
+    } catch (err) {
+      // The gate could not settle the run; it runs as if ungated.
+      log.warn(
+        `worth gate could not settle run ${run.id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     if (gated) return gated;
     let outcome;
     opts.activity?.start(run.id, clock());

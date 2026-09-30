@@ -15,6 +15,7 @@ import {
   EXIT_AUTH,
   EXIT_GATEWAY_ERROR,
   EXIT_USER_ERROR,
+  formatDateShort,
   isJSON,
   pickGatewayExitCode,
   withSpinner,
@@ -25,7 +26,7 @@ import {
   DEFAULT_ANSWER_WAIT_TIMEOUT_S,
   MAX_ANSWER_WAIT_TIMEOUT_S,
 } from "../answer-wait.js";
-import type { AnswerResponse } from "@omnesis/types/privacy";
+import type { AnswerCitation, AnswerResponse } from "@omnesis/types/privacy";
 
 export const DEFAULT_WAIT_TIMEOUT_S = DEFAULT_ANSWER_WAIT_TIMEOUT_S;
 export const WAIT_POLL_INTERVAL_MS = ANSWER_WAIT_POLL_INTERVAL_MS;
@@ -79,9 +80,9 @@ export function formatAnswer(result: AnswerResponse, json: boolean): string {
   const context = `${c.dim}Workflow: ${result.workflowId}\nConversation: ${result.conversationId}\nTask: ${result.taskId}${c.reset}`;
   switch (result.status) {
     case "released":
-      return `${result.answer}\n\n${context}`;
+      return `${result.answer}${formatCitations(result.citations)}\n\n${context}`;
     case "released_with_reductions":
-      return `${result.answer}\n\n${c.dim}Privacy: released with reductions (${result.reductions.join(", ")})${c.reset}\n${context}`;
+      return `${result.answer}${formatCitations(result.citations)}\n\n${c.dim}Privacy: released with reductions (${result.reductions.join(", ")})${c.reset}\n${context}`;
     case "approval_required":
       return `Approval required in Omnesis. Wait with omnesis answer --task ${result.taskId} --wait.\n\n${context}\n${c.dim}Approval: ${result.approvalId}${c.reset}`;
     case "denied":
@@ -89,6 +90,48 @@ export function formatAnswer(result: AnswerResponse, json: boolean): string {
     default:
       return assertNever(result);
   }
+}
+
+/**
+ * The released citations as a numbered "Sources" section, one line per
+ * document (`title · sourceType · date`) followed by its links. Empty when
+ * nothing was cited, so an answer without sources prints unchanged.
+ */
+export function formatCitations(citations: readonly AnswerCitation[] | undefined): string {
+  if (!citations || citations.length === 0) return "";
+  const width = String(citations.length).length;
+  const lines = citations.flatMap((citation, index) => {
+    const number = `${String(index + 1).padStart(width)}.`;
+    const indent = " ".repeat(number.length + 1);
+    const heading = [
+      terminalSafe(citation.title ?? citation.documentId),
+      `${c.dim}${terminalSafe(citation.sourceType)}${c.reset}`,
+      ...(citation.timestamp && !Number.isNaN(Date.parse(citation.timestamp))
+        ? [`${c.dim}${formatDateShort(citation.timestamp)}${c.reset}`]
+        : []),
+    ].join(" · ");
+    return [
+      `${number} ${heading}`,
+      ...(citation.sourceUrl
+        ? [`${indent}${c.dim}Link:${c.reset} ${terminalSafe(citation.sourceUrl)}`]
+        : []),
+      ...(citation.appUrl
+        ? [`${indent}${c.dim}App link:${c.reset} ${terminalSafe(citation.appUrl)}`]
+        : []),
+    ];
+  });
+  return `\n\n${c.bold}Sources${c.reset}\n${lines.join("\n")}`;
+}
+
+// eslint-disable-next-line no-control-regex -- matching control characters is the point
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g;
+
+/**
+ * Document text with its control characters replaced, so a title or link can
+ * neither break the list's lines nor reach the terminal as an escape sequence.
+ */
+function terminalSafe(value: string): string {
+  return value.replace(CONTROL_CHARACTERS, " ").trim();
 }
 
 function createAnswerClient(): AnswerHttpClient {

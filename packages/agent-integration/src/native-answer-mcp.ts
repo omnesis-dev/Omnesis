@@ -23,6 +23,7 @@ import {
   type GatewayRequestOptions,
 } from "./http.js";
 import { mcpEndpointUrl, pinnedTlsOptions, type TlsTrust, validateGatewayUrl } from "./tls.js";
+import { ANSWER_CITATIONS_META_KEY, answerCitationsSchema } from "./answer-citations.js";
 import type { AnswerPoster } from "./answer-wait.js";
 
 export const NATIVE_CONVERSATION_META_KEY = "dev.omnesis/nativeConversationId";
@@ -49,6 +50,7 @@ const answerResponseSchema = z.discriminatedUnion("status", [
       status: z.literal("released"),
       releaseId: z.string(),
       answer: z.string(),
+      citations: answerCitationsSchema.optional(),
     })
     .strict(),
   z
@@ -58,6 +60,7 @@ const answerResponseSchema = z.discriminatedUnion("status", [
       releaseId: z.string(),
       answer: z.string(),
       reductions: z.array(z.string()),
+      citations: answerCitationsSchema.optional(),
     })
     .strict(),
   z
@@ -245,9 +248,14 @@ export class NativeAnswerMcpClient {
         {
           name,
           arguments: args,
-          ...(nativeConversationId
-            ? { _meta: { [NATIVE_CONVERSATION_META_KEY]: nativeConversationId } }
-            : {}),
+          // Declares that this client parses released citations; the gateway
+          // withholds them from a bound integration that does not.
+          _meta: {
+            [ANSWER_CITATIONS_META_KEY]: true,
+            ...(nativeConversationId
+              ? { [NATIVE_CONVERSATION_META_KEY]: nativeConversationId }
+              : {}),
+          },
         },
         { signal, timeout: remaining, maxTotalTimeout: remaining },
       ),

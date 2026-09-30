@@ -230,6 +230,8 @@ export function decisionDto(
     inheritedFromParent: decision.subjectDocumentId !== decision.documentId,
     subjectDoc: subjectDoc ?? null,
     reusedFrom: decision.reusedFrom,
+    recordId: decision.recordId,
+    enforced: decision.enforced,
     error: decision.error,
     latencyMs: decision.latencyMs,
     inputTokens: decision.inputTokens,

@@ -89,6 +89,8 @@ function decision(over = {}) {
     inheritedFromParent: false,
     subjectDoc: { id: "doc-mail", title: "your weekly digest is here", sourceType: null },
     reusedFrom: null,
+    recordId: null,
+    enforced: true,
     error: null,
     latencyMs: 412,
     inputTokens: 356,
@@ -219,6 +221,74 @@ describe("run detail — the Decision model section", () => {
     expect(text).toContain("went ahead unjudged");
     expect(nodes.find((n) => n.class.includes("debug-error")).text).toContain("TypeSafe returned HTTP 503");
     expect(nodes.filter((n) => n.tag === "summary").map((n) => n.text)).toEqual(["Request sent"]);
+  });
+
+  it("never reads a decision of an unknown purpose as a worth-gate verdict", () => {
+    const text = flatText(cognition.DecisionCard({ decision: decision({ purpose: "future-check", verdict: "pass" }) }));
+    expect(text).toContain("pass");
+    expect(text).not.toContain("Worth a run");
+    expect(text).toContain("future-check");
+  });
+
+  describe("a record check", () => {
+    const recordCheck = (over = {}) =>
+      decision({
+        id: "dec_rc",
+        purpose: "record-check",
+        verdict: "skip",
+        score: 0.12,
+        threshold: 0.81,
+        rubricVersion: "record-belongs-v1",
+        recordId: "ta_example",
+        enforced: false,
+        subjectDoc: { id: "doc-mail", title: "Studio Northstar opens a new cycle room", sourceType: null },
+        request: {
+          model: "jev-1.13.0",
+          state: {
+            record_type: "timeline",
+            record_kind: "event",
+            record: "Studio Northstar says its new cycle room opens on 3 October 2026.",
+          },
+          questions: { belongs: { type: "score", instructions: "How much does `record` belong?", criteria: CRITERIA } },
+        },
+        response: { model: "jev-1.13.0", answers: { belongs: { type: "score", score: 0.12 } } },
+        ...over,
+      });
+
+    it("shows the record it judged, its id and the document it came from", () => {
+      const text = flatText(cognition.DecisionCard({ decision: recordCheck() }));
+      expect(text).toContain("record check · bootstrap");
+      expect(text).toContain("Studio Northstar says its new cycle room opens on 3 October 2026.");
+      expect(text).toContain("ta_example");
+      expect(text).toContain("Studio Northstar opens a new cycle room");
+      expect(text).not.toContain("the document that contains it");
+    });
+
+    it("says an observing skip saved the record anyway, and an enforced one did not", () => {
+      const observing = flatText(cognition.DecisionCard({ decision: recordCheck() }));
+      expect(observing).toContain("would drop");
+      expect(observing).toContain("saved anyway");
+      const enforced = flatText(cognition.DecisionCard({ decision: recordCheck({ enforced: true }) }));
+      expect(enforced).toContain("dropped");
+      expect(enforced).toContain("the record was not saved");
+      expect(enforced).not.toContain("saved anyway");
+    });
+
+    it("still names the record id and its document once retention cleared the request", () => {
+      const text = flatText(cognition.DecisionCard({ decision: recordCheck({ request: null, response: null }) }));
+      expect(text).toContain("ta_example");
+      expect(text).toContain("Studio Northstar opens a new cycle room");
+      expect(text).not.toContain("undefined");
+    });
+
+    it("reads a pass as kept and an outage as saved unjudged", () => {
+      expect(flatText(cognition.DecisionCard({ decision: recordCheck({ verdict: "pass", score: 2.6 }) }))).toContain(
+        "the record was kept",
+      );
+      expect(
+        flatText(cognition.DecisionCard({ decision: recordCheck({ verdict: "unavailable", score: null, response: null }) })),
+      ).toContain("the record was saved unjudged");
+    });
   });
 
   it("says plainly that a gated run has no transcript because no agent turn ran", () => {

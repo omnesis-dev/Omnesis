@@ -452,7 +452,7 @@ describe("OpenClaw plugin registration", () => {
     // The idempotency key is derived from the ask rather than invented by the
     // model, so a repeat of this call cannot buy a second agent turn.
     expect(postJson).toHaveBeenCalledWith(
-      "/subscriptions/firings/sf_fictional/answer",
+      "/subscriptions/firings/sf_fictional/answer?citations=true",
       {
         question: "What caused the fictional firing?",
         clientRequestId: firingAnswerRequestId({
@@ -1033,6 +1033,82 @@ describe("OpenClaw plugin registration", () => {
     await service.stop();
   });
 
+  test("a released answer's citations reach the model beside the answer", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "omnesis-openclaw-citations-"));
+    tempDirs.push(stateDir);
+    mkdirSync(join(stateDir, "omnesis"));
+    writeFileSync(
+      join(stateDir, "omnesis", "integration.json"),
+      `${JSON.stringify({
+        gatewayUrl: "http://127.0.0.1:1",
+        deliveryToken: "omn_fictional_delivery",
+        ingestionToken: "omn_fictional_ingestion",
+        managementToken: "omn_fictional_management",
+        oauth: {
+          redirectUri: "http://127.0.0.1:48123/callback",
+          clientInformation: { client_id: "client_fictional" },
+          tokens: {
+            access_token: "omn_fictional_agent",
+            refresh_token: "refresh_fictional",
+            token_type: "Bearer",
+          },
+        },
+      })}\n`,
+    );
+    vi.spyOn(AgentIntegrationClient.prototype, "start").mockImplementation(() => {});
+    vi.spyOn(DurableTranscriptIngestor.prototype, "start").mockImplementation(() => {});
+    vi.spyOn(AgentIntegrationClient.prototype, "stop").mockResolvedValue();
+    vi.spyOn(DurableTranscriptIngestor.prototype, "stop").mockResolvedValue();
+    const released = {
+      status: "released",
+      workflowId: "wf_fictional",
+      conversationId: "conv_fictional",
+      taskId: "task_fictional",
+      releaseId: "rel_fictional",
+      answer: "The Q4 budget review approved the plan.",
+      citations: [
+        {
+          documentId: "doc_fictional_budget",
+          sourceType: "gmail",
+          title: "Q4 budget review",
+          timestamp: "2026-03-14T09:30:00.000Z",
+          sourceUrl: "https://mail.example.com/thread/fictional-budget",
+        },
+      ],
+    };
+    vi.spyOn(NativeAnswerMcpClient.prototype, "postJson").mockResolvedValue(released);
+    const fake = api("full");
+    registerOpenClawIntegration(fake as never);
+    const service = fake.services[0] as {
+      start(context: { stateDir: string; logger: { warn(message: string): void } }): Promise<void>;
+      stop(): Promise<void>;
+    };
+    await service.start({ stateDir, logger: { warn: vi.fn() } });
+    const tool = fake.tools
+      .find(({ options }) => options.name === "omnesis_answer")!
+      .factory({ sessionKey: "agent:main:main" }) as {
+      execute(
+        id: string,
+        input: Record<string, unknown>,
+      ): Promise<{ content: Array<{ type: string; text: string }>; details: unknown }>;
+    };
+
+    const result = await tool.execute("call", {
+      question: "What did the budget review decide?",
+      timeoutMs: 600_000,
+    });
+
+    expect(JSON.parse(result.content[0]!.text)).toEqual(released);
+    expect(result.content[1]).toEqual({
+      type: "text",
+      text:
+        "Sources:\n1. Q4 budget review · gmail · 2026-03-14T09:30:00.000Z\n" +
+        "   Link: https://mail.example.com/thread/fictional-budget",
+    });
+    expect(result.details).toEqual({ ok: true, response: released });
+    await service.stop();
+  });
+
   test("a granted window reaches the request, and repeated waiting is bounded", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "omnesis-openclaw-grant-"));
     tempDirs.push(stateDir);
@@ -1595,6 +1671,32 @@ describe("OpenClaw plugin registration", () => {
 
     expect(text).toContain("not a new request");
     expect(text).toContain("The fictional shipment left on Tuesday.");
+  });
+
+  test("carries a released answer's citations into the resumed run", () => {
+    const text = answerCompletionContinuation({
+      workflowId: "wf_fictional",
+      conversationId: "conv_fictional",
+      taskId: "task_fictional",
+      status: "released",
+      releaseId: "release_fictional",
+      answer: "The Q4 budget review approved the plan.",
+      citations: [
+        {
+          documentId: "doc_fictional_budget",
+          sourceType: "gmail",
+          title: "Q4 budget review",
+          timestamp: "2026-03-14T09:30:00.000Z",
+          sourceUrl: "https://mail.example.com/thread/fictional-budget",
+        },
+      ],
+    });
+
+    expect(text).toContain(
+      "The Q4 budget review approved the plan.\n\nSources:\n" +
+        "1. Q4 budget review · gmail · 2026-03-14T09:30:00.000Z\n" +
+        "   Link: https://mail.example.com/thread/fictional-budget",
+    );
   });
 
   test("delivers a terminal answer through the captured channel adapter without a model run", async () => {
@@ -2222,7 +2324,9 @@ describe("two firings of one workflow running at once", () => {
     const postJson = vi
       .spyOn(PinnedGatewayHttpClient.prototype, "postJson")
       .mockImplementation(async (endpoint: string) =>
-        endpoint.endsWith("/answer") ? { status: "approval_required", taskId: "task_held" } : {},
+        endpoint.endsWith("/answer?citations=true")
+          ? { status: "approval_required", taskId: "task_held" }
+          : {},
       );
     const fake = api("full");
     fake.runtime.subagent.getSessionMessages = vi.fn(async () => ({

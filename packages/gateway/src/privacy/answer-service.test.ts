@@ -32,7 +32,7 @@ import {
   type AnswerProfiler,
 } from "./answer-profile.js";
 import type { AnswerServiceDeps } from "./answer-service.js";
-import type { PrivacyReviewRecord } from "@omnesis/types/privacy";
+import type { AnswerCitation, PrivacyReviewRecord } from "@omnesis/types/privacy";
 
 const review: PrivacyReviewRecord = {
   recipeVersion: "privacy-reviewer-v1",
@@ -60,6 +60,7 @@ describe("AnswerService", () => {
     decisions: Array<{
       decision: "allow" | "reduce" | "ask" | "deny";
       reducedAnswer?: string;
+      reducedCitations?: AnswerCitation[];
       reductions?: string[];
       hardStop?: boolean;
     }>,
@@ -80,6 +81,7 @@ describe("AnswerService", () => {
       candidateHook?: (candidateOptions: unknown) => void;
       /** Observe the reviewer options (including a profiling sink) per call. */
       reviewHook?: (reviewOptions: unknown) => void;
+      citations?: AnswerCitation[];
     } = {},
   ) {
     const reviewRecord = options.review ?? review;
@@ -93,7 +95,10 @@ describe("AnswerService", () => {
         candidateOptions?: unknown,
       ) => {
         options.candidateHook?.(candidateOptions);
-        return { answer: options.candidate ?? "Private candidate" };
+        return {
+          answer: options.candidate ?? "Private candidate",
+          citations: options.citations ?? [],
+        };
       },
     );
     const reviewer = vi.fn(
@@ -112,6 +117,7 @@ describe("AnswerService", () => {
         return {
           decision: next.decision,
           ...(next.reducedAnswer ? { reducedAnswer: next.reducedAnswer } : {}),
+          ...(next.reducedCitations ? { reducedCitations: next.reducedCitations } : {}),
           reductions: next.reductions ?? [],
           hardStop: next.hardStop ?? false,
           review: stageReview,
@@ -134,6 +140,7 @@ describe("AnswerService", () => {
               },
               reviewStage: stage,
               candidateAnswer: options.candidate ?? "Private candidate",
+              candidateCitations: [],
               watchDisclosure: null,
             },
             envelopeDigest: "audit-envelope",
@@ -1165,7 +1172,7 @@ describe("AnswerService", () => {
         generateReadOnlyAnswerCandidate: vi.fn(async () => {
           candidateStarted();
           await gate;
-          return { answer: "Synthetic answer" };
+          return { answer: "Synthetic answer", citations: [] };
         }),
       },
       reviewer: {
@@ -1345,7 +1352,7 @@ describe("AnswerService", () => {
         generateReadOnlyAnswerCandidate: async () => {
           started += 1;
           await candidateGate;
-          return { answer: "Private candidate" };
+          return { answer: "Private candidate", citations: [] };
         },
       },
       reviewer: {
@@ -1455,7 +1462,7 @@ describe("AnswerService", () => {
           }
           holderStarted += 1;
           await holderGate;
-          return { answer: "Private candidate" };
+          return { answer: "Private candidate", citations: [] };
         }),
       },
       reviewer: {
@@ -1546,5 +1553,185 @@ describe("AnswerService", () => {
     expect(bounded).toHaveLength(MAX_RELEASED_HISTORY_MESSAGES);
     expect(bounded[0]?.parts).toEqual([{ kind: "text", text: "message-2" }]);
     expect(bounded.at(-1)?.parts).toEqual([{ kind: "text", text: "message-41" }]);
+  });
+
+  describe("citations", () => {
+    const citations: AnswerCitation[] = [
+      {
+        documentId: "doc_budget",
+        sourceType: "gmail",
+        title: "Q4 budget review",
+        sourceUrl: "https://mail.example.com/message/budget",
+      },
+      {
+        documentId: "doc_offsite",
+        sourceType: "google-calendar",
+        title: "Team offsite",
+        appUrl: "calendar-example://event/offsite",
+      },
+    ];
+    const coveringFinding = {
+      category: "schedule",
+      detailLevel: "exact",
+      subject: "user",
+      disposition: "approval",
+      description: "An exact schedule detail.",
+    } as const;
+
+    it("reviews the citations and releases them only to a caller that accepts them", async () => {
+      const { service, reviewer } = makeService([{ decision: "allow" }], { citations });
+
+      const response = await service.answer(request);
+
+      expect(reviewer.mock.calls[0]?.[0]).toMatchObject({ candidateCitations: citations });
+      expect(response).not.toHaveProperty("citations");
+      const plain = await service.recordEgress(response.taskId, request.ownerId, "/answer");
+      expect(plain?.response).not.toHaveProperty("citations");
+      const cited = await service.recordEgress(response.taskId, request.ownerId, "/answer", {
+        includeCitations: true,
+      });
+      expect(cited?.response).toMatchObject({ status: "released", citations });
+      expect(JSON.parse(cited!.responseJson)).toMatchObject({ citations });
+    });
+
+    it("withholds a credential-looking citation field instead of denying a clean answer", async () => {
+      const shared = {
+        documentId: "doc_share",
+        sourceType: "drive",
+        title: "Budget workbook",
+        sourceUrl: "https://files.example.com/share?access_token=synthetic-secret-123",
+      };
+      const { service, reviewer } = makeService([{ decision: "allow" }], {
+        citations: [shared],
+      });
+
+      const response = await service.answer(request);
+
+      const withheld = { documentId: "doc_share", sourceType: "drive", title: "Budget workbook" };
+      expect(reviewer.mock.calls[0]?.[0]).toMatchObject({ candidateCitations: [withheld] });
+      const egress = await service.recordEgress(response.taskId, request.ownerId, "/answer", {
+        includeCitations: true,
+      });
+      expect(egress?.response).toMatchObject({ status: "released", citations: [withheld] });
+      expect(egress?.responseJson).not.toContain("synthetic-secret-123");
+    });
+
+    it("shows a later review the citations released with earlier turns", async () => {
+      const { service, reviewer } = makeService([{ decision: "allow" }, { decision: "allow" }], {
+        citations,
+      });
+
+      const first = await service.answer(request);
+      await service.answer({
+        ...request,
+        clientRequestId: "request-2",
+        workflowId: first.workflowId,
+        conversationId: first.conversationId,
+      });
+
+      expect(reviewer.mock.calls[1]?.[0]).toMatchObject({
+        priorExternalConversation: [
+          { role: "user", content: request.question },
+          { role: "assistant", content: "Private candidate", citations },
+        ],
+      });
+    });
+
+    it("leaves the citations field off a release that has none", async () => {
+      const { service } = makeService([{ decision: "allow" }]);
+      const response = await service.answer(request);
+      const egress = await service.recordEgress(response.taskId, request.ownerId, "/answer", {
+        includeCitations: true,
+      });
+      expect(egress?.response).not.toHaveProperty("citations");
+    });
+
+    it("releases the citations the reviewer reduced, after reviewing them again", async () => {
+      const reduced = [
+        { documentId: "doc_budget", sourceType: "gmail", title: "Q4 budget review" },
+      ];
+      const { service, reviewer } = makeService(
+        [
+          { decision: "reduce", reducedAnswer: "Private candidate", reducedCitations: reduced },
+          { decision: "allow" },
+        ],
+        { citations },
+      );
+
+      const response = await service.answer(request);
+
+      expect(reviewer.mock.calls[1]?.[0]).toMatchObject({
+        reviewStage: "reduction",
+        candidateCitations: reduced,
+      });
+      const egress = await service.recordEgress(response.taskId, request.ownerId, "/mcp", {
+        includeCitations: true,
+      });
+      expect(egress?.response).toMatchObject({
+        status: "released_with_reductions",
+        citations: reduced,
+      });
+    });
+
+    it("holds the citations with the candidate and releases exactly those on approval", async () => {
+      const { service } = makeService([{ decision: "ask" }], {
+        citations,
+        review: { ...review, findings: [coveringFinding] },
+      });
+
+      const held = await service.answer(request);
+      expect(held.status).toBe("approval_required");
+      const [pending] = listPrivacyExchangePresentations(
+        db,
+        held.conversationId,
+        50,
+        undefined,
+        1_000,
+      )!.exchanges;
+      expect(pending?.pendingCitations).toEqual(citations);
+      expect(pending?.draftCitations).toEqual(citations);
+
+      resolvePrivacyApproval(db, {
+        approvalId: (held as { approvalId: string }).approvalId,
+        action: "approve",
+        requestContext: { requestId: "req", tokenId: null, deviceId: null },
+        releaseId: "release-approved",
+        now: 1_000,
+      });
+      const egress = await service.recordEgress(held.taskId, request.ownerId, "/answer", {
+        includeCitations: true,
+      });
+      expect(egress?.response).toMatchObject({ status: "released", citations });
+      const [shared] = listPrivacyExchangePresentations(
+        db,
+        held.conversationId,
+        50,
+        undefined,
+        1_000,
+      )!.exchanges;
+      expect(shared?.sharedCitations).toEqual(citations);
+      expect(shared?.sharedAt).not.toBeNull();
+    });
+
+    it("refuses to release held citations that no longer match the approval digest", async () => {
+      const { service } = makeService([{ decision: "ask" }], {
+        citations,
+        review: { ...review, findings: [coveringFinding] },
+      });
+      const held = await service.answer(request);
+      db.prepare("UPDATE answer_approvals SET candidate_citations_json = ?").run(
+        JSON.stringify([{ ...citations[0], sourceUrl: "https://mail.example.com/other" }]),
+      );
+
+      expect(() =>
+        resolvePrivacyApproval(db, {
+          approvalId: (held as { approvalId: string }).approvalId,
+          action: "approve",
+          requestContext: { requestId: "req", tokenId: null, deviceId: null },
+          releaseId: "release-tampered",
+          now: 1_000,
+        }),
+      ).toThrow(AnswerStoreError);
+    });
   });
 });

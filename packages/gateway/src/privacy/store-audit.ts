@@ -7,6 +7,7 @@ import { assertNever } from "@omnesis/core";
 import { PRIVACY_AUDIT_EVENT_KINDS } from "@omnesis/types/privacy";
 import { compareReleasedAnswer } from "./answer-diff.js";
 import { getOwnedTask, parseDisclosureCategories, responseForTask } from "./store-internals.js";
+import { parseStoredCitations } from "./answer-citations.js";
 import {
   fallbackExternalAgentIdentity,
   latestPrivacyExchangeOutcomes,
@@ -178,7 +179,7 @@ export function recordAnswerEgress(
 ): RecordedAnswerEgress | null {
   return db.transaction(() => {
     const task = getOwnedTask(db, input.taskId, input.ownerId);
-    const response = responseForTask(db, task.id);
+    const response = responseForTask(db, task.id, { includeCitations: input.includeCitations });
     if (!response) return null;
     // Answer egress and the final MCP authority check are one commit. Validate
     // only after a releasable response exists: a pending status poll must not
@@ -456,14 +457,26 @@ export function loadPrivacyReviewerContext(
   if (conversation.owner_id !== ownerId) {
     throw new AnswerStoreError("owner_mismatch", "Answer conversation belongs to another caller.");
   }
+  // An assistant turn carries the citations released with it: they left with
+  // the text, so a later review judges the combined disclosure of both.
   const priorExternalConversation = db
-    .prepare<[string, number], { role: "user" | "assistant"; content: string }>(
-      `SELECT role, content FROM (
-         SELECT id, role, content FROM answer_messages
-          WHERE conversation_id = ? ORDER BY id DESC LIMIT ?
+    .prepare<
+      [string, number],
+      { role: "user" | "assistant"; content: string; citations_json: string | null }
+    >(
+      `SELECT role, content, citations_json FROM (
+         SELECT m.id, m.role, m.content,
+                CASE WHEN m.role = 'assistant' THEN r.citations_json END AS citations_json
+           FROM answer_messages m
+           LEFT JOIN answer_releases r ON r.task_id = m.task_id
+          WHERE m.conversation_id = ? ORDER BY m.id DESC LIMIT ?
        ) ORDER BY id ASC`,
     )
-    .all(conversationId, MAX_EXTERNAL_CONTEXT_MESSAGES);
+    .all(conversationId, MAX_EXTERNAL_CONTEXT_MESSAGES)
+    .map(({ role, content, citations_json }): PrivacyExternalMessage => {
+      const citations = parseStoredCitations(citations_json);
+      return citations.length > 0 ? { role, content, citations } : { role, content };
+    });
   const totalMessages =
     db
       .prepare<

@@ -2429,6 +2429,12 @@ const brainAnnotations = z
         "Abstention floor: a new annotation whose (post-ceiling) confidence falls below this is refused outright — too weak to persist.",
       )
       .optional(),
+    recordCheck: z
+      .enum(["off", "shadow", "enforce"])
+      .describe(
+        "Before a background run saves a new annotation, ask the decision model whether it belongs in life memory. 'shadow' records the verdict without acting on it; 'enforce' drops records judged not to belong. Needs the decision model assigned.",
+      )
+      .optional(),
   })
   .strict();
 
@@ -2884,16 +2890,15 @@ const dictationSettings = z
   })
   .strict();
 
+// `typesafe` is not reserved here: a configured backend of that name keeps
+// serving the roles it did, and the built-in TypeSafe backend answers only the
+// decision role (see the inference registry). Clients avoid it for new names.
 const backendKey = z
   .string()
   .min(1)
-  .refine(
-    (k) => !["local", "anthropic", "codex", "typesafe", "replay"].includes(k) && !k.includes("/"),
-    {
-      message:
-        "Backend name cannot be 'local', 'anthropic', 'codex', 'typesafe', 'replay', or contain '/'",
-    },
-  );
+  .refine((k) => !["local", "anthropic", "codex", "replay"].includes(k) && !k.includes("/"), {
+    message: "Backend name cannot be 'local', 'anthropic', 'codex', 'replay', or contain '/'",
+  });
 
 const inference = z
   .object({
@@ -2935,7 +2940,7 @@ const inference = z
           .string()
           .url()
           .describe(
-            "TypeSafe System One endpoint. Defaults to https://api.typesafe.ai/v1/systemone; set it to reach a private deployment or a local test server.",
+            "Experimental: the TypeSafe endpoint the Decision model uses. Defaults to https://api.typesafe.ai/v1/systemone; set it to reach a private deployment or a local test server.",
           )
           .optional(),
       })

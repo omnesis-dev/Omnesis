@@ -5420,6 +5420,50 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
+    /// Every shape of the cited-documents list: a draft's own list, a pending
+    /// release and a shared one each compared with the draft, a release that
+    /// withheld every citation, and rows with a wrapping title and link, a link
+    /// the app will not open, no links and an unreadable date.
+    func testPrivacyCitationList() {
+        snapshot(
+            PrivacyCitationListGallery().environment(AppStore.preview()),
+            name: "111rd-privacy-citations",
+            size: CGSize(width: 393, height: 2300)
+        )
+    }
+
+    /// The pinned review card in the feed, built from the exchange as the feed
+    /// builds it, so its citations are compared with the recorded draft.
+    func testPrivacyActivityPendingCitations() {
+        let view = NavigationStack {
+            PrivacyActivityPane(
+                previewExchanges: [PreviewMocks.privacyPendingCitationExchange, PreviewMocks.privacyExchanges[1]]
+            )
+        }
+        .background(Theme.bgPrimary)
+        .environment(AppStore.preview())
+        snapshot(
+            view,
+            name: "111re-privacy-activity-pending-citations",
+            size: CGSize(width: 393, height: 1300)
+        )
+    }
+
+    /// A pending exchange whose draft cited more than the held answer would
+    /// release: the draft's own list on the draft card, and what Share once
+    /// releases, compared with it, beside the decision.
+    func testPrivacyExchangeSpinePendingCitations() {
+        let view = NavigationStack {
+            PrivacyExchangeDetailView(previewExchange: PreviewMocks.privacyPendingCitationExchange)
+        }
+        .environment(AppStore.preview())
+        snapshot(
+            view,
+            name: "111vf-privacy-spine-pending-citations",
+            size: CGSize(width: 393, height: 2500)
+        )
+    }
+
     /// The spine while the answer is still held: dashed rail outside, hairline,
     /// solid accented rail through the tinted inside panel, and no second
     /// crossing because nothing left.

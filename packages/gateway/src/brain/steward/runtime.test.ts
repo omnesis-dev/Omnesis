@@ -36,6 +36,7 @@ import { getBrief, listBriefs } from "../storage/briefs.js";
 import { claimDueCognitionRuns } from "../storage/run-queue.js";
 import { dismissBriefAndEnqueueFeedback } from "../feedback.js";
 import { resolveBrainSettings } from "../config.js";
+import { RecordCheck } from "../record-check/check.js";
 import { buildCognitionRunPrompt } from "./prompts.js";
 import { createOpenLoopMirror } from "./mirror.js";
 import {
@@ -273,6 +274,78 @@ describe("assembled Cognition Steward through the real driver", () => {
     expect(db.prepare("SELECT prior_annotation_id FROM cognition_consumption_edges").all()).toEqual(
       [{ prior_annotation_id: annotationId }],
     );
+  });
+
+  test("the record check is bound to background data and bootstrap runs only, never to interactive memory", async () => {
+    const evidence = "The venue requires a response before Friday.";
+    db.prepare(
+      `INSERT INTO documents (id, provider_id, source_id, external_id, title, content, content_hash,
+         source_created_at, source_updated_at, ingested_at, updated_at)
+       VALUES ('doc_evidence', 'test', 'test', 'evidence', 'Venue request', ?, ?, ?, ?, ?, ?)`,
+    ).run(evidence, evidence, NOW, NOW, NOW, NOW);
+    const asked: string[] = [];
+    const writeGate = directWriteGate(db);
+    toolsetDeps.getAnnotationSettings = () => ({
+      enabled: true,
+      confidenceCeiling: 0.9,
+      basisCeilings: { quoted: 0.9, inferred: 0.7, synthesized: 0.55 },
+      confidenceFloor: 0.25,
+    });
+    toolsetDeps.recordCheck = new RecordCheck({
+      getDecision: () => ({
+        modelId: "jev-test",
+        decide: async (request) => {
+          asked.push((request.state as { record: string }).record);
+          return { model: "jev-test", answers: { belongs: { type: "score", score: 0.1 } } };
+        },
+        dispose() {},
+      }),
+      getMode: () => "enforce",
+      recordDecision: (record) => writeGate.recordCognitionDecision(record),
+      recordSpend: async () => {},
+      clock: () => NOW,
+      idGen: () => randomUUID(),
+      log,
+    });
+    const annotate = (tools: ToolHandle[], claimType: string) =>
+      tools
+        .find((tool) => tool.name === "annotate_durable")!
+        .invoke(
+          {
+            docId: "doc_evidence",
+            claimType,
+            claimText: `${claimType}: ${evidence}`,
+            evidenceDocId: "doc_evidence",
+            evidenceQuote: evidence,
+            confidence: 0.8,
+            claimBasis: "quoted",
+          },
+          { sessionId: "test", messageId: "message" },
+        );
+    const resultType = (r: ToolResult) => (r.kind === "structured" ? r.resultType : r.kind);
+
+    const bootstrap = claimed({
+      id: "run_b",
+      kind: "bootstrap",
+      payload: { docId: "doc_evidence", datumAt: NOW },
+    });
+    expect(
+      resultType(await annotate(buildCognitionToolset(toolsetDeps, bootstrap), "deadline")),
+    ).toBe("record.not_saved");
+    const handedOver = claimed({
+      id: "run_i",
+      kind: "data",
+      payload: { docId: "doc_evidence", event: "created", datumAt: NOW, immediate: true },
+    });
+    expect(
+      resultType(await annotate(buildCognitionToolset(toolsetDeps, handedOver), "venue")),
+    ).toBe("annotation.created");
+    expect(
+      resultType(
+        await annotate(buildCognitionInteractiveOwnTools(toolsetDeps, "interactive_test"), "reply"),
+      ),
+    ).toBe("annotation.created");
+    expect(asked).toEqual([`deadline: ${evidence}`]);
   });
 
   test("a scripted open_loop_create through the driver lands the table row + mirror doc, stamped with the run id", async () => {

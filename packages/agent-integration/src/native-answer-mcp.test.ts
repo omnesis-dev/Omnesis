@@ -14,6 +14,7 @@ import {
   FICTIONAL_LARGE_RESULT_BYTES,
   startFictionalGateway,
 } from "../test/fictional-mcp-gateway.js";
+import { ANSWER_CITATIONS_META_KEY } from "./answer-citations.js";
 import { integrationAnswerRequestId } from "./answer-wait.js";
 import { IntegrationHttpError } from "./http.js";
 import { IntegrationOAuthProvider, SerializedIntegrationAuthProvider } from "./oauth.js";
@@ -44,6 +45,7 @@ async function gateway(
   errorMeta?: unknown,
   completionOnly = false,
   beforeRequest?: () => Promise<void>,
+  released: Record<string, unknown> = {},
 ): Promise<string> {
   const handler = createMcpHandler(
     async () => {
@@ -78,6 +80,7 @@ async function gateway(
               taskId: "task_fictional",
               releaseId: "release_fictional",
               answer: "A fictional answer.",
+              ...released,
             };
             return {
               content: [{ type: "text", text: response.answer }],
@@ -99,6 +102,7 @@ async function gateway(
             taskId: args.taskId,
             releaseId: "release_fictional",
             answer: "A fictional approved answer.",
+            ...released,
           };
           return {
             content: [{ type: "text", text: response.answer }],
@@ -468,14 +472,66 @@ describe("native Answer MCP client", () => {
     expect(calls[0]).toMatchObject({
       name: "ask_omnesis",
       args: { question: request.question, requestId: integrationAnswerRequestId(request) },
-      meta: { [NATIVE_CONVERSATION_META_KEY]: "native_fictional" },
+      meta: {
+        [NATIVE_CONVERSATION_META_KEY]: "native_fictional",
+        [ANSWER_CITATIONS_META_KEY]: true,
+      },
     });
     expect(JSON.stringify(calls[0]!.args)).not.toContain("native_fictional");
     expect(calls[1]).toMatchObject({
       name: "get_answer_status",
       args: { taskId: "task_fictional" },
+      meta: { [ANSWER_CITATIONS_META_KEY]: true },
     });
     expect(calls[1]!.meta ?? {}).not.toHaveProperty(NATIVE_CONVERSATION_META_KEY);
+  });
+
+  const fictionalCitation = {
+    documentId: "doc_fictional_budget",
+    sourceType: "gmail",
+    title: "Q4 budget review",
+    timestamp: "2026-03-14T09:30:00.000Z",
+    sourceUrl: "https://mail.example.com/thread/fictional-budget",
+    appUrl: "example-mail://thread/fictional-budget",
+  };
+
+  test("accepts released citations on an ask and on a status read", async () => {
+    const gatewayUrl = await gateway([], undefined, false, undefined, {
+      citations: [fictionalCitation, { documentId: "doc_fictional_note", sourceType: "notes" }],
+    });
+    const client = new NativeAnswerMcpClient(gatewayUrl, "omn_fictional");
+    try {
+      await expect(
+        client.postJson("/mcp", {
+          question: "What did the budget review decide?",
+          clientRequestId: "request_fictional",
+        }),
+      ).resolves.toMatchObject({
+        status: "released",
+        citations: [fictionalCitation, { documentId: "doc_fictional_note", sourceType: "notes" }],
+      });
+      await expect(client.getTask("task_fictional")).resolves.toMatchObject({
+        citations: [fictionalCitation, { documentId: "doc_fictional_note", sourceType: "notes" }],
+      });
+    } finally {
+      await client.close();
+    }
+  });
+
+  test.each([
+    ["an unknown citation field", [{ ...fictionalCitation, snippet: "Fictional excerpt." }]],
+    ["a non-string title", [{ ...fictionalCitation, title: 42 }]],
+    ["a missing source type", [{ documentId: "doc_fictional_budget" }]],
+    ["a timestamp that is not ISO 8601", [{ ...fictionalCitation, timestamp: "last Tuesday" }]],
+    ["a citation list that is not an array", { documentId: "doc_fictional_budget" }],
+  ])("fails closed on %s", async (_label, citations) => {
+    const gatewayUrl = await gateway([], undefined, false, undefined, { citations });
+    const client = new NativeAnswerMcpClient(gatewayUrl, "omn_fictional");
+    try {
+      await expect(client.getTask("task_fictional")).rejects.toThrow();
+    } finally {
+      await client.close();
+    }
   });
 
   test("maps only the fixed in-progress tool error into the retry contract", async () => {

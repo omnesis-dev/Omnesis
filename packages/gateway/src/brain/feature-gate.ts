@@ -44,7 +44,11 @@ import { chatRoleReadiness } from "../models/chat-role-readiness.js";
 import { DERIVATION_STAGES, type DerivationStage } from "../domain/DocumentDerivation.js";
 import { cognitionBudgetVerdict } from "./cognition/budget.js";
 import { seedOpenLoopSourceMeta } from "./open-loop-source/source-meta.js";
-import { WorthGate, recordWorthGateSpend } from "./worth-gate/gate.js";
+import { WorthGate } from "./worth-gate/gate.js";
+import { RecordCheck } from "./record-check/check.js";
+import { RECORD_CHECK_SPEND_MECHANISM } from "./record-check/rubric.js";
+import { WORTH_GATE_SPEND_MECHANISM } from "./worth-gate/rubric.js";
+import { recordDecisionSpend } from "./decision-call.js";
 import { cognitionSpendDay } from "./storage/spend.js";
 import type { ChatRoleReadinessDeps } from "../models/chat-role-readiness.js";
 import type { BriefJudge } from "./steward/brief-judge.js";
@@ -341,6 +345,26 @@ export async function bootBriefs(deps: {
           ? { getEntailmentVerifier: rq.cognition.getEntailmentVerifier }
           : {}),
         ...(rq.cognition.getBriefJudge ? { getBriefJudge: rq.cognition.getBriefJudge } : {}),
+        ...(rq.getDecision
+          ? {
+              recordCheck: new RecordCheck({
+                getDecision: rq.getDecision,
+                getMode: () => rq.getSettings().annotations.recordCheck,
+                recordDecision: (record) => deps.writeGate.recordCognitionDecision(record),
+                recordSpend: (modelId, inputTokens) =>
+                  recordDecisionSpend(
+                    deps.writeGate,
+                    cognitionSpendDay((rq.clock ?? Date.now)()),
+                    RECORD_CHECK_SPEND_MECHANISM,
+                    modelId,
+                    inputTokens,
+                  ),
+                clock: rq.clock ?? Date.now,
+                idGen: () => crypto.randomUUID(),
+                log: log.child("record-check"),
+              }),
+            }
+          : {}),
         ...(rq.cognition.policyStore ? { policyStore: rq.cognition.policyStore } : {}),
         getSettings: rq.getSettings,
         ...(rq.getOperatorInstructions
@@ -447,9 +471,10 @@ export async function bootBriefs(deps: {
                 getDecision: rq.getDecision,
                 recordDecision: (record) => deps.writeGate.recordCognitionDecision(record),
                 recordSpend: (modelId, inputTokens) =>
-                  recordWorthGateSpend(
+                  recordDecisionSpend(
                     deps.writeGate,
                     cognitionSpendDay((rq.clock ?? Date.now)()),
+                    WORTH_GATE_SPEND_MECHANISM,
                     modelId,
                     inputTokens,
                   ),

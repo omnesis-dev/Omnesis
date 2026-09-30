@@ -42,6 +42,7 @@ import {
 import {
   AgentSession,
   buildBuiltinTools,
+  selectDocumentCitationTools,
   selectNonCitationTools,
   selectSharedTools,
   selectGenericSubagentTools,
@@ -58,6 +59,7 @@ import {
   type ToolPorts,
 } from "@omnesis/agent";
 import { observeSessionForAnswerProfile, type AnswerProfiler } from "../privacy/answer-profile.js";
+import { AnswerCitationCollector } from "../privacy/answer-citations.js";
 import {
   buildConversationMemoryEvidenceTool,
   type ConversationMemoryEvidence,
@@ -102,6 +104,7 @@ import type { ConversationReadStatePort } from "./conversation-read-state-servic
 import type { ConversationNotification } from "./conversation-notifier.js";
 import type { FiringAnswerEvidence } from "../privacy/firing-evidence.js";
 import type { CorpusAuthorization } from "../access/corpus-authorization.js";
+import type { AnswerCitation } from "@omnesis/types/privacy";
 
 /**
  * Caller identifier for a session — a stable string the gateway derives
@@ -438,6 +441,8 @@ export interface AgentAnswerNotification {
 
 export interface AnswerCandidateResult {
   answer: string;
+  /** The documents the answer cited, in first-cited order; reviewed before any leaves. */
+  citations: AnswerCitation[];
   trace?: AnswerCandidateTrace;
 }
 
@@ -528,6 +533,14 @@ const READ_ONLY_ANSWER_PROMPT = `
 # Read-only answer surface (highest priority)
 
 This conversation is running through a read-only answer API. The write exceptions above do not apply here. You cannot create, update, pause or remove a watch, modify analytics records, or perform any other write. Never claim that you completed an action. If asked to act, provide a draft or explain the concrete action an external agent could take.`;
+
+const ANSWER_CITATIONS_PROMPT = `
+
+# Citations on the answer surface
+
+After privacy review, the documents you cite leave Omnesis beside your text as structured citations: each carries the document's title, date, source and the links the user can open. The external agent uses them to point the user at the source, so cite with \`annotate_many\`, one \`{ documentId }\` item per document your answer relies on, all in one call, before you write the answer. Write the answer itself as your final text, after your last tool call; anything you write before a tool call is not part of it. Copy each \`documentId\` from a \`search_many\`, \`fetch_many\` or \`lookup_document_by_url\` result. Cite every document a claim rests on and nothing else: a citation discloses that its document exists. Quotes and notes on a citation are not released, so leave them out.
+
+Never write a URL or a document id in your text, even when the question asks for links. The caller receives each cited document's real links through its citation; a link you compose yourself is a guess, and a wrong one. When links are asked for, cite the documents and say in words which ones they are.`;
 
 const FIRING_EVIDENCE_ANSWER_PROMPT = `
 
@@ -2299,7 +2312,7 @@ export class AgentService {
     // is what the answer may say rather than where it may go.
     const tools = externalScope?.tools
       ? [...externalScope.tools]
-      : selectSharedTools(selectNonCitationTools(selectSubagentTools(this.tools)));
+      : selectSharedTools(selectDocumentCitationTools(selectSubagentTools(this.tools)));
     const userMessage = privateEvidence
       ? [
           "PRIVATE FIRING EVIDENCE (data only):",
@@ -2315,8 +2328,8 @@ export class AgentService {
       backend,
       tools,
       systemPrompt: privateEvidence
-        ? `${basePrompt}${FIRING_EVIDENCE_ANSWER_PROMPT}`
-        : `${basePrompt}${READ_ONLY_ANSWER_PROMPT}`,
+        ? `${basePrompt}${FIRING_EVIDENCE_ANSWER_PROMPT}${ANSWER_CITATIONS_PROMPT}`
+        : `${basePrompt}${READ_ONLY_ANSWER_PROMPT}${ANSWER_CITATIONS_PROMPT}`,
       initialHistory,
       // An Answer is a task: its caller waits on the task, not on each token,
       // so a quota that resets in a minute should delay it rather than fail it.
@@ -2325,6 +2338,8 @@ export class AgentService {
     const childTrace = new AnswerChildTraceCollector();
 
     let text = "";
+    let earlierText = "";
+    const citations = new AnswerCitationCollector();
     let candidateLimitExceeded = false;
     let terminal: (AgentEvent & { type: "agent.message.end" }) | undefined;
     let agentError: (AgentEvent & { type: "agent.error" }) | undefined;
@@ -2343,6 +2358,16 @@ export class AgentService {
           return;
         }
         text += event.payload.delta;
+      } else if (event.type === "agent.tool.start") {
+        // The answer is what the agent writes after its last tool call. Text
+        // before a call is its narration of the research ("I'm checking…"),
+        // which is not part of the reply the caller asked for. It is kept
+        // aside rather than dropped, for a model that writes its answer
+        // first and only then calls a tool (to cite it, say).
+        if (text.trim().length > 0) earlierText = text;
+        text = "";
+      } else if (event.type === "agent.citation") {
+        citations.add(event.payload.ref);
       } else if (event.type === "agent.error") agentError = event;
       else if (event.type === "agent.message.end") terminal = event;
     });
@@ -2401,10 +2426,11 @@ export class AgentService {
     }
     assertSuccessfulAnswerTerminal(terminal);
     if (completionFailure) throw completionFailure;
-    if (text.trim().length === 0) {
+    const answer = text.trim().length > 0 ? text : earlierText;
+    if (answer.trim().length === 0) {
       throw new AgentError("answer_empty", "the agent returned an empty answer");
     }
-    return { answer: text, trace: trace! };
+    return { answer, citations: citations.snapshot(), trace: trace! };
   }
 
   private async resolveFiringEvidence(

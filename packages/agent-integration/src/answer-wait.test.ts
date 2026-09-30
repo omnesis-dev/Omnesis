@@ -205,7 +205,7 @@ describe("requestFiringAnswer", () => {
     const http = poster(async () => RELEASED);
     await requestFiringAnswer(http, { endpoint: ENDPOINT, question: QUESTION });
     expect(http.postJson).toHaveBeenCalledWith(
-      ENDPOINT,
+      `${ENDPOINT}?citations=true`,
       {
         question: QUESTION,
         clientRequestId: firingAnswerRequestId({ endpoint: ENDPOINT, question: QUESTION }),
@@ -530,7 +530,58 @@ describe("describeAnswerOutcome", () => {
 
   test("adds nothing to a plain release", () => {
     expect(describeAnswerOutcome(RELEASED)).toBeNull();
+    expect(describeAnswerOutcome({ ...RELEASED, citations: [] })).toBeNull();
     expect(describeAnswerOutcome(null)).toBeNull();
     expect(describeAnswerOutcome("released")).toBeNull();
+  });
+
+  test("lists a released answer's citations with their links", () => {
+    const note = describeAnswerOutcome({
+      ...RELEASED,
+      citations: [
+        {
+          documentId: "doc_fictional_budget",
+          sourceType: "gmail",
+          title: "Q4 budget review",
+          timestamp: "2026-03-14T09:30:00.000Z",
+          sourceUrl: "https://mail.example.com/thread/fictional-budget",
+          appUrl: "example-mail://thread/fictional-budget",
+        },
+        { documentId: "doc_fictional_note", sourceType: "notes" },
+      ],
+    });
+    expect(note).toBe(
+      [
+        "Sources:",
+        "1. Q4 budget review · gmail · 2026-03-14T09:30:00.000Z",
+        "   Link: https://mail.example.com/thread/fictional-budget",
+        "   App link: example-mail://thread/fictional-budget",
+        "2. Untitled · notes",
+      ].join("\n"),
+    );
+  });
+
+  test("keeps the reduction note ahead of a reduced answer's citations", () => {
+    const note = describeAnswerOutcome({
+      status: "released_with_reductions",
+      citations: [{ documentId: "doc_fictional_note", sourceType: "notes" }],
+    });
+    expect(note).toMatch(/^Omnesis released this answer with some detail removed/);
+    expect(note).toContain("Sources:\n1. Untitled · notes");
+  });
+
+  test("renders no citations from a malformed list", () => {
+    expect(
+      describeAnswerOutcome({
+        ...RELEASED,
+        citations: [{ documentId: "doc_fictional_note", sourceType: "notes", extra: "x" }],
+      }),
+    ).toBeNull();
+    expect(
+      describeAnswerOutcome({
+        status: "denied",
+        citations: [{ documentId: "doc_fictional_note", sourceType: "notes" }],
+      }),
+    ).not.toContain("Sources:");
   });
 });

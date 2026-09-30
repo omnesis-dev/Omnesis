@@ -52,6 +52,40 @@ describe("Codex runtime update UI", () => {
     else globalThis.window = originalWindow;
   });
 
+  it("copies the login code and confirms successful clipboard access", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    vi.useFakeTimers();
+    try {
+      await act(async () => render(h(CodexConfigModal, {
+        overview,
+        loginFlow: { status: "pending", userCode: "ABCD-EFGH", verificationUri: "https://example.com/login" },
+      }), host));
+      const button = host.querySelector('button[aria-label="Copy login code"]');
+      expect(button?.parentElement?.textContent).toContain("ABCD-EFGH");
+      await act(async () => button.click());
+      expect(writeText).toHaveBeenCalledWith("ABCD-EFGH");
+      expect(button.getAttribute("aria-label")).toBe("Copied");
+      await act(async () => vi.advanceTimersByTime(1500));
+      expect(button.getAttribute("aria-label")).toBe("Copy login code");
+      writeText.mockRejectedValue(new Error("Clipboard denied"));
+      await act(async () => button.click());
+      expect(button.getAttribute("aria-label")).toBe("Copy login code");
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("does not offer to copy a login code before it arrives", async () => {
+    await act(async () => render(h(CodexConfigModal, {
+      overview,
+      loginFlow: { status: "pending" },
+    }), host));
+    expect(host.textContent).toContain("Code pending…");
+    expect(host.querySelector('button[aria-label="Copy login code"]')).toBeNull();
+  });
+
   it("maps each plan state to the intended action", () => {
     expect(codexRuntimeUpdatePresentation({ plan })).toMatchObject({ label: "Update available", action: "update" });
     expect(codexRuntimeUpdatePresentation({ plan: { ...plan, state: "repair-needed", action: "repair" } })).toMatchObject({ label: "Repair needed", action: "repair" });

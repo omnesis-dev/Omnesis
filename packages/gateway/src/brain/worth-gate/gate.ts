@@ -26,13 +26,8 @@
  * earlier answer instead of paying for a second call.
  */
 
-import {
-  canonicalJson,
-  type DecisionCapability,
-  type DecisionRequest,
-  type Logger,
-} from "@omnesis/core";
 import { documentsMetadataCodec } from "../../data/json-columns.js";
+import { askScore, raceAbort, type ScoreJudgement } from "../decision-call.js";
 import { resolveContainingDocument } from "../../domain/LinkGraphService.js";
 import {
   parseCognitionBootstrapRunPayload,
@@ -49,37 +44,13 @@ import {
   EMAIL_WORTH_THRESHOLD,
   WORTH_GATED_DOCUMENT_TYPE,
   WORTH_GATE_RUBRIC_VERSION,
-  WORTH_GATE_SPEND_MECHANISM,
   emailWorthState,
 } from "./rubric.js";
+import type { DecisionCapability, Logger } from "@omnesis/core";
 import type { ClaimedCognitionRun } from "../storage/types.js";
-import type { WriteGate } from "../../write-gate.js";
 import type Database from "better-sqlite3";
 
 type Db = Database.Database;
-
-/**
- * Record one decision's tokens under the worth-gate mechanism. A decision is
- * not an agent run: its tokens count toward the daily token budget, never the
- * daily run budget.
- */
-export function recordWorthGateSpend(
-  writeGate: Pick<WriteGate, "recordCognitionSpend">,
-  day: string,
-  modelId: string,
-  inputTokens: number,
-): Promise<void> {
-  return writeGate.recordCognitionSpend(
-    day,
-    WORTH_GATE_SPEND_MECHANISM,
-    modelId,
-    { promptTokens: inputTokens, completionTokens: 0 },
-    { countRun: false },
-  );
-}
-
-/** Per-decision timeout; a slower model is treated as unavailable. */
-const DECISION_TIMEOUT_MS = 45_000;
 
 export interface WorthGateDeps {
   /** Read handle; the gate never writes directly. */
@@ -110,23 +81,13 @@ interface DocRow {
   metadata: string;
 }
 
-interface Judgement {
-  modelId: string;
-  requestJson: string;
-  responseJson: string | null;
-  score: number | null;
-  error: string | null;
-  latencyMs: number;
-  inputTokens: number | null;
-}
-
 export class WorthGate {
   /**
    * Judgements in flight, keyed by subject and content. With several drainer
    * workers, an email and its attachment can be claimed together; both then
    * share one decision-model call instead of paying for two.
    */
-  private readonly inFlight = new Map<string, Promise<Judgement>>();
+  private readonly inFlight = new Map<string, Promise<ScoreJudgement>>();
 
   constructor(private readonly deps: WorthGateDeps) {}
 
@@ -234,9 +195,14 @@ export class WorthGate {
     // records the same answer without claiming a second call's cost.
     const shared = pending !== undefined;
     if (!pending) {
-      pending = this.judge(decision, { state, questions: EMAIL_WORTH_QUESTIONS }).finally(() =>
-        this.inFlight.delete(key),
-      );
+      // Bounded by its own timeout rather than any one run's signal, because
+      // several runs may be waiting on it.
+      pending = askScore(
+        decision,
+        { state, questions: EMAIL_WORTH_QUESTIONS },
+        EMAIL_WORTH_QUESTION_ID,
+        { recordSpend: this.deps.recordSpend, log: this.deps.log },
+      ).finally(() => this.inFlight.delete(key));
       this.inFlight.set(key, pending);
     }
     // Each run may abandon the shared call on its own abort; the call itself
@@ -268,45 +234,6 @@ export class WorthGate {
     };
   }
 
-  /**
-   * One decision-model call, bounded by its own timeout rather than by any one
-   * run's signal, because several runs may be waiting on it. Never throws: a
-   * model failure becomes an unavailable judgement.
-   */
-  private async judge(decision: DecisionCapability, request: DecisionRequest): Promise<Judgement> {
-    const requestJson = canonicalJson({ model: decision.modelId, ...request });
-    const started = performance.now();
-    try {
-      const result = await decision.decide(request, {
-        signal: AbortSignal.timeout(DECISION_TIMEOUT_MS),
-      });
-      const answer = result.answers[EMAIL_WORTH_QUESTION_ID];
-      if (!answer || answer.type !== "score") throw new Error("decision reply has no worth score");
-      if (result.inputTokens) await this.deps.recordSpend(result.model, result.inputTokens);
-      return {
-        modelId: result.model,
-        requestJson,
-        responseJson: JSON.stringify({ model: result.model, answers: result.answers }),
-        score: answer.score,
-        error: null,
-        latencyMs: Math.round(performance.now() - started),
-        inputTokens: result.inputTokens ?? null,
-      };
-    } catch (err) {
-      const error = (err instanceof Error ? err.message : String(err)).slice(0, 500);
-      this.deps.log.warn(`worth gate: decision model unavailable (${error})`);
-      return {
-        modelId: decision.modelId,
-        requestJson,
-        responseJson: null,
-        score: null,
-        error,
-        latencyMs: Math.round(performance.now() - started),
-        inputTokens: null,
-      };
-    }
-  }
-
   private target(run: ClaimedCognitionRun): { docId: string; lane: "data" | "bootstrap" } | null {
     if (run.kind === "data") {
       const payload = parseCognitionDataRunPayload(run.payload);
@@ -331,26 +258,6 @@ export class WorthGate {
         .get(id) ?? null
     );
   }
-}
-
-/** Resolve with `promise`, or reject as soon as `signal` aborts. */
-function raceAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
-  if (!signal) return promise;
-  if (signal.aborted) return Promise.reject(signal.reason);
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = (): void => reject(signal.reason);
-    signal.addEventListener("abort", onAbort, { once: true });
-    promise.then(
-      (value) => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(value);
-      },
-      (err) => {
-        signal.removeEventListener("abort", onAbort);
-        reject(err);
-      },
-    );
-  });
 }
 
 function verdictFor(score: number): "pass" | "skip" {

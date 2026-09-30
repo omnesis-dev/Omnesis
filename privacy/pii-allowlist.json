@@ -6975,6 +6975,7 @@
     {
       "value": "Maya Reeves",
       "paths": [
+        "packages/gateway/src/brain/record-check/record-check.test.ts",
         "evals/universes/default/cast.json",
         "evals/universes/japan-trip/cast.json",
         "evals/universes/japan-trip/sources/gmail/messages.json",
@@ -9075,6 +9076,9 @@
     {
       "value": "Studio Northstar",
       "paths": [
+        "packages/collector/src/e2e/brain-record-check.e2e.test.ts",
+        "packages/gateway/portal/js/views/cognition-decisions.test.ts",
+        "packages/gateway/src/brain/record-check/record-check.test.ts",
         "evals/universes/default/agent-demos/temporal-recall.jsonl",
         "evals/universes/default/sources/core-location-visits/visits.json",
         "evals/universes/default/sources/onedrive/items.json",
@@ -9836,6 +9840,7 @@
         "evals/universes/default/agent-demos/person-catchup.jsonl",
         "evals/universes/default/sources/gmail/messages.json",
         "packages/collector/src/e2e/adjacency-retrieval.e2e.test.ts",
+        "packages/collector/src/e2e/answer-boundary.e2e.test.ts",
         "packages/collector/src/e2e/trail-graph.e2e.test.ts",
         "packages/core/src/agent-protocol.test.ts",
         "packages/gateway/src/agent/ports.test.ts"

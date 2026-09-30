@@ -8,6 +8,7 @@ import {
   IntegrationHttpError,
   type GatewayRequestOptions,
 } from "./http.js";
+import { formatAnswerCitations } from "./answer-citations.js";
 
 /**
  * Asking Omnesis a question runs a full agent turn behind the privacy
@@ -332,7 +333,10 @@ export function requestFiringAnswer(
   return waitForAnswer(
     http,
     {
-      endpoint: request.endpoint,
+      // The documents a released answer relies on reach the model beside
+      // the answer text. The opt-in is a query parameter so a gateway that
+      // predates citations, whose body schema is strict, still answers.
+      endpoint: `${request.endpoint}?citations=true`,
       requestId: firingAnswerRequestId(request),
       body: {
         question: request.question,
@@ -381,12 +385,27 @@ export function requestIntegrationAnswer(
 }
 
 /**
- * What a non-released outcome means, in words an agent can relay. A held or
- * denied answer is a decision the privacy boundary made, not a fault — an
- * agent that reports it as a failure tells the user their watch is broken
- * when in fact it is waiting on them.
+ * What an outcome means, in words an agent can relay. A held or denied answer
+ * is a decision the privacy boundary made, not a fault — an agent that
+ * reports it as a failure tells the user their watch is broken when in fact
+ * it is waiting on them. A released answer is described by the documents it
+ * cites, when it cites any, so the agent can point the user at them.
  */
 export function describeAnswerOutcome(response: unknown): string | null {
+  const status = describeAnswerStatus(response);
+  const released =
+    isRecord(response) &&
+    (response.status === "released" || response.status === "released_with_reductions");
+  const sources = released ? formatAnswerCitations(response) : null;
+  if (status && sources) return `${status}\n\n${sources}`;
+  return status ?? sources;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function describeAnswerStatus(response: unknown): string | null {
   if (!response || typeof response !== "object" || Array.isArray(response)) return null;
   const record = response as Record<string, unknown>;
   switch (record.status) {

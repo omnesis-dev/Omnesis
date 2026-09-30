@@ -108,6 +108,9 @@ MCP_PROTOCOL_VERSION_META_KEY = "io.modelcontextprotocol/protocolVersion"
 MCP_CLIENT_CAPABILITIES_META_KEY = "io.modelcontextprotocol/clientCapabilities"
 MCP_NATIVE_CONVERSATION_META_KEY = "dev.omnesis/nativeConversationId"
 MCP_ANSWER_ERROR_META_KEY = "dev.omnesis/error"
+# Declares that this client parses `citations` on a released Answer result;
+# the gateway withholds them from a bound integration that does not send it.
+MCP_ANSWER_CITATIONS_META_KEY = "dev.omnesis/answerCitations"
 PAGE_SIZE = 500
 MAX_FRAME_BYTES = 1024 * 1024
 MAX_SAFE_INTEGER = 9_007_199_254_740_991
@@ -760,11 +763,13 @@ def _answer_still_running(error: BaseException) -> bool:
 
 
 def _describe_answer_outcome(response: Any) -> Optional[str]:
-    """What a non-released outcome means, in words an agent can relay.
+    """What an outcome means, in words an agent can relay.
 
     A held or denied answer is a decision the privacy boundary made, not a
     fault — an agent that reports it as a failure tells the user their watch is
-    broken when in fact it is waiting on them.
+    broken when in fact it is waiting on them. A released answer is described
+    by the documents it cites, when it cites any, so the agent can point the
+    user at them.
     """
     if not isinstance(response, dict):
         return None
@@ -798,11 +803,104 @@ def _describe_answer_outcome(response: Any) -> Optional[str]:
             "the user Omnesis kept that detail private."
         )
     if status == "released_with_reductions":
-        return (
+        note = (
             "Omnesis released this answer with some detail removed under the "
             "user's privacy policy."
         )
+        sources = _format_answer_citations(response)
+        return f"{note}\n\n{sources}" if sources else note
+    if status == "released":
+        return _format_answer_citations(response)
     return None
+
+
+# The most citations the gateway releases beside one answer, and the bounds it
+# puts on each field. The timestamp bound is a generous one: the gateway emits
+# an ISO 8601 instant and sets no limit of its own.
+_MAX_ANSWER_CITATIONS = 32
+_CITATION_FIELD_LIMITS = {
+    "documentId": 200,
+    "sourceType": 100,
+    "title": 300,
+    "timestamp": 64,
+    "sourceUrl": 2_048,
+    "appUrl": 2_048,
+}
+_CITATION_REQUIRED_FIELDS = {"documentId", "sourceType"}
+
+
+def _valid_citation_timestamp(value: str) -> bool:
+    """An ISO 8601 date-time carrying its offset, as the gateway emits it."""
+    if "T" not in value:
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None
+
+
+def _validate_answer_citations(value: Any) -> None:
+    """Accept only the public citation shape; unknown fields fail closed."""
+    if not isinstance(value, list) or len(value) > _MAX_ANSWER_CITATIONS:
+        raise McpProtocolError("Omnesis returned invalid Answer citations")
+    for citation in value:
+        if (
+            not isinstance(citation, dict)
+            or not _CITATION_REQUIRED_FIELDS <= set(citation)
+            or not set(citation) <= set(_CITATION_FIELD_LIMITS)
+        ):
+            raise McpProtocolError("Omnesis returned an invalid Answer citation")
+        for key, item in citation.items():
+            if (
+                not isinstance(item, str)
+                or not item
+                or len(item) > _CITATION_FIELD_LIMITS[key]
+            ):
+                raise McpProtocolError("Omnesis returned an invalid Answer citation")
+        timestamp = citation.get("timestamp")
+        if timestamp is not None and not _valid_citation_timestamp(timestamp):
+            raise McpProtocolError("Omnesis returned an invalid Answer citation")
+
+
+def _format_answer_citations(response: Dict[str, Any]) -> Optional[str]:
+    """The citations of a released answer, one numbered line per document.
+
+    Each line reads title · source · date, followed by the document's links.
+    A response without well-formed citations renders nothing.
+    """
+    citations = response.get("citations")
+    if not citations:
+        return None
+    try:
+        _validate_answer_citations(citations)
+    except McpProtocolError:
+        return None
+    lines = ["Sources:"]
+    for index, citation in enumerate(citations, start=1):
+        label = " · ".join(
+            _single_line(part)
+            for part in (
+                citation.get("title") or "Untitled",
+                citation["sourceType"],
+                citation.get("timestamp"),
+            )
+            if part
+        )
+        lines.append(f"{index}. {label}")
+        if citation.get("sourceUrl"):
+            lines.append(f"   Link: {_single_line(citation['sourceUrl'])}")
+        if citation.get("appUrl"):
+            lines.append(f"   App link: {_single_line(citation['appUrl'])}")
+    return "\n".join(lines)
+
+
+_CONTROL_OR_LINE_BREAK = re.compile("[\u0000-\u001f\u007f-\u009f\u2028\u2029]+")
+
+
+def _single_line(value: str) -> str:
+    """Document text on one line, so a title cannot fake further list lines."""
+    return _CONTROL_OR_LINE_BREAK.sub(" ", value).strip()
 
 
 def _format_answer_completion(answer: Dict[str, Any]) -> str:
@@ -810,7 +908,8 @@ def _format_answer_completion(answer: Dict[str, Any]) -> str:
     if status in {"released", "released_with_reductions"}:
         text = answer.get("answer")
         if isinstance(text, str) and text:
-            return text
+            sources = _format_answer_citations(answer)
+            return f"{text}\n\n{sources}" if sources else text
     elif status == "denied":
         reason = answer.get("reason")
         if reason == "expired":
@@ -840,6 +939,9 @@ def _validate_answer_response(value: Any) -> Dict[str, Any]:
         raise McpProtocolError("Omnesis MCP result has no structured answer")
     status = value.get("status")
     expected = set(_ANSWER_BASE_KEYS)
+    if status in {"released", "released_with_reductions"} and "citations" in value:
+        _validate_answer_citations(value["citations"])
+        expected.add("citations")
     if status == "released":
         expected.update({"releaseId", "answer"})
     elif status == "released_with_reductions":
@@ -3957,7 +4059,11 @@ class OmnesisAdapter(BasePlatformAdapter):
             "nativeConversationId": native_conversation_id,
         }
         try:
-            answer = self._await_answer(endpoint, token, body)
+            # The documents a released answer relies on reach the model beside
+            # the answer text. The opt-in is a query parameter so a gateway
+            # that predates citations, whose body schema is strict, still
+            # answers.
+            answer = self._await_answer(f"{endpoint}?citations=true", token, body)
         except AnswerPendingError as pending:
             return json.dumps({"pending": True, "agentGuidance": str(pending)})
         except Exception:
@@ -4239,6 +4345,7 @@ class OmnesisAdapter(BasePlatformAdapter):
         request_meta: Dict[str, Any] = {
             MCP_PROTOCOL_VERSION_META_KEY: MCP_PROTOCOL_VERSION,
             MCP_CLIENT_CAPABILITIES_META_KEY: {},
+            MCP_ANSWER_CITATIONS_META_KEY: True,
         }
         if metadata is not None:
             if set(metadata) != {MCP_NATIVE_CONVERSATION_META_KEY}:

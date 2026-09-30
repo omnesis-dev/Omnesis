@@ -20,7 +20,7 @@ vi.mock("../utils.js", async (importOriginal) => {
   };
 });
 
-import { EXIT_AUTH, EXIT_GATEWAY_ERROR, EXIT_USER_ERROR } from "../utils.js";
+import { EXIT_AUTH, EXIT_GATEWAY_ERROR, EXIT_USER_ERROR, formatDateShort } from "../utils.js";
 import {
   answerCommand,
   DEFAULT_WAIT_TIMEOUT_S,
@@ -29,6 +29,7 @@ import {
   assertNotInsideAgentHarness,
   WAIT_POLL_INTERVAL_MS,
 } from "./answer.js";
+import type { AnswerResponse } from "@omnesis/types/privacy";
 
 function response(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -96,7 +97,7 @@ describe("omnesis answer", () => {
     await run({ question: "  What changed?  " });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://localhost:7600/answer",
+      "https://localhost:7600/answer?citations=true",
       expect.objectContaining({ method: "POST", body: expect.any(String) }),
     );
     expect(sentBody()).toEqual({
@@ -128,7 +129,7 @@ describe("omnesis answer", () => {
     await run({ task: "task_example", json: true });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://localhost:7600/answer/tasks/task_example",
+      "https://localhost:7600/answer/tasks/task_example?citations=true",
       expect.any(Object),
     );
   });
@@ -204,6 +205,71 @@ describe("omnesis answer", () => {
         false,
       ),
     ).toContain("A concise answer.\n\nWorkflow: wf_example\nConversation: conv_example");
+  });
+
+  it("prints no Sources section when nothing was cited", () => {
+    const base = {
+      status: "released",
+      workflowId: "wf_example",
+      conversationId: "conv_example",
+      taskId: "task_example",
+      releaseId: "release_example",
+      answer: "A concise answer.",
+    } as const;
+    expect(formatAnswer(base, false)).not.toContain("Sources");
+    expect(formatAnswer({ ...base, citations: [] }, false)).not.toContain("Sources");
+  });
+
+  it("lists released citations under the answer with their links", () => {
+    const text = formatAnswer(
+      {
+        status: "released_with_reductions",
+        workflowId: "wf_example",
+        conversationId: "conv_example",
+        taskId: "task_example",
+        releaseId: "release_example",
+        answer: "The budget was approved.",
+        reductions: ["removed third-party detail"],
+        citations: [
+          {
+            documentId: "doc_budget",
+            sourceType: "gmail",
+            title: "Q4 budget review",
+            timestamp: "2026-03-14T12:00:00.000Z",
+            sourceUrl: "https://mail.example.com/thread/budget",
+            appUrl: "example-mail://thread/budget",
+          },
+          { documentId: "doc_untitled", sourceType: "notes" },
+        ],
+      },
+      false,
+    );
+    expect(text).toContain(
+      [
+        "The budget was approved.",
+        "",
+        "Sources",
+        `1. Q4 budget review · gmail · ${formatDateShort("2026-03-14T12:00:00.000Z")}`,
+        "   Link: https://mail.example.com/thread/budget",
+        "   App link: example-mail://thread/budget",
+        "2. doc_untitled · notes",
+        "",
+        "Privacy: released with reductions (removed third-party detail)",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps citations in --json output", () => {
+    const result: AnswerResponse = {
+      status: "released",
+      workflowId: "wf_example",
+      conversationId: "conv_example",
+      taskId: "task_example",
+      releaseId: "release_example",
+      answer: "A concise answer.",
+      citations: [{ documentId: "doc_budget", sourceType: "gmail", title: "Q4 budget review" }],
+    };
+    expect(JSON.parse(formatAnswer(result, true))).toEqual(result);
   });
 
   it("does not print a held candidate when approval is required", () => {
@@ -303,7 +369,7 @@ describe("omnesis answer --task --wait", () => {
     await run({ question: "A fictional scheduled question", "no-approval": true, json: true });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://localhost:7600/answer",
+      "https://localhost:7600/answer?citations=true",
       expect.objectContaining({ body: expect.stringContaining('"approval":"never"') }),
     );
   });
@@ -396,7 +462,7 @@ describe("asking from inside an agent harness", () => {
     try {
       await run({ task: "task_example", json: true });
       expect(fetchMock).toHaveBeenCalledWith(
-        "https://localhost:7600/answer/tasks/task_example",
+        "https://localhost:7600/answer/tasks/task_example?citations=true",
         expect.any(Object),
       );
     } finally {

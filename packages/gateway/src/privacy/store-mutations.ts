@@ -7,6 +7,7 @@ import { assertNever } from "@omnesis/core";
 
 import { appendAnswerAuditEvent, auditDisplay } from "./store-audit.js";
 import { detectCredentialHardStop } from "./reviewer.js";
+import { credentialScanText, parseStoredCitations } from "./answer-citations.js";
 
 import {
   advanceWorkflowDisclosure,
@@ -320,7 +321,15 @@ export function completeAnswerTask(db: PrivacyDb, input: CompleteAnswerTaskInput
           now: input.now,
           expectedRevision: input.outcome.expectedDisclosureRevision,
         });
-        insertRelease(db, task, input.outcome.releaseId, input.outcome.answer, [], input.now);
+        insertRelease(
+          db,
+          task,
+          input.outcome.releaseId,
+          input.outcome.answer,
+          [],
+          input.outcome.citations,
+          input.now,
+        );
         appendResolvedTranscript(db, task, input.outcome.answer, input.now);
         db.prepare(
           `UPDATE answer_tasks
@@ -339,12 +348,13 @@ export function completeAnswerTask(db: PrivacyDb, input: CompleteAnswerTaskInput
             status: "released",
             text: preview(input.outcome.answer),
             releaseId: input.outcome.releaseId,
-            digest: digestCandidate(input.outcome.answer),
+            digest: digestCandidate(input.outcome.answer, input.outcome.citations),
           }),
           payload: {
             answer: input.outcome.answer,
+            citations: input.outcome.citations,
             releaseId: input.outcome.releaseId,
-            answerDigest: digestCandidate(input.outcome.answer),
+            answerDigest: digestCandidate(input.outcome.answer, input.outcome.citations),
           },
           now: input.now,
         });
@@ -370,6 +380,7 @@ export function completeAnswerTask(db: PrivacyDb, input: CompleteAnswerTaskInput
           input.outcome.releaseId,
           input.outcome.answer,
           input.outcome.reductions,
+          input.outcome.citations,
           input.now,
         );
         appendResolvedTranscript(db, task, input.outcome.answer, input.now);
@@ -397,13 +408,14 @@ export function completeAnswerTask(db: PrivacyDb, input: CompleteAnswerTaskInput
             status: "released_with_reductions",
             text: preview(input.outcome.answer),
             releaseId: input.outcome.releaseId,
-            digest: digestCandidate(input.outcome.answer),
+            digest: digestCandidate(input.outcome.answer, input.outcome.citations),
             reductions: input.outcome.reductions,
           }),
           payload: {
             answer: input.outcome.answer,
+            citations: input.outcome.citations,
             releaseId: input.outcome.releaseId,
-            answerDigest: digestCandidate(input.outcome.answer),
+            answerDigest: digestCandidate(input.outcome.answer, input.outcome.citations),
             reductions: input.outcome.reductions,
           },
           now: input.now,
@@ -415,14 +427,15 @@ export function completeAnswerTask(db: PrivacyDb, input: CompleteAnswerTaskInput
         const reductions = input.outcome.reductions ?? [];
         db.prepare(
           `INSERT INTO answer_approvals (
-             id, task_id, candidate_digest, candidate_answer, policy_revision,
-             release_status, reductions_json, status, created_at, expires_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+             id, task_id, candidate_digest, candidate_answer, candidate_citations_json,
+             policy_revision, release_status, reductions_json, status, created_at, expires_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
         ).run(
           input.outcome.approvalId,
           task.id,
           input.outcome.candidateDigest,
           input.outcome.candidateAnswer,
+          JSON.stringify(input.outcome.candidateCitations),
           input.review.policyRevision,
           releaseStatus,
           JSON.stringify(reductions),
@@ -606,14 +619,17 @@ export function resolvePrivacyApproval(
     }
 
     const candidate = joined.approval_candidate_answer;
-    if (!candidate || digestCandidate(candidate) !== joined.candidate_digest) {
+    const citations = parseStoredCitations(joined.approval_candidate_citations_json);
+    if (!candidate || digestCandidate(candidate, citations) !== joined.candidate_digest) {
       throw new AnswerStoreError(
         "task_state_conflict",
         "Held answer no longer matches the approval record.",
       );
     }
     const approvalReview = parseReview(joined.review_json, joined.policy_revision);
-    const hardStop = detectCredentialHardStop(`${joined.question}\n${candidate}`);
+    const hardStop = detectCredentialHardStop(
+      `${joined.question}\n${credentialScanText(candidate, citations)}`,
+    );
     const credentialApprovalAuthorized =
       hardStop !== null &&
       approvalReview.credentialApprovalRequired === true &&
@@ -661,7 +677,7 @@ export function resolvePrivacyApproval(
       answerCharacters: candidate.length,
       now: input.now,
     });
-    insertRelease(db, joined, input.releaseId, candidate, reductions, input.now);
+    insertRelease(db, joined, input.releaseId, candidate, reductions, citations, input.now);
     appendResolvedTranscript(db, joined, candidate, input.now);
     db.prepare(
       "UPDATE answer_approvals SET status = 'approved', resolved_at = ? WHERE id = ? AND status = 'pending'",
@@ -694,12 +710,13 @@ export function resolvePrivacyApproval(
         text: preview(candidate),
         approvalId: input.approvalId,
         releaseId: input.releaseId,
-        digest: digestCandidate(candidate),
+        digest: digestCandidate(candidate, citations),
         reductions,
       }),
       payload: {
         answer: candidate,
-        answerDigest: digestCandidate(candidate),
+        citations,
+        answerDigest: digestCandidate(candidate, citations),
         approvalId: input.approvalId,
         releaseId: input.releaseId,
         reductions,
