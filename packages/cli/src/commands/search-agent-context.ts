@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { buildResultUrl, linkify } from "../utils.js";
-import type { buildCliFx} from "../utils.js";
+import type { buildCliFx } from "../utils.js";
 import type { ToolResult } from "@omnesis/core";
 
 export type AgentSearchResult = Extract<ToolResult, { kind: "search.results" }>;

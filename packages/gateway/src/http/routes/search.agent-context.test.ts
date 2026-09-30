@@ -207,7 +207,17 @@ describe("agent context restricted identity and cancellation", () => {
         credentialId: "example",
         oauthClientId: "example",
         executionDeviceId: null,
-        capabilities: ["direct"],
+        capabilities: [
+          {
+            capability: "direct",
+            sourceMode: "all",
+            sourceIds: [],
+            releaseMode: null,
+            policyFamilyId: null,
+            policyRevision: null,
+            privacyPolicy: null,
+          },
+        ],
         expiresAt: Date.now() + 60_000,
       },
       { search },

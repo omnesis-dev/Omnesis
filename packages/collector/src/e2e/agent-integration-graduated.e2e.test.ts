@@ -53,6 +53,15 @@ const RELEASED_ANSWER =
   "The Halden Press order is booked for delivery on Thursday 14 May.\n" +
   "The courier is Ridgeway Logistics.\n" +
   "Someone at Halden Press is expecting the pallet at the loading bay.";
+function expectReleasedAnswer(response: unknown): void {
+  expect(response).toMatchObject({ answer: RELEASED_ANSWER });
+  expect(response).toHaveProperty("citations", [
+    expect.objectContaining({ documentId: expect.any(String), sourceType: "gmail" }),
+  ]);
+  // The replay reviewer releases the citation while withholding its private message link.
+  expect(response).not.toHaveProperty("citations.0.sourceUrl");
+}
+
 const repositoryRoot = resolve(import.meta.dirname, "../../../..");
 const run = promisify(execFile);
 const DAY_MS = 24 * 60 * 60_000;
@@ -75,6 +84,8 @@ describe("managed agent integration on a gateway without Watches", () => {
       extraInference: { assignments: { "privacy-reviewer": "replay" } },
     });
     await harness.start();
+    // Seed the document annotated by the replay before its citation is privacy-reviewed.
+    await harness.triggerSyncAndWait("gmail:john.smith@example.com");
     await assertGatewayHasNoWatches();
     home = mkdtempSync(join(tmpdir(), "omnesis-graduated-openclaw-"));
     cliConfig = mkdtempSync(join(tmpdir(), "omnesis-graduated-cli-"));
@@ -167,7 +178,7 @@ describe("managed agent integration on a gateway without Watches", () => {
     expect(ingested.status, await ingested.clone().text()).toBe(202);
 
     const answered = await askColdPlugin();
-    expect(answered).toMatchObject({ answer: RELEASED_ANSWER });
+    expectReleasedAnswer(answered);
   }, 120_000);
 
   test("the start-time keepalive renews a ticket that is nearly spent", async () => {
@@ -214,7 +225,7 @@ describe("managed agent integration on a gateway without Watches", () => {
     });
 
     const answered = await askColdPlugin();
-    expect(answered).toMatchObject({ answer: RELEASED_ANSWER });
+    expectReleasedAnswer(answered);
 
     const after = readCredentials();
     expect(after.oauth.tokens.refresh_token).not.toBe(before.oauth.tokens.refresh_token);
