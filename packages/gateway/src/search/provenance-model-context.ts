@@ -69,18 +69,15 @@ export function provenanceModelContext(
     for (const path of paths) {
       if (!path.relations || path.relations.length !== path.edges.length) continue;
       const first = path.documentIds[0];
-      let node = roots.get(first);
-      if (!node) {
-        node = { id: first, children: new Map() };
-        roots.set(first, node);
-      }
+      let node: Node = roots.get(first) ?? { id: first, children: new Map() };
+      roots.set(first, node);
       for (let index = 0; index < path.edges.length; index++) {
         const id = path.documentIds[index + 1];
         if (id === path.documentIds[index]) continue;
         reference(id);
         const relation = path.relations[index];
         const key = JSON.stringify([id, path.edges[index], relation]);
-        let child = node.children.get(key);
+        let child: Node | undefined = node.children.get(key);
         if (!child) {
           child = { id, relation, children: new Map() };
           node.children.set(key, child);
