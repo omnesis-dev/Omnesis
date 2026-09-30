@@ -5,6 +5,7 @@
       "entry": [
         "scripts/*.{ts,mjs}",
         "scripts/release/*.mjs",
+        "scripts/blog/*.{mjs,ts}",
         "bench/*.ts",
         "evals/universes/*/_build/*.mjs",
         "evals/universes/*/agent-demos/_build/*.mjs"

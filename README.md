@@ -25,7 +25,7 @@ Omnesis also connects what it indexes. A **people graph** resolves every email a
 
 On top sits a built-in **agent**, in the web portal and the iOS and Android apps, that answers questions from your data with citations. It is sandboxed: every tool it holds only reads. Or bring **your own agent** — Claude, ChatGPT, Codex, [OpenClaw](https://openclaw.ai/), [Hermes](https://hermes-agent.nousresearch.com/) — over MCP. Each connection is approved by you and limited to the sources and permissions you choose, and answers can pass through a privacy reviewer before they leave.
 
-**Docs:** [omnesis.dev/docs](https://omnesis.dev/docs) · **See it in action:** [omnesis.dev/#demos](https://omnesis.dev/#demos)
+**Docs:** [omnesis.dev/docs](https://omnesis.dev/docs) · **Blog:** [omnesis.dev/blog](https://omnesis.dev/blog/) · **See it in action:** [omnesis.dev/#demos](https://omnesis.dev/#demos)
 
 <p align="center">
   <a href="https://omnesis.dev/#demos">

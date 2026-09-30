@@ -1,1 +1,6 @@
 README.md
+
+# Authoring sources and configuration are not public web assets.
+blog/posts/
+blog/giscus.json
+blog/README.md
