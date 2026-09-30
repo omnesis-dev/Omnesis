@@ -158,7 +158,7 @@ export class TranscribeService {
   async transcribe(
     audio: Uint8Array,
     mimeType: string,
-    opts?: { language?: string },
+    opts?: { language?: string; minTimeoutMs?: number },
   ): Promise<TranscriptionResult | null> {
     // Resolve/load the capability AND run the transcription inside the same
     // serialization fence. A model reassignment disposes the previous

@@ -34,7 +34,7 @@ let service: VoiceNoteService;
 let now: Date;
 let readiness: TranscriberReadiness;
 let transcripts: (TranscriptionResult | null)[];
-let calls: { mimeType: string; language?: string; bytes: number }[];
+let calls: { mimeType: string; language?: string; bytes: number; minTimeoutMs?: number }[];
 /** While set, a transcription waits until `release` is called. */
 let held: Promise<void> | null;
 let release: () => void;
@@ -96,7 +96,12 @@ beforeEach(() => {
     writeGate: gate,
     readDb: db,
     transcribe: async (bytes, mimeType, opts) => {
-      calls.push({ mimeType, language: opts?.language, bytes: bytes.byteLength });
+      calls.push({
+        mimeType,
+        language: opts?.language,
+        bytes: bytes.byteLength,
+        minTimeoutMs: opts?.minTimeoutMs,
+      });
       if (held) await held;
       return transcripts.length > 0 ? transcripts.shift()! : null;
     },
@@ -127,7 +132,9 @@ describe("VoiceNoteService", () => {
     release();
     await service.idle();
     expect(noteText(input.id)).toBe("Pick up the dry cleaning at five.");
-    expect(calls).toEqual([{ mimeType: "audio/mp4", language: "en", bytes: audio().byteLength }]);
+    expect(calls).toEqual([
+      { mimeType: "audio/mp4", language: "en", bytes: audio().byteLength, minTimeoutMs: 300_000 },
+    ]);
     expect(getPendingVoiceNote(db, input.id)).toBeNull();
   });
 
@@ -189,6 +196,18 @@ describe("VoiceNoteService", () => {
     expect(calls).toHaveLength(MAX_ATTEMPTS);
     expect(getPendingVoiceNote(db, input.id)).toBeNull();
     expect(noteText(input.id)).toBe("pick up the dry cleaning");
+  });
+
+  test("each retry allows the transcriber more time", async () => {
+    await service.accept(voiceNote());
+    await service.idle();
+    for (let attempt = 2; attempt <= 5; attempt++) {
+      advance(24 * 60 * 60 * 1000);
+      await pass();
+    }
+    expect(calls.map((call) => call.minTimeoutMs)).toEqual([
+      300_000, 600_000, 1_200_000, 1_800_000, 1_800_000,
+    ]);
   });
 
   test("a placeholder note that cannot be transcribed says so", async () => {

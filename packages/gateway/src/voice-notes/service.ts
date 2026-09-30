@@ -46,6 +46,12 @@ export const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const RETRY_DELAYS_MS = [60_000, 5 * 60_000, 30 * 60_000, 2 * 60 * 60_000, 12 * 60 * 60_000];
 /** How often a note is re-checked while no transcriber can run. */
 const UNAVAILABLE_RECHECK_MS = 30 * 60_000;
+/**
+ * The least time a transcription may take before it is given up, per attempt.
+ * Nobody waits on a voice note, so a slow host gets far more than a backend's
+ * own deadline, and more again on each retry.
+ */
+const PATIENCE_MS = [5 * 60_000, 10 * 60_000, 20 * 60_000, 30 * 60_000];
 /** How often the loop looks for due notes when nothing wakes it sooner. */
 const POLL_INTERVAL_MS = 60_000;
 
@@ -68,7 +74,7 @@ export interface VoiceNoteServiceDeps {
   transcribe: (
     audio: Uint8Array,
     mimeType: string,
-    opts?: { language?: string },
+    opts?: { language?: string; minTimeoutMs?: number },
   ) => Promise<TranscriptionResult | null>;
   readiness: () => TranscriberReadiness;
   now?: () => Date;
@@ -189,11 +195,10 @@ export class VoiceNoteService {
 
     const audio = readPendingVoiceNoteAudio(this.deps.readDb, note.noteId);
     if (!audio) return;
-    const result = await this.deps.transcribe(
-      audio,
-      note.mimeType,
-      note.language ? { language: note.language } : undefined,
-    );
+    const result = await this.deps.transcribe(audio, note.mimeType, {
+      ...(note.language ? { language: note.language } : {}),
+      minTimeoutMs: PATIENCE_MS[Math.min(note.attempts, PATIENCE_MS.length - 1)],
+    });
     // The note may have been deleted while it was being transcribed; its row
     // went with it, and there is nothing left to update.
     if (!getPendingVoiceNote(this.deps.readDb, note.noteId)) return;
