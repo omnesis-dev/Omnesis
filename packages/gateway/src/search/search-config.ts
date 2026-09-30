@@ -166,7 +166,7 @@ export function resolveVectorConfig(config?: SearchConfig): Required<SearchVecto
 }
 
 export interface SearchConfig {
-  /** Default-off grouping and graph provenance for unrestricted agent searches. */
+  /** Default-on grouping and graph provenance for unrestricted agent searches. */
   v2?: Partial<SearchV2Config>;
   /** Fusion + limit tunables; see {@link DEFAULT_SEARCH_PARAMS}. */
   params?: Partial<SearchParams>;

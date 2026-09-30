@@ -31,4 +31,3 @@ it("retains the snippet length bound inside the quote", () => {
   render(h(ResultCard, { result: { documentId: "doc-example", chunkText: "a".repeat(400) } }), host);
   expect(host.querySelector("blockquote.result-snippet").textContent).toBe(`${"a".repeat(300)}...`);
 });
-

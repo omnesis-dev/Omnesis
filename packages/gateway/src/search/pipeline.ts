@@ -557,7 +557,7 @@ export class SearchPipeline {
     };
   }
 
-  /** Internal prompt gate; public search never opts into the agent projection. */
+  /** Internal enrichment flag; public search never opts into the agent projection. */
   get agentSearchV2Enabled(): boolean {
     return resolveSearchV2Config(this.searchConfig).enabled;
   }
