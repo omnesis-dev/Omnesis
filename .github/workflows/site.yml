@@ -53,10 +53,13 @@ jobs:
       - name: Install blog tooling
         run: npm ci --prefix scripts/blog --ignore-scripts --no-audit --no-fund
 
-      - name: Test and verify blog pages
-        run: |
-          npm run test:unit --prefix scripts/blog
-          npm run check --prefix scripts/blog
+      - name: Test blog builder
+        working-directory: scripts/blog
+        run: exec node node_modules/vitest/vitest.mjs run --config vitest.config.mjs
+
+      - name: Verify blog pages
+        working-directory: scripts/blog
+        run: exec node build.mjs --check
 
       - name: wrangler deploy --dry-run
         run: npx --yes "wrangler@${WRANGLER_VERSION}" deploy --dry-run --outdir "$RUNNER_TEMP/site"
@@ -84,10 +87,13 @@ jobs:
       - name: Install blog tooling
         run: npm ci --prefix scripts/blog --ignore-scripts --no-audit --no-fund
 
-      - name: Test and verify blog pages
-        run: |
-          npm run test:unit --prefix scripts/blog
-          npm run check --prefix scripts/blog
+      - name: Test blog builder
+        working-directory: scripts/blog
+        run: exec node node_modules/vitest/vitest.mjs run --config vitest.config.mjs
+
+      - name: Verify blog pages
+        working-directory: scripts/blog
+        run: exec node build.mjs --check
 
       - name: wrangler deploy
         env:
