@@ -89,6 +89,7 @@ export function assignmentReadiness(resolved: ResolvedAssignment): TranscriberRe
     case "http":
     case "anthropic":
     case "codex":
+    case "typesafe":
       return { runnable: false, reason: "Transcription runs on local models only." };
     case "disabled":
       return { runnable: false, reason: "No transcriber model is assigned." };
