@@ -404,7 +404,7 @@ import {
   insertNoteEntry,
   updateNoteEntryText,
   deleteNoteEntry,
-  replaceNoteEntryTextIf,
+  applyNoteEntryTranscript,
   type NoteEntry,
 } from "../sources/omnesis-notes/storage.js";
 import {
@@ -1710,13 +1710,8 @@ export const writerHandlers = {
   "voiceNotes.reschedule": (db: Db, noteId: string, attempts: number, nextAttemptAt: string) =>
     reschedulePendingVoiceNote(db, noteId, attempts, nextAttemptAt),
   "voiceNotes.delete": (db: Db, noteId: string) => deletePendingVoiceNote(db, noteId),
-  "notes.replaceEntryTextIf": (
-    db: Db,
-    id: string,
-    expected: string,
-    text: string,
-    nowIso: string,
-  ) => replaceNoteEntryTextIf(db, id, expected, text, nowIso),
+  "notes.applyTranscript": (db: Db, id: string, expected: string, text: string, nowIso: string) =>
+    applyNoteEntryTranscript(db, id, expected, text, nowIso),
 
   // Append one pushed agent-conversation turn to the ledger. The per-bucket
   // day-document projection is driven separately by the

@@ -214,7 +214,7 @@ export class VoiceNoteService {
 
     const text = result.text.trim();
     if (text.length === 0) return this.giveUp(note, "no speech was recognised");
-    const outcome = await this.deps.notes().replaceTextIf(note.noteId, note.savedText, text);
+    const outcome = await this.deps.notes().applyTranscript(note.noteId, note.savedText, text);
     await this.deps.writeGate.deleteVoiceNote(note.noteId);
     log.info(`Transcribed voice note ${note.noteId}: ${outcome} (${text.length} chars)`);
   }
@@ -222,7 +222,7 @@ export class VoiceNoteService {
   /** Stop trying: a placeholder says so, the device's transcript stays. */
   private async giveUp(note: PendingVoiceNote, why: string): Promise<void> {
     if (note.placeholder) {
-      await this.deps.notes().replaceTextIf(note.noteId, note.savedText, UNTRANSCRIBED_TEXT);
+      await this.deps.notes().applyTranscript(note.noteId, note.savedText, UNTRANSCRIBED_TEXT);
     }
     await this.deps.writeGate.deleteVoiceNote(note.noteId);
     log.warn(`Voice note ${note.noteId} not transcribed (${why}); kept its saved text`);

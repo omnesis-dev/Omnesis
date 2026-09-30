@@ -18686,6 +18686,17 @@ a.agent-loop-row.agent-ephemeral-result-link:hover .agent-loop-state {
   font-size: 12px;
 }
 
+/* A voice note whose gateway transcript is still to come. */
+.note-item-transcribing {
+  margin-top: 4px;
+}
+.note-item-transcribing .spinner {
+  width: 10px;
+  height: 10px;
+  border-width: 1.5px;
+  margin-right: 0;
+}
+
 .note-item-actions {
   display: flex;
   gap: 8px;

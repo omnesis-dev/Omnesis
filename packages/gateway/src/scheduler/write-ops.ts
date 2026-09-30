@@ -546,7 +546,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "notes.deleteEntry", priority: "user" },
   // A voice note's transcript, written by the background queue rather than a
   // waiting person: a compare-and-set on one row.
-  { name: "notes.replaceEntryTextIf", priority: "background" },
+  { name: "notes.applyTranscript", priority: "background" },
 
   // ── voice notes waiting on the transcriber ────────────────────────
   // The enqueue rides the capture request a device is waiting on and carries

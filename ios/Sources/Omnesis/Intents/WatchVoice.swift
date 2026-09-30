@@ -144,9 +144,9 @@ public struct WatchVoiceRecording: Equatable, Sendable {
     }
 }
 
-/// When the watch app leaves the screen by itself after sending a recorded
-/// note, so a complication tap reads as one gesture: tap, speak, send, back
-/// to the watch face.
+/// When the watch app leaves the screen by itself after sending a note —
+/// recorded or dictated — so a complication tap reads as one gesture: tap,
+/// speak, send, back to the watch face.
 ///
 /// watchOS offers no public call that returns to the watch face — no
 /// suspend, no scene or window dismissal (`DismissWindowAction` is
@@ -164,9 +164,10 @@ public enum WatchVoiceDismissal {
     /// Whether to leave now.
     /// - `showingSent`: the confirmation is still on screen — a failure, a
     ///   tap on it, or a new recording keeps the app.
-    /// - `carriedByTransfer`: WatchConnectivity has the note. One still
-    ///   waiting for the link keeps the app running, so the outbox can hand
-    ///   it over when the link comes back.
+    /// - `carriedByTransfer`: WatchConnectivity has the note — a transfer,
+    ///   or a live message awaiting the phone's reply. One still waiting for
+    ///   the link keeps the app running, so the outbox can hand it over when
+    ///   the link comes back.
     /// - `otherWorkInFlight`: an ask or a dictated note is still relaying,
     ///   or an answer is being spoken.
     public static func shouldLeave(showingSent: Bool, carriedByTransfer: Bool, otherWorkInFlight: Bool) -> Bool {
@@ -174,18 +175,21 @@ public enum WatchVoiceDismissal {
     }
 }
 
-/// The watch's durable outbox of recorded notes, and what to do with each.
+/// The watch's durable outbox of notes, and what to do with each: notes
+/// recorded for gateway dictation, and notes dictated as text on the system's
+/// screen.
 ///
-/// A recorded note counts as sent once it is safely in the outbox — the
-/// recording and its metadata on disk — whatever the state of the link to
+/// A note counts as sent once it is safely in the outbox — its metadata, and
+/// its recording when it has one, on disk — whatever the state of the link to
 /// the iPhone. From there it is handed to WatchConnectivity, and handed again
-/// whenever no transfer carries it: at launch, when the iPhone becomes
-/// reachable, when the iPhone app is installed, and after a transfer fails
-/// (then after a backoff, so a failing link is not hammered). It leaves the
-/// outbox only when a transfer reports success, or when it has waited so long
-/// it is dropped — and the person is told. Every copy carries the same ref,
-/// so the phone saves the note once however many copies reach it. Pure, so
-/// the logic lane covers the policy.
+/// whenever nothing carries it: at launch, when the iPhone becomes reachable,
+/// when the iPhone app is installed, and after a delivery fails (then after a
+/// backoff, so a failing link is not hammered). It leaves the outbox only when
+/// the iPhone confirms it — a transfer reporting success, or the phone's reply
+/// to a live message — or when it has waited so long it is dropped, and the
+/// person is told. Every copy carries the same ref, so the phone saves the
+/// note once however many copies reach it. Pure, so the logic lane covers the
+/// policy.
 public enum WatchOutboxPolicy {
     /// How long a note may wait for the iPhone before it is dropped.
     public static let retention: TimeInterval = 7 * 24 * 60 * 60
@@ -212,6 +216,29 @@ public enum WatchOutboxPolicy {
         public var ref: String? {
             metadata[WatchVoiceRecording.refKey]
         }
+
+        /// A note dictated as text (`WatchNoteWire`), with no recording.
+        public var isTextNote: Bool {
+            WatchNoteWire.text(from: metadata) != nil
+        }
+    }
+
+    /// How a note is handed over.
+    public enum Transport: Equatable, Sendable {
+        /// A recording goes as a file transfer.
+        case file
+        /// A text note to a reachable iPhone goes as a live message, whose
+        /// reply confirms it at once — and as a queued transfer when that
+        /// message fails.
+        case liveMessage
+        /// A text note to an iPhone out of reach goes as a queued transfer,
+        /// which the system delivers when the iPhone app next runs.
+        case queuedTransfer
+    }
+
+    public static func transport(for entry: Entry, phoneReachable: Bool) -> Transport {
+        guard entry.isTextNote else { return .file }
+        return phoneReachable ? .liveMessage : .queuedTransfer
     }
 
     /// What set the outbox moving.

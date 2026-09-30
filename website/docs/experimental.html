@@ -2009,13 +2009,16 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/admin/watch/compile" \
           background, and that text is saved with the note at once so it is never empty. The gateway
           then works on the recording and replaces the text when its transcriber finishes. How long
           that takes depends on the gateway's hardware and on the voice notes it is already
-          transcribing for your sources; nothing waits on it. If you edit the note first, your edit
-          stays.
+          transcribing for your sources; nothing waits on it. The portal's Tell Omnesis page marks
+          such a note as transcribing until the gateway's text arrives. If you edit the note first,
+          your edit stays.
         </p>
         <p>
           A note from the Apple Watch travels through your iPhone, which transcribes it on the phone
-          first. When the phone has no transcript to offer, the note reads "Voice note —
-          transcribing…" until the gateway's arrives.
+          first. The watch keeps each note, recorded or dictated, until the iPhone confirms it has
+          it, retrying for up to a week when the phone is out of reach. When the phone has no
+          transcript to offer, the note reads "Voice note — transcribing…" until the gateway's
+          arrives.
         </p>
         <p>
           The gateway keeps the recording in its database, alongside the rest of your data and under

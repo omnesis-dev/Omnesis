@@ -99,12 +99,12 @@ export interface OmnesisNotesRuntime {
   /** Replace an entry's text; null when the id is unknown. */
   edit(id: string, text: string): Promise<NoteEntry | null>;
   /**
-   * Replace an entry's text only while it still reads `expected`, for a
-   * writer that is not the user (a voice note's transcript): an edit the user
-   * made in the meantime wins. `changed` when the text no longer matches,
-   * `missing` when the entry is gone.
+   * Write a voice note's gateway transcript over its text, only while the
+   * text still reads `expected`: an edit the user made in the meantime wins.
+   * Stamps `transcribedAt`, so the change never reads as an edit. `changed`
+   * when the text no longer matches, `missing` when the entry is gone.
    */
-  replaceTextIf(
+  applyTranscript(
     id: string,
     expected: string,
     text: string,
@@ -239,12 +239,12 @@ export function bootOmnesisNotes(deps: OmnesisNotesBootDeps): OmnesisNotesRuntim
       upserter.enqueue(existing.day);
       return { ...existing, text: trimmed, updatedAt: now };
     },
-    replaceTextIf: async (id, expected, text) => {
+    applyTranscript: async (id, expected, text) => {
       const trimmed = text.trim();
       if (trimmed.length === 0) {
         throw new Error("note text must not be empty");
       }
-      const result = await deps.writeGate.replaceNoteEntryTextIf(
+      const result = await deps.writeGate.applyNoteEntryTranscript(
         id,
         expected,
         trimmed,

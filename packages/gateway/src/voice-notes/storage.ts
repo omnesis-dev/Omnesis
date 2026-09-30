@@ -136,6 +136,18 @@ export function getPendingVoiceNote(db: Db, noteId: string): PendingVoiceNote | 
   return row ? toPending(row) : null;
 }
 
+/** Which of `noteIds` are still waiting on the transcriber. */
+export function pendingVoiceNoteIds(db: Db, noteIds: readonly string[]): Set<string> {
+  if (noteIds.length === 0) return new Set();
+  const rows = db
+    .prepare<string[], { note_id: string }>(
+      `SELECT note_id FROM voice_note_transcriptions
+        WHERE note_id IN (${noteIds.map(() => "?").join(", ")})`,
+    )
+    .all(...noteIds);
+  return new Set(rows.map((row) => row.note_id));
+}
+
 /** A pending note's audio; null when not queued. */
 export function readPendingVoiceNoteAudio(db: Db, noteId: string): Uint8Array | null {
   const row = db

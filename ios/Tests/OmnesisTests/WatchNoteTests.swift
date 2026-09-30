@@ -54,43 +54,15 @@ final class WatchNoteTests: XCTestCase {
         ]))
     }
 
-    func testReplyOutcomeRoundTripsEveryCase() {
-        let all: [WatchNoteOutcome] = [
-            .saved, .queuedOnPhone, .rejected, .captureFailed, .reachedPhone,
-            .phoneUnreachable, .watchLinkInactive, .relayFailed, .queuedForPhone,
+    /// The reply tags are what watch builds already in use read, so they
+    /// stay as they are.
+    func testReplyTagsAreStable() {
+        let tags: [WatchNoteOutcome: String] = [
+            .saved: "saved", .queuedOnPhone: "queuedOnPhone", .rejected: "rejected",
+            .captureFailed: "captureFailed", .reachedPhone: "reachedPhone", .relayFailed: "relayFailed",
         ]
-        for outcome in all {
-            let reply = WatchNoteWire.reply(for: outcome)
-            XCTAssertEqual(WatchNoteWire.outcome(from: reply), outcome, "round-trip failed for \(outcome)")
-        }
-    }
-
-    func testUnknownOrMissingOutcomeTagFallsBackToRelayFailed() {
-        XCTAssertEqual(WatchNoteWire.outcome(from: ["outcome": "bogus"]), .relayFailed)
-        XCTAssertEqual(WatchNoteWire.outcome(from: [:]), .relayFailed)
-    }
-
-    // MARK: - Outcome
-
-    func testKindClassification() {
-        XCTAssertEqual(WatchNoteOutcome.saved.kind, .success)
-        // Saved-but-unconfirmed and queued are statuses, never failures —
-        // neither should nudge the user into re-dictating a duplicate.
-        XCTAssertEqual(WatchNoteOutcome.queuedOnPhone.kind, .status)
-        XCTAssertEqual(WatchNoteOutcome.reachedPhone.kind, .status)
-        XCTAssertEqual(WatchNoteOutcome.queuedForPhone.kind, .status)
-        for failure in [WatchNoteOutcome.rejected, .captureFailed, .phoneUnreachable, .watchLinkInactive, .relayFailed] {
-            XCTAssertEqual(failure.kind, .failure, "\(failure) should read as failure")
-        }
-    }
-
-    func testEveryOutcomeHasNonEmptySpokenCopy() {
-        let all: [WatchNoteOutcome] = [
-            .saved, .queuedOnPhone, .rejected, .captureFailed, .reachedPhone,
-            .phoneUnreachable, .watchLinkInactive, .relayFailed, .queuedForPhone,
-        ]
-        for outcome in all {
-            XCTAssertFalse(WatchNoteDialog.text(for: outcome).isEmpty, "no copy for \(outcome)")
+        for (outcome, tag) in tags {
+            XCTAssertEqual(WatchNoteWire.reply(for: outcome), ["outcome": tag])
         }
     }
 

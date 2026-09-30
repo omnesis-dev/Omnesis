@@ -10,16 +10,16 @@ import WatchConnectivity
 /// session owner (and delegate). The watch holds no gateway pairing, so
 /// both surfaces it drives hand off to the paired iPhone:
 ///   - `relayAsk` sends a dictated question and awaits the spoken answer.
-///   - `relayNote` sends a dictated note and awaits a save confirmation.
-///   - `flushOutbox` hands the notes recorded for gateway dictation, which
-///     wait in the durable `WatchVoiceOutbox`, to the phone as file
-///     transfers, and sends them again until one is delivered.
+///   - `flushOutbox` hands the notes waiting in the durable
+///     `WatchVoiceOutbox` — dictated as text, or recorded for gateway
+///     dictation — to the phone, and sends them again until the phone
+///     confirms each.
 /// The phone owns the pairing; the watch's whole job is voice in, relay
 /// out, result back.
 ///
 /// `sendMessage(_:replyHandler:errorHandler:)` from watchOS launches the
-/// iPhone app in the background if it isn't already running, so the relay
-/// works with the phone locked. An app iOS has evicted from memory takes a
+/// iPhone app in the background if it isn't already running, so the ask
+/// relay works with the phone locked. An app iOS has evicted from memory takes a
 /// while to launch, so an unreachable phone is retried for the whole
 /// `WatchRelayPatience.deliveryWindow`; past it the relay is queued on
 /// `transferUserInfo`, which the system delivers whenever the iPhone app
@@ -42,11 +42,6 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
     /// async "become reachable" primitive, so this polls the flag.
     private static let reachabilityPolls = 20
     private static let reachabilityPollInterval: TimeInterval = 0.15
-    /// Backstop on one note relay. A note save on the phone is quick
-    /// (a POST, or a fall-back to the durable queue), so this sits far
-    /// below the ask relay's turn-length budget — a lost reply shouldn't
-    /// leave the wrist waiting a minute-plus for a note.
-    private static let noteRelayTimeout: TimeInterval = 15
 
     /// Hard ceiling on one send. WatchConnectivity is supposed to call either
     /// the reply or the error handler, but a phone suspended after a
@@ -62,6 +57,9 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
     /// WatchConnectivity's delegate queue.
     private let outboxLock = NSLock()
     private var retryTask: Task<Void, Never>?
+    /// Text notes whose live message is awaiting the phone's reply: carried,
+    /// so not handed over again meanwhile.
+    private var liveNoteSends: Set<String> = []
     private var activationWaiters: [CheckedContinuation<Void, Never>] = []
     /// The in-flight relay, resumed by whichever of the reply, the phone's
     /// fire-and-forget result, or the timeout arrives first. Every resolver
@@ -71,14 +69,6 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
     /// its ref, so the per-send resolvers (reply, error, timeout) also carry
     /// the attempt they belong to; the phone's result names only the ask.
     private var pendingRelay: PendingSend<SiriAskOutcome>?
-    /// The in-flight note relay, resolved by whichever of the reply, a
-    /// send error, or the backstop arrives first — correlated by attempt so
-    /// a stale backstop can't end a later send's wait.
-    ///
-    /// Each slot holds one send. A new send that finds it taken — a relay
-    /// replaced mid-send by a newer one — resumes the displaced wait as
-    /// undelivered before taking the slot, so no wait is ever stranded.
-    private var pendingNote: PendingSend<WatchNoteOutcome>?
 
     /// Activate the shared session with this link as delegate. Called at
     /// app launch so the session is ready by the time Siri fires an ask or
@@ -100,12 +90,13 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
         return WatchDictationGate(applicationContext: WCSession.default.receivedApplicationContext)
     }
 
-    /// Hand every waiting note that no transfer carries to WatchConnectivity,
+    /// Hand every waiting note that nothing carries to WatchConnectivity,
     /// drop those that waited too long, and wake a reachable iPhone app so it
     /// receives what is outstanding (`WatchOutboxPolicy`). WatchConnectivity
     /// holds a transfer until the iPhone app runs, and carries it on after
-    /// this app exits; the note leaves the outbox only when `didFinish`
-    /// reports it delivered. Returns the refs a transfer now carries.
+    /// this app exits; a note leaves the outbox only when the phone confirms
+    /// it — a transfer's `didFinish` without error, or its reply to a live
+    /// message. Returns the refs now carried.
     @discardableResult
     func flushOutbox(_ trigger: WatchOutboxPolicy.Trigger) -> Set<String> {
         guard WCSession.isSupported() else { return [] }
@@ -115,17 +106,23 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
         defer { outboxLock.unlock() }
         let outbox = WatchVoiceOutbox.shared
         let transfers = session.outstandingFileTransfers
+        let queuedNotes = session.outstandingUserInfoTransfers.filter { WatchNoteWire.text(from: $0.userInfo) != nil }
         var carried = Set(transfers.compactMap { $0.file.metadata?[WatchVoiceRecording.refKey] as? String })
+            .union(queuedNotes.compactMap { WatchNoteWire.ref(from: $0.userInfo) })
+        lock.lock()
+        carried.formUnion(liveNoteSends)
+        lock.unlock()
         let entries = outbox.entries()
         var dropped = 0
         for (ref, action) in WatchOutboxPolicy.plan(entries, carried: carried, trigger: trigger, now: Date()) {
             switch action {
             case .send:
                 guard session.isCompanionAppInstalled, let entry = entries.first(where: { $0.ref == ref }) else { continue }
-                session.transferFile(outbox.audioURL(ref), metadata: entry.metadata)
+                send(entry, ref: ref, session: session)
                 carried.insert(ref)
             case .drop:
                 transfers.filter { $0.file.metadata?[WatchVoiceRecording.refKey] as? String == ref }.forEach { $0.cancel() }
+                queuedNotes.filter { WatchNoteWire.ref(from: $0.userInfo) == ref }.forEach { $0.cancel() }
                 carried.remove(ref)
                 outbox.drop(ref)
                 dropped += 1
@@ -134,7 +131,7 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
             }
         }
         if dropped > 0 {
-            log.error("Dropped \(dropped, privacy: .public) recorded notes that waited too long for the iPhone")
+            log.error("Dropped \(dropped, privacy: .public) notes that waited too long for the iPhone")
             Task { @MainActor in WatchVoiceCapture.shared.showDroppedIfNeeded() }
         }
         // A transfer alone may not start the iPhone app; a message does.
@@ -143,6 +140,52 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
         }
         scheduleRetry(WatchOutboxPolicy.nextRetry(outbox.entries(), carried: carried, now: Date()))
         return carried
+    }
+
+    /// Hand one waiting note over (`WatchOutboxPolicy.transport`). A text
+    /// note to a reachable iPhone goes as a live message, so the phone's reply
+    /// confirms it at once; when that message fails it goes on the queued
+    /// channel instead. Every copy carries the note's ref, so the phone saves
+    /// it once.
+    private func send(_ entry: WatchOutboxPolicy.Entry, ref: String, session: WCSession) {
+        switch WatchOutboxPolicy.transport(for: entry, phoneReachable: session.isReachable) {
+        case .file:
+            session.transferFile(WatchVoiceOutbox.shared.audioURL(ref), metadata: entry.metadata)
+        case .queuedTransfer:
+            session.transferUserInfo(Self.queued(entry))
+        case .liveMessage:
+            lock.lock()
+            liveNoteSends.insert(ref)
+            lock.unlock()
+            session.sendMessage(
+                entry.metadata,
+                replyHandler: { [weak self] _ in
+                    // Any reply means the phone has the note.
+                    self?.liveNoteSettled(ref)
+                    WatchVoiceOutbox.shared.remove(ref)
+                },
+                errorHandler: { [weak self] error in
+                    guard let self else { return }
+                    self.log.info("Live note send failed, queueing it: \(String(describing: error), privacy: .public)")
+                    self.liveNoteSettled(ref)
+                    if WCSession.default.activationState == .activated {
+                        WCSession.default.transferUserInfo(Self.queued(entry))
+                    }
+                }
+            )
+        }
+    }
+
+    private func liveNoteSettled(_ ref: String) {
+        lock.lock()
+        liveNoteSends.remove(ref)
+        lock.unlock()
+    }
+
+    /// A text note's queued-channel payload: its message, stamped with when
+    /// it joined the outbox.
+    private static func queued(_ entry: WatchOutboxPolicy.Entry) -> [String: String] {
+        WatchRelayQueue.queued(entry.metadata, envelope: .init(queuedAt: entry.queuedAt, attempts: 0, lastErrorCode: nil))
     }
 
     /// Run the outbox again when the next backed-off note falls due, while
@@ -179,7 +222,7 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
         return await deliverOrQueue(
             SiriAskWire.request(question: question, ref: ref),
             session: session,
-            plan: RelayPlan(unreachable: .phoneUnreachable, queued: .queuedForPhone, queueWhenCancelled: false),
+            plan: RelayPlan(unreachable: .phoneUnreachable, queued: .queuedForPhone),
             onWaking: {
                 WatchAskRouter.shared.report(
                     activity: SiriAskActivitySnapshot(label: SiriAskActivity.wakingPhoneLabel),
@@ -192,43 +235,16 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
         )
     }
 
-    /// Relay a non-empty, trimmed note to the iPhone and return the save
-    /// outcome it reports (or a watch-local relay failure). Mirrors
-    /// `relayAsk`'s activation + reachability handshake; the phone saves
-    /// the note through the shared capture service and replies.
-    func relayNote(text: String, captureTime: NoteCaptureTime) async -> WatchNoteOutcome {
-        guard WCSession.isSupported() else { return .watchLinkInactive }
-        // A background App Shortcut invocation may run `perform()` without
-        // the app's `activate()` ever having run, so (re)assert the delegate
-        // here, exactly as the ask relay does.
-        WCSession.default.delegate = self
-        await ensureActivated()
-        let session = WCSession.default
-        guard session.activationState == .activated else { return .watchLinkInactive }
-        // The message, and so its ref, is built once: every copy of this note,
-        // live or queued, carries the same ref, so the phone saves it once
-        // however many reach it. That is also what makes it safe to queue a
-        // note the user moved on from, rather than drop it.
-        return await deliverOrQueue(
-            WatchNoteWire.request(text: text, captureTime: captureTime, ref: UUID().uuidString),
-            session: session,
-            plan: RelayPlan(unreachable: .phoneUnreachable, queued: .queuedForPhone, queueWhenCancelled: true),
-            onWaking: { WatchNoteRouter.shared.wakingPhone() },
-            send: { message, diagnostics in
-                await self.sendNote(message, session: session, diagnostics: diagnostics)
-            }
-        )
-    }
-
     /// Send `message` until the phone takes it, answers with anything but
     /// `unreachable`, or the delivery window closes — then queue it if it
     /// never arrived. Only an unreachable phone is retried: every other
     /// outcome means the phone received the relay, so a question is never
-    /// asked — nor a note saved — twice.
+    /// asked twice.
     ///
-    /// A cancelled relay (replaced by a newer one) stops at once and
-    /// is queued only when the plan says so. Nothing is queued for an
-    /// iPhone that can never receive it: no companion app, or no pairing.
+    /// A cancelled relay (replaced by a newer question) stops at once and is
+    /// not queued: its answer would arrive about something the person moved
+    /// on from. Nothing is queued for an iPhone that can never receive it: no
+    /// companion app, or no pairing.
     private func deliverOrQueue<Outcome: Equatable>(
         _ message: [String: String],
         session: WCSession,
@@ -272,7 +288,7 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
             await onWaking()
             try? await Task.sleep(nanoseconds: UInt64(pause * 1_000_000_000))
         }
-        guard !cancelled || plan.queueWhenCancelled,
+        guard !cancelled,
               !diagnostics.phoneCannotReceive,
               session.activationState == .activated,
               session.isCompanionAppInstalled
@@ -285,68 +301,6 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
         session.transferUserInfo(WatchRelayQueue.queued(message, envelope: envelope))
         log.info("Relay queued for the iPhone after \(attempts, privacy: .public) live attempts")
         return plan.queued
-    }
-
-    private func sendNote(
-        _ message: [String: String],
-        session: WCSession,
-        diagnostics: RelayDiagnostics
-    ) async
-        -> WatchNoteOutcome {
-        let attempt = UUID()
-        return await withCheckedContinuation { continuation in
-            lock.lock()
-            let displaced = pendingNote
-            pendingNote = PendingSend(ref: nil, attempt: attempt, continuation: continuation)
-            lock.unlock()
-            displaced?.continuation.resume(returning: .phoneUnreachable)
-            session.sendMessage(
-                message,
-                replyHandler: { [weak self] reply in
-                    self?.resolveNote(WatchNoteWire.outcome(from: reply), attempt: attempt)
-                },
-                errorHandler: { [weak self] error in
-                    diagnostics.record(error)
-                    self?.resolveNote(Self.mapNoteSendError(error), attempt: attempt)
-                }
-            )
-            // Backstop: a lost reply must not spin the watch forever. This
-            // fires only when the send itself did NOT error (the phone was
-            // reached) but no reply arrived — the note almost certainly
-            // landed, so report `reachedPhone` (a status), never a failure
-            // that would nudge the user into a duplicate.
-            Task { [weak self] in
-                try? await Task.sleep(nanoseconds: UInt64(Self.noteRelayTimeout * 1_000_000_000))
-                self?.resolveNote(.reachedPhone, attempt: attempt)
-            }
-        }
-    }
-
-    /// Resume the in-flight note send if `attempt` is the one still waiting —
-    /// first matching caller wins, everything else is a no-op.
-    private func resolveNote(_ outcome: WatchNoteOutcome, attempt: UUID) {
-        lock.lock()
-        guard let waiting = pendingNote, waiting.attempt == attempt else {
-            lock.unlock()
-            return
-        }
-        pendingNote = nil
-        lock.unlock()
-        waiting.continuation.resume(returning: outcome)
-    }
-
-    /// Classify a note `sendMessage` failure into a spoken outcome.
-    /// Connectivity failures ask the user to bring the phone closer; a
-    /// watch-session problem points at the watch; anything else is generic.
-    static func mapNoteSendError(_ error: Error) -> WatchNoteOutcome {
-        switch (error as? WCError)?.code {
-        case .notReachable, .deviceNotPaired, .companionAppNotInstalled:
-            .phoneUnreachable
-        case .sessionNotActivated, .sessionMissingDelegate, .sessionInactive:
-            .watchLinkInactive
-        default:
-            .relayFailed
-        }
     }
 
     private func send(
@@ -520,16 +474,21 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
         flushOutbox(.linkMayHaveChanged)
     }
 
-    /// A queued relay the system could not deliver. A note is queued again,
-    /// a bounded number of times while it is recent; a question is not — its
-    /// answer would come long after it mattered.
+    /// A queued relay ended. A text note the phone received leaves the
+    /// outbox; one that failed stays, and is sent again after a backoff. A
+    /// queued question is not retried — its answer would come long after it
+    /// mattered.
     func session(_ session: WCSession, didFinish userInfoTransfer: WCSessionUserInfoTransfer, error: Error?) {
-        guard error != nil,
-              let payload = userInfoTransfer.userInfo as? [String: String],
-              let requeued = WatchRelayQueue.requeued(payload, now: Date())
+        guard WatchNoteWire.text(from: userInfoTransfer.userInfo) != nil,
+              let ref = WatchNoteWire.ref(from: userInfoTransfer.userInfo)
         else { return }
-        log.error("Queued note transfer failed; queueing it again")
-        session.transferUserInfo(requeued)
+        if let error {
+            log.error("Queued note transfer failed, will retry: \(String(describing: error), privacy: .public)")
+            WatchVoiceOutbox.shared.recordFailure(ref)
+            flushOutbox(.retry)
+        } else {
+            WatchVoiceOutbox.shared.remove(ref)
+        }
     }
 
     /// Mid-turn progress pushed by the phone (no reply expected): the tool the
@@ -551,20 +510,17 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
     }
 }
 
-/// How one kind of relay reports its two watch-side endings, and whether a
-/// relay the user moved on from is still worth queueing.
+/// How a relay reports its two watch-side endings.
 private struct RelayPlan<Outcome> {
     /// The outcome of a send that never reached the phone — the one retried.
     let unreachable: Outcome
     let queued: Outcome
-    let queueWhenCancelled: Bool
 }
 
 /// One registered send, resumed by whichever of its resolvers comes first.
-/// `ref` names the ask it belongs to, for the phone's result message; a note
-/// has none, and is only ever resolved by its own send.
+/// `ref` names the ask it belongs to, for the phone's result message.
 private struct PendingSend<Outcome> {
-    let ref: String?
+    let ref: String
     let attempt: UUID
     let continuation: CheckedContinuation<Outcome, Never>
 }

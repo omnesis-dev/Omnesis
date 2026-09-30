@@ -4700,6 +4700,24 @@ export const MIGRATIONS: readonly Migration[] = [
       }
     },
   },
+  {
+    // A voice note's gateway transcript stamps when it replaced the note's
+    // text, so clients tell it apart from the user's own edit. Existing notes
+    // were never transcribed that way and keep a null stamp. Idempotent via
+    // the pragma_table_info guard, and a no-op on a fresh DB whose table
+    // already carries the column.
+    version: 185,
+    description: "stamp when a voice note's gateway transcript replaced its text",
+    up(db) {
+      const cols = db
+        .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('note_entries')")
+        .all()
+        .map((r) => r.name);
+      if (cols.length > 0 && !cols.includes("transcribed_at")) {
+        db.exec("ALTER TABLE note_entries ADD COLUMN transcribed_at TEXT");
+      }
+    },
+  },
 ];
 
 /**

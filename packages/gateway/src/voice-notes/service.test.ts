@@ -149,6 +149,20 @@ describe("VoiceNoteService", () => {
     expect(noteText(input.id)).toBe("Call the plumber");
   });
 
+  test("the transcript is stamped apart from an edit", async () => {
+    const input = voiceNote();
+    transcripts.push({ text: "Pick up the dry cleaning" });
+    await service.accept(input);
+    await service.idle();
+    const entry = () => notes.listDay().find((e) => e.id === input.id)!;
+    expect(entry().transcribedAt).toBeDefined();
+    expect(entry().updatedAt).toBe(entry().transcribedAt);
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await notes.edit(input.id, "Pick up the dry cleaning tomorrow");
+    expect(entry().updatedAt > entry().transcribedAt!).toBe(true);
+  });
+
   test("an edit made before the transcript lands wins", async () => {
     const input = voiceNote();
     transcripts.push({ text: "Pick up the dry cleaning" });

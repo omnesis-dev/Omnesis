@@ -36,6 +36,8 @@ let priorExperimental: string | undefined;
 let voiceNotes: VoiceNoteService | undefined;
 let notesRuntime: OmnesisNotesRuntime | undefined;
 let languages: (string | undefined)[];
+/** While set, a transcription waits for it. */
+let held: Promise<void> | null = null;
 
 function mintToken(scopes: readonly Scope[]): string {
   const dev = createDevice(db, { name: `test-${randomUUID()}`, kind: "ios" });
@@ -73,10 +75,12 @@ beforeEach(() => {
   resolved = { role: "transcriber", kind: "replay" };
   optedIn = true;
   languages = [];
+  held = null;
   const transcribeService = new TranscribeService({ resolveAssignment: () => resolved });
   const transcribe = transcribeService.transcribe.bind(transcribeService);
-  transcribeService.transcribe = (audio, mime, opts) => {
+  transcribeService.transcribe = async (audio, mime, opts) => {
     languages.push(opts?.language);
+    if (held) await held;
     return transcribe(audio, mime, opts);
   };
   app = createServer(db, dbPath, {
@@ -128,6 +132,32 @@ describe("POST /notes/voice", () => {
     voiceNotes!.dispose();
     expect((await post(voiceNoteForm({ id }))).status).toBe(202);
     expect(noteText(id)).toBe(TRANSCRIBING_PLACEHOLDER);
+  });
+
+  test("note listings mark a voice note pending until its transcript lands", async () => {
+    const listed = async (path: string) => {
+      const res = await app.request(path, { headers: { authorization: `Bearer ${ADMIN_TOKEN}` } });
+      return ((await res.json()) as { entries: { id: string; transcription?: string }[] }).entries;
+    };
+    let release!: () => void;
+    held = new Promise((resolve) => (release = resolve));
+    const id = randomUUID();
+    expect((await post(voiceNoteForm({ id, text: "water the ferns" }))).status).toBe(202);
+    const typed = await notesRuntime!.capture({ text: "a typed note" });
+
+    for (const path of ["/notes", "/notes/history"]) {
+      const entries = await listed(path);
+      expect(entries.find((entry) => entry.id === id)?.transcription).toBe("pending");
+      expect(entries.find((entry) => entry.id === typed.id)).not.toHaveProperty("transcription");
+    }
+
+    release();
+    held = null;
+    await vi.waitFor(async () =>
+      expect((await listed("/notes/history")).find((entry) => entry.id === id)).not.toHaveProperty(
+        "transcription",
+      ),
+    );
   });
 
   test("a retried capture is accepted again without a duplicate", async () => {
