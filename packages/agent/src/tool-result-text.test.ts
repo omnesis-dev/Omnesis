@@ -19,7 +19,7 @@ const modelContext = {
   ],
   limits: ["Some highly connected documents were not expanded."],
 };
-const enriched: ToolResult = {
+const enriched: Extract<ToolResult, { kind: "search.results" }> = {
   kind: "search.results",
   query: "agreement",
   durationMs: 1,
@@ -27,6 +27,7 @@ const enriched: ToolResult = {
     {
       documentId: "agreement",
       sourceType: "archive",
+      sourceId: "archive:fictional",
       title: "Agreement",
       snippet: "Fictional terms.",
       provenance: {
@@ -72,11 +73,11 @@ describe("model tool-result presentation", () => {
     expect(output.items.slice(1)).toEqual([error, ordinary]);
   });
   it("leaves flag-off results and old provenance byte-for-byte unchanged", () => {
-    const ordinary: ToolResult = {
+    const ordinary: Extract<ToolResult, { kind: "search.results" }> = {
       kind: "search.results",
       query: "old",
       durationMs: 1,
-      results: [{ documentId: "old", sourceType: "archive" }],
+      results: [{ documentId: "old", sourceType: "archive", sourceId: "archive:fictional" }],
     };
     expect(serializeToolResultForModel(ordinary)).toBe(JSON.stringify(ordinary));
     const old = structuredClone(enriched);
