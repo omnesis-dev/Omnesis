@@ -188,6 +188,9 @@ class MainActivity : ComponentActivity() {
         // so a transient gateway or FCM failure does not permanently disable push.
         sessionManager.beginForegroundVisit()
         lifecycleScope.launch { sessionManager.retryFcmRegistration() }
+        // Feature gates the operator may have changed from another device while this
+        // app was in the background, gateway dictation among them.
+        lifecycleScope.launch { sessionManager.refreshStatus() }
         // A source the user turned off while the gateway was unreachable is
         // still listed there as hosted by this phone until the detach lands.
         sourceMembership.retryPending()

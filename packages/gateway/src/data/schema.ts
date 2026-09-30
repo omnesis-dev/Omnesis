@@ -16,6 +16,7 @@ import { createExtractedDatesTables } from "../enrichment/dates/storage.js";
 import { createTemporalAnnotationTables } from "../enrichment/temporal-annotations/storage.js";
 import { createDocumentTemporalProjectionTables } from "../enrichment/temporal-projections/document-storage.js";
 import { createNoteEntriesTables } from "../sources/omnesis-notes/storage.js";
+import { createVoiceNoteTables } from "../voice-notes/storage.js";
 import { createAgentMessagesTables } from "../sources/agent-conversations/storage.js";
 import { createAccessTables } from "../access/store.js";
 import { createAnswerPrivacyTables, createDirectAuditTables } from "../privacy/store.js";
@@ -1452,6 +1453,9 @@ function runSchemaSetupInTxn(db: Db): void {
   // omnesis-notes: the append-only quick-capture ledger
   // the per-day note documents are projected from.
   createNoteEntriesTables(db);
+  // Voice notes waiting on the gateway's transcriber (after note_entries,
+  // which their rows reference).
+  createVoiceNoteTables(db);
   // agent-conversations: the append-only ledger of turns a
   // harness plugin pushes, projected into per-day conversation documents.
   createAgentMessagesTables(db);

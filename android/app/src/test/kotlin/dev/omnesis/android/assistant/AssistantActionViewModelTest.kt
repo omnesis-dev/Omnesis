@@ -14,7 +14,12 @@ import dev.omnesis.android.transport.client.AgentStreamItem
 import dev.omnesis.android.transport.dto.AgentEvent
 import dev.omnesis.android.transport.dto.CreateSessionResponse
 import dev.omnesis.android.transport.dto.SendMessageResponse
+import dev.omnesis.android.notes.VoiceNoteFiles
+import dev.omnesis.android.ui.capture.RecognizerAudioInput
 import dev.omnesis.android.ui.capture.SpeechTranscriber
+import dev.omnesis.android.voice.FakeVoiceNoteSession
+import dev.omnesis.android.voice.VoiceNoteSession
+import java.io.File
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -246,6 +251,102 @@ class AssistantActionViewModelTest {
         assertEquals(true, second.deliveryId > first.deliveryId)
     }
 
+    private fun voiceNotesRepo(store: PendingNotesStore) = NotesRepository(
+        store,
+        gateway = { null },
+        audioFiles = VoiceNoteFiles(File(context.noBackupFilesDir, "voice-notes")),
+    )
+
+    private fun session(): FakeVoiceNoteSession =
+        FakeVoiceNoteSession(File(File(context.noBackupFilesDir, "voice-notes").apply { mkdirs() }, "recording-a.wav"))
+
+    private fun awaitFinished(vm: AssistantActionViewModel) {
+        val deadline = System.currentTimeMillis() + 5_000
+        while (vm.state.value !is AssistantActionUiState.Finished && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10)
+        }
+    }
+
+    @Test
+    fun a_dictated_capture_is_saved_with_its_recording() {
+        val transcriber = FakeTranscriber(context)
+        val recording = session()
+        val store = PendingNotesStore(context)
+        val vm = viewModel(
+            FakeGateway(CompletableDeferred()),
+            transcriber = transcriber,
+            voiceNote = recording,
+            notes = voiceNotesRepo(store),
+        )
+        vm.handle(Intent(AssistantActionActivity.ACTION_CAPTURE), freshDelivery = true, trustedDelivery = true)
+        vm.startListening()
+        assertEquals(1, transcriber.audioStarts)
+        assertEquals(
+            AssistantActionUiState.Listening(AssistantActionKind.CAPTURE, deliveryId = 1, recordingVoiceNote = true),
+            vm.state.value,
+        )
+
+        // The overlay shows the recording, never the phone's words.
+        transcriber.listeners.last().onPartial("Buy a birth")
+        assertEquals("", (vm.state.value as AssistantActionUiState.Listening).partialText)
+        transcriber.listeners.last().onFinal("Buy a birthday card")
+        transcriber.listeners.last().onEnded(SpeechTranscriber.EndReason.NORMAL)
+        awaitFinished(vm)
+
+        val queued = kotlinx.coroutines.runBlocking { store.readAll() }.single()
+        assertEquals("Buy a birthday card", queued.text)
+        assertEquals(true, queued.audio!!.file.exists())
+    }
+
+    @Test
+    fun a_capture_the_recognizer_cannot_hear_ends_on_silence_and_saves_the_recording() {
+        val transcriber = FakeTranscriber(context)
+        val recording = session()
+        val store = PendingNotesStore(context)
+        val vm = viewModel(
+            FakeGateway(CompletableDeferred()),
+            transcriber = transcriber,
+            voiceNote = recording,
+            notes = voiceNotesRepo(store),
+        )
+        vm.handle(Intent(AssistantActionActivity.ACTION_CAPTURE), freshDelivery = true, trustedDelivery = true)
+        vm.startListening()
+        transcriber.listeners.last().onEnded(SpeechTranscriber.EndReason.FAULT)
+
+        var t = 0L
+        repeat(5) { recording.listener!!.onPeak(9_000, t.also { t += 100 }) }
+        repeat(30) { recording.listener!!.onPeak(100, t.also { t += 100 }) }
+        awaitFinished(vm)
+
+        val queued = kotlinx.coroutines.runBlocking { store.readAll() }.single()
+        assertEquals("", queued.text)
+        assertEquals(true, queued.audio!!.file.exists())
+    }
+
+    @Test
+    fun an_ask_never_records_for_the_gateway() {
+        val transcriber = FakeTranscriber(context)
+        val recording = session()
+        val vm = viewModel(FakeGateway(CompletableDeferred()), transcriber = transcriber, voiceNote = recording)
+        vm.handle(Intent(AssistantActionActivity.ACTION_ASK), freshDelivery = true, trustedDelivery = true)
+        vm.startListening()
+        assertEquals(0, transcriber.audioStarts)
+        assertEquals(1, transcriber.startCount)
+        transcriber.listeners.last().onPartial("What is on")
+        assertEquals("What is on", (vm.state.value as AssistantActionUiState.Listening).partialText)
+    }
+
+    @Test
+    fun losing_foreground_discards_a_captures_recording() {
+        val transcriber = FakeTranscriber(context)
+        val recording = session()
+        val vm = viewModel(FakeGateway(CompletableDeferred()), transcriber = transcriber, voiceNote = recording)
+        vm.handle(Intent(AssistantActionActivity.ACTION_CAPTURE), freshDelivery = true, trustedDelivery = true)
+        vm.startListening()
+        vm.stopListening()
+        assertEquals(true, recording.discarded)
+    }
+
     @Test
     fun unpaired_capture_copy_requires_pairing_instead_of_promising_reachability_retry() {
         assertEquals(
@@ -260,13 +361,16 @@ class AssistantActionViewModelTest {
         transcriber: SpeechTranscriber = object : SpeechTranscriber(context) {
             override fun cancel() = Unit
         },
+        voiceNote: VoiceNoteSession? = null,
+        notes: NotesRepository = NotesRepository(PendingNotesStore(context), gateway = { null }),
     ): AssistantActionViewModel = AssistantActionViewModel(
         askRunner = VoiceAskRunner({ gateway }, object : VoiceAskContinuity {
             override fun conversationToResume(): String? = null
             override fun record(conversationId: String) = Unit
         }) { 0L },
-        notes = NotesRepository(PendingNotesStore(context), gateway = { null }),
+        notes = notes,
         transcriber = transcriber,
+        voiceNotes = { voiceNote },
         savedState = state,
     )
 
@@ -304,6 +408,7 @@ class AssistantActionViewModelTest {
 
     private class FakeTranscriber(context: Context) : SpeechTranscriber(context) {
         var startCount = 0
+        var audioStarts = 0
         var cancelCount = 0
         val listeners = mutableListOf<Listener>()
 
@@ -312,6 +417,11 @@ class AssistantActionViewModelTest {
         override fun start(listener: Listener) {
             startCount++
             listeners += listener
+        }
+
+        override fun startWithAudio(listener: Listener, audio: RecognizerAudioInput) {
+            audioStarts++
+            start(listener)
         }
 
         override fun cancel() {

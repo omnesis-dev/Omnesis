@@ -18,9 +18,11 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import java.io.IOException
+import java.time.Duration
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -81,10 +83,15 @@ class GatewayHttp(
         return b
     }
 
-    /** Executes a request, returning the body string on 2xx or throwing a typed error. */
-    suspend fun execute(request: Request): String {
+    /**
+     * Executes a request, returning the body string on 2xx or throwing a typed error.
+     * [callClient] defaults to this engine's client; a caller that needs different
+     * timeouts passes one derived from it with `client.newBuilder()`, which keeps the
+     * pinning and the connection pool.
+     */
+    suspend fun execute(request: Request, callClient: OkHttpClient = client): String {
         val response = try {
-            client.newCall(request).await()
+            callClient.newCall(request).await()
         } catch (e: IOException) {
             throw GatewayException.Network(e)
         }
@@ -238,6 +245,20 @@ suspend inline fun <reified B, reified T> GatewayHttp.patchJson(path: String, bo
 suspend inline fun <reified B, reified T> GatewayHttp.putJson(path: String, body: B): T {
     val payload = OmnesisJson.encodeToString(body).toRequestBody(JSON_MEDIA)
     return decodeBody(execute(newRequest(urlFor(path)).put(payload).build()))
+}
+
+/**
+ * POST of a prebuilt body (a multipart upload, not JSON), decoding the 2xx reply into [T].
+ * [timeout] replaces the engine's call, read and write timeouts for this one call, for an
+ * upload whose size outlasts an ordinary API round trip.
+ */
+suspend inline fun <reified T> GatewayHttp.postBody(path: String, body: RequestBody, timeout: Duration): T {
+    val callClient = client.newBuilder()
+        .callTimeout(timeout)
+        .readTimeout(timeout)
+        .writeTimeout(timeout)
+        .build()
+    return decodeBody(execute(newRequest(urlFor(path)).post(body).build(), callClient))
 }
 
 /** DELETE; discards the `{ok:true}` response. */

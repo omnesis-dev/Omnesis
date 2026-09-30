@@ -67,7 +67,7 @@ describe("Nx change selection", () => {
       "ios-logic",
       "ios-snapshot",
     ]);
-    expect(behavioralBundles(["ios/Sources/Omnesis/UI/Agent/SpeechRecognizer.swift"])).toEqual([
+    expect(behavioralBundles(["ios/Sources/Omnesis/UI/Agent/AgentView.swift"])).toEqual([
       "ios-logic",
       "ios-snapshot",
     ]);

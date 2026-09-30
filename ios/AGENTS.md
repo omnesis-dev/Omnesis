@@ -38,7 +38,33 @@ contracts `Sources/Omnesis/Intents/SiriAsk.swift` (ask),
 `Sources/Omnesis/Intents/WatchNote.swift` (note) and
 `Sources/Omnesis/Intents/WatchRelayDelivery.swift` (the delivery window, the
 `transferUserInfo` fallback a relay is queued on when the iPhone app never
-picks it up live, and the phone's handling of queued relays).
+picks it up live, and the phone's handling of queued relays) and
+`Sources/Omnesis/Intents/WatchVoice.swift` (a note recorded on the watch for
+gateway dictation — see below).
+
+**Gateway dictation for notes (experimental).** While the paired gateway
+reports gateway dictation on, a Tell Omnesis capture on the iPhone is a voice
+note (`VoiceNoteCaptureState`): it records (`DictationAudioRecorder`) and
+shows the recording — never the phone's transcript, which it keeps out of
+sight as the note's fallback text — and Done sends both to
+`POST /notes/voice` (`VoiceNoteDelivery`): the note is saved at once, and the
+gateway's transcript replaces the text when ready. Discarding the recording
+makes it a typed note. Nobody waits for the
+gateway, and the offline queue carries the recording like the note. On the
+watch, Note (complication and in-app button) records instead of opening
+system dictation while the gate the phone publishes in the WatchConnectivity
+application context (`WatchDictationGateStore`) is on — `WatchVoiceCapture`,
+which needs the watch's microphone permission — keeps the note in a durable
+outbox (`WatchVoiceOutbox`, policy in `WatchOutboxPolicy`) until a
+`transferFile` reports it delivered, handing it over again at launch, when the
+iPhone becomes reachable and after failures; shows "Sent to your iPhone."; and
+then ends its own process to return to the watch face once the transfer
+carries the note (`WatchVoiceDismissal` — watchOS has no public
+return-to-watch-face call). The phone keeps it in
+`WatchVoiceInbox`, transcribes it strictly on-device for the text shown at
+once, and saves it as a voice note (`WatchVoicePipeline`). Ask always uses
+system dictation. Recording and transfer can only be checked on a physical
+watch paired with a phone.
 
 The watch also ships two complications, **Ask Omnesis** and **Omnesis note**,
 from the `OmnesisWatchWidgets` WidgetKit extension embedded in the watch app. A
@@ -143,16 +169,18 @@ When the user is away from the macOS build host, `devicectl install` doesn't wor
 
 `project.yml` defines a second application target, `OmnesisDemo`, that ships identical code to `Omnesis` but with a distinct identity:
 
-|                       | `Omnesis` (production)                                        | `OmnesisDemo`                             |
-| --------------------- | ------------------------------------------------------------- | ----------------------------------------- |
-| Bundle id             | `dev.omnesis.ios`                                             | `dev.omnesis.ios.demo`                    |
-| Display name          | Omnesis                                                       | Omnesis Demo                              |
-| Info.plist            | `Info.plist`                                                  | `Info-Demo.plist`                         |
-| Entitlements          | `Omnesis.entitlements`                                        | `Omnesis-Demo.entitlements`               |
-| Keychain access group | `dev.omnesis.ios` plus shared `dev.omnesis.ios.notifications` | `dev.omnesis.ios.demo`                    |
-| APS environment       | Debug `development`, Release `production`                     | Debug `development`, Release `production` |
+|                       | `Omnesis` (production)                                        | `OmnesisDemo`                                  |
+| --------------------- | ------------------------------------------------------------- | ---------------------------------------------- |
+| Bundle id             | `dev.omnesis.ios`                                             | `dev.omnesis.ios.demo`                         |
+| Display name          | Omnesis                                                       | Omnesis Demo                                   |
+| Info.plist            | `Info.plist`                                                  | `Info-Demo.plist`                              |
+| Entitlements          | `Omnesis.entitlements`                                        | `Omnesis-Demo.entitlements`                    |
+| Keychain access group | `dev.omnesis.ios` plus shared `dev.omnesis.ios.notifications` | `dev.omnesis.ios.demo`                         |
+| APS environment       | Debug `development`, Release `production`                     | Debug `development`, Release `production`      |
+| Apple Watch app       | `OmnesisWatch` + `OmnesisWatchWidgets`                        | `OmnesisDemoWatch` + `OmnesisDemoWatchWidgets` |
+| Extensions            | Control Center control, notification service                  | none                                           |
 
-Both apps install side-by-side on the same device. Because the keychain access groups differ, each app keeps its own paired gateway URL + token — pair the production app to your live gateway, pair the demo app to whatever the synth/replay demo gateway is serving (`scripts/start-demo-gateway.sh`), and flip between them by tapping the home-screen icon. **No more re-pairing your live setup just to demo.**
+Both apps install side-by-side on the same device. Because the keychain access groups differ, each app keeps its own paired gateway URL + token — pair the production app to your live gateway, pair the demo app to whatever the synth/replay demo gateway is serving (`scripts/start-demo-gateway.sh`), and flip between them by tapping the home-screen icon. **No more re-pairing your live setup just to demo.** Each app embeds its own watch app, built from the `WatchApp` / `WatchWidgets` templates in `project.yml`, so the demo app's complications reach the demo app's gateway.
 
 Build + install the demo target locally (the macOS build host, USB- or Wi-Fi-connected iPhone):
 
@@ -167,7 +195,7 @@ xcrun devicectl device install app --device <UDID> \
 
 `-allowProvisioningUpdates` lets Xcode request a development profile for an App ID your team owns. A custom-identity build may still need manual App ID and capability setup in the Apple Developer portal; see [README.md](README.md) § "Independent device build".
 
-TestFlight delivery of the demo target **is** configured: it has its own App Store Connect app record, the `Omnesis Demo App Store` distribution profile, and an internal beta group. Uploads use the same archive→export→upload→compliance→notify pipeline as production but with `-scheme OmnesisDemo`, the demo `ExportOptions` (`dev.omnesis.ios.demo` → `Omnesis Demo App Store`), and the demo app record. Release resolves `aps-environment` to `production` for the App Store distribution profile; Debug resolves it to `development`. The full demo runbook + reference IDs live in the private `CLAUDE.local.md` (kept out of this checked-in file, same as the production runbook).
+TestFlight delivery of the demo target **is** configured: it has its own App Store Connect app record, the `Omnesis Demo App Store` distribution profile, and an internal beta group. Uploads use the same archive→export→upload→compliance→notify pipeline as production but with `-scheme OmnesisDemo`, the demo `ExportOptions` (`dev.omnesis.ios.demo` → `Omnesis Demo App Store`, `….demo.watchkitapp` → `Omnesis Demo Watch App Store`, `….demo.watchkitapp.widgets` → `Omnesis Demo Watch Widgets App Store`), and the demo app record. The demo app record keeps its own build-number sequence; an upload sets `CURRENT_PROJECT_VERSION` and `Info-Demo.plist`'s `CFBundleVersion` to the same number so the embedded watch app matches. Release resolves `aps-environment` to `production` for the App Store distribution profile; Debug resolves it to `development`. The full demo runbook + reference IDs live in the private `CLAUDE.local.md` (kept out of this checked-in file, same as the production runbook).
 
 To pair the demo app: start the demo gateway, then mint an iOS pairing code against THAT gateway (point the CLI at the demo config dir):
 

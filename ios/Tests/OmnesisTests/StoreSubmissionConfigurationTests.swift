@@ -61,12 +61,19 @@ final class StoreSubmissionConfigurationTests: XCTestCase {
         let extensionManifests = [
             "OmnesisNotificationService": "Sources/OmnesisNotificationService/PrivacyInfo.xcprivacy",
             "OmnesisWidgets": "Sources/OmnesisWidgets/PrivacyInfo.xcprivacy",
-            "OmnesisWatch": "Sources/OmnesisWatch/PrivacyInfo.xcprivacy",
+            // Both watch apps are built from this template.
+            "WatchApp": "Sources/OmnesisWatch/PrivacyInfo.xcprivacy",
         ]
         for (target, path) in extensionManifests {
             let block = try targetBlock(named: target, in: project)
             XCTAssertTrue(block.contains("- path: \(path)"), "\(target) must explicitly bundle its privacy manifest")
             XCTAssertEqual(project.components(separatedBy: path).count - 1, 1, path)
+        }
+        for watch in ["OmnesisWatch", "OmnesisDemoWatch"] {
+            XCTAssertTrue(
+                project.contains("  \(watch):\n    templates: [WatchApp]"),
+                "\(watch) must be built from the template that bundles the privacy manifest"
+            )
         }
     }
 

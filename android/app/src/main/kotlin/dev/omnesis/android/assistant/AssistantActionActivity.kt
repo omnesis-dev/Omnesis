@@ -114,7 +114,8 @@ class AssistantActionActivity : ComponentActivity() {
                             // Partial transcripts update this state repeatedly. Only the initial
                             // empty state owns recognizer startup; restarting on every partial
                             // result drops the utterance that is already in progress.
-                            if ((state as AssistantActionUiState.Listening).partialText.isNotEmpty()) {
+                            val listening = state as AssistantActionUiState.Listening
+                            if (listening.partialText.isNotEmpty() || listening.recordingVoiceNote) {
                                 return@LaunchedEffect
                             }
                             if (ContextCompat.checkSelfPermission(
@@ -425,7 +426,12 @@ fun AssistantActionContent(
                             Modifier.size(88.dp).clip(CircleShape).background(colors.accent.copy(alpha = 0.14f)),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Icon(Icons.Outlined.Mic, "Listening", tint = colors.accent, modifier = Modifier.size(42.dp))
+                            Icon(
+                                Icons.Outlined.Mic,
+                                if (state.recordingVoiceNote) "Recording" else "Listening",
+                                tint = colors.accent,
+                                modifier = Modifier.size(42.dp),
+                            )
                         }
                         Spacer(Modifier.height(OmSpacing.lg))
                         Text(
@@ -434,7 +440,14 @@ fun AssistantActionContent(
                             fontWeight = FontWeight.SemiBold,
                             textAlign = TextAlign.Center,
                         )
-                        if (state.partialText.isNotBlank()) {
+                        if (state.recordingVoiceNote) {
+                            Spacer(Modifier.height(OmSpacing.md))
+                            Text(
+                                "Recording — your gateway will transcribe this note.",
+                                color = colors.accent,
+                                textAlign = TextAlign.Center,
+                            )
+                        } else if (state.partialText.isNotBlank()) {
                             Spacer(Modifier.height(OmSpacing.md))
                             Text(state.partialText, color = colors.textSecondary, textAlign = TextAlign.Center)
                         }

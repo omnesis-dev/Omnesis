@@ -445,8 +445,15 @@ import {
   insertNoteEntry,
   updateNoteEntryText,
   deleteNoteEntry,
+  replaceNoteEntryTextIf,
   type NoteEntry,
 } from "./sources/omnesis-notes/storage.js";
+import {
+  insertPendingVoiceNote,
+  reschedulePendingVoiceNote,
+  deletePendingVoiceNote,
+  type NewPendingVoiceNote,
+} from "./voice-notes/storage.js";
 import { insertAgentMessage, type AgentMessageRow } from "./sources/agent-conversations/storage.js";
 import { resolveDerivationStages, type DerivationStageId } from "./domain/DocumentDerivation.js";
 import {
@@ -2011,6 +2018,24 @@ export interface WriteGate {
    * day so the caller can re-render that day's projected document.
    */
   deleteNoteEntry(id: string): Promise<{ deleted: boolean; day: string | null }>;
+  /**
+   * Replace an entry's text only while it still reads `expected` (bumps
+   * `updated_at`). Returns the day on success so the caller can re-render it.
+   */
+  replaceNoteEntryTextIf(
+    id: string,
+    expected: string,
+    text: string,
+    now: string,
+  ): Promise<{ outcome: "replaced"; day: string } | { outcome: "changed" | "missing" }>;
+
+  // ── voice notes waiting on the transcriber ──────────────────────
+  /** Queue a note's audio. False when that note is already queued. */
+  enqueueVoiceNote(row: NewPendingVoiceNote): Promise<boolean>;
+  /** Record an attempt and when to try next. */
+  rescheduleVoiceNote(noteId: string, attempts: number, nextAttemptAt: string): Promise<void>;
+  /** Drop a queued note and its audio. */
+  deleteVoiceNote(noteId: string): Promise<void>;
 
   // ── agent-conversations (pushed) ──────────────────────────────────
   /**
@@ -2638,6 +2663,12 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     appendNoteEntry: (entry, audit) => call("notes.appendEntry", [entry, audit]),
     updateNoteEntry: (id, text, now) => call("notes.updateEntry", [id, text, now]),
     deleteNoteEntry: (id) => call("notes.deleteEntry", [id]),
+    replaceNoteEntryTextIf: (id, expected, text, now) =>
+      call("notes.replaceEntryTextIf", [id, expected, text, now]),
+    enqueueVoiceNote: (row) => call("voiceNotes.enqueue", [row]),
+    rescheduleVoiceNote: (noteId, attempts, nextAttemptAt) =>
+      call("voiceNotes.reschedule", [noteId, attempts, nextAttemptAt]),
+    deleteVoiceNote: (noteId) => call("voiceNotes.delete", [noteId]),
 
     appendAgentMessage: (message) => call("agentMessages.appendMessage", [message]),
 
@@ -3283,6 +3314,12 @@ export function directWriteGate(db: Db): WriteGate {
     appendNoteEntry: async (entry, audit) => insertNoteEntry(db, entry, audit),
     updateNoteEntry: async (id, text, now) => updateNoteEntryText(db, id, text, now),
     deleteNoteEntry: async (id) => deleteNoteEntry(db, id),
+    replaceNoteEntryTextIf: async (id, expected, text, now) =>
+      replaceNoteEntryTextIf(db, id, expected, text, now),
+    enqueueVoiceNote: async (row) => insertPendingVoiceNote(db, row),
+    rescheduleVoiceNote: async (noteId, attempts, nextAttemptAt) =>
+      reschedulePendingVoiceNote(db, noteId, attempts, nextAttemptAt),
+    deleteVoiceNote: async (noteId) => deletePendingVoiceNote(db, noteId),
 
     appendAgentMessage: async (message) => insertAgentMessage(db, message),
 

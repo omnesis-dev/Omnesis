@@ -17,6 +17,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import java.io.File
 import java.time.Instant
 
 /** Durability contract of the offline quick-capture queue (real SQLite via Robolectric). */
@@ -192,5 +193,64 @@ class PendingNotesStoreTest {
         assertNull(upgraded.lastAttemptAt)
         assertNull(upgraded.lastFailure)
         assertEquals(0, upgraded.retryCount)
+    }
+
+    @Test
+    fun a_voice_note_keeps_its_audio_and_language_and_can_drop_the_audio() = runTest {
+        val s = store()
+        val audio = VoiceNoteAudio(File("/data/voice-notes/note-v1.wav"), "audio/wav")
+        s.insert("v1", "", "2026-07-13T08:00:00.000Z", "android-tile", audio = audio, language = "fr-FR")
+        s.insert("t1", "Typed note", "2026-07-13T08:01:00.000Z", "android-app")
+
+        val (voice, typed) = s.readAll()
+        assertEquals(audio, voice.audio)
+        assertEquals("fr-FR", voice.language)
+        assertNull(typed.audio)
+        assertNull(typed.language)
+
+        s.dropAudio(voice.id)
+        assertNull(s.readAll().first().audio)
+        assertEquals("fr-FR", s.readAll().first().language)
+    }
+
+    @Test
+    fun upgrading_a_v3_database_keeps_rows_as_typed_notes() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val v3 = object : SQLiteOpenHelper(context, "omnesis_pending_notes.db", null, 3) {
+            override fun onCreate(db: SQLiteDatabase) {
+                db.execSQL(
+                    """CREATE TABLE pending_notes (
+                        _id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        note_id TEXT NOT NULL,
+                        text TEXT NOT NULL,
+                        captured_at TEXT NOT NULL,
+                        surface TEXT NOT NULL,
+                        last_attempt_at TEXT,
+                        last_failure TEXT,
+                        retry_count INTEGER NOT NULL DEFAULT 0
+                    )""",
+                )
+            }
+
+            override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+        }
+        v3.writableDatabase.insert(
+            "pending_notes",
+            null,
+            ContentValues().apply {
+                put("note_id", "v3-key")
+                put("text", "Queued before voice notes")
+                put("captured_at", "2026-07-13T07:00:00.000Z")
+                put("surface", "android-app")
+                put("retry_count", 2)
+            },
+        )
+        v3.close()
+
+        val upgraded = store().readAll().single()
+        assertEquals("Queued before voice notes", upgraded.text)
+        assertEquals(2, upgraded.retryCount)
+        assertNull(upgraded.audio)
+        assertNull(upgraded.language)
     }
 }

@@ -55,17 +55,27 @@ final class WatchPresenter {
     var screen: Screen = .ask
 }
 
-/// Top-level switch between the ask and note capture flows.
+/// Top-level switch between the ask and note capture flows, with the
+/// gateway dictation recording screen over either while it is up.
 struct WatchRootView: View {
     private var presenter = WatchPresenter.shared
+    private var capture = WatchVoiceCapture.shared
 
     var body: some View {
-        switch presenter.screen {
-        case .ask:
-            WatchAskView()
-        case .note:
-            WatchNoteView()
+        Group {
+            if capture.state != .idle {
+                WatchVoiceCaptureView()
+            } else {
+                switch presenter.screen {
+                case .ask:
+                    WatchAskView()
+                case .note:
+                    WatchNoteView()
+                }
+            }
         }
+        // Recorded notes the outbox had to drop are told on the next visit.
+        .onAppear { capture.showDroppedIfNeeded() }
     }
 }
 

@@ -120,10 +120,12 @@ public final class NotesCoordinator {
     // MARK: - Capture / edit / delete
 
     /// Save a note (POST, falling back to the durable queue).
+    /// `audio` makes it a voice note — see `NoteCaptureService.capture`.
     public func save(
         text: String,
         surface: NoteSurface,
-        captureTime: NoteCaptureTime = .now()
+        captureTime: NoteCaptureTime = .now(),
+        audio: NoteAudio? = nil
     ) async
         -> NoteCaptureService.Outcome {
         // Best-effort location for this fresh capture. Resolved before the
@@ -139,7 +141,8 @@ public final class NotesCoordinator {
             deviceId: deviceId,
             store: store,
             captureTime: captureTime,
-            location: location
+            location: location,
+            audio: audio
         )
         switch outcome {
         case .saved:
@@ -203,8 +206,10 @@ public final class NotesCoordinator {
     }
 
     /// Deliver queued notes oldest-first with their original
-    /// `capturedAt`. A deterministic per-note rejection (400/413/422 —
-    /// the gateway will refuse that exact note every time) is skipped
+    /// `capturedAt`, a voice note with its recording (`VoiceNoteDelivery`).
+    /// A deterministic per-note rejection (400/413/422 — the gateway will
+    /// refuse that exact note every time — or a voice note with no text of
+    /// its own that the gateway will not take as audio) is skipped
     /// so one bad row can't wedge the whole queue; the row stays visible
     /// in delivery diagnostics until the user discards it. Any other
     /// failure stops the pass — the queue shares one endpoint, so
@@ -222,20 +227,40 @@ public final class NotesCoordinator {
         var delivered = 0
         for note in await store.list() {
             do {
-                _ = try await client.createNote(
-                    id: note.noteId,
-                    text: note.text,
-                    capturedAt: note.capturedAt,
-                    capturedTimeZoneId: note.capturedTimeZoneId,
-                    capturedUtcOffsetSeconds: note.capturedUtcOffsetSeconds,
-                    surface: note.surface,
-                    deviceId: deviceId,
-                    location: note.location
-                )
+                if note.voice != nil, let noteId = note.noteId {
+                    try await VoiceNoteDelivery.deliver(
+                        VoiceNoteUpload(
+                            id: noteId,
+                            text: note.text,
+                            capturedAt: note.capturedAt,
+                            capturedTimeZoneId: note.capturedTimeZoneId,
+                            capturedUtcOffsetSeconds: note.capturedUtcOffsetSeconds,
+                            surface: note.surface,
+                            deviceId: deviceId,
+                            location: note.location,
+                            language: note.voice?.locale
+                        ),
+                        audio: store.audioFile(for: note.id),
+                        client: client,
+                        location: note.location
+                    )
+                } else {
+                    _ = try await client.createNote(
+                        id: note.noteId,
+                        text: note.text,
+                        capturedAt: note.capturedAt,
+                        capturedTimeZoneId: note.capturedTimeZoneId,
+                        capturedUtcOffsetSeconds: note.capturedUtcOffsetSeconds,
+                        surface: note.surface,
+                        deviceId: deviceId,
+                        location: note.location
+                    )
+                }
                 try await store.remove(id: note.id)
                 delivered += 1
             } catch {
-                if let rejection = NoteCaptureService.deterministicRejection(error) {
+                if let rejection = NoteCaptureService.deterministicRejection(error)
+                    ?? (error is VoiceNoteDelivery.TextlessVoiceNoteRefused ? VoiceNoteDelivery.refusedMessage : nil) {
                     log.warning("Skipping queued note the gateway rejects: \(rejection, privacy: .public)")
                     try? await store.recordFailedRedelivery(
                         id: note.id,

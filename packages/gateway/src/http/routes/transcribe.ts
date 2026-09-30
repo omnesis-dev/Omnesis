@@ -7,8 +7,8 @@
  * The collector posts raw audio bytes (Content-Type = the audio MIME type)
  * during sync; the gateway runs the configured transcriber model (local
  * Whisper) and returns the transcript. Audio is held only for the duration of
- * the request — nothing is persisted. Gated behind the `stt` experimental
- * feature, so the endpoint 404s unless the operator opted in.
+ * the request — nothing is persisted. Without a runnable transcriber the
+ * route answers `{ available: false }`.
  *
  * Scope: `writeAny` — the same scope the collector uses to ingest documents.
  * Transcription is part of producing a document's content, not an admin op.

@@ -73,11 +73,14 @@ const WHISPER_MS_PER_AUDIO_SEC = 3_000;
 const WHISPER_MIN_TIMEOUT_MS = 120_000;
 const WHISPER_MAX_TIMEOUT_MS = 1_800_000;
 
-/** Compute the per-request timeout (ms) for a clip of `durationSec` seconds. */
-export function computeWhisperTimeoutMs(durationSec: number): number {
+/**
+ * Compute the per-request timeout (ms) for a clip of `durationSec` seconds,
+ * raised to a caller's `minTimeoutMs`, within the same ceiling.
+ */
+export function computeWhisperTimeoutMs(durationSec: number, minTimeoutMs = 0): number {
   const budget =
     WHISPER_LOAD_BUDGET_MS + Math.ceil(Math.max(durationSec, 0) * WHISPER_MS_PER_AUDIO_SEC);
-  return Math.min(Math.max(budget, WHISPER_MIN_TIMEOUT_MS), WHISPER_MAX_TIMEOUT_MS);
+  return Math.min(Math.max(budget, WHISPER_MIN_TIMEOUT_MS, minTimeoutMs), WHISPER_MAX_TIMEOUT_MS);
 }
 
 /** A spawned worker process — minimal surface the supervisor drives. */
@@ -305,7 +308,7 @@ export class WhisperTranscriber implements TranscribeCapability {
   async transcribe(
     audio: Uint8Array,
     mimeType: string,
-    opts?: { language?: string },
+    opts?: { language?: string; minTimeoutMs?: number },
   ): Promise<TranscriptionResult> {
     const pcm = await this.decodeAudio(audio, mimeType);
     let worker: WhisperWorkerProcess;
@@ -326,9 +329,10 @@ export class WhisperTranscriber implements TranscribeCapability {
     };
     // Budget = explicit override (tests) or a duration-scaled value that covers
     // a cold reload plus the inference itself — so a long clip on CPU isn't
-    // killed mid-transcribe.
+    // killed mid-transcribe — raised to the caller's `minTimeoutMs`.
     const timeoutMs =
-      this.requestTimeoutMs ?? computeWhisperTimeoutMs(pcm.length / PCM_SAMPLE_RATE);
+      this.requestTimeoutMs ??
+      computeWhisperTimeoutMs(pcm.length / PCM_SAMPLE_RATE, opts?.minTimeoutMs);
     return new Promise<TranscriptionResult>((resolve, reject) => {
       const timer = setTimeout(() => {
         // A hung whisper.cpp call: reject this request, kill the worker (which

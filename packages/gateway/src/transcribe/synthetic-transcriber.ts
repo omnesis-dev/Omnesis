@@ -24,7 +24,7 @@ export class SyntheticTranscriber implements TranscribeCapability {
   async transcribe(
     audio: Uint8Array,
     _mimeType: string,
-    opts?: { language?: string },
+    opts?: { language?: string; minTimeoutMs?: number },
   ): Promise<TranscriptionResult> {
     const text = new TextDecoder("utf-8", { fatal: false }).decode(audio).trim();
     // Echo the language hint when given (defaulting to English) so tests can

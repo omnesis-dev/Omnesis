@@ -41,6 +41,7 @@ import { ReleaseCheckService } from "./release-check/service.js";
 import { createReleaseCheckTask } from "./release-check/task.js";
 import { GatewayHttpShutdown } from "./gateway-http-shutdown.js";
 import { seedWebSourceMeta } from "./sources/web/source-meta.js";
+import { dictationFeatureStatus } from "./dictation/index.js";
 import {
   bootBriefs,
   briefsFeatureStatus,
@@ -1706,6 +1707,7 @@ const briefTalkback: {
 // needs DocumentService.ingest); held here for the shutdown sequence —
 // flushAll() then dispose(), beside the omnesis-chat runtime's teardown.
 let omnesisNotesRuntime: import("./sources/omnesis-notes/index.js").OmnesisNotesRuntime | undefined;
+let voiceNoteService: import("./voice-notes/index.js").VoiceNoteService | undefined;
 let agentConversationsRuntime:
   | import("./sources/agent-conversations/index.js").AgentConversationsRuntime
   | undefined;
@@ -2170,6 +2172,9 @@ const app = createServer(db, DB_PATH, {
     // Nudge the date-enrichment pass to pick up freshly ingested docs promptly.
     dateEnrichment.kick();
   },
+  onVoiceNoteService: (service) => {
+    voiceNoteService = service;
+  },
   onOmnesisNotesRuntime: (runtime) => {
     omnesisNotesRuntime = runtime;
   },
@@ -2313,6 +2318,11 @@ const app = createServer(db, DB_PATH, {
   getConfigHealth: () => inferenceRegistry.configHealth(),
   getReleaseCheck: () => releaseCheckService.snapshot(),
   getBriefsStatus: () => briefsFeatureStatus(inferenceRegistry, chatRoleReadinessDeps),
+  getDictationStatus: () =>
+    dictationFeatureStatus({
+      transcriberReadiness: () => transcribeService.readiness(),
+      getConfig: () => configStore.get(),
+    }),
   getBriefTalkback: () => briefTalkback.port,
   briefsClock: briefsVirtualClock ?? undefined,
   cognitionActivity,
@@ -3174,6 +3184,9 @@ const doShutdown = async (): Promise<void> => {
   }
 
   await agentLifecycle.shutdown();
+  // Voice notes: stop picking up queued notes. One being transcribed right now
+  // is not awaited — it stays queued and is transcribed again after restart.
+  voiceNoteService?.dispose();
   // omnesis-notes: flush pending day-doc upserts (a capture that landed
   // within the debounce window must still project), then drop timers.
   if (omnesisNotesRuntime) {

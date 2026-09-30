@@ -46,6 +46,9 @@ public struct OmnesisApp: App {
         // here, register right away, then stash it in @State.
         let store = AppStore()
         store.registerBackgroundTasks()
+        #if os(iOS)
+        store.publishDictationGateToWatch()
+        #endif
         _store = State(wrappedValue: store)
     }
 
