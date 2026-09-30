@@ -160,16 +160,18 @@ When the user is away from the macOS build host, `devicectl install` doesn't wor
 
 `project.yml` defines a second application target, `OmnesisDemo`, that ships identical code to `Omnesis` but with a distinct identity:
 
-|                       | `Omnesis` (production)                                        | `OmnesisDemo`                             |
-| --------------------- | ------------------------------------------------------------- | ----------------------------------------- |
-| Bundle id             | `dev.omnesis.ios`                                             | `dev.omnesis.ios.demo`                    |
-| Display name          | Omnesis                                                       | Omnesis Demo                              |
-| Info.plist            | `Info.plist`                                                  | `Info-Demo.plist`                         |
-| Entitlements          | `Omnesis.entitlements`                                        | `Omnesis-Demo.entitlements`               |
-| Keychain access group | `dev.omnesis.ios` plus shared `dev.omnesis.ios.notifications` | `dev.omnesis.ios.demo`                    |
-| APS environment       | Debug `development`, Release `production`                     | Debug `development`, Release `production` |
+|                       | `Omnesis` (production)                                        | `OmnesisDemo`                                  |
+| --------------------- | ------------------------------------------------------------- | ---------------------------------------------- |
+| Bundle id             | `dev.omnesis.ios`                                             | `dev.omnesis.ios.demo`                         |
+| Display name          | Omnesis                                                       | Omnesis Demo                                   |
+| Info.plist            | `Info.plist`                                                  | `Info-Demo.plist`                              |
+| Entitlements          | `Omnesis.entitlements`                                        | `Omnesis-Demo.entitlements`                    |
+| Keychain access group | `dev.omnesis.ios` plus shared `dev.omnesis.ios.notifications` | `dev.omnesis.ios.demo`                         |
+| APS environment       | Debug `development`, Release `production`                     | Debug `development`, Release `production`      |
+| Apple Watch app       | `OmnesisWatch` + `OmnesisWatchWidgets`                        | `OmnesisDemoWatch` + `OmnesisDemoWatchWidgets` |
+| Extensions            | Control Center control, notification service                  | none                                           |
 
-Both apps install side-by-side on the same device. Because the keychain access groups differ, each app keeps its own paired gateway URL + token — pair the production app to your live gateway, pair the demo app to whatever the synth/replay demo gateway is serving (`scripts/start-demo-gateway.sh`), and flip between them by tapping the home-screen icon. **No more re-pairing your live setup just to demo.**
+Both apps install side-by-side on the same device. Because the keychain access groups differ, each app keeps its own paired gateway URL + token — pair the production app to your live gateway, pair the demo app to whatever the synth/replay demo gateway is serving (`scripts/start-demo-gateway.sh`), and flip between them by tapping the home-screen icon. **No more re-pairing your live setup just to demo.** Each app embeds its own watch app, built from the `WatchApp` / `WatchWidgets` templates in `project.yml`, so the demo app's complications reach the demo app's gateway.
 
 Build + install the demo target locally (the macOS build host, USB- or Wi-Fi-connected iPhone):
 
@@ -184,7 +186,7 @@ xcrun devicectl device install app --device <UDID> \
 
 `-allowProvisioningUpdates` lets Xcode request a development profile for an App ID your team owns. A custom-identity build may still need manual App ID and capability setup in the Apple Developer portal; see [README.md](README.md) § "Independent device build".
 
-TestFlight delivery of the demo target **is** configured: it has its own App Store Connect app record, the `Omnesis Demo App Store` distribution profile, and an internal beta group. Uploads use the same archive→export→upload→compliance→notify pipeline as production but with `-scheme OmnesisDemo`, the demo `ExportOptions` (`dev.omnesis.ios.demo` → `Omnesis Demo App Store`), and the demo app record. Release resolves `aps-environment` to `production` for the App Store distribution profile; Debug resolves it to `development`. The full demo runbook + reference IDs live in the private `CLAUDE.local.md` (kept out of this checked-in file, same as the production runbook).
+TestFlight delivery of the demo target **is** configured: it has its own App Store Connect app record, the `Omnesis Demo App Store` distribution profile, and an internal beta group. Uploads use the same archive→export→upload→compliance→notify pipeline as production but with `-scheme OmnesisDemo`, the demo `ExportOptions` (`dev.omnesis.ios.demo` → `Omnesis Demo App Store`, `….demo.watchkitapp` → `Omnesis Demo Watch App Store`, `….demo.watchkitapp.widgets` → `Omnesis Demo Watch Widgets App Store`), and the demo app record. The demo app record keeps its own build-number sequence; an upload sets `CURRENT_PROJECT_VERSION` and `Info-Demo.plist`'s `CFBundleVersion` to the same number so the embedded watch app matches. Release resolves `aps-environment` to `production` for the App Store distribution profile; Debug resolves it to `development`. The full demo runbook + reference IDs live in the private `CLAUDE.local.md` (kept out of this checked-in file, same as the production runbook).
 
 To pair the demo app: start the demo gateway, then mint an iOS pairing code against THAT gateway (point the CLI at the demo config dir):
 
