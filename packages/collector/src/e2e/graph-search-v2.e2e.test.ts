@@ -141,8 +141,22 @@ describe("Agent search v2 — synthetic file journey", () => {
         WHERE origin.external_id = 'graph-chat' AND target.external_id = 'graph-contract-1' AND link.link_type = 'url'`,
         )
         .get() as { n: number };
-      return copies.length === 5 && links.n >= 4 && urls.n >= 13 && shared.n > 0;
-    }, "five ingested copies and materialized URL/duplicate edges");
+      const attachment = copies.find((copy) => copy.source_id.startsWith("gmail:"));
+      const attached = attachment
+        ? (
+            db
+              .prepare(
+                `SELECT COUNT(*) AS n FROM document_links link
+               JOIN documents parent ON parent.id = link.target_doc_id
+               WHERE link.source_doc_id = ? AND parent.external_id = 'graph-mail'
+                 AND parent.source_id = ? AND link.link_type = 'contains'
+                 AND json_extract(link.metadata_json, '$.role') = 'attachment'`,
+              )
+              .get(attachment.id, attachment.source_id) as { n: number }
+          ).n
+        : 0;
+      return copies.length === 5 && links.n >= 4 && urls.n >= 13 && shared.n > 0 && attached > 0;
+    }, "five ingested copies and resolved sharing, attachment and duplicate edges");
     const index = new Database(join(harness.getConfigDir(), "index.db"), { readonly: true });
     try {
       await waitUntil(() => {
