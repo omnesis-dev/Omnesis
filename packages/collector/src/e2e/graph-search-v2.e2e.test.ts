@@ -360,6 +360,8 @@ describe("Agent search v2 — synthetic file journey", () => {
       expect(body.results.every((hit) => hit.provenance === undefined)).toBe(true);
     } else expect(injection.status).toBe(400);
     const enriched = await directSearch(unrestricted, QUERY);
+    const copyQuery = '"agreement copy" source:google-drive';
+    const enrichedCopies = await directSearchResult(unrestricted, copyQuery);
     enabled = false;
     await harness.restartGateway();
     const publicAfter = (await publicSearch(harness)).results;
@@ -381,11 +383,39 @@ describe("Agent search v2 — synthetic file journey", () => {
       legacy.filter((h) => copies.some((copy) => copy.id === h.documentId)).length,
     ).toBeGreaterThan(1);
     expect(legacy.some((h) => h.breadcrumb?.length)).toBe(true);
-    // Count the entire model-facing result, including provenance/IDs/URLs.
+    // Broad queries may spend saved snippet space on additional unique evidence.
     const enrichedBytes = Buffer.byteLength(JSON.stringify(enriched));
     const legacyBytes = Buffer.byteLength(JSON.stringify(legacy));
     console.info(`[graph-search] model result bytes: v2=${enrichedBytes}, legacy=${legacyBytes}`);
-    expect(enrichedBytes).toBeLessThan(legacyBytes);
+    const legacyCopies = await directSearchResult(unrestricted, copyQuery);
+    if (
+      enrichedCopies.kind !== "search.batch" ||
+      enrichedCopies.items[0]?.kind !== "search.results" ||
+      legacyCopies.kind !== "search.batch" ||
+      legacyCopies.items[0]?.kind !== "search.results"
+    )
+      throw new Error("Missing focused copy-family results");
+    const matchingDriveIds = copies
+      .filter((copy) => copy.source_id === "google-drive:maya@example.com")
+      .map((copy) => copy.id)
+      .sort();
+    expect(legacyCopies.items[0].results.map((hit) => hit.documentId).sort()).toEqual(
+      matchingDriveIds,
+    );
+    expect(enrichedCopies.items[0].results).toHaveLength(1);
+    const grouped = enrichedCopies.items[0].results[0]!;
+    expect(matchingDriveIds).toContain(grouped.documentId);
+    expect(grouped.provenance!.copies.map((copy) => copy.documentId).sort()).toEqual(
+      copies.map((copy) => copy.id).sort(),
+    );
+    // Compare the full live tool payload for the same three matching roots,
+    // including batch envelopes and provenance for copies outside the filter.
+    const enrichedCopyBytes = Buffer.byteLength(JSON.stringify(enrichedCopies));
+    const legacyCopyBytes = Buffer.byteLength(JSON.stringify(legacyCopies));
+    console.info(
+      `[graph-search] focused tool payload bytes: v2=${enrichedCopyBytes}, legacy=${legacyCopyBytes}`,
+    );
+    expect(enrichedCopyBytes).toBeLessThan(legacyCopyBytes);
     enabled = true;
     await harness.restartGateway();
     expect(
@@ -401,15 +431,21 @@ async function publicSearch(harness: SyntheticE2EHarness): Promise<{ results: Pu
   });
 }
 async function directSearch(authorized: AuthorizedMcpClient, query: string): Promise<DocRef[]> {
+  const result = await directSearchResult(authorized, query);
+  if (result.kind !== "search.batch" || result.items[0]?.kind !== "search.results")
+    throw new Error(`Unexpected direct result: ${JSON.stringify(result)}`);
+  return result.items[0].results;
+}
+async function directSearchResult(
+  authorized: AuthorizedMcpClient,
+  query: string,
+): Promise<ToolResult> {
   const response = await authorized.client.callTool({
     name: "search_many",
     arguments: { queries: [{ query, limit: 20 }] },
   });
   expect(response.isError).not.toBe(true);
-  const result = response.structuredContent as ToolResult;
-  if (result.kind !== "search.batch" || result.items[0]?.kind !== "search.results")
-    throw new Error(`Unexpected direct result: ${JSON.stringify(result)}`);
-  return result.items[0].results;
+  return response.structuredContent as ToolResult;
 }
 function toolResult(events: WireEvent[], id: string): ToolResult {
   const result = events.find(
