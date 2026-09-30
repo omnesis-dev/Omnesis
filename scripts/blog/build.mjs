@@ -137,13 +137,13 @@ ${footer}
 export function renderIndex(posts) {
   const list = posts.length
     ? `<div class="post-list">${posts.map((post) => `<article class="post-card">${metadata(post)}<h2><a href="/blog/${post.slug}">${escapeHtml(post.title)}</a></h2><p class="post-description">${escapeHtml(post.description)}</p><a class="read-post" href="/blog/${post.slug}" aria-label="Read ${escapeHtml(post.title)}">Read post <span aria-hidden="true">→</span></a></article>`).join("")}</div>`
-    : `<div class="empty-state"><span class="empty-mark" aria-hidden="true">01 /</span><h2>Posts coming soon.</h2><p>One problem at a time. Notes on building Omnesis, the decisions behind it, and what I learn along the way.</p></div>`;
+    : `<div class="empty-state"><span class="empty-mark" aria-hidden="true">01 /</span><h2>Posts coming soon.</h2></div>`;
   return layout({
     title: "Blog",
     description:
       "Engineering notes on building Omnesis: problems, solutions, and the tradeoffs behind them.",
     path: "/blog/",
-    content: `<header class="blog-intro"><p class="eyebrow">BUILDING OMNESIS</p><h1>Notes from the build.</h1><p class="lede">The problems, the solutions, and the decisions along the way.</p></header>${list}`,
+    content: `<header class="blog-intro"><p class="eyebrow">BUILDING OMNESIS</p><h1>Notes from the build.</h1><p class="lede">I’ll try to share updates and interesting stories of how I went about building Omnesis.</p></header>${list}`,
   });
 }
 
