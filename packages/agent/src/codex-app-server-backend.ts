@@ -340,6 +340,7 @@ export class CodexAppServerRuntime {
       toolTimeoutMs,
       maxToolIterations,
       signal,
+      heldForTurnId: [],
     };
 
     const abort = (): void => {
@@ -408,10 +409,8 @@ export class CodexAppServerRuntime {
       const parsedTurnId = extractTurnId(turnResult);
       if (!parsedTurnId) throw new Error("Codex app-server did not return a turn id");
       turnId = parsedTurnId;
-      if (state.turnId && state.turnId !== turnId) {
-        throw new Error("Codex app-server returned a turn id that did not match its early events");
-      }
       state.turnId = turnId;
+      this.releaseHeldMessages(state);
 
       while (true) {
         const next = await queue.shift();
@@ -453,6 +452,8 @@ export class CodexAppServerRuntime {
       }
     } finally {
       signal?.removeEventListener("abort", abort);
+      // A turn that never learned its id judges anything still held as foreign.
+      this.releaseHeldMessages(state);
       if (this.activeTurn === state) this.activeTurn = null;
       queue.close();
     }
@@ -625,6 +626,12 @@ export class CodexAppServerRuntime {
     const tool = stringField(p, "tool") ?? "";
     const rawArgs = p?.arguments ?? {};
 
+    if (state && this.holdUntilTurnId(state, params)) {
+      return new Promise((resolve) => {
+        state.heldForTurnId?.push(() => resolve(this.handleToolCall(params)));
+      });
+    }
+
     if (!state || !this.acceptTurnScopedParams(state, params)) {
       return {
         success: false,
@@ -729,6 +736,10 @@ export class CodexAppServerRuntime {
   private handleNotification(method: string, params: unknown): void {
     const state = this.activeTurn;
     if (!state) return;
+    if (this.holdUntilTurnId(state, params)) {
+      state.heldForTurnId?.push(() => this.handleNotification(method, params));
+      return;
+    }
 
     if (method === "item/agentMessage/delta") {
       if (!this.acceptTurnScopedParams(state, params)) return;
@@ -770,6 +781,8 @@ export class CodexAppServerRuntime {
       if (!this.acceptTurnScopedParams(state, params)) return;
       const p = asRecord(params);
       state.usage = parseCodexUsage(p?.tokenUsage);
+      const contextInputTokens = parseCodexContextInputTokens(p?.tokenUsage);
+      if (contextInputTokens !== undefined) state.contextInputTokens = contextInputTokens;
       if (Object.keys(state.usage).length > 0) {
         state.queue.push(
           wrapEvent("agent.usage.update", {
@@ -866,11 +879,26 @@ export class CodexAppServerRuntime {
     if (threadId && state.threadId && threadId !== state.threadId) return false;
     const turnId = turnIdFromParams(p);
     if (!turnId) return state.turnId === "";
-    if (!state.turnId) {
-      state.turnId = turnId;
-      return true;
-    }
     return turnId === state.turnId;
+  }
+
+  /**
+   * Codex may deliver a turn's first events before the `turn/start` response,
+   * or in the same read, ahead of the continuation that records the turn id.
+   * Until that id is known those events cannot be told apart from another
+   * turn's output, so a message naming a turn is held and replayed, in arrival
+   * order, once `turn/start` settles.
+   */
+  private holdUntilTurnId(state: ActiveCodexTurn, params: unknown): boolean {
+    if (state.turnId || !state.heldForTurnId) return false;
+    const p = asRecord(params);
+    return p !== null && turnIdFromParams(p) !== null;
+  }
+
+  private releaseHeldMessages(state: ActiveCodexTurn): void {
+    const held = state.heldForTurnId;
+    state.heldForTurnId = null;
+    for (const replay of held ?? []) replay();
   }
 
   private failActiveTurn(code: string, message: string): void {
@@ -905,7 +933,7 @@ export class CodexAppServerRuntime {
           }),
         );
     }
-    const inputTokens = state.usage.inputTokens;
+    const inputTokens = state.contextInputTokens;
     state.queue.push(
       wrapEvent("agent.message.end", {
         sessionId: state.sessionId,
@@ -1169,12 +1197,16 @@ interface ActiveCodexTurn {
   handles: Map<string, ToolHandle>;
   queue: AsyncQueue<AgentEvent>;
   usage: AgentEndUsage;
+  /** The input size of the turn's latest model request, cached input included. */
+  contextInputTokens?: number;
   completed: boolean;
   answer?: { deltas: string; phased: boolean; final?: string; unphased?: string };
   toolCalls: number;
   toolTimeoutMs: number;
   maxToolIterations: number;
   signal?: AbortSignal;
+  /** Turn-scoped messages received before `turn/start` returned the turn id; null once released. */
+  heldForTurnId: Array<() => void> | null;
 }
 
 type AgentEndUsage = {
@@ -1412,15 +1444,43 @@ function turnIdFromParams(params: Record<string, unknown>): string | null {
   return stringField(params, "turnId") ?? stringField(turn, "id");
 }
 
-function parseCodexUsage(value: unknown): AgentEndUsage {
+/**
+ * Read Codex's `tokenUsage` into the agent usage shape.
+ *
+ * `total` is the whole turn: every turn runs on a fresh ephemeral thread, so
+ * the thread total is exactly this turn's spend across all its model requests,
+ * whereas `last` covers only the final request. `last` is read only when a
+ * server omits `total`.
+ *
+ * Codex's `inputTokens` includes the cached input. The agent usage convention
+ * (the chat-completions and Responses backends follow it too) reports fresh
+ * input and cache reads as disjoint counts, so the cached portion is
+ * subtracted here, once, at the boundary.
+ */
+export function parseCodexUsage(value: unknown): AgentEndUsage {
   const usage = asRecord(value);
-  const last = asRecord(usage?.last) ?? asRecord(usage?.total);
-  if (!last) return {};
+  const counts = asRecord(usage?.total) ?? asRecord(usage?.last);
+  if (!counts) return {};
+  const input = numberField(counts, "inputTokens");
+  const cached = numberField(counts, "cachedInputTokens");
+  const output = numberField(counts, "outputTokens");
   return {
-    inputTokens: numberField(last, "inputTokens"),
-    outputTokens: numberField(last, "outputTokens"),
-    cacheReadTokens: numberField(last, "cachedInputTokens"),
+    ...(input !== undefined ? { inputTokens: Math.max(0, input - (cached ?? 0)) } : {}),
+    ...(output !== undefined ? { outputTokens: output } : {}),
+    ...(cached !== undefined ? { cacheReadTokens: cached } : {}),
   };
+}
+
+/**
+ * The context-window reading of Codex's `tokenUsage`: the full input of the
+ * latest model request (`last`, cached input included), which is how much of
+ * the window the conversation occupies — unlike the spend counts, a sum over
+ * requests would overstate it.
+ */
+export function parseCodexContextInputTokens(value: unknown): number | undefined {
+  const usage = asRecord(value);
+  const counts = asRecord(usage?.last) ?? asRecord(usage?.total);
+  return counts ? numberField(counts, "inputTokens") : undefined;
 }
 
 function isNativeCodexNotification(method: string): boolean {

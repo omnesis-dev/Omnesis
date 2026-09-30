@@ -388,6 +388,7 @@ fun PrivacyApprovalScreen(
         onOpenExchange = onOpenExchange,
         onOpenPolicy = onOpenPolicy,
         onOpenSettings = onOpenSettings,
+        catalog = vm.catalog,
     )
 }
 
@@ -402,6 +403,7 @@ fun PrivacyApprovalContent(
     onOpenExchange: (String, String) -> Unit = { _, _ -> },
     onOpenPolicy: PrivacyPolicyOpener? = null,
     onOpenSettings: () -> Unit = {},
+    catalog: SourceCatalog = SourceCatalog(),
 ) {
     val c = OmTheme.colors
     val detail = state.detail
@@ -456,6 +458,7 @@ fun PrivacyApprovalContent(
                             onApprove = onApprove,
                             onDeny = onDeny,
                             onOpenPolicy = onOpenPolicy,
+                            catalog = catalog,
                         )
                     }
                 }

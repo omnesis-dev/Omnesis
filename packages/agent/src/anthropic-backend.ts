@@ -289,6 +289,7 @@ export class AnthropicBackend implements ChatBackend {
       // Input tokens arrive on this iteration's `message_start`; captured
       // per-iteration so the probe can attribute them to this request.
       let iterationInputTokens = 0;
+      let iterationCacheReadTokens = 0;
       contextAssessment = beginContextIteration(contextAssessment, requestIteration);
       if (signal?.aborted) {
         yield canceledEnd();
@@ -449,6 +450,7 @@ export class AnthropicBackend implements ChatBackend {
                 totalUsage.cacheReadTokens += u.cache_read_input_tokens ?? 0;
                 totalUsage.cacheCreationTokens += u.cache_creation_input_tokens ?? 0;
                 iterationInputTokens += u.input_tokens ?? 0;
+                iterationCacheReadTokens += u.cache_read_input_tokens ?? 0;
                 contextAssessment = recordContextInput(
                   contextAssessment,
                   (u.input_tokens ?? 0) +
@@ -612,7 +614,11 @@ export class AnthropicBackend implements ChatBackend {
       // The request's stream is fully consumed: close its span with this
       // request's provider-reported tokens. Tool execution downstream is
       // not inference.
-      llmReq.end({ inputTokens: iterationInputTokens, outputTokens: iterationOutputTokens });
+      llmReq.end({
+        inputTokens: iterationInputTokens,
+        outputTokens: iterationOutputTokens,
+        cacheReadTokens: iterationCacheReadTokens,
+      });
 
       // Aborting an SDK stream may either throw or end iteration normally.
       // In both cases cancellation wins over the transport-shaped outcome.

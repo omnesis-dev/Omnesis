@@ -16,6 +16,8 @@ import {
   convertToolsToCodexDynamicTools,
   isSupportedCodexCliVersion,
   parseCodexCliVersion,
+  parseCodexContextInputTokens,
+  parseCodexUsage,
   renderCodexUserInput,
   resolveCodexRuntimeCommand,
 } from "./codex-app-server-backend.js";
@@ -122,6 +124,50 @@ async function waitForLog(
   }
   throw new Error(`timed out waiting for fake Codex log ${path}`);
 }
+
+describe("parseCodexUsage", () => {
+  it("reports the whole turn from the thread total, not the final request", () => {
+    expect(
+      parseCodexUsage({
+        total: { inputTokens: 25_696, outputTokens: 900, cachedInputTokens: 25_344 },
+        last: { inputTokens: 9_000, outputTokens: 120, cachedInputTokens: 8_900 },
+      }),
+    ).toEqual({ inputTokens: 352, outputTokens: 900, cacheReadTokens: 25_344 });
+  });
+
+  it("splits cached input out of inputTokens so the two never double count", () => {
+    const usage = parseCodexUsage({
+      total: { inputTokens: 1_000, outputTokens: 10, cachedInputTokens: 600 },
+    });
+    expect(usage).toEqual({ inputTokens: 400, outputTokens: 10, cacheReadTokens: 600 });
+    expect((usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0)).toBe(1_000);
+  });
+
+  it("falls back to the last request when a server omits the total", () => {
+    expect(
+      parseCodexUsage({ last: { inputTokens: 12, outputTokens: 7, cachedInputTokens: 2 } }),
+    ).toEqual({ inputTokens: 10, outputTokens: 7, cacheReadTokens: 2 });
+  });
+
+  it("reports only the counts the server gave", () => {
+    expect(parseCodexUsage({ total: { inputTokens: 50, outputTokens: 5 } })).toEqual({
+      inputTokens: 50,
+      outputTokens: 5,
+    });
+    expect(parseCodexUsage(undefined)).toEqual({});
+    expect(parseCodexUsage({ total: "garbage" })).toEqual({});
+  });
+
+  it("reads the context size off the latest request, cached input included", () => {
+    const tokenUsage = {
+      total: { inputTokens: 25_696, outputTokens: 900, cachedInputTokens: 25_344 },
+      last: { inputTokens: 9_000, outputTokens: 120, cachedInputTokens: 8_900 },
+    };
+    expect(parseCodexContextInputTokens(tokenUsage)).toBe(9_000);
+    expect(parseCodexContextInputTokens({ total: tokenUsage.total })).toBe(25_696);
+    expect(parseCodexContextInputTokens(undefined)).toBeUndefined();
+  });
+});
 
 describe("CodexAppServerBackend", () => {
   it("parses and gates the supported Codex CLI line", () => {
@@ -297,11 +343,14 @@ describe("CodexAppServerBackend", () => {
       const toolResult = events.find((ev) => ev.type === "agent.tool.result");
       expect(toolResult?.payload.result).toEqual(result);
       const end = events.find((ev) => ev.type === "agent.message.end");
+      // The thread total, with the cached input split out of inputTokens.
       expect(end?.payload.usage).toEqual({
-        inputTokens: 12,
-        outputTokens: 7,
-        cacheReadTokens: 2,
+        inputTokens: 10,
+        outputTokens: 11,
+        cacheReadTokens: 20,
       });
+      // The context reading is the final request's whole input.
+      expect(end?.payload.context?.inputTokens).toBe(12);
 
       const configToml = readFileSync(join(codexHome, "config.toml"), "utf8");
       expect(configToml).toContain('approval_policy = "never"');
@@ -502,11 +551,14 @@ describe("CodexAppServerBackend", () => {
     }
   });
 
-  it("ignores stale native output from a previous turn", async () => {
+  it.each([
+    ["in the same read as the turn/start response", "stale-native-output"],
+    ["before the turn/start response", "stale-native-output-before-response"],
+  ] as const)("ignores stale native output from a previous turn %s", async (_order, scenario) => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-stale-native-output-")));
     const codexHome = join(dir, "codex-home");
     const logPath = join(dir, "fake-codex.jsonl");
-    const backend = makeBackend({ codexHome, logPath, scenario: "stale-native-output" });
+    const backend = makeBackend({ codexHome, logPath, scenario });
 
     try {
       const events = await collect(backend.runTurn(baseInput()));

@@ -4,6 +4,7 @@
 package dev.omnesis.android.assistant
 
 import android.content.Intent
+import android.os.Build
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -13,17 +14,30 @@ import dev.omnesis.android.notes.NotesRepository
 import dev.omnesis.android.notes.QueueReason
 import dev.omnesis.android.ui.capture.CaptureSurface
 import dev.omnesis.android.ui.capture.SpeechTranscriber
+import dev.omnesis.android.voice.SilenceDetector
+import dev.omnesis.android.voice.VoiceNoteSession
+import dev.omnesis.android.voice.VoiceNoteSessions
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-/** Owns exactly one foreground App Action request across Activity recreation. */
+/**
+ * Owns exactly one foreground App Action request across Activity recreation.
+ *
+ * A capture dictated hands-free becomes a voice note when the gateway transcribes voice
+ * notes ([VoiceNoteSessions]): the overlay shows the recording, never the recognizer's
+ * words, and the note is saved with its audio. The recognizer still listens to a copy,
+ * out of sight — its end of speech ends the capture and its words stand in if the
+ * gateway cannot transcribe. When it cannot run on the recording, the
+ * [SilenceDetector] ends the capture instead.
+ */
 @HiltViewModel
 class AssistantActionViewModel @Inject constructor(
     private val askRunner: VoiceAskRunner,
     private val notes: NotesRepository,
     private val transcriber: SpeechTranscriber,
+    private val voiceNotes: VoiceNoteSessions,
     private val savedState: SavedStateHandle,
 ) : ViewModel() {
     private val _state = MutableStateFlow<AssistantActionUiState>(
@@ -36,6 +50,15 @@ class AssistantActionViewModel @Inject constructor(
     private var deliveredInThisProcess = false
     private var requestGeneration = 0L
     private var recognitionGeneration = 0L
+
+    /** The recording of a capture's dictation, while the gateway transcribes voice notes. */
+    private var voiceNote: VoiceNoteSession? = null
+
+    /** Whether the recognizer produced any words from the shared recording yet. */
+    private var recognizerHeardRecording = false
+
+    /** Set while the capture is recorded with no recognizer; it decides when speech ended. */
+    private var silenceDetector: SilenceDetector? = null
 
     fun handle(intent: Intent, freshDelivery: Boolean, trustedDelivery: Boolean = false) {
         if (!freshDelivery && savedState.get<Boolean>(KEY_HANDLED) == true) {
@@ -88,9 +111,20 @@ class AssistantActionViewModel @Inject constructor(
     }
 
     fun startListening() {
-        if (request == null || _state.value !is AssistantActionUiState.Listening) return
+        val listening = _state.value as? AssistantActionUiState.Listening ?: return
+        if (request == null) return
+        if (listening.kind == AssistantActionKind.CAPTURE && voiceNote == null) {
+            voiceNote = voiceNotes.begin()?.also {
+                it.listener = voiceNoteListener(it)
+                _state.value = listening.copy(recordingVoiceNote = true)
+            }
+        }
         if (!transcriber.isAvailable()) {
-            finish("Speech unavailable", "Type your request in Omnesis instead.", successful = false)
+            if (voiceNote != null) {
+                recordWithoutRecognizer()
+            } else {
+                finish("Speech unavailable", "Type your request in Omnesis instead.", successful = false)
+            }
             return
         }
         beginRecognition()
@@ -129,7 +163,11 @@ class AssistantActionViewModel @Inject constructor(
 
     private fun execute(kind: AssistantActionKind, rawText: String) {
         val text = rawText.trim()
-        if (text.isEmpty()) {
+        // A dictated capture's recording goes with the note: the gateway's transcript
+        // replaces the phone's, or stands in for it when the phone heard nothing.
+        val audio = voiceNote?.finish()
+        voiceNote = null
+        if (text.isEmpty() && audio == null) {
             _state.value = AssistantActionUiState.Listening(kind, deliveryId = requestGeneration)
             return
         }
@@ -148,7 +186,7 @@ class AssistantActionViewModel @Inject constructor(
                     )
                 }
                 AssistantActionKind.CAPTURE -> runCatching {
-                    notes.capture(text, CaptureSurface.ASSISTANT)
+                    notes.capture(text, CaptureSurface.ASSISTANT, audio)
                 }.fold(
                     onSuccess = { outcome ->
                         val message = when (outcome) {
@@ -192,12 +230,67 @@ class AssistantActionViewModel @Inject constructor(
         val delivery = requestGeneration
         recognitionGeneration++
         val recognition = recognitionGeneration
-        transcriber.start(speechListener(delivery, recognition))
+        val listener = speechListener(delivery, recognition)
+        val input = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) voiceNote?.recognizerInput() else null
+        if (input != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            transcriber.startWithAudio(listener, input)
+        } else {
+            transcriber.start(listener)
+        }
+    }
+
+    /**
+     * Records the capture for the gateway with no recognizer — it is missing, refused the
+     * shared recording, or has no model for the language. Peaks drive the end of speech.
+     */
+    private fun recordWithoutRecognizer() {
+        recognitionGeneration++
+        transcriber.cancel()
+        silenceDetector = SilenceDetector()
     }
 
     private fun cancelRecognition() {
         recognitionGeneration++
         transcriber.cancel()
+        silenceDetector = null
+        recognizerHeardRecording = false
+        voiceNote?.discard()
+        voiceNote = null
+    }
+
+    private fun voiceNoteListener(session: VoiceNoteSession) = object : VoiceNoteSession.Listener {
+        private fun current(): AssistantActionUiState.Listening? =
+            (_state.value as? AssistantActionUiState.Listening)?.takeIf { voiceNote === session }
+
+        override fun onPeak(peak: Int, elapsedMs: Long) {
+            val listening = current() ?: return
+            when (silenceDetector?.onSample(peak, elapsedMs)) {
+                SilenceDetector.Verdict.SPEECH_ENDED -> execute(listening.kind, finalTranscript)
+                SilenceDetector.Verdict.NO_SPEECH -> {
+                    cancelRecognition()
+                    finish("Didn't catch that", "Nothing was heard. Start the action again to retry.", false)
+                }
+                SilenceDetector.Verdict.LISTENING, null -> Unit
+            }
+        }
+
+        override fun onLimitReached() {
+            val listening = current() ?: return
+            // The recognizer ends on its own once its audio stops growing; a recording
+            // without one ends here.
+            if (silenceDetector != null) execute(listening.kind, finalTranscript)
+        }
+
+        override fun onLost() {
+            if (current() == null) return
+            val recordingAlone = silenceDetector != null
+            voiceNote = null
+            // Without a recognizer there is nothing left to hear the capture.
+            if (recordingAlone) {
+                cancelRecognition()
+                finish("Speech stopped", "Tap the microphone and try again.", successful = false)
+            }
+        }
     }
 
     private fun recognitionIsCurrent(delivery: Long, recognition: Long): Boolean =
@@ -211,6 +304,9 @@ class AssistantActionViewModel @Inject constructor(
     ) = object : SpeechTranscriber.Listener {
         override fun onPartial(text: String) {
             if (!recognitionIsCurrent(delivery, recognition)) return
+            recognizerHeardRecording = true
+            // A voice note's words stay out of sight; the gateway writes the note.
+            if (voiceNote != null) return
             val kind = request?.kind ?: return
             _state.value = AssistantActionUiState.Listening(
                 kind,
@@ -221,6 +317,7 @@ class AssistantActionViewModel @Inject constructor(
 
         override fun onFinal(text: String) {
             if (!recognitionIsCurrent(delivery, recognition)) return
+            recognizerHeardRecording = true
             finalTranscript = joinSpeech(finalTranscript, text)
         }
 
@@ -232,13 +329,27 @@ class AssistantActionViewModel @Inject constructor(
                     if (finalTranscript.isNotBlank()) execute(current.kind, finalTranscript)
                     else beginRecognition()
                 }
+                // A recognizer that fails on the shared recording before hearing a word most
+                // likely does not take the audio source; the recording carries on alone.
                 SpeechTranscriber.EndReason.FAULT ->
-                    finish("Speech stopped", "Tap the microphone and try again.", successful = false)
+                    if (voiceNote != null && !recognizerHeardRecording) {
+                        recordWithoutRecognizer()
+                    } else {
+                        finish("Speech stopped", "Tap the microphone and try again.", successful = false)
+                    }
                 SpeechTranscriber.EndReason.DENIED -> microphoneDenied()
                 SpeechTranscriber.EndReason.LANGUAGE_NOT_DOWNLOADED ->
-                    finish("Speech model missing", "Install this language in Speech Services by Google.", false)
+                    if (voiceNote != null) {
+                        recordWithoutRecognizer()
+                    } else {
+                        finish("Speech model missing", "Install this language in Speech Services by Google.", false)
+                    }
                 SpeechTranscriber.EndReason.LANGUAGE_NOT_SUPPORTED ->
-                    finish("Speech unavailable", "This language isn't available for offline dictation.", false)
+                    if (voiceNote != null) {
+                        recordWithoutRecognizer()
+                    } else {
+                        finish("Speech unavailable", "This language isn't available for offline dictation.", false)
+                    }
             }
         }
     }

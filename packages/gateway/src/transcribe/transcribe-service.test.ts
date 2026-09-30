@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, test, expect } from "vitest";
+import { describe, test, expect, vi } from "vitest";
 import { TranscribeService } from "./transcribe-service.js";
 import {
   FrameDecoder,
@@ -302,6 +302,51 @@ describe("TranscribeService", () => {
     ]);
     expect(maxActive).toBe(1);
     expect(order).toHaveLength(3);
+  });
+
+  test("readiness: a local model also needs the Whisper runtime, probed once", async () => {
+    let probes = 0;
+    const svc = new TranscribeService({
+      resolveAssignment: () => ({
+        role: "transcriber",
+        kind: "local",
+        catalogId: "whisper-small",
+        modelPath: "/m.bin",
+        available: true,
+      }),
+      deps: {
+        loadModule: async () => {
+          probes++;
+          throw new Error("Cannot find module 'smart-whisper'");
+        },
+      },
+    });
+    expect(svc.readiness()).toEqual({ runnable: true });
+    await vi.waitFor(() => expect(svc.readiness().runnable).toBe(false));
+    expect(svc.readiness().reason).toMatch(/smart-whisper/);
+    svc.readiness();
+    expect(probes).toBe(1);
+  });
+
+  test("readiness mirrors the assignment for everything but a local model", () => {
+    const readinessOf = (resolved: ResolvedAssignment) =>
+      new TranscribeService({ resolveAssignment: () => resolved }).readiness();
+    expect(readinessOf(replay)).toEqual({ runnable: true });
+    expect(readinessOf(disabled)).toEqual({
+      runnable: false,
+      reason: "No transcriber model is assigned.",
+    });
+    expect(readinessOf(localUnavailable)).toEqual({ runnable: false, reason: "not installed" });
+    expect(
+      readinessOf({
+        role: "transcriber",
+        kind: "anthropic",
+        catalogId: "claude",
+        apiModelId: "claude",
+        allowRemoteInference: true,
+        available: true,
+      }).runnable,
+    ).toBe(false);
   });
 
   test("dispose tears down the loaded capability", async () => {

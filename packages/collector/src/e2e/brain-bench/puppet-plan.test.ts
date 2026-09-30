@@ -113,12 +113,7 @@ describe("readRunContext", () => {
         "sweep",
         "may-day",
       ],
-      [
-        "bootstrap",
-        "RETROSPECTIVE BOOTSTRAP. This is a PAST document (doc_11) that still carries a semantic time",
-        "bootstrap",
-        "doc_11",
-      ],
+      ["bootstrap", "Bootstrap document: doc_11. Fetch it with fetch_many.", "bootstrap", "doc_11"],
       [
         "verification",
         "Re-verification pass over the doc annotation store. These live annotations are due",
@@ -156,6 +151,25 @@ describe("readRunContext", () => {
     );
     expect(ctx!.flavour).toBe("time_based.scheduled");
     expect(ctx!.detail).toBe("Re-verify the deposit.");
+  });
+
+  test("a run prompt that opens with static rules is read from its envelope beneath them", () => {
+    const ctx = readRunContext(
+      [
+        "RETROSPECTIVE BOOTSTRAP. This run's document is a PAST document.",
+        "",
+        "How a brief reads — the house style.",
+        "",
+        prompt("bootstrap", "Bootstrap document: doc_11. Fetch it with fetch_many.", 2),
+      ].join("\n"),
+    );
+    expect(ctx).toMatchObject({
+      runId: "run_1",
+      kind: "bootstrap",
+      attempt: 2,
+      flavour: "bootstrap",
+      subject: "doc_11",
+    });
   });
 
   test("text that is not a run prompt yields nothing", () => {

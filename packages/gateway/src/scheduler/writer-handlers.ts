@@ -404,8 +404,15 @@ import {
   insertNoteEntry,
   updateNoteEntryText,
   deleteNoteEntry,
+  replaceNoteEntryTextIf,
   type NoteEntry,
 } from "../sources/omnesis-notes/storage.js";
+import {
+  insertPendingVoiceNote,
+  reschedulePendingVoiceNote,
+  deletePendingVoiceNote,
+  type NewPendingVoiceNote,
+} from "../voice-notes/storage.js";
 import {
   insertAgentMessage,
   type AgentMessageRow,
@@ -456,6 +463,8 @@ import {
   mutateWithConsumptionDependencies,
   retractAnnotationWithDependentRechecks,
   recordCognitionSpend,
+  insertCognitionDecision,
+  type CognitionDecisionRecord,
   type ConsumptionDependencyContext,
   type CognitionRunUsage,
   type EnqueueCognitionRunInput,
@@ -1328,6 +1337,9 @@ export const writerHandlers = {
   // already settled, with attribution + spend in the same transaction.
   "cognition.recordSettledRun": (db: Db, input: RecordSettledCognitionRunInput): void =>
     recordSettledCognitionRun(db, input),
+  // One decision-model answer (the worth gate's audit + reuse ledger).
+  "cognition.recordDecision": (db: Db, record: CognitionDecisionRecord): void =>
+    insertCognitionDecision(db, record),
   // Readiness barrier: atomically revalidate and release deferred data runs
   // whose datum finished deriving or disappeared. One writer trip per pass.
   "cognition.pullForward": (
@@ -1691,6 +1703,20 @@ export const writerHandlers = {
   "notes.updateEntry": (db: Db, id: string, text: string, nowIso: string): boolean =>
     updateNoteEntryText(db, id, text, nowIso),
   "notes.deleteEntry": (db: Db, id: string) => deleteNoteEntry(db, id),
+  // Voice notes waiting on the transcriber: queue one (the audio arrives
+  // with the capture), record an attempt, and drop one when it is done with.
+  "voiceNotes.enqueue": (db: Db, row: NewPendingVoiceNote): boolean =>
+    insertPendingVoiceNote(db, row),
+  "voiceNotes.reschedule": (db: Db, noteId: string, attempts: number, nextAttemptAt: string) =>
+    reschedulePendingVoiceNote(db, noteId, attempts, nextAttemptAt),
+  "voiceNotes.delete": (db: Db, noteId: string) => deletePendingVoiceNote(db, noteId),
+  "notes.replaceEntryTextIf": (
+    db: Db,
+    id: string,
+    expected: string,
+    text: string,
+    nowIso: string,
+  ) => replaceNoteEntryTextIf(db, id, expected, text, nowIso),
 
   // Append one pushed agent-conversation turn to the ledger. The per-bucket
   // day-document projection is driven separately by the

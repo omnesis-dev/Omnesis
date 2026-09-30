@@ -17,7 +17,7 @@
  * What the generator does:
  *
  * - Unstructured array fixtures (gmail, calendars, drive, contacts,
- *   notes, reminders, imessage, outlook, obsidian, things, chrome,
+ *   notes, reminders, imessage, outlook, maildir, obsidian, things, chrome,
  *   notion-pages, whatsapp): take the first N entries (default 3).
  *   With BATCH_SIZE=5 in the sync helper, N=3 still tests the
  *   single-page case AND the final-page `presentExternalIds` snapshot.
@@ -88,6 +88,7 @@ const UNSTRUCTURED_FIXTURES = [
   ["android-call-log", "calls.json"],
   ["notion-pages", "pages.json"],
   ["chrome-bookmarks", "bookmarks.json"],
+  ["maildir", "messages.json"],
   ["obsidian-notes", "notes.json"],
   ["things", "tasks.json"],
   ["whatsapp-messages", "messages.json"],

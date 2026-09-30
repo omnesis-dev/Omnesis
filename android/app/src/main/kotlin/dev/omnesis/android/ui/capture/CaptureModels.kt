@@ -25,6 +25,12 @@ enum class SpeechState {
     /** Actively recognizing; partial results stream into the text field. */
     LISTENING,
 
+    /**
+     * Recording a voice note for the gateway to transcribe. The phone's own transcript
+     * is kept out of sight: it only stands in if the gateway cannot transcribe.
+     */
+    RECORDING,
+
     /** No recognition service on this device, or none for its language — keyboard only. */
     UNAVAILABLE,
 
@@ -63,5 +69,21 @@ data class CaptureUiState(
     /** In-flight partial recognition, displayed after [text] while listening. */
     val partialText: String = "",
     val speech: SpeechState = SpeechState.IDLE,
+    /**
+     * The voice note this capture is, when the gateway transcribes voice notes; null for
+     * a typed or on-device dictated note. While it exists the note has no editable text:
+     * its words come from the gateway.
+     */
+    val voiceNote: VoiceNoteUi? = null,
     val save: SaveState = SaveState.Idle,
+)
+
+/** A voice note being recorded, or recorded and ready to save. */
+data class VoiceNoteUi(
+    /** The microphone is open. */
+    val recording: Boolean,
+    /** How much audio the note holds. */
+    val elapsedMs: Long,
+    /** 0–1 microphone level while recording, for the meter. */
+    val level: Float = 0f,
 )

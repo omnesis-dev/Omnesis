@@ -9,6 +9,7 @@ import {
   ANSWER_ERROR_META_KEY,
   AnswerMcpGatewayError,
   answerToolError,
+  answerOutputSchema,
   answerToolResult,
   askOmnesisInputSchema,
   safeAnswerErrorMessage,
@@ -60,6 +61,42 @@ describe("Answer MCP privacy projection", () => {
         reason: "privacy_policy",
       }).content[0]?.text,
     ).toContain("did not release");
+  });
+
+  it("carries released citations in the structured result and lists them in the text", () => {
+    const released = {
+      status: "released" as const,
+      workflowId: "wf_fictional",
+      conversationId: "conv_fictional",
+      taskId: "task_fictional",
+      releaseId: "release_fictional",
+      answer: "The budget review is on Tuesday.",
+      citations: [
+        {
+          documentId: "doc_budget",
+          sourceType: "gmail",
+          title: "Q4 budget review",
+          sourceUrl: "https://mail.example.com/message/budget",
+        },
+      ],
+    };
+    const result = answerToolResult(released);
+    expect(answerOutputSchema.safeParse(result.structuredContent).success).toBe(true);
+    expect(result.content[0]?.text).toBe(
+      [
+        "The budget review is on Tuesday.",
+        "",
+        "Sources:",
+        "1. Q4 budget review · gmail",
+        "   Link: https://mail.example.com/message/budget",
+      ].join("\n"),
+    );
+    expect(
+      answerOutputSchema.safeParse({
+        ...released,
+        citations: [{ ...released.citations[0], quote: "Not a released field." }],
+      }).success,
+    ).toBe(false);
   });
 
   it("sanitizes gateway failures and validates reflected task handles", () => {

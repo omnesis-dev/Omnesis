@@ -4,12 +4,21 @@
 import { assertNever } from "@omnesis/core";
 import * as z from "zod/v4";
 import { ANSWER_PROFILE_META_KEY, type AnswerProfileReport } from "../privacy/answer-profile.js";
+import { renderCitationsText } from "../privacy/answer-citations.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 import type { AnswerResponse } from "@omnesis/types/privacy";
 
 export const ANSWER_MCP_SUPPORTED_VERSIONS = ["2026-07-28", "2025-11-25"] as const;
 export const NATIVE_ANSWER_CONVERSATION_META_KEY = "dev.omnesis/nativeConversationId";
 export const ANSWER_ERROR_META_KEY = "dev.omnesis/error";
+/**
+ * Request metadata by which a bound native integration declares it accepts
+ * `citations` on a released result. A generic MCP client receives them
+ * without asking, since it validates against the advertised output schema; a
+ * native plugin shipped before citations existed rejects unknown fields, so
+ * a bound integration receives them only once it says it understands them.
+ */
+export const ANSWER_CITATIONS_META_KEY = "dev.omnesis/answerCitations";
 
 /** Safe, transport-neutral failure presented by the Answer boundary. */
 export class AnswerMcpGatewayError extends Error {
@@ -44,14 +53,43 @@ export interface AnswerMcpClient {
       /** Collect a timing profile of the run, returned beside the response. */
       profiling?: boolean;
     },
-    options?: { signal?: AbortSignal },
+    options?: AnswerMcpCallOptions,
   ): Promise<AnswerMcpSubmission>;
-  getTask(taskId: string, options?: { signal?: AbortSignal }): Promise<AnswerResponse>;
+  getTask(taskId: string, options?: AnswerMcpCallOptions): Promise<AnswerResponse>;
+}
+
+export interface AnswerMcpCallOptions {
+  signal?: AbortSignal;
+  /** The caller sent {@link ANSWER_CITATIONS_META_KEY}. */
+  citationsDeclared?: boolean;
 }
 
 const id = z.string().regex(/^[A-Za-z0-9_:-]{1,128}$/);
 const requestId = z.string().regex(/^[A-Za-z0-9_.:-]{1,160}$/);
 const answerBase = { workflowId: z.string(), conversationId: z.string(), taskId: z.string() };
+
+const answerCitationOutput = z
+  .strictObject({
+    documentId: z.string().describe("Omnesis document id."),
+    sourceType: z.string().describe("The source the document came from, e.g. gmail."),
+    title: z.string().optional().describe("The document's title, e.g. an email subject."),
+    timestamp: z.string().optional().describe("When the document happened, ISO 8601."),
+    sourceUrl: z
+      .string()
+      .optional()
+      .describe("The document's canonical web or desktop link, for the user to open."),
+    appUrl: z
+      .string()
+      .optional()
+      .describe("A native-app deep link to the document, preferred on mobile."),
+  })
+  .describe("A document the answer relies on, released after privacy review.");
+const answerCitations = z
+  .array(answerCitationOutput)
+  .optional()
+  .describe(
+    "The documents the answer relies on. Link the user to them rather than repeating their content.",
+  );
 
 export const answerOutputSchema = z.discriminatedUnion("status", [
   z.strictObject({
@@ -59,6 +97,7 @@ export const answerOutputSchema = z.discriminatedUnion("status", [
     status: z.literal("released"),
     releaseId: z.string(),
     answer: z.string(),
+    citations: answerCitations,
   }),
   z.strictObject({
     ...answerBase,
@@ -66,6 +105,7 @@ export const answerOutputSchema = z.discriminatedUnion("status", [
     releaseId: z.string(),
     answer: z.string(),
     reductions: z.array(z.string()),
+    citations: answerCitations,
   }),
   z.strictObject({
     ...answerBase,
@@ -145,7 +185,7 @@ export function registerAnswerMcpTools(server: McpServer, client: AnswerMcpClien
     {
       title: "Ask Omnesis (privacy reviewed)",
       description:
-        "Ask the local Omnesis agent about the user's private corpus. This read-only call may run a model, consume the owner's configured model budget, create durable privacy activity, and send an approval notification. Omnesis searches internally, reviews the candidate answer against the user's privacy policy, and returns only the released result. Omnesis cannot browse or search the live internet: it answers only from the user's already-captured corpus, fixed at capture time, so combine the released result with your own search or browse tools when the question needs current outside-world facts. By default, sensitive content may be held for approval in Omnesis; if approval_required is returned, tell the user and call get_answer_status after they approve. Never invent or reconstruct held content. Reuse requestId for a retry of the exact same turn.",
+        "Ask the local Omnesis agent about the user's private corpus. This read-only call may run a model, consume the owner's configured model budget, create durable privacy activity, and send an approval notification. Omnesis searches internally, reviews the candidate answer against the user's privacy policy, and returns only the released result. Omnesis cannot browse or search the live internet: it answers only from the user's already-captured corpus, fixed at capture time, so combine the released result with your own search or browse tools when the question needs current outside-world facts. A released result may carry citations: the documents the answer relies on, each with a title, a date and links the user can open; use them to point the user at the source. By default, sensitive content may be held for approval in Omnesis; if approval_required is returned, tell the user and call get_answer_status after they approve. Never invent or reconstruct held content. Reuse requestId for a retry of the exact same turn.",
       inputSchema: askOmnesisInputSchema,
       outputSchema: answerOutputSchema,
       annotations: {
@@ -158,6 +198,7 @@ export function registerAnswerMcpTools(server: McpServer, client: AnswerMcpClien
     async (args, context) => {
       try {
         const nativeConversationId = parseNativeConversationMeta(context.mcpReq._meta);
+        const citationsDeclared = parseCitationsMeta(context.mcpReq._meta);
         const submission = await client.submit(
           {
             question: args.question.trim(),
@@ -170,7 +211,7 @@ export function registerAnswerMcpTools(server: McpServer, client: AnswerMcpClien
             ...(args.profiling ? { profiling: true as const } : {}),
             approval: args.approval,
           },
-          { signal: context.mcpReq.signal },
+          { signal: context.mcpReq.signal, citationsDeclared },
         );
         return answerToolResult(submission.response, submission.profile ?? undefined);
       } catch (error) {
@@ -195,7 +236,10 @@ export function registerAnswerMcpTools(server: McpServer, client: AnswerMcpClien
     },
     async ({ taskId }, context) => {
       try {
-        return answerToolResult(await client.getTask(taskId, { signal: context.mcpReq.signal }));
+        const citationsDeclared = parseCitationsMeta(context.mcpReq._meta);
+        return answerToolResult(
+          await client.getTask(taskId, { signal: context.mcpReq.signal, citationsDeclared }),
+        );
       } catch (error) {
         return answerToolError(error);
       }
@@ -214,6 +258,10 @@ function parseNativeConversationMeta(
   return value;
 }
 
+function parseCitationsMeta(meta: Readonly<Record<string, unknown>> | undefined): boolean {
+  return meta?.[ANSWER_CITATIONS_META_KEY] === true;
+}
+
 export function answerToolResult(result: AnswerResponse, profile?: AnswerProfileReport) {
   return {
     content: [{ type: "text" as const, text: answerText(result) }],
@@ -225,9 +273,12 @@ export function answerToolResult(result: AnswerResponse, profile?: AnswerProfile
 function answerText(result: AnswerResponse): string {
   switch (result.status) {
     case "released":
-      return result.answer;
+      return withCitations(result.answer, result.citations);
     case "released_with_reductions":
-      return `${result.answer}\n\nPrivacy: Omnesis released this answer with reductions.`;
+      return withCitations(
+        `${result.answer}\n\nPrivacy: Omnesis released this answer with reductions.`,
+        result.citations,
+      );
     case "approval_required":
       return (
         "Omnesis requires user approval before it can release an answer. No private answer content was returned. " +
@@ -239,6 +290,18 @@ function answerText(result: AnswerResponse): string {
       return assertNever(result);
   }
 }
+
+/**
+ * The text content carries the citations too, for an MCP client that shows
+ * its model only text. They are the reviewed citations, so repeating them
+ * here discloses nothing the structured result does not.
+ */
+function withCitations(text: string, citations: AnswerResponseCitations): string {
+  const rendered = renderCitationsText(citations ?? []);
+  return rendered ? `${text}\n\n${rendered}` : text;
+}
+
+type AnswerResponseCitations = Extract<AnswerResponse, { status: "released" }>["citations"];
 
 export function answerToolError(error: unknown) {
   const errorMeta = safeAnswerErrorMeta(error);

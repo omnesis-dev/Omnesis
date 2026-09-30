@@ -105,7 +105,14 @@ final class MobileJourneyUITests: XCTestCase {
     func testOpeningASearchResultShowsTheDocument() throws {
         try launchPaired()
         search(for: Self.documentTitle)
-        tap(searchResult(titled: Self.documentTitle), "the \"\(Self.documentTitle)\" result")
+        let result = searchResult(titled: Self.documentTitle)
+        tap(result, "the \"\(Self.documentTitle)\" result")
+        // The result row's snippet quotes the same line, so the line alone
+        // proves nothing until the results list has given way to the document.
+        XCTAssertTrue(
+            result.waitForNonExistence(timeout: 30),
+            "tapping the \"\(Self.documentTitle)\" result did not open the document"
+        )
         XCTAssertTrue(
             element(containing: Self.documentLine).waitForExistence(timeout: 30),
             "the opened document does not show \"\(Self.documentLine)\""

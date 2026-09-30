@@ -46,6 +46,7 @@ import {
   rebuildIndex,
   getAdminConfig,
   patchAdminConfig,
+  getStatus,
 } from "../api.js";
 import { CredentialsWizard } from "./credentials-wizard.js";
 import { CloudInferenceConsentModal } from "../components/cloud-inference-consent.js";
@@ -56,8 +57,8 @@ import { useVisiblePoll } from "../lib/use-visible-poll.js";
 import { ProviderIcon } from "../components/provider-icon.js";
 import { navigate } from "../lib/router.js";
 import { isEnabled, isConfigured, capabilityCardState } from "../lib/capability-state.js";
-import { CAPABILITY_TO_CATALOG, isAnthropicConfigured, catalogProviderForBackend } from "../lib/backend-options.js";
-import { ModelConfigModal, AddBackendModal, CodexConfigModal, codexRuntimeUpdatePresentation, classifyRecentApply } from "./model-config.js";
+import { CAPABILITY_TO_CATALOG, isAnthropicConfigured, catalogProviderForBackend, isDecisionRole } from "../lib/backend-options.js";
+import { ModelConfigModal, AddBackendModal, CodexConfigModal, codexRuntimeUpdatePresentation, classifyRecentApply, typesafeKeyConfigured } from "./model-config.js";
 import { ModelBehaviorEditor, modelBehaviorSummary } from "./model-behavior.js";
 
 // ── Capability grid (the tab's landing view) ──────────────────────────────
@@ -342,7 +343,7 @@ function CapabilityDetail({ role, overview, onOpenPicker, onAddBackend, onDisabl
 
       <div class="cap-detail-actions">
         <button class="btn-primary" onClick=${onOpenPicker}>Choose model</button>
-        <button class="btn-secondary" onClick=${onAddBackend}>Add backend</button>
+        ${isDecisionRole(role) ? null : html`<button class="btn-secondary" onClick=${onAddBackend}>Add backend</button>`}
         ${configured ? html`<button class="btn-secondary" onClick=${onDisable}>Disable</button>` : null}
       </div>
 
@@ -352,7 +353,8 @@ function CapabilityDetail({ role, overview, onOpenPicker, onAddBackend, onDisabl
         ? html`<div class="cap-detail-hint">Switching the embedder rebuilds the vector index gracefully — search stays live on the current model and switches automatically when the new index is ready. A hard cutover (offered when switching) stops the old model immediately, leaving keyword-only search until the rebuild finishes.</div>`
         : null}
       ${role === "transcriber"
-        ? html`<div class="cap-detail-hint">Voice notes are transcribed as sources sync. Already-ingested voice notes are <strong>not</strong> re-transcribed automatically; resync a source to reprocess it.</div>`
+        ? html`<div class="cap-detail-hint">Voice notes are transcribed as sources sync. Already-ingested voice notes are <strong>not</strong> re-transcribed automatically; resync a source to reprocess it.</div>
+            <${GatewayDictationSetting} />`
         : null}
       ${role === "ocr"
         ? html`<div class="cap-detail-hint">Images and scanned PDFs are OCR'd as sources sync. Already-ingested attachments are <strong>not</strong> re-OCR'd automatically; resync a source to reprocess them.</div>`
@@ -398,6 +400,73 @@ function EntailmentPromptStyle() {
         MiniCheck convention — for MiniCheck-family fact checkers
       </label>
       ${error ? html`<div class="cap-detail-warn">${error}</div>` : null}
+    </div>
+  `;
+}
+
+// Tell Omnesis voice-note opt-in (experimental). The gateway's `dictation`
+// verdict on /status decides whether the setting shows at all (`visible` =
+// experimental mode) and carries the live state, so this control never reasons
+// about experimental mode or the assignment itself. With it on, the mobile apps
+// send voice notes' audio for this transcriber to transcribe.
+export function GatewayDictationSetting() {
+  const [dictation, setDictation] = useState(null); // null = loading or hidden
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  // A failed read keeps the last verdict, so one transient error never hides
+  // the section.
+  async function refresh() {
+    try {
+      const status = await getStatus();
+      setDictation(status?.dictation ?? null);
+    } catch {
+      // keep the current verdict
+    }
+  }
+  useEffect(() => { refresh(); }, []);
+
+  if (!dictation?.visible) return null;
+
+  async function toggle() {
+    const next = !dictation.enabled;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await patchAdminConfig({ inference: { dictation: { transcribeOnGateway: next } } });
+      if (!res.ok) setError(res.body?.error ?? "Failed to save the setting.");
+      await refresh();
+    } catch {
+      setError("Failed to save the setting.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return html`
+    <div class="detail-section cap-dictation">
+      <div class="models-cloud-control">
+        <h2>Tell Omnesis voice notes <span class="experimental-tag" title="Experimental feature">Experimental</span></h2>
+        <button type="button" class="models-cloud-switch" role="switch"
+          aria-checked=${dictation.enabled}
+          aria-label="Transcribe Tell Omnesis voice notes on the gateway" disabled=${busy}
+          onClick=${toggle}>
+          <span class="models-cloud-switch-thumb" aria-hidden="true"></span>
+        </button>
+        <span role="status">${busy ? "Saving…" : dictation.enabled ? "On" : "Off"}</span>
+      </div>
+      <p class="cap-detail-desc">
+        The iOS and Android apps send the audio of what you dictate in Tell Omnesis, on the
+        phone or the Apple Watch, with the note. The note is saved right away with the phone's
+        own transcript and updated once this transcriber has transcribed it. Agent
+        conversations, Siri, and assistant requests that already carry their words are unaffected.
+      </p>
+      ${dictation.enabled && !dictation.modelAssigned
+        ? html`<div class="cap-detail-warn">
+            <strong>Not in use.</strong> ${dictation.reason ?? "No transcriber model can run."} Notes keep the phone's own transcript until a transcriber is available.
+          </div>`
+        : null}
+      ${error ? html`<div class="cap-detail-warn" role="alert">${error}</div>` : null}
     </div>
   `;
 }
@@ -913,6 +982,46 @@ export function ModelsView({ section }) {
     }
   };
 
+  // TypeSafe is the Decision model's only backend. Without a key the
+  // credentials wizard opens first and the assignment completes when it is
+  // saved; with one, the model is assigned straight away.
+  const pickTypeSafe = async (model) => {
+    setShowPicker(false);
+    try {
+      const status = await getModelCredentialsStatus();
+      const credEntry = (status.items || []).find((e) => e.fileKey === "typesafe");
+      if (credEntry && !typesafeKeyConfigured(credEntry, overview.inference.assignments[role])) {
+        setCredsWizard({ entry: credEntry, pendingActivation: { kind: "typesafe", model, capability: role } });
+        return;
+      }
+    } catch (e) {
+      flashErr(e?.message ?? String(e));
+      return;
+    }
+    await assignTypeSafe(role, model);
+  };
+
+  const assignTypeSafe = async (targetRole, model) => {
+    const targetTitle = capabilityFor(overview, targetRole)?.title ?? targetRole;
+    try {
+      const res = await saveAssignment(targetRole, "typesafe", model);
+      if (!res) return;
+      if (!res.ok) {
+        flashErr(res.body?.errors?.[0]?.message ?? res.body?.error ?? "Failed to update config.");
+        return;
+      }
+      flashOk(`${targetTitle} now uses ${model} on TypeSafe.`);
+      await refresh();
+    } catch (e) {
+      flashErr(e?.message ?? String(e));
+    }
+  };
+
+  const onConfigureTypeSafeKey = (credEntry) => {
+    setShowPicker(false);
+    setCredsWizard({ entry: credEntry });
+  };
+
   const pickCodex = async (model) => {
     setShowPicker(false);
     return assignCodexModel(role, model);
@@ -952,6 +1061,10 @@ export function ModelsView({ section }) {
           await refresh();
         })
         .catch((e) => flashErr(e?.message ?? String(e)));
+      return;
+    }
+    if (decision.backendKey === "typesafe") {
+      void pickTypeSafe(decision.model);
       return;
     }
     void assignHttp(decision.backendKey, decision.model);
@@ -1122,6 +1235,8 @@ export function ModelsView({ section }) {
             onPickAnthropic=${pickAnthropic}
             onPickHttp=${pickHttp}
             onPickCodex=${pickCodex}
+            onPickTypeSafe=${pickTypeSafe}
+            onConfigureTypeSafeKey=${onConfigureTypeSafeKey}
             onPickRecent=${pickRecent}
             onStartCodexLogin=${onStartCodexLogin}
             onCancelCodexLogin=${onCancelCodexLogin}
@@ -1142,7 +1257,10 @@ export function ModelsView({ section }) {
             onClose=${async (updated) => {
               const pending = credsWizard;
               setCredsWizard(null);
-              if (updated && pending?.pendingActivation) {
+              if (updated && pending?.pendingActivation?.kind === "typesafe") {
+                const { model, capability } = pending.pendingActivation;
+                await assignTypeSafe(capability, model);
+              } else if (updated && pending?.pendingActivation) {
                 const { entry, catalogRole, capability } = pending.pendingActivation;
                 try {
                   const res = entry.kind === "anthropic-api"

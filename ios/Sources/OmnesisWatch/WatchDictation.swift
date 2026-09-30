@@ -4,14 +4,18 @@
 #if os(watchOS)
 import WatchKit
 
-/// Opens the system dictation screen for an ask or a note, and hands what
-/// was said to the flow's router — the same hand-off the Siri intents make.
+/// Opens dictation for an ask or a note, and hands what was said to the
+/// flow's router — the same hand-off the Siri intents make. A note is the
+/// exception while the iPhone reports gateway dictation on: the watch records
+/// it and hands the recording to the phone (`WatchVoiceCapture`), falling
+/// back to dictation when recording cannot start.
 ///
 /// WatchKit's text input controller goes straight to dictation, listening
 /// at once, only when it is given no suggestions and plain input mode: a
 /// suggestion list (even an empty one) or emoji mode shows the keyboard and
-/// Scribble picker first. The screen is the system's own, so it needs no
-/// microphone or speech-recognition permission from this app.
+/// Scribble picker first. That screen is the system's own and needs no
+/// permission from this app; recording for the gateway needs microphone
+/// access, and falls back to the system screen without it.
 @MainActor
 enum WatchDictation {
     /// True while a dictation screen is up or about to be, so a second tap
@@ -45,6 +49,13 @@ enum WatchDictation {
         // An answer still being read aloud would talk over the dictation.
         WatchSpeaker.shared.stop()
 
+        if complication == .note,
+           let limit = await WatchLink.shared.dictationGate()?.recordingLimit(now: Date()),
+           await WatchVoiceCapture.shared.start(limit: limit) {
+            presenting = false
+            return
+        }
+
         guard let controller = await visibleController() else {
             presenting = false
             // Say so on the wrist rather than doing nothing: silence reads
@@ -66,6 +77,7 @@ enum WatchDictation {
 
     static func appDidEnterBackground() {
         presenting = false
+        WatchVoiceCapture.shared.appDidEnterBackground()
     }
 
     private static func submit(_ text: String, to complication: WatchComplication) {

@@ -140,6 +140,82 @@ public struct PrivacyExchangeReview: Decodable, Equatable, Sendable {
     }
 }
 
+/// One document the answering agent cited, recorded beside an answer. The
+/// privacy check may withhold a whole citation or any of its optional fields,
+/// so every field but the document's identity can be absent.
+public struct AnswerCitation: Decodable, Equatable, Sendable, Identifiable {
+    public let documentId: String
+    public let sourceType: String
+    public let title: String?
+    /// When the document happened, as ISO 8601.
+    public let timestamp: String?
+    /// The document's canonical web or desktop destination.
+    public let sourceUrl: String?
+    /// A native-app deep link, preferred over `sourceUrl` on a phone.
+    public let appUrl: String?
+
+    public var id: String {
+        documentId
+    }
+
+    public init(
+        documentId: String,
+        sourceType: String,
+        title: String? = nil,
+        timestamp: String? = nil,
+        sourceUrl: String? = nil,
+        appUrl: String? = nil
+    ) {
+        self.documentId = documentId
+        self.sourceType = sourceType
+        self.title = title
+        self.timestamp = timestamp
+        self.sourceUrl = sourceUrl
+        self.appUrl = appUrl
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case documentId
+        case sourceType
+        case title
+        case timestamp
+        case sourceUrl
+        case appUrl
+    }
+
+    /// The document id and source type are the citation; an optional field
+    /// of the wrong shape reads as withheld rather than costing the citation.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        documentId = try container.decode(String.self, forKey: .documentId)
+        sourceType = try container.decode(String.self, forKey: .sourceType)
+        title = try? container.decodeIfPresent(String.self, forKey: .title)
+        timestamp = try? container.decodeIfPresent(String.self, forKey: .timestamp)
+        sourceUrl = try? container.decodeIfPresent(String.self, forKey: .sourceUrl)
+        appUrl = try? container.decodeIfPresent(String.self, forKey: .appUrl)
+    }
+
+    /// A citation list read entry by entry: a malformed citation is skipped,
+    /// and a missing key or a list of the wrong shape reads as no citations,
+    /// which is what a gateway without citation support sends.
+    static func decodeList<Key: CodingKey>(
+        from container: KeyedDecodingContainer<Key>,
+        forKey key: Key
+    )
+        -> [AnswerCitation] {
+        let entries = (try? container.decodeIfPresent([LossyEntry].self, forKey: key)) ?? []
+        return entries.compactMap(\.citation)
+    }
+
+    private struct LossyEntry: Decodable {
+        let citation: AnswerCitation?
+
+        init(from decoder: Decoder) throws {
+            citation = try? AnswerCitation(from: decoder)
+        }
+    }
+}
+
 /// Server-produced, task-level presentation of one external boundary exchange.
 /// `sharedAnswer` is populated only after recorded external egress;
 /// `draftAnswer` and `pendingCandidate` remain local to the operator's audit.
@@ -160,6 +236,12 @@ public struct PrivacyExchangePresentation: Decodable, Equatable, Sendable, Ident
     /// privacy audit, but this value does not mean the answer left the machine.
     public let draftAnswer: String?
     public let pendingCandidate: String?
+    /// The citations recorded beside `sharedAnswer`; empty unless it was shared.
+    public let sharedCitations: [AnswerCitation]
+    /// The citations the agent recorded beside `draftAnswer`. Local, like the draft.
+    public let draftCitations: [AnswerCitation]
+    /// The citations held beside `pendingCandidate` while the approval is pending.
+    public let pendingCitations: [AnswerCitation]
     public let reductions: [String]
     public let approval: PrivacyExchangeApproval?
     public let userDecision: PrivacyExchangeUserDecision?
@@ -199,6 +281,18 @@ public struct PrivacyExchangePresentation: Decodable, Equatable, Sendable, Ident
         return pendingCandidate
     }
 
+    /// The citations a pending approval would release, under the same rule as
+    /// `candidateAwaitingReview`.
+    public var citationsAwaitingReview: [AnswerCitation]? {
+        guard outcome == .needsReview, approval?.status == .pending else { return nil }
+        return pendingCitations
+    }
+
+    /// The only citations the human-facing audit may label as shared.
+    public var externallyVisibleCitations: [AnswerCitation]? {
+        externallyVisibleAnswer == nil ? nil : sharedCitations
+    }
+
     public init(
         taskId: String,
         conversationId: String,
@@ -214,6 +308,9 @@ public struct PrivacyExchangePresentation: Decodable, Equatable, Sendable, Ident
         sharedAnswer: String?,
         draftAnswer: String? = nil,
         pendingCandidate: String?,
+        sharedCitations: [AnswerCitation] = [],
+        draftCitations: [AnswerCitation] = [],
+        pendingCitations: [AnswerCitation] = [],
         reductions: [String],
         approval: PrivacyExchangeApproval?,
         userDecision: PrivacyExchangeUserDecision?,
@@ -237,6 +334,9 @@ public struct PrivacyExchangePresentation: Decodable, Equatable, Sendable, Ident
         self.sharedAnswer = sharedAnswer
         self.draftAnswer = draftAnswer
         self.pendingCandidate = pendingCandidate
+        self.sharedCitations = sharedCitations
+        self.draftCitations = draftCitations
+        self.pendingCitations = pendingCitations
         self.reductions = reductions
         self.approval = approval
         self.userDecision = userDecision
@@ -251,6 +351,7 @@ public struct PrivacyExchangePresentation: Decodable, Equatable, Sendable, Ident
         case taskId, conversationId, workflowId, externalAgent, workflow, question
         case status, outcome, createdAt, resolvedAt, sharedAt, sharedAnswer, draftAnswer
         case pendingCandidate, reductions, approval, userDecision, denialReason, review, failure
+        case sharedCitations, draftCitations, pendingCitations
         case agentTraces, agentTraceOmittedAttempts
     }
 
@@ -262,7 +363,8 @@ public struct PrivacyExchangePresentation: Decodable, Equatable, Sendable, Ident
     /// The three ids stay required: they are this row's identity and the route
     /// to its detail, and a synthesized one would collide with its neighbours.
     /// Nothing here can turn local data into shared data — `sharedAnswer`,
-    /// `draftAnswer`, and `pendingCandidate` keep distinct value semantics.
+    /// `draftAnswer`, and `pendingCandidate` keep distinct value semantics, and
+    /// so do the three citation lists recorded beside them.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         taskId = try container.decode(String.self, forKey: .taskId)
@@ -285,6 +387,9 @@ public struct PrivacyExchangePresentation: Decodable, Equatable, Sendable, Ident
         sharedAnswer = try? container.decodeIfPresent(String.self, forKey: .sharedAnswer)
         draftAnswer = try? container.decodeIfPresent(String.self, forKey: .draftAnswer)
         pendingCandidate = try? container.decodeIfPresent(String.self, forKey: .pendingCandidate)
+        sharedCitations = AnswerCitation.decodeList(from: container, forKey: .sharedCitations)
+        draftCitations = AnswerCitation.decodeList(from: container, forKey: .draftCitations)
+        pendingCitations = AnswerCitation.decodeList(from: container, forKey: .pendingCitations)
         reductions = (try? container.decodeIfPresent([String].self, forKey: .reductions)) ?? []
         approval = try? container.decodeIfPresent(
             PrivacyExchangeApproval.self,

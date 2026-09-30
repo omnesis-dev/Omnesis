@@ -50,6 +50,11 @@ describe("privacy-brokered MCP OAuth — spawned replay gateway", () => {
       extraInference: { assignments: { "privacy-reviewer": "replay" } },
     });
     await harness.start();
+    // These answer cassettes cite synthetic Gmail messages through the real
+    // citation tool, which resolves each one from the corpus.
+    const gmailSources = harness.getSourceIds().filter((id) => id.startsWith("gmail:"));
+    expect(gmailSources).not.toHaveLength(0);
+    for (const id of gmailSources) await harness.triggerSyncAndWait(id, 60_000);
   }, 120_000);
 
   afterAll(async () => {
@@ -87,6 +92,23 @@ describe("privacy-brokered MCP OAuth — spawned replay gateway", () => {
         answer: RELEASED_ANSWER,
         taskId: released.taskId,
       });
+      // The draft cited one message through the agent's real citation tool,
+      // resolved from the synthetic corpus. A generic MCP client receives the
+      // reviewed citation unasked, in the structured result and in the text.
+      const citations = (status.structuredContent as { citations?: Array<Record<string, unknown>> })
+        .citations;
+      expect(citations).toEqual([
+        {
+          documentId: expect.any(String),
+          sourceType: "gmail",
+          title: "Q3 logistics recap",
+          timestamp: expect.any(String),
+          sourceUrl: expect.stringMatching(/^https:\/\/mail\.google\.com\//),
+        },
+      ]);
+      expect((status.content as Array<{ text?: string }>)[0]?.text).toContain(
+        "Sources:\n1. Q3 logistics recap · gmail",
+      );
 
       const db = new Database(harness.getDbPath(), { readonly: true });
       try {

@@ -2182,6 +2182,43 @@ class AdapterLifecycleTests(unittest.IsolatedAsyncioTestCase):
             bodies[0]["clientRequestId"], bodies[1]["clientRequestId"]
         )
 
+    async def test_answer_opts_in_to_citations_and_relays_them(self):
+        args = await self._authorized_answer_session()
+        bodies = []
+        endpoints = []
+        released = {
+            "status": "released",
+            "answer": "The Q4 budget review approved the plan.",
+            "citations": [
+                {
+                    "documentId": "doc_fictional_budget",
+                    "sourceType": "gmail",
+                    "title": "Q4 budget review",
+                    "timestamp": "2026-03-14T09:30:00.000Z",
+                    "sourceUrl": "https://mail.example.com/thread/fictional-budget",
+                }
+            ],
+        }
+
+        def post(endpoint, token, body, timeout=None):
+            endpoints.append(endpoint)
+            bodies.append(body)
+            return released
+
+        self.instance._post_json = post
+        result = json.loads(
+            self.instance.answer_subscription(args, "session-authorized")
+        )
+        self.assertTrue(endpoints[0].endswith("/answer?citations=true"))
+        self.assertNotIn("citations", bodies[0])
+        self.assertEqual(result["citations"], released["citations"])
+        self.assertEqual(
+            result["agentGuidance"],
+            "Sources:\n"
+            "1. Q4 budget review · gmail · 2026-03-14T09:30:00.000Z\n"
+            "   Link: https://mail.example.com/thread/fictional-budget",
+        )
+
     async def test_a_socket_timeout_collects_the_answer_it_started(self):
         # The live failure: the client's budget elapsed while the gateway was
         # still running the turn, and the turn then completed.
@@ -3098,6 +3135,108 @@ class FiringAnswerContractTests(unittest.TestCase):
             self.assertFalse(adapter_module._answer_still_running(fatal))
 
 
+_FICTIONAL_CITATION = {
+    "documentId": "doc_fictional_budget",
+    "sourceType": "gmail",
+    "title": "Q4 budget review",
+    "timestamp": "2026-03-14T09:30:00.000Z",
+    "sourceUrl": "https://mail.example.com/thread/fictional-budget",
+    "appUrl": "example-mail://thread/fictional-budget",
+}
+
+
+def _fictional_released(**extra):
+    return {
+        "status": "released",
+        "workflowId": "wf_fictional",
+        "conversationId": "conv_fictional",
+        "taskId": "task_fictional",
+        "releaseId": "release_fictional",
+        "answer": "The Q4 budget review approved the plan.",
+        **extra,
+    }
+
+
+class AnswerCitationTests(unittest.TestCase):
+    def test_a_response_without_citations_still_validates(self):
+        response = _fictional_released()
+        self.assertEqual(adapter_module._validate_answer_response(response), response)
+        self.assertIsNone(adapter_module._describe_answer_outcome(response))
+        self.assertEqual(
+            adapter_module._format_answer_completion(response),
+            "The Q4 budget review approved the plan.",
+        )
+
+    def test_released_citations_validate_and_render(self):
+        note = {"documentId": "doc_fictional_note", "sourceType": "notes"}
+        response = _fictional_released(citations=[_FICTIONAL_CITATION, note])
+        self.assertEqual(adapter_module._validate_answer_response(response), response)
+        sources = (
+            "Sources:\n"
+            "1. Q4 budget review · gmail · 2026-03-14T09:30:00.000Z\n"
+            "   Link: https://mail.example.com/thread/fictional-budget\n"
+            "   App link: example-mail://thread/fictional-budget\n"
+            "2. Untitled · notes"
+        )
+        self.assertEqual(adapter_module._describe_answer_outcome(response), sources)
+        self.assertEqual(
+            adapter_module._format_answer_completion(response),
+            "The Q4 budget review approved the plan.\n\n" + sources,
+        )
+
+    def test_reduced_citations_follow_the_reduction_note(self):
+        response = {
+            **_fictional_released(citations=[_FICTIONAL_CITATION]),
+            "status": "released_with_reductions",
+            "reductions": ["A fictional detail was withheld."],
+        }
+        self.assertEqual(adapter_module._validate_answer_response(response), response)
+        guidance = adapter_module._describe_answer_outcome(response)
+        self.assertTrue(guidance.startswith("Omnesis released this answer with some"))
+        self.assertIn("\n\nSources:\n1. Q4 budget review", guidance)
+
+    def test_malformed_citations_fail_closed(self):
+        cases = {
+            "unknown field": [{**_FICTIONAL_CITATION, "snippet": "Fictional excerpt."}],
+            "non-string title": [{**_FICTIONAL_CITATION, "title": 42}],
+            "empty title": [{**_FICTIONAL_CITATION, "title": ""}],
+            "missing source type": [{"documentId": "doc_fictional_budget"}],
+            "missing document id": [{"sourceType": "gmail"}],
+            "date without a time": [{**_FICTIONAL_CITATION, "timestamp": "2026-03-14"}],
+            "time without an offset": [
+                {**_FICTIONAL_CITATION, "timestamp": "2026-03-14T09:30:00"}
+            ],
+            "not an ISO timestamp": [{**_FICTIONAL_CITATION, "timestamp": "last Tuesday"}],
+            "not a list": {"documentId": "doc_fictional_budget", "sourceType": "gmail"},
+            "not an object": ["doc_fictional_budget"],
+            "too many": [_FICTIONAL_CITATION] * 33,
+        }
+        for label, citations in cases.items():
+            with self.subTest(label):
+                with self.assertRaises(adapter_module.McpProtocolError):
+                    adapter_module._validate_answer_response(
+                        _fictional_released(citations=citations)
+                    )
+                self.assertIsNone(
+                    adapter_module._describe_answer_outcome(
+                        _fictional_released(citations=citations)
+                    )
+                )
+
+    def test_citations_on_an_unreleased_answer_fail_closed(self):
+        with self.assertRaises(adapter_module.McpProtocolError):
+            adapter_module._validate_answer_response(
+                {
+                    "status": "denied",
+                    "workflowId": "wf_fictional",
+                    "conversationId": "conv_fictional",
+                    "taskId": "task_fictional",
+                    "reason": "privacy_policy",
+                    "citations": [_FICTIONAL_CITATION],
+                }
+            )
+
+
 class StatelessMcpAnswerTests(unittest.TestCase):
     def setUp(self):
         self.instance = adapter_module.OmnesisAdapter.for_tools()
@@ -3158,6 +3297,7 @@ class StatelessMcpAnswerTests(unittest.TestCase):
                 adapter_module.MCP_PROTOCOL_VERSION_META_KEY: "2026-07-28",
                 adapter_module.MCP_CLIENT_CAPABILITIES_META_KEY: {},
                 adapter_module.MCP_NATIVE_CONVERSATION_META_KEY: "native_1",
+                adapter_module.MCP_ANSWER_CITATIONS_META_KEY: True,
             },
         )
         self.assertEqual(

@@ -682,9 +682,9 @@ describe("local-files sync", () => {
     expect(instance.watchFileExtensions).not.toContain(".png");
   });
 
-  test("descriptor carries the experimental partitioned contract", () => {
+  test("descriptor carries the generally available partitioned contract", () => {
     expect(definition.id).toBe("local-files");
-    expect(definition.experimental).toBe(true);
+    expect(definition.experimental).toBeFalsy();
     expect(definition.multiDevice).toEqual({ mode: "partitioned" });
     expect(definition.singleInstance).toBe(true);
     expect(definition.supportedPlatforms).toEqual(["darwin", "linux"]);

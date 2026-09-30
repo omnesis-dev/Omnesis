@@ -1118,6 +1118,50 @@ enum PreviewMocks {
         experimental: true
     )
 
+    // MARK: - Gateway dictation (experimental)
+
+    /// 25 MB, the gateway's audio body limit.
+    static let dictationMaxAudioBytes = 25 * 1024 * 1024
+
+    /// Experimental gateway; the operator has not switched dictation on.
+    static let dictationStatusOff = DictationStatus(
+        visible: true,
+        enabled: false,
+        modelAssigned: true,
+        active: false,
+        maxAudioBytes: dictationMaxAudioBytes
+    )
+
+    /// Switched on with a runnable transcriber: mics record for the gateway.
+    static let dictationStatusActive = DictationStatus(
+        visible: true,
+        enabled: true,
+        modelAssigned: true,
+        active: true,
+        maxAudioBytes: dictationMaxAudioBytes
+    )
+
+    /// Switched on, but the transcriber model is missing.
+    static let dictationStatusBlocked = DictationStatus(
+        visible: true,
+        enabled: true,
+        modelAssigned: false,
+        active: false,
+        reason: "The transcriber model is not installed.",
+        maxAudioBytes: dictationMaxAudioBytes
+    )
+
+    /// An experimental gateway advertising the dictation setting, switched
+    /// on with its transcriber unable to run — Settings shows the Voice
+    /// section with the gateway's reason.
+    static let statusSnapshotDictationBlocked = StatusSnapshot(
+        documents: statusSnapshot.documents,
+        dbSizeBytes: statusSnapshot.dbSizeBytes,
+        latestActivityBySource: nil,
+        experimental: true,
+        dictation: dictationStatusBlocked
+    )
+
     /// A `/status` snapshot with the Omnesis Briefs feature active —
     /// exercises the Briefs menu entry (experimental mode on AND a
     /// background-agent model assigned).
@@ -5331,6 +5375,74 @@ extension PreviewMocks {
         rationale: privacyReview.rationale
     )
 
+    // MARK: Answer citations
+
+    /// The calendar event the pending answer leans on. Invented.
+    static let privacyCitationEvent = AnswerCitation(
+        documentId: "doc_preview_cite_event",
+        sourceType: "google-calendar",
+        title: "Organizer meeting at the venue east entrance",
+        timestamp: "2026-08-20T13:00:00Z",
+        sourceUrl: "https://calendar.example.com/event?eid=b3JnYW5pemVyLW1lZXRpbmc",
+        appUrl: "calendar-example://event/b3JnYW5pemVyLW1lZXRpbmc"
+    )
+
+    static let privacyCitationEmail = AnswerCitation(
+        documentId: "doc_preview_cite_email",
+        sourceType: "gmail",
+        title: "Re: Meeting place for Thursday",
+        timestamp: "2026-08-18T16:42:10.500Z",
+        sourceUrl: "https://mail.example.com/mail/u/0/#all/18c2f0a1b2d3e4f5",
+        appUrl: "mail-example:///thread/18c2f0a1b2d3e4f5"
+    )
+
+    /// A note the agent cited without a title.
+    static let privacyCitationUntitledNote = AnswerCitation(
+        documentId: "doc_preview_cite_note",
+        sourceType: "notion",
+        timestamp: "2026-08-15T08:05:00Z",
+        sourceUrl: "https://notes.example.org/itinerary-draft-4f1c9a"
+    )
+
+    static let privacyCitationBudget = AnswerCitation(
+        documentId: "doc_preview_cite_budget",
+        sourceType: "gmail",
+        title: "Q4 budget review",
+        timestamp: "2026-09-14T09:30:00Z",
+        sourceUrl: "https://mail.example.com/mail/u/0/#all/19a7b3c5d7e9f1a3"
+    )
+
+    /// The pending review's citations: exactly what approving releases.
+    static let privacyPendingCitations = [privacyCitationEvent, privacyCitationEmail]
+
+    /// Everything a citation row has to survive: a title long enough to wrap,
+    /// a link long enough to wrap, a link this app will not hand off, no links
+    /// at all, and a date that is not ISO 8601.
+    static let privacyCitationEdgeCases = [
+        AnswerCitation(
+            documentId: "doc_preview_cite_long",
+            sourceType: "google-drive",
+            title: "Q4 budget review — travel, equipment and training lines, with the revised "
+                + "conference allowance and the notes from the second planning session",
+            timestamp: "2026-09-12T10:00:00Z",
+            sourceUrl: "https://files.example.com/document/d/1QxExampleBudgetReviewQ4DraftRevisionThree"
+                + "/edit?usp=sharing&section=travel-and-equipment"
+        ),
+        AnswerCitation(
+            documentId: "doc_preview_cite_local",
+            sourceType: "apple-notes",
+            title: "Packing list",
+            timestamp: "2026-09-10T18:00:00Z",
+            sourceUrl: "file:///Users/example/Notes/packing-list.txt"
+        ),
+        AnswerCitation(
+            documentId: "doc_preview_cite_nolinks",
+            sourceType: "whatsapp",
+            title: "Maya Reeves",
+            timestamp: "not a date"
+        ),
+    ]
+
     /// The pending review every other Privacy fixture is anchored to: the feed
     /// exchange, the pinned card, and the deep-linked approval all read their
     /// identity from here.
@@ -5348,6 +5460,7 @@ extension PreviewMocks {
         workflowPurpose: "Compare travel options and prepare a draft itinerary.",
         question: "When is the user free to meet the event organizer, and where is the proposed meeting?",
         candidateAnswer: "The user is free on Thursday afternoon. The proposed meeting is at 42 Example Street.",
+        candidateCitations: privacyPendingCitations,
         review: privacyReview
     )
 
@@ -5451,6 +5564,7 @@ extension PreviewMocks {
             resolvedAt: nil,
             sharedAnswer: nil,
             pendingCandidate: "The user is free on Thursday afternoon. The proposed meeting is at 42 Example Street.",
+            pendingCitations: privacyPendingCitations,
             reductions: [],
             approval: PrivacyExchangeApproval(
                 id: privacyApprovalDetail.id,
@@ -5483,6 +5597,18 @@ extension PreviewMocks {
             sharedAnswer: "The user is available Thursday afternoon near the venue.",
             draftAnswer: "The user is available Thursday afternoon at 42 Example Street.",
             pendingCandidate: nil,
+            // The check kept the event, dropped the email's subject (it named
+            // the street) and its date, and withheld the itinerary note entirely.
+            sharedCitations: [
+                privacyCitationEvent,
+                AnswerCitation(
+                    documentId: privacyCitationEmail.documentId,
+                    sourceType: privacyCitationEmail.sourceType,
+                    sourceUrl: privacyCitationEmail.sourceUrl,
+                    appUrl: privacyCitationEmail.appUrl
+                ),
+            ],
+            draftCitations: [privacyCitationEvent, privacyCitationEmail, privacyCitationUntitledNote],
             reductions: ["Removed the exact street address"],
             approval: nil,
             userDecision: nil,
@@ -5530,6 +5656,95 @@ extension PreviewMocks {
                 + "people named alongside it need your decision before anything is shared."
         )
     )
+
+    /// A pending exchange whose draft cited more than the held answer would
+    /// release: the privacy check already withheld one citation and one link.
+    static let privacyPendingCitationExchange = PrivacyExchangePresentation(
+        taskId: "task_preview_citations",
+        conversationId: privacyApprovalDetail.conversationId,
+        workflowId: "workflow_budget_summary",
+        externalAgent: privacyExternalAgent,
+        workflow: PrivacyExchangeWorkflow(
+            name: "Summarize the quarter",
+            purpose: "Prepare a short summary of the quarter's budget decisions."
+        ),
+        question: "What changed in the Q4 budget review?",
+        status: .approvalRequired,
+        outcome: .needsReview,
+        createdAt: privacyApprovalDetail.createdAt,
+        resolvedAt: nil,
+        sharedAnswer: nil,
+        draftAnswer: "Travel and equipment grew; training was flat. The venue walkthrough is booked.",
+        pendingCandidate: "Travel and equipment grew; training was flat. The venue walkthrough is booked.",
+        sharedCitations: [],
+        draftCitations: [privacyCitationBudget, privacyCitationEvent, privacyCitationUntitledNote],
+        pendingCitations: [
+            privacyCitationBudget,
+            AnswerCitation(
+                documentId: privacyCitationEvent.documentId,
+                sourceType: privacyCitationEvent.sourceType,
+                title: privacyCitationEvent.title,
+                timestamp: privacyCitationEvent.timestamp,
+                sourceUrl: privacyCitationEvent.sourceUrl
+            ),
+        ],
+        reductions: [],
+        approval: PrivacyExchangeApproval(
+            id: "pap_preview_citations",
+            status: .pending,
+            expiresAt: privacyApprovalDetail.expiresAt,
+            resolvedAt: nil
+        ),
+        userDecision: nil,
+        review: PrivacyExchangeReview(
+            fallbackCause: .policyRequiresReview,
+            findings: privacyReview.findings,
+            rationale: "The budget summary is allowed; the itinerary note and the event's "
+                + "app link were withheld."
+        )
+    )
+
+    /// A shared answer whose draft cited two documents the privacy check
+    /// withheld entirely: the release carried no citations at all.
+    static let privacyAllCitationsWithheldExchange = PrivacyExchangePresentation(
+        taskId: "task_preview_citations_withheld",
+        conversationId: privacyApprovalDetail.conversationId,
+        workflowId: "workflow_budget_summary",
+        externalAgent: privacyExternalAgent,
+        workflow: PrivacyExchangeWorkflow(
+            name: "Summarize the quarter",
+            purpose: "Prepare a short summary of the quarter's budget decisions."
+        ),
+        question: "Which meetings shaped the Q4 budget review?",
+        status: .releasedWithReductions,
+        outcome: .sharedWithReductions,
+        createdAt: privacyApprovalDetail.createdAt,
+        resolvedAt: privacyApprovalDetail.createdAt + 4000,
+        sharedAt: privacyApprovalDetail.createdAt + 4500,
+        sharedAnswer: "Two planning meetings shaped the Q4 budget review.",
+        draftAnswer: "Two planning meetings with David Lin shaped the Q4 budget review.",
+        pendingCandidate: nil,
+        sharedCitations: [],
+        draftCitations: [privacyCitationBudget, privacyCitationEvent],
+        reductions: ["Removed a named attendee"],
+        approval: nil,
+        userDecision: nil,
+        review: nil
+    )
+
+    /// Every shape the citation list takes, for the gallery preview and its
+    /// snapshot: a draft's own list, a pending release and a shared one each
+    /// compared with the draft, a release that withheld every citation, and
+    /// the edge cases.
+    static var privacyCitationLists: [PrivacyCitationList] {
+        [
+            privacyDraftCitationList(privacyExchanges[1]),
+            PrivacyPendingReview(exchange: privacyPendingCitationExchange).flatMap { privacyReviewCitationList($0) },
+            privacySharedCitationList(privacyExchanges[1]),
+            privacySharedCitationList(privacyAllCitationsWithheldExchange),
+            privacyCitationList(privacyCitationEdgeCases, heading: "Cited in this draft"),
+        ].compactMap { $0 }
+    }
 
     static let privacyFailedExchange = PrivacyExchangePresentation(
         taskId: "task_preview_failed",

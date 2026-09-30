@@ -495,6 +495,23 @@ describe("Bootstrap panel — the history hero", () => {
     }
   });
 
+  it("draws the decision model's skips as their own band, with a legend entry", async () => {
+    const { TimelineHero } = await import("./cognition-timeline.js");
+    const months = [
+      { month: "2024-01", reviewed: 10, gated: 30, failed: 0, owed: 0, discarded: 500, unscanned: 0 },
+    ];
+    const vnode = TimelineHero({ timeline: { months }, status: RUNNING, loading: false, error: null });
+    const nodes = expandToHostNodes(vnode);
+    const segments = nodes.filter((n) => n.class === "tl-seg").map((n) => n.style);
+    expect(segments).toEqual([
+      "flex-grow:10; background:var(--success);",
+      "flex-grow:30; background:var(--type-event);",
+    ]);
+    const key = nodes.find((n) => n.class === "tl-key" && n.text.includes("Skipped by the decision model"));
+    expect(key).toBeDefined();
+    expect(flatText(vnode)).toContain("Read back to Jan 2024");
+  });
+
   it("says nothing has been read when nothing has", async () => {
     const { TimelineHero } = await import("./cognition-timeline.js");
     const bare = [{ month: "2024-01", reviewed: 0, failed: 0, owed: 5, discarded: 5, unscanned: 0 }];

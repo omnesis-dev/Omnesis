@@ -18,10 +18,44 @@ export interface AnswerResponseBase {
   taskId: string;
 }
 
+/**
+ * One document the answering agent cited, released beside the answer as
+ * structured metadata. Every field was shown to the privacy reviewer, which
+ * may withhold a whole citation or any of its optional fields.
+ */
+export interface AnswerCitation {
+  /** Omnesis document id; resolvable with the Direct document tools. */
+  documentId: string;
+  /** The source type the document came from, e.g. `gmail`. */
+  sourceType: string;
+  /** The document's title, e.g. an email subject or an event name. */
+  title?: string;
+  /** When the document happened, as ISO 8601. */
+  timestamp?: string;
+  /** The document's canonical web or desktop destination. */
+  sourceUrl?: string;
+  /** A native-app deep link, preferred over `sourceUrl` on mobile. */
+  appUrl?: string;
+}
+
+/** The fields of an {@link AnswerCitation} the privacy reviewer may withhold one by one. */
+export const ANSWER_CITATION_WITHHOLDABLE_FIELDS = [
+  "title",
+  "timestamp",
+  "sourceUrl",
+  "appUrl",
+] as const;
+export type AnswerCitationWithholdableField = (typeof ANSWER_CITATION_WITHHOLDABLE_FIELDS)[number];
+
 export interface ReleasedAnswerResponse extends AnswerResponseBase {
   status: "released";
   releaseId: string;
   answer: string;
+  /**
+   * The documents the answer relies on. Present only for a caller that
+   * declared it accepts citations, and only when at least one was released.
+   */
+  citations?: AnswerCitation[];
 }
 
 export interface ReducedAnswerResponse extends AnswerResponseBase {
@@ -29,6 +63,8 @@ export interface ReducedAnswerResponse extends AnswerResponseBase {
   releaseId: string;
   answer: string;
   reductions: string[];
+  /** As on {@link ReleasedAnswerResponse}. */
+  citations?: AnswerCitation[];
 }
 
 export interface ApprovalRequiredAnswerResponse extends AnswerResponseBase {
@@ -130,6 +166,13 @@ export interface PrivacyExternalAgentIdentity {
   /** The specific OAuth installation using this principal, when known. */
   connectionName?: string | null;
   /**
+   * The app an OAuth principal signed in from, as its client registered itself
+   * (`Claude Code`, `ChatGPT`, …) — the name the Access page draws an agent's
+   * logo from. Absent for a token or integration caller, and null when the
+   * client is no longer registered.
+   */
+  clientName?: string | null;
+  /**
    * The kind of the paired device that asked (`cli`, `ios`, `agent`, …), when
    * a device did — what a client draws its icon from. Absent for an OAuth
    * principal and for a caller no device accounts for.
@@ -151,6 +194,8 @@ export interface PrivacyExternalAgentIdentity {
 export interface PrivacyExternalMessage {
   role: "user" | "assistant";
   content: string;
+  /** The citations released with an assistant turn; absent when there were none. */
+  citations?: AnswerCitation[];
 }
 
 export interface PrivacyCumulativeCategory {
@@ -278,6 +323,8 @@ export interface PrivacyApprovalDetail extends PrivacyApprovalSummary {
   question: string;
   /** Null only for approvals created by a gateway predating durable approval snapshots. */
   candidateAnswer: string | null;
+  /** The citations held beside `candidateAnswer`; empty when none. */
+  candidateCitations: AnswerCitation[];
   /** When the released answer was recorded as returned to the external caller. */
   sharedAt: number | null;
   review: PrivacyReviewRecord;
@@ -583,6 +630,12 @@ export interface PrivacyExchangePresentation {
   draftAnswer: string | null;
   /** Exact held content, present only while the approval is pending. */
   pendingCandidate: string | null;
+  /** The citations recorded beside `sharedAnswer`; empty when none were released. */
+  sharedCitations: AnswerCitation[];
+  /** The citations the agent recorded beside `draftAnswer`. */
+  draftCitations: AnswerCitation[];
+  /** The citations held beside `pendingCandidate`, while the approval is pending. */
+  pendingCitations: AnswerCitation[];
   reductions: string[];
   approval: {
     id: string;

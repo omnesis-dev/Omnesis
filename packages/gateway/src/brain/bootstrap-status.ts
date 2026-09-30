@@ -570,6 +570,7 @@ export interface BootstrapTimeline {
     discarded: number;
     owed: number;
     reviewed: number;
+    gated: number;
     failed: number;
   }>;
   computedAt: number;

@@ -1,26 +1,17 @@
 name: omnesis-integration
 label: Omnesis
 kind: platform
-version: 0.5.13
+version: 0.5.14
 description: >
   Ingests durable Hermes transcripts, accepts privacy-reviewed Omnesis
   subscription wakes in dedicated background sessions, and offers the Direct
   and Notes tools a connection is granted.
 author: Omnesis
+# The tools every load registers. The Direct and Notes tools are registered
+# from the connection's own tool listing, so which of them a load adds depends
+# on the access level; Hermes loads a user plugin whole whether or not a tool is
+# named here, and its plugin doctor warns on any declared tool a load did not add.
 provides_tools:
   - omnesis_answer
   - omnesis_subscription_answer
   - omnesis_subscriptions
-  - omnesis_search_many
-  - omnesis_fetch_many
-  - omnesis_lookup_document_by_url
-  - omnesis_lookup_people
-  - omnesis_trace_connections
-  - omnesis_run_sql
-  - omnesis_temporal_query
-  - omnesis_entity_context
-  - omnesis_search_loops
-  - omnesis_list_loops
-  - omnesis_fetch_loop
-  - omnesis_list_tables
-  - omnesis_add_note

@@ -24,6 +24,13 @@ export function isServiceComponent(value: string): value is ServiceComponent {
   return (SERVICE_COMPONENTS as readonly string[]).includes(value);
 }
 
+/**
+ * The LaunchAgent's `ThrottleInterval`: the least time launchd leaves between
+ * two starts of a job. A daemon that asks launchd to start it again waits this
+ * long too, so it can never restart faster than launchd itself would.
+ */
+export const LAUNCHD_THROTTLE_INTERVAL_SECONDS = 10;
+
 /** launchd label, e.g. `dev.omnesis.gateway` / `dev.omnesis.gateway.staging`. */
 export function launchdLabel(component: ServiceComponent, instance?: string): string {
   return instance ? `dev.omnesis.${component}.${instance}` : `dev.omnesis.${component}`;

@@ -1,0 +1,54 @@
+diff --git a/node_modules/re2-wasm/build/src/re2.js b/node_modules/re2-wasm/build/src/re2.js
+index 465e125..71e3376 100644
+--- a/node_modules/re2-wasm/build/src/re2.js
++++ b/node_modules/re2-wasm/build/src/re2.js
+@@ -13,6 +13,8 @@
+  *   See the License for the specific language governing permissions and
+  *   limitations under the License.
+  */
++// Modified by Omnesis (patches/re2-wasm+1.0.2.patch): the RE2 constructor
++// deletes the native values it creates and does not hand back.
+ Object.defineProperty(exports, "__esModule", { value: true });
+ exports.RE2 = void 0;
+ // eslint-disable-next-line node/no-unpublished-import
+@@ -186,19 +188,32 @@ class RE2 {
+         this.pattern = pattern;
+         this.wrapper = new re2_1.WrappedRE2(translateRegExp(pattern, this._multiline), this._ignoreCase, this._multiline, this._dotAll);
+         if (!this.wrapper.ok()) {
+-            throw new SyntaxError(`Invalid regular expression: /${pattern}/${flags}: ${this.wrapper.error()}`);
++            // Modified by Omnesis: a rejected wrapper never reaches the caller,
++            // so it is deleted here rather than left on the fixed WASM heap.
++            const error = this.wrapper.error();
++            this.wrapper.delete();
++            throw new SyntaxError(`Invalid regular expression: /${pattern}/${flags}: ${error}`);
+         }
++        // Modified by Omnesis: the name table and its key list are embind
++        // copies this constructor owns, so both are deleted once read.
+         // Verify that all named groups have unique names
+         const groupNames = this.wrapper.capturingGroupNames();
+         const groupNumbers = groupNames.keys();
+-        for (let i = 0; i < groupNumbers.size(); i++) {
+-            const num = groupNumbers.get(i);
+-            const name = groupNames.get(num);
+-            if (name in this.namedGroups) {
+-                throw new SyntaxError(`Invalid regular expression: /${pattern}/${flags}: Duplicate capture group name`);
++        try {
++            for (let i = 0; i < groupNumbers.size(); i++) {
++                const num = groupNumbers.get(i);
++                const name = groupNames.get(num);
++                if (name in this.namedGroups) {
++                    this.wrapper.delete();
++                    throw new SyntaxError(`Invalid regular expression: /${pattern}/${flags}: Duplicate capture group name`);
++                }
++                this.groupNames[num] = name;
++                this.namedGroups[name] = num;
+             }
+-            this.groupNames[num] = name;
+-            this.namedGroups[name] = num;
++        }
++        finally {
++            groupNumbers.delete();
++            groupNames.delete();
+         }
+     }
+     get source() {

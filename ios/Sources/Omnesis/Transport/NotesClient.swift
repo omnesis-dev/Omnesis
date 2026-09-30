@@ -61,6 +61,63 @@ public final class NotesClient: Sendable {
         return try decodeOrThrow(NoteEntry.self, from: data)
     }
 
+    /// `POST /notes/voice` — create one note from a recording (experimental
+    /// gateway dictation). The note exists at once with `text`, the phone's
+    /// own transcript (or a placeholder when that is empty), and the gateway
+    /// replaces it with its transcription of `audio` when that is ready. The
+    /// same `id` again is idempotent. A gateway that does not take voice
+    /// notes answers 404, 409 or 503 — see `VoiceNoteDelivery`.
+    @discardableResult
+    public func createVoiceNote(_ note: VoiceNoteUpload, audio: Data) async throws -> VoiceNoteReceipt {
+        let request = try Self.voiceNoteRequest(
+            baseURL: baseURL,
+            token: token,
+            note: note,
+            audio: audio,
+            boundary: "omnesis-\(UUID().uuidString)"
+        )
+        let (data, _) = try await send(request)
+        return try decodeOrThrow(VoiceNoteReceipt.self, from: data)
+    }
+
+    /// The multipart request for `createVoiceNote`: a `note` part carrying the
+    /// note's fields as JSON, and an `audio` part carrying the recording.
+    static func voiceNoteRequest(
+        baseURL: URL,
+        token: String,
+        note: VoiceNoteUpload,
+        audio: Data,
+        boundary: String
+    ) throws
+        -> URLRequest {
+        guard let url = URL(string: "/notes/voice", relativeTo: baseURL)?.absoluteURL else {
+            throw GatewayClient.Error.invalidURL
+        }
+        var request = URLRequest(url: url, timeoutInterval: voiceNoteTimeout)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        var body = Data()
+        func append(_ text: String) {
+            body.append(Data(text.utf8))
+        }
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"note\"\r\n")
+        append("Content-Type: application/json\r\n\r\n")
+        try body.append(JSONEncoder().encode(note))
+        append("\r\n--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"audio\"; filename=\"note.\(DictationRecordingFormat.fileExtension)\"\r\n")
+        append("Content-Type: \(DictationRecordingFormat.contentType)\r\n\r\n")
+        body.append(audio)
+        append("\r\n--\(boundary)--\r\n")
+        request.httpBody = body
+        return request
+    }
+
+    /// A voice note uploads a recording of up to the gateway's byte limit.
+    static let voiceNoteTimeout: TimeInterval = 120
+
     // MARK: - Internals
 
     private func dispatch(
@@ -80,6 +137,10 @@ public final class NotesClient: Sendable {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = body
         }
+        return try await send(request)
+    }
+
+    private func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw GatewayClient.Error.invalidResponse
@@ -173,6 +234,57 @@ private struct CreateNoteRequest: Encodable {
     let latitude: Double?
     let longitude: Double?
     let placeName: String?
+}
+
+/// The `note` part of `POST /notes/voice`: the `POST /notes` fields, with
+/// the phone's transcript as `text`, plus the recording's locale.
+public struct VoiceNoteUpload: Encodable, Equatable, Sendable {
+    /// Client-generated UUID — the note's idempotency key.
+    public let id: String
+    /// The phone's own transcript, shown until the gateway's replaces it.
+    /// Empty when the phone heard nothing.
+    public let text: String
+    public let capturedAt: String
+    public let capturedTimeZoneId: String?
+    public let capturedUtcOffsetSeconds: Int?
+    public let surface: String
+    public let deviceId: String?
+    public let latitude: Double?
+    public let longitude: Double?
+    public let placeName: String?
+    /// A locale identifier such as `en_GB`; the gateway takes its language
+    /// as the transcriber's hint.
+    public let language: String?
+
+    public init(
+        id: String,
+        text: String,
+        capturedAt: Date,
+        capturedTimeZoneId: String?,
+        capturedUtcOffsetSeconds: Int?,
+        surface: String,
+        deviceId: String?,
+        location: NoteLocation?,
+        language: String?
+    ) {
+        self.id = id
+        self.text = text
+        self.capturedAt = NotesTime.isoString(from: capturedAt)
+        self.capturedTimeZoneId = capturedTimeZoneId
+        self.capturedUtcOffsetSeconds = capturedUtcOffsetSeconds
+        self.surface = surface
+        self.deviceId = deviceId
+        latitude = location?.latitude
+        longitude = location?.longitude
+        placeName = location?.placeName
+        self.language = language
+    }
+}
+
+/// `POST /notes/voice`'s answer: the note exists, its transcription pending.
+public struct VoiceNoteReceipt: Decodable, Equatable, Sendable {
+    public let id: String
+    public let transcription: String?
 }
 
 /// Capture-surface slugs the iOS app reports on `POST /notes`. The

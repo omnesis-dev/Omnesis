@@ -50,6 +50,7 @@ export {
   loadSourceFixtureJson,
   loadCastFromUniverse,
   getAgentDemosDir,
+  getDecisionCassettesDir,
   getUniversesDir,
   getRepoRoot,
   resetActiveUniverseCache,

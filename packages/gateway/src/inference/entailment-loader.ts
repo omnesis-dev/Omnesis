@@ -342,6 +342,9 @@ export async function loadEntailmentFromResolved(
       });
     }
 
+    case "typesafe":
+      return null;
+
     default:
       return assertNever(resolved);
   }

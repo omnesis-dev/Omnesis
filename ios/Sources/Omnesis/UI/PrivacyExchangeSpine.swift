@@ -236,6 +236,9 @@ struct PrivacyExchangeSpine: View {
             PrivacyActorLine(kind: .omnesis, label: privacyDraftActorLabel(exchange))
             if let answer = privacyDisplayedAnswer(exchange) {
                 PrivacyAnswerBlock(answer: answer.text, role: answer.role)
+                if let citations = privacyDraftCitationList(exchange) {
+                    PrivacyCitationListView(list: citations)
+                }
                 if !shared {
                     Text("This draft has not left this machine.")
                         .font(.system(size: 12))
@@ -330,6 +333,9 @@ struct PrivacyExchangeSpine: View {
             if let policy = exchange.review?.reviewedPolicy {
                 PrivacyReviewedUnderRow(policy: policy)
             }
+            if pending, let citations = privacyPendingCitationList(exchange) {
+                PrivacyCitationListView(list: citations)
+            }
             if let actionError {
                 PrivacyBanner(text: actionError)
             }
@@ -406,6 +412,9 @@ struct PrivacyExchangeSpine: View {
             // received an answer before it was let go.
             if let release = order.released {
                 PrivacyLedgerStep(event: release)
+            }
+            if shared, let citations = privacySharedCitationList(exchange) {
+                PrivacyCitationListView(list: citations)
             }
             // Only when it was actually collected. A released answer the caller
             // has not come back for has crossed the boundary without anyone

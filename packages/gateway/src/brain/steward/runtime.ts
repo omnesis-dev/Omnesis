@@ -38,6 +38,7 @@ import { TemporalQueryService } from "../../enrichment/temporal/temporal-query-s
 import { createGatewayEntityContextPort } from "../../domain/cognitive-graph/interactive-entity-context-port.js";
 import { readCognitionNotes } from "../storage/notes.js";
 import { resolveSelfMemory } from "../self-memory.js";
+import { fetchSelfPersonId } from "../../domain/InteractionScoreService.js";
 import {
   parseCognitionDataRunPayload,
   parseCognitionBootstrapRunPayload,
@@ -78,6 +79,7 @@ import type { WriteGate } from "../../write-gate.js";
 import type { DerivationStage } from "../../domain/DocumentDerivation.js";
 import type { ResolvedBrainSettings } from "../config.js";
 import type { CognitionRunExecutionContext } from "../run-driver.js";
+import type { RecordCheck } from "../record-check/check.js";
 
 type Db = Database.Database;
 
@@ -175,6 +177,11 @@ export interface CognitionToolsetDeps {
   getEntailmentVerifier?: () => Promise<EntailCapability | null>;
   validateAnnotationEvidence?: AnnotationToolDeps["validateAnnotationEvidence"];
   /**
+   * The record check, bound per background run to the lanes it covers.
+   * Omitted, every new annotation is saved unchecked.
+   */
+  recordCheck?: RecordCheck;
+  /**
    * Resolve the brief judge (the push bar) for `brief_create`. Omitted, or
    * resolving to null (judge disabled), the gate is absent and briefs ship
    * unjudged.
@@ -222,8 +229,9 @@ export function buildCognitionToolset(
   // check), so `schedule_agent_run` can auto-attach it to a follow-up check.
   const triggeringLoopId = runScopeLoopId(run.payload);
   const sweepId = parseCognitionSweepRunPayload(run.payload)?.sweepId;
-  const own = buildCognitionOwnTools(
-    ownToolsInput(deps, {
+  const checkRecord = deps.recordCheck?.forRun(run) ?? null;
+  const own = buildCognitionOwnTools({
+    ...ownToolsInput(deps, {
       runId: run.id,
       seedDocIds: cognitionSeedDocIds(deps.db, run),
       briefLane: cognitionBriefLane(run),
@@ -234,7 +242,8 @@ export function buildCognitionToolset(
       ...(triggeringLoopId !== undefined ? { triggeringLoopId } : {}),
       ...(opts.consumption ? { consumption: opts.consumption } : {}),
     }),
-  );
+    ...(checkRecord ? { checkRecord } : {}),
+  });
   // A merge-adjudication run gets its one dedicated verdict tool, scoped to
   // the run's own candidate. Background runs only — the interactive own-tools
   // path never carries it.
@@ -397,6 +406,8 @@ export interface CognitionRuntimeDeps {
   /** Entailment verifier resolver for the annotation firewall. Optional. */
   getEntailmentVerifier?: () => Promise<EntailCapability | null>;
   validateAnnotationEvidence?: AnnotationToolDeps["validateAnnotationEvidence"];
+  /** The record check on new background annotations. Optional — absent saves them unchecked. */
+  recordCheck?: RecordCheck;
   /** Brief judge (push bar) resolver for `brief_create`. Optional — absent leaves briefs unjudged. */
   getBriefJudge?: () => BriefJudge | null;
   policyStore?: { get(): Promise<{ revision: string }> };
@@ -501,6 +512,7 @@ export async function createCognitionRuntime(
       ? { validateAnnotationEvidence: deps.validateAnnotationEvidence }
       : {}),
     ...(deps.getEntailmentVerifier ? { getEntailmentVerifier: deps.getEntailmentVerifier } : {}),
+    ...(deps.recordCheck ? { recordCheck: deps.recordCheck } : {}),
     ...(deps.getBriefJudge ? { getBriefJudge: deps.getBriefJudge } : {}),
     clock,
     log: deps.log,
@@ -525,12 +537,6 @@ export async function createCognitionRuntime(
   return {
     buildTools: (run, executionContext) => {
       const consumption = consumptionFor(run);
-      // The injected self-memory counts as consumed on every run — the same
-      // read the system prompt renders from, so the seed matches what the
-      // model actually sees.
-      consumption.note("person", [
-        ...resolveSelfMemory(deps.db, deps.getSettings().annotations.enabled).annotationIds,
-      ]);
       const tools = buildCognitionToolset(toolsetDeps, run, { consumption });
       let successfulReads = successfulDocumentReadsByRun.get(run);
       if (!successfulReads) {
@@ -628,10 +634,19 @@ export async function createCognitionRuntime(
           })
         : undefined;
       const presentedRefileIds: string[] = [];
+      const cfg = deps.getSettings();
+      // The self person's live annotations, gated on the annotation feature
+      // (person annotations are part of it). The rendered facts count as
+      // consumed on every run, seeded from this same read so the seed matches
+      // what the model actually sees.
+      const self = resolveSelfMemory(deps.db, cfg.annotations.enabled);
+      consumptionFor(run).note("person", [...self.annotationIds]);
       const basePrompt = buildCognitionRunPrompt(run, {
         db: deps.db,
         clock,
-        cfg: deps.getSettings(),
+        cfg,
+        // The standing memory, read at claim time.
+        memory: { notes: readCognitionNotes(deps.db), selfMemory: self.selfMemory },
         datumProjections,
         nearbyTimeline,
         ...(digestHorizon ? { digestHorizon } : {}),
@@ -656,18 +671,15 @@ export async function createCognitionRuntime(
       return basePrompt;
     },
     systemPrompt: () => {
-      // Self-memory: the self person's live annotations, injected as the
-      // standing profile of the user. Gated on the annotation feature (person
-      // annotations are part of it); the self id lets the agent write more.
-      const annotationsOn = deps.getSettings().annotations.enabled;
-      const { selfPersonId, selfMemory } = resolveSelfMemory(deps.db, annotationsOn);
+      // Static for the same settings and the same OMNESIS.md, so the
+      // provider's prefix cache reuses it across runs. The self id lets the
+      // agent write self-memory; the memory itself rides the run message.
+      const settings = deps.getSettings();
+      const annotationsOn = settings.annotations.enabled;
       return buildCognitionSystemPrompt({
-        notes: readCognitionNotes(deps.db),
-        notesMaxBytes: deps.getSettings().notesMaxBytes,
-        now: new Date(clock()),
+        notesMaxBytes: settings.notesMaxBytes,
         annotationsEnabled: annotationsOn,
-        selfPersonId,
-        selfMemory,
+        selfPersonId: annotationsOn ? fetchSelfPersonId(deps.db) : null,
         operatorInstructions: deps.getOperatorInstructions?.() ?? "",
       });
     },

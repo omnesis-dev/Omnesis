@@ -1249,3 +1249,24 @@ describe("Codex inference capacity", () => {
     expect(validateConfig({ inference: { codex } }).ok).toBe(false);
   });
 });
+
+describe("validateConfig — inference backend names", () => {
+  test("a backend named typesafe stays valid, so existing configs keep booting", () => {
+    expect(
+      validateConfig({
+        inference: { backends: { typesafe: { type: "http", url: "http://127.0.0.1:18998/v1" } } },
+      }).ok,
+    ).toBe(true);
+  });
+
+  test("the built-in backend names stay reserved", () => {
+    for (const name of ["local", "anthropic", "codex", "replay"]) {
+      expect(
+        validateConfig({
+          inference: { backends: { [name]: { type: "http", url: "http://127.0.0.1:18998/v1" } } },
+        }).ok,
+        name,
+      ).toBe(false);
+    }
+  });
+});

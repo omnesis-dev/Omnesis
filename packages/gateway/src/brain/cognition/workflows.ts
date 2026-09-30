@@ -47,6 +47,8 @@ import {
   parseCognitionProvenanceRecheckPayload,
   parseCognitionSynthesisRunPayload,
 } from "../run-payloads.js";
+import { WORTH_GATE_SPEND_MECHANISM } from "../worth-gate/rubric.js";
+import { RECORD_CHECK_SPEND_MECHANISM } from "../record-check/rubric.js";
 import type { CognitionRunKind } from "../storage/types.js";
 
 /**
@@ -256,6 +258,8 @@ const NON_WORKFLOW_MECHANISM_LABELS: Readonly<Record<string, string>> = {
   [SUBAGENT_SPEND_MECHANISM]: "Interactive sub-agent",
   [ENTAILMENT_GATE_SPEND_MECHANISM]: "Evidence verifier",
   [BRIEF_JUDGE_SPEND_MECHANISM]: "Brief gate",
+  [WORTH_GATE_SPEND_MECHANISM]: "Decision model · worth gate",
+  [RECORD_CHECK_SPEND_MECHANISM]: "Decision model · record check",
   [WATCH_FIRING_OPENING_SPEND_MECHANISM]: "Watch opening message",
   [deepResearchSpendMechanism("research-planner")]: "Deep Research · planner",
   [deepResearchSpendMechanism("history-sweep")]: "Deep Research · history sweep",

@@ -157,12 +157,22 @@ rl.on("line", (line) => {
   if (msg.method === "turn/start") {
     log("turn_start", { params: msg.params });
     if (scenario === "pending-turn-start") return;
+    const firstTurn = !turnStarted;
+    turnStarted = true;
+    // These scenarios pin the stream orders that race the client's read loop:
+    // the turn's events written in one chunk with the turn/start response,
+    // after it or ahead of it, so they are all dispatched before the client
+    // resumes from the response.
+    const oneChunk = scenario === "early-events" || scenario.startsWith("stale-native-output");
+    if (oneChunk) process.stdout.cork();
+    if (firstTurn && scenario === "stale-native-output-before-response") runScenario();
     send({ id: msg.id, result: { turn: { id: turnId, status: "inProgress", items: [] } } });
-    if (!turnStarted) {
-      turnStarted = true;
-      if (scenario === "early-events") runScenario();
-      else setTimeout(runScenario, 0);
+    if (firstTurn && (scenario === "early-events" || scenario === "stale-native-output")) {
+      runScenario();
+    } else if (firstTurn && !oneChunk) {
+      setTimeout(runScenario, 0);
     }
+    if (oneChunk) process.nextTick(() => process.stdout.uncork());
     return;
   }
 
@@ -292,7 +302,7 @@ function runScenario() {
     return;
   }
 
-  if (scenario === "stale-native-output") {
+  if (scenario === "stale-native-output" || scenario === "stale-native-output-before-response") {
     notify("item/started", {
       threadId,
       turnId: "turn_stale",
@@ -413,7 +423,11 @@ function notifyUsage() {
   notify("thread/tokenUsage/updated", {
     threadId,
     turnId,
+    // Shaped like the real server: `total` spans the thread (every model
+    // request of the turn), `last` only its final request, and both count
+    // cached input inside inputTokens.
     tokenUsage: {
+      total: { inputTokens: 30, outputTokens: 11, cachedInputTokens: 20 },
       last: { inputTokens: 12, outputTokens: 7, cachedInputTokens: 2 },
     },
   });

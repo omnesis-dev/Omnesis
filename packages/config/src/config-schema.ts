@@ -2429,6 +2429,12 @@ const brainAnnotations = z
         "Abstention floor: a new annotation whose (post-ceiling) confidence falls below this is refused outright — too weak to persist.",
       )
       .optional(),
+    recordCheck: z
+      .enum(["off", "shadow", "enforce"])
+      .describe(
+        "Before a background run saves a new annotation, ask the decision model whether it belongs in life memory. 'shadow' records the verdict without acting on it; 'enforce' drops records judged not to belong. Needs the decision model assigned.",
+      )
+      .optional(),
   })
   .strict();
 
@@ -2706,7 +2712,8 @@ const brain = z
 // inference runs; assignments map capability slots to backend + model.
 // Assignment values use "backend/model" string format:
 //   "local/<catalogId>", "anthropic/<modelId>", "codex/<modelId>",
-//   "<httpKey>/<model>", "replay" (agent only), or null (disabled).
+//   "typesafe/<modelId>" (decision only), "<httpKey>/<model>", "replay"
+//   (roles with a replay backend), or null (disabled).
 
 const httpBackendConfig = z
   .object({
@@ -2777,6 +2784,7 @@ const inferenceModelSettings = z
     "watch-judge": modelSettingsEntry.optional(),
     "entailment-verifier": modelSettingsEntry.optional(),
     "brief-judge": modelSettingsEntry.optional(),
+    decision: modelSettingsEntry.optional(),
   })
   .strict();
 
@@ -2813,6 +2821,11 @@ const inferenceAssignments = z
     // judge runs independently from the background agent, including when both
     // use Codex. Never assigned by default: unset means briefs ship unjudged.
     "brief-judge": assignmentValue.optional(),
+    // Typed decisions (experimental): "typesafe/<model>" (TypeSafe Jev) or
+    // "replay". Only typed-decision backends serve it — never a chat model.
+    // Never assigned by default: unset means the Brain's worth gate is absent
+    // and every candidate document gets a background-agent run.
+    decision: assignmentValue.optional(),
   })
   .strict();
 
@@ -2838,6 +2851,13 @@ const ocrSettings = z
      * the host's CPU parallelism). Override only to tune a specific backend.
      */
     pageConcurrency: z.number().int().positive().optional(),
+    /**
+     * How long a collector waits for one attachment's OCR before giving up on
+     * it, in seconds. Unset = 30. Raise it for a backend that needs longer to
+     * read a dense image; an image that runs out of time is recorded as not
+     * extracted and retried later by sources that retry.
+     */
+    requestTimeoutSeconds: z.number().int().positive().max(3600).optional(),
   })
   .strict();
 
@@ -2853,6 +2873,26 @@ const entailmentSettings = z
   .strict()
   .default({ promptStyle: "judge" });
 
+// Tell Omnesis voice notes (experimental). When on, the mobile apps send the
+// audio of a voice note — dictated on the phone or the Apple Watch — with the
+// note, and the gateway's `transcriber` replaces the phone's own transcript
+// once it has transcribed it. Has effect only in experimental mode and with a
+// runnable transcriber assigned; the gateway advertises the combined verdict as
+// `dictation` on `GET /status`.
+const dictationSettings = z
+  .object({
+    transcribeOnGateway: z
+      .boolean()
+      .describe(
+        "Experimental. The mobile apps send the audio of Tell Omnesis voice notes with the note, and the gateway's transcriber replaces the phone's own transcript. Off by default; needs experimental mode and an assigned transcriber.",
+      )
+      .optional(),
+  })
+  .strict();
+
+// `typesafe` is not reserved here: a configured backend of that name keeps
+// serving the roles it did, and the built-in TypeSafe backend answers only the
+// decision role (see the inference registry). Clients avoid it for new names.
 const backendKey = z
   .string()
   .min(1)
@@ -2894,6 +2934,19 @@ const inference = z
       .optional(),
     ocr: ocrSettings.optional(),
     entailment: entailmentSettings,
+    typesafe: z
+      .object({
+        url: z
+          .string()
+          .url()
+          .describe(
+            "Experimental: the TypeSafe endpoint the Decision model uses. Defaults to https://api.typesafe.ai/v1/systemone; set it to reach a private deployment or a local test server.",
+          )
+          .optional(),
+      })
+      .strict()
+      .optional(),
+    dictation: dictationSettings.optional(),
   })
   .strict();
 

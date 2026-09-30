@@ -28,7 +28,12 @@ import {
 import { type OmnesisConfig } from "@omnesis/config";
 import { Ontology } from "@omnesis/watch";
 import { dotEnvKeysAtBoot } from "./load-env.js";
-import { resolveAnthropicApiKey, resolveAnthropicCredential } from "./model-credentials.js";
+import {
+  resolveAnthropicApiKey,
+  resolveAnthropicCredential,
+  resolveTypeSafeApiKey,
+} from "./model-credentials.js";
+import { DecisionService } from "./inference/decision/decision-service.js";
 import { createDatabase, getDocumentTitlesAndSources, openReadOnlyDatabase } from "./db.js";
 import { createServer } from "./server.js";
 import { GATEWAY_VERSION } from "./version.js";
@@ -36,6 +41,7 @@ import { ReleaseCheckService } from "./release-check/service.js";
 import { createReleaseCheckTask } from "./release-check/task.js";
 import { GatewayHttpShutdown } from "./gateway-http-shutdown.js";
 import { seedWebSourceMeta } from "./sources/web/source-meta.js";
+import { dictationFeatureStatus } from "./dictation/index.js";
 import {
   bootBriefs,
   briefsFeatureStatus,
@@ -402,6 +408,7 @@ const inferenceRegistry = new InferenceRegistry({
   configDir,
   manifest: () => loadManifest(manifestPath).manifest,
   hasAnthropicApiKey: () => resolveAnthropicApiKey(configDir) !== null,
+  hasTypeSafeApiKey: () => resolveTypeSafeApiKey(configDir) !== null,
   getCatalogEntry: (id) => anthropicCatalogService.getCatalogEntry(id),
   getAnthropicStatus: () => anthropicCatalogService.status(),
   getModelControls: (backendKey, model, backendUrl, protocol) =>
@@ -1370,6 +1377,8 @@ const watchJudgeReadiness = (): { loadable: boolean; reason: string | null } => 
             ? null
             : (resolved.reason ?? "The assigned Codex model is unavailable"),
       };
+    case "typesafe":
+      return { loadable: false, reason: "TypeSafe cannot serve single-shot Watch completions" };
     default:
       return assertNever(resolved);
   }
@@ -1613,6 +1622,16 @@ const ocrService = new OcrService({
   },
 });
 
+// Decision model — typed judgements (TypeSafe Jev, or recorded replay). The
+// Brain's worth gate asks it whether an email is worth a background-agent run;
+// unset, the gate is absent. Re-resolved per use, so assigning Jev or pasting
+// a key from the portal takes effect without a restart.
+const decisionService = new DecisionService({
+  resolveAssignment: () => inferenceRegistry.resolve("decision"),
+  readTypeSafeApiKey: () => resolveTypeSafeApiKey(configDir),
+  defaultReplayFixture: () => process.env.OMNESIS_DECISION_FIXTURE || undefined,
+});
+
 // Entailment verifier — the annotation write gate's entailment firewall.
 // Resolves through the InferenceRegistry and self-heals on assignment change
 // like the transcriber/OCR services; unset role resolves to null and the
@@ -1688,6 +1707,7 @@ const briefTalkback: {
 // needs DocumentService.ingest); held here for the shutdown sequence —
 // flushAll() then dispose(), beside the omnesis-chat runtime's teardown.
 let omnesisNotesRuntime: import("./sources/omnesis-notes/index.js").OmnesisNotesRuntime | undefined;
+let voiceNoteService: import("./voice-notes/index.js").VoiceNoteService | undefined;
 let agentConversationsRuntime:
   | import("./sources/agent-conversations/index.js").AgentConversationsRuntime
   | undefined;
@@ -2152,6 +2172,9 @@ const app = createServer(db, DB_PATH, {
     // Nudge the date-enrichment pass to pick up freshly ingested docs promptly.
     dateEnrichment.kick();
   },
+  onVoiceNoteService: (service) => {
+    voiceNoteService = service;
+  },
   onOmnesisNotesRuntime: (runtime) => {
     omnesisNotesRuntime = runtime;
   },
@@ -2295,6 +2318,11 @@ const app = createServer(db, DB_PATH, {
   getConfigHealth: () => inferenceRegistry.configHealth(),
   getReleaseCheck: () => releaseCheckService.snapshot(),
   getBriefsStatus: () => briefsFeatureStatus(inferenceRegistry, chatRoleReadinessDeps),
+  getDictationStatus: () =>
+    dictationFeatureStatus({
+      transcriberReadiness: () => transcribeService.readiness(),
+      getConfig: () => configStore.get(),
+    }),
   getBriefTalkback: () => briefTalkback.port,
   briefsClock: briefsVirtualClock ?? undefined,
   cognitionActivity,
@@ -2466,6 +2494,7 @@ await bootBriefs({
     getSettings: () => resolveBrainSettings(configStore.get().brain),
     activeDerivationStages,
     resolveBackend: resolveBackgroundAgentBackend,
+    getDecision: () => decisionService.get(),
     getOperatorInstructions: () => operatorInstructions.promptText(),
     transcriptsDir: cognitionTranscriptsDir(configDir),
     // Collaborators the Cognition Steward's toolset + prompts are assembled from
@@ -3155,6 +3184,9 @@ const doShutdown = async (): Promise<void> => {
   }
 
   await agentLifecycle.shutdown();
+  // Voice notes: stop picking up queued notes. One being transcribed right now
+  // is not awaited — it stays queued and is transcribed again after restart.
+  voiceNoteService?.dispose();
   // omnesis-notes: flush pending day-doc upserts (a capture that landed
   // within the debounce window must still project), then drop timers.
   if (omnesisNotesRuntime) {

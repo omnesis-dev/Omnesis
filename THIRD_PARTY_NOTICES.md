@@ -361,6 +361,12 @@ To regenerate this section against the current tree:
 npm ls --omit=dev --all --json > /tmp/prod-tree.json   # or parse package-lock.json
 ```
 
+**`re2-wasm@1.0.2`** (Apache-2.0): Omnesis installs it modified by
+`patches/re2-wasm+1.0.2.patch` (applied by `patch-package` on install), which
+makes its `RE2` constructor free the native memory it would otherwise leave on
+the module's fixed heap. Apache-2.0 §4(b) requires modified files to carry a
+notice of the change; the patch adds one.
+
 ### Copyleft and weak-copyleft dependencies (individual callout)
 
 The following distributed dependencies carry copyleft or weak-copyleft licenses

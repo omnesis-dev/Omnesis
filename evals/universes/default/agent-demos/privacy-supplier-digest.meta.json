@@ -1,3 +1,6 @@
 {
-  "triggers": ["which supplier reviews are still open"]
+  "triggers": ["which supplier reviews are still open"],
+  "placeholders": {
+    "docExternalIds": ["synth-gmail-023", "synth-gmail-maria-002"]
+  }
 }

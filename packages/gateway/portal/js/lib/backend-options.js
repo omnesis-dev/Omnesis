@@ -31,6 +31,22 @@ export const CAPABILITY_TO_CATALOG = {
   ocr: undefined,
 };
 
+/**
+ * TypeSafe model the Decision picker offers first. The operator can edit it;
+ * the gateway accepts any `typesafe/<model>` id TypeSafe serves.
+ */
+export const TYPESAFE_DEFAULT_MODEL = "jev-1.13.0";
+
+/**
+ * Whether a capability is served only by typed-decision backends. The
+ * gateway resolves such a role to TypeSafe (or replay, for tests) and refuses
+ * every chat backend, and it refuses TypeSafe for every other role — so the
+ * picker mirrors both halves.
+ */
+export function isDecisionRole(role) {
+  return role === "decision";
+}
+
 /** Effective Anthropic key presence, including environment-backed credentials. */
 export function isAnthropicConfigured(backends) {
   const anthropic = backends?.anthropic;
@@ -79,16 +95,20 @@ export function catalogProviderForBackend(overview, backendKey) {
  * source from. Ordered: Local, each preset, each existing custom HTTP backend,
  * Codex for roles it advertises, Anthropic, then "add a custom HTTP backend".
  * Local/Anthropic cards appear only when the role has bundled catalog entries
- * for them.
+ * for them. A decision role gets the TypeSafe card alone: no chat backend
+ * can serve it, and TypeSafe serves nothing else.
  *
  * Each option carries the data a card needs: `configured` (is the backend set
  * up), `fitCount` (role-matching models it serves, when configured), and the
  * probe `status`.
  *
  * @returns {Array<object>} option descriptors keyed by `kind`:
- *   "local" | "preset" | "custom" | "codex" | "anthropic" | "add-custom".
+ *   "local" | "preset" | "custom" | "codex" | "anthropic" | "add-custom" |
+ *   "typesafe".
  */
 export function buildModelPickerOptions(overview, role) {
+  if (isDecisionRole(role)) return [{ kind: "typesafe" }];
+
   const presets = overview.presets ?? [];
   const backends = overview.inference?.backends ?? {};
   const codex = overview.inference?.codex;

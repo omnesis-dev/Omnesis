@@ -5,6 +5,7 @@
       "entry": [
         "scripts/*.{ts,mjs}",
         "scripts/release/*.mjs",
+        "scripts/blog/*.{mjs,ts}",
         "bench/*.ts",
         "evals/universes/*/_build/*.mjs",
         "evals/universes/*/agent-demos/_build/*.mjs"
@@ -94,6 +95,7 @@
         "@omnesis/provider-local-files",
         "@omnesis/provider-lunchflow",
         "@omnesis/provider-lunchflow-synth",
+        "@omnesis/provider-maildir-synth",
         "@omnesis/provider-notion",
         "@omnesis/provider-notion-synth",
         "@omnesis/provider-obsidian",
@@ -172,5 +174,5 @@
     "unlisted": "off"
   },
   "ignoreDependencies": ["nx", "patch-package"],
-  "ignoreBinaries": ["python3"]
+  "ignoreBinaries": ["python3", "mkfifo"]
 }

@@ -13,7 +13,8 @@ export function providerBrand(id) {
   return PORTAL_PROVIDER_BRANDS[id] ?? PORTAL_PROVIDER_BRANDS.none;
 }
 
-const WITHOUT_LOGO = new Set(["local", "replay", "http", "none"]);
+// Runtimes the models.dev catalog carries no logo for.
+const WITHOUT_LOGO = new Set(["local", "replay", "typesafe", "http", "none"]);
 
 /** A provider SVG served by this gateway as a theme-colored mask. */
 export function ProviderIcon({ providerId, size }) {

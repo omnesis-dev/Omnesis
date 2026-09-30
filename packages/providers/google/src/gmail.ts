@@ -7,16 +7,13 @@ type OAuth2Client = InstanceType<typeof google.auth.OAuth2>;
 import {
   createLogger,
   computeContentHash,
-  parseEmailHeader,
   extractSchemaOrgDatesFromHtml,
   isAutomatedSenderAddress,
   isAutoSubmittedGenerated,
   mailHeaderRelevancePenalty,
-  splitEmailList,
-  extractEmailsFromText,
-  extractPhonesFromText,
-  cleanPersonName,
-  htmlToMarkdown,
+  parseEmailHeader,
+  chooseMailBody,
+  charsetOfContentType,
   pMap,
   resolveAttachmentConfig,
   shouldExtractAttachment,
@@ -24,6 +21,7 @@ import {
   buildAttachmentDocument,
   formatAttachmentMarkers,
   deriveAttachmentStableId,
+  isInlineDecorationImage,
 } from "@omnesis/core";
 import { makeCursorValidator, applyDataCutoff } from "@omnesis/source-sdk";
 import { SourceId, ProviderId, isTransientSyncError } from "@omnesis/types";
@@ -34,14 +32,22 @@ import {
   GMAIL_HISTORY_RECOVERY_OVERLAP_MS,
   GMAIL_HISTORY_RECOVERY_FALLBACK_MS,
 } from "./constants.js";
-import { mapGoogleApiError } from "./api-error.js";
+import { googleApiStatus, mapGoogleApiError } from "./api-error.js";
+import {
+  addsToMessage,
+  messageContent,
+  messageDate,
+  messageParts,
+  messagePeople,
+  partHeader,
+} from "./gmail-message.js";
 import type {
   AttachmentInfo,
   AttachmentExtractionConfig,
   AttachmentExtractFn,
 } from "@omnesis/core";
 import type { SyncCursor, SyncResult, HistoryCoverage } from "@omnesis/source-sdk";
-import type { DocumentInput, PersonMention } from "@omnesis/types";
+import type { DocumentInput } from "@omnesis/types";
 
 const log = createLogger("source:gmail");
 
@@ -86,7 +92,7 @@ export interface GmailSyncCursor extends SyncCursor {
   /**
    * Set on a recovery bootstrap whose floor was anchored on a watermark, so
    * the walk it starts knows the gap it is backfilling was already covered
-   * below that point and the result still reaches everything.
+   * below that point and the result keeps the coverage it had.
    */
   recoveryVouched?: boolean;
 }
@@ -98,17 +104,17 @@ export interface GmailSyncCursor extends SyncCursor {
  * is the one case that can vouch. A walk stopped by the operator's own cutoff
  * is missing history by request, and knows exactly what. A walk stopped by a
  * recovery floor is the honest "cannot tell": the gap it skipped may have held
- * mail that no longer exists to re-list.
+ * mail that no longer exists to re-list — unless the floor was anchored on a
+ * watermark, in which case the recovery closes the gap and the mailbox keeps
+ * whatever coverage it had before.
  */
-function reachOf(dataCutoff?: Date, recoverAfter?: Date, recoveryVouched = false): HistoryCoverage {
-  // A recovery anchored on a watermark is not a gap. Everything before the
-  // watermark was indexed by an earlier successful sync, so the backfilled
-  // window closes the whole hole and the walk still reaches everything —
-  // which is why the page that starts such a recovery makes no claim. Without
-  // this the next page claims "unknown" anyway and settles it into the cursor,
-  // so one expired history id would permanently downgrade a mailbox that had
-  // legitimately settled complete.
-  if (recoverAfter && !recoveryVouched) return "unknown";
+function reachOf(
+  dataCutoff: Date | undefined,
+  recoverAfter: Date | undefined,
+  recoveryVouched: boolean,
+  prior: HistoryCoverage | undefined,
+): HistoryCoverage {
+  if (recoverAfter) return recoveryVouched ? (prior ?? "unknown") : "unknown";
   if (dataCutoff) return "partial";
   return "complete";
 }
@@ -138,6 +144,12 @@ function gmailAfterDate(d: Date): string {
   return `${yyyy}/${mm}/${dd}`;
 }
 
+/** The `messages.list` query for mail after `afterFloor`, spam and trash left out. */
+function listQuery(afterFloor: Date | undefined): string {
+  const q = "-in:spam -in:trash";
+  return afterFloor ? `${q} after:${gmailAfterDate(afterFloor)}` : q;
+}
+
 export function isGmailSyncCursor(v: unknown): v is GmailSyncCursor {
   if (!v || typeof v !== "object") return false;
   const c = v as Record<string, unknown>;
@@ -156,6 +168,10 @@ interface AttachmentPartInfo {
   mimeType: string;
   attachmentId: string;
   size: number | null;
+  /** The part's `Content-ID`, which the HTML body references as `cid:` when it shows the part inline. */
+  contentId?: string;
+  /** The charset the part's `Content-Type` declares, so a text attachment is read in it. */
+  charset?: string;
 }
 
 export interface GmailSourceOptions {
@@ -188,6 +204,18 @@ export function gmailMessageUrl(messageId: string, accountEmail?: string): strin
 // actually opens the specific message rather than the inbox or composer.
 
 /**
+ * How long one sync may run before it ends and leaves the rest to the next.
+ * A first sync of a large mailbox pages through every message for hours; the
+ * host stops a sync that runs too long and reports it as an error, while a
+ * sync that ends on its own keeps its pages and reports none. The cursor
+ * already records where the walk stands, so the next sync continues it.
+ */
+const GMAIL_SYNC_BUDGET_MS = 20 * 60 * 1000;
+
+/** What fetching one message came to: its documents, or that Gmail no longer has it. */
+type Fetched = { documents: DocumentInput[] } | { gone: true };
+
+/**
  * Gmail source.
  * Fetches emails and normalizes them into Documents.
  */
@@ -201,6 +229,8 @@ export class GmailSource {
   private extractAttachment?: AttachmentExtractFn;
   private labelMap: Map<string, string> | null = null;
   private labelMapFetchedAt = 0;
+  /** When the current sync's first page began; unset between syncs. */
+  private syncStartedAt: number | undefined;
   // The account email (== accountId for multi-account sources). Used to pin
   // "open in Gmail" links to the right account via `?authuser=`.
   private accountEmail?: string;
@@ -278,17 +308,43 @@ export class GmailSource {
     // it those reach the collector as raw SDK throws: kind `unknown`, and a
     // transport failure reading `fetch failed` with nothing to say which
     // request died.
+    this.syncStartedAt ??= Date.now();
     try {
-      if (state.phase === "bootstrap" || !state.historyId) {
-        log.debug("Running bootstrap sync", { pageToken: state.pageToken });
-        return await this.bootstrapSync(state);
+      const result =
+        state.phase === "bootstrap" || !state.historyId
+          ? await this.bootstrapSync(state)
+          : await this.incrementalSync(state);
+      if (result.hasMore && Date.now() - this.syncStartedAt >= GMAIL_SYNC_BUDGET_MS) {
+        log.info(
+          `Sync of ${this.id} paused after ${Math.round(GMAIL_SYNC_BUDGET_MS / 60_000)} minutes; the next sync continues it`,
+        );
+        result.hasMore = false;
       }
-
-      log.debug("Running incremental sync", { historyId: state.historyId });
-      return await this.incrementalSync(state);
+      if (!result.hasMore) this.syncStartedAt = undefined;
+      return result;
     } catch (error: unknown) {
+      this.syncStartedAt = undefined;
       throw mapGoogleApiError(error);
     }
+  }
+
+  /** Fetch every listed message, concurrently within Gmail's quota. */
+  private async fetchAll(
+    ids: readonly string[],
+  ): Promise<{ documents: DocumentInput[]; gone: string[] }> {
+    // RTT-bound: each per-message `messages.get` is a separate round-trip,
+    // serial loops over a 100-message page were the dominant bootstrap
+    // wall-clock cost. Bounded concurrency stays inside Gmail's quota.
+    const fetched = await pMap(ids, (id) => this.fetchAndNormalize(id), {
+      concurrency: GOOGLE_FETCH_CONCURRENCY,
+    });
+    const documents: DocumentInput[] = [];
+    const gone: string[] = [];
+    fetched.forEach((result, i) => {
+      if ("gone" in result) gone.push(ids[i]!);
+      else documents.push(...result.documents);
+    });
+    return { documents, gone };
   }
 
   private async bootstrapSync(state: GmailSyncCursor): Promise<SyncResult> {
@@ -320,29 +376,24 @@ export class GmailSource {
     const recoverAfter = state.recoverAfter ? new Date(state.recoverAfter) : undefined;
     const afterFloor = laterDate(this.dataCutoff, recoverAfter);
     // What this walk can claim to have reached, restated on every page of it.
-    const reach = reachOf(this.dataCutoff, recoverAfter, state.recoveryVouched === true);
-    let q = "-in:spam -in:trash";
-    if (afterFloor) {
-      q += ` after:${gmailAfterDate(afterFloor)}`;
-    }
+    const reach = reachOf(
+      this.dataCutoff,
+      recoverAfter,
+      state.recoveryVouched === true,
+      state.coverage,
+    );
 
     const res = await this.gmail.users.messages.list({
       userId: "me",
       maxResults: GOOGLE_PAGE_SIZE,
       pageToken: state.pageToken ?? undefined,
-      q,
+      q: listQuery(afterFloor),
     });
 
-    const messageIds = (res.data.messages ?? []).filter(
-      (m): m is { id: string } => typeof m.id === "string",
-    );
-    // RTT-bound: each per-message `messages.get` is a separate round-trip,
-    // serial loops over a 100-message page were the dominant bootstrap
-    // wall-clock cost. Bounded concurrency stays inside Gmail's quota.
-    const fetched = await pMap(messageIds, (msg) => this.fetchAndNormalize(msg.id), {
-      concurrency: GOOGLE_FETCH_CONCURRENCY,
-    });
-    const documents: DocumentInput[] = fetched.flat();
+    const messageIds = (res.data.messages ?? [])
+      .map((m) => m.id)
+      .filter((id): id is string => typeof id === "string");
+    const { documents } = await this.fetchAll(messageIds);
 
     // Apply data cutoff as a safety net: Gmail's `after:YYYY/MM/DD` pushdown
     // is granular to the day in the user's account timezone, so a 1y cutoff
@@ -361,18 +412,19 @@ export class GmailSource {
 
     // Counted in messages, because that is what it is compared against.
     // `messagesTotal` is a message count while a fetch returns a parent
-    // document plus one child per extracted attachment, so counting documents
-    // made the guard trip early — on an attachment-heavy mailbox, before
-    // pagination had exhausted, ending the walk with mail still unread. The
-    // guard only runs on an unbounded walk, where every listed message is
-    // fetched, so the page's message count is the right increment.
+    // document plus one child per extracted attachment. The guard only runs
+    // on an unbounded walk, where every listed message is fetched, so the
+    // page's message count is the right increment.
     const processedDocs = (state.processedDocs ?? 0) + messageIds.length;
 
     // Bootstrap is "done" when any of:
     //   - Gmail's listMessages returns no more pages;
-    //   - we've ingested at least messagesTotal docs (Gmail's listMessages can
-    //     keep serving past messagesTotal due to in-flight churn — without this
-    //     guard the cursor stays stuck in bootstrap forever).
+    //   - we've ingested twice messagesTotal (a runaway guard: Gmail's
+    //     listMessages can keep serving past messagesTotal due to in-flight
+    //     churn, and without a bound the cursor could stay in bootstrap
+    //     forever). The listing serves the oldest mail last, so ending at
+    //     messagesTotal itself would leave whatever churn pushed past it —
+    //     the oldest mail — never read.
     //
     // The `reachedTotal` guard only applies to an *unbounded* bootstrap, where
     // the denominator is the mailbox-wide `messagesTotal` (a hard upper bound).
@@ -382,7 +434,7 @@ export class GmailSource {
     // walks Gmail's pagination naturally exhausts at the `after:` boundary, so
     // `exhausted` is the only correct stopper.
     const reachedTotal =
-      !afterFloor && totalMessages !== undefined && processedDocs >= totalMessages;
+      !afterFloor && totalMessages !== undefined && processedDocs >= 2 * totalMessages;
     const exhausted = !res.data.nextPageToken;
     const hasMore = !reachedTotal && !exhausted;
 
@@ -431,9 +483,6 @@ export class GmailSource {
         // Settled when the walk ends: from here on the incremental pages
         // restate it, because a history delta cannot re-derive how far back
         // the mailbox was read.
-        // Only a walk that ran out of pages can claim to have reached
-        // everything. Ending on the count guard means Gmail was still serving,
-        // and "complete" is the one value a client may present as fact.
         coverage: hasMore ? state.coverage : settledReach,
       } satisfies GmailSyncCursor,
       hasMore,
@@ -448,158 +497,164 @@ export class GmailSource {
   }
 
   private async incrementalSync(state: GmailSyncCursor): Promise<SyncResult> {
-    const documents: DocumentInput[] = [];
     const deletedExternalIds: string[] = [];
-
-    try {
-      const res = await this.gmail.users.history.list({
+    // historyId expired — the change-gap is unrecoverable via history.list.
+    // Recover by re-bootstrapping, but bound the walk to the *recent* window
+    // (`recoverAfter`) instead of re-paging the entire mailbox: everything
+    // older is already indexed, and re-fetching 100k+ messages to recover a
+    // few days' gap is a quota/time sink. The bounded bootstrap fetches the
+    // missed window, then transitions to incremental from a fresh historyId.
+    // Re-ingest is idempotent (upsert keys on provider/source/external_id).
+    //
+    // Only a 404 from `history.list` itself means that: a message deleted
+    // between being listed in the history and being fetched 404s too, and is
+    // handled where it is fetched.
+    const res = await this.gmail.users.history
+      .list({
         userId: "me",
         startHistoryId: state.historyId,
         pageToken: state.historyPageToken ?? undefined,
         historyTypes: ["messageAdded", "messageDeleted", "labelAdded", "labelRemoved"],
+      })
+      .catch((error: unknown) => {
+        if (googleApiStatus(error) === 404) return null;
+        throw mapGoogleApiError(error);
       });
+    if (res === null) return this.recoverFromExpiredHistory(state);
 
-      const histories = res.data.history ?? [];
+    const histories = res.data.history ?? [];
 
-      const addedIds = new Set<string>();
-      const trashedIds = new Set<string>();
-      for (const history of histories) {
-        for (const added of history.messagesAdded ?? []) {
-          if (added.message?.id) addedIds.add(added.message.id);
-        }
-        for (const deleted of history.messagesDeleted ?? []) {
-          if (deleted.message?.id) deletedExternalIds.push(deleted.message.id);
-        }
-        // TRASH/SPAM are soft-deletes; everything else (STARRED, IMPORTANT,
-        // user labels, UNREAD, categories) is just a tag mutation that needs
-        // a re-fetch so metadata.tags reflects the current state.
-        for (const labelAdded of history.labelsAdded ?? []) {
-          const id = labelAdded.message?.id;
-          if (!id) continue;
-          const labels = labelAdded.labelIds ?? [];
-          if (labels.includes("TRASH") || labels.includes("SPAM")) {
-            trashedIds.add(id);
-          } else {
-            addedIds.add(id);
-          }
-        }
-        for (const labelRemoved of history.labelsRemoved ?? []) {
-          const id = labelRemoved.message?.id;
-          if (!id) continue;
-          const labels = labelRemoved.labelIds ?? [];
-          if (labels.includes("TRASH") || labels.includes("SPAM")) {
-            trashedIds.delete(id);
-            addedIds.add(id);
-          } else {
-            addedIds.add(id);
-          }
+    const addedIds = new Set<string>();
+    const trashedIds = new Set<string>();
+    for (const history of histories) {
+      for (const added of history.messagesAdded ?? []) {
+        if (added.message?.id) addedIds.add(added.message.id);
+      }
+      for (const deleted of history.messagesDeleted ?? []) {
+        if (deleted.message?.id) deletedExternalIds.push(deleted.message.id);
+      }
+      // TRASH/SPAM are soft-deletes; everything else (STARRED, IMPORTANT,
+      // user labels, UNREAD, categories) is just a tag mutation that needs
+      // a re-fetch so metadata.tags reflects the current state.
+      for (const labelAdded of history.labelsAdded ?? []) {
+        const id = labelAdded.message?.id;
+        if (!id) continue;
+        const labels = labelAdded.labelIds ?? [];
+        if (labels.includes("TRASH") || labels.includes("SPAM")) {
+          trashedIds.add(id);
+        } else {
+          addedIds.add(id);
         }
       }
-
-      // Merge trashed into deleted
-      for (const id of trashedIds) {
-        deletedExternalIds.push(id);
+      for (const labelRemoved of history.labelsRemoved ?? []) {
+        const id = labelRemoved.message?.id;
+        if (!id) continue;
+        const labels = labelRemoved.labelIds ?? [];
+        if (labels.includes("TRASH") || labels.includes("SPAM")) {
+          trashedIds.delete(id);
+          addedIds.add(id);
+        } else {
+          addedIds.add(id);
+        }
       }
-
-      // Don't fetch messages that were both added and deleted
-      for (const id of deletedExternalIds) {
-        addedIds.delete(id);
-      }
-
-      for (const id of addedIds) {
-        const docs = await this.fetchAndNormalize(id);
-        documents.push(...docs);
-      }
-
-      // Only advance historyId when we've drained every page. Otherwise keep
-      // the same startHistoryId and persist nextPageToken so the next sync
-      // resumes pagination — advancing prematurely loses every event past
-      // page 1 of a multi-page history response.
-      const nextHistoryPageToken = res.data.nextPageToken ?? undefined;
-      const advancedHistoryId = nextHistoryPageToken
-        ? state.historyId
-        : (res.data.historyId ?? state.historyId);
-
-      return {
-        documents,
-        deletedExternalIds,
-        cursor: {
-          historyId: advancedHistoryId,
-          phase: "incremental",
-          historyPageToken: nextHistoryPageToken,
-          lastSyncAt: new Date().toISOString(),
-          coverage: state.coverage,
-        } satisfies GmailSyncCursor,
-        hasMore: !!nextHistoryPageToken,
-        // Restated, not recomputed. An incremental page sees one history delta
-        // and cannot tell how far back the mailbox was walked; going silent
-        // instead would leave whatever was last said standing forever, which
-        // is how a recovery's "cannot tell" outlived the recovery.
-        ...(state.coverage
-          ? {
-              progress: {
-                phase: "incremental",
-                processed: documents.length,
-                coverage: state.coverage,
-                ...(reachDetail(state.coverage) ? { detail: reachDetail(state.coverage)! } : {}),
-              },
-            }
-          : {}),
-      };
-    } catch (error: unknown) {
-      // historyId expired — the change-gap is unrecoverable via history.list.
-      // Recover by re-bootstrapping, but bound the walk to the *recent* window
-      // (`recoverAfter`) instead of re-paging the entire mailbox: everything
-      // older is already indexed, and re-fetching 100k+ messages to recover a
-      // few days' gap is a quota/time sink. The bounded bootstrap fetches the
-      // missed window, then transitions to incremental from a fresh historyId.
-      // Re-ingest is idempotent (upsert keys on provider/source/external_id).
-      if ((error as { code?: number } | undefined)?.code === 404) {
-        const recoverAfter = this.recoveryFloor(state);
-        log.warn(
-          `Gmail historyId ${state.historyId} expired; backfilling messages after ${recoverAfter} instead of re-walking the full mailbox`,
-        );
-        // `recoveryFloor` anchors the backfill window on `lastSyncAt` when the
-        // cursor carries one: everything before that watermark was already
-        // indexed by an earlier successful sync, so the window is provably
-        // complete. A cursor written before `lastSyncAt` existed has no
-        // watermark to anchor on, so the floor falls back to a fixed
-        // look-back — a guess that can undershoot a gap wider than the
-        // fallback window, so the recovered range cannot be vouched for.
-        const watermarked =
-          state.lastSyncAt !== undefined && !Number.isNaN(Date.parse(state.lastSyncAt));
-        return {
-          documents: [],
-          deletedExternalIds: [],
-          cursor: {
-            phase: "bootstrap",
-            recoverAfter,
-            lastSyncAt: state.lastSyncAt,
-            // Carried so the bootstrap this hands off to reaches the same
-            // conclusion the page above just did, rather than re-deriving a
-            // weaker one from the floor alone.
-            recoveryVouched: watermarked,
-            coverage: state.coverage,
-          } satisfies GmailSyncCursor,
-          hasMore: true,
-          ...(watermarked
-            ? {}
-            : {
-                progress: {
-                  phase: "bootstrap",
-                  processed: 0,
-                  coverage: "unknown",
-                  // Phrased about the corpus, not about this page. The claim
-                  // outlives the recovery that raised it, so a sentence in the
-                  // present progressive would still be on screen describing a
-                  // recovery that finished months earlier.
-                  detail: reachDetail("unknown")!,
-                },
-              }),
-        };
-      }
-      throw mapGoogleApiError(error);
     }
+
+    // Merge trashed into deleted
+    for (const id of trashedIds) {
+      deletedExternalIds.push(id);
+    }
+
+    // Don't fetch messages that were both added and deleted
+    for (const id of deletedExternalIds) {
+      addedIds.delete(id);
+    }
+
+    const fetched = await this.fetchAll([...addedIds]);
+    // A message Gmail no longer has was deleted after its history event.
+    deletedExternalIds.push(...fetched.gone);
+    const documents = fetched.documents;
+
+    // Only advance historyId when we've drained every page. Otherwise keep
+    // the same startHistoryId and persist nextPageToken so the next sync
+    // resumes pagination — advancing prematurely loses every event past
+    // page 1 of a multi-page history response.
+    const nextHistoryPageToken = res.data.nextPageToken ?? undefined;
+    const advancedHistoryId = nextHistoryPageToken
+      ? state.historyId
+      : (res.data.historyId ?? state.historyId);
+
+    return {
+      documents,
+      deletedExternalIds,
+      cursor: {
+        historyId: advancedHistoryId,
+        phase: "incremental",
+        historyPageToken: nextHistoryPageToken,
+        lastSyncAt: new Date().toISOString(),
+        coverage: state.coverage,
+      } satisfies GmailSyncCursor,
+      hasMore: !!nextHistoryPageToken,
+      // Restated, not recomputed. An incremental page sees one history delta
+      // and cannot tell how far back the mailbox was walked; going silent
+      // instead would leave whatever was last said standing forever, which
+      // is how a recovery's "cannot tell" outlived the recovery.
+      ...(state.coverage
+        ? {
+            progress: {
+              phase: "incremental",
+              processed: documents.length,
+              coverage: state.coverage,
+              ...(reachDetail(state.coverage) ? { detail: reachDetail(state.coverage)! } : {}),
+            },
+          }
+        : {}),
+    };
+  }
+
+  /** Hand an incremental cursor whose history expired to a bounded recovery bootstrap. */
+  private recoverFromExpiredHistory(state: GmailSyncCursor): SyncResult {
+    const recoverAfter = this.recoveryFloor(state);
+    log.warn(
+      `Gmail historyId ${state.historyId} expired; backfilling messages after ${recoverAfter} instead of re-walking the full mailbox`,
+    );
+    // `recoveryFloor` anchors the backfill window on `lastSyncAt` when the
+    // cursor carries one: everything before that watermark was already
+    // indexed by an earlier successful sync, so the window is provably
+    // complete. A cursor written before `lastSyncAt` existed has no
+    // watermark to anchor on, so the floor falls back to a fixed
+    // look-back — a guess that can undershoot a gap wider than the
+    // fallback window, so the recovered range cannot be vouched for.
+    const watermarked =
+      state.lastSyncAt !== undefined && !Number.isNaN(Date.parse(state.lastSyncAt));
+    return {
+      documents: [],
+      deletedExternalIds: [],
+      cursor: {
+        phase: "bootstrap",
+        recoverAfter,
+        lastSyncAt: state.lastSyncAt,
+        // Carried so the bootstrap this hands off to reaches the same
+        // conclusion the page above just did, rather than re-deriving a
+        // weaker one from the floor alone.
+        recoveryVouched: watermarked,
+        coverage: state.coverage,
+      } satisfies GmailSyncCursor,
+      hasMore: true,
+      ...(watermarked
+        ? {}
+        : {
+            progress: {
+              phase: "bootstrap",
+              processed: 0,
+              coverage: "unknown",
+              // Phrased about the corpus, not about this page. The claim
+              // outlives the recovery that raised it, so a sentence in the
+              // present progressive would still be on screen describing a
+              // recovery that finished months earlier.
+              detail: reachDetail("unknown")!,
+            },
+          }),
+    };
   }
 
   /**
@@ -617,229 +672,59 @@ export class GmailSource {
     return new Date(Date.now() - GMAIL_HISTORY_RECOVERY_FALLBACK_MS).toISOString();
   }
 
-  private async fetchAndNormalize(messageId: string): Promise<DocumentInput[]> {
-    const res = await this.gmail.users.messages.get({
-      userId: "me",
-      id: messageId,
-      format: "full",
-    });
+  private async fetchAndNormalize(messageId: string): Promise<Fetched> {
+    const res = await this.gmail.users.messages
+      .get({ userId: "me", id: messageId, format: "full" })
+      .catch((error: unknown) => {
+        // Deleted between being listed and being fetched.
+        if (googleApiStatus(error) === 404) return null;
+        throw error;
+      });
+    if (res === null) return { gone: true };
 
     const msg = res.data;
-    if (!msg.id || !msg.payload) return [];
+    if (!msg.id || !msg.payload) return { documents: [] };
 
     // Skip messages in Spam or Trash
     const labels = msg.labelIds ?? [];
-    if (labels.includes("SPAM") || labels.includes("TRASH")) return [];
+    if (labels.includes("SPAM") || labels.includes("TRASH")) return { documents: [] };
 
-    const headers = msg.payload.headers ?? [];
-    const getHeader = (name: string) =>
-      headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ?? "";
+    const payload = msg.payload;
+    await this.fetchDeferredBodyText(msg.id, payload);
+    const getHeader = (name: string) => partHeader(payload, name) ?? "";
 
     const subject = getHeader("subject") || "(no subject)";
     const from = getHeader("from");
     const to = getHeader("to");
     const cc = getHeader("cc");
+    const bcc = getHeader("bcc");
     const date = getHeader("date");
     const listUnsubscribe = getHeader("List-Unsubscribe");
     const precedence = getHeader("Precedence");
     const autoSubmitted = getHeader("Auto-Submitted");
 
-    const body = this.extractBody(msg.payload);
-    const schemaDates = this.schemaOrgDates(msg.payload);
-
-    const sourceDate = msg.internalDate
-      ? new Date(parseInt(msg.internalDate, 10)).toISOString()
-      : new Date().toISOString();
-
-    // Build structured people mentions.
-    //
-    // SECURITY CAVEAT: every identity below comes from a
-    // sender-controlled `From`/`To`/`Cc` header or attacker-controlled body
-    // text. None is authentication-verified — we don't consult
-    // `Authentication-Results` for an aligned DKIM/DMARC pass, so a spoofed
-    // sender (common on domains without enforced DMARC) is ingested as a
-    // normal mention. Treat these as UNVERIFIED: fine for search/graph
-    // completeness, but a retrieval-trust gate must not score a person as
-    // credible off them without verifying first.
-    const people: PersonMention[] = [];
-    const seenEmails = new Set<string>();
-
-    // Sender
-    const fromParsed = from ? parseEmailHeader(from) : {};
-    if (fromParsed.email) seenEmails.add(fromParsed.email);
-    // Skip entirely if we got neither a name nor an email — an empty
-    // From header is junk we don't want a person row for.
-    if (fromParsed.name || fromParsed.email) {
-      people.push({
-        role: "sender",
-        name: cleanPersonName(fromParsed.name),
-        emails: fromParsed.email ? [fromParsed.email] : undefined,
-      });
-    }
+    const parts = messageParts(payload);
+    const body = chooseMailBody(parts);
+    const schemaDates = parts.html ? extractSchemaOrgDatesFromHtml(parts.html) : {};
+    const sourceDate = messageDate(date, msg.internalDate, Date.now(), getHeader("Received"));
+    const people = messagePeople({ from, to, cc, bcc }, body);
 
     // Generic automated-notification marker: a no-reply / notifications sender
     // local part, or an RFC 3834 `Auto-Submitted: auto-generated` header.
     // Distinct from bulkMail (List-Unsubscribe) — it catches transactional
     // machine mail that carries no unsubscribe signal (CI/build notifications
     // are the canonical case). Shared consumers read this generically.
+    const senderEmail = from ? parseEmailHeader(from).email : undefined;
     const automatedSender =
       isAutoSubmittedGenerated(autoSubmitted) ||
-      (fromParsed.email !== undefined && isAutomatedSenderAddress(fromParsed.email));
+      (senderEmail !== undefined && isAutomatedSenderAddress(senderEmail));
 
-    // Recipients from To and Cc
-    for (const header of [to, cc]) {
-      if (!header) continue;
-      for (const entry of splitEmailList(header)) {
-        const parsed = parseEmailHeader(entry);
-        if (parsed.email) seenEmails.add(parsed.email);
-        if (parsed.name || parsed.email) {
-          people.push({
-            role: "recipient",
-            name: cleanPersonName(parsed.name),
-            emails: parsed.email ? [parsed.email] : undefined,
-          });
-        }
-      }
+    const attachments = await this.readAttachments(msg.id, payload, parts.html, body);
+
+    let content = messageContent({ subject, from, to, cc, bcc, date, body });
+    if (attachments.infos.length > 0) {
+      content += formatAttachmentMarkers(attachments.infos);
     }
-
-    // Mentioned emails/phones from body text (skip already-seen emails)
-    const bodyEmails = extractEmailsFromText(body).filter((e) => !seenEmails.has(e));
-    const bodyPhones = extractPhonesFromText(body);
-
-    for (const email of bodyEmails) {
-      people.push({ role: "mentioned", emails: [email] });
-    }
-    for (const phone of bodyPhones) {
-      people.push({ role: "mentioned", phones: [phone], allowPersonCreation: false });
-    }
-
-    // Process attachments if enabled
-    const attachmentInfos: AttachmentInfo[] = [];
-    /**
-     * Per-attachment pending bag — holds the extraction output until
-     * the parent email's `DocumentInput` is built, at which point we
-     * call `buildAttachmentDocument(emailDoc, ...)` to derive each
-     * child. Pre-fix this was typed as `DocumentInput[]` and pushed
-     * `{_pendingAttachment: true, ...}` markers cast through `as any`
-     * (twice) because the marker shape is NOT a `DocumentInput`. The
-     * typed `PendingAttachment` interface makes the array honest.
-     */
-    interface PendingAttachment {
-      filename: string;
-      extractionResult: ReturnType<
-        NonNullable<GmailSourceOptions["extractAttachment"]>
-      > extends Promise<infer R>
-        ? NonNullable<R>
-        : never;
-      mimeType: string;
-      /** AttachmentPartInfo.size is `number | null` when Gmail's API didn't
-       *  populate body.size — preserved here so the downstream
-       *  `deriveAttachmentStableId` can fall back to its "unknown" hash. */
-      sizeBytes: number | null;
-    }
-    const attachmentDocs: PendingAttachment[] = [];
-
-    if (this.attachmentConfig.enabled && this.extractAttachment) {
-      const parts = this.findAttachmentParts(msg.payload);
-      for (const part of parts) {
-        // Recover the real type when the client sent a generic Content-Type
-        // (a .pkpass mislabeled application/octet-stream is the common case).
-        const mimeType = resolveEffectiveMimeType(part.filename, part.mimeType);
-        const check = shouldExtractAttachment(mimeType, part.size, this.attachmentConfig);
-        if (!check.extract) {
-          attachmentInfos.push({
-            filename: part.filename,
-            mimeType,
-            size: part.size,
-            extracted: false,
-            reason: check.reason,
-          });
-          continue;
-        }
-
-        try {
-          const data = await this.downloadAttachment(msg.id, part.attachmentId);
-          const result = await this.extractAttachment(data, mimeType, {
-            maxTextLength: this.attachmentConfig.maxTextLength,
-          });
-
-          if (result?.noText) {
-            attachmentInfos.push({
-              filename: part.filename,
-              mimeType,
-              size: part.size,
-              extracted: false,
-              reason: "no-text",
-            });
-          } else if (result) {
-            attachmentInfos.push({
-              filename: part.filename,
-              mimeType,
-              size: part.size,
-              extracted: true,
-            });
-            // We'll build the attachment doc after the parent doc is created
-            // below. Note: we no longer carry `attachmentId` here — the
-            // child's externalId derives from (filename, size, mimeType, seq)
-            // via deriveAttachmentStableId, which is stable across re-syncs.
-            //Gmail's attachmentId is only used for the download
-            // call above.
-            attachmentDocs.push({
-              filename: part.filename,
-              extractionResult: result,
-              mimeType,
-              sizeBytes: part.size,
-            });
-          } else {
-            attachmentInfos.push({
-              filename: part.filename,
-              mimeType,
-              size: part.size,
-              extracted: false,
-              reason: "extraction-failed",
-            });
-          }
-        } catch (err) {
-          // A transient non-OCR extraction failure must fail the page so it
-          // retries, not get recorded as a permanent download/extraction
-          // failure that advances the cursor past the message forever.
-          // Optional OCR failures are normalized to null before this boundary.
-          if (isTransientSyncError(err)) throw err;
-          log.warn(
-            `Failed to download attachment ${part.filename} from ${msg.id}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-          attachmentInfos.push({
-            filename: part.filename,
-            mimeType,
-            size: part.size,
-            extracted: false,
-            reason: "download-failed",
-          });
-        }
-      }
-    }
-
-    // Build email content — append attachment markers if any
-    let content = [
-      `# ${subject}`,
-      "",
-      `**From:** ${from}`,
-      `**To:** ${to}`,
-      cc ? `**Cc:** ${cc}` : "",
-      `**Date:** ${date}`,
-      "",
-      "---",
-      "",
-      body,
-    ]
-      .filter(Boolean)
-      .join("\n");
-
-    if (attachmentInfos.length > 0) {
-      content += formatAttachmentMarkers(attachmentInfos);
-    }
-
-    const contentHash = computeContentHash(content);
 
     const emailDoc: DocumentInput = {
       providerId: this.providerId,
@@ -847,10 +732,10 @@ export class GmailSource {
       externalId: msg.id,
       title: subject,
       content,
-      contentHash,
+      contentHash: computeContentHash(content),
       metadata: {
         sourceUrl: gmailMessageUrl(msg.id, this.accountEmail),
-        tags: await this.resolveLabels(msg.labelIds ?? []),
+        tags: await this.resolveLabels(labels),
         documentType: "email",
         relevanceScore: this.computeRelevanceScore(labels, {
           listUnsubscribe,
@@ -872,36 +757,110 @@ export class GmailSource {
         people,
         extra: {
           threadId: msg.threadId,
-          ...(attachmentInfos.length > 0 ? { attachments: attachmentInfos } : {}),
+          ...(attachments.infos.length > 0 ? { attachments: attachments.infos } : {}),
         },
       },
       sourceCreatedAt: sourceDate,
       sourceUpdatedAt: sourceDate,
     };
 
-    // Build actual attachment DocumentInput[] from pending data. Track seq
-    // per stable-base-id so two attachments with identical (filename, size,
-    // mimeType) within the same email get distinct externalIds.
-    const result: DocumentInput[] = [emailDoc];
-    const seqByBase = new Map<string, number>();
-    for (const pending of attachmentDocs) {
-      const baseId = deriveAttachmentStableId(
-        pending.filename,
-        pending.sizeBytes,
-        pending.mimeType,
-      );
-      const seq = seqByBase.get(baseId) ?? 0;
-      seqByBase.set(baseId, seq + 1);
-      result.push(
-        buildAttachmentDocument(emailDoc, pending.filename, pending.extractionResult, {
-          mimeType: pending.mimeType,
-          sizeBytes: pending.sizeBytes,
-          seq,
+    const documents: DocumentInput[] = [emailDoc];
+    for (const child of attachments.children) {
+      documents.push(
+        buildAttachmentDocument(emailDoc, child.filename, child.result, {
+          mimeType: child.mimeType,
+          sizeBytes: child.sizeBytes,
+          seq: child.seq,
         }),
       );
     }
+    return { documents };
+  }
 
-    return result;
+  /**
+   * A message's attachments: the marker for each, and the extracted text of
+   * those that became child documents on this fetch.
+   *
+   * A small image the HTML shows inline by `cid:` is usually decoration — a
+   * logo, an icon, a badge — and is left out, but only once its text has been
+   * read and adds nothing the message does not already say: a signature sent
+   * as an image can carry the only copy of a phone number or an address. A
+   * text attachment is read in the charset its part declares.
+   */
+  private async readAttachments(
+    messageId: string,
+    payload: gmail_v1.Schema$MessagePart,
+    html: string | undefined,
+    messageText: string,
+  ): Promise<{
+    infos: AttachmentInfo[];
+    children: Array<{
+      filename: string;
+      mimeType: string;
+      sizeBytes: number | null;
+      seq: number;
+      result: NonNullable<Awaited<ReturnType<AttachmentExtractFn>>>;
+    }>;
+  }> {
+    const infos: AttachmentInfo[] = [];
+    const children: Awaited<ReturnType<GmailSource["readAttachments"]>>["children"] = [];
+    if (!this.attachmentConfig.enabled || !this.extractAttachment) return { infos, children };
+
+    const seqByBase = new Map<string, number>();
+
+    for (const part of this.findAttachmentParts(payload)) {
+      // Recover the real type when the client sent a generic Content-Type
+      // (a .pkpass mislabeled application/octet-stream is the common case).
+      const mimeType = resolveEffectiveMimeType(part.filename, part.mimeType);
+      const decoration = isInlineDecorationImage(
+        { mimeType, contentId: part.contentId, size: part.size },
+        html,
+      );
+      // Two attachments with the same name, size and type are told apart by
+      // their order; the child document's id derives from the same pair.
+      const baseId = deriveAttachmentStableId(part.filename, part.size, mimeType);
+      const seq = seqByBase.get(baseId) ?? 0;
+      seqByBase.set(baseId, seq + 1);
+      const base = { filename: part.filename, mimeType, size: part.size };
+
+      const check = shouldExtractAttachment(mimeType, part.size, this.attachmentConfig);
+      if (!check.extract) {
+        if (!decoration) infos.push({ ...base, extracted: false, reason: check.reason });
+        continue;
+      }
+
+      let info: AttachmentInfo;
+      try {
+        const data = await this.downloadAttachment(messageId, part.attachmentId);
+        const typed = part.charset ? `${mimeType}; charset=${part.charset}` : mimeType;
+        const result = await this.extractAttachment(data, typed, {
+          maxTextLength: this.attachmentConfig.maxTextLength,
+        });
+        if (decoration && !(result && !result.noText && addsToMessage(result.text, messageText))) {
+          continue;
+        }
+        if (!result) {
+          info = { ...base, extracted: false, reason: "extraction-failed" };
+        } else if (result.noText) {
+          info = { ...base, extracted: false, reason: "no-text" };
+        } else {
+          info = { ...base, extracted: true };
+          children.push({ filename: part.filename, mimeType, sizeBytes: part.size, seq, result });
+        }
+      } catch (err) {
+        // A transient non-OCR extraction failure must fail the page so it
+        // retries, not get recorded as a permanent download/extraction
+        // failure that advances the cursor past the message forever.
+        // Optional OCR failures are normalized to null before this boundary.
+        if (isTransientSyncError(err)) throw err;
+        log.warn(
+          `Failed to download attachment ${part.filename} from ${messageId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        info = { ...base, extracted: false, reason: "download-failed" };
+      }
+      infos.push(info);
+    }
+    return { infos, children };
   }
 
   /**
@@ -942,16 +901,41 @@ export class GmailSource {
     result: AttachmentPartInfo[],
   ): void {
     if (part.filename && part.body?.attachmentId) {
+      const charset = charsetOfContentType(partHeader(part, "Content-Type"));
       result.push({
         filename: part.filename,
         mimeType: part.mimeType ?? "application/octet-stream",
         attachmentId: part.body.attachmentId,
         size: part.body.size ?? null,
+        contentId: partHeader(part, "Content-ID") ?? partHeader(part, "X-Attachment-Id"),
+        ...(charset ? { charset } : {}),
       });
     }
     for (const child of part.parts ?? []) {
       this.walkAttachmentParts(child, result);
     }
+  }
+
+  /**
+   * Fill in body text Gmail left out of the message. A large text or HTML
+   * part comes back with an attachment id in place of its data, and read
+   * without it the message would lose its body. A part with a file name is an
+   * attached file, fetched with the attachments instead.
+   */
+  private async fetchDeferredBodyText(
+    messageId: string,
+    part: gmail_v1.Schema$MessagePart,
+  ): Promise<void> {
+    const isText = part.mimeType === "text/plain" || part.mimeType === "text/html";
+    if (isText && !part.filename && part.body?.attachmentId && !part.body.data) {
+      const res = await this.gmail.users.messages.attachments.get({
+        userId: "me",
+        messageId,
+        id: part.body.attachmentId,
+      });
+      if (res.data.data) part.body.data = res.data.data;
+    }
+    for (const child of part.parts ?? []) await this.fetchDeferredBodyText(messageId, child);
   }
 
   /**
@@ -986,49 +970,5 @@ export class GmailSource {
     // Header signals — the shared weight table, so IMAP and Gmail can't drift.
     score += mailHeaderRelevancePenalty(headers);
     return Math.max(0, Math.min(1, score));
-  }
-
-  private extractBody(payload: gmail_v1.Schema$MessagePart): string {
-    const textPart = this.findPart(payload, "text/plain");
-    if (textPart?.body?.data) {
-      return Buffer.from(textPart.body.data, "base64url").toString("utf-8");
-    }
-
-    const htmlPart = this.findPart(payload, "text/html");
-    if (htmlPart?.body?.data) {
-      const html = Buffer.from(htmlPart.body.data, "base64url").toString("utf-8");
-      return htmlToMarkdown(html).trim();
-    }
-
-    return "";
-  }
-
-  /**
-   * Promote schema.org JSON-LD dates from the email's HTML part to the typed
-   * `scheduledAt` (earliest planned start) / `dueAt` (earliest deadline) fields.
-   *Cheap + robust: regex the `<script type="application/ld+json">`
-   * blocks, JSON.parse each, walk for the known date keys. Returns {} when the
-   * mail carries no such markup (the common case).
-   */
-  private schemaOrgDates(payload: gmail_v1.Schema$MessagePart): {
-    scheduledAt?: string;
-    dueAt?: string;
-  } {
-    const htmlPart = this.findPart(payload, "text/html");
-    if (!htmlPart?.body?.data) return {};
-    const html = Buffer.from(htmlPart.body.data, "base64url").toString("utf-8");
-    return extractSchemaOrgDatesFromHtml(html);
-  }
-
-  private findPart(
-    part: gmail_v1.Schema$MessagePart,
-    mimeType: string,
-  ): gmail_v1.Schema$MessagePart | null {
-    if (part.mimeType === mimeType) return part;
-    for (const child of part.parts ?? []) {
-      const found = this.findPart(child, mimeType);
-      if (found) return found;
-    }
-    return null;
   }
 }

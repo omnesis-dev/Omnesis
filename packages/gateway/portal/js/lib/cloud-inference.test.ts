@@ -13,6 +13,7 @@ describe("cloud inference permission", () => {
   it("requires consent for Codex, Anthropic, and remote HTTP selections", () => {
     expect(remoteAssignmentConsent(overview, "codex", "example-model")).toEqual({ modelName: "example-model", providerLabel: "OpenAI" });
     expect(remoteAssignmentConsent(overview, "anthropic", "example-model").providerLabel).toBe("Anthropic");
+    expect(remoteAssignmentConsent(overview, "typesafe", "example-model")).toEqual({ modelName: "example-model", providerLabel: "TypeSafe" });
     expect(remoteAssignmentConsent(overview, "remote", "example-model").providerLabel).toBe("https://api.example.com");
     expect(remoteAssignmentConsent(overview, "missing", "example-model")).not.toBeNull();
   });

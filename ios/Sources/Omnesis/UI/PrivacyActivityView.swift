@@ -70,6 +70,10 @@ struct PrivacyReviewCard: View {
                 .foregroundStyle(Theme.textSecondary)
             if review.candidateAvailable, let answer = review.candidateAnswer {
                 PrivacyAnswerBlock(answer: answer, role: "held answer", tinted: true)
+                if let citations = privacyReviewCitationList(review) {
+                    PrivacyCitationListView(list: citations)
+                        .padding(.top, Theme.Spacing.xs)
+                }
             } else {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("The exact answer is unavailable.")
@@ -620,6 +624,16 @@ private struct PrivacyReviewCardHarness: View {
     .omnesisColorScheme()
 }
 
+// Built from the feed's exchange, as the pinned card is: the draft was
+// recorded, so the citations list marks what the check already withheld.
+#Preview("Privacy review card — pending with withheld citations") {
+    if let review = PrivacyPendingReview(exchange: PreviewMocks.privacyPendingCitationExchange) {
+        PrivacyReviewCardHarness(review: review)
+            .environment(AppStore.preview())
+            .omnesisColorScheme()
+    }
+}
+
 #Preview("Privacy review card — check unavailable") {
     PrivacyReviewCardHarness(
         review: PrivacyPendingReview(detail: PreviewMocks.privacyUnavailableApproval)
@@ -645,6 +659,15 @@ private struct PrivacyActivityPaneHarness<Content: View>: View {
             previewExchanges: PreviewMocks.privacyExchangeFeed,
             previewNextCursor: "activity-next",
             previewSubscriptionApprovals: [PreviewMocks.subscriptionApproval]
+        )
+    }
+}
+
+// The pinned review card in the feed, with citations the check partly withheld.
+#Preview("Privacy activity — pinned review with citations") {
+    PrivacyActivityPaneHarness {
+        PrivacyActivityPane(
+            previewExchanges: [PreviewMocks.privacyPendingCitationExchange, PreviewMocks.privacyExchanges[1]]
         )
     }
 }

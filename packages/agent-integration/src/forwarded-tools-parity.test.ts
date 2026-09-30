@@ -42,7 +42,7 @@ describe("the forwardable tools as every copy states them", () => {
     expect(stringsIn(hermes[1]!)).toEqual([...FORWARDED_TOOL_NAMES]);
   });
 
-  test("both OpenClaw manifests and the Hermes manifest declare every one", () => {
+  test("both OpenClaw manifests declare every one", () => {
     for (const manifest of [
       "../openclaw.plugin.json",
       "../../../integrations/openclaw-omnesis-plugin/openclaw.plugin.json",
@@ -56,6 +56,12 @@ describe("the forwardable tools as every copy states them", () => {
         ...OPENCLAW_FORWARDED_TOOL_NAMES,
       ]);
     }
+  });
+
+  // Hermes registers a user plugin's tools whether or not its manifest names
+  // them, and its plugin doctor loads the plugin with no connection, so only the
+  // tools every load registers can be declared without a warning.
+  test("the Hermes manifest declares only the tools every load registers", () => {
     const provided = /^provides_tools:\n((?: {2}- [a-z_]+\n)+)/mu.exec(
       source("../hermes/plugin.yaml"),
     );
@@ -64,7 +70,6 @@ describe("the forwardable tools as every copy states them", () => {
       "omnesis_answer",
       "omnesis_subscription_answer",
       "omnesis_subscriptions",
-      ...OPENCLAW_FORWARDED_TOOL_NAMES,
     ]);
   });
 });

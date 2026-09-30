@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { deletionsFor, rowsFor, tablesWritten } from "@omnesis/source-sdk/testing";
 import { tableWrites } from "@omnesis/source-sdk";
-import { StravaClient, StravaForbiddenError } from "./client.js";
+import { StravaActivitiesSource } from "./activities.js";
+import { StravaClient, StravaForbiddenError, StravaRateLimitError } from "./client.js";
 import {
   syncDetailBackfill,
   syncSocialBackfill,
@@ -197,26 +198,6 @@ describe("syncDetailBackfill", () => {
     expect(result.cursor.phase).toBe("enrich-pending");
     expect(gateway.query).toHaveBeenCalledTimes(1);
   });
-
-  test("defers (hasMore=true, same cursor phase) when quota is too low", async () => {
-    const { gateway } = makeMockGateway([baseRow]);
-    const client = makeFetchedClient({});
-    client.quota.setState(undefined, {
-      used: { short: 95, daily: 100 },
-      limit: { short: 100, daily: 1000 },
-    });
-    const cur: StravaActivitiesCursor = { phase: "detail-backfill" };
-    const { result } = await syncDetailBackfill(cur, {
-      analytics: gateway,
-      client,
-      sourceId: SOURCE_ID,
-      providerId: PROVIDER_ID,
-      athleteId: 99,
-    });
-    expect(result.cursor.phase).toBe("detail-backfill");
-    expect(result.hasMore).toBe(true);
-    expect(rowsFor(result, "strava_activities")).toEqual([]);
-  });
 });
 
 // ── Tier 2 — social-backfill ─────────────────────────────────────
@@ -329,6 +310,24 @@ describe("syncSocialBackfill", () => {
     // second page's selection excluding the carried id — that exclusion is in
     // the SQL. What it does show is the ordering this test exists for: the
     // mark appears only once the document it describes has been handed over.
+  });
+
+  test("404 stamps social_fetched_at on the same page, so the activity is not fetched again", async () => {
+    // Deleted or made private upstream: nothing about it is written on this
+    // page, so there is nothing for the mark to outrun. Unmarked, it would be
+    // pending on every page and the phase could never finish.
+    const { gateway } = makeMockGateway([baseRow]);
+    const client = makeFetchedClient({}); // every URL returns 404
+    const { result } = await syncSocialBackfill(
+      { phase: "social-backfill" },
+      { analytics: gateway, client, sourceId: SOURCE_ID, providerId: PROVIDER_ID, athleteId: 99 },
+    );
+
+    const marked = rowsFor(result, "strava_activities") as Record<string, unknown>[];
+    expect(marked.map((r) => String(r.id))).toEqual(["12345"]);
+    expect(marked[0]!.social_fetched_at).toBeTruthy();
+    expect(result.documents).toHaveLength(0);
+    expect(result.cursor.pendingSocialStamps).toBeUndefined();
   });
 });
 
@@ -553,6 +552,74 @@ describe("syncStreamsBackfill", () => {
       throw new StravaForbiddenError("/x");
     }).toThrow(/Strava access denied \(403\)/);
     expect(new StravaForbiddenError("/x", 402).status).toBe(402);
+  });
+});
+
+// ── Quota deferral — every tier ──────────────────────────────────
+
+// A page the window cannot cover throws `quotaDeferral` rather than returning
+// `hasMore` (see its JSDoc). These pin that for every tier, and for
+// enrich-pending in front of them.
+describe("a page the rate-limit window cannot cover", () => {
+  // Seven and a half minutes before the quarter hour resets the short window.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-03-04T10:07:30Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** One activity pending in every tier, and a short window already spent. */
+  function spentWindow(): { gateway: SourceAnalyticsAccess; client: StravaClient } {
+    const { gateway } = makeMockGateway([baseRow]);
+    const client = makeFetchedClient({});
+    client.quota.setState(undefined, {
+      used: { short: 95, daily: 100 },
+      limit: { short: 100, daily: 1000 },
+    });
+    return { gateway, client };
+  }
+
+  const quarterHourDeferral = {
+    kind: "rate-limit",
+    // To the quarter hour, plus the 30 seconds that let Strava's reset land first.
+    retryAfterMs: 8 * 60_000,
+    quota: { kind: "app" },
+  };
+
+  test.each([
+    ["detail-backfill", syncDetailBackfill],
+    ["social-backfill", syncSocialBackfill],
+    ["zones-backfill", syncZonesBackfill],
+    ["streams-backfill", syncStreamsBackfill],
+  ] as const)("%s defers the tick past the next quarter hour", async (phase, syncPhase) => {
+    const { gateway, client } = spentWindow();
+
+    const page = syncPhase(
+      { phase },
+      { analytics: gateway, client, sourceId: SOURCE_ID, providerId: PROVIDER_ID, athleteId: 99 },
+    );
+
+    await expect(page).rejects.toBeInstanceOf(StravaRateLimitError);
+    await expect(page).rejects.toMatchObject(quarterHourDeferral);
+  });
+
+  test("the source defers from enrich-pending too, rather than rotating to the next tier", async () => {
+    const { gateway, client } = spentWindow();
+    const source = new StravaActivitiesSource(
+      client,
+      SOURCE_ID,
+      PROVIDER_ID,
+      undefined,
+      undefined,
+      99,
+      gateway,
+    );
+
+    await expect(source.syncStructured({ phase: "enrich-pending" })).rejects.toMatchObject(
+      quarterHourDeferral,
+    );
   });
 });
 

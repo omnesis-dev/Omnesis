@@ -1288,6 +1288,9 @@ public struct StatusSnapshot: Decodable, Sendable {
     /// gateway that predates the feature — reads as inactive, so the
     /// Briefs entry stays hidden.
     public let briefs: BriefsStatus?
+    /// The gateway dictation gate (experimental). `nil` from a gateway that
+    /// predates it, which keeps every mic on the on-device recognizer.
+    public let dictation: DictationStatus?
 
     public init(
         documents: Documents,
@@ -1296,7 +1299,8 @@ public struct StatusSnapshot: Decodable, Sendable {
         latestActivityBySource: [String: LatestActivity]?,
         experimental: Bool = false,
         developer: Bool = false,
-        briefs: BriefsStatus? = nil
+        briefs: BriefsStatus? = nil,
+        dictation: DictationStatus? = nil
     ) {
         self.documents = documents
         self.dbSizeBytes = dbSizeBytes
@@ -1305,6 +1309,7 @@ public struct StatusSnapshot: Decodable, Sendable {
         self.experimental = experimental
         self.developer = developer
         self.briefs = briefs
+        self.dictation = dictation
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -1315,6 +1320,7 @@ public struct StatusSnapshot: Decodable, Sendable {
         case experimental
         case developer
         case briefs
+        case dictation
     }
 
     public init(from decoder: Decoder) throws {
@@ -1328,6 +1334,9 @@ public struct StatusSnapshot: Decodable, Sendable {
         experimental = try c.decodeIfPresent(Bool.self, forKey: .experimental) ?? false
         developer = try c.decodeIfPresent(Bool.self, forKey: .developer) ?? false
         briefs = try c.decodeIfPresent(BriefsStatus.self, forKey: .briefs)
+        // An experimental field: a shape this app cannot read reads as absent
+        // rather than failing the whole snapshot.
+        dictation = try? c.decodeIfPresent(DictationStatus.self, forKey: .dictation)
     }
 
     /// What the "on disk" stat shows: the gateway's whole footprint, or the

@@ -7,8 +7,9 @@
 #   E2E_WORK=<scratch> E2E_MODE=fresh|upgrade E2E_FIXTURE_DIR=<fixture> \
 #     E2E_GATEWAY_HOST=<gateway node name> scripts/install-e2e/tailnet-collector.sh
 #
-# Reaches the gateway by its MagicDNS name, reads the join URL, fingerprint
-# and a pairing code from the gateway's mailbox, and runs the `--collector`
+# Reaches the gateway by its MagicDNS name, pinned in /etc/hosts while the
+# Mac keeps its own resolvers (see ts_restore_system_dns), reads the join
+# URL, fingerprint and a pairing code from the gateway's mailbox, and runs the `--collector`
 # line the gateway's installer printed, from the same release the gateway
 # runs. Then it holds an invented Obsidian vault for the gateway to add and
 # sync. In upgrade mode it waits for the gateway's fleet update and checks,
@@ -37,8 +38,11 @@ esac
 
 group "Tailnet"
 ts_register
+ts_restore_system_dns
+ts_check_internet
 GATEWAY_FQDN="$GATEWAY_HOST.$TS_SUFFIX"
 ts_wait_peer "$GATEWAY_HOST" "$WAIT_PEER_SECONDS"
+ts_pin_host "$GATEWAY_HOST" "$GATEWAY_FQDN"
 ts_wait_resolves "$GATEWAY_FQDN" 120
 MAILBOX="http://$GATEWAY_FQDN:$MAILBOX_PORT"
 # Where the workflow's failure step posts `abort`.
@@ -71,6 +75,8 @@ expect_shape "the gateway's version" "$VERSION_SHAPE" "$START_VERSION"
 endgroup
 
 group "Run the printed --collector line (v$START_VERSION)"
+# The install fetches its dependencies from npm; check the way out first.
+ts_check_internet
 set -- --collector --gateway-url "$JOIN_URL" --code "$CODE" \
   --source-dir "$HOME/omnesis" --no-prompt --no-modify-path
 [ -z "$FINGERPRINT" ] || set -- "$@" --trust-fingerprint "$FINGERPRINT"

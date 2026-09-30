@@ -102,6 +102,8 @@ function resolvedActiveId(resolved: ResolvedAssignment): string | undefined {
       return undefined;
     case "codex":
       return undefined;
+    case "typesafe":
+      return undefined;
     default:
       return assertNever(resolved);
   }
@@ -768,7 +770,9 @@ function printRoleLine(
           ? "Replay (demo mode)"
           : resolved.kind === "codex"
             ? `Codex: ${resolved.model}`
-            : "(none)";
+            : resolved.kind === "typesafe"
+              ? `TypeSafe: ${resolved.model}`
+              : "(none)";
   const available =
     resolved.kind === "replay" ||
     (resolved.kind !== "disabled" && resolved.kind !== "unresolved" && resolved.available);

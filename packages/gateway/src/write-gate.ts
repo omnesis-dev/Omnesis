@@ -445,8 +445,15 @@ import {
   insertNoteEntry,
   updateNoteEntryText,
   deleteNoteEntry,
+  replaceNoteEntryTextIf,
   type NoteEntry,
 } from "./sources/omnesis-notes/storage.js";
+import {
+  insertPendingVoiceNote,
+  reschedulePendingVoiceNote,
+  deletePendingVoiceNote,
+  type NewPendingVoiceNote,
+} from "./voice-notes/storage.js";
 import { insertAgentMessage, type AgentMessageRow } from "./sources/agent-conversations/storage.js";
 import { resolveDerivationStages, type DerivationStageId } from "./domain/DocumentDerivation.js";
 import {
@@ -509,6 +516,8 @@ import {
   type EnqueueCognitionRunResult,
   type FinalizeCognitionRunInput,
   type RecordSettledCognitionRunInput,
+  type CognitionDecisionRecord,
+  insertCognitionDecision,
   type ClaimedCognitionRun,
   type CreateOpenLoopInput,
   type UpdateOpenLoopInput,
@@ -1605,6 +1614,8 @@ export interface WriteGate {
     usage: CognitionRunUsage,
     opts?: { countRun?: boolean },
   ): Promise<void>;
+  /** Append one decision-model answer to the decision ledger (idempotent on id). */
+  recordCognitionDecision(record: CognitionDecisionRecord): Promise<void>;
   // Open-loop / brief / notes mutations — the Cognition Steward's tool layer is
   // the only production caller (only the agent mutates loops/briefs in
   // V1). The mirror-document upsert is a separate `upsertDocuments` call.
@@ -2007,6 +2018,24 @@ export interface WriteGate {
    * day so the caller can re-render that day's projected document.
    */
   deleteNoteEntry(id: string): Promise<{ deleted: boolean; day: string | null }>;
+  /**
+   * Replace an entry's text only while it still reads `expected` (bumps
+   * `updated_at`). Returns the day on success so the caller can re-render it.
+   */
+  replaceNoteEntryTextIf(
+    id: string,
+    expected: string,
+    text: string,
+    now: string,
+  ): Promise<{ outcome: "replaced"; day: string } | { outcome: "changed" | "missing" }>;
+
+  // ── voice notes waiting on the transcriber ──────────────────────
+  /** Queue a note's audio. False when that note is already queued. */
+  enqueueVoiceNote(row: NewPendingVoiceNote): Promise<boolean>;
+  /** Record an attempt and when to try next. */
+  rescheduleVoiceNote(noteId: string, attempts: number, nextAttemptAt: string): Promise<void>;
+  /** Drop a queued note and its audio. */
+  deleteVoiceNote(noteId: string): Promise<void>;
 
   // ── agent-conversations (pushed) ──────────────────────────────────
   /**
@@ -2498,6 +2527,7 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     addToCognitionEngineCounter: (key, delta) => call("cognition.engineCounterAdd", [key, delta]),
     recordCognitionSpend: (day, mechanism, modelId, usage, opts) =>
       call("cognition.recordCognitionSpend", [day, mechanism, modelId, usage, opts]),
+    recordCognitionDecision: (record) => call("cognition.recordDecision", [record]),
     createOpenLoop: (input, dependencies, now) =>
       call("cognition.openLoopCreate", [input, dependencies, now]),
     updateOpenLoop: (id, input, dependencies, now) =>
@@ -2633,6 +2663,12 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     appendNoteEntry: (entry, audit) => call("notes.appendEntry", [entry, audit]),
     updateNoteEntry: (id, text, now) => call("notes.updateEntry", [id, text, now]),
     deleteNoteEntry: (id) => call("notes.deleteEntry", [id]),
+    replaceNoteEntryTextIf: (id, expected, text, now) =>
+      call("notes.replaceEntryTextIf", [id, expected, text, now]),
+    enqueueVoiceNote: (row) => call("voiceNotes.enqueue", [row]),
+    rescheduleVoiceNote: (noteId, attempts, nextAttemptAt) =>
+      call("voiceNotes.reschedule", [noteId, attempts, nextAttemptAt]),
+    deleteVoiceNote: (noteId) => call("voiceNotes.delete", [noteId]),
 
     appendAgentMessage: (message) => call("agentMessages.appendMessage", [message]),
 
@@ -3125,6 +3161,9 @@ export function directWriteGate(db: Db): WriteGate {
     recordCognitionSpend: async (day, mechanism, modelId, usage, opts) => {
       recordCognitionSpend(db, day, mechanism, modelId, usage, opts);
     },
+    recordCognitionDecision: async (record) => {
+      insertCognitionDecision(db, record);
+    },
     createOpenLoop: async (input, dependencies, now) =>
       mutateWithConsumptionDependencies(db, dependencies, "loop", input.id, now, () =>
         createOpenLoop(db, input, now),
@@ -3275,6 +3314,12 @@ export function directWriteGate(db: Db): WriteGate {
     appendNoteEntry: async (entry, audit) => insertNoteEntry(db, entry, audit),
     updateNoteEntry: async (id, text, now) => updateNoteEntryText(db, id, text, now),
     deleteNoteEntry: async (id) => deleteNoteEntry(db, id),
+    replaceNoteEntryTextIf: async (id, expected, text, now) =>
+      replaceNoteEntryTextIf(db, id, expected, text, now),
+    enqueueVoiceNote: async (row) => insertPendingVoiceNote(db, row),
+    rescheduleVoiceNote: async (noteId, attempts, nextAttemptAt) =>
+      reschedulePendingVoiceNote(db, noteId, attempts, nextAttemptAt),
+    deleteVoiceNote: async (noteId) => deletePendingVoiceNote(db, noteId),
 
     appendAgentMessage: async (message) => insertAgentMessage(db, message),
 

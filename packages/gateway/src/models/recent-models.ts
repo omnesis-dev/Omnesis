@@ -138,6 +138,7 @@ function toApply(
     case "http":
     case "codex":
     case "replay":
+    case "typesafe":
       return { type: "assign", value };
     case "disabled":
     case "unresolved":

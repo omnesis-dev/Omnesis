@@ -67,6 +67,7 @@
             <li><a href="/brain">Omnesis Brain</a></li>
             <li><a href="/vision">Vision</a></li>
             <li><a href="/docs/" aria-current="page">Docs</a></li>
+            <li><a href="/blog/">Blog</a></li>
           </ul>
           <a
             class="nav-icon-btn"
@@ -386,6 +387,14 @@
           one request at a time.
         </p>
         <p>
+          The reviewer judges an answer's <a href="#citations">citations</a> under the same policy
+          as its text. A title, a date or a link can disclose as much as a sentence, and a link can
+          carry an account address, a phone number or a message ID. A policy that restricts links or
+          identifiers therefore applies to them too, for example:
+          <em>Never share links to my documents.</em> The reviewer then withholds the links, or
+          whole citations, and the answer is released with details removed.
+        </p>
+        <p>
           The editor shows a line and character diff before saving. Each policy keeps its own
           history, and restoring an older version adds a new current entry without deleting later
           ones. A policy you adopted keeps its text; a change to a built-in template reaches your
@@ -491,6 +500,46 @@
           Hermes shell, <code>omnesis answer</code> refuses to ask and points the agent to its
           native <code>omnesis_answer</code> tool, which waits for slow answers properly.
         </p>
+
+        <h3 id="citations">Citations</h3>
+        <p>
+          An answer can come with citations: the documents the Omnesis agent relied on, released
+          beside the text so the external agent can link you to them instead of quoting them. Each
+          citation carries the document ID and its source, and may carry its title, when it happened
+          (<code>timestamp</code>, ISO 8601), its web or desktop link (<code>sourceUrl</code>) and a
+          link that opens it in the source's own app (<code>appUrl</code>). The privacy reviewer
+          checks every citation and may withhold one or any of its fields. A title or link that
+          looks like a credential is never released: that field is withheld before the review. What
+          the reviewer releases is exactly what the Audit page shows, under the answer it came with.
+        </p>
+        <p>
+          An MCP client receives citations in the <code>citations</code> field of a released result,
+          and the text of the result lists them too. <code>omnesis answer</code> prints them under
+          the answer. Over HTTP, add <code>?citations=true</code> to <code>POST /answer</code> and
+          to a <code>GET /answer/tasks/&lt;id&gt;</code> poll; without it the response has no
+          <code>citations</code> field, as older clients expect.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <pre>
+{
+  "status": "released",
+  "answer": "Your dentist appointment is on Tuesday at 09:30.",
+  "citations": [
+    {
+      "documentId": "doc_2f41c9",
+      "sourceType": "gmail",
+      "title": "Appointment confirmation",
+      "timestamp": "2026-03-02T14:05:00.000Z",
+      "sourceUrl": "https://mail.example.com/message/2f41c9"
+    }
+  ],
+  …
+}</pre
+            >
+          </div>
+        </div>
 
         <h2 id="bring-your-own-agent">Bring your own agent</h2>
         <p>
@@ -1253,6 +1302,7 @@
             <a href="https://github.com/omnesis-dev/Omnesis/blob/main/LICENSE">AGPL-3.0</a>
           </div>
           <nav class="footer-links" aria-label="Footer">
+            <a href="/blog/">Blog</a>
             <a href="/docs/">Docs</a>
             <a href="/privacy">Privacy</a>
             <a href="https://github.com/omnesis-dev/Omnesis/blob/main/CONTRIBUTING.md"
@@ -1292,7 +1342,7 @@
             </a>
             <a
               class="footer-social footer-discord"
-              href="https://discord.gg/4Y8pQHrVv"
+              href="https://discord.gg/QeaNZGAs2V"
               target="_blank"
               rel="noopener noreferrer"
               aria-label="Join Omnesis on Discord"

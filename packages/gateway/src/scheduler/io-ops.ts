@@ -101,6 +101,7 @@ export interface IoGate {
       discarded: number;
       owed: number;
       reviewed: number;
+      gated: number;
       failed: number;
     }>
   >;

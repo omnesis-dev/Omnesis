@@ -74,3 +74,44 @@ test("athlete refresh composes Summit recovery with gear edits on the same activ
   expect(result.cursor.phase).toBe("detail-backfill");
   expect(result.cursor.lastAthleteRefreshAt).toBeTruthy();
 });
+
+test("a spent daily budget defers the refresh until just after midnight UTC, without calling Strava", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    vi.setSystemTime(new Date("2026-03-04T22:40:00Z"));
+    const analytics: SourceAnalyticsAccess = {
+      query: vi.fn(() => Promise.resolve({ columns: [], rows: [] })),
+    };
+    const fetchFn = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
+    const client = new StravaClient({
+      tokens: {
+        access_token: "token",
+        refresh_token: "refresh",
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+        athlete_id: 99,
+      },
+      credentials: { client_id: "client", client_secret: "secret" },
+      fetchFn,
+    });
+    // 950 of the day's 1,000 reads used, against a cap of 900.
+    client.quota.setState(undefined, {
+      used: { short: 5, daily: 950 },
+      limit: { short: 100, daily: 1000 },
+    });
+
+    const refresh = syncAthleteRefresh({ phase: "athlete-refresh" }, "detail-backfill", {
+      analytics,
+      client,
+      athleteId: 99,
+    });
+
+    await expect(refresh).rejects.toMatchObject({
+      kind: "rate-limit",
+      retryAfterMs: 80.5 * 60_000,
+      quota: { kind: "app" },
+    });
+    expect(fetchFn).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
+});

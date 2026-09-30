@@ -76,6 +76,42 @@ export interface RunDto {
   lastAttemptAt: string | null;
   completedAt: string | null;
   usage: { promptTokens?: number; completionTokens?: number } | null;
+  /**
+   * The worth gate's verdict for the run (the newest decision's), or null when
+   * the gate never judged it. Served on the runs LIST only.
+   */
+  gateVerdict?: "pass" | "skip" | "unavailable" | null;
+}
+
+/**
+ * One worth-gate judgement as `GET /admin/brain/runs/:id` serves it — the
+ * exact request sent, the reply, and the verdict it produced. A reused
+ * judgement carries no request of its own and names the one it repeated.
+ */
+export interface GateDecisionDto {
+  id: string;
+  purpose: string;
+  lane: string;
+  verdict: "pass" | "skip" | "unavailable";
+  score: number | null;
+  threshold: number;
+  modelId: string | null;
+  rubricVersion: string;
+  documentId: string;
+  subjectDocumentId: string;
+  inheritedFromParent: boolean;
+  subjectDoc: AdminDocRef | null;
+  reusedFrom: string | null;
+  /** The record a record-check decision judged; null for a document judgement. */
+  recordId: string | null;
+  /** False when the verdict was only observed (a record check in shadow mode). */
+  enforced: boolean;
+  error: string | null;
+  latencyMs: number | null;
+  inputTokens: number | null;
+  createdAt: string;
+  request: { model?: string; state: unknown; questions: unknown } | null;
+  response: { model: string; answers: Record<string, unknown> } | null;
 }
 
 /**
@@ -287,7 +323,11 @@ export class BrainObs {
     }
   }
 
-  async run(id: string): Promise<{ run: RunDto; transcripts: Array<{ fileName: string }> }> {
+  async run(id: string): Promise<{
+    run: RunDto;
+    transcripts: Array<{ fileName: string }>;
+    decisions: GateDecisionDto[];
+  }> {
     return this.h.gatewayJson(`/admin/brain/runs/${id}`);
   }
 
@@ -573,6 +613,27 @@ export class BrainObs {
     providerOutage: { openUntil: string; consecutiveFailures: number; lastError: string } | null;
   }> {
     return this.h.gatewayJson("/admin/brain/bootstrap");
+  }
+
+  /**
+   * The corpus month by month, as the Bootstrap panel's timeline reads it.
+   * Cached server-side for minutes against the cognition clock, so a suite
+   * reads it once, after the state it asserts on has settled.
+   */
+  async bootstrapTimeline(): Promise<{
+    pending: boolean;
+    months: Array<{
+      month: string;
+      unscanned: number;
+      discarded: number;
+      owed: number;
+      reviewed: number;
+      gated: number;
+      failed: number;
+    }>;
+    computedAt: string;
+  }> {
+    return this.h.gatewayJson("/admin/brain/bootstrap/timeline");
   }
 
   /** Exercise the same explicit-consent action the Bootstrap panel exposes. */

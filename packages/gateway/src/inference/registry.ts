@@ -31,6 +31,7 @@ import {
   type ResolvedAnthropic,
   type ResolvedReplay,
   type ResolvedCodex,
+  type ResolvedTypeSafe,
   type InferenceOverview,
   type BackendStatus,
   type CapabilityVerdict,
@@ -141,7 +142,14 @@ const ROLE_TO_CATALOG_ROLE = {
   "watch-judge": undefined,
   "entailment-verifier": undefined,
   "brief-judge": undefined,
+  decision: undefined,
 } as const;
+
+/** TypeSafe's public System One endpoint, used unless `inference.typesafe.url` overrides it. */
+export const TYPESAFE_DEFAULT_URL = "https://api.typesafe.ai/v1/systemone";
+
+const DECISION_ONLY_REASON =
+  'The Decision model is served only by typed-decision backends: assign "typesafe/<model>" (e.g. typesafe/jev-1.13.0) or "replay".';
 
 /**
  * Heal backend URLs that carry the OpenAI-compatible version path inline. Many
@@ -206,6 +214,8 @@ export class InferenceRegistry {
   private configDir: string;
   private getManifest: () => Manifest;
   private checkAnthropicKey: () => boolean;
+  private checkTypeSafeKey: () => boolean;
+  private typesafeUrl = TYPESAFE_DEFAULT_URL;
   private lookupCatalogEntry: (id: string) => CatalogEntry | undefined;
   private getAnthropicStatus: () => BackendStatus | undefined;
 
@@ -240,6 +250,8 @@ export class InferenceRegistry {
     configDir: string;
     manifest: () => Manifest;
     hasAnthropicApiKey: () => boolean;
+    /** Whether a TypeSafe API key is configured. Unset = never (no key). */
+    hasTypeSafeApiKey?: () => boolean;
     getCatalogEntry?: (id: string) => CatalogEntry | undefined;
     getAnthropicStatus?: () => BackendStatus | undefined;
     getModelControls?: (
@@ -253,6 +265,7 @@ export class InferenceRegistry {
     this.configDir = opts.configDir;
     this.getManifest = opts.manifest;
     this.checkAnthropicKey = opts.hasAnthropicApiKey;
+    this.checkTypeSafeKey = opts.hasTypeSafeApiKey ?? (() => false);
     this.lookupCatalogEntry = opts.getCatalogEntry ?? getBundledCatalogEntry;
     this.getAnthropicStatus = opts.getAnthropicStatus ?? (() => undefined);
     this.getModelControls = opts.getModelControls;
@@ -271,6 +284,7 @@ export class InferenceRegistry {
     let needsProbe = false;
     const previousAllowRemoteInference = this.allowRemoteInference;
     this.allowRemoteInference = config.inference?.allowRemoteInference === true;
+    this.typesafeUrl = config.inference?.typesafe?.url ?? TYPESAFE_DEFAULT_URL;
     const previous = new Map(this.httpBackends);
     this.httpBackends.clear();
 
@@ -374,6 +388,21 @@ export class InferenceRegistry {
     }
 
     const slashIndex = value.indexOf("/");
+    const prefixOf = slashIndex === -1 ? value : value.slice(0, slashIndex);
+
+    // The decision role takes only typed-decision backends, and TypeSafe
+    // serves no other role: neither is a chat model. A configured HTTP backend
+    // that happens to be named `typesafe` keeps serving the other roles.
+    if (role === "decision" && prefixOf !== "typesafe" && prefixOf !== "replay") {
+      return { role, kind: "unresolved", reason: DECISION_ONLY_REASON };
+    }
+    if (role !== "decision" && prefixOf === "typesafe" && !this.httpBackends.has("typesafe")) {
+      return {
+        role,
+        kind: "unresolved",
+        reason: "TypeSafe serves only the Decision model capability.",
+      };
+    }
 
     if (slashIndex === -1) {
       if (value === "replay") {
@@ -400,6 +429,7 @@ export class InferenceRegistry {
     if (prefix === "local") return this.resolveLocalModel(role, suffix);
     if (prefix === "anthropic") return this.resolveAnthropicModel(role, value, suffix);
     if (prefix === "codex") return this.resolveCodex(role, suffix);
+    if (prefix === "typesafe" && role === "decision") return this.resolveTypeSafe(role, suffix);
     if (prefix === "replay") {
       if (role === "watch-judge") {
         return {
@@ -1030,6 +1060,39 @@ export class InferenceRegistry {
 
   private resolveReplay(role: CapabilityRole, fixture?: string): ResolvedReplay {
     return { role, kind: "replay", fixture };
+  }
+
+  private resolveTypeSafe(role: CapabilityRole, model: string): ResolvedTypeSafe {
+    const allowRemoteInference = this.allowRemoteInference;
+    const hasApiKey = this.checkTypeSafeKey();
+    const base = {
+      role,
+      kind: "typesafe" as const,
+      model,
+      url: this.typesafeUrl,
+      allowRemoteInference,
+      hasApiKey,
+    };
+    if (!model.trim()) {
+      return {
+        ...base,
+        available: false,
+        reason: 'TypeSafe assignment must include a model id, e.g. "typesafe/jev-1.13.0"',
+      };
+    }
+    // Remote-inference-off is the more fundamental block — TypeSafe is
+    // always off-host — so it is reported before a missing key.
+    if (!allowRemoteInference) {
+      return { ...base, available: false, reason: CLOUD_EGRESS_DISABLED_REASON };
+    }
+    if (!hasApiKey) {
+      return {
+        ...base,
+        available: false,
+        reason: "TypeSafe API key not configured. Set it from the portal's Settings → Models tab.",
+      };
+    }
+    return { ...base, available: true };
   }
 
   private resolveCodex(role: CapabilityRole, model: string): ResolvedCodex {

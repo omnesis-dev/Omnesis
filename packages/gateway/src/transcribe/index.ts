@@ -14,7 +14,8 @@
  * over HTTP via `GatewayClient.transcribe`.
  */
 
-export { TranscribeService, MAX_AUDIO_BYTES } from "./transcribe-service.js";
+export { TranscribeService, MAX_AUDIO_BYTES, assignmentReadiness } from "./transcribe-service.js";
+export type { TranscriberReadiness } from "./transcribe-service.js";
 export {
   WhisperTranscriber,
   whisperDepsAvailable,

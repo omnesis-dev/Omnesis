@@ -95,6 +95,7 @@ import type {
 import type { SearchPort, TemporalReadPort, ToolHandle } from "@omnesis/agent";
 import type { WriteGate } from "../../write-gate.js";
 import type { OpenLoopMirror } from "./mirror.js";
+import type { CheckRecord, RecordCheckInput } from "../record-check/check.js";
 import type { BriefRow, BriefState, Clock, OpenLoopRow, OpenLoopState } from "../storage/types.js";
 
 type Db = Database.Database;
@@ -210,6 +211,13 @@ export interface CognitionToolDeps {
    * annotation writes behave exactly as without it.
    */
   getEntailmentVerifier?: () => Promise<EntailCapability | null>;
+  /**
+   * The record check bound to this run, consulted when a NEW annotation is
+   * saved: in enforce mode its answer decides whether the write happens.
+   * Absent (interactive memory, unchecked lanes, no decision model) every
+   * record is saved unchecked.
+   */
+  checkRecord?: CheckRecord;
   /**
    * Resolve the brief judge (the push bar), read live so a config toggle or
    * model swap takes effect on the next brief. Absent, or resolving to null
@@ -614,6 +622,28 @@ async function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Ask the run's record check about a new record. Returns the tool result that
+ * replaces the write when the check drops it, or null to save it.
+ */
+async function recordCheckRefusal(
+  deps: Pick<CognitionToolDeps, "checkRecord">,
+  input: RecordCheckInput,
+  signal: AbortSignal | undefined,
+): Promise<ToolResult | null> {
+  if (!deps.checkRecord) return null;
+  const outcome = await deps.checkRecord(input, signal);
+  if (outcome.save) return null;
+  return ok("record.not_saved", {
+    reason:
+      `judged not to belong in the owner's life memory (score ${outcome.score.toFixed(2)}, ` +
+      `below ${outcome.threshold})`,
+    guidance:
+      "Not saved. Do not retry or reword this record; continue with anything else the " +
+      "datum warrants.",
+  });
 }
 
 /** The re-askable refusal the annotation tools return on a failed entailment check. */
@@ -2188,7 +2218,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
               code: "notes_edit_not_found",
               message:
                 `oldText was not found in the current notes: "${needle}" — copy an ` +
-                `exact span from the notes shown in your system prompt`,
+                `exact span from the notes shown in your prompt`,
             };
           }
           case "ambiguous":
@@ -2752,6 +2782,20 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       const loops = partitionLoopIds(db, a.loopIds ?? []);
       const people = partitionPersonRefs(db, a.personIds ?? []);
       const id = `ta_${idGen()}`;
+      // Only document-grounded entries are checked; a self-sourced scheduling
+      // entry is the agent's own bookkeeping.
+      if (a.evidence !== undefined) {
+        const dropped = await recordCheckRefusal(
+          deps,
+          {
+            recordId: id,
+            record: { type: "timeline", kind: a.kind ?? null, text: a.sentence },
+            documentId: a.evidence.docId,
+          },
+          ctx.abortSignal,
+        );
+        if (dropped !== null) return dropped;
+      }
       const annotation = await writeGate.createTemporalAnnotation(
         {
           id,
@@ -3032,6 +3076,7 @@ export type AnnotationToolDeps = Pick<
   | "annotationBasisCeilings"
   | "annotationConfidenceFloor"
   | "getEntailmentVerifier"
+  | "checkRecord"
   | "consumption"
   | "validateAnnotationEvidence"
 > & {
@@ -3129,7 +3174,7 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
     schema: annotateDurableSchema,
     mutates: true,
     summarize: (args) => (args as { claimType?: string })?.claimType,
-    async invoke(rawArgs): Promise<ToolResult> {
+    async invoke(rawArgs, ctx): Promise<ToolResult> {
       const parsed = annotateDurableSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
       const a = parsed.data;
@@ -3235,6 +3280,18 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       );
       if (gate.kind === "refused") return entailmentRefusal(gate.verdict);
       const id = `anno_${idGen()}`;
+      if (a.supersedes === undefined) {
+        const dropped = await recordCheckRefusal(
+          deps,
+          {
+            recordId: id,
+            record: { type: "doc-fact", kind: a.claimType, text: a.claimText },
+            documentId: a.docId,
+          },
+          ctx.abortSignal,
+        );
+        if (dropped !== null) return dropped;
+      }
       const input = {
         id,
         docId: a.docId,
@@ -3688,7 +3745,7 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
     schema: annotatePersonSchema,
     mutates: true,
     summarize: (args) => (args as { claimType?: string })?.claimType,
-    async invoke(rawArgs): Promise<ToolResult> {
+    async invoke(rawArgs, ctx): Promise<ToolResult> {
       const parsed = annotatePersonSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
       const a = parsed.data;
@@ -3790,6 +3847,18 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       );
       if (gate.kind === "refused") return entailmentRefusal(gate.verdict);
       const id = `panno_${idGen()}`;
+      if (a.supersedes === undefined) {
+        const dropped = await recordCheckRefusal(
+          deps,
+          {
+            recordId: id,
+            record: { type: "person-fact", kind: a.claimType, text: a.claimText },
+            documentId: a.evidenceDocId,
+          },
+          ctx.abortSignal,
+        );
+        if (dropped !== null) return dropped;
+      }
       const input = {
         id,
         personId,

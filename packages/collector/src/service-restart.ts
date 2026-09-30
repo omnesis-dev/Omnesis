@@ -38,7 +38,13 @@
 
 import { execFile, spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { createLogger, launchdLabelInstance, systemdUnitInstance } from "@omnesis/core";
+import {
+  createLogger,
+  LAUNCHD_THROTTLE_INTERVAL_SECONDS,
+  launchdLabelInstance,
+  systemdUnitInstance,
+} from "@omnesis/core";
+import { leaveRelaunchRequest, type RelaunchRequest } from "./relaunch-request.js";
 
 const log = createLogger("collector").child("service-restart");
 
@@ -163,6 +169,60 @@ export function restartInvocation(unit: CollectorServiceUnit): {
     args: ["--user", "--no-block", "restart", unit.unit],
     detached: false,
   };
+}
+
+/**
+ * The request that starts `unit` again after this process has died, or null
+ * when its manager restarts a failed unit on its own. See `relaunch-request.ts`.
+ */
+export function relaunchRequestFor(
+  unit: CollectorServiceUnit,
+  delaySeconds = LAUNCHD_THROTTLE_INTERVAL_SECONDS,
+): RelaunchRequest | null {
+  if (unit.manager !== "launchd") return null;
+  return {
+    command: "/bin/sh",
+    args: [
+      "-c",
+      'sleep "$1"; exec launchctl kickstart "$2"',
+      "omnesis-relaunch",
+      String(delaySeconds),
+      unit.target,
+    ],
+    description: `launchd is asked to start ${unit.target} in ${delaySeconds}s unless it already runs`,
+  };
+}
+
+/**
+ * The relaunch request for the collector unit this process runs as, or null
+ * when it runs as none or its manager needs none.
+ */
+export async function resolveRelaunchRequest(
+  host: ServiceHost = defaultServiceHost(),
+): Promise<RelaunchRequest | null> {
+  try {
+    const resolved = await resolveCollectorUnit(host);
+    return "unit" in resolved ? relaunchRequestFor(resolved.unit) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Leave `request` behind whenever this process exits non-zero — the exits a
+ * LaunchAgent's `KeepAlive { SuccessfulExit: false }` is meant to restart. A
+ * clean exit is a deliberate stop and leaves nothing.
+ */
+export function relaunchOnFailedExit(
+  request: RelaunchRequest,
+  proc: Pick<NodeJS.Process, "on"> = process,
+): void {
+  proc.on("exit", (code: number) => {
+    if (code === 0) return;
+    const failure = leaveRelaunchRequest(request);
+    if (failure) log.error(`Could not leave a relaunch request: ${failure}`);
+    else log.info(`Exiting with code ${code}; ${request.description}`);
+  });
 }
 
 /** Spawn the restart request and settle once the manager has accepted it. */

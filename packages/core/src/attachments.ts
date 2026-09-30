@@ -293,6 +293,30 @@ export type AttachmentExtractFn = (
   opts?: { maxTextLength?: number },
 ) => Promise<ExtractionResult | null>;
 
+/** An inline image at or below this size, shown by the HTML body, is decoration. */
+const INLINE_DECORATION_MAX_BYTES = 64 * 1024;
+
+/**
+ * Whether an image part is decoration the HTML body displays — a signature
+ * logo, a social-media icon — rather than something the sender attached.
+ *
+ * Mail clients send such images as parts with a `Content-ID` that the HTML
+ * references as `cid:`, and every reply repeats them, so indexing them adds a
+ * document per message that says nothing. Only small images qualify: a
+ * screenshot pasted into the body is also referenced by `cid:` but is usually
+ * larger, and it may carry text worth reading.
+ */
+export function isInlineDecorationImage(
+  part: { mimeType: string; contentId?: string; size: number | null },
+  html: string | undefined,
+): boolean {
+  if (!part.mimeType.toLowerCase().startsWith("image/")) return false;
+  if (part.size === null || part.size > INLINE_DECORATION_MAX_BYTES) return false;
+  const id = part.contentId?.trim().replace(/^<|>$/g, "");
+  if (!id || !html) return false;
+  return html.toLowerCase().includes(`cid:${id.toLowerCase()}`);
+}
+
 /**
  * Resolve attachment config from source config fields, applying defaults.
  *

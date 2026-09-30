@@ -145,6 +145,7 @@ export {
   buildBuiltinTools,
   findTool,
   selectNonCitationTools,
+  selectDocumentCitationTools,
   selectSharedTools,
   selectGenericSubagentTools,
   selectSubagentTools,

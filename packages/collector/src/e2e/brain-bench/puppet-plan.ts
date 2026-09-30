@@ -199,7 +199,7 @@ export function readRunContext(prompt: string): RunContext | null {
   if (sweep) return { ...base, flavour: "sweep", subject: sweep[1]!, detail: sweep[2]! };
 
   // bootstrap
-  const boot = m(/^RETROSPECTIVE BOOTSTRAP\. This is a PAST document \((\S+)\)/m);
+  const boot = m(/^Bootstrap document: (\S+)\. Fetch/m);
   if (boot) return { ...base, flavour: "bootstrap", subject: boot[1]!, detail: null };
   const bootGone = m(/^The document (\S+) this bootstrap run targets has been DELETED/m);
   if (bootGone)

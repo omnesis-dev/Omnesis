@@ -19,6 +19,7 @@
 import { createRunAttributionTable } from "./run-attribution.js";
 import { createCognitionCoverageTable } from "./coverage.js";
 import { createSweepTallyTable } from "./sweep-tally.js";
+import { createCognitionDecisionsTable } from "./decisions.js";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 
@@ -271,6 +272,7 @@ export function createBriefsStorageTables(db: Db): void {
   // each source's corpus has been reasoned over, and at what cost. Reporting
   // only: nothing on the selection path reads it. See `storage/coverage.ts`.
   createCognitionCoverageTable(db);
+  createCognitionDecisionsTable(db);
 
   // Per-sweep production tallies — durable because run rows are pruned and
   // `cognition_spend` has no per-sweep dimension. See `storage/sweep-tally.ts`.

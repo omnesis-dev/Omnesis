@@ -6,6 +6,7 @@ import {
   cleanPersonName,
   countryNameToISO2,
   deriveAuthor,
+  mailPeopleMentions,
   extractEmailsAndPhonesFromText,
   normalizeEmail,
   isNonIdentifyingEmail,
@@ -438,6 +439,78 @@ describe("parseEmailHeader", () => {
 });
 
 describe("cleanPersonName", () => {
+  test("drops a stray double quote left by a broken header", () => {
+    expect(cleanPersonName('"Maya Reeves')).toBe("Maya Reeves");
+    expect(cleanPersonName('Maya Reeves"')).toBe("Maya Reeves");
+    expect(cleanPersonName("O'Brien")).toBe("O'Brien");
+  });
+
+  test("keeps an apostrophe a name begins or ends with", () => {
+    expect(cleanPersonName("'t Hooft")).toBe("'t Hooft");
+    expect(cleanPersonName("Jamie Lopez'")).toBe("Jamie Lopez'");
+    expect(cleanPersonName("'Maya Reeves'")).toBe("Maya Reeves");
+  });
+
+  test("keeps a bracketed part that is not an address", () => {
+    expect(cleanPersonName("Sarah Mendez <Finance>")).toBe("Sarah Mendez <Finance>");
+    expect(cleanPersonName("David Lin (at example.com")).toBe("David Lin (at example.com");
+    expect(cleanPersonName("David Lin (x@example.com")).toBe("David Lin (x@example.com");
+  });
+
+  test("keeps a handle or an organisation in brackets", () => {
+    expect(cleanPersonName("Maya Reeves (@maya)")).toBe("Maya Reeves (@maya)");
+    expect(cleanPersonName("Maya Reeves (Sales @ Studio Northstar)")).toBe(
+      "Maya Reeves (Sales @ Studio Northstar)",
+    );
+    expect(cleanPersonName("Jamie Lopez ( Work )")).toBe("Jamie Lopez ( Work )");
+  });
+
+  test("clears the brackets an address leaves behind", () => {
+    expect(cleanPersonName("Maya Reeves (<maya.reeves@example.com>)")).toBe("Maya Reeves");
+    expect(cleanPersonName("Maya Reeves <(maya.reeves@example.com)>")).toBe("Maya Reeves");
+    expect(cleanPersonName("(Maya Reeves <maya.reeves@example.com>)")).toBe("(Maya Reeves)");
+    expect(cleanPersonName("Maya Reeves (mailto:maya.reeves@example.com)")).toBe("Maya Reeves");
+  });
+
+  test("cleaning a cleaned name changes nothing", () => {
+    const samples = [
+      `"'Maya Reeves'`,
+      `"Maya" <maya.reeves@example.com> "`,
+      `''"`,
+      `"Maya Reeves`,
+      "'t Hooft",
+      "Maya Reeves (maya.reeves@example.com)",
+      "Maya Reeves (<maya.reeves@example.com>)",
+      "Jamie (Work)",
+      "  david   lin  ",
+      "Sarah Mendez 🎉",
+      "Мая Ривз",
+    ];
+    for (const sample of samples) {
+      const once = cleanPersonName(sample);
+      expect(cleanPersonName(once), sample).toBe(once);
+    }
+  });
+
+  test("stays fast on a hostile name", () => {
+    const hostile = [`(${"@".repeat(200_000)}`, `<${"@x ".repeat(70_000)}`, "(".repeat(200_000)];
+    const started = performance.now();
+    for (const name of hostile) cleanPersonName(name);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  test("drops an address a mail client wrote into the display name", () => {
+    expect(cleanPersonName("Maya Reeves (maya.reeves@example.com)")).toBe("Maya Reeves");
+    expect(cleanPersonName("Maya Reeves <maya.reeves@example.com> (maya.reeves@example.com)")).toBe(
+      "Maya Reeves",
+    );
+    expect(cleanPersonName("(maya.reeves@example.com)")).toBeUndefined();
+    // A parenthesised part that is not an address is part of the name.
+    expect(cleanPersonName("Maya Reeves (Studio Northstar)")).toBe(
+      "Maya Reeves (Studio Northstar)",
+    );
+  });
+
   test("returns a normal name unchanged", () => {
     expect(cleanPersonName("John Smith")).toBe("John Smith");
   });
@@ -508,6 +581,25 @@ describe("extractEmailsFromText", () => {
   test("finds emails in text", () => {
     const text = "Contact john@example.com or jane@test.org for info.";
     expect(extractEmailsFromText(text)).toEqual(["john@example.com", "jane@test.org"]);
+  });
+
+  test("image file names in URLs are not addresses", () => {
+    // Assembled so the file names never read as addresses in the source.
+    const retina = ["brand", "2x.png"].join("@");
+    const small = ["hero", "small.jpg"].join("@");
+    const text = `![logo](https://cdn.example.com/mail/logos/${retina}) ![](https://img.example.org/a/${small}) — reply to jamie.lopez@example.org`;
+    expect(extractEmailsFromText(text)).toEqual(["jamie.lopez@example.org"]);
+  });
+
+  test("an address pasted into a URL path is not a mention", () => {
+    expect(extractEmailsFromText("https://example.com/unsubscribe/maya@example.com")).toEqual([]);
+  });
+
+  test("an address glued to the next capitalised word keeps its domain", () => {
+    const glued = ["jamie", "example.comOn"].join("@");
+    expect(extractEmailsFromText(`From: ${glued} behalf of the team`)).toEqual([
+      "jamie@example.com",
+    ]);
   });
 
   test("deduplicates emails", () => {
@@ -802,5 +894,131 @@ describe("extractEmailsAndPhonesFromText", () => {
       emails: [],
       phones: [],
     });
+  });
+});
+
+describe("mailPeopleMentions", () => {
+  test("stays fast on a hostile address", () => {
+    const hostile = [
+      `a@${".".repeat(200_000)}"`,
+      `${"a".repeat(200_000)}@`,
+      `<${"@".repeat(200_000)}`,
+    ];
+    const started = performance.now();
+    const people = mailPeopleMentions({ from: hostile.map((address) => ({ address })) }, "", 100);
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(people).toEqual([]);
+  });
+
+  test("skips an entry that carries no address", () => {
+    const entries = [
+      { name: "undisclosed recipients" } as unknown as { name: string; address: string },
+      { name: "Maya Reeves", address: "maya.reeves@example.com" },
+    ];
+    expect(mailPeopleMentions({ to: entries }, "", 100)).toEqual([
+      { role: "recipient", name: "Maya Reeves", emails: ["maya.reeves@example.com"] },
+    ]);
+  });
+
+  test("keeps an address with an apostrophe", () => {
+    expect(
+      mailPeopleMentions({ from: [{ address: "o'brien@example.com" }] }, "", 100)[0]?.emails,
+    ).toEqual(["o'brien@example.com"]);
+  });
+
+  test("keeps only addresses a person could be written to", () => {
+    const addresses = [
+      "maya.reeves@example.com",
+      "maya.reeves@localhost",
+      "maya.reeves@.example.com",
+      "maya.reeves@example.",
+      "@example.com",
+      'maya"reeves@example.com',
+      "a@b@example.com",
+    ].map((address) => ({ address }));
+    expect(mailPeopleMentions({ to: addresses }, "", 100).map((p) => p.emails?.[0])).toEqual([
+      "maya.reeves@example.com",
+    ]);
+  });
+
+  test("names the sender, then recipients, then addresses mentioned in the body, each once", () => {
+    expect(
+      mailPeopleMentions(
+        {
+          from: [{ name: "Jamie Lopez", address: "Jamie.Lopez@Example.org" }],
+          to: [{ name: "Maya Reeves", address: "maya.reeves@example.com" }],
+          cc: [{ address: "jamie.lopez@example.org" }],
+          bcc: [{ address: "david.lin@example.io" }],
+        },
+        "Loop in sarah.mendez@example.net and maya.reeves@example.com.",
+        100,
+      ),
+    ).toEqual([
+      { role: "sender", name: "Jamie Lopez", emails: ["jamie.lopez@example.org"] },
+      { role: "recipient", name: "Maya Reeves", emails: ["maya.reeves@example.com"] },
+      { role: "recipient", name: undefined, emails: ["david.lin@example.io"] },
+      { role: "mentioned", emails: ["sarah.mendez@example.net"] },
+    ]);
+  });
+
+  test("a phone number in the body is a mention that cannot create a person", () => {
+    const people = mailPeopleMentions({}, "Call me on +1 (415) 555-0134 tomorrow.", 10);
+    expect(people).toEqual([
+      { role: "mentioned", phones: ["+14155550134"], allowPersonCreation: false },
+    ]);
+  });
+
+  test("a display name that is really an address is not kept as a name", () => {
+    const people = mailPeopleMentions(
+      { from: [{ name: "jamie.lopez@example.org", address: "jamie.lopez@example.org" }] },
+      "",
+      10,
+    );
+    expect(people[0]?.name).toBeUndefined();
+  });
+
+  test("an automated address is linked but never creates a person", () => {
+    const people = mailPeopleMentions(
+      {
+        from: [{ name: "Build bot", address: "notifications@example.org" }],
+        to: [{ address: "maya.reeves@example.com" }],
+      },
+      "Bounces go to mailer-daemon@example.net.",
+      10,
+    );
+    expect(people).toEqual([
+      {
+        role: "sender",
+        name: "Build bot",
+        emails: ["notifications@example.org"],
+        allowPersonCreation: false,
+      },
+      { role: "recipient", name: undefined, emails: ["maya.reeves@example.com"] },
+      { role: "mentioned", emails: ["mailer-daemon@example.net"], allowPersonCreation: false },
+    ]);
+  });
+
+  test("recovers the address from a broken header, and drops what is not one", () => {
+    const people = mailPeopleMentions(
+      {
+        from: [{ address: "Maya Reeves maya.reeves@example.com" }],
+        to: [
+          { address: "=?utf-8?q?Jamie?= <jamie.lopez@example.org" },
+          { address: "root@localhost" },
+          { address: '"david_lin@example.io"@example.io' },
+        ],
+      },
+      "",
+      10,
+    );
+    expect(people.map((p) => [p.role, p.emails])).toEqual([
+      ["sender", ["maya.reeves@example.com"]],
+      ["recipient", ["jamie.lopez@example.org"]],
+    ]);
+  });
+
+  test("stops at the cap", () => {
+    const to = Array.from({ length: 5 }, (_, i) => ({ address: `member${i}@example.org` }));
+    expect(mailPeopleMentions({ to }, "", 3)).toHaveLength(3);
   });
 });

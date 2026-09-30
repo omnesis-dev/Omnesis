@@ -5466,6 +5466,50 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
+    /// Every shape of the cited-documents list: a draft's own list, a pending
+    /// release and a shared one each compared with the draft, a release that
+    /// withheld every citation, and rows with a wrapping title and link, a link
+    /// the app will not open, no links and an unreadable date.
+    func testPrivacyCitationList() {
+        snapshot(
+            PrivacyCitationListGallery().environment(AppStore.preview()),
+            name: "111rd-privacy-citations",
+            size: CGSize(width: 393, height: 2300)
+        )
+    }
+
+    /// The pinned review card in the feed, built from the exchange as the feed
+    /// builds it, so its citations are compared with the recorded draft.
+    func testPrivacyActivityPendingCitations() {
+        let view = NavigationStack {
+            PrivacyActivityPane(
+                previewExchanges: [PreviewMocks.privacyPendingCitationExchange, PreviewMocks.privacyExchanges[1]]
+            )
+        }
+        .background(Theme.bgPrimary)
+        .environment(AppStore.preview())
+        snapshot(
+            view,
+            name: "111re-privacy-activity-pending-citations",
+            size: CGSize(width: 393, height: 1300)
+        )
+    }
+
+    /// A pending exchange whose draft cited more than the held answer would
+    /// release: the draft's own list on the draft card, and what Share once
+    /// releases, compared with it, beside the decision.
+    func testPrivacyExchangeSpinePendingCitations() {
+        let view = NavigationStack {
+            PrivacyExchangeDetailView(previewExchange: PreviewMocks.privacyPendingCitationExchange)
+        }
+        .environment(AppStore.preview())
+        snapshot(
+            view,
+            name: "111vf-privacy-spine-pending-citations",
+            size: CGSize(width: 393, height: 2500)
+        )
+    }
+
     /// The spine while the answer is still held: dashed rail outside, hairline,
     /// solid accented rail through the tinted inside panel, and no second
     /// crossing because nothing left.
@@ -6353,6 +6397,72 @@ final class PreviewSnapshotTests: XCTestCase {
         .background(Theme.bgPrimary)
         .preferredColorScheme(.dark)
         snapshot(view, name: "96-composer-speech-unavailable", size: CGSize(width: 393, height: 140))
+    }
+
+    // MARK: - Gateway dictation
+
+    /// Tell Omnesis as a voice note, recording: the recording and its length,
+    /// never the phone's transcript.
+    func testCaptureVoiceNoteRecording() {
+        let view = CaptureView(
+            speech: .preview(state: .listening),
+            previewVoiceNote: .previewRecording(seconds: 12)
+        )
+        .environment(AppStore.preview())
+        snapshot(view, name: "299a-capture-voice-note-recording")
+    }
+
+    /// Stopped: the voice note's length, record more, discard to type.
+    func testCaptureVoiceNoteRecorded() {
+        let view = CaptureView(
+            speech: .preview(state: .idle),
+            previewVoiceNote: .previewRecorded(seconds: 72)
+        )
+        .environment(AppStore.preview())
+        snapshot(view, name: "299b-capture-voice-note-recorded")
+    }
+
+    /// Settings → Voice in each state the gateway can advertise.
+    func testSettingsVoiceSectionStates() {
+        struct VoiceCase {
+            let status: DictationStatus
+            var writeError: String?
+            let name: String
+        }
+        let cases = [
+            VoiceCase(status: PreviewMocks.dictationStatusOff, name: "296a-settings-voice-off"),
+            VoiceCase(status: PreviewMocks.dictationStatusActive, name: "296b-settings-voice-on"),
+            VoiceCase(status: PreviewMocks.dictationStatusBlocked, name: "296c-settings-voice-blocked"),
+            VoiceCase(
+                status: PreviewMocks.dictationStatusOff,
+                writeError: "Check that the gateway is running and this phone has internet.",
+                name: "296d-settings-voice-write-failed"
+            ),
+        ]
+        for voiceCase in cases {
+            let form = Form {
+                VoiceSettingsSection(status: voiceCase.status, previewWriteError: voiceCase.writeError)
+            }
+            .scrollContentBackground(.hidden)
+            .background(Theme.bgPrimary)
+            .environment(AppStore.preview())
+            snapshot(form, name: voiceCase.name, size: CGSize(width: 393, height: 420))
+        }
+    }
+
+    /// The Voice section in place: an experimental gateway advertising the
+    /// setting, switched on with a transcriber that cannot run. Tall canvas so
+    /// the render reaches it below Notifications.
+    func testSettingsWithVoiceSection() {
+        let store = AppStore.preview(
+            statusSnapshot: PreviewMocks.statusSnapshotDictationBlocked,
+            indexStats: PreviewMocks.indexStats
+        )
+        snapshot(
+            SettingsView(initialDestination: .root, previewData: true).environment(store),
+            name: "297-settings-with-voice-section",
+            size: CGSize(width: 393, height: 1600)
+        )
     }
 
     // MARK: - Composer slash-command / Deep Research pill

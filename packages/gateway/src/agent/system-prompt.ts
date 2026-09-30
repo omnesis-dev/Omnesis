@@ -111,11 +111,11 @@ When a top hit is highly connected and its snippet doesn't fully answer the ques
 
 /**
  * Whether a prompt profile's surface actually renders a Timeline. Only the
- * interactive chat does — the read-only answer API hands text back to a
- * caller, and a voice reply is spoken aloud. Drives `citationSurface`, and
- * must stay in step with the toolset each surface receives: a prompt that
- * teaches `annotate_many` to a session that has no such tool spends the model's
- * attention on something it cannot do.
+ * interactive chat does — the read-only answer API hands text and reviewed
+ * citations back to a caller, and a voice reply is spoken aloud. Drives
+ * `citationSurface`, whose guidance is Timeline guidance: the answer surface
+ * teaches its own use of `annotate_many` (see the agent service's answer
+ * prompt), and a voice session has no citation tool at all.
  */
 export function rendersTimeline(profile: "interactive" | "answer" | "voice"): boolean {
   return profile === "interactive";

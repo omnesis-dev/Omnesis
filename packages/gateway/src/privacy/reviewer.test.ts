@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { BACKGROUND_RATE_LIMIT_PATIENCE, type AgentEvent, type ToolResult } from "@omnesis/core";
 import {
+  CITATION_REDUCTION_RELEASE_LABEL,
   MAX_PRIVACY_REVIEW_OUTPUT_BYTES,
   PrivacyReviewer,
   REDUCTION_RELEASE_LABEL,
@@ -208,7 +209,7 @@ describe("PrivacyReviewer", () => {
 
     expect(result.decision).toBe("allow");
     expect(result.review).toMatchObject({
-      recipeVersion: "privacy-reviewer-v4",
+      recipeVersion: "privacy-reviewer-v5",
       provider: "review-provider",
       model: "review-model",
       confidence: 0.97,
@@ -233,6 +234,7 @@ describe("PrivacyReviewer", () => {
       },
       reviewStage: "initial",
       candidateAnswer: input.candidateAnswer,
+      candidateCitations: [],
       watchDisclosure: null,
     });
   });
@@ -529,7 +531,7 @@ describe("PrivacyReviewer", () => {
       decision: "ask",
       audit: {
         fallbackReason:
-          "submit_privacy_review rejected its arguments (reducedAnswer: reduce requires reducedAnswer).",
+          "submit_privacy_review rejected its arguments (reducedAnswer: reduce requires reducedAnswer or citationReductions).",
       },
     });
   });
@@ -934,5 +936,140 @@ describe("the shipped default policy and other people's details", () => {
     });
 
     expect(result.decision).toBe("allow");
+  });
+});
+
+describe("PrivacyReviewer citations", () => {
+  const citations = [
+    {
+      documentId: "doc_budget",
+      sourceType: "gmail",
+      title: "Q4 budget review",
+      sourceUrl: "https://mail.example.com/message/budget",
+    },
+    {
+      documentId: "doc_offsite",
+      sourceType: "google-calendar",
+      title: "Team offsite",
+      appUrl: "calendar-example://event/offsite",
+    },
+  ];
+  const cited = { ...input, candidateCitations: citations };
+  const finding = {
+    category: "private_communication",
+    detailLevel: "exact",
+    subject: "user",
+    disposition: "reduce",
+    description: "A link identifies a private message.",
+  } as const;
+
+  it("shows the reviewer every citation, numbered for a reduction", async () => {
+    const backend = new JsonBackend(
+      JSON.stringify({
+        decision: "allow",
+        confidence: 0.97,
+        findings: [{ ...finding, disposition: "allow" }],
+        rationale: "Citations are allowed.",
+      }),
+    );
+
+    await new PrivacyReviewer({ resolveBackend: () => backend }).review(cited);
+
+    const envelope = JSON.parse(backend.turns[0]?.userMessage ?? "") as {
+      candidateCitations: unknown;
+    };
+    expect(envelope.candidateCitations).toEqual([
+      { citation: 1, ...citations[0] },
+      { citation: 2, ...citations[1] },
+    ]);
+    expect(backend.turns[0]?.systemPrompt).toContain("candidateCitations");
+  });
+
+  it("reduces citations alone, keeping the reviewed answer text", async () => {
+    const backend = new JsonBackend(
+      JSON.stringify({
+        decision: "reduce",
+        confidence: 0.95,
+        findings: [finding],
+        rationale: "Links are not shared under this policy.",
+        citationReductions: [
+          { citation: 1, withhold: ["sourceUrl"] },
+          { citation: 2, withhold: ["citation"] },
+        ],
+      }),
+    );
+
+    const result = await new PrivacyReviewer({ resolveBackend: () => backend }).review(cited);
+
+    expect(result.decision).toBe("reduce");
+    expect(result.reducedAnswer).toBe(cited.candidateAnswer);
+    expect(result.reducedCitations).toEqual([
+      { documentId: "doc_budget", sourceType: "gmail", title: "Q4 budget review" },
+    ]);
+    expect(result.reductions).toEqual([CITATION_REDUCTION_RELEASE_LABEL]);
+  });
+
+  it("sends back a reduction naming a citation that does not exist", async () => {
+    const backend = new JsonBackend([
+      JSON.stringify({
+        decision: "reduce",
+        confidence: 0.95,
+        findings: [finding],
+        rationale: "Links are not shared under this policy.",
+        citationReductions: [{ citation: 3, withhold: ["citation"] }],
+      }),
+      JSON.stringify({
+        decision: "reduce",
+        confidence: 0.95,
+        findings: [finding],
+        rationale: "Links are not shared under this policy.",
+        citationReductions: [{ citation: 2, withhold: ["appUrl"] }],
+      }),
+    ]);
+
+    const result = await new PrivacyReviewer({ resolveBackend: () => backend }).review(cited);
+
+    expect(backend.toolResults[0]).toMatchObject({ kind: "error", code: "privacy_review_invalid" });
+    expect(result.reducedCitations).toEqual([
+      citations[0],
+      { documentId: "doc_offsite", sourceType: "google-calendar", title: "Team offsite" },
+    ]);
+  });
+
+  it("refuses citation reductions outside a reduce decision", async () => {
+    const backend = new JsonBackend(
+      JSON.stringify({
+        decision: "allow",
+        confidence: 0.97,
+        findings: [{ ...finding, disposition: "allow" }],
+        rationale: "Allowed.",
+        citationReductions: [{ citation: 1, withhold: ["title"] }],
+      }),
+    );
+
+    const result = await new PrivacyReviewer({ resolveBackend: () => backend }).review(cited);
+
+    expect(result).toMatchObject({
+      decision: "ask",
+      audit: {
+        fallbackReason:
+          "submit_privacy_review rejected its arguments (citationReductions: citationReductions is only valid for reduce).",
+      },
+    });
+  });
+
+  it("applies the credential hard stop to citation links", async () => {
+    const result = await new PrivacyReviewer({ resolveBackend: () => null }).review({
+      ...input,
+      candidateCitations: [
+        {
+          documentId: "doc_share",
+          sourceType: "drive",
+          sourceUrl: "https://files.example.com/share?access_token=synthetic-secret-123",
+        },
+      ],
+    });
+
+    expect(result).toMatchObject({ decision: "deny", hardStop: true });
   });
 });

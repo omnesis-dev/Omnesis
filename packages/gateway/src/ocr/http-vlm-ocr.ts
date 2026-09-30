@@ -48,6 +48,43 @@ export interface HttpVlmOcrOptions {
   timeoutMs?: number;
 }
 
+/**
+ * The text of a reply given as a layout — a JSON array of regions, each with
+ * its `text`, in reading order — or the reply itself when it is not one.
+ *
+ * Document-layout models such as dots.ocr are trained to answer this way and
+ * sometimes do despite the prompt. Stored as it came, the index would hold
+ * the coordinates and category names instead of the text. Regions without
+ * text, such as pictures, contribute nothing. A layout cut off by the token
+ * cap is not valid JSON; the text of its complete regions is kept.
+ */
+export function layoutReplyText(reply: string): string {
+  if (!reply.startsWith("[")) return reply;
+  let regions: unknown;
+  try {
+    regions = JSON.parse(reply);
+  } catch {
+    return /^\[\s*\{\s*"bbox"/.test(reply) ? truncatedLayoutText(reply) : reply;
+  }
+  if (!Array.isArray(regions) || regions.length === 0) return reply;
+  const isRegion = (r: unknown): r is { text?: unknown } =>
+    typeof r === "object" && r !== null && !Array.isArray(r) && ("bbox" in r || "category" in r);
+  if (!regions.every(isRegion)) return reply;
+  return regions
+    .map((r) => (typeof r.text === "string" ? r.text.trim() : ""))
+    .filter((t) => t.length > 0)
+    .join("\n\n");
+}
+
+function truncatedLayoutText(reply: string): string {
+  const texts: string[] = [];
+  for (const match of reply.matchAll(/"text":\s*("(?:[^"\\]|\\.)*")/g)) {
+    const text = (JSON.parse(match[1]!) as string).trim();
+    if (text.length > 0) texts.push(text);
+  }
+  return texts.join("\n\n");
+}
+
 interface ChatCompletionResponse {
   choices?: Array<{ message?: { content?: string | null } }>;
 }
@@ -144,7 +181,7 @@ export class HttpVlmOcr implements OcrCapability {
     }
 
     const json = (await res.json()) as ChatCompletionResponse;
-    const text = (json.choices?.[0]?.message?.content ?? "").trim();
+    const text = layoutReplyText((json.choices?.[0]?.message?.content ?? "").trim());
     log.debug(
       `OCR via ${this.model}: ${image.byteLength} bytes (${mimeType}) → ${text.length} chars`,
     );

@@ -161,6 +161,7 @@ export {
 } from "./rate-limiter.js";
 
 export { htmlToMarkdown } from "./html-to-markdown.js";
+export { chooseMailBody, tidyMailBody, decodeMailText, charsetOfContentType } from "./mail-body.js";
 
 export {
   extractSchemaOrgDatesFromHtml,
@@ -320,7 +321,6 @@ export {
 export {
   formatCognitionRunEnvelope,
   parseCognitionRunEnvelope,
-  cognitionRunPromptBody,
   type CognitionRunEnvelope,
 } from "./cognition-envelope.js";
 
@@ -760,10 +760,12 @@ export {
   extractEmailsFromText,
   extractPhonesFromText,
   extractEmailsAndPhonesFromText,
+  mailPeopleMentions,
   deriveAuthor,
   cleanPersonName,
   countryNameToISO2,
 } from "./people-utils.js";
+export type { MailAddress } from "./people-utils.js";
 
 export {
   resolveAttachmentConfig,
@@ -778,6 +780,7 @@ export {
   DEFAULT_ATTACHMENT_TYPES,
   STT_AUDIO_TYPES,
   DEFAULT_MAX_TEXT_LENGTH,
+  isInlineDecorationImage,
 } from "./attachments.js";
 
 export type {
@@ -1057,6 +1060,11 @@ export {
   findManifestEntry,
   findManifestEntryByFilename,
   ANTHROPIC_CREDENTIALS_SPEC,
+  TYPESAFE_CREDENTIALS_SPEC,
+  canonicalJson,
+  decisionFingerprint,
+  formatDecisionCassetteEntry,
+  parseDecisionCassette,
   PROVIDER_PRESETS,
   getPreset,
   PROVIDER_BRANDS,
@@ -1104,6 +1112,12 @@ export type {
   OcrCapability,
   EntailCapability,
   EntailVerdict,
+  DecisionAnswer,
+  DecisionCapability,
+  DecisionQuestion,
+  DecisionRequest,
+  DecisionResult,
+  DecisionCassetteEntry,
   CapabilityRole,
   CapabilityMetadata,
   BackendType,
@@ -1119,6 +1133,7 @@ export type {
   ResolvedUnresolved,
   ResolvedReplay,
   ResolvedCodex,
+  ResolvedTypeSafe,
   BackendStatus,
   CodexBackendStatus,
   CodexLoginFlow,
@@ -1174,6 +1189,7 @@ export {
   HARDENED_UNIT_PATH,
   isServiceComponent,
   launchdLabel,
+  LAUNCHD_THROTTLE_INTERVAL_SECONDS,
   launchdLabelInstance,
   launchdPlistPath,
   systemdEscapeArg,

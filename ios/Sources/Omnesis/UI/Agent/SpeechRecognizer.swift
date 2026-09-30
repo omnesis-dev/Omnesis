@@ -34,6 +34,11 @@ final class SpeechRecognizer {
         state == .listening
     }
 
+    /// Also receives the microphone's buffers while listening, when set —
+    /// Tell Omnesis records a capture for gateway transcription this way.
+    /// Read when a session starts.
+    @ObservationIgnored var audioSink: DictationAudioSink?
+
     // MARK: - Private
 
     private let speechRecognizer = SFSpeechRecognizer(locale: Locale.current)
@@ -178,8 +183,10 @@ final class SpeechRecognizer {
 
         let inputNode = audioEngine.inputNode
         let recordingFormat = inputNode.outputFormat(forBus: 0)
+        let sink = audioSink
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { buffer, _ in
             request.append(buffer)
+            sink?.append(buffer)
         }
 
         audioEngine.prepare()

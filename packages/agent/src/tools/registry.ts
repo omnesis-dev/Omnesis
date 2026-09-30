@@ -151,13 +151,14 @@ export function findTool(tools: ReadonlyArray<ToolHandle>, name: string): ToolHa
 }
 
 /**
- * Tools whose only product is a Timeline / citation-sidebar entry. A surface
- * that renders no Timeline gains nothing from them, and citations are a large
- * share of an ordinary turn's tool calls (`annotate_many` batches a turn's
- * citations, but a Timeline-less surface still records for nothing). Dropping
- * them from such a surface is pure latency saved, at
- * the cost of that conversation having no citations if it is later reopened
- * in a client that does render a Timeline.
+ * Tools whose only product is a citation: a Timeline / citation-sidebar entry
+ * in chat, or the reviewed citation metadata an Answer releases. A surface
+ * that shows citations nowhere gains nothing from them, and citations are a
+ * large share of an ordinary turn's tool calls (`annotate_many` batches a
+ * turn's citations, but such a surface still records for nothing). Dropping
+ * them from it is pure latency saved, at the cost of that conversation having
+ * no citations if it is later reopened in a client that does render a
+ * Timeline.
  */
 export const CITATION_TOOL_NAMES: ReadonlySet<string> = new Set(["annotate_many", "cite_record"]);
 
@@ -203,6 +204,16 @@ export const GENERIC_SUBAGENT_TOOL_NAMES: ReadonlySet<string> = new Set([
  */
 export function selectNonCitationTools(tools: ReadonlyArray<ToolHandle>): ToolHandle[] {
   return tools.filter((t) => !CITATION_TOOL_NAMES.has(t.name));
+}
+
+/**
+ * Drop the record citation tool, for the read-only answer surface. An Answer
+ * releases its document citations as metadata beside the text; a record
+ * citation points at an analytics row, which carries no link a reader could
+ * open, so it would cost a tool call for nothing the caller receives.
+ */
+export function selectDocumentCitationTools(tools: ReadonlyArray<ToolHandle>): ToolHandle[] {
+  return tools.filter((t) => t.name !== "cite_record");
 }
 
 /**

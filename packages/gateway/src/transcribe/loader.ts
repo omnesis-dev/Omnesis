@@ -79,6 +79,7 @@ export async function loadTranscriberFromResolved(
       return null;
     case "disabled":
     case "unresolved":
+    case "typesafe":
       return null;
     default:
       return assertNever(resolved);

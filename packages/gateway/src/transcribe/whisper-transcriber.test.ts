@@ -266,6 +266,12 @@ describe("computeWhisperTimeoutMs", () => {
   test("ceils absurd durations at the hang-catcher maximum", () => {
     expect(computeWhisperTimeoutMs(100_000)).toBe(1_800_000);
   });
+
+  test("a caller's minimum raises the deadline, within the same ceiling", () => {
+    expect(computeWhisperTimeoutMs(13, 300_000)).toBe(300_000);
+    expect(computeWhisperTimeoutMs(300, 300_000)).toBe(990_000);
+    expect(computeWhisperTimeoutMs(13, 10 * 60 * 60_000)).toBe(1_800_000);
+  });
 });
 
 describe("WhisperTranscriber duration-scaled timeout", () => {

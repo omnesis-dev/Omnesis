@@ -8693,6 +8693,33 @@ describe("POST /sql", () => {
 });
 
 describe("GET /status", () => {
+  test("serves test labels only on authenticated status, never public health", async () => {
+    const names = [
+      "OMNESIS_TEST_INSTANCE",
+      "OMNESIS_TEST_SESSION",
+      "OMNESIS_TEST_PURPOSE",
+    ] as const;
+    const saved = names.map((name) => process.env[name]);
+    try {
+      delete process.env.OMNESIS_TEST_INSTANCE;
+      process.env.OMNESIS_TEST_SESSION = "Codex: navigation";
+      process.env.OMNESIS_TEST_PURPOSE = "Try navigation";
+      expect((await (await req("/status")).json()).testInstance).toBeNull();
+      process.env.OMNESIS_TEST_INSTANCE = "1";
+      expect((await (await req("/status")).json()).testInstance).toEqual({
+        session: "Codex: navigation",
+        purpose: "Try navigation",
+      });
+      expect((await app.request("/status")).status).toBe(401);
+      expect(await (await app.request("/health")).json()).not.toHaveProperty("testInstance");
+    } finally {
+      names.forEach((name, index) => {
+        if (saved[index] === undefined) delete process.env[name];
+        else process.env[name] = saved[index];
+      });
+    }
+  });
+
   test("returns gateway status with document counts", async () => {
     await req("/documents", {
       method: "POST",

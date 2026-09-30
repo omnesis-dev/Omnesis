@@ -398,6 +398,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "cognition.cancelScheduledForLoop", priority: "background" },
   { name: "cognition.engineStateSet", priority: "background" },
   { name: "cognition.recordCognitionSpend", priority: "background" },
+  { name: "cognition.recordDecision", priority: "background" },
   // Loop/brief/notes mutations issued by the Cognition Steward's tools mid-run —
   // background like the rest: agent runs never contend with ingest.
   { name: "cognition.openLoopCreate", priority: "background" },
@@ -543,6 +544,17 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "notes.appendEntry", priority: "user" },
   { name: "notes.updateEntry", priority: "user" },
   { name: "notes.deleteEntry", priority: "user" },
+  // A voice note's transcript, written by the background queue rather than a
+  // waiting person: a compare-and-set on one row.
+  { name: "notes.replaceEntryTextIf", priority: "background" },
+
+  // ── voice notes waiting on the transcriber ────────────────────────
+  // The enqueue rides the capture request a device is waiting on and carries
+  // the recording (up to the audio cap), so it gets a longer budget. The
+  // queue's own bookkeeping runs in the background.
+  { name: "voiceNotes.enqueue", priority: "user", latencyBudgetMs: 2_000 },
+  { name: "voiceNotes.reschedule", priority: "background" },
+  { name: "voiceNotes.delete", priority: "background" },
 
   // Pushed agent-conversation turns (experimental). Small single-row writes;
   // a plugin's live push must not sit behind a bulk backfill.

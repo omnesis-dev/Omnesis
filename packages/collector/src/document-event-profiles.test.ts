@@ -80,6 +80,18 @@ describe("published document-event profiles", () => {
     expect(paths(openclaw)).not.toEqual(paths(hermes));
   });
 
+  test("Maildir is told apart from the other mail sources by its fields", () => {
+    // Maildir, IMAP and Gmail all emit emails and attachments with the same
+    // person roles. What separates Maildir is the flags it reads from its
+    // file names; losing them would leave the compiler guessing between
+    // mail sources.
+    const paths = (sourceType: string): string[] =>
+      (bySourceType.get(sourceType)?.metadataFields ?? []).map((f) => f.path).sort();
+    expect(paths("maildir")).toContain("extra.flagged");
+    expect(paths("maildir")).not.toEqual(paths("imap"));
+    expect(paths("maildir")).not.toEqual(paths("gmail"));
+  });
+
   test.each(["openclaw", "hermes"])(
     "the %s source is not something a collector offers to add",
     (sourceType) => {

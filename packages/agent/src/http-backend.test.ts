@@ -6,7 +6,7 @@ import { z } from "zod";
 
 import { BACKGROUND_RATE_LIMIT_PATIENCE, type AgentEvent, type ToolResult } from "@omnesis/core";
 import { HttpChatBackend, convertHistoryToOpenAI, convertToolsToOpenAI } from "./http-backend.js";
-import type { ToolHandle } from "./backend.js";
+import type { LlmRequestTiming, ToolHandle } from "./backend.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
@@ -565,6 +565,47 @@ describe("HttpChatBackend", () => {
       outputTokens: 10,
       cacheReadTokens: 2500,
     });
+  });
+
+  it("reports each request's cached input to the llmProbe beside its fresh input", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      mockFetchResponse(
+        sseBody([
+          {
+            choices: [{ delta: { content: "hi" }, finish_reason: "stop" }],
+            usage: {
+              prompt_tokens: 3000,
+              completion_tokens: 10,
+              prompt_tokens_details: { cached_tokens: 2500 },
+            },
+          },
+          "[DONE]",
+        ]),
+      ),
+    );
+    globalThis.fetch = fetchMock;
+    const backend = new HttpChatBackend({ baseUrl: "http://localhost:8000", model: "test-model" });
+    const timings: LlmRequestTiming[] = [];
+    for await (const _ of backend.runTurn(
+      baseInput({
+        llmProbe: (timing) => timings.push(timing),
+        promptCacheKey: "omnesis-cognition:data",
+      }),
+    )) {
+      // drain
+    }
+    expect(timings).toHaveLength(1);
+    expect(timings[0]).toMatchObject({
+      inputTokens: 500,
+      cacheReadTokens: 2500,
+      outputTokens: 10,
+    });
+    // Unknown request fields can be refused by OpenAI-compatible servers, so
+    // the cache key never reaches this backend's wire.
+    for (const [, init] of fetchMock.mock.calls) {
+      const body = JSON.parse((init as { body: string }).body) as Record<string, unknown>;
+      expect(body).not.toHaveProperty("prompt_cache_key");
+    }
   });
 
   it("reads Moonshot/Kimi-style top-level cached_tokens", async () => {

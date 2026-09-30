@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { afterEach, describe, test, expect, vi } from "vitest";
-import { HttpVlmOcr, OCR_PROMPT } from "./http-vlm-ocr.js";
+import { HttpVlmOcr, OCR_PROMPT, layoutReplyText } from "./http-vlm-ocr.js";
 
 const enc = (s: string) => new TextEncoder().encode(s);
 
@@ -69,6 +69,33 @@ describe("HttpVlmOcr", () => {
     const { fetchFn } = capturingFetch("  spaced text \n");
     const ocr = new HttpVlmOcr({ url: "http://localhost:18088", model: "m", fetchFn });
     expect((await ocr.recognize(enc("i"), "image/png")).text).toBe("spaced text");
+  });
+
+  test("a reply given as a layout keeps only its text, in order", async () => {
+    const layout = JSON.stringify([
+      { bbox: [10, 4, 120, 18], category: "Section-header", text: "Quarterly review" },
+      { bbox: [0, 0, 360, 220], category: "Picture" },
+      { bbox: [10, 30, 300, 60], category: "Text", text: "Budget approved for Q4." },
+    ]);
+    const { fetchFn } = capturingFetch(layout);
+    const ocr = new HttpVlmOcr({ url: "http://localhost:18088", model: "m", fetchFn });
+    expect((await ocr.recognize(enc("i"), "image/png")).text).toBe(
+      "Quarterly review\n\nBudget approved for Q4.",
+    );
+  });
+
+  test("a layout cut off mid-region keeps the text of the regions before the cut", () => {
+    const cut =
+      '[{"bbox": [1, 2, 3, 4], "category": "Title", "text": "Invoice \\"final\\""}, ' +
+      '{"bbox": [1, 2, 3, 4], "category": "Text", "text": "Due in 30 days"}, {"bbox": [1, 2';
+    expect(layoutReplyText(cut)).toBe('Invoice "final"\n\nDue in 30 days');
+  });
+
+  test("text that only looks like JSON is kept as it came", () => {
+    expect(layoutReplyText("[1] See the footnote")).toBe("[1] See the footnote");
+    expect(layoutReplyText('["a", "b"]')).toBe('["a", "b"]');
+    expect(layoutReplyText("[]")).toBe("[]");
+    expect(layoutReplyText('[{"name": "not a region"}]')).toBe('[{"name": "not a region"}]');
   });
 
   test("throws on 502/503/504 (backend unavailable — transient, route surfaces it)", async () => {

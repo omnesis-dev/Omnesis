@@ -150,6 +150,10 @@ struct SettingsView: View {
 
                 notificationsSection
 
+                if store.experimentalEnabled, let dictation = store.dictationStatus, dictation.visible {
+                    VoiceSettingsSection(status: dictation)
+                }
+
                 phoneSetupSection
 
                 if store.appleHealthEnabled {

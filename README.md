@@ -14,7 +14,7 @@
   <a href="https://github.com/omnesis-dev/Omnesis/actions/workflows/full-validation.yml?query=branch%3Amain+event%3Apush"><img src="https://github.com/omnesis-dev/Omnesis/actions/workflows/ci-status.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL_v3-blue.svg" alt="License: AGPL v3"></a>
   <a href="https://x.com/Omnesisdev"><img src="https://img.shields.io/badge/X-%40Omnesisdev-black?logo=x&amp;logoColor=white" alt="Omnesis on X"></a>
-  <a href="https://discord.gg/4Y8pQHrVv"><img src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&amp;logoColor=white" alt="Join Omnesis on Discord"></a>
+  <a href="https://discord.gg/QeaNZGAs2V"><img src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&amp;logoColor=white" alt="Join Omnesis on Discord"></a>
 </p>
 
 <p align="center"><strong>Index, search, and reason about your entire digital life.<br>On machines you own, with the models you choose.</strong></p>
@@ -25,7 +25,7 @@ Omnesis also connects what it indexes. A **people graph** resolves every email a
 
 On top sits a built-in **agent**, in the web portal and the iOS and Android apps, that answers questions from your data with citations. It is sandboxed: every tool it holds only reads. Or bring **your own agent** — Claude, ChatGPT, Codex, [OpenClaw](https://openclaw.ai/), [Hermes](https://hermes-agent.nousresearch.com/) — over MCP. Each connection is approved by you and limited to the sources and permissions you choose, and answers can pass through a privacy reviewer before they leave.
 
-**Docs:** [omnesis.dev/docs](https://omnesis.dev/docs) · **See it in action:** [omnesis.dev/#demos](https://omnesis.dev/#demos)
+**Docs:** [omnesis.dev/docs](https://omnesis.dev/docs) · **Blog:** [omnesis.dev/blog](https://omnesis.dev/blog/) · **See it in action:** [omnesis.dev/#demos](https://omnesis.dev/#demos)
 
 <p align="center">
   <a href="https://omnesis.dev/#demos">
@@ -84,16 +84,16 @@ Every source is opt-in, and once added it syncs by itself. The full catalogue, w
 
 | Category                | Sources                                                                                                                                       |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Email & messaging       | Gmail, Outlook, IMAP, WhatsApp, iMessage                                                                                                      |
+| Email & messaging       | Gmail, Outlook, IMAP, Maildir (mbsync, offlineimap, Thunderbird), WhatsApp, iMessage                                                          |
 | Notes, tasks & meetings | Apple Notes, Reminders, Notion pages and databases, Obsidian, Things 3, Granola                                                               |
 | Coding agents & code    | Claude Code, Codex and Pi sessions, GitHub                                                                                                    |
 | Calendar & contacts     | Google, Apple and Outlook calendars; Google and Apple contacts                                                                                |
-| Files & web             | Google Drive, OneDrive, Chrome bookmarks, browser history, pages you read (browser extension)                                                 |
+| Files & web             | Google Drive, OneDrive, local files, Chrome bookmarks, browser history, pages you read (browser extension)                                    |
 | Phone & device          | Apple Health, Health Connect, photos and screenshots (on-device OCR), activity, location visits, call logs, voicemail, app usage, Screen Time |
-| Finance & fitness       | Bank accounts (Enable Banking, Lunch Flow), Coinbase, Strava                                                                                  |
+| Finance & fitness       | Bank accounts (Enable Banking, Lunch Flow, Plaid), Coinbase, Strava                                                                           |
 | Omnesis itself          | Your notes to Omnesis, agent conversations, OpenClaw and Hermes transcripts                                                                   |
 
-The Apple sources need a collector on a Mac. Phone sources are pushed by the iOS and Android apps. Two further sources, Plaid and Local Files, are [experimental](https://omnesis.dev/docs/sources#experimental-sources).
+The Apple sources need a collector on a Mac. Phone sources are pushed by the iOS and Android apps.
 
 ## Using Omnesis
 
@@ -179,7 +179,7 @@ Contributions are covered by a Contributor License Agreement — a copyright ass
 
 ## Community & Support
 
-- **Chat with the community** — [join the Omnesis Discord](https://discord.gg/4Y8pQHrVv)
+- **Chat with the community** — [join the Omnesis Discord](https://discord.gg/QeaNZGAs2V)
 - **Questions, ideas, and help** — [GitHub Discussions](https://github.com/omnesis-dev/Omnesis/discussions)
 - **Bugs & feature requests** — [open an issue](https://github.com/omnesis-dev/Omnesis/issues/new/choose)
 - See [`SUPPORT.md`](SUPPORT.md) for where to go for what.

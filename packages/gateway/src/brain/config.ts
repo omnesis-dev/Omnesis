@@ -19,6 +19,9 @@
 import { parseDuration } from "@omnesis/core";
 import { ONE_HOP_DEFAULT_FANOUT } from "../domain/DocumentGraphService.js";
 import type { BrainSettings } from "@omnesis/config";
+
+/** What the record check does with its verdicts, as the config spells it. */
+export type RecordCheckMode = NonNullable<NonNullable<BrainSettings["annotations"]>["recordCheck"]>;
 import type { CognitionBudgetSettings } from "./cognition/budget.js";
 
 /** Effective defaults, config-shaped (durations as human-readable strings). */
@@ -75,6 +78,9 @@ export const BRAIN_DEFAULTS = {
     enabled: true,
     basisCeilings: { quoted: 0.9, inferred: 0.7, synthesized: 0.55 },
     confidenceFloor: 0.25,
+    // Observe-only by default: verdicts are recorded, nothing is dropped.
+    // See #242 — decide enforce vs remove once there is shadow data.
+    recordCheck: "shadow",
   },
   // The re-verification sweep (annotation correctness, pull half). On, because
   // an annotation store nothing re-checks drifts away from its evidence
@@ -242,7 +248,11 @@ export interface ResolvedBrainSettings {
     push: boolean;
   };
   /** The durable doc-annotation layer. */
-  annotations: { enabled: boolean };
+  annotations: {
+    enabled: boolean;
+    /** The decision-model check on new background annotations; see `brain/record-check/`. */
+    recordCheck: RecordCheckMode;
+  };
   /** The re-verification sweep (annotation correctness, pull half). */
   reverification: {
     /** Producer runs only when true (checked live per rhythm tick). */
@@ -407,6 +417,7 @@ export function resolveBrainSettings(settings?: BrainSettings): ResolvedBrainSet
     },
     annotations: {
       enabled: settings?.annotations?.enabled ?? BRAIN_DEFAULTS.annotations.enabled,
+      recordCheck: settings?.annotations?.recordCheck ?? BRAIN_DEFAULTS.annotations.recordCheck,
     },
     annotationBasisCeilings: {
       quoted:

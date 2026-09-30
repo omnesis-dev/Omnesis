@@ -31,6 +31,12 @@ import { getOpenLoop, listOpenLoopLedger, listOpenLoops } from "./storage/open-l
 import { readCognitionNotes } from "./storage/notes.js";
 import { listRetiredLoops } from "./storage/retired-loops.js";
 import {
+  decisionVerdictsForRuns,
+  listDecisionsForRun,
+  type CognitionDecisionRecord,
+  type DecisionVerdict,
+} from "./storage/decisions.js";
+import {
   getCognitionRun,
   getCognitionRunsByIds,
   listCognitionRuns,
@@ -322,6 +328,16 @@ export class CognitionAdminQueryService {
 
   readNotes(): string {
     return readCognitionNotes(this.db);
+  }
+
+  /** The worth-gate verdict of each listed run that has one. */
+  decisionVerdicts(runIds: readonly string[]): Map<string, DecisionVerdict> {
+    return decisionVerdictsForRuns(this.db, runIds);
+  }
+
+  /** Every decision-model judgement made for one run, oldest first. */
+  decisionsForRun(runId: string): CognitionDecisionRecord[] {
+    return listDecisionsForRun(this.db, runId);
   }
 
   documentRefs(docIds: readonly string[]): CognitionAdminDocumentRef[] {

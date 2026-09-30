@@ -25,7 +25,6 @@ import {
 import { LoadMore } from "../../components/load-more.js";
 import { Loading } from "../../components/loading.js";
 import { Segmented } from "../../components/segmented.js";
-import { KindIcon } from "../../lib/device-kind-icon.js";
 import { navigate } from "../../lib/router.js";
 import { useCursorPage } from "../../lib/use-cursor-page.js";
 import {
@@ -38,7 +37,9 @@ import {
   privacyDateTimeAttribute,
   privacyDayKey,
 } from "../shared/privacy-vocabulary.js";
+import { PrivacyCitationList } from "./citations.js";
 import {
+  CallerMark,
   PRIVACY_FEED_FILTERS,
   PrivacyActivityLoadFailure,
   PrivacyActor,
@@ -47,7 +48,6 @@ import {
   PrivacyFindingChips,
   PrivacyReviewedUnder,
   exchangeDetailPath,
-  externalAgentDeviceKind,
   externalAgentNarrativeName,
   privacyApprovalDocument,
   privacyFailureDiagnostics,
@@ -92,7 +92,7 @@ export function PrivacyReviewCard({
         <${PrivacyActor}
           kind="external"
           label=${`${agentName} asked`}
-          deviceKind=${externalAgentDeviceKind(approval)}
+          caller=${approval}
         />
         <time datetime=${privacyDateTimeAttribute(approval.createdAt)}>
           ${formatPrivacyRelativeDate(approval.createdAt)}
@@ -112,6 +112,14 @@ export function PrivacyReviewCard({
               <strong>The exact answer is unavailable.</strong>
               <p>It cannot be shared from here. You can still choose not to share it.</p>
             </div>`}
+        ${candidateAvailable
+          ? html`<${PrivacyCitationList}
+              citations=${approval.candidateCitations}
+              baseline=${approval.candidateCitationBaseline ?? null}
+              heading="Citations that would be shared"
+              note="Share once releases these documents and every link printed here."
+            />`
+          : null}
       </div>
 
       <div class="privacy-review-reason">
@@ -159,7 +167,6 @@ function privacyFeedRowInstant(exchange) {
  */
 export function PrivacyFeedRow({ exchange }) {
   const agentName = externalAgentNarrativeName(exchange);
-  const deviceKind = externalAgentDeviceKind(exchange);
   const href = exchangeDetailPath(exchange.conversationId, exchange.taskId);
   const at = privacyFeedRowInstant(exchange);
   // The chip already says an answer failed; this says which failure it was, so
@@ -179,9 +186,7 @@ export function PrivacyFeedRow({ exchange }) {
   >
     <span class="privacy-feed-main">
       <span class="privacy-feed-question">
-        <strong class="privacy-feed-asker">${deviceKind
-          ? html`<${KindIcon} kind=${deviceKind} size=${14} class="privacy-feed-device" />`
-          : null}${agentName} asked</strong> <span class="privacy-feed-quote">“${exchange.question}”</span>
+        <strong class="privacy-feed-asker"><${CallerMark} caller=${exchange} size=${14} class="privacy-feed-device" />${agentName} asked</strong> <span class="privacy-feed-quote">“${exchange.question}”</span>
       </span>
       <span class="privacy-feed-meta">
         <${PrivacyFeedOutcome} exchange=${exchange} />
@@ -267,6 +272,10 @@ export function pinnedApprovalRecord(exchange) {
     workflowPurpose: exchange.workflow?.purpose ?? "",
     question: exchange.question,
     candidateAnswer: exchange.pendingCandidate,
+    candidateCitations: exchange.pendingCitations ?? [],
+    // What the agent drafted, so the card marks what the check withheld; only
+    // when the draft was recorded, since without it nothing can be compared.
+    candidateCitationBaseline: exchange.draftAnswer ? (exchange.draftCitations ?? []) : null,
     status: exchange.approval.status,
     createdAt: exchange.createdAt,
     expiresAt: exchange.approval.expiresAt,

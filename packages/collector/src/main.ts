@@ -54,7 +54,11 @@ import { createAttachmentExtractor } from "./attachments/index.js";
 import { createSourceWsHandlers } from "./source-ws-handlers.js";
 import { createCommandDispatch, type CommandDispatch } from "./ws-command-dispatch.js";
 import { createCliUpdater, registerSelfUpdateCommand } from "./self-update.js";
-import { handOverToServiceManager } from "./service-restart.js";
+import {
+  handOverToServiceManager,
+  relaunchOnFailedExit,
+  resolveRelaunchRequest,
+} from "./service-restart.js";
 import { isBaileysAuthEnoent } from "./baileys-enoent-filter.js";
 import { collectorDeviceName } from "./device-name.js";
 import { CollectorDoctor } from "./doctor.js";
@@ -95,6 +99,12 @@ const PROBE_TIMEOUT_MS = 15_000;
 
 /** Wallclock cap on draining in-flight syncs before the process stops. */
 const SHUTDOWN_DRAIN_MS = 30_000;
+
+/** The operator's OCR deadline, or undefined for the client's default. */
+function ocrTimeoutMsFromConfig(config: OmnesisConfig): number | undefined {
+  const seconds = config.inference?.ocr?.requestTimeoutSeconds;
+  return seconds === undefined ? undefined : seconds * 1000;
+}
 
 function ocrEnabledFromConfig(config: OmnesisConfig): boolean {
   const assignment = config.inference?.assignments?.ocr;
@@ -470,8 +480,14 @@ async function haltForRepair(input: {
  * module is the process entrypoint (see the guard at the bottom).
  */
 export async function main() {
-  // First, so a stall anywhere in the startup below is bounded too.
-  startEventLoopWatchdog();
+  // Under launchd, every way this process dies other than a clean exit leaves
+  // a request for launchd to start it again: launchd itself may not.
+  const relaunch = resolveRelaunchRequest();
+  void relaunch.then((request) => {
+    if (request) relaunchOnFailedExit(request);
+  });
+  // Before the rest of startup, so a stall anywhere in it is bounded too.
+  startEventLoopWatchdog({ relaunch });
   const configDir = process.env.OMNESIS_CONFIG_DIR ?? DEFAULT_CONFIG_DIR;
   const sourceCommit = runningSourceCommit(configDir, import.meta.url, COLLECTOR_STARTED_AT);
   await primeSecretFileKeyCache({ configDir }).catch((err) => {
@@ -584,6 +600,7 @@ export async function main() {
   };
   const unifiedConfig = await fetchConfigWithBackoff(configFetchContext);
   let ocrEnabled = ocrEnabledFromConfig(unifiedConfig);
+  gateway.setOcrRequestTimeoutMs(ocrTimeoutMsFromConfig(unifiedConfig));
   const config = toLegacyConfig(unifiedConfig);
 
   const engine = new SyncEngine(gateway, { ingestionContext });
@@ -704,6 +721,7 @@ export async function main() {
 
   const refreshConfig = createConfigRefreshQueue(configFetchContext, async (next) => {
     ocrEnabled = ocrEnabledFromConfig(next);
+    gateway.setOcrRequestTimeoutMs(ocrTimeoutMsFromConfig(next));
     await manager.handleConfigChange(toLegacyConfig(next));
   });
   wsClient.onEvent((event, payload) => {

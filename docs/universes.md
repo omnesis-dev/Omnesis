@@ -52,6 +52,7 @@ The synth provider packages cache the active universe on first call, so the env 
   "description": "One or two sentences describing this corpus.",
   "cast": "cast.json",
   "agentDemos": "agent-demos", // or null to disable the replay agent
+  "decisionCassettes": "decision-cassettes", // optional: recorded typed decisions
   "devices": [
     { "id": "macbook", "name": "Jamies-MacBook-Pro-collector", "kind": "collector" },
     { "id": "iphone", "name": "Jamies-iPhone", "kind": "ios" },
@@ -73,6 +74,7 @@ Fields:
 - **`description`** — one or two sentences for tooling output.
 - **`cast`** — path to the cast file, relative to the universe dir. Almost always `cast.json`.
 - **`agentDemos`** — path to the agent-demos dir, relative to the universe dir. Set to `null` (or omit) for universes that only care about ingest/search.
+- **`decisionCassettes`** — optional path to a directory of decision cassettes, relative to the universe dir: what the `decision` role answers from when it is assigned `replay` (see [Replaying typed decisions](#replaying-typed-decisions--decisioncassettes)). Omit it (or set `null`) when the universe records no decisions.
 - **`devices`** — the device roster: the synthetic devices this universe's documents come from. Each entry has a roster `id` (referenced by `sources[].device`), the `name` the device pairs under (unique per universe — device names are unique per gateway; a real collector pairs as `<hostname>-collector`, so name roster collectors the same way), and a `kind` — `collector`, or a kind that pushes sources itself (`ios`, `android`, `browser`); `cli`, `portal` and `agent` host nothing and are refused. Every seed source is attributed to one of these devices.
 - **`sources`** — the seed list. Each entry has a `descriptorId` (must match a synth source descriptor like `gmail`, `apple-notes`, `whatsapp-messages`), one or more `accountIds`, and the roster `device` that hosts them. A type a phone or the browser extension pushes itself (`apple-health`, `core-location-visits`, `android-call-log`, `web`, … — the `DEVICE_HOSTED_SOURCE_TYPES` map in `@omnesis/types`) must sit on a device of a kind that hosts it; every other type sits on a `collector`. An entry may also list `members` — further roster devices that host the same sources as members joining the owner named by `device`; every member obeys the same kind rule, and only a descriptor with a non-exclusive `multiDeviceModes` entry admits members. The demo gateway iterates this list when seeding via `/admin/sources/add` (onto its single running collector — the demo has no synthetic phones, so phone-attributed sources are polled there by their synth twins, and members are not represented); the E2E harness uses each `discover()` and syncs every source as the roster device the manifest attributes it to — on every host, for a source with members.
 - **`multiDeviceModes`** — optional; the multi-device mode (`handoff`, `replicated`, `partitioned`) each descriptor id is exercised under. Every harness device that hosts one of these descriptor ids announces its hosted override to the gateway, including phone and browser hosts, so the creating device can pin the source's mode the same way a real host does. A universe can therefore put a mode under test independently of whether the descriptor ships it. A descriptor without an entry is `exclusive`.
@@ -181,6 +183,62 @@ exchange can show: a release the reviewer allowed unchanged (`identical`), a
 reduction that edits lines (`diff`), and a wholesale rewrite too unlike its draft
 to describe as an edit (`no_diff`, reason `dissimilar`).
 
+## Replaying typed decisions — `decisionCassettes`
+
+The `decision` capability (the model the Brain's worth gate asks whether an
+email is worth an agent run) has a `replay` backend that answers from recorded
+**decision cassettes** with no network. A cassette is a `.jsonl` file, one entry
+per line:
+
+```jsonc
+{
+  "fp": "sha256:…", // fingerprint of the request's canonical JSON (state + questions only)
+  "request": { "state": { "subject": "…", "from": "…", "body": "…" }, "questions": { … } },
+  "response": { "model": "jev-1.13.0", "answers": { "worth_score": { "type": "score", "score": 0.4 } }, "inputTokens": 480 },
+}
+```
+
+The format, the canonical JSON and the fingerprint live in `@omnesis/core`'s
+`decision-cassette` module, which the gateway's replay backend, the brain bench's
+scripted decision server and the recorder all share. The model id is outside the
+fingerprint, so a cassette recorded against one pinned model version replays
+under another. A request with no entry is a miss: the replay backend throws, the
+worth gate fails open, and the ledger records the decision as `unavailable` with
+the fingerprint in its error.
+
+A universe that declares `decisionCassettes` makes it available to the E2E
+harness: `new SyntheticE2EHarness({ …, decisionBackend: "replay" })` assigns the
+`decision` role to `replay` and points `OMNESIS_DECISION_FIXTURE` at that
+directory (the brain bench forwards the same option). Outside the harness, the
+same two settings reproduce it on any gateway.
+
+The validator parses every `.jsonl` in the directory and fails when a line is
+malformed, when an entry's `fp` does not match its own request (a hand edit that
+desynchronised the two), or when two files record the same request.
+
+Two ways to produce cassettes:
+
+- **Generate them** from a fixture table. `loops-test-life/decision-cassettes/worth-gate.jsonl`
+  holds the worth gate's answers for the invented emails the `brain-decision-*` suites
+  push; `npx tsx scripts/write-worth-gate-cassettes.mjs` rebuilds it from
+  `packages/collector/src/e2e/brain-bench/worth-gate-mail.ts` with the gateway's own
+  rubric, and `worth-gate-mail.test.ts` fails until the committed file matches. Rerun it
+  after any change to the rubric or the table.
+- **Record them** from a gateway's decision ledger. Every decision the gateway asks for is
+  stored in `cognition_decisions` with its exact request and reply, so recording is a
+  transform over that table:
+
+  ```bash
+  scripts/record-decision-cassette.mjs --db <dev gateway sqlite> \
+      --out evals/universes/<name>/decision-cassettes/<file>.jsonl [--run <run id>]...
+  ```
+
+  It opens the database read-only, keeps only answered decisions that made their own call
+  (reused and unavailable ones carry no replayable answer), writes one line per distinct
+  request, and refuses a database under `~/.config/omnesis` and any entry carrying a
+  real-looking token (the same guard as the agent recorders). Record from a dev or synthetic
+  gateway only, and read the cassette before committing it.
+
 ## Recording replay-agent scenarios
 
 Replay-agent cassettes (`agent-demos/<name>.jsonl`) can be authored by hand, but the
@@ -279,3 +337,34 @@ Exit code is 0 with only warnings, non-zero on any `error`-severity issue. `npm 
 - **No procedural generation.** All fixtures are hand-authored JSON committed to the repo; there is no fixture generator.
 - **No versioning / compat checking.** There is no `version` field and no schema-mismatch detection. Universes are read at face value.
 - **No universe registry beyond the in-tree `evals/universes/` directory.** External universes work via path-mode but aren't discoverable as names.
+
+## Starting an isolated portal for feature review
+
+Use `scripts/dev-instance.sh start` to boot a separate gateway and collector,
+seeded from the default synthetic universe. Strongly prefer supplying both
+optional labels so parallel review portals identify the creating agent session
+and the feature under test in their sidebar:
+
+```sh
+scripts/dev-instance.sh start --session "Codex: search filters" --purpose "Review the filter controls"
+# Choose another corpus with --universe <name>, or omit seeding with --bare.
+# --real starts an isolated instance without synthetic data or seeded sources.
+```
+
+The same optional `--session` and `--purpose` arguments work with
+`scripts/synth-gateway.sh start`. Session labels accept up to 200 characters,
+purpose descriptions up to 1000; supplied values must be nonblank and contain
+no control characters. Labels are display text: use a recognizable session
+name and concise feature description, without credentials or private corpus
+content. An unlabeled test gateway still displays the test-instance card.
+Labels stay with the running gateway; stop and restart it to change them.
+
+The startup output and `scripts/dev-instance.sh info` include a `/portal/?token=…`
+one-click login link. When handing a test instance to the operator, provide
+that complete link so they can sign in without minting a token or pairing code.
+Treat the link as a credential and keep it out of committed files. The portal
+consumes the token and removes it from the browser URL after opening it.
+
+For parallel instances, choose distinct `OMNESIS_CONFIG_DIR` and
+`OMNESIS_GATEWAY_PORT` values. Use `scripts/dev-instance.sh stop` with those
+same values to retire your instance when review finishes.

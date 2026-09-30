@@ -25,6 +25,7 @@ import { ConfirmModal } from "../../components/confirm-modal.js";
 import { Loading } from "../../components/loading.js";
 import { navigate } from "../../lib/router.js";
 import { PrivacyDetailOverflow } from "./exchange-detail.js";
+import { CallerMark } from "./shared.js";
 import {
   errorMessage,
   formatPrivacyDate,
@@ -65,7 +66,7 @@ function DirectSessionRow({ session, onOpen }) {
     onClick=${() => onOpen(session)}
   >
     <span class="privacy-feed-main">
-      <span class="privacy-feed-question">${agentName}</span>
+      <span class="privacy-feed-question"><span class="privacy-feed-asker"><${CallerMark} caller=${session} size=${14} class="privacy-feed-device" />${agentName}</span></span>
       <span class="privacy-feed-meta">
         <span>${sessionLabel(session)}</span>
         <span>${session.eventCount} ${session.eventCount === 1 ? "call" : "calls"}</span>
@@ -225,7 +226,7 @@ function DirectSessionDetail({ session, onBack, onDeleted }) {
     <header class="privacy-detail-header">
       <div>
         <h1>${sessionLabel(session ?? {})}</h1>
-        <p>${agentName}${callCount}</p>
+        <p class="privacy-direct-caller">${session ? html`<${CallerMark} caller=${session} size=${14} />` : null}${agentName}${callCount}</p>
       </div>
       <${PrivacyDetailOverflow}
         itemLabel="Delete transcript"

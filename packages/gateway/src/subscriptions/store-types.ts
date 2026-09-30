@@ -512,6 +512,8 @@ export interface FinalizeSubscriptionFiringAnswerEgressMutation {
   ownerId: string;
   egressId: string;
   recordedAt: number;
+  /** Whether the caller declared it accepts Answer citations. */
+  includeCitations?: boolean;
 }
 
 export type FinalizeSubscriptionFiringAnswerEgressMutationResult =

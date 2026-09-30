@@ -256,6 +256,23 @@ export interface ResolvedCodex extends ResolvedBase {
   reason?: string;
 }
 
+export interface ResolvedTypeSafe extends ResolvedBase {
+  kind: "typesafe";
+  /** TypeSafe model id, from a `"typesafe/<model>"` assignment (e.g. `jev-1.13.0`). */
+  model: string;
+  /** System One endpoint (the public API unless `inference.typesafe.url` overrides it). */
+  url: string;
+  /**
+   * Whether config permits sending data to this cloud backend. TypeSafe is
+   * unconditionally off-host, so `inference.allowRemoteInference` is the gate.
+   */
+  allowRemoteInference: boolean;
+  /** Whether an API key is configured (the value is never exposed). */
+  hasApiKey: boolean;
+  available: boolean;
+  reason?: string;
+}
+
 export type ResolvedAssignment =
   | ResolvedLocal
   | ResolvedHttp
@@ -263,7 +280,8 @@ export type ResolvedAssignment =
   | ResolvedDisabled
   | ResolvedUnresolved
   | ResolvedReplay
-  | ResolvedCodex;
+  | ResolvedCodex
+  | ResolvedTypeSafe;
 
 // ── Backend status (for portal/CLI) ──────────────────────────────────
 

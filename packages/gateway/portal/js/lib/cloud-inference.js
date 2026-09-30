@@ -14,6 +14,7 @@ export function remoteAssignmentConsent(overview, backendKey, modelName) {
   if (overview.inference.allowRemoteInference === true) return null;
   if (backendKey === "codex") return { modelName, providerLabel: "OpenAI" };
   if (backendKey === "anthropic") return { modelName, providerLabel: "Anthropic" };
+  if (backendKey === "typesafe") return { modelName, providerLabel: "TypeSafe" };
   const backend = overview.inference.backends[backendKey];
   if (backend?.url && isLoopbackInferenceUrl(backend.url)) return null;
   return { modelName, providerLabel: backend?.url ?? backendKey };

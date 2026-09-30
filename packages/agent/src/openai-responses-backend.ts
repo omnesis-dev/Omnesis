@@ -43,7 +43,7 @@ import {
 } from "@omnesis/core";
 
 import { zodToJsonSchema } from "./zod-to-json-schema.js";
-import { modelReasoningRequestFields } from "./model-reasoning-wire.js";
+import { isOpenAIApiEndpoint, modelReasoningRequestFields } from "./model-reasoning-wire.js";
 import {
   childEventHooks,
   DEFAULT_MAX_TOOL_ITERATIONS,
@@ -162,11 +162,14 @@ export class OpenAIResponsesBackend implements ChatBackend {
   private readonly modelBehavior?: ModelBehaviorValues;
   private readonly extendedOutputTimeoutMs: number;
   private readonly contextSafetyMarginTokens: number;
+  /** Whether the endpoint is OpenAI's own API, which accepts `prompt_cache_key`. */
+  private readonly sendsPromptCacheKey: boolean;
   private inputTokenCounting: "unknown" | "supported" | "unsupported" = "unknown";
   private observedExtendedOutput = false;
 
   constructor(opts: OpenAIResponsesBackendOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
+    this.sendsPromptCacheKey = isOpenAIApiEndpoint(this.baseUrl);
     this.apiPathPrefix = normalizeApiPathPrefix(opts.apiPathPrefix);
     this.model = opts.model;
     this.maxToolIterations = opts.maxToolIterations ?? DEFAULT_MAX_TOOL_ITERATIONS;
@@ -264,6 +267,13 @@ export class OpenAIResponsesBackend implements ChatBackend {
       };
       if (tools.length > 0) body.tools = tools;
       if (previousResponseId) body.previous_response_id = previousResponseId;
+      // Routes every turn of one workflow to the same prompt cache, so the
+      // prefix they share (instructions, tools, static rules) is reused. Sent
+      // to OpenAI's own API only: a compatible server that validates its
+      // request fields strictly could refuse an unknown one.
+      if (input.promptCacheKey && this.sendsPromptCacheKey) {
+        body.prompt_cache_key = input.promptCacheKey;
+      }
       Object.assign(body, selectedFields);
 
       const countedInput = await this.countInputTokens(body, signal);
@@ -628,6 +638,7 @@ export class OpenAIResponsesBackend implements ChatBackend {
       llmReq.end({
         inputTokens: Math.max(0, iterationUsage.input - iterationUsage.cachedInput),
         outputTokens: iterationUsage.output,
+        cacheReadTokens: iterationUsage.cachedInput,
       });
 
       if (signal?.aborted) {
@@ -849,6 +860,8 @@ export class OpenAIResponsesBackend implements ChatBackend {
     const countBody = { ...createBody };
     delete countBody.stream;
     delete countBody.max_output_tokens;
+    // A routing hint for generation, not part of the input being counted.
+    delete countBody.prompt_cache_key;
 
     let response: Response;
     try {

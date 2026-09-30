@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { createLogger, type OcrFn, type AudioTranscribeFn } from "@omnesis/core";
+import {
+  charsetOfContentType,
+  createLogger,
+  type OcrFn,
+  type AudioTranscribeFn,
+} from "@omnesis/core";
 import { extractPdfText } from "./extract-pdf.js";
 import { extractTextContent } from "./extract-text.js";
 import { extractOfficeText } from "./extract-office.js";
@@ -142,7 +147,7 @@ export function createAttachmentExtractor(deps: AttachmentExtractorDeps = {}) {
       case "text/markdown":
       case "application/json":
       case "text/calendar":
-        return extractTextContent(data, base, opts);
+        return extractTextContent(data, base, opts, charsetOfContentType(mimeType));
 
       // Email messages
       case "message/rfc822":

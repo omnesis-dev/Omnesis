@@ -6,7 +6,8 @@
 //
 //   • ModelConfigModal   — "Choose a <capability> model": a grid of backend
 //                          options (Local, presets, custom HTTP backends,
-//                          Anthropic, + a custom backend), each leading to the
+//                          Anthropic, + a custom backend — or TypeSafe alone
+//                          for the Decision model), each leading to the
 //                          model selection (configuring the backend inline
 //                          first when it isn't set up yet).
 //   • AddBackendModal    — "Add a backend": the same grid in configure-only
@@ -17,11 +18,13 @@
 
 import { html } from "htm/preact";
 import { useEffect, useState } from "preact/hooks";
-import { getRecentModels } from "../api.js";
+import { getModelCredentialsStatus, getRecentModels } from "../api.js";
 import { CloudInferenceConsentModal } from "../components/cloud-inference-consent.js";
+import { CopyIconButton } from "../components/copy-button.js";
 import { isLoopbackInferenceUrl } from "../lib/cloud-inference.js";
 import { Modal } from "../components/modal.js";
 import { ProviderIcon } from "../components/provider-icon.js";
+import { CapabilityIcon } from "../components/capability-icon.js";
 import { filterBackendModels } from "../lib/backend-model-filter.js";
 import { fuzzyMatchFields } from "../lib/fuzzy-match.js";
 import {
@@ -30,10 +33,12 @@ import {
   CAPABILITY_TO_CATALOG,
   isAnthropicConfigured,
   catalogProviderForBackend,
+  TYPESAFE_DEFAULT_MODEL,
+  isDecisionRole,
 } from "../lib/backend-options.js";
 import { formatBytes, fit } from "../lib/model-format.js";
 
-const RESERVED_BACKEND_NAMES = ["local", "anthropic", "codex", "replay"];
+const RESERVED_BACKEND_NAMES = ["local", "anthropic", "codex", "replay", "typesafe"];
 
 const plural = (n, noun) => `${n} ${noun}${n !== 1 ? "s" : ""}`;
 
@@ -189,6 +194,9 @@ function BackendOptionCard({ providerId, fallbackGlyph, title, subtitle, muted, 
 
 // A neutral "stack" glyph for the Local-model card (no provider brand).
 const LOCAL_GLYPH = html`<svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="6" rx="1" /><rect x="3" y="14" width="18" height="6" rx="1" /></svg>`;
+// TypeSafe has no served provider logo; its card wears the Decision model's
+// own capability glyph.
+const TYPESAFE_GLYPH = html`<${CapabilityIcon} icon="scale" size=${22} />`;
 // A "plus" glyph for the add-custom card.
 const ADD_GLYPH = html`<svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>`;
 
@@ -249,6 +257,8 @@ function renderOption(opt, mode, onSelect) {
         muted=${!opt.configured && mode === "pick"}
         onClick=${pick}
       />`;
+    case "typesafe":
+      return html`<${BackendOptionCard} key="typesafe" fallbackGlyph=${TYPESAFE_GLYPH} title="TypeSafe" subtitle="Scores documents before a run" onClick=${pick} />`;
     case "add-custom":
       return html`<${BackendOptionCard} key="add-custom" fallbackGlyph=${ADD_GLYPH} title="Custom HTTP backend" subtitle="Any OpenAI-compatible server" onClick=${pick} />`;
     default:
@@ -574,7 +584,12 @@ function CodexModelList({ overview, role, loginFlow, refreshing, runtimeUpdate, 
                   ${loginFlow.verificationUri
                     ? html`<a href=${loginFlow.verificationUri} target="_blank" rel="noreferrer">${loginFlow.verificationUri}</a>`
                     : html`<span>Waiting for Codex to return the login link…</span>`}
-                  <span><strong>${loginFlow.userCode ?? "Code pending…"}</strong></span>
+                  <span class="codex-login-code">
+                    <strong>${loginFlow.userCode ?? "Code pending…"}</strong>
+                    ${loginFlow.userCode
+                      ? html`<${CopyIconButton} text=${loginFlow.userCode} class="codex-login-copy" title="Copy login code" />`
+                      : null}
+                  </span>
                   ${loginFlow.expiresAt ? html`<span>expires ${new Date(loginFlow.expiresAt).toLocaleTimeString()}</span>` : null}
                 </div>
               </div>
@@ -608,6 +623,96 @@ function CodexModelList({ overview, role, loginFlow, refreshing, runtimeUpdate, 
               ${filtered.length === 0 ? html`<div class="picker-note">No matching Codex models.</div>` : null}
             `
           : null}
+      </div>
+    </div>
+  `;
+}
+
+// ── TypeSafe (decision models) ──────────────────────────────────────────────
+
+/**
+ * Whether the gateway holds a TypeSafe key: the stored credential, or — when
+ * the capability is already on TypeSafe — the resolved assignment, which also
+ * sees a key supplied through the environment.
+ */
+export function typesafeKeyConfigured(credentialEntry, assignment) {
+  return (
+    credentialEntry?.configured === true ||
+    credentialEntry?.environment === true ||
+    (assignment?.kind === "typesafe" && assignment.hasApiKey === true)
+  );
+}
+
+/** The model id the TypeSafe pane starts from: the current one, else the default. */
+export function typesafeInitialModel(assignment) {
+  return assignment?.kind === "typesafe" && assignment.model ? assignment.model : TYPESAFE_DEFAULT_MODEL;
+}
+
+function TypeSafeModelPane({ role, overview, onPick, onConfigureKey, onBack }) {
+  const assignment = overview.inference?.assignments?.[role];
+  const [model, setModel] = useState(() => typesafeInitialModel(assignment));
+  const [credential, setCredential] = useState(undefined); // undefined = loading
+  useEffect(() => {
+    let cancelled = false;
+    getModelCredentialsStatus()
+      .then((status) => {
+        if (!cancelled) setCredential((status?.items ?? []).find((e) => e.fileKey === "typesafe") ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setCredential(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const keyConfigured = typesafeKeyConfigured(credential, assignment);
+  const trimmed = model.trim();
+  const current = assignment?.kind === "typesafe" ? assignment.model : null;
+  const use = () => {
+    if (trimmed) onPick(trimmed);
+  };
+  return html`
+    <div class="picker-pane">
+      <div class="picker-pane-head">
+        <button type="button" class="btn-back" onClick=${onBack}>← Back</button>
+        <div class="picker-pane-title">${TYPESAFE_GLYPH} TypeSafe</div>
+      </div>
+      <div class="picker-scroll">
+        <div class="picker-row">
+          <div class="picker-row-info">
+            <div class="picker-row-name">API key</div>
+            <div class="picker-row-meta">
+              <span>${credential === undefined
+                ? "Checking…"
+                : keyConfigured
+                ? "Configured"
+                : "Not configured — you'll be asked for it when you use a model"}</span>
+            </div>
+          </div>
+          ${credential
+            ? html`<button class="btn-tiny" onClick=${() => onConfigureKey(credential)}>${keyConfigured ? "Replace key" : "Configure key"}</button>`
+            : null}
+        </div>
+        <label class="field">
+          <span class="field-label">Model</span>
+          <span class="picker-custom">
+            <input
+              class="picker-custom-input"
+              type="text"
+              aria-label="TypeSafe model id"
+              value=${model}
+              onInput=${(e) => setModel(e.target.value)}
+              onKeyDown=${(e) => { if (e.key === "Enter") use(); }}
+            />
+            <button class="btn-tiny" disabled=${!trimmed || credential === undefined} onClick=${use}>
+              ${current === trimmed ? "Current" : "Use"}
+            </button>
+          </span>
+        </label>
+        <div class="picker-note">
+          Cloud · each scored document's subject, sender and opening text are sent to TypeSafe.
+          ${overview.inference?.allowRemoteInference === true ? null : " You'll be asked to allow cloud inference first."}
+        </div>
       </div>
     </div>
   `;
@@ -703,15 +808,17 @@ function RecentModels({ role, onPick }) {
 
 // ── Choose-model flow ───────────────────────────────────────────────────────
 
-export function ModelConfigModal({ role, capTitle, overview, sys, codexLoginFlow, codexRefreshing, codexRuntimeUpdate, onClose, onAddHttp, onPickHttp, onPickLocal, onPickAnthropic, onPickCodex, onPickRecent, onStartCodexLogin, onCancelCodexLogin, onRefreshCodex, onCodexRuntimeUpdate, onCancelCodexRuntimeUpdate, onDismissCodexRuntimeResult, onInstall, onUninstall, onCancelDownload }) {
-  // step.name: "grid" | "http" | "select" | "local" | "anthropic" | "codex"
-  const [step, setStep] = useState({ name: "grid" });
+export function ModelConfigModal({ role, capTitle, overview, sys, codexLoginFlow, codexRefreshing, codexRuntimeUpdate, onClose, onAddHttp, onPickHttp, onPickLocal, onPickAnthropic, onPickCodex, onPickTypeSafe, onConfigureTypeSafeKey, onPickRecent, onStartCodexLogin, onCancelCodexLogin, onRefreshCodex, onCodexRuntimeUpdate, onCancelCodexRuntimeUpdate, onDismissCodexRuntimeResult, onInstall, onUninstall, onCancelDownload }) {
+  // step.name: "grid" | "http" | "select" | "local" | "anthropic" | "codex" | "typesafe"
+  // A decision role has one backend, so its picker opens on it directly.
+  const [step, setStep] = useState(() => (isDecisionRole(role) ? { name: "typesafe" } : { name: "grid" }));
   const toGrid = () => setStep({ name: "grid" });
 
   const onSelect = (opt) => {
     if (opt.kind === "local") setStep({ name: "local" });
     else if (opt.kind === "anthropic") setStep({ name: "anthropic" });
     else if (opt.kind === "codex") setStep({ name: "codex" });
+    else if (opt.kind === "typesafe") setStep({ name: "typesafe" });
     else if (opt.kind === "add-custom") setStep({ name: "http", preset: null });
     else if (opt.kind === "custom") setStep({ name: "select", backendKey: opt.id });
     else if (opt.kind === "preset") setStep(opt.configured ? { name: "select", backendKey: opt.id } : { name: "http", preset: opt.preset });
@@ -732,6 +839,8 @@ export function ModelConfigModal({ role, capTitle, overview, sys, codexLoginFlow
     body = html`<${LocalModelList} role=${role} overview=${overview} sys=${sys} onInstall=${onInstall} onUse=${onPickLocal} onUninstall=${onUninstall} onCancelDownload=${onCancelDownload} onBack=${toGrid} />`;
   } else if (step.name === "anthropic") {
     body = html`<${AnthropicModelList} role=${role} overview=${overview} onPick=${onPickAnthropic} onBack=${toGrid} />`;
+  } else if (step.name === "typesafe") {
+    body = html`<${TypeSafeModelPane} role=${role} overview=${overview} onPick=${onPickTypeSafe} onConfigureKey=${onConfigureTypeSafeKey} onBack=${toGrid} />`;
   } else if (step.name === "codex") {
     body = html`<${CodexModelList}
       overview=${overview}
@@ -751,7 +860,7 @@ export function ModelConfigModal({ role, capTitle, overview, sys, codexLoginFlow
   }
 
   const size = step.name === "select" || step.name === "codex" ? "lg" : "md";
-  return html`<${Modal} open onClose=${onClose} title=${`Choose a ${capTitle} model`} size=${size}>${body}<//>`;
+  return html`<${Modal} open onClose=${onClose} title=${/\bmodel$/i.test(capTitle) ? `Choose a ${capTitle}` : `Choose a ${capTitle} model`} size=${size}>${body}<//>`;
 }
 
 // ── Add-backend flow (configure only) ───────────────────────────────────────

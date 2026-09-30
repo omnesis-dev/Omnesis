@@ -289,6 +289,27 @@ a:hover { text-decoration: underline; }
 .sidebar-brand-name { font-size: 14px; font-weight: 700; letter-spacing: 1px; color: var(--text-primary); }
 .sidebar-brand-sub { font-size: 10px; color: var(--text-muted); letter-spacing: 0.5px; margin-top: 2px; text-transform: uppercase; }
 
+.sidebar-test-instance {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+  min-width: 0;
+  margin: 12px 10px 0;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.sidebar-test-instance strong { color: var(--text-primary); }
+.sidebar-test-instance > div { display: flex; flex-direction: column; gap: 2px; }
+.sidebar-test-label { color: var(--text-muted); font-size: 10px; }
+
 .sidebar-nav {
   padding: 12px 10px 8px;
   display: flex;
@@ -7682,6 +7703,120 @@ button.privacy-direct-row {
   padding-left: 18px;
 }
 
+/* The documents an answer cites. Each URL is printed in full, in mono, and may
+   wrap anywhere: the operator is reading exactly what is disclosed, so a long
+   link is never truncated to fit. A citation the check withheld keeps its row,
+   dimmed and chipped, so the list still accounts for the whole draft. */
+.privacy-citations {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0 6px;
+}
+
+.privacy-citations-heading {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+}
+
+.privacy-citation-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+}
+
+.privacy-citation {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.privacy-citation + .privacy-citation {
+  border-top: 1px solid var(--border-light);
+}
+
+.privacy-citation--withheld {
+  color: var(--text-muted);
+}
+
+.privacy-citation-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  font-size: 13px;
+}
+
+.privacy-citation-title {
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.privacy-citation--withheld .privacy-citation-title {
+  color: var(--text-muted);
+}
+
+.privacy-citation-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.privacy-citation-links {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+}
+
+.privacy-citation-link {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.privacy-citation-link dt {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.privacy-citation-link dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.privacy-citation-url {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+a.privacy-citation-url {
+  color: var(--accent);
+}
+
+.privacy-citation-withheld-tag {
+  font-size: 11px;
+  font-weight: 600;
+  font-style: italic;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--privacy-kept);
+}
+
 /* What the caller said about itself, under a rule that separates its claims
    from the question above them. */
 .privacy-card-facts {
@@ -13405,6 +13540,19 @@ div.source-activity-popover-link:hover {
 .codex-runtime-result--bad { border-color: rgba(248, 81, 73, 0.32); background: rgba(248, 81, 73, 0.07); }
 .codex-runtime-assignment { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .codex-runtime-actions { display: flex; justify-content: flex-end; }
+.codex-login-code { display: inline-flex; align-items: center; gap: 6px; }
+.codex-login-copy {
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.codex-login-copy svg { width: 1em; height: 1em; }
+.codex-login-copy:hover { color: var(--text-primary); }
 .codex-update-confirm p { margin: 0 0 10px; }
 .codex-update-confirm p:last-child { margin-bottom: 0; }
 .codex-model-target {
@@ -18340,6 +18488,116 @@ a.agent-loop-row.agent-ephemeral-result-link:hover .agent-loop-state {
   color: var(--text-primary);
 }
 
+/* Cognition runs — the decision model's worth-gate judgements. */
+.cognition-gate-marker {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.cognition-gate-marker--warn {
+  color: var(--warning);
+}
+.cognition-decision {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.cognition-decision-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.cognition-decision-score {
+  font-variant-numeric: tabular-nums;
+}
+.cognition-decision-sentence {
+  margin: 6px 0 4px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.cognition-decision-record {
+  color: var(--text-primary);
+}
+.cognition-decision-details {
+  margin-top: 8px;
+}
+.cognition-decision-details > summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.cognition-decision-sub {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.cognition-decision-state {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+.cognition-decision-state-key {
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+}
+.cognition-decision-state-value {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow: auto;
+}
+.cognition-decision-pre {
+  white-space: pre-wrap;
+  font-size: 12px;
+  margin: 0;
+}
+.cognition-decision-instructions {
+  font-size: 13px;
+}
+.cognition-decision-criteria {
+  margin: 4px 0 0;
+  padding-left: 22px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.cognition-decision-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cognition-decision-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px 40px;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+.cognition-decision-bar-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+}
+.cognition-decision-bar-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-tertiary);
+  overflow: hidden;
+}
+.cognition-decision-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.cognition-decision-bar-pct {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ── Tell Omnesis (quick capture) ─────────────────────────────────────────── */
 /* The typed sibling of the mobile capture screens: one composer, one button.
    Page layout stays on `.app-main`; the column only bounds the composer. */
@@ -18723,3 +18981,7 @@ a.agent-loop-row.agent-ephemeral-result-link:hover .agent-loop-state {
 
 .privacy-feed-asker { display: inline-flex; align-items: center; gap: 4px; }
 .privacy-feed-device { flex: none; color: var(--text-muted); }
+/* An agent's logo is its brand mark, drawn at full strength rather than at the
+   muted weight of the generic actor glyphs. */
+.privacy-caller-logo { display: inline-flex; flex: none; }
+.privacy-direct-caller { display: flex; align-items: center; gap: 5px; }

@@ -24,7 +24,10 @@ import { randomUUID } from "node:crypto";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { createLogger, type AgentEvent, type ToolResult } from "@omnesis/core";
 import { PlanStore, selectSubagentTools } from "@omnesis/agent";
-import { createDatabase } from "../../db.js";
+import { ProviderId, SourceId } from "@omnesis/types";
+import { createDatabase, upsertDocuments } from "../../db.js";
+import { writeCognitionNotes } from "../storage/notes.js";
+import { createPersonAnnotation } from "../storage/person-annotations.js";
 import { directWriteGate } from "../../write-gate.js";
 import { CognitionRunDriver } from "../run-driver.js";
 import { FsCognitionTranscriptStore } from "../transcripts.js";
@@ -32,12 +35,16 @@ import { getOpenLoop, listOpenLoopLedger, listOpenLoops } from "../storage/open-
 import { getBrief, listBriefs } from "../storage/briefs.js";
 import { claimDueCognitionRuns } from "../storage/run-queue.js";
 import { dismissBriefAndEnqueueFeedback } from "../feedback.js";
+import { resolveBrainSettings } from "../config.js";
+import { RecordCheck } from "../record-check/check.js";
 import { buildCognitionRunPrompt } from "./prompts.js";
 import { createOpenLoopMirror } from "./mirror.js";
 import {
   buildCognitionToolset,
   buildCognitionInteractiveOwnTools,
+  createCognitionRuntime,
   COGNITION_INTERACTIVE_TOOLS,
+  type CognitionRuntimeDeps,
   type CognitionToolsetDeps,
 } from "./runtime.js";
 import { buildCognitionOwnTools, COGNITION_MUTATING_TOOL_NAMES } from "./tools.js";
@@ -179,6 +186,12 @@ describe("assembled Cognition Steward through the real driver", () => {
   let dir: string;
   let transcripts: FsCognitionTranscriptStore;
   let toolsetDeps: CognitionToolsetDeps;
+  const promptDeps = () => ({
+    db,
+    clock: () => NOW,
+    cfg: resolveBrainSettings(),
+    memory: { notes: "", selfMemory: "" },
+  });
 
   beforeEach(() => {
     path = testDbPath();
@@ -215,7 +228,7 @@ describe("assembled Cognition Steward through the real driver", () => {
       log,
       clock: () => NOW,
       buildTools: (run) => buildCognitionToolset(toolsetDeps, run),
-      promptBuilder: (run) => buildCognitionRunPrompt(run, { db, clock: () => NOW }),
+      promptBuilder: (run) => buildCognitionRunPrompt(run, promptDeps()),
     });
   }
 
@@ -261,6 +274,78 @@ describe("assembled Cognition Steward through the real driver", () => {
     expect(db.prepare("SELECT prior_annotation_id FROM cognition_consumption_edges").all()).toEqual(
       [{ prior_annotation_id: annotationId }],
     );
+  });
+
+  test("the record check is bound to background data and bootstrap runs only, never to interactive memory", async () => {
+    const evidence = "The venue requires a response before Friday.";
+    db.prepare(
+      `INSERT INTO documents (id, provider_id, source_id, external_id, title, content, content_hash,
+         source_created_at, source_updated_at, ingested_at, updated_at)
+       VALUES ('doc_evidence', 'test', 'test', 'evidence', 'Venue request', ?, ?, ?, ?, ?, ?)`,
+    ).run(evidence, evidence, NOW, NOW, NOW, NOW);
+    const asked: string[] = [];
+    const writeGate = directWriteGate(db);
+    toolsetDeps.getAnnotationSettings = () => ({
+      enabled: true,
+      confidenceCeiling: 0.9,
+      basisCeilings: { quoted: 0.9, inferred: 0.7, synthesized: 0.55 },
+      confidenceFloor: 0.25,
+    });
+    toolsetDeps.recordCheck = new RecordCheck({
+      getDecision: () => ({
+        modelId: "jev-test",
+        decide: async (request) => {
+          asked.push((request.state as { record: string }).record);
+          return { model: "jev-test", answers: { belongs: { type: "score", score: 0.1 } } };
+        },
+        dispose() {},
+      }),
+      getMode: () => "enforce",
+      recordDecision: (record) => writeGate.recordCognitionDecision(record),
+      recordSpend: async () => {},
+      clock: () => NOW,
+      idGen: () => randomUUID(),
+      log,
+    });
+    const annotate = (tools: ToolHandle[], claimType: string) =>
+      tools
+        .find((tool) => tool.name === "annotate_durable")!
+        .invoke(
+          {
+            docId: "doc_evidence",
+            claimType,
+            claimText: `${claimType}: ${evidence}`,
+            evidenceDocId: "doc_evidence",
+            evidenceQuote: evidence,
+            confidence: 0.8,
+            claimBasis: "quoted",
+          },
+          { sessionId: "test", messageId: "message" },
+        );
+    const resultType = (r: ToolResult) => (r.kind === "structured" ? r.resultType : r.kind);
+
+    const bootstrap = claimed({
+      id: "run_b",
+      kind: "bootstrap",
+      payload: { docId: "doc_evidence", datumAt: NOW },
+    });
+    expect(
+      resultType(await annotate(buildCognitionToolset(toolsetDeps, bootstrap), "deadline")),
+    ).toBe("record.not_saved");
+    const handedOver = claimed({
+      id: "run_i",
+      kind: "data",
+      payload: { docId: "doc_evidence", event: "created", datumAt: NOW, immediate: true },
+    });
+    expect(
+      resultType(await annotate(buildCognitionToolset(toolsetDeps, handedOver), "venue")),
+    ).toBe("annotation.created");
+    expect(
+      resultType(
+        await annotate(buildCognitionInteractiveOwnTools(toolsetDeps, "interactive_test"), "reply"),
+      ),
+    ).toBe("annotation.created");
+    expect(asked).toEqual([`deadline: ${evidence}`]);
   });
 
   test("a scripted open_loop_create through the driver lands the table row + mirror doc, stamped with the run id", async () => {
@@ -612,7 +697,7 @@ describe("assembled Cognition Steward through the real driver", () => {
     // Claim the run the way the drainer does; its prompt carries the signal.
     const [run] = claimDueCognitionRuns(db, { now: NOW });
     expect(run).toMatchObject({ id: "run_fb", kind: "feedback" });
-    const prompt = buildCognitionRunPrompt(run!, { db, clock: () => NOW });
+    const prompt = buildCognitionRunPrompt(run!, promptDeps());
     expect(prompt).toContain("dismissed_snoozed");
     expect(prompt).toContain(new Date(until).toISOString());
 
@@ -667,7 +752,7 @@ describe("assembled Cognition Steward through the real driver", () => {
     expect(res.outcome).toBe("dismissed");
 
     const [run] = claimDueCognitionRuns(db, { now: NOW });
-    const prompt = buildCognitionRunPrompt(run!, { db, clock: () => NOW });
+    const prompt = buildCognitionRunPrompt(run!, promptDeps());
     expect(prompt).toContain("dismissed_already_handled");
 
     // The feedback run closes (deletes) the related loop.
@@ -760,5 +845,89 @@ describe("assembled Cognition Steward through the real driver", () => {
       }),
     );
     expect(judged).toEqual(["reactive", "lookahead", "dated_reminder", "noticing"]);
+  });
+});
+
+describe("createCognitionRuntime prompt wiring", () => {
+  let path: string;
+  let db: Db;
+
+  beforeEach(() => {
+    path = testDbPath();
+    db = createDatabase(path);
+  });
+  afterEach(() => {
+    db.close();
+    cleanupDb(path);
+  });
+
+  /** A runtime over the test DB; the search, sync and analytics collaborators are never reached by these seams. */
+  function runtime(operatorInstructions: string) {
+    return createCognitionRuntime({
+      db,
+      writeGate: directWriteGate(db),
+      searchPipeline: {} as unknown as CognitionRuntimeDeps["searchPipeline"],
+      syncStatus: {} as unknown as CognitionRuntimeDeps["syncStatus"],
+      analyticsDb: {} as unknown as CognitionRuntimeDeps["analyticsDb"],
+      getSettings: () => resolveBrainSettings({ annotations: { enabled: true } }),
+      getOperatorInstructions: () => operatorInstructions,
+      clock: () => NOW,
+      log,
+    });
+  }
+
+  test("the run prompt carries the stored notes and self-memory; OMNESIS.md rides the system prompt", async () => {
+    writeCognitionNotes(db, "ZZNOTE the user files receipts weekly", { maxBytes: 8192, now: NOW });
+    db.prepare(
+      `INSERT INTO people (id, canonical_name, source, is_self, first_seen, last_seen, created_at, updated_at)
+       VALUES ('per_self', 'Maya Reeves', 'test', 1, '2026-01-01', '2026-01-01', '2026-01-01', '2026-01-01')`,
+    ).run();
+    upsertDocuments(db, [
+      {
+        providerId: ProviderId("google"),
+        sourceId: SourceId("gmail-test"),
+        externalId: "msg_self",
+        title: "Studio update",
+        content: "I run Studio Northstar",
+        contentHash: "h",
+        metadata: {},
+        sourceCreatedAt: "2026-01-01T10:00:00.000Z",
+        sourceUpdatedAt: "2026-01-01T10:00:00.000Z",
+      },
+    ]);
+    const evidenceDocId = db
+      .prepare<[string], { id: string }>("SELECT id FROM documents WHERE external_id = ?")
+      .get("msg_self")!.id;
+    createPersonAnnotation(
+      db,
+      {
+        id: "panno_self",
+        personId: "per_self",
+        claimType: "role",
+        claimText: "ZZSELF runs a design studio",
+        evidenceDocId,
+        evidenceQuote: "I run Studio Northstar",
+        confidence: 0.8,
+        claimBasis: "quoted",
+        createdByRun: "r",
+      },
+      NOW,
+    );
+
+    const rt = await runtime("ZZOPERATOR keep briefs short");
+    const prompt = await rt.promptBuilder(
+      claimed({ kind: "time_based", payload: { prompt: "check in" } }),
+    );
+    expect(prompt).toContain("<agent-notes>\nZZNOTE the user files receipts weekly");
+    expect(prompt).toContain("<self-memory>");
+    expect(prompt).toContain("ZZSELF runs a design studio");
+    expect(prompt).not.toContain("ZZOPERATOR");
+
+    const system = rt.systemPrompt();
+    expect(system).toContain("<omnesis-md>\nZZOPERATOR keep briefs short\n</omnesis-md>");
+    expect(system).toContain("per_self");
+    expect(system).not.toContain("ZZNOTE");
+    expect(system).not.toContain("ZZSELF");
+    expect(system).toBe(rt.systemPrompt());
   });
 });

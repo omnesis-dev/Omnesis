@@ -28,8 +28,27 @@ function plistValue(path, key) {
   return match[1];
 }
 
+/**
+ * A target's base build setting, resolving the XcodeGen templates it uses:
+ * the target's own setting wins, then its templates' with their
+ * `${attribute}` placeholders filled from `templateAttributes`.
+ */
+function targetSetting(target, key) {
+  const definition = spec.targets[target];
+  const own = definition?.settings?.base?.[key];
+  if (own !== undefined) return own;
+  for (const name of definition?.templates ?? []) {
+    const value = spec.targetTemplates[name]?.settings?.base?.[key];
+    if (value === undefined) continue;
+    return value.replace(/\$\{(\w+)\}/g, (_, attribute) =>
+      attribute === "target_name" ? target : definition.templateAttributes[attribute],
+    );
+  }
+  return undefined;
+}
+
 function targetIdentity(target, base) {
-  const configured = spec.targets[target]?.settings?.base?.PRODUCT_BUNDLE_IDENTIFIER;
+  const configured = targetSetting(target, "PRODUCT_BUNDLE_IDENTIFIER");
   return expanded(configured ?? spec.settings.base.PRODUCT_BUNDLE_IDENTIFIER, base);
 }
 
@@ -46,6 +65,8 @@ describe("iOS build identities", () => {
       "OmnesisWidgets",
       "OmnesisWatch",
       "OmnesisWatchWidgets",
+      "OmnesisDemoWatch",
+      "OmnesisDemoWatchWidgets",
     ];
     const identities = Object.fromEntries(
       appTargets.map((target) => [target, targetIdentity(target, base)]),
@@ -57,13 +78,24 @@ describe("iOS build identities", () => {
       OmnesisWidgets: `${base}.widgets`,
       OmnesisWatch: `${base}.watchkitapp`,
       OmnesisWatchWidgets: `${base}.watchkitapp.widgets`,
+      OmnesisDemoWatch: `${base}.demo.watchkitapp`,
+      OmnesisDemoWatchWidgets: `${base}.demo.watchkitapp.widgets`,
     });
+    // Each watch app pairs with the iPhone app that embeds it.
     expect(
-      expanded(
-        plistValue("ios/Sources/OmnesisWatch/Info.plist", "WKCompanionAppBundleIdentifier"),
-        base,
-      ),
-    ).toBe(base);
+      plistValue("ios/Sources/OmnesisWatch/Info.plist", "WKCompanionAppBundleIdentifier"),
+    ).toBe("$(OMNESIS_WATCH_COMPANION_BUNDLE_ID)");
+    for (const [watch, phone] of [
+      ["OmnesisWatch", "Omnesis"],
+      ["OmnesisDemoWatch", "OmnesisDemo"],
+    ]) {
+      expect(expanded(targetSetting(watch, "OMNESIS_WATCH_COMPANION_BUNDLE_ID"), base)).toBe(
+        identities[phone],
+      );
+      expect(spec.targets[phone].dependencies.map((dependency) => dependency.target)).toContain(
+        watch,
+      );
+    }
     expect(plistValue("ios/Info.plist", "CFBundleIdentifier")).toBe("$(PRODUCT_BUNDLE_IDENTIFIER)");
     expect(plistValue("ios/Info-Demo.plist", "CFBundleIdentifier")).toBe(
       "$(PRODUCT_BUNDLE_IDENTIFIER)",

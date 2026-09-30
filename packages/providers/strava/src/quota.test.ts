@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { StravaRateLimitTracker, DEFAULT_SAFETY_PCT } from "./quota.js";
 
 function makeHeaders(record: Record<string, string>): Headers {
@@ -100,5 +100,66 @@ describe("StravaRateLimitTracker", () => {
     });
     expect(tr.canMakeNCalls(1)).toBe(false);
     expect(tr.remainingShort()).toBe(0);
+  });
+});
+
+// Usage arrives only with a response, and a spent budget is exactly when no
+// request is made — so the tracker itself has to know when Strava resets it.
+describe("StravaRateLimitTracker across Strava's reset boundaries", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** A tracker that last heard from Strava at `when`, reporting `usage`. */
+  function heardAt(when: string, usage: string): StravaRateLimitTracker {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(when));
+    const tr = new StravaRateLimitTracker();
+    tr.observe(
+      makeHeaders({ "X-ReadRateLimit-Limit": "100,1000", "X-ReadRateLimit-Usage": usage }),
+    );
+    return tr;
+  }
+
+  const at = (iso: string) => new Date(iso);
+
+  it("lets the 15-minute window's usage go on the quarter hour", () => {
+    const tr = heardAt("2026-03-04T10:14:30Z", "95,300");
+
+    expect(tr.canMakeNCalls(10, DEFAULT_SAFETY_PCT, at("2026-03-04T10:14:59Z"))).toBe(false);
+    expect(tr.canMakeNCalls(10, DEFAULT_SAFETY_PCT, at("2026-03-04T10:15:00Z"))).toBe(true);
+    // Short window reset: cap 90, used 0 → 90. Day not reset: cap 900, used 300 → 600.
+    expect(tr.remainingShort(DEFAULT_SAFETY_PCT, at("2026-03-04T10:15:00Z"))).toBe(90);
+    expect(tr.remainingDaily(DEFAULT_SAFETY_PCT, at("2026-03-04T10:15:00Z"))).toBe(600);
+  });
+
+  it("lets the day's usage go at midnight UTC, and not before", () => {
+    const tr = heardAt("2026-03-04T22:40:00Z", "5,950");
+
+    expect(tr.canMakeNCalls(10, DEFAULT_SAFETY_PCT, at("2026-03-04T23:59:59Z"))).toBe(false);
+    expect(tr.canMakeNCalls(10, DEFAULT_SAFETY_PCT, at("2026-03-05T00:00:00Z"))).toBe(true);
+  });
+
+  it("reports the wait until whichever window cannot cover the calls resets", () => {
+    /** How long ten calls wait, asked the moment Strava reported `usage`. */
+    const waitAfter = (when: string, usage: string) =>
+      heardAt(when, usage).msUntilCanMakeNCalls(10, DEFAULT_SAFETY_PCT, at(when));
+    const grace = 30_000;
+
+    expect(waitAfter("2026-03-04T10:07:30Z", "95,300")).toBe(7.5 * 60_000 + grace);
+    expect(waitAfter("2026-03-04T22:40:00Z", "5,950")).toBe(80 * 60_000 + grace);
+    // Both spent: the quarter hour would free nothing, so the wait runs to midnight.
+    expect(waitAfter("2026-03-04T22:40:00Z", "95,950")).toBe(80 * 60_000 + grace);
+    expect(waitAfter("2026-03-04T10:07:30Z", "5,300")).toBe(0);
+  });
+
+  it("takes a count reported in a window's first 30 seconds for the window before it", () => {
+    // A response crossing midnight carries yesterday's spent day; counted as
+    // today's, it would hold the source back until the next midnight.
+    const crossing = heardAt("2026-03-05T00:00:05Z", "95,950");
+    expect(crossing.canMakeNCalls(10, DEFAULT_SAFETY_PCT, at("2026-03-05T00:00:40Z"))).toBe(true);
+
+    const current = heardAt("2026-03-05T00:00:45Z", "95,950");
+    expect(current.canMakeNCalls(10, DEFAULT_SAFETY_PCT, at("2026-03-05T00:01:00Z"))).toBe(false);
   });
 });

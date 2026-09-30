@@ -1,6 +1,9 @@
-# Landing page
+# Website
 
-Static marketing site (`index.html`) plus its media. Also serves the
+Static marketing site (`index.html`), documentation, and a Markdown-authored
+engineering blog at `/blog/`. Blog authoring and comments setup are documented
+in [blog/README.md](blog/README.md). The site workflow verifies the generated
+blog before deploying; the rest of the site remains hand-authored HTML. Also serves the
 installer: `install.sh` here is a byte-identical mirror of the canonical
 `scripts/install.sh`, so `https://omnesis.dev/install.sh` resolves. The guided
 install prompt follows the same pattern: `website/install-prompt.md` mirrors

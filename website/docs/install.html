@@ -67,6 +67,7 @@
             <li><a href="/brain">Omnesis Brain</a></li>
             <li><a href="/vision">Vision</a></li>
             <li><a href="/docs/" aria-current="page">Docs</a></li>
+            <li><a href="/blog/">Blog</a></li>
           </ul>
           <a
             class="nav-icon-btn"
@@ -1097,6 +1098,20 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           each kind of change needs.
         </p>
 
+        <p>
+          For an isolated test gateway from a development checkout, use
+          <code
+            >scripts/dev-instance.sh start --session "Codex: navigation" --purpose "Try the new
+            navigation"</code
+          >. Session and purpose are optional, but strongly recommended when several agents or test
+          gateways run in parallel. The portal shows them in a Test gateway card in its left menu.
+          Choose a separate <code>OMNESIS_CONFIG_DIR</code> and available
+          <code>OMNESIS_GATEWAY_PORT</code> for each instance. Use <code>--bare</code> for an empty
+          synthetic instance or <code>--real</code> to add real sources yourself.
+          <code>scripts/dev-instance.sh info</code> prints a portal login link with its token; treat
+          it as a credential and share it only with the person testing the feature.
+        </p>
+
         <h2 id="uninstall">Uninstall</h2>
         <p>
           Removing Omnesis reverses the install you made. Your data stays in the config directory
@@ -1188,6 +1203,7 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
             <a href="https://github.com/omnesis-dev/Omnesis/blob/main/LICENSE">AGPL-3.0</a>
           </div>
           <nav class="footer-links" aria-label="Footer">
+            <a href="/blog/">Blog</a>
             <a href="/docs/">Docs</a>
             <a href="/privacy">Privacy</a>
             <a href="https://github.com/omnesis-dev/Omnesis/blob/main/CONTRIBUTING.md"
@@ -1227,7 +1243,7 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
             </a>
             <a
               class="footer-social footer-discord"
-              href="https://discord.gg/4Y8pQHrVv"
+              href="https://discord.gg/QeaNZGAs2V"
               target="_blank"
               rel="noopener noreferrer"
               aria-label="Join Omnesis on Discord"

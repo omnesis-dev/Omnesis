@@ -567,7 +567,7 @@ export function BoundarySection({ status }) {
             <td class="num">${fmtCount(status.processedDocs)}</td>
             <td style="color:var(--text-secondary);">
               set once and never cleared — by selection, by a run opening a document across an arc,
-              or by the live lane reasoning over it first
+              by the live lane reasoning over it first, or by the decision model skipping it
             </td>
           </tr>
           ${status.state === "drained" &&

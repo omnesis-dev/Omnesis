@@ -27,7 +27,10 @@ function dataPrompt(event: "created" | "updated", extra = ""): string {
     event === "created"
       ? `A new document arrived: ${DOC_ID}. Fetch its content with fetch_many.`
       : `Document ${DOC_ID} was updated. Fetch the current content with fetch_many.`;
+  // Production shape: the static run rules come first, the envelope after.
   return [
+    "Data run: a document arrived or changed. The run envelope follows these rules.",
+    "",
     `Loop agent run run_test_1 (kind: data, attempt 1).`,
     "",
     line,

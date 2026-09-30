@@ -28,13 +28,13 @@
     </script>
     <meta
       name="description"
-      content="Unstable Omnesis features behind OMNESIS_EXPERIMENTAL=1: how Omnesis Brain and Omnesis Watch work, what they spend, and how to observe and stop them."
+      content="Unstable Omnesis features behind OMNESIS_EXPERIMENTAL=1: how Omnesis Brain, Omnesis Watch and gateway dictation work, what they spend, and how to observe and stop them."
     />
     <link rel="canonical" href="https://omnesis.dev/docs/experimental" />
     <meta property="og:title" content="Experimental — Omnesis Docs" />
     <meta
       property="og:description"
-      content="Unstable Omnesis features behind OMNESIS_EXPERIMENTAL=1: how Omnesis Brain and Omnesis Watch work, what they spend, and how to observe and stop them."
+      content="Unstable Omnesis features behind OMNESIS_EXPERIMENTAL=1: how Omnesis Brain, Omnesis Watch and gateway dictation work, what they spend, and how to observe and stop them."
     />
     <meta property="og:image" content="https://omnesis.dev/og-image.png" />
     <meta property="og:type" content="website" />
@@ -64,6 +64,7 @@
             <li><a href="/brain">Omnesis Brain</a></li>
             <li><a href="/vision">Vision</a></li>
             <li><a href="/docs/" aria-current="page">Docs</a></li>
+            <li><a href="/blog/">Blog</a></li>
           </ul>
           <a
             class="nav-icon-btn"
@@ -138,6 +139,7 @@
               <ul class="side-sub">
                 <li><a href="#brain">Omnesis Brain</a></li>
                 <li><a href="#watch">Omnesis Watch</a></li>
+                <li><a href="#gateway-dictation">Gateway dictation</a></li>
               </ul>
             </li>
           </ul>
@@ -148,11 +150,13 @@
         <p class="docs-kicker">Experimental</p>
         <h1>Experimental</h1>
         <p class="docs-lead">
-          Omnesis ships two features switched off because they are not yet stable:
+          Omnesis ships three features switched off because they are not yet stable:
           <strong>Omnesis Brain</strong>, which reads your data in the background and keeps cited
-          notes, loops and briefs about it, and <strong>Omnesis Watch</strong>, which tells you or
-          an agent when a condition you describe becomes true. This page is for operators who want
-          to run them: how each works, what it spends, how to observe it and how to stop it.
+          notes, loops and briefs about it, <strong>Omnesis Watch</strong>, which tells you or an
+          agent when a condition you describe becomes true, and <strong>gateway dictation</strong>,
+          which transcribes Tell Omnesis voice notes from the mobile apps with the gateway's
+          transcriber. This page is for operators who want to run them: how each works, what it
+          spends, how to observe it and how to stop it.
         </p>
         <div class="callout warn">
           <strong>These features are experimental</strong> as they are unstable and
@@ -160,9 +164,10 @@
         </div>
         <p>
           Nothing here is visible unless the process was started with
-          <code>OMNESIS_EXPERIMENTAL=1</code>. Set it on the gateway to reveal Brain, Watch and
-          their controls; with it unset the gateway serves none of their routes, schedules none of
-          their work and creates none of their files. For a gateway you run in the foreground:
+          <code>OMNESIS_EXPERIMENTAL=1</code>. Set it on the gateway to reveal Brain, Watch, gateway
+          dictation and their controls; with it unset the gateway serves none of their routes,
+          schedules none of their work and creates none of their files. For a gateway you run in the
+          foreground:
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -202,10 +207,8 @@
         <p>
           <code>GET /status</code> reports whether the gateway is in experimental mode, and the
           portal, the mobile apps and the CLI use it to show or hide these controls. The flag on the
-          collector matters only for sources: two experimental sources,
-          <a href="/docs/sources#plaid">Plaid</a> and
-          <a href="/docs/sources#local-files">Local Files</a>, are offered in the source picker only
-          by a collector that runs with the flag itself. They are documented with the other sources.
+          collector matters only for sources: a source marked experimental is offered in the source
+          picker only by a collector that runs with the flag itself.
         </p>
 
         <h2 id="brain">Omnesis Brain</h2>
@@ -349,7 +352,7 @@
           serve <code>background-agent</code> or <code>brief-judge</code>, which need a chat
           backend; it can serve <code>entailment-verifier</code>. The portal's
           <strong>Settings → Models</strong> page lists the same roles under
-          <strong>Cognition</strong>. Two further roles are optional reviewers:
+          <strong>Cognition</strong>. Three further roles are optional:
         </p>
         <div class="table-wrap">
           <table>
@@ -381,16 +384,28 @@
                 <td>Decides whether a candidate brief is worth interrupting you for.</td>
                 <td>Briefs are created without review.</td>
               </tr>
+              <tr>
+                <td><code>decision</code></td>
+                <td>
+                  Scores each email before its agent run and skips the ones the agent would get
+                  nothing from, and scores each new record a run saves. Served only by TypeSafe Jev
+                  (<code>typesafe/jev-1.13.0</code>); see
+                  <a href="#brain-worth-gate">Skipping mail it cannot use</a> and
+                  <a href="#brain-record-check">Checking what it writes</a>.
+                </td>
+                <td>Every email Brain selects gets an agent run, and every record is saved.</td>
+              </tr>
             </tbody>
           </table>
         </div>
         <p>
-          Codex can serve all three through the same ChatGPT login. A reviewer runs as its own model
-          turn even when it uses the same model as the agent waiting on its verdict, and every role
-          shares the account's usage allowance. <code>GET /status</code> reports the gate as
-          <code>brain</code>, with <code>visible</code>, <code>enabled</code>,
-          <code>modelAssigned</code> and <code>active</code>; the portal's Cognition page says which
-          of the two conditions is missing.
+          Codex can serve the first three through the same ChatGPT login. The two reviewers each run
+          as their own model turn even when they use the same model as the agent waiting on their
+          verdict, and every role shares the account's usage allowance.
+          <code>GET /status</code> reports the gate as <code>brain</code>, with
+          <code>visible</code>, <code>enabled</code>, <code>modelAssigned</code> and
+          <code>active</code>; the portal's Cognition page says which of the two conditions is
+          missing.
         </p>
 
         <h3 id="brain-how-it-runs">How it runs</h3>
@@ -551,6 +566,61 @@
             re-affirmed, weakened, superseded or retracted.
           </li>
         </ul>
+
+        <h3 id="brain-worth-gate">Skipping mail it cannot use</h3>
+        <p>
+          Most mail gives Brain nothing to record: promotions, newsletters, notifications. Assigning
+          the <code>decision</code> role lets Brain ask a cheap typed-decision model, TypeSafe Jev,
+          whether an email is worth a full agent run before starting one. Jev reads the subject, the
+          sender and the first 2,000 characters of the body and answers with a score; below the
+          threshold, the run ends without an agent turn. An attachment is judged by the email that
+          contains it. Mail you sent to the assistant, and mail carrying a structured booking or due
+          date, is never skipped. Unchanged mail is not scored twice.
+        </p>
+        <p>
+          The check sends each email it scores to TypeSafe, so it needs
+          <code>inference.allowRemoteInference: true</code> and a TypeSafe API key. Enter the key
+          from <strong>Settings → Models → Decision model</strong>, or with
+          <code>omnesis backend key set typesafe</code>, then assign the model:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis model assign decision typesafe/jev-1.13.0</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          If Jev cannot be reached, or rejects the key, the email is processed as if the check were
+          off. Every judgement is kept with the run it was made for: the Runs tab marks a skipped
+          run <strong>gated</strong> and shows the exact request and answer, and the Bootstrap tab
+          counts skipped history separately from reviewed history. Jev's tokens appear on the
+          Overview tab as <strong>Decision model · worth gate</strong> and count toward the daily
+          token budget, not the daily run budget. The request and answer text is cleared after the
+          activity-retention window, and deleting an email deletes its judgements. The key can also
+          come from <code>OMNESIS_TYPESAFE_API_KEY</code> or <code>TYPESAFE_API_KEY</code> in the
+          gateway's environment. To reach a private TypeSafe deployment instead of the public API,
+          set <code>inference.typesafe.url</code>.
+        </p>
+        <h3 id="brain-record-check">Checking what it writes</h3>
+        <p>
+          The same decision model also checks what Brain writes. When a live or catch-up run saves a
+          new dated entry or annotation drawn from a document, Jev reads that one sentence and
+          scores whether it belongs in your life memory; promotional dates, product news and
+          descriptions of what a document is score low. The agent still reads and searches as much
+          as it wants; only the record it settles on is scored.
+          <code>brain.annotations.recordCheck</code> sets what happens: <code>shadow</code> (the
+          default) saves every record at once and scores it afterwards, <code>enforce</code> scores
+          it first, drops a low-scored record and tells the agent not to retry it, and
+          <code>off</code> asks nothing. If Jev does not answer within 15 seconds, the record is
+          saved. Corrections to an existing record, entries Brain writes for its own scheduling,
+          anything you hand to the assistant, and memory you ask for directly are never checked.
+          Each verdict is shown on the run it was made for, with the record and the document it came
+          from, and its tokens appear as <strong>Decision model · record check</strong>. Verdicts
+          are deleted after the activity-retention window.
+        </p>
 
         <h3 id="brain-spend">Bounding the spend</h3>
         <p>
@@ -976,7 +1046,9 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
                 <td>
                   Durable notes on documents and people. <code>basisCeilings</code> and
                   <code>confidenceFloor</code> are described in
-                  <a href="#brain-gates">What it will not write</a>.
+                  <a href="#brain-gates">What it will not write</a>;
+                  <code>recordCheck</code> (<code>shadow</code>) in
+                  <a href="#brain-record-check">Checking what it writes</a>.
                 </td>
               </tr>
               <tr>
@@ -1885,6 +1957,79 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/admin/watch/compile" \
           </table>
         </div>
 
+        <h2 id="gateway-dictation">Gateway dictation</h2>
+        <p>
+          The iOS and Android apps turn what you say to Tell Omnesis into text with the phone's own
+          recognizer. With gateway dictation on, they also send the recording with the note, and
+          your gateway's <strong>Transcriber</strong> model — the same local Whisper model that
+          transcribes voice notes from your sources — transcribes it again and replaces the phone's
+          text with its own. It applies to Tell Omnesis only:
+        </p>
+        <ul>
+          <li>
+            Tell Omnesis in the app, including its Control Center control, Quick Settings tile and
+            app shortcut;
+          </li>
+          <li>a Tell Omnesis request from Google Assistant that opens the app to listen;</li>
+          <li>the Apple Watch's Note complication and the watch app's Dictate.</li>
+        </ul>
+        <p>
+          Agent conversations, replies to briefs, Ask Omnesis, Siri, Shortcuts and assistant
+          requests that already carry their words keep the phone's or the system's recognition.
+        </p>
+
+        <h3 id="gateway-dictation-turning-on">Turning it on</h3>
+        <p>
+          It needs three things: the gateway in experimental mode, a Transcriber model assigned
+          under <strong>Settings → Models → Transcriber</strong>, and the
+          <strong>Tell Omnesis voice notes</strong> switch on that same page. The apps show the same
+          switch under <strong>Settings → Voice</strong>. It is a gateway setting, so it applies to
+          every phone paired with the gateway. In <code>omnesis.json</code> it is:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <pre>
+"inference": {
+  "dictation": { "transcribeOnGateway": true }
+}</pre
+            >
+          </div>
+        </div>
+        <p>
+          <code>GET /status</code> reports the combined verdict as <code>dictation</code>, and the
+          apps send recordings only while its <code>active</code> field is true. Switched on without
+          a runnable transcriber, the setting shows why it has no effect, and notes keep the phone's
+          own text.
+        </p>
+
+        <h3 id="gateway-dictation-behaviour">What happens to a voice note</h3>
+        <p>
+          While you dictate, Tell Omnesis shows that it is recording rather than what the phone
+          heard: the gateway's transcript is the one that counts. The phone still transcribes in the
+          background, and that text is saved with the note at once so it is never empty. The gateway
+          then works on the recording and replaces the text when its transcriber finishes. How long
+          that takes depends on the gateway's hardware and on the voice notes it is already
+          transcribing for your sources; nothing waits on it. If you edit the note first, your edit
+          stays.
+        </p>
+        <p>
+          A note from the Apple Watch travels through your iPhone, which transcribes it on the phone
+          first. When the phone has no transcript to offer, the note reads "Voice note —
+          transcribing…" until the gateway's arrives.
+        </p>
+        <p>
+          The gateway keeps the recording in its database, alongside the rest of your data and under
+          the same encryption at rest, only until it has transcribed it, and retries a failed
+          transcription for up to a week. A note it cannot transcribe keeps the phone's text.
+          Deleting the note deletes its recording.
+        </p>
+        <p>
+          To stop, switch the setting off. The apps return to saving the phone's text once they next
+          read the gateway's status, which they do at the latest when they come back to the
+          foreground. Recordings already sent are still transcribed.
+        </p>
+
         <nav class="docs-pager" aria-label="Pages">
           <a href="/docs/building-sources"
             ><span class="pager-label">Previous</span
@@ -1902,6 +2047,7 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/admin/watch/compile" \
             <a href="https://github.com/omnesis-dev/Omnesis/blob/main/LICENSE">AGPL-3.0</a>
           </div>
           <nav class="footer-links" aria-label="Footer">
+            <a href="/blog/">Blog</a>
             <a href="/docs/">Docs</a>
             <a href="/privacy">Privacy</a>
             <a href="https://github.com/omnesis-dev/Omnesis/blob/main/CONTRIBUTING.md"
@@ -1941,7 +2087,7 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/admin/watch/compile" \
             </a>
             <a
               class="footer-social footer-discord"
-              href="https://discord.gg/4Y8pQHrVv"
+              href="https://discord.gg/QeaNZGAs2V"
               target="_blank"
               rel="noopener noreferrer"
               aria-label="Join Omnesis on Discord"

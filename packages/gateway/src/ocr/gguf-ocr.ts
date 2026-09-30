@@ -20,7 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createLogger } from "@omnesis/core";
-import { OCR_PROMPT } from "./http-vlm-ocr.js";
+import { OCR_PROMPT, layoutReplyText } from "./http-vlm-ocr.js";
 import type { OcrCapability, OcrResult } from "@omnesis/core";
 
 const log = createLogger("gateway:ocr:gguf");
@@ -176,7 +176,7 @@ export class GgufOcr implements OcrCapability {
         prompt: OCR_PROMPT,
         timeoutMs: this.timeoutMs,
       });
-      const text = raw.trim();
+      const text = layoutReplyText(raw.trim());
       log.debug(`GGUF OCR (${this.modelId}): ${image.byteLength} bytes → ${text.length} chars`);
       return { text };
     } finally {

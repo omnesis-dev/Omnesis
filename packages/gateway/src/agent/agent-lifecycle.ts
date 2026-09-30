@@ -453,7 +453,14 @@ export function createAgentService(
         memoryWrites: profile !== "answer",
       }),
     externalAnswerScope: async (authorization) => {
-      const safeNames = new Set(["search_many", "fetch_many", "lookup_document_by_url"]);
+      // `annotate_many` resolves each citation through the same restricted
+      // document port, so a restricted caller can cite only what it may read.
+      const safeNames = new Set([
+        "search_many",
+        "fetch_many",
+        "lookup_document_by_url",
+        "annotate_many",
+      ]);
       const tools = buildBuiltinTools({
         experimental: false,
         ports: {
@@ -1058,6 +1065,11 @@ export class AgentLifecycle {
         log.warn(`agent disabled: ${agentDisabledReason}`);
         break;
 
+      case "typesafe":
+        agentDisabledReason = "TypeSafe serves only the Decision model capability.";
+        log.warn(`agent disabled: ${agentDisabledReason}`);
+        break;
+
       default: {
         const _exhaustive: never = agentResolved;
         agentDisabledReason = `Unexpected agent assignment kind: ${(agentResolved as { kind: string }).kind}`;
@@ -1274,6 +1286,9 @@ export class AgentLifecycle {
       }
       case "local":
         newReason = "Local GGUF agent models are not yet supported.";
+        break;
+      case "typesafe":
+        newReason = "TypeSafe serves only the Decision model capability.";
         break;
       default: {
         const _exhaustive: never = resolved;
