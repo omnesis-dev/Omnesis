@@ -28,7 +28,7 @@ describe("gatewayJson", () => {
   test("returns the parsed body of a 2xx", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(respond('{"window":{"timeZone":"UTC"}}'));
 
-    await expect(gatewayJson(endpoint, "/briefs/temporal/window")).resolves.toEqual({
+    await expect(gatewayJson(endpoint, "/temporal/window")).resolves.toEqual({
       window: { timeZone: "UTC" },
     });
   });
@@ -49,8 +49,8 @@ describe("gatewayJson", () => {
 
     // The failure a feature-gated route produces. Handing the envelope back
     // would surface downstream as an absent field, naming neither.
-    await expect(gatewayJson(endpoint, "/briefs/temporal/window?timeZone=UTC")).rejects.toThrow(
-      /gateway GET \/briefs\/temporal\/window\?timeZone=UTC → 404: .*NOT_FOUND/,
+    await expect(gatewayJson(endpoint, "/briefs?limit=1")).rejects.toThrow(
+      /gateway GET \/briefs\?limit=1 → 404: .*NOT_FOUND/,
     );
   });
 

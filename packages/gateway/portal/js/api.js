@@ -756,10 +756,11 @@ export const getCognitionMechanismSpend = (query) =>
 // stores; nothing recalibrates from it.
 export const getCognitionCalibration = (query) =>
   request("GET", "/admin/cognition/calibration", { query });
-export const getCognitionCalendarWindow = (query) =>
-  request("GET", "/briefs/temporal/window", { query });
-export const getCognitionCalendarAnnotation = (id, timeZone) =>
-  request("GET", `/briefs/temporal/annotations/${encodeURIComponent(id)}`, {
+// The time index the Calendar reads: projections, date mentions and the
+// Brain's annotations, ungated.
+export const getCalendarWindow = (query) => request("GET", "/temporal/window", { query });
+export const getCalendarAnnotation = (id, timeZone) =>
+  request("GET", `/temporal/annotations/${encodeURIComponent(id)}`, {
     query: { timeZone },
   });
 

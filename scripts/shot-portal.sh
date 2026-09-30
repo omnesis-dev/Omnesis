@@ -30,7 +30,7 @@
 # search, people, sources, capture, privacy, watches, debug, and settings.
 # The last two are tabbed pages, whose tabs are addressed as debug/data,
 # debug/sql, debug/graph, debug/metrics, debug/background-jobs,
-# debug/cognition, debug/doctor, and settings/config, settings/models,
+# debug/calendar, debug/cognition, debug/doctor, and settings/config, settings/models,
 # settings/access, settings/access/connect (the connect-an-agent dialog),
 # settings/policies, settings/devices.
 #

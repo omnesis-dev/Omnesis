@@ -57,7 +57,6 @@ import {
 import { DevAnnotateButton } from "../components/dev-annotate-button.js";
 import { CalibrationTab } from "./cognition-calibration.js";
 import { BootstrapTab } from "./cognition-bootstrap.js";
-import { CalendarTab } from "./cognition-calendar.js";
 
 // Developer mode for this page, mirrored from `CognitionView`'s `developer`
 // prop so the per-item ⚑ annotate buttons in the detail panes and rows don't
@@ -79,7 +78,6 @@ const SECTIONS = [
   { key: "loops", label: "Loops" },
   { key: "runs", label: "Runs" },
   { key: "briefs", label: "Briefs" },
-  { key: "calendar", label: "Calendar" },
   { key: "memory", label: "Memory" },
   { key: "calibration", label: "Calibration" },
   { key: "bootstrap", label: "Bootstrap" },
@@ -94,8 +92,6 @@ const VALID_SECTIONS = new Set(SECTIONS.map((s) => s.key));
  */
 export function resolveSection(subTab) {
   if (subTab === "scheduled") return "runs";
-  // Compatibility for deep links from both annotation-only predecessors.
-  if (subTab === "time-index" || subTab === "temporal-annotations") return "calendar";
   return subTab && VALID_SECTIONS.has(subTab) ? subTab : "overview";
 }
 
@@ -245,7 +241,7 @@ function entityHref(kind, id) {
     case "loop": return cognitionPath("loops", id);
     case "run": return cognitionPath("runs", id);
     case "brief": return cognitionPath("briefs", id);
-    case "temporal-annotation": return cognitionPath("calendar", id);
+    case "temporal-annotation": return `/portal/debug/calendar/${encodeURIComponent(id)}`;
     case "doc": return `/portal/doc/${encodeURIComponent(id)}`;
     case "person": return `/portal/people/${encodeURIComponent(id)}`;
     default: return "#";
@@ -533,10 +529,10 @@ function BrainInactiveNotice({ gate }) {
 
 /**
  * Self-sufficient disabled-Brain banner: polls the gate itself and renders
- * the notice only while blocked, so list sections (and sections hosted in
- * other modules, like CalendarTab) render it with no props and no hook.
+ * the notice only while blocked, so list sections render it with no props
+ * and no hook.
  */
-export function BrainInactiveBanner() {
+function BrainInactiveBanner() {
   const { briefsGate, brainBlocked } = useBrainGate();
   if (!brainBlocked) return null;
   return html`<${BrainInactiveNotice} gate=${briefsGate} />`;
@@ -2080,10 +2076,6 @@ export function CognitionView({ subTab, selectedId, developer = false } = {}) {
           ${section === "loops" && html`<${LoopsTab} selectedId=${selectedId} />`}
           ${section === "runs" && html`<${RunsTab} selectedId=${selectedId} pulse=${pulse} />`}
           ${section === "briefs" && html`<${BriefsTab} selectedId=${selectedId} />`}
-          ${section === "calendar" && html`<${CalendarTab}
-            selectedId=${selectedId}
-            developer=${developer}
-          />`}
           ${section === "memory" && html`<${MemoryTab} />`}
           ${section === "calibration" && html`<${CalibrationTab} />`}
           ${section === "bootstrap" && html`<${BootstrapTab} />`}

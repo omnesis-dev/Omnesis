@@ -15,6 +15,7 @@ import type {
   DocumentByUrlPort,
   DocumentPort,
   EntityContextPort,
+  TemporalReadPort,
   LoopReadPort,
   PersonPort,
   RecordPort,
@@ -301,6 +302,30 @@ describe("tool registry", () => {
       experimental: true,
     });
     expect(tools.map((t) => t.name)).not.toContain("search_loops");
+  });
+
+  const noopTemporal: TemporalReadPort = {
+    query: async () => {
+      throw new Error("not called");
+    },
+  };
+
+  it("registers temporal_query whenever the port is wired, experimental or not", () => {
+    for (const experimental of [false, true]) {
+      const tools = buildBuiltinTools({
+        ports: { search: noopSearch, document: noopDocument, temporal: noopTemporal },
+        experimental,
+      });
+      expect(tools.map((t) => t.name)).toContain("temporal_query");
+    }
+  });
+
+  it("omits temporal_query when the port is absent", () => {
+    const tools = buildBuiltinTools({
+      ports: { search: noopSearch, document: noopDocument },
+      experimental: true,
+    });
+    expect(tools.map((t) => t.name)).not.toContain("temporal_query");
   });
 
   const noopEntityContext: EntityContextPort = {

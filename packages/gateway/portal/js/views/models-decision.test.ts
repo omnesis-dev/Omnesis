@@ -33,7 +33,7 @@ vi.mock("./credentials-wizard.js", async () => {
 });
 import { ModelsView } from "./models.js";
 
-const DECISION = { role: "decision", title: "Decision model", description: "Answers typed questions about a document.", icon: "scale", experimental: true, section: "cognition" };
+const DECISION = { role: "decision", title: "Decision model", description: "Answers typed questions about a document.", icon: "scale", section: "cognition" };
 
 function overviewWith(assignment, extra = {}) {
   return {

@@ -459,6 +459,42 @@
           index (HNSW).
         </p>
         <p>
+          The gateway also reads the dates written in each document's text, such as “next Friday” or
+          “12 October”, and resolves each against the document's own date. The agent's time query
+          uses them to find documents that mention a given day: a day, a span the text lays out by
+          day (“1 to 3 October”), or a month named with its year. Years, month names without a year,
+          vague spans such as “the next few weeks” or “Q4”, durations counted from the document's
+          own date (“in 20 days”), and bare digit runs are left out, as are the dates that only date
+          a message — its header and the “On …, … wrote:” line above a quoted reply. A day written
+          without a year that would fall more than six months after the document is read as the one
+          just gone. A conversation that repeats a date in every reply counts it once. A phrase such
+          as “before 30 September” or “by 12 October” reads as a deadline. Notes you tell Omnesis
+          are read more loosely, since they are meant to be followed up: “next week”, “in October”
+          or “within ten days” counts there, and “tomorrow” counts from the day you wrote the note
+          in your own time zone. A document's page in the portal lists all of its dates under
+          <strong>Enriched by Omnesis</strong>, and <strong>Debug → Calendar</strong> shows the time
+          index itself: the dates sources record and the mentions above, by day, week or month, and
+          the deadlines coming up.
+        </p>
+        <p>
+          All-numeric English dates such as “10/07/2026” read day-first (10 July) unless the gateway
+          runs in an Americas time zone, where they read month-first. Set
+          <code>enrichment.dates.numericDateOrder</code> to <code>day-first</code> or
+          <code>month-first</code> to choose; the setting applies to documents scanned after the
+          change.
+        </p>
+        <p>
+          Marketing mail and newsletters name dates constantly. With
+          <code>enrichment.dates.worthGate</code> on and a
+          <a href="/docs/operating#models">decision model</a> assigned, the gateway asks that model
+          whether each email with a date mention is worth recording, including every such email
+          already stored, and the time query leaves out the dates of email judged not worth it. An
+          attachment follows the email it came with, and other documents are always kept. An email
+          whose judgement is still to come — it is queued, or the model did not answer — keeps its
+          dates, and with the setting off or no decision model assigned every date is shown. The
+          agent can still read any email's dates by naming the document.
+        </p>
+        <p>
           A search queries both indexes and merges the results, so exact terms and paraphrases both
           match. Without an embedding model, search falls back to keywords alone. How ranking works,
           and the query syntax, are on <a href="/docs/search">Search</a>.

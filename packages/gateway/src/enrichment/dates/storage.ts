@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Storage for the (experimental) date-enrichment signal.
+ * Storage for the date-enrichment signal.
  *
  * Extracted dates live in a sidecar table `document_extracted_dates` in
  * `omnesis.db`, keyed by `document_id` with `ON DELETE CASCADE` — so a
@@ -21,6 +21,7 @@
  * the main read handle for {@link getExtractedDatesForDocument} and the counts.
  */
 
+import { createMentionJudgementsTable } from "./mention-judgements.js";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 import type { ExtractedDate } from "@omnesis/types";
@@ -62,6 +63,79 @@ export function createExtractedDatesTables(db: Db): void {
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_document_extracted_dates_start ON document_extracted_dates(resolved_start)",
   );
+  createMentionJudgementsTable(db);
+}
+
+/** A two-bound range: the one shape that may begin before a window and end inside it. */
+const MENTION_IS_RANGE = "(resolved_start IS NOT NULL AND resolved_end IS NOT NULL)";
+
+/**
+ * Add the day bounds the temporal query reads mentions by: the first day a
+ * mention covers and the day after its last (`YYYY-MM-DD`, half-open), both
+ * NULL for a date that is not a mention (see `mention-bounds.ts`), and
+ * `mention_deadline` (1 when the phrase states a deadline). The extractor
+ * decides them and the writer stores them with the date.
+ *
+ * - `idx_…_mention_start` on `(start, end)` — its implicit row-id suffix makes
+ *   it the query's own order, so a page is an ordered index walk that stops
+ *   at its limit.
+ * - `idx_…_mention_range` on the same bounds, for two-bound ranges only — the
+ *   few mentions that begin before a window and end inside it, found by a
+ *   start no more than `MENTION_MAX_SPAN_DAYS` before the window.
+ * - `idx_…_mention_thread` on the thread and bounds — whether a later message
+ *   of the same thread repeats a mention.
+ *
+ * `thread_key` names the conversation the document belongs to (its source
+ * and the `metadata.extra.threadId` / `conversationId` convention), NULL for
+ * a document outside one.
+ *
+ * Idempotent: columns are added only when missing.
+ */
+export function ensureMentionDayColumns(db: Db): void {
+  const columns = new Set(
+    db
+      .prepare<[], { name: string }>(
+        "SELECT name FROM pragma_table_info('document_extracted_dates')",
+      )
+      .all()
+      .map((row) => row.name),
+  );
+  for (const [column, type] of [
+    ["mention_start_day", "TEXT"],
+    ["mention_end_day", "TEXT"],
+    ["mention_deadline", "INTEGER"],
+    ["thread_key", "TEXT"],
+  ] as const) {
+    if (!columns.has(column)) {
+      db.exec(`ALTER TABLE document_extracted_dates ADD COLUMN ${column} ${type}`);
+    }
+  }
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_document_extracted_dates_mention_start
+       ON document_extracted_dates(mention_start_day, mention_end_day)
+       WHERE mention_start_day IS NOT NULL`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_document_extracted_dates_mention_range
+       ON document_extracted_dates(mention_start_day, mention_end_day)
+       WHERE mention_start_day IS NOT NULL AND ${MENTION_IS_RANGE}`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_document_extracted_dates_mention_thread
+       ON document_extracted_dates(thread_key, mention_start_day, mention_end_day)
+       WHERE thread_key IS NOT NULL AND mention_start_day IS NOT NULL`,
+  );
+}
+
+/**
+ * Migration 185: add the mention columns and rescan every document, so every
+ * stored date is read again with the current language routing and mention
+ * rules — and every document with a mention is queued for the worth gate,
+ * whose table schema setup creates.
+ */
+export function addDateMentions(db: Db): void {
+  ensureMentionDayColumns(db);
+  db.exec("UPDATE documents SET dates_extracted_at = NULL WHERE dates_extracted_at IS NOT NULL");
 }
 
 /**
@@ -81,7 +155,9 @@ export function createDatesUnprocessedIndex(db: Db): void {
  * Fetch up to `limit` documents that still need date extraction, truncating
  * `content` to `maxChars` so a large body never bloats the io→main→cpu copy
  * (the extractor caps its own input to the same budget). `title` rides along
- * for the extractor's language routing. Newest documents first (the partial
+ * for the extractor's language routing. Relative dates count from the
+ * document's `metadata.dateAnchorDay` when its source sets one, else from its
+ * last edit; `addressed` carries `metadata.addressedToAgent`. Newest documents first (the partial
  * pending-age index serves exactly this), so live ingest clears the agent
  * readiness barrier promptly even while a large re-extraction backlog
  * drains behind it. Runs on the io pool's read-only handle.
@@ -95,13 +171,25 @@ export function fetchDateExtractionBatch(
     .prepare(
       `SELECT id, title, substr(content, 1, ?) AS content,
               LENGTH(content) AS contentLength,
-              COALESCE(source_updated_at, source_created_at) AS anchorAt
+              COALESCE(json_extract(metadata, '$.dateAnchorDay'),
+                       source_updated_at, source_created_at) AS anchorAt,
+              json_extract(metadata, '$.addressedToAgent') IS 1 AS addressed,
+              source_id || char(0) || COALESCE(
+                json_extract(metadata, '$.extra.threadId'),
+                json_extract(metadata, '$.extra.conversationId')
+              ) AS threadKey
          FROM documents
         WHERE dates_extracted_at IS NULL
         ORDER BY ingested_at DESC
         LIMIT ?`,
     )
-    .all(maxChars, limit) as DateExtractionDocRow[];
+    .all(maxChars, limit)
+    .map((raw) => {
+      const { addressed, ...row } = raw as Omit<DateExtractionDocRow, "addressed"> & {
+        addressed: number;
+      };
+      return addressed === 1 ? { ...row, addressed: true } : row;
+    });
 }
 
 export interface ApplyExtractedDatesResult {
@@ -131,9 +219,19 @@ export function applyExtractedDates(
   const del = db.prepare("DELETE FROM document_extracted_dates WHERE document_id = ?");
   const ins = db.prepare(
     `INSERT INTO document_extracted_dates
-       (document_id, kind, resolved_start, resolved_end, mod, relative, matched_text, timex, char_start, char_end)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (document_id, kind, resolved_start, resolved_end, mod, relative, matched_text, timex, char_start, char_end,
+        mention_start_day, mention_end_day, mention_deadline, thread_key)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
+  // Queue a document that keeps a mention for the worth gate, as a new
+  // generation; the previous judgement's answer stays alongside, so unchanged
+  // content is not asked again.
+  const queue = db.prepare(
+    `INSERT INTO date_mention_judgements (document_id, verdict) VALUES (?, 'pending')
+       ON CONFLICT(document_id) DO UPDATE
+         SET verdict = 'pending', generation = generation + 1, attempts = 0, next_attempt_at = 0`,
+  );
+  const unqueue = db.prepare("DELETE FROM date_mention_judgements WHERE document_id = ?");
   const now = new Date().toISOString();
   let applied = 0;
   let datesWritten = 0;
@@ -145,7 +243,8 @@ export function applyExtractedDates(
       if (stamp.run(now, e.truncated ? 1 : null, e.id).changes === 0) continue;
       applied++;
       del.run(e.id);
-      for (const d of e.dates) {
+      for (const [index, d] of e.dates.entries()) {
+        const mention = e.mentions?.[index] ?? null;
         ins.run(
           e.id,
           d.kind,
@@ -157,9 +256,15 @@ export function applyExtractedDates(
           d.timex,
           d.charStart,
           d.charEnd,
+          mention?.startDay ?? null,
+          mention?.endDay ?? null,
+          mention ? (mention.deadline ? 1 : 0) : null,
+          e.threadKey ?? null,
         );
         datesWritten++;
       }
+      if (e.mentions?.some((m) => m !== null)) queue.run(e.id);
+      else unqueue.run(e.id);
     }
   });
   run(entries);
@@ -209,12 +314,18 @@ export function getExtractedDatesForDocument(db: Db, documentId: string): Extrac
   return rows.map(rowToExtractedDate);
 }
 
-/** Count documents that still need date extraction (progress denominator). */
-export function countPendingDateExtraction(db: Db): number {
+/**
+ * Count documents that still need date extraction (progress denominator),
+ * optionally only those of some sources.
+ */
+export function countPendingDateExtraction(db: Db, sourceIds?: readonly string[]): number {
+  const bySource = sourceIds?.length
+    ? ` AND source_id IN (${sourceIds.map(() => "?").join(", ")})`
+    : "";
   return (
-    db.prepare("SELECT COUNT(*) AS c FROM documents WHERE dates_extracted_at IS NULL").get() as {
-      c: number;
-    }
+    db
+      .prepare(`SELECT COUNT(*) AS c FROM documents WHERE dates_extracted_at IS NULL${bySource}`)
+      .get(...(sourceIds ?? [])) as { c: number }
   ).c;
 }
 

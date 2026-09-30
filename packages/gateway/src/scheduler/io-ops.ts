@@ -388,6 +388,17 @@ export interface IoGate {
    * truncated to `maxChars`. The read half of the date-enrichment split.
    */
   fetchDateExtractionBatch(limit: number, maxChars: number): Promise<DateExtractionDocRow[]>;
+  /**
+   * Fetch up to `limit` documents waiting for the mention worth gate and due
+   * by `now`, each resolved to an exemption, an answer to reuse, or the state
+   * to ask about.
+   */
+  fetchPendingMentionJudgements(
+    limit: number,
+    rubricVersion: string,
+    modelId: string,
+    now: number,
+  ): Promise<import("../enrichment/dates/mention-judgements.js").PendingMentionJudgement[]>;
   captureDfOccVersion(): Promise<number>;
   fetchDfDocChunk(
     eligibleDocTypes: string[],
@@ -507,6 +518,7 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
   { name: "io.fetchLinksForBatch", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.resolveExtractedLinks", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.fetchDateExtractionBatch", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
+  { name: "io.fetchPendingMentionJudgements", priority: "background" },
   { name: "io.captureDfOccVersion", priority: "background" },
   { name: "io.fetchDfDocChunk", priority: "background", latencyBudgetMs: 5_000 },
   { name: "io.nearDupFileLikeDocsSince", priority: "background" },
@@ -626,6 +638,8 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
       ]),
     fetchDateExtractionBatch: (limit, maxChars) =>
       call("io.fetchDateExtractionBatch", [limit, maxChars]),
+    fetchPendingMentionJudgements: (limit, rubricVersion, modelId, now) =>
+      call("io.fetchPendingMentionJudgements", [limit, rubricVersion, modelId, now]),
     captureDfOccVersion: () => call("io.captureDfOccVersion", []),
     fetchDfDocChunk: (eligibleDocTypes, minContentLength, maxContentLength, afterId, limit) =>
       call("io.fetchDfDocChunk", [

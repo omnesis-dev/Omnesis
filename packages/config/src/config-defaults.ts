@@ -108,10 +108,9 @@ export const CONFIG_DEFAULTS = {
     sweepsEnabled: true,
   },
   enrichment: {
-    // Omnesis-derived enrichment signals (experimental). Runtime resolution
-    // lives in packages/gateway/src/enrichment/dates/config.ts. The pass is
-    // gated by experimental mode; `enabled` defaults ON there so turning on
-    // experimental is the only step needed, and this knob is the off-switch.
+    // Omnesis-derived enrichment signals. Runtime resolution lives in
+    // packages/gateway/src/enrichment/dates/config.ts. The pass runs on every
+    // install; `enabled` is the off-switch.
     dates: {
       enabled: true,
       batchSize: 50,
@@ -119,6 +118,8 @@ export const CONFIG_DEFAULTS = {
       scanBudgetMs: 3_000,
       periodMs: 1_500,
       idlePeriodMs: 300_000,
+      numericDateOrder: "auto",
+      worthGate: false,
     },
   },
   search: {

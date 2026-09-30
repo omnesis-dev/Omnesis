@@ -258,7 +258,7 @@ function renderOption(opt, mode, onSelect) {
         onClick=${pick}
       />`;
     case "typesafe":
-      return html`<${BackendOptionCard} key="typesafe" fallbackGlyph=${TYPESAFE_GLYPH} title="TypeSafe" subtitle="Scores documents before a run" onClick=${pick} />`;
+      return html`<${BackendOptionCard} key="typesafe" fallbackGlyph=${TYPESAFE_GLYPH} title="TypeSafe" subtitle="Judges whether an email is worth recording" onClick=${pick} />`;
     case "add-custom":
       return html`<${BackendOptionCard} key="add-custom" fallbackGlyph=${ADD_GLYPH} title="Custom HTTP backend" subtitle="Any OpenAI-compatible server" onClick=${pick} />`;
     default:

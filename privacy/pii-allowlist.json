@@ -2788,8 +2788,8 @@
         "packages/gateway/portal/js/views/cognition-bootstrap.js",
         "packages/gateway/portal/js/views/cognition-bootstrap.test.ts",
         "packages/gateway/portal/js/views/cognition-briefclaims.test.ts",
-        "packages/gateway/portal/js/views/cognition-calendar-loading.test.ts",
-        "packages/gateway/portal/js/views/cognition-calendar.test.ts",
+        "packages/gateway/portal/js/views/calendar-loading.test.ts",
+        "packages/gateway/portal/js/views/calendar.test.ts",
         "packages/gateway/portal/js/views/cognition-calibration.test.ts",
         "packages/gateway/portal/js/views/cognition-doclist.test.ts",
         "packages/gateway/portal/js/views/cognition-personlist.test.ts",
@@ -4885,14 +4885,6 @@
       "reason": "reviewed product test label"
     },
     {
-      "value": "Cognition Calendar",
-      "paths": [
-        "packages/gateway/portal/js/views/cognition-calendar-loading.test.ts",
-        "packages/gateway/portal/js/views/cognition-calendar.test.ts"
-      ],
-      "reason": "reviewed product test-suite title"
-    },
-    {
       "value": "Cognition Steward",
       "paths": [
         "evals/universes/loops-test-life/universe.json",
@@ -5132,7 +5124,8 @@
         "packages/watch/universes/poc/ontology.json",
         "packages/gateway/src/privacy/reviewer.test.ts",
         "packages/collector/src/e2e/maildir-lifecycle.e2e.test.ts",
-        "packages/providers/maildir/src/source.test.ts"
+        "packages/providers/maildir/src/source.test.ts",
+        "packages/gateway/src/enrichment/dates/mention-bounds.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -6441,7 +6434,8 @@
         "evals/universes/graph-search/sources/whatsapp-messages/messages.json",
         "packages/collector/src/e2e/graph-search-v2.e2e.test.ts",
         "packages/gateway/src/search/agent-provenance.test.ts",
-        "packages/gateway/src/search/provenance-model-context.test.ts"
+        "packages/gateway/src/search/provenance-model-context.test.ts",
+        "packages/gateway/src/enrichment/dates/mention-bounds.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -7047,6 +7041,7 @@
         "packages/gateway/src/brain/storage/consumption-edges.test.ts",
         "packages/gateway/src/brain/temporal-annotation-invalidator.integration.test.ts",
         "packages/gateway/src/brain/worth-gate/worth-gate.test.ts",
+        "packages/gateway/src/enrichment/dates/mention-judgements.test.ts",
         "packages/gateway/src/data/list-revisions.test.ts",
         "packages/gateway/src/data/prune-invalid-email-aliases.test.ts",
         "packages/gateway/src/domain/DocumentGraphService.test.ts",
@@ -7111,7 +7106,8 @@
         "packages/providers/maildir/src/message.test.ts",
         "packages/providers/maildir/src/source.test.ts",
         "evals/universes/graph-search/cast.json",
-        "packages/gateway/src/search/agent-provenance.test.ts"
+        "packages/gateway/src/search/agent-provenance.test.ts",
+        "packages/gateway/src/enrichment/dates/mention-bounds.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -10194,6 +10190,31 @@
       "value": "Forwarded Northstar Equipment",
       "paths": ["evals/universes/graph-search/sources/gmail/messages.json"],
       "reason": "Invented graph-search test corpus; no personal corpus data."
+    },
+    {
+      "value": "On Tue",
+      "paths": ["packages/gateway/src/enrichment/dates/mention-bounds.test.ts"],
+      "reason": "ordinary words, not a name"
+    },
+    {
+      "value": "On Mon",
+      "paths": ["packages/gateway/src/enrichment/dates/mention-bounds.test.ts"],
+      "reason": "ordinary words, not a name"
+    },
+    {
+      "value": "On Friday",
+      "paths": ["packages/gateway/src/enrichment/dates/mention-bounds.test.ts"],
+      "reason": "ordinary words, not a name"
+    },
+    {
+      "value": "The Calendar",
+      "paths": ["packages/gateway/portal/js/views/cognition-runs.test.ts"],
+      "reason": "ordinary words, not a name"
+    },
+    {
+      "value": "The Brain",
+      "paths": ["packages/gateway/src/http/routes/temporal.test.ts"],
+      "reason": "ordinary words, not a name"
     }
   ],
   "secretFixtures": [

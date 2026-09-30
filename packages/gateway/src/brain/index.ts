@@ -166,7 +166,6 @@ export {
   insertCognitionDecision,
   listDecisionsForRun,
   decisionVerdictsForRuns,
-  findReusableDecision,
   type CognitionDecisionRecord,
   type DecisionVerdict,
 } from "./storage/decisions.js";

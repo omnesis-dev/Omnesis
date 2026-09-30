@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { TemporalQueryService } from "./temporal-query-service.js";
+import { TemporalQueryService, type TemporalQueryOptions } from "./temporal-query-service.js";
 import type Database from "better-sqlite3";
 import type { TemporalReadPort } from "@omnesis/agent";
 import type { AnalyticsDb } from "../../analytics-db.js";
@@ -13,8 +13,9 @@ export function createGatewayTemporalPort(
   db: Db,
   analyticsDb: AnalyticsDb,
   execution?: { maxWindowMs?: number },
+  options?: TemporalQueryOptions,
 ): TemporalReadPort {
-  const service = new TemporalQueryService(db, analyticsDb);
+  const service = new TemporalQueryService(db, analyticsDb, options);
   return {
     query(input, signal) {
       return service.query(input, { ...execution, ...(signal ? { signal } : {}) });

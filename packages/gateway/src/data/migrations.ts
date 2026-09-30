@@ -58,6 +58,7 @@ import { queueTranscriptEviction } from "../brain/transcript-eviction.js";
 import {
   createExtractedDatesTables,
   createDatesUnprocessedIndex,
+  addDateMentions,
 } from "../enrichment/dates/storage.js";
 import {
   cascadeTemporalAnnotationPrivacyDelete,
@@ -4699,6 +4700,11 @@ export const MIGRATIONS: readonly Migration[] = [
         }
       }
     },
+  },
+  {
+    version: 185,
+    description: "store date mentions by day for the temporal query and rescan every document",
+    up: addDateMentions,
   },
 ];
 

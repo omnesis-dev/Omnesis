@@ -113,6 +113,8 @@ describe("buildNotesDayDocument", () => {
     expect(doc.title).toBe("Notes — 2026-06-15");
     expect(doc.metadata.documentType).toBe("note");
     expect(doc.metadata.addressedToAgent).toBe(true);
+    // Relative dates in the notes count from the day they were written.
+    expect(doc.metadata.dateAnchorDay).toBe("2026-06-15");
     expect(doc.metadata.addressedEntries).toEqual([
       {
         id: "a",

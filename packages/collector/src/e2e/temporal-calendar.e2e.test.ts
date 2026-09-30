@@ -8,7 +8,7 @@
  * message).
  *
  * Covered:
- *  - `GET /briefs/temporal/window`: projections and annotations round-trip
+ *  - `GET /temporal/window`: projections and annotations round-trip
  *    together with explicit provenance; origin and kind filters narrow
  *    server-side;
  *  - grounding-document changes invalidate stale annotations through the
@@ -155,7 +155,7 @@ describe("unified temporal Calendar (scripted backend)", () => {
   }, 30_000);
 
   const temporalWindowPath = () =>
-    `/briefs/temporal/window?from=${now}&to=${now + 30 * DAY_MS}&timeZone=UTC`;
+    `/temporal/window?from=${now}&to=${now + 30 * DAY_MS}&timeZone=UTC`;
 
   test("the unified window returns projections and annotations with provenance and filters", async () => {
     const body = await harness.gatewayJson<{

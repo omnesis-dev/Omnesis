@@ -1,23 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// Calendar section for the Cognition inspector. It is a read-only view over
-// the gateway's unified temporal query: deterministic source projections and
-// selective agent annotations share one calendar, while their provenance
-// remains explicit in each row and detail panel.
+// The Debug page's Calendar: a read-only view of the time index through the
+// gateway's unified temporal query. Source projections, date mentions from
+// document text and — when the Brain runs — its annotations share one
+// calendar, while each row and detail panel says where it came from.
 
 import { html } from "htm/preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
-import {
-  getCognitionCalendarAnnotation,
-  getCognitionCalendarWindow,
-  getDocumentSummariesBulk,
-} from "../api.js";
-// Render-time-only import: cognition.js owns CalendarTab, so this is a
-// cycle by construction. Safe because neither module touches the other's
-// bindings at evaluation time — BrainInactiveBanner is first referenced
-// inside CalendarTab's render. Keep it that way: no module-scope use.
-import { BrainInactiveBanner } from "./cognition.js";
+import { getCalendarAnnotation, getCalendarWindow, getDocumentSummariesBulk } from "../api.js";
 import { Modal } from "../components/modal.js";
 import { DevAnnotateButton } from "../components/dev-annotate-button.js";
 import { sourceIconUrl } from "../lib/format.js";
@@ -25,6 +16,20 @@ import { navigate, replaceRoute } from "../lib/router.js";
 
 const DAY_MS = 86_400_000;
 const PAGE_LIMIT = 100;
+/**
+ * Pages read for one view. Date mentions make the index corpus-sized, so a
+ * wide view over a large mailbox stops here and says so instead of paging on.
+ */
+const MAX_PAGES = 20;
+/** Every origin the index holds; the gateway reads mentions only when asked. */
+const ORIGINS = "projection,annotation,mention";
+
+/** How each origin is labelled on a row and headed in its detail. */
+export const ORIGIN_LABELS = {
+  projection: { row: "▱ Source", heading: "Source fact" },
+  mention: { row: "❝ Mention", heading: "Date written in a document" },
+  annotation: { row: "✦ Agent", heading: "Agent note" },
+};
 const UPCOMING_DAYS = 399;
 const DATE_FORMATTERS = new Map();
 const LOCAL_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
@@ -119,11 +124,41 @@ export function isMomentWindow(entry) {
     && entryEndMs(entry) - entryStartMs(entry) >= DAY_MS;
 }
 
+/**
+ * Spanning entries shown above the days before the rest fold away: months and
+ * long spans are many on a busy mailbox, and must not push the days out of view.
+ */
+const BANNER_PREVIEW = 4;
+
+/** A mention span longer than this sits in the banner row, not on each of its days. */
+const MENTION_BANNER_SPAN_MS = 7 * DAY_MS;
+
 export function isSemanticBanner(entry) {
   const span = entryEndMs(entry) - entryStartMs(entry);
   return entry.precision === "month"
     || entry.precision === "year"
-    || (entry.precision === "range" && !isMomentWindow(entry) && span > 35 * DAY_MS);
+    || (entry.precision === "range" && !isMomentWindow(entry) && span > 35 * DAY_MS)
+    // A billing period or a statement's span names its days only at its
+    // ends; repeating it on every day between would bury the days' own entries.
+    || (entry.origin === "mention" && entry.precision === "range" && span > MENTION_BANNER_SPAN_MS);
+}
+
+/**
+ * The entries to show together: a document that writes the same day in
+ * several phrases ("Tue 29 Sep 10am–10:30am", "Tuesday 29 Sep") appears once,
+ * under its first mention. `dayOf` keeps one per document per day, for a list
+ * that runs across days.
+ */
+export function oneMentionPerDocument(entries, dayOf = null) {
+  const seen = new Set();
+  return entries.filter((entry) => {
+    const documentId = entry.origin === "mention" ? entry.mention?.documentId : null;
+    if (!documentId) return true;
+    const key = dayOf ? `${documentId} ${dayOf(entry)}` : documentId;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 export function overlapsVisibleDays(entry, visibleKeys, timeZone) {
@@ -157,7 +192,9 @@ export function entryDayKeys(entry, visibleKeys = null, timeZone = "UTC") {
 export function evidenceDocumentIds(entry) {
   const ids = entry.origin === "projection"
     ? [entry.projection?.documentId]
-    : (entry.annotation?.documentIds ?? []);
+    : entry.origin === "mention"
+      ? [entry.mention?.documentId]
+      : (entry.annotation?.documentIds ?? []);
   return [...new Set(ids.filter(Boolean))];
 }
 
@@ -167,13 +204,19 @@ function evidenceFor(entry, documents) {
 
 export async function fetchCalendarPages(
   query,
-  { fetchPage = getCognitionCalendarWindow } = {},
+  { fetchPage = getCalendarWindow, maxPages = MAX_PAGES } = {},
 ) {
   const byId = new Map();
   const seen = new Set();
   let cursor;
   let nowMs = Date.now();
-  do {
+  let coverage = null;
+  let capped = false;
+  for (let pages = 0; ; pages += 1) {
+    if (pages === maxPages) {
+      capped = true;
+      break;
+    }
     const page = await fetchPage({
       ...query,
       limit: PAGE_LIMIT,
@@ -181,14 +224,15 @@ export async function fetchCalendarPages(
     });
     for (const item of page.items ?? []) byId.set(item.id, item);
     nowMs = page.nowMs ?? nowMs;
+    coverage ??= page.coverage ?? null;
     const next = page.nextCursor;
     if (!next) break;
     if (seen.has(next)) throw new Error("Calendar pagination returned a cursor cycle");
     seen.add(next);
     cursor = next;
-  } while (true);
+  }
   const items = [...byId.values()];
-  return { items, documents: {}, nowMs, timeZone: query.timeZone };
+  return { items, documents: {}, nowMs, timeZone: query.timeZone, coverage, capped };
 }
 
 export async function fetchCalendarEvidence(
@@ -210,6 +254,7 @@ function queryFor(zoom, anchor) {
       timeZone,
       kinds: UPCOMING_KINDS.join(","),
       statuses: "active,completed",
+      origins: ORIGINS,
     };
   }
   const days = visibleCalendarDays(zoom, anchor);
@@ -218,6 +263,7 @@ function queryFor(zoom, anchor) {
     to: addDays(days.at(-1), 2).getTime() - 1,
     timeZone,
     statuses: "active,completed",
+    origins: ORIGINS,
   };
 }
 
@@ -255,6 +301,10 @@ function periodTitle(zoom, anchor, days) {
   return `${left} – ${right}`;
 }
 
+function originLabel(origin) {
+  return ORIGIN_LABELS[origin] ?? { row: origin, heading: origin };
+}
+
 function KindPill({ kind }) {
   const meta = kindMeta(kind);
   return html`<span class="calendar-kind" style=${`--calendar-kind:${meta.color}`}>
@@ -287,7 +337,7 @@ export function CalendarEntryRow({
         ${showDate && html`<span>${date}</span>`}
         ${formatTime(entry, timeZone) && html`<span>${formatTime(entry, timeZone)}</span>`}
         <${KindPill} kind=${entry.kind} />
-        <span class="calendar-origin">${entry.origin === "projection" ? "▱ Source" : "✦ Agent"}</span>
+        <span class="calendar-origin">${originLabel(entry.origin).row}</span>
         ${evidence.length > 0 && html`<span>▤ ${evidence.length}</span>`}
       </span>
     </span>
@@ -366,6 +416,7 @@ export function CalendarEntryDetail({ entry, documents, timeZone = "UTC", develo
   const evidence = evidenceFor(entry, documents);
   const projection = entry.projection;
   const annotation = entry.annotation;
+  const mention = entry.mention;
   const sourceIcon = projection ? sourceIconUrl(projection.sourceId) : null;
   return html`<${Modal} open=${true} onClose=${onClose} title=${entry.label} size="lg">
     <div class="calendar-detail">
@@ -385,11 +436,15 @@ export function CalendarEntryDetail({ entry, documents, timeZone = "UTC", develo
         />`}
       </div>
       <section class="calendar-provenance">
-        <strong>${entry.origin === "projection" ? "Source fact" : "Agent note"}</strong>
+        <strong>${originLabel(entry.origin).heading}</strong>
         ${projection && html`<div>
           ${sourceIcon && html`<img class="source-icon" src=${sourceIcon} alt="" />`}
           <span>Recorded by ${projection.sourceId}</span>
           <span class="debug-sub">${projection.tableName ? `${projection.tableName} · ` : ""}${projection.slot}</span>
+        </div>`}
+        ${mention && html`<div>
+          <q>${mention.text}</q>
+          ${mention.relative && html`<span class="debug-sub">counted from the document's date</span>`}
         </div>`}
         ${annotation && html`<div>
           <span>Revision ${annotation.revision}</span>
@@ -424,6 +479,9 @@ export function CalendarTab({ selectedId = null, developer = false } = {}) {
   const [detail, setDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState(null);
+  const [showAllBanners, setShowAllBanners] = useState(false);
+  // A new period starts with its spanning entries folded again.
+  useEffect(() => setShowAllBanners(false), [queryKey]);
   const queryError = error?.queryKey === queryKey ? error.message : null;
   const loading = result.queryKey !== queryKey && queryError == null;
 
@@ -468,13 +526,16 @@ export function CalendarTab({ selectedId = null, developer = false } = {}) {
         map.set(key, list);
       }
     }
-    for (const list of map.values()) list.sort((a, b) => entryStartMs(a) - entryStartMs(b) || a.id.localeCompare(b.id));
+    for (const [key, list] of map) {
+      list.sort((a, b) => entryStartMs(a) - entryStartMs(b) || a.id.localeCompare(b.id));
+      map.set(key, oneMentionPerDocument(list));
+    }
     return map;
   }, [result.items, visibleKeys]);
-  const banners = result.items.filter(
+  const banners = oneMentionPerDocument(result.items.filter(
     (entry) => isSemanticBanner(entry)
       && overlapsVisibleDays(entry, visibleKeys, result.timeZone),
-  );
+  ));
 
   useEffect(() => {
     let cancelled = false;
@@ -494,7 +555,7 @@ export function CalendarTab({ selectedId = null, developer = false } = {}) {
     }
     setDetail(null);
     setDetailLoading(true);
-    getCognitionCalendarAnnotation(selectedId, result.timeZone)
+    getCalendarAnnotation(selectedId, result.timeZone)
       .then(async ({ item }) => {
         if (cancelled) return;
         setDetail(item);
@@ -534,27 +595,29 @@ export function CalendarTab({ selectedId = null, developer = false } = {}) {
   function openEntry(entry) {
     setDetail(entry);
     if (entry.origin === "annotation") {
-      navigate(`/portal/debug/cognition/calendar/${encodeURIComponent(entry.id)}`);
+      navigate(`/portal/debug/calendar/${encodeURIComponent(entry.id)}`);
     }
   }
 
   function closeDetail() {
     const wasAddressable = detail?.origin === "annotation";
     setDetail(null);
-    if (wasAddressable || selectedId) replaceRoute("/portal/debug/cognition/calendar");
+    if (wasAddressable || selectedId) replaceRoute("/portal/debug/calendar");
   }
 
-  const upcoming = [...result.items].sort((a, b) => {
+  const upcoming = oneMentionPerDocument([...result.items].sort((a, b) => {
     const aKey = entryDayKeys(a, null, result.timeZone)[0] ?? a.start;
     const bKey = entryDayKeys(b, null, result.timeZone)[0] ?? b.start;
     return aKey.localeCompare(bKey) || entryStartMs(a) - entryStartMs(b);
-  });
+  }), (entry) => entryDayKeys(entry, null, result.timeZone)[0]);
 
-  return html`<div class="cognition-calendar">
+  const mentionsHidden = result.coverage?.mentions?.unworthyHidden === true;
+  return html`<div class="calendar-view">
     <p class="debug-sub calendar-intro">
-      Source-owned time projections and agent-authored interpretations in one read-only view.
+      The time index, read-only: facts your sources record, dates written in your
+      documents, and — when the Brain runs — its own notes.
+      ${mentionsHidden && " Dates in mail judged not worth recording are hidden."}
     </p>
-    <${BrainInactiveBanner} />
     <div class="calendar-toolbar">
       <div class="calendar-zoom" role="group" aria-label="Calendar view">
         ${ZOOMS.map((item) => html`<button
@@ -575,9 +638,19 @@ export function CalendarTab({ selectedId = null, developer = false } = {}) {
     ${queryError && html`<div class="debug-error">⚠️ ${queryError}</div>`}
     ${detailLoading && html`<div class="debug-loading">Loading calendar entry…</div>`}
     ${detailError && html`<div class="debug-error">⚠️ ${detailError}</div>`}
+    ${!loading && !queryError && result.capped && html`<div class="debug-sub calendar-capped">
+      Showing the first ${result.items.length} entries — narrow the view to see them all.
+    </div>`}
     ${!loading && !queryError && html`
       ${zoom !== "upcoming" && banners.length > 0 && html`<div class="calendar-banners">
-        ${banners.map((entry) => html`<${CalendarEntryRow} key=${entry.id} entry=${entry} documents=${result.documents} timeZone=${result.timeZone} onOpen=${openEntry} />`)}
+        ${(showAllBanners ? banners : banners.slice(0, BANNER_PREVIEW)).map((entry) => html`<${CalendarEntryRow} key=${entry.id} entry=${entry} documents=${result.documents} timeZone=${result.timeZone} onOpen=${openEntry} />`)}
+        ${banners.length > BANNER_PREVIEW && html`<button
+          type="button"
+          class="calendar-banners-toggle"
+          onClick=${() => setShowAllBanners((shown) => !shown)}
+        >${showAllBanners
+          ? "Show fewer spanning entries"
+          : `Show ${banners.length - BANNER_PREVIEW} more spanning entries`}</button>`}
       </div>`}
       ${zoom === "month" && html`<div>
         <${MonthGrid} days=${days} anchor=${anchor} byDay=${byDay} selectedDay=${selectedDay} onSelectDay=${setSelectedDay} />

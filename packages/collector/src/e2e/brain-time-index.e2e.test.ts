@@ -8,7 +8,7 @@
  * (`temporal_annotation_add` / `_update` / `_delete`) on a real spawned
  * gateway, and read back through the three shipped read surfaces:
  * `/admin/brain/time-index`, `/briefs/time-index/window` and the unified
- * `/briefs/temporal/window`. The sibling suites `temporal-substrate` and
+ * `/temporal/window`. The sibling suites `temporal-substrate` and
  * `temporal-calendar` cover the window routes over rows seeded directly into
  * SQLite; this file covers what happens when the STEWARD is the author —
  * precision resolution, revisions, the two invalidation paths, the write
@@ -643,7 +643,7 @@ describe("Brain Bench — steward-written temporal annotations", () => {
     expect(deadlines.items.some((i) => i.label.includes("TIX-RANGE"))).toBe(false);
 
     // The unified read is timezone-aware by contract: it refuses to guess.
-    expect(await bench.obs.statusOf(`/briefs/temporal/window?from=${from}&to=${to}`)).toBe(400);
+    expect(await bench.obs.statusOf(`/temporal/window?from=${from}&to=${to}`)).toBe(400);
     // The legacy annotation-only read is deliberately timezone-ignorant.
     expect(await bench.obs.statusOf(`/briefs/time-index/window?from=${from}&to=${to}`)).toBe(200);
   }, 60_000);

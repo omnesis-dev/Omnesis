@@ -22,8 +22,9 @@
  *
  * Every judgement is appended to the decision ledger (`cognition_decisions`)
  * with its exact request and answers — the audit trail the runs page shows.
- * An unchanged document (same content hash, same rubric version) reuses its
- * earlier answer instead of paying for a second call.
+ * An email already answered for the same content, rubric and model — by this
+ * gate or by the mention worth gate — reuses that shared answer
+ * (`worth/answers.ts`) instead of paying for a second call.
  */
 
 import { documentsMetadataCodec } from "../../data/json-columns.js";
@@ -33,11 +34,7 @@ import {
   parseCognitionBootstrapRunPayload,
   parseCognitionDataRunPayload,
 } from "../run-payloads.js";
-import {
-  findReusableDecision,
-  type CognitionDecisionRecord,
-  type DecisionVerdict,
-} from "../storage/decisions.js";
+import { findWorthAnswer } from "../../worth/answers.js";
 import {
   EMAIL_WORTH_QUESTIONS,
   EMAIL_WORTH_QUESTION_ID,
@@ -45,10 +42,16 @@ import {
   WORTH_GATED_DOCUMENT_TYPE,
   WORTH_GATE_RUBRIC_VERSION,
   emailWorthState,
-} from "./rubric.js";
+  hasStructuredDate,
+  passesWorthThreshold,
+} from "../../worth/rubric.js";
+import type { CognitionDecisionRecord, DecisionVerdict } from "../storage/decisions.js";
 import type { DecisionCapability, Logger } from "@omnesis/core";
 import type { ClaimedCognitionRun } from "../storage/types.js";
 import type Database from "better-sqlite3";
+
+/** Spend mechanism the Brain worth gate's decision-model tokens are recorded under. */
+export const WORTH_GATE_SPEND_MECHANISM = "worth-gate";
 
 type Db = Database.Database;
 
@@ -154,14 +157,14 @@ export class WorthGate {
       threshold: EMAIL_WORTH_THRESHOLD,
     };
 
-    const reusable = findReusableDecision(
-      this.deps.db,
-      subject.id,
-      WORTH_GATE_RUBRIC_VERSION,
+    // The email's stored worth answer, whichever gate asked for it.
+    const reusable = findWorthAnswer(this.deps.db, {
+      subjectDocumentId: subject.id,
       contentHash,
-      decision.modelId,
-    );
-    if (reusable && reusable.score !== null) {
+      rubricVersion: WORTH_GATE_RUBRIC_VERSION,
+      requestedModelId: decision.modelId,
+    });
+    if (reusable) {
       const verdict = verdictFor(reusable.score);
       const record: CognitionDecisionRecord = {
         ...base,
@@ -261,7 +264,7 @@ export class WorthGate {
 }
 
 function verdictFor(score: number): "pass" | "skip" {
-  return score >= EMAIL_WORTH_THRESHOLD ? "pass" : "skip";
+  return passesWorthThreshold(score) ? "pass" : "skip";
 }
 
 function parseMetadata(doc: DocRow): Record<string, unknown> {
@@ -269,9 +272,4 @@ function parseMetadata(doc: DocRow): Record<string, unknown> {
     string,
     unknown
   >;
-}
-
-/** Structured booking/invoice dates — the waker's own bulk-mail exemption. */
-function hasStructuredDate(meta: Record<string, unknown>): boolean {
-  return typeof meta.dueAt === "string" || typeof meta.scheduledAt === "string";
 }

@@ -17,7 +17,12 @@
  * silently also filters on who wrote it.
  */
 
-export const TEMPORAL_ORIGINS = ["projection", "annotation"] as const;
+/**
+ * Who produced a temporal fact. A projection is a source's own dated field, an
+ * annotation is the cognition agent's interpretation, and a mention is a date
+ * written in a document's text, found by the deterministic date recognizer.
+ */
+export const TEMPORAL_ORIGINS = ["projection", "annotation", "mention"] as const;
 
 /**
  * What a temporal fact *is*. Deliberately small, and deliberately free of any
@@ -40,8 +45,8 @@ export const TEMPORAL_STATUSES = ["active", "completed", "cancelled"] as const;
 
 /**
  * How precisely the interval is known. Projections currently emit only
- * `instant` and `day`; the coarser values exist for annotations, which
- * routinely assert a fact about a month or a year.
+ * `instant` and `day`; the coarser values exist for annotations and mentions,
+ * which routinely name a month or a span of days rather than a moment.
  */
 export const TEMPORAL_PRECISIONS = ["instant", "day", "month", "year", "range"] as const;
 
