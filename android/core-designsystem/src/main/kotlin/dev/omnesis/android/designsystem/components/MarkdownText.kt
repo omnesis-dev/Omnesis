@@ -380,7 +380,7 @@ fun parseInline(text: String, linkColor: Color = Color.Unspecified): AnnotatedSt
                         value = value.substring(1, value.length - 1)
                     }
                     pushStringAnnotation(CopyCodeAnnotation, value)
-                    withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = CodeBg)) { append(value) }
+                    withStyle(SpanStyle(fontFamily = FontFamily.Monospace)) { append(value) }
                     pop()
                     i = match + length
                 } else {
@@ -430,5 +430,3 @@ fun parseInline(text: String, linkColor: Color = Color.Unspecified): AnnotatedSt
 }
 
 internal const val CopyCodeAnnotation = "markdown-copy-code"
-
-private val CodeBg = Color(0x1F808080)

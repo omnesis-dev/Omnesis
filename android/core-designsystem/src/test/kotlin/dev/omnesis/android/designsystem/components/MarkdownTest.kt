@@ -3,6 +3,8 @@
 
 package dev.omnesis.android.designsystem.components
 
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -46,6 +48,21 @@ class MarkdownTest {
     fun inline_strips_markers_in_plain_text() {
         assertEquals("bold and italic and code", parseInline("**bold** and *italic* and `code`").text)
         assertEquals("link", parseInline("[link](https://example.com)").text)
+    }
+
+    @Test
+    fun inline_values_keep_monospace_without_a_background_in_nested_styles() {
+        val parsed = parseInline("Reference: `0012` and **`A12`**.")
+        for (text in listOf(parsed, inlineCopyText(parsed, true))) {
+            val values = text.getStringAnnotations(CopyCodeAnnotation, 0, text.length)
+            assertEquals(listOf("0012", "A12"), values.map { it.item })
+            for (value in values) {
+                assertTrue(text.spanStyles.any {
+                    it.start <= value.start && it.end >= value.end && it.item.fontFamily == FontFamily.Monospace
+                })
+            }
+            assertTrue(text.spanStyles.all { it.item.background == Color.Unspecified })
+        }
     }
 
     @Test
