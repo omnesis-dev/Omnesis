@@ -5,6 +5,16 @@
 import XCTest
 
 final class MarkdownCopyContentTests: XCTestCase {
+    func testPlainValueFenceLanguagesAndDisplayKeepPayloadSeparate() {
+        for language in ["", "text", "TEXT", "plain", "plaintext", "txt"] {
+            XCTAssertTrue(MarkdownCopyContent.isPlainFence(language))
+        }
+        XCTAssertFalse(MarkdownCopyContent.isPlainFence("swift"))
+        let value = "  42 Example Street  \nExampleville\n\n"
+        XCTAssertEqual(MarkdownCopyContent.fencedDisplay(value), "  42 Example Street  \nExampleville")
+        XCTAssertEqual(value, "  42 Example Street  \nExampleville\n\n")
+    }
+
     func testOnlyCompleteCodeSpansAreCopyable() {
         XCTAssertEqual(MarkdownCopyContent.values(in: "Address: `42 Example Street`. ID: `000042`."), ["42 Example Street", "000042"])
         XCTAssertEqual(MarkdownCopyContent.values(in: "ID: `00004"), [])

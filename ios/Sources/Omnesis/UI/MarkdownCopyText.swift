@@ -6,6 +6,18 @@ import Foundation
 /// Completed Markdown only: unlike the streaming display cache, this parser
 /// never supplies synthetic closing delimiters to create a copyable value.
 enum MarkdownCopyContent {
+    static func isPlainFence(_ language: String) -> Bool {
+        ["", "text", "plain", "plaintext", "txt"].contains(language.lowercased())
+    }
+
+    static func fencedDisplay(_ value: String) -> String {
+        var display = value
+        while display.hasSuffix("\n") {
+            display.removeLast()
+        }
+        return display
+    }
+
     static func inline(_ raw: String) -> AttributedString {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         return (try? AttributedString(markdown: raw, options: options)) ?? AttributedString(raw)
@@ -38,6 +50,8 @@ import UIKit
 @available(iOS 17.0, *)
 struct MarkdownCopyText: UIViewRepresentable {
     let raw: String
+    /// Literal multiline display with one trailing button for the full payload.
+    var wholeValue: String?
     var font: UIFont = .systemFont(ofSize: 14)
     var color: Color = Theme.textPrimary
 
@@ -51,7 +65,7 @@ struct MarkdownCopyText: UIViewRepresentable {
         let category = context.environment.dynamicTypeSize.uiContentSizeCategory
         let traits = UITraitCollection(preferredContentSizeCategory: category)
         let scaledFont = UIFontMetrics(forTextStyle: .body).scaledFont(for: font, compatibleWith: traits)
-        view.update(raw: raw, font: scaledFont, color: UIColor(color))
+        view.update(raw: raw, wholeValue: wholeValue, font: scaledFont, color: UIColor(color))
         view.semanticContentAttribute = context.environment.layoutDirection == .rightToLeft
             ? .forceRightToLeft : .forceLeftToRight
     }
@@ -96,13 +110,13 @@ final class MarkdownCopyTextView: UIView {
     private var slots: [CopySlot] = []
     private var renderedKey: String = ""
 
-    func update(raw: String, font: UIFont, color: UIColor) {
-        let key = "\(raw)\u{0}\(font.fontName)\(font.pointSize)\(color)"
+    func update(raw: String, wholeValue: String? = nil, font: UIFont, color: UIColor) {
+        let key = "\(raw)\u{0}\(wholeValue ?? "")\u{0}\(font.fontName)\(font.pointSize)\(color)"
         guard key != renderedKey else { return }
         renderedKey = key
         slots.forEach { $0.button.removeFromSuperview() }
         slots.removeAll()
-        let parsed = MarkdownCopyContent.inline(raw)
+        let parsed = wholeValue == nil ? MarkdownCopyContent.inline(raw) : AttributedString(raw)
         let result = NSMutableAttributedString(string: "")
         var codeValue: String?
 
@@ -152,6 +166,7 @@ final class MarkdownCopyTextView: UIView {
             result.append(NSAttributedString(string: value, attributes: attributes))
             if isCode { codeValue = (codeValue ?? "") + value }
         }
+        if let wholeValue { codeValue = wholeValue }
         appendButton()
         textView.attributedText = result
         textView.linkTextAttributes = [.foregroundColor: UIColor(Theme.accent)]
@@ -226,9 +241,12 @@ struct MarkdownCodeCopyButton: View {
 }
 
 #Preview("Copyable Markdown — multiline block") {
-    MarkdownCodeCopyButton(value: PreviewMocks.copyableMarkdownBlock)
-        .padding()
-        .background(Theme.bgPrimary)
+    MarkdownCopyText(
+        raw: MarkdownCopyContent.fencedDisplay(PreviewMocks.copyableMarkdownBlock),
+        wholeValue: PreviewMocks.copyableMarkdownBlock
+    )
+    .padding()
+    .background(Theme.bgPrimary)
 }
 #endif
 #endif

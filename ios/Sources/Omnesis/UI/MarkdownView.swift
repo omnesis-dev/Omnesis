@@ -26,6 +26,8 @@ struct MarkdownView: View {
     var headingDesign: Font.Design = .default
     /// Enabled only for completed assistant answers.
     var copyValues: Bool = false
+    /// Assistant value fences stay ordinary body text while streaming too.
+    var plainValueFences: Bool = false
     var copyFont: UIFont = .systemFont(ofSize: 14)
 
     @State private var cache = MarkdownCache()
@@ -95,26 +97,42 @@ struct MarkdownView: View {
                         .fill(Theme.borderLight)
                         .frame(width: 3)
                 }
-        case .code(let raw, let closed):
-            VStack(alignment: .leading, spacing: 0) {
+        case .code(let raw, let closed, let language):
+            if plainValueFences || copyValues, MarkdownCopyContent.isPlainFence(language) {
+                let display = MarkdownCopyContent.fencedDisplay(raw)
                 if copyValues, closed {
-                    HStack {
-                        Spacer()
-                        MarkdownCodeCopyButton(value: raw)
-                    }
+                    MarkdownCopyText(raw: display, wholeValue: raw, font: copyFont)
+                } else {
+                    Text(display)
+                        .font(bodyFont)
+                        .foregroundStyle(Theme.textPrimary)
+                        .textSelection(.enabled)
                 }
-                Text(raw.hasSuffix("\n") ? String(raw.dropLast()) : raw)
-                    .font(Theme.monospace(size: 13))
+            } else {
+                codeBlock(raw, closed: closed)
             }
-            .foregroundStyle(Theme.textPrimary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
-            .background(Theme.bgTertiary)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .textSelection(.enabled)
         case .table(let headers, let rows):
             MarkdownTable(headers: headers, rows: rows, bodyFont: bodyFont, cache: cache, copyValues: copyValues, copyFont: copyFont)
         }
+    }
+
+    private func codeBlock(_ raw: String, closed: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if copyValues, closed {
+                HStack {
+                    Spacer()
+                    MarkdownCodeCopyButton(value: raw)
+                }
+            }
+            Text(raw.hasSuffix("\n") ? String(raw.dropLast()) : raw)
+                .font(Theme.monospace(size: 13))
+        }
+        .foregroundStyle(Theme.textPrimary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Theme.bgTertiary)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .textSelection(.enabled)
     }
 
     @ViewBuilder
@@ -279,7 +297,7 @@ enum MarkdownBlock: Equatable {
     case bulletList([String])
     case orderedList([String])
     case quote(String)
-    case code(String, closed: Bool)
+    case code(String, closed: Bool, language: String = "")
     /// GFM-style table — headers then rows of cells. The alignment row
     /// (`---|---`) is consumed by the parser and dropped; alignment
     /// rendering is left to the renderer (currently left-aligned for
@@ -291,6 +309,7 @@ struct MarkdownFence {
     let marker: Character
     let count: Int
     let indent: Int
+    var language: String = ""
 }
 
 enum MarkdownParser {
@@ -413,7 +432,7 @@ enum MarkdownParser {
         let closed = index < lines.count
         if closed { index += 1 }
         let payload = codeLines.isEmpty ? "" : codeLines.joined(separator: "\n") + "\n"
-        return .code(payload, closed: closed)
+        return .code(payload, closed: closed, language: fence.language)
     }
 
     static func fenceOpening(_ line: String) -> MarkdownFence? {
@@ -424,7 +443,8 @@ enum MarkdownParser {
         let count = content.prefix { $0 == marker }.count
         guard count >= 3 else { return nil }
         if marker == "`", content.dropFirst(count).contains("`") { return nil }
-        return MarkdownFence(marker: marker, count: count, indent: indent)
+        let language = content.dropFirst(count).split(whereSeparator: \.isWhitespace).first.map(String.init) ?? ""
+        return MarkdownFence(marker: marker, count: count, indent: indent, language: language)
     }
 
     static func closesFence(_ line: String, fence: MarkdownFence) -> Bool {
@@ -608,6 +628,12 @@ enum MarkdownStreaming {
     .frame(width: 320)
     .background(Theme.bgPrimary)
     .preferredColorScheme(.dark)
+}
+
+#Preview("Markdown — plain value and labelled code") {
+    MarkdownView(text: PreviewMocks.copyableMarkdownValueAndCode, copyValues: true)
+        .padding()
+        .background(Theme.bgPrimary)
 }
 
 #Preview("Markdown — kitchen sink") {

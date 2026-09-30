@@ -52,6 +52,13 @@ internal fun MarkdownInlineText(
     Text(text = rendered, style = style, color = color, modifier = modifier, inlineContent = content)
 }
 
+/** The display omits a fence's terminal newline; copying retains its entire literal body. */
+internal fun copyValueText(value: String): AnnotatedString = buildAnnotatedString {
+    pushStringAnnotation(CopyCodeAnnotation, value)
+    append(value.trimEnd('\n'))
+    pop()
+}
+
 /** Annotated subsequences preserve link and style ranges around inserted controls. */
 internal fun inlineCopyText(text: AnnotatedString, enabled: Boolean): AnnotatedString {
     if (!enabled) return text

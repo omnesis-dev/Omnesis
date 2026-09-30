@@ -13,6 +13,31 @@ import XCTest
 @available(iOS 17.0, *)
 @MainActor
 final class MarkdownCacheTests: XCTestCase {
+    func testMultilineValueCopiesLiteralPayloadAfterFinalLine() throws {
+        let payload = "42 Example Street\n**Exampleville** `literal`  \n\n"
+        let display = MarkdownCopyContent.fencedDisplay(payload)
+        let view = MarkdownCopyTextView()
+        let font = UIFont.systemFont(ofSize: 15)
+        view.update(raw: display, wholeValue: payload, font: font, color: .label)
+        view.frame = CGRect(origin: .zero, size: view.sizeThatFits(CGSize(width: 300, height: 1000)))
+        view.layoutIfNeeded()
+        let button = try XCTUnwrap(view.subviews.compactMap { $0 as? UIButton }.first)
+        XCTAssertEqual(view.subviews.compactMap { $0 as? UIButton }.count, 1)
+        XCTAssertTrue(view.textView.attributedText.string.hasPrefix(display))
+        XCTAssertEqual(view.textView.attributedText.attribute(.font, at: 0, effectiveRange: nil) as? UIFont, font)
+        XCTAssertGreaterThan(button.center.y, font.lineHeight, "Copy belongs to the final line, not a header row")
+        XCTAssertTrue(view.textView.isSelectable)
+        let previous = UIPasteboard.general.string
+        defer { UIPasteboard.general.string = previous }
+        button.sendActions(for: .touchUpInside)
+        XCTAssertEqual(UIPasteboard.general.string, payload)
+        XCTAssertEqual(MarkdownParser.parse("```swift\nlet value = 42\n```"), [.code("let value = 42\n", closed: true, language: "swift")])
+        XCTAssertEqual(
+            MarkdownParser.parse("```text\n42 Example Street\n```"),
+            [.code("42 Example Street\n", closed: true, language: "text")]
+        )
+    }
+
     func testCopyFencesPreservePayloadAndRequireMatchingCloser() {
         XCTAssertEqual(MarkdownParser.parse("```\n\n  000042  \n```"), [.code("\n  000042  \n", closed: true)])
         XCTAssertEqual(MarkdownParser.parse("````\na`b\n```\n````"), [.code("a`b\n```\n", closed: true)])

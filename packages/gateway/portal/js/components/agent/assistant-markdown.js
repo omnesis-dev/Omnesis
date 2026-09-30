@@ -8,23 +8,32 @@ import { renderMarkdown, renderCopyableMarkdown } from "../../lib/markdown.js";
 import { CopyIconButton } from "../copy-button.js";
 
 /** Sanitized Markdown with copy controls attached to trusted token targets. */
-export function AssistantMarkdown({ text, copyable = false }) {
+export function AssistantMarkdown({ text, copyable = false, plainValueFences = true, className = "agent-part-text" }) {
   const root = useRef(null);
-  const result = useMemo(() => copyable
-    ? renderCopyableMarkdown(text)
-    : { html: renderMarkdown(text), targets: [] }, [text, copyable]);
+  const result = useMemo(() => copyable || plainValueFences
+    ? renderCopyableMarkdown(text, { plainValueFences })
+    : { html: renderMarkdown(text), targets: [] }, [text, copyable, plainValueFences]);
 
   useLayoutEffect(() => {
     const hosts = [];
     for (const target of result.targets) {
       const code = root.current.querySelector(`#${target.id}`);
       if (!code) continue;
+      const showCopy = copyable && target.closed;
+      if (!showCopy && !target.plain) continue;
       const host = document.createElement("span");
-      host.className = target.block ? "agent-value-copy-block" : "agent-value-copy-inline";
+      host.className = target.block && !target.plain ? "agent-value-copy-block" : "agent-value-copy-inline";
       // Keep buttons outside links so copying never also follows the link.
       const anchor = code.closest("a");
       if (anchor) anchor.after(host);
-      else if (target.block) {
+      else if (target.plain) {
+        const block = document.createElement("div");
+        block.className = "agent-value-text-block";
+        // Keep the control after the last text line; copying retains all trailing LFs.
+        block.textContent = target.text.replace(/\n+$/, "");
+        code.parentElement.replaceWith(block);
+        if (showCopy) block.append(host);
+      } else if (target.block) {
         // Feedback lives outside the scrolling pre so its message is never clipped.
         const pre = code.parentElement;
         const block = document.createElement("div");
@@ -32,6 +41,7 @@ export function AssistantMarkdown({ text, copyable = false }) {
         pre.before(block);
         block.append(pre, host);
       } else code.after(host);
+      if (!showCopy) continue;
       render(html`<${CopyIconButton} text=${target.text} class="agent-value-copy-btn"
         label=${`Copy ${target.block ? "text block" : "value"}: ${target.text.replace(/\s+/g, " ").slice(0, 80)}`} />`, host);
       hosts.push(host);
@@ -44,6 +54,6 @@ export function AssistantMarkdown({ text, copyable = false }) {
     };
   }, [result]);
 
-  return html`<div ref=${root} class="agent-part-text"
+  return html`<div ref=${root} class=${className}
     dangerouslySetInnerHTML=${{ __html: result.html }} />`;
 }

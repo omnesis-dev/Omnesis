@@ -32,4 +32,13 @@ describe("Markdown copy payloads", () => {
       .toEqual(["00123", "+1 (555) 010-0123"]);
     expect(result.targets[0].id).not.toBe(result.targets[1].id);
   });
+
+  it("distinguishes plain value fences from language code without changing payloads", () => {
+    for (const language of ["", "plain", "TEXT", "txt", "PlainText"]) {
+      const target = renderCopyableMarkdown(`\`\`\`${language}\n42 example street  \nExampleville\n\`\`\``).targets[0];
+      expect(target.plain).toBe(true);
+      expect(target.text).toBe("42 example street  \nExampleville\n");
+    }
+    expect(renderCopyableMarkdown("```javascript\nconst n = 1;\n```").targets[0].plain).toBe(false);
+  });
 });

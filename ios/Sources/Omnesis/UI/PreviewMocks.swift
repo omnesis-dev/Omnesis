@@ -14,6 +14,22 @@ import SwiftUI
 enum PreviewMocks {
     static let copyableMarkdownInline = "Address: `42 Example Street, Exampleville`. Reference: `000042`. **Keep** this [link](https://example.com)."
     static let copyableMarkdownBlock = "42 Example Street\nExampleville\n"
+    static let copyableMarkdownValueAndCode = """
+    ```text
+    42 Example Street
+    Exampleville
+    ```
+
+    ```swift
+    let reference = "000042"
+    ```
+    """
+    static let copyableHistory: [ChatMessage] = [
+        .user(parts: [.text("What is the reference?")]),
+        .assistant(parts: [.text("Reference: `000042`.")]),
+        .user(parts: [.text("And the address?")]),
+        .assistant(parts: [.text("```text\n42 Example Street\nExampleville\n```")]),
+    ]
     static let copyableMarkdown = """
     ## Useful values
 

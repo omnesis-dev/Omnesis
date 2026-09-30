@@ -308,9 +308,9 @@ class AgentParityScreenshotTest {
     }
 
 
-    private fun copyValuesTurn(finished: Boolean) = AgentTurn.Assistant(
+    private fun copyValuesTurn() = AgentTurn.Assistant(
         id = "copy-values",
-        stopReason = if (finished) "stop" else null,
+        stopReason = null,
         parts = listOf(AgentPart.Text("""
             The address is `42 Example Street, Exampleville`. See [the map](https://example.com).
 
@@ -326,6 +326,10 @@ class AgentParityScreenshotTest {
             Exampleville
             EX1 2AB
             ```
+
+            ```kotlin
+            val reference = 12
+            ```
         """.trimIndent())),
     )
 
@@ -333,7 +337,8 @@ class AgentParityScreenshotTest {
     private fun copyValuesContent(finished: Boolean) {
         Column(Modifier.fillMaxWidth().background(OmTheme.colors.bgPrimary).padding(16.dp)) {
             AssistantTurn(
-                turn = copyValuesTurn(finished),
+                turn = copyValuesTurn(),
+                isStreaming = !finished,
                 catalog = catalog,
                 onFlushEphemeral = {},
                 onOpenDocument = {},

@@ -14072,6 +14072,7 @@ div.source-activity-popover-link:hover {
   white-space: normal;
 }
 .agent-value-copy-inline { display: inline; margin-left: 2px; }
+.agent-value-text-block { margin: 8px 0; white-space: pre-wrap; font: inherit; }
 .agent-value-copy-btn {
   display: inline-flex;
   align-items: center;
@@ -14089,12 +14090,12 @@ div.source-activity-popover-link:hover {
 .agent-value-copy-btn:hover { background: var(--bg-tertiary); color: var(--text-primary); }
 .agent-value-copy-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .agent-value-code-block { position: relative; margin: 8px 0; }
-.agent-part-text .agent-value-code-block > pre { margin: 0; padding-right: 44px; }
+.agent-value-code-block > pre { margin: 0; padding-right: 44px; }
 .agent-value-copy-block .copy-feedback-error { left: auto; right: 0; }
 .agent-value-copy-block { position: absolute; right: 6px; top: 6px; }
 @media (pointer: coarse) {
   .agent-value-copy-btn { min-width: 44px; min-height: 44px; }
-  .agent-part-text .agent-value-code-block > pre { padding-right: 58px; }
+  .agent-value-code-block > pre { padding-right: 58px; }
 }
 .agent-part-text table {
   border-collapse: collapse;

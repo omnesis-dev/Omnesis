@@ -34,7 +34,8 @@ function sanitizeMarkdown(rawHtml) {
 }
 
 /** Copy targets originate only in parsed Markdown, never in raw HTML. */
-export function renderCopyableMarkdown(content) {
+export function renderCopyableMarkdown(content, { plainValueFences = false } = {}) {
+  if (!content) return { html: "", targets: [] };
   const targets = [];
   const renderer = new Renderer();
   for (const kind of ["codespan", "code"]) {
@@ -44,17 +45,23 @@ export function renderCopyableMarkdown(content) {
       // marked removes the final LF from fenced content for rendering.
       // Restore it in the payload while retaining its indentation normalization.
       let text = token.text;
+      const language = (token.lang ?? "").trim().split(/\s+/)[0].toLowerCase();
+      const plain = kind === "code" && ["", "plain", "text", "txt", "plaintext"].includes(language);
+      let closed = true;
       if (kind === "code") {
         if (!/^ {0,3}(?:`{3,}|~{3,})/.test(token.raw)) return render.call(this, token);
         const lines = token.raw.split("\n");
         const opening = lines.shift().trimStart().match(/^(`+|~+)/)[1];
         while (lines.at(-1) === "") lines.pop();
         const closing = lines.at(-1)?.match(/^ {0,3}(`{3,}|~{3,})[ \t]*$/)?.[1];
-        if (closing?.[0] !== opening[0] || closing.length < opening.length) return render.call(this, token);
-        lines.pop();
-        if (lines.length > 0) text += "\n";
+        closed = closing?.[0] === opening[0] && closing.length >= opening.length;
+        if (!closed && !(plainValueFences && plain)) return render.call(this, token);
+        if (closed) {
+          lines.pop();
+          if (lines.length > 0) text += "\n";
+        }
       }
-      targets.push({ id, text, block: kind === "code" });
+      targets.push({ id, text, block: kind === "code", plain, closed });
       return render.call(this, token).replace("<code", `<code id="${id}"`);
     };
   }

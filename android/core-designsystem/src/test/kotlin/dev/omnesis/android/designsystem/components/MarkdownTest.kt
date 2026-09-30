@@ -94,4 +94,25 @@ class MarkdownTest {
         assertEquals(1, inlineCopyText(nested, true).getLinkAnnotations(6, 9).size)
     }
 
+    @Test
+    fun plain_value_fences_use_literal_body_with_full_clipboard_payload() {
+        for (info in listOf("", "text", "plain", "plaintext", "txt", "TEXT title", "Plain")) {
+            val block = parseMarkdownBlocks("```$info\n42 Example Street  \nExampleville\n```").single() as MdBlock.Code
+            assertTrue(block.isPlainValue)
+            val value = copyValueText(block.code)
+            assertEquals("42 Example Street  \nExampleville", value.text)
+            assertEquals(block.code, value.getStringAnnotations(CopyCodeAnnotation, 0, value.length).single().item)
+            assertTrue(value.spanStyles.isEmpty())
+        }
+        assertEquals(false, (parseMarkdownBlocks("```kotlin\nval x = 12\n```").single() as MdBlock.Code).isPlainValue)
+    }
+
+    @Test
+    fun trailing_blank_lines_do_not_move_the_value_copy_icon_but_stay_in_clipboard() {
+        val raw = "42 Example Street  \nExampleville\n\n\n"
+        val text = copyValueText(raw)
+        assertEquals("42 Example Street  \nExampleville", text.text)
+        assertEquals(raw, text.getStringAnnotations(CopyCodeAnnotation, 0, text.length).single().item)
+    }
+
 }

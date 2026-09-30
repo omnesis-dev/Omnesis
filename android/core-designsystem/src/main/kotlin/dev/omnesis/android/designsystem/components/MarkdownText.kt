@@ -63,6 +63,7 @@ fun MarkdownText(
      */
     headingFontFamily: FontFamily? = null,
     copyableCode: Boolean = false,
+    plainValueFences: Boolean = false,
 ) {
     val blocks = remember(markdown) { parseMarkdownBlocks(markdown) }
     val linkColor = MaterialTheme.colorScheme.primary
@@ -93,7 +94,14 @@ fun MarkdownText(
                     MarkdownInlineText(parseInline(block.text, linkColor), copyableCode = copyableCode, style = style, color = color, modifier = Modifier.alignByBaseline())
                 }
 
-                is MdBlock.Code -> Surface(
+                is MdBlock.Code -> if (plainValueFences && block.isPlainValue) {
+                    MarkdownInlineText(
+                        text = copyValueText(block.code),
+                        copyableCode = copyableCode && block.closed,
+                        style = style,
+                        color = color,
+                    )
+                } else Surface(
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.fillMaxWidth(),
@@ -189,7 +197,10 @@ sealed interface MdBlock {
     data class Heading(val level: Int, val text: String) : MdBlock
     data class Paragraph(val text: String) : MdBlock
     data class ListItem(val ordered: Boolean, val marker: String, val text: String, val indent: Int) : MdBlock
-    data class Code(val code: String, val closed: Boolean = true) : MdBlock
+    data class Code(val code: String, val closed: Boolean = true, val info: String = "") : MdBlock {
+        val isPlainValue: Boolean
+            get() = info.isBlank() || info.split(Regex("\\s+"))[0].lowercase() in setOf("text", "plain", "plaintext", "txt")
+    }
     data class Quote(val text: String) : MdBlock
     data class Table(val headers: List<String>, val rows: List<List<String>>) : MdBlock
     data object Rule : MdBlock
@@ -257,7 +268,7 @@ fun parseMarkdownBlocks(md: String): List<MdBlock> {
                 if (i < lines.lastIndex) body.append('\n')
                 i++
             }
-            out.add(MdBlock.Code(body.toString(), closed))
+            out.add(MdBlock.Code(body.toString(), closed, fence.groupValues[2].trim()))
             continue
         }
 

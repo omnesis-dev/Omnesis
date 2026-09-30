@@ -830,7 +830,7 @@ test.describe("Assistant value copying", () => {
           "max-width:680px;padding:24px;background:var(--bg-primary);position:fixed;inset:40px auto auto 40px;z-index:10000";
         document.body.appendChild(host);
         const text =
-          'The address is `42 Example Street`.\n\n- Reference: `00123`\n\n| Contact |\n| --- |\n| `+1 (555) 010-0123` |\n\n```\n\n42 Example Street  \nExampleville\n```\n\n[`example.org`](https://example.org)\n\n<code id="forged-copy">raw HTML</code><img src=x onerror="window.copyInjected=true"><script>window.copyInjected=true</script>';
+          'The address is `42 Example Street`.\n\n- Reference: `00123`\n\n| Contact |\n| --- |\n| `+1 (555) 010-0123` |\n\n```javascript\n\n42 Example Street  \nExampleville\n```\n\n[`example.org`](https://example.org)\n\n<code id="forged-copy">raw HTML</code><img src=x onerror="window.copyInjected=true"><script>window.copyInjected=true</script>';
         Object.defineProperty(navigator, "clipboard", {
           configurable: true,
           value: {
@@ -884,6 +884,117 @@ test.describe("Assistant value copying", () => {
     await page.reload();
     await renderAnswer(page, true, "user");
     await expect(page.locator("#copy-answer-fixture .agent-value-copy-btn")).toHaveCount(0);
+  });
+
+  test("restores completed marked Ask answers through route navigation and reload", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      class QuietEventSource {
+        close() {}
+      }
+      window.EventSource = QuietEventSource as unknown as typeof EventSource;
+    });
+    await page.route("**/admin/agent/config", (route) =>
+      route.fulfill({ json: { enabled: true, backend: "test", model: "test-model" } }),
+    );
+    await page.route("**/agent/conversations?*", (route) =>
+      route.fulfill({ json: { conversations: [] } }),
+    );
+    await page.route("**/agent/sessions?*", (route) =>
+      route.fulfill({
+        json: {
+          sessionId: "s-copy-history",
+          conversationId: "s-copy-history",
+          model: "test-model",
+          backend: "test",
+          busy: false,
+          messageCount: 2,
+          messagesAreVisible: true,
+          messagePageInfo: { hasMore: false, nextCursor: null },
+          messages: [
+            { role: "user", parts: [{ kind: "text", text: "Where is the fictional venue?" }] },
+            {
+              role: "assistant",
+              parts: [
+                {
+                  kind: "text",
+                  text: "Reference: `00123`\n\n```text\n42 Example Street\nExampleville\n```",
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+    await page.goto(`/portal/agent/s-copy-history?token=${encodeURIComponent(getToken())}`);
+    await expect(page.locator(".agent-msg-assistant .agent-value-copy-btn")).toHaveCount(2);
+    await expect(page.locator(".agent-value-text-block")).toContainText("Exampleville");
+    await page.reload();
+    await expect(page.locator(".agent-msg-assistant .agent-value-copy-btn")).toHaveCount(2);
+    await expect(page.locator(".agent-msg-user .agent-value-copy-btn")).toHaveCount(0);
+  });
+
+  test("reopens marked conversation answers with plain multiline trailing controls", async ({
+    page,
+  }) => {
+    await loginToPortal(page);
+    await page.evaluate(async () => {
+      const preactPath = "/portal/vendor/preact.js";
+      const { h, render } = await import(preactPath);
+      const sharedPath = "/portal/js/views/audit/shared.js";
+      const { PrivacyAnswerContent } = await import(sharedPath);
+      const host = document.createElement("section");
+      host.id = "copy-history-fixture";
+      host.style.cssText =
+        "max-width:680px;padding:24px;background:var(--bg-primary);position:fixed;inset:40px auto auto 40px;z-index:10000";
+      document.body.appendChild(host);
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: {
+          writeText: async (text: string) => {
+            (window as unknown as { copiedValue: string }).copiedValue = text;
+          },
+        },
+      });
+      const props = {
+        answer: "```TEXT\n42 Example Street  \nExampleville\n\n```",
+        className: "privacy-quote",
+      };
+      render(h(PrivacyAnswerContent, props), host);
+      render(h(PrivacyAnswerContent, { ...props }), host);
+      render(null, host);
+      render(h(PrivacyAnswerContent, props), host);
+    });
+    const fixture = page.locator("#copy-history-fixture");
+    const block = fixture.locator(".agent-value-text-block");
+    await expect(fixture.locator("pre, code, .agent-value-code-block")).toHaveCount(0);
+    await expect(block.locator("button")).toHaveCount(1);
+    const layout = await block.evaluate((element) => {
+      const text = document.createRange();
+      text.setStart(element.firstChild!, "42 Example Street  \n".length);
+      text.setEnd(element.firstChild!, element.firstChild!.textContent!.length);
+      const line = text.getBoundingClientRect();
+      const button = element.querySelector("button")!.getBoundingClientRect();
+      return {
+        lineTop: line.top,
+        lineBottom: line.bottom,
+        lineRight: line.right,
+        buttonTop: button.top,
+        buttonBottom: button.bottom,
+        buttonLeft: button.left,
+        background: getComputedStyle(element).backgroundColor,
+      };
+    });
+    expect(layout.buttonTop).toBeLessThan(layout.lineBottom);
+    expect(layout.buttonBottom).toBeGreaterThan(layout.lineTop);
+    expect(layout.buttonLeft).toBeGreaterThanOrEqual(layout.lineRight);
+    expect(layout.background).toBe("rgba(0, 0, 0, 0)");
+    await block.locator("button").click();
+    expect(
+      await page.evaluate(() => (window as unknown as { copiedValue: string }).copiedValue),
+    ).toBe("42 Example Street  \nExampleville\n\n");
+    await fixture.screenshot({ path: "/tmp/omnesis-copy-answer-portal-history.png" });
   });
 
   test("reports clipboard denial and allows retry", async ({ page }) => {
