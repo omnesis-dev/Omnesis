@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StravaRateLimitTracker, DEFAULT_SAFETY_PCT } from "./quota.js";
 
 function makeHeaders(record: Record<string, string>): Headers {
@@ -11,6 +11,16 @@ function makeHeaders(record: Record<string, string>): Headers {
 }
 
 describe("StravaRateLimitTracker", () => {
+  // Mid-window, clear of the grace period after a quarter hour in which usage
+  // is still read as the previous window's.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-03-04T10:07:30Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("treats unobserved state as effectively unbounded", () => {
     const tr = new StravaRateLimitTracker();
     expect(tr.canMakeNCalls(1000)).toBe(true);
