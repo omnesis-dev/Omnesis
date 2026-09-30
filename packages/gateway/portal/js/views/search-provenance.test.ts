@@ -63,7 +63,15 @@ describe("direct search graph diagnostics", () => {
     expect(api.searchAgentContext).toHaveBeenCalledWith("agreement");
     expect(host.querySelector(".result-snippet").textContent).toBe("Original ranked snippet");
     const panel = host.querySelector(".search-provenance");
-    expect(panel.textContent).toContain("This document has related content in Sharing note");
+    const connection = panel.querySelector(".search-provenance-connection");
+    const prose = connection.cloneNode(true);
+    for (const icon of prose.querySelectorAll('.search-graph-document-icon[aria-hidden="true"]')) icon.remove();
+    expect(prose.textContent).toBe("This document has related content in Sharing note.");
+    const link = connection.querySelector("a");
+    expect(link.getAttribute("href")).toBe("/portal/doc/doc-message");
+    expect(link.firstElementChild.className).toBe("search-graph-document-icon");
+    expect(link.firstElementChild.getAttribute("aria-hidden")).toBe("true");
+    expect(link.lastElementChild.textContent).toBe("Sharing note");
     expect(panel.textContent).not.toContain("Other copies");
     expect(panel.textContent).not.toContain(evidence.summary);
     expect(panel.textContent).not.toContain("doc-message");
@@ -120,11 +128,19 @@ describe("direct search graph diagnostics", () => {
     expect(panel.querySelector(".search-provenance-copies a").getAttribute("href")).toBe("/portal/doc/doc-second");
   });
   it("refetches restored results using their actual query instead of an edited input", async () => {
+    const context = deferred();
+    api.searchAgentContext.mockImplementationOnce(() => context.promise);
     sessionStorage.setItem("omnesis_search_cache", JSON.stringify({ query: "Unsubmitted draft", results: normal().results, response: normal() }));
     await mount();
     expect(api.searchAgentContext).toHaveBeenCalledWith("agreement");
     expect(api.search).not.toHaveBeenCalled();
-    expect(host.querySelector(".search-provenance").textContent).toContain("Sharing note");
+    expect(host.querySelector(".search-input").value).toBe("Unsubmitted draft");
+    expect(host.querySelector(".search-provenance")).toBeNull();
+    await act(async () => { context.resolve(diagnostic()); });
+    await flush();
+    const panel = host.querySelector(".search-provenance");
+    expect(panel.querySelector(".search-provenance-connection .search-graph-document-title").textContent).toBe("Sharing note");
+    expect(panel.querySelector(".search-provenance-connection a").getAttribute("href")).toBe("/portal/doc/doc-message");
   });
   it("refreshes capability and discards in-flight context after a downgrade", async () => {
     const old = deferred(); api.searchAgentContext.mockImplementationOnce(() => old.promise);

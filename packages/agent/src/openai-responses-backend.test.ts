@@ -1665,11 +1665,14 @@ describe("model context serialization", () => {
   it("projects historical tool evidence without mutating canonical history", () => {
     const result = searchModelContextResult();
     const canonical = JSON.stringify(result);
-    const input = convertHistoryToResponsesInput(
+    const { instructions, input } = convertHistoryToResponsesInput(
       [{ role: "user", parts: [{ kind: "tool_result", toolCallId: "call-model", result }] }],
       "next",
+      "Use the supplied evidence.",
     );
-    const output = input.find((item) => item.type === "function_call_output") as { output: string };
+    expect(instructions).toBe("Use the supplied evidence.");
+    const output = input.find((item) => "type" in item && item.type === "function_call_output");
+    if (!output || !("output" in output)) throw new Error("Expected historical tool output");
     expect(JSON.parse(output.output).results[0].provenance).toEqual(
       result.results[0]!.provenance!.modelContext,
     );

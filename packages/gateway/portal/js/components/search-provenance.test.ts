@@ -22,6 +22,17 @@ beforeEach(() => {
 });
 afterEach(() => { render(null, host); vi.unstubAllGlobals(); });
 const mount = (provenance, resultDocumentId = "root", knownDocuments = documents) => render(h(SearchProvenance, { provenance, resultDocumentId, documents: knownDocuments, panelId: "context" }), host);
+// Decorative source icons are separate from the readable relationship and title.
+function proseText(node) {
+  const clone = node.cloneNode(true);
+  for (const icon of clone.querySelectorAll(".search-graph-document-icon")) {
+    expect(icon.getAttribute("aria-hidden")).toBe("true");
+    expect(icon.parentElement.className).toBe("search-graph-document");
+    expect(icon.nextElementSibling.className).toBe("search-graph-document-title");
+    icon.remove();
+  }
+  return clone.textContent;
+}
 
 it("hides singleton or self-only derived evidence entirely", () => {
   mount({ copies: [root], paths: [], summary: "Derived summary about this same document", truncated: true, stopReasons: ["hub"] });
@@ -55,8 +66,8 @@ it("shows attachment roles and deeper connections as prose without numbered root
     { documentIds: ["root", "message"], edges: ["inbound:contains"], relations: ["was attached to"] },
     { documentIds: ["root", "message", "thread"], edges: ["inbound:contains", "outbound:part-of-thread"], relations: ["was attached to", "belongs to"] },
   ], truncated: true, stopReasons: ["hub"] });
-  expect(host.textContent).toContain("This document was attached to Sharing note");
-  expect(host.textContent).toContain("This document was attached to Sharing note, which belongs to Equipment discussion");
+  expect(proseText(host)).toContain("This document was attached to Sharing note");
+  expect(proseText(host)).toContain("This document was attached to Sharing note, which belongs to Equipment discussion");
   expect(host.querySelectorAll(".search-provenance-connection")).toHaveLength(1);
   expect(host.querySelector("details")).toBeNull();
   expect(host.querySelector("h2, h3, .search-provenance-heading")).toBeNull();
@@ -76,7 +87,7 @@ it("keeps two same-title evidenced IDs linked separately without title parsing",
 });
 it("shows linked revisions as relationships rather than additional matching copies", () => {
   mount({ copies: [root], paths: [{ documentIds: ["root", "revision"], edges: ["outbound:references"], relations: ["has a revised version in"] }] });
-  expect(host.textContent).toContain("This document has a revised version in Agreement revision");
+  expect(proseText(host)).toContain("This document has a revised version in Agreement revision");
   expect(host.textContent).not.toContain("Other copies");
   expect(host.querySelector("a").getAttribute("href")).toBe("/portal/doc/revision");
 });
@@ -104,7 +115,7 @@ it("joins independent same-subject connections with and rather than inventing a 
     { documentIds: ["root", "thread"], edges: ["outbound:url"] },
   ] });
   expect(host.querySelectorAll(".search-provenance-connection")).toHaveLength(1);
-  expect(host.textContent).toContain("This document is linked from Sharing note and links to Equipment discussion");
+  expect(proseText(host)).toContain("This document is linked from Sharing note and links to Equipment discussion");
   expect(host.textContent).not.toContain("which");
 });
 it("renders a true five-hop chain as one flat visible fact", () => {
@@ -122,7 +133,7 @@ it("renders a true five-hop chain as one flat visible fact", () => {
 it("links the exact other-copy root instead of assigning its connection to this document", () => {
   mount({ copies: [root, copy], paths: [{ documentIds: ["copy", "message"], edges: ["inbound:contains"], relations: ["was attached to"] }] });
   const fact = host.querySelector(".search-provenance-connection");
-  expect(fact.textContent).toContain("Agreement attachment was attached to Sharing note");
+  expect(proseText(fact)).toContain("Agreement attachment was attached to Sharing note");
   expect(fact.textContent).not.toContain("This document");
   expect(fact.querySelector("a").getAttribute("href")).toBe("/portal/doc/copy");
 });
