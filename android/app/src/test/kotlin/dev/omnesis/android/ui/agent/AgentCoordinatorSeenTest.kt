@@ -24,7 +24,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import java.util.Collections
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Who is allowed to tell the gateway a conversation is being read.
@@ -46,7 +46,7 @@ import java.util.Collections
 class AgentCoordinatorSeenTest {
     private lateinit var server: MockWebServer
     private val seenRequests: MutableList<Pair<String, String>> =
-        Collections.synchronizedList(mutableListOf())
+        CopyOnWriteArrayList()
 
     @Before fun setUp() {
         Dispatchers.setMain(kotlinx.coroutines.test.UnconfinedTestDispatcher())
