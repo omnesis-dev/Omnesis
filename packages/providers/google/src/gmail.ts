@@ -34,6 +34,7 @@ import {
 } from "./constants.js";
 import { googleApiStatus, mapGoogleApiError } from "./api-error.js";
 import {
+  addsToMessage,
   messageContent,
   messageDate,
   messageParts,
@@ -718,7 +719,7 @@ export class GmailSource {
       isAutoSubmittedGenerated(autoSubmitted) ||
       (senderEmail !== undefined && isAutomatedSenderAddress(senderEmail));
 
-    const attachments = await this.readAttachments(msg.id, payload, parts.html);
+    const attachments = await this.readAttachments(msg.id, payload, parts.html, body);
 
     let content = messageContent({ subject, from, to, cc, bcc, date, body });
     if (attachments.infos.length > 0) {
@@ -780,14 +781,17 @@ export class GmailSource {
    * A message's attachments: the marker for each, and the extracted text of
    * those that became child documents on this fetch.
    *
-   * Inline decoration (a signature logo the HTML shows by `cid:`) is not an
-   * attachment and is left out. A text attachment is read in the charset its
-   * part declares.
+   * A small image the HTML shows inline by `cid:` is usually decoration — a
+   * logo, an icon, a badge — and is left out, but only once its text has been
+   * read and adds nothing the message does not already say: a signature sent
+   * as an image can carry the only copy of a phone number or an address. A
+   * text attachment is read in the charset its part declares.
    */
   private async readAttachments(
     messageId: string,
     payload: gmail_v1.Schema$MessagePart,
     html: string | undefined,
+    messageText: string,
   ): Promise<{
     infos: AttachmentInfo[];
     children: Array<{
@@ -808,9 +812,10 @@ export class GmailSource {
       // Recover the real type when the client sent a generic Content-Type
       // (a .pkpass mislabeled application/octet-stream is the common case).
       const mimeType = resolveEffectiveMimeType(part.filename, part.mimeType);
-      if (isInlineDecorationImage({ mimeType, contentId: part.contentId, size: part.size }, html)) {
-        continue;
-      }
+      const decoration = isInlineDecorationImage(
+        { mimeType, contentId: part.contentId, size: part.size },
+        html,
+      );
       // Two attachments with the same name, size and type are told apart by
       // their order; the child document's id derives from the same pair.
       const baseId = deriveAttachmentStableId(part.filename, part.size, mimeType);
@@ -820,7 +825,7 @@ export class GmailSource {
 
       const check = shouldExtractAttachment(mimeType, part.size, this.attachmentConfig);
       if (!check.extract) {
-        infos.push({ ...base, extracted: false, reason: check.reason });
+        if (!decoration) infos.push({ ...base, extracted: false, reason: check.reason });
         continue;
       }
 
@@ -831,6 +836,9 @@ export class GmailSource {
         const result = await this.extractAttachment(data, typed, {
           maxTextLength: this.attachmentConfig.maxTextLength,
         });
+        if (decoration && !(result && !result.noText && addsToMessage(result.text, messageText))) {
+          continue;
+        }
         if (!result) {
           info = { ...base, extracted: false, reason: "extraction-failed" };
         } else if (result.noText) {

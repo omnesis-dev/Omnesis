@@ -169,3 +169,29 @@ export function messageContent(fields: {
   if (fields.body) lines.push(fields.body);
   return lines.join("\n");
 }
+
+/**
+ * Whether an inline image's text says something its message does not: a
+ * phone number or an email address missing from the message, or at least a
+ * few words the message never uses. A logo repeating the sender's name adds
+ * nothing; a signature block sent as an image does.
+ */
+export function addsToMessage(imageText: string, messageText: string): boolean {
+  const messageDigits = messageText.replace(/\D/g, "");
+  const phones = (imageText.match(/\+?\d[\d ().-]{7,}\d/g) ?? [])
+    .map((p) => p.replace(/\D/g, ""))
+    .filter((digits) => digits.length >= 9);
+  // The last nine digits match a number however its country code is written.
+  if (phones.some((digits) => !messageDigits.includes(digits.slice(-9)))) return true;
+  const lowerMessage = messageText.toLowerCase();
+  const emails = imageText.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g) ?? [];
+  if (emails.some((e) => !lowerMessage.includes(e.toLowerCase()))) return true;
+  const known = new Set(lowerMessage.match(/[\p{L}]{3,}/gu) ?? []);
+  const fresh = new Set(
+    (imageText.toLowerCase().match(/[\p{L}]{3,}/gu) ?? []).filter((w) => !known.has(w)),
+  );
+  return fresh.size >= MIN_FRESH_WORDS;
+}
+
+/** How many words an inline image must add to its message to be kept. */
+const MIN_FRESH_WORDS = 4;

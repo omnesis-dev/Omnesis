@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, test, expect, beforeEach, vi } from "vitest";
-import { messageDate } from "./gmail-message.js";
+import { addsToMessage, messageDate } from "./gmail-message.js";
 import { createMockGmail, createGmailSource, makeGmailMessage } from "./testing/mock-google.js";
 import type { DocumentInput } from "@omnesis/types";
 
@@ -262,5 +262,34 @@ describe("Gmail message normalization", () => {
       expect(sender?.allowPersonCreation).toBe(false);
       expect(doc.metadata.automatedSender).toBe(true);
     });
+  });
+});
+
+describe("addsToMessage", () => {
+  const message = "Thanks for the call. maya, the design studio, +44 7700 900123, maya@example.com";
+
+  test("text the message already carries adds nothing", () => {
+    expect(addsToMessage("the design studio", message)).toBe(false);
+    expect(addsToMessage("MAYA@EXAMPLE.COM", message)).toBe(false);
+    expect(addsToMessage("", message)).toBe(false);
+  });
+
+  test("a phone number is the same number however its prefix is written", () => {
+    expect(addsToMessage("Tel 07700 900123", message)).toBe(false);
+    expect(addsToMessage("Tel (0)7700-900-123", message)).toBe(false);
+    expect(addsToMessage("Tel +44 7700 900456", message)).toBe(true);
+  });
+
+  test("a date or a short code is not taken for a phone number", () => {
+    expect(addsToMessage("2024-01-15", message)).toBe(false);
+  });
+
+  test("an email address the message lacks is new", () => {
+    expect(addsToMessage("desk@example.org", message)).toBe(true);
+  });
+
+  test("a few words the message never uses are new, one or two are not", () => {
+    expect(addsToMessage("Award winner", message)).toBe(false);
+    expect(addsToMessage("registered office above the old bakery", message)).toBe(true);
   });
 });
