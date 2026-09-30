@@ -164,9 +164,11 @@ describe("Gmail message normalization", () => {
     });
 
     test("a short first HTML part does not hide the one that carries the message", async () => {
+      // The sender's own text carries a replacement character, in the markup
+      // plain part and in the long HTML part alike; the short one has none.
       const article = Array.from(
         { length: 40 },
-        (_, i) => `<p>Paragraph ${i} of the quarterly review.</p>`,
+        (_, i) => `<p>Paragraph ${i} of the quarterly review \uFFFD see notes.</p>`,
       ).join("");
       const doc = await normalize(
         makeGmailMessage("m-11", {
@@ -197,8 +199,8 @@ describe("Gmail message normalization", () => {
           },
         }),
       );
-      expect(doc.content).toContain("Paragraph 0 of the quarterly review.");
-      expect(doc.content).toContain("Paragraph 39 of the quarterly review.");
+      expect(doc.content).toContain("Paragraph 0 of the quarterly review");
+      expect(doc.content).toContain("Paragraph 39 of the quarterly review");
       expect(doc.content).not.toContain("<p>");
     });
 
