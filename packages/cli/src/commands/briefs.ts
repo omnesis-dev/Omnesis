@@ -91,6 +91,29 @@ interface RunDto {
   } | null;
 }
 
+/**
+ * One decision-model judgement made for a run, as `/admin/brain/runs/:id`
+ * serves it: the worth gate judges the run's document before any agent turn,
+ * the record check judges a record the run was about to save.
+ */
+export interface RunDecisionDto {
+  purpose: string;
+  lane: string;
+  verdict: string;
+  score: number | null;
+  threshold: number;
+  modelId: string | null;
+  inheritedFromParent: boolean;
+  subjectDoc: { id: string; title: string | null } | null;
+  subjectDocumentId: string;
+  reusedFrom: string | null;
+  recordId?: string | null;
+  enforced?: boolean;
+  error: string | null;
+  latencyMs: number | null;
+  request: { state?: unknown } | null;
+}
+
 interface TranscriptRefDto {
   fileName: string;
   runId: string;
@@ -352,6 +375,50 @@ function scheduledLabel(run: RunDto): string {
   return (run.status === "pending" ? run.nextAttemptAt : run.completedAt) ?? "-";
 }
 
+/** What a decision's verdict meant for the run, in the words the portal uses. */
+function decisionOutcome(d: RunDecisionDto): string {
+  if (d.purpose === "record-check") {
+    if (d.verdict === "pass") return "keep";
+    if (d.verdict === "skip") return d.enforced === false ? "would drop (observing)" : "dropped";
+    if (d.verdict === "unavailable") return "unavailable, record saved";
+  } else if (d.purpose === "worth-gate") {
+    if (d.verdict === "pass") return "worth a run";
+    if (d.verdict === "skip") return "gated, no agent turn";
+    if (d.verdict === "unavailable") return "unavailable, run went ahead";
+  }
+  return d.verdict;
+}
+
+/** The decision-model block for `run <id>`: one entry per judgement, oldest first. */
+export function renderRunDecisions(decisions: readonly RunDecisionDto[]): string[] {
+  const out: string[] = [];
+  for (const d of decisions) {
+    const purpose = d.purpose.replace("-", " ");
+    const score =
+      d.score === null
+        ? ""
+        : `  score ${d.score.toFixed(2)} ${d.score >= d.threshold ? "≥" : "<"} ${d.threshold}`;
+    const model = d.modelId ? `  ${c.dim}${d.modelId}${c.reset}` : "";
+    out.push(`    ${purpose} · ${decisionOutcome(d)}${score}${model}`);
+    if (d.purpose === "record-check") {
+      const state = d.request?.state as { record?: unknown } | undefined;
+      const record =
+        typeof state?.record === "string" ? truncate(oneLine(state.record), 110) : null;
+      if (record) out.push(`      record:   ${record}`);
+      if (d.recordId) out.push(`      id:       ${d.recordId}`);
+    } else {
+      const title = d.subjectDoc?.title ?? d.subjectDocumentId;
+      out.push(
+        `      judged:   ${d.inheritedFromParent ? "the email that contains it, " : ""}${title}`,
+      );
+    }
+    if (d.reusedFrom)
+      out.push(`      reused:   decision ${d.reusedFrom} (same content, no model call)`);
+    if (d.error) out.push(`      ${c.red}error:    ${oneLine(d.error)}${c.reset}`);
+  }
+  return out;
+}
+
 /** Per-kind decoded payload for `run <id>` — the "what will this run do" block. */
 export function renderRunTrigger(t: RunTrigger): string[] {
   const out: string[] = [];
@@ -591,9 +658,10 @@ const runShowCommand = defineCommand({
   async run(ctx) {
     const id = ctx.args.id;
     if (!id) throw new CliError(`${c.red}Missing run id${c.reset}`, EXIT_USER_ERROR);
-    const { run, transcripts } = await gatewayJson<{
+    const { run, transcripts, decisions } = await gatewayJson<{
       run: RunDto | null;
       transcripts: TranscriptRefDto[];
+      decisions?: RunDecisionDto[];
     }>(`/admin/brain/runs/${encodeURIComponent(id)}`);
     if (run) {
       console.log(`\n${c.bold}run ${run.id}${c.reset}`);
@@ -619,6 +687,10 @@ const runShowCommand = defineCommand({
       console.log(
         `\n${c.dim}Run row pruned (transcripts below outlive the queue's retention).${c.reset}`,
       );
+    }
+    if (decisions && decisions.length > 0) {
+      console.log(`\n  ${c.dim}decision model:${c.reset}`);
+      for (const line of renderRunDecisions(decisions)) console.log(line);
     }
     console.log(`\n  ${c.dim}transcripts:${c.reset}`);
     if (transcripts.length === 0) {
