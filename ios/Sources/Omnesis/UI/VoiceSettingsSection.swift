@@ -4,14 +4,15 @@
 #if canImport(SwiftUI) && canImport(UIKit)
 import SwiftUI
 
-/// Settings → Voice: the gateway dictation switch (experimental). Shown only
-/// while the paired gateway runs in experimental mode and advertises the
-/// setting.
+/// Settings → Voice: the gateway dictation switch (experimental), which has
+/// Tell Omnesis notes transcribed by the gateway. Shown only while the paired
+/// gateway runs in experimental mode and advertises the setting.
 ///
 /// The switch is a gateway setting, written with `PATCH /admin/config`, so it
 /// applies to every device paired with the gateway. When it is on but the
 /// transcriber cannot run, the gateway's reason is stated here, beside the
-/// control that depends on it, and dictation stays on-device meanwhile.
+/// control that depends on it, and notes keep the device's transcript
+/// meanwhile.
 @available(iOS 17.0, *)
 struct VoiceSettingsSection: View {
     @Environment(AppStore.self) private var store
@@ -44,7 +45,7 @@ struct VoiceSettingsSection: View {
                 VStack(alignment: .leading, spacing: 4) {
                     notice(reason, color: Theme.warning)
                         .font(.subheadline.weight(.semibold))
-                    Text("Dictation uses on-device transcription until the gateway's transcriber can run.")
+                    Text("Notes keep this device's transcript until the gateway's transcriber can run.")
                         .font(.footnote)
                         .foregroundStyle(Theme.textMuted)
                 }
@@ -67,10 +68,10 @@ struct VoiceSettingsSection: View {
             Text("Voice")
         } footer: {
             Text(
-                "When on, the audio you dictate to the agent, Briefs, Tell Omnesis and the Apple Watch's "
-                    + "Ask and Note is sent to your gateway, which transcribes it and returns the text. Nothing "
-                    + "is stored. This is a gateway setting, so it applies to every device paired with it. "
-                    + "Siri is unaffected."
+                "When on, what you dictate to Tell Omnesis — on this iPhone and in Apple Watch notes — is also "
+                    + "recorded and sent to your gateway to transcribe. Notes are saved at once with this "
+                    + "device's transcript, and the gateway's replaces it when ready. This is a gateway "
+                    + "setting, so it applies to every device paired with it."
             )
         }
         .listRowBackground(Theme.bgSecondary)

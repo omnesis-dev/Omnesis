@@ -23,7 +23,10 @@ extension EnvironmentValues {
 }
 
 /// "Tell Omnesis" quick capture: full-screen, listening from the
-/// moment it appears. The live transcript lands in an editable text
+/// moment it appears. With gateway dictation on, the capture also records
+/// what is dictated, and a note saved as dictated carries the recording for
+/// the gateway to transcribe — the note is saved at once with the phone's
+/// transcript either way. The live transcript lands in an editable text
 /// area (typing works whenever speech is stopped, and is the only
 /// path when speech permission is denied); Done delivers the note —
 /// POST to the gateway, or the durable offline queue when unreachable
@@ -62,11 +65,14 @@ struct CaptureView: View {
     /// 422) shown inline; the text stays in the editor for fixing.
     @State private var saveError: String?
     @State private var confirmDiscard = false
-    /// Set when Done was tapped while recording for the gateway: the note
-    /// saves, stamped with this time, as soon as the gateway's text replaces
-    /// the draft.
-    @State private var deferredSaveTime: NoteCaptureTime?
-    @State private var fallbackNoteExpired = false
+    /// The capture's recording for gateway transcription, set up when its
+    /// first dictation starts while gateway dictation is on.
+    @State private var recording: DictationAudioRecorder?
+    /// The text as dictation last left it — what the recording covers.
+    @State private var dictatedText: String?
+    /// Part of the text was not dictated into the recording: typed before a
+    /// dictation run, or already there when the recording started.
+    @State private var recordingIncomplete = false
     @FocusState private var keyboardFocused: Bool
 
     enum Phase: Equatable {
@@ -81,14 +87,14 @@ struct CaptureView: View {
     init(
         surface: NoteSurface = .app,
         onClose: (() -> Void)? = nil,
-        speech: SpeechRecognizer? = nil,
+        speech: SpeechRecognizer = SpeechRecognizer(),
         previewText: String = "",
         previewPhase: Phase = .capturing,
         previewSaveError: String? = nil
     ) {
         self.surface = surface
         self.onClose = onClose
-        self._speech = State(initialValue: speech ?? SpeechRecognizer())
+        self._speech = State(initialValue: speech)
         self._text = State(initialValue: previewText)
         self._phase = State(initialValue: previewPhase)
         self._saveError = State(initialValue: previewSaveError)
@@ -143,25 +149,26 @@ struct CaptureView: View {
             titleVisibility: .visible
         ) {
             Button("Discard", role: .destructive) {
-                deferredSaveTime = nil
                 speech.cancel()
+                discardRecording()
                 close()
             }
             Button("Keep editing", role: .cancel) {}
         }
         .onAppear {
-            speech.routeDictation(through: store)
             // Listening starts the moment the surface appears — that is
             // the point of the feature. Chained onto the permission
             // grants so a first-ever run prompts, then starts.
             if phase == .capturing, speech.state == .idle, text.isEmpty {
+                prepareRecording()
                 speech.requestPermissionsAndStart()
             }
         }
         .onDisappear {
-            // Belt and braces: never leave the audio session running, or
-            // an upload in flight, behind a dismissed cover.
-            if speech.isListening || speech.isWrappingUp { speech.cancel() }
+            // Belt and braces: never leave the audio session running
+            // behind a dismissed cover.
+            if speech.isListening { speech.cancel() }
+            discardRecording()
         }
         .onChange(of: text) {
             saveError = nil
@@ -169,32 +176,27 @@ struct CaptureView: View {
         .onChange(of: speech.transcript) { _, newValue in
             if speech.isListening {
                 text = DictationTranscript.compose(base: dictationBase, partial: newValue)
+                dictatedText = text
             }
         }
         .onChange(of: speech.state) { oldValue, newValue in
             // Commit the final transcript when recognition wraps up —
-            // the gateway's text when it refined this run — appended onto
-            // the dictation base, and only if the user hasn't edited the
-            // text since stopping (their edit wins over a late
-            // final-transcript callback). Hand the user the keyboard when
-            // speech isn't available at all.
-            if oldValue == .listening || oldValue.isWrappingUp,
+            // appended onto the dictation base, and only if the user
+            // hasn't edited the text since stopping (their edit wins
+            // over a late final-transcript callback). Hand the user the
+            // keyboard when speech isn't available at all.
+            if oldValue == .listening || oldValue == .finishing,
                newValue == .idle {
                 if !speech.transcript.isEmpty, textAtStop == nil || text == textAtStop {
                     text = DictationTranscript.compose(base: dictationBase, partial: speech.transcript)
+                    dictatedText = text
                 }
                 textAtStop = nil
-                if let captureTime = deferredSaveTime {
-                    deferredSaveTime = nil
-                    Task { await save(captureTime: captureTime) }
-                }
             }
             if newValue == .unavailable {
                 keyboardFocused = true
             }
         }
-        .dictationFallbackExpiry(raised: speech.usedOnDeviceFallback, expired: $fallbackNoteExpired)
-        .dictationAnnouncements(speech)
     }
 
     // MARK: - Pieces
@@ -253,19 +255,13 @@ struct CaptureView: View {
                 .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .disabled(speech.state == .unavailable || speech.isWrappingUp || phase != .capturing)
+            .disabled(speech.state == .unavailable || phase != .capturing)
             .accessibilityLabel(speech.isListening ? "Stop listening" : "Start listening")
 
-            if speech.state == .refining {
-                DictationRefiningCue(fontSize: 14, skipLabel: DictationCopy.skip(hasDraft: speech.hasDraft)) {
-                    skipRefinement()
-                }
-            } else {
-                Text(stateCopy)
-                    .font(.system(size: 14))
-                    .foregroundStyle(Theme.textSecondary)
-                    .multilineTextAlignment(.center)
-            }
+            Text(stateCopy)
+                .font(.system(size: 14))
+                .foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
         }
     }
 
@@ -273,7 +269,6 @@ struct CaptureView: View {
         switch speech.state {
         case .listening: "Listening — tap Done when you're finished"
         case .finishing: "Finishing up…"
-        case .refining: DictationCopy.refining
         case .unavailable: "Speech recognition isn't available — type your note instead"
         case .idle: text.isEmpty ? "Tap the mic to talk, or just type" : "Tap the mic to keep talking"
         }
@@ -297,12 +292,11 @@ struct CaptureView: View {
             TextField("", text: $text, axis: .vertical)
                 .font(.system(size: 17))
                 .foregroundStyle(Theme.textPrimary)
-                .dictationDraftReceding(speech.state)
                 .lineLimit(3 ... 10)
                 .padding(.horizontal, Theme.Spacing.md)
                 .padding(.vertical, Theme.Spacing.md)
                 .focused($keyboardFocused)
-                .disabled(speech.isListening || speech.state == .refining || phase != .capturing)
+                .disabled(speech.isListening || phase != .capturing)
                 .accessibilityIdentifier("captureTranscript")
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -333,16 +327,10 @@ struct CaptureView: View {
     }
 
     /// Inline deterministic-rejection message (the note itself was
-    /// refused). The text stays in the editor above for fixing. Otherwise,
-    /// briefly, the note that gateway dictation kept the on-device text.
+    /// refused). The text stays in the editor above for fixing.
     @ViewBuilder
     private var saveErrorLine: some View {
-        if saveError == nil, speech.usedOnDeviceFallback, !fallbackNoteExpired, speech.state == .idle {
-            DictationFallbackNote()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.bottom, Theme.Spacing.md)
-                .transition(.opacity)
-        } else if let saveError {
+        if let saveError {
             Label(saveError, systemImage: "exclamationmark.triangle.fill")
                 .font(.footnote)
                 .foregroundStyle(Theme.warning)
@@ -352,13 +340,7 @@ struct CaptureView: View {
     }
 
     private var canSave: Bool {
-        phase == .capturing && !speech.isWrappingUp && deferredSaveTime == nil
-            && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    /// Done is waiting on the gateway's text before it saves.
-    private var awaitingTranscript: Bool {
-        deferredSaveTime != nil || speech.state == .refining
+        phase == .capturing && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var doneButton: some View {
@@ -366,7 +348,7 @@ struct CaptureView: View {
             Task { await save() }
         } label: {
             HStack(spacing: 8) {
-                if phase == .saving || awaitingTranscript {
+                if phase == .saving {
                     ProgressView().tint(.white)
                 }
                 Text("Done")
@@ -449,16 +431,11 @@ struct CaptureView: View {
             // resets its transcript on start, and partials compose onto
             // this base so resuming never wipes earlier text.
             dictationBase = text
+            if text != (dictatedText ?? "") { recordingIncomplete = true }
+            prepareRecording()
             speech.startListening()
-        case .finishing, .refining, .unavailable: break
+        case .finishing, .unavailable: break
         }
-    }
-
-    /// Stop waiting for the gateway. Keeping the draft still lets a pending
-    /// Done save it; with no draft the run is cancelled, and so is that save.
-    private func skipRefinement() {
-        if !speech.hasDraft { deferredSaveTime = nil }
-        speech.skipRefinement()
     }
 
     /// Stop the recognizer, remembering the on-screen text so a user
@@ -469,11 +446,50 @@ struct CaptureView: View {
         speech.stopListening()
     }
 
+    /// Start recording the capture for the gateway, when gateway dictation
+    /// is on and it is not already recording. Read as each dictation starts;
+    /// once started, every later run in the capture adds to the recording.
+    private func prepareRecording() {
+        guard recording == nil, let limit = store.voiceNoteAudioLimit else { return }
+        if !text.isEmpty { recordingIncomplete = true }
+        let recording = DictationAudioRecorder(maxAudioBytes: limit)
+        self.recording = recording
+        speech.audioSink = recording
+    }
+
+    /// The recording to save with `noteText`, when it covers exactly that
+    /// text (`VoiceNoteCapture`); otherwise the recording is deleted and the
+    /// note goes as typed.
+    private func takeRecording(for noteText: String) -> NoteAudio? {
+        defer {
+            recording = nil
+            speech.audioSink = nil
+        }
+        guard let recording else { return nil }
+        guard VoiceNoteCapture.attachesAudio(
+            savedText: noteText,
+            dictatedText: dictatedText,
+            recordingIncomplete: recordingIncomplete
+        ),
+            let file = recording.finish()
+        else {
+            recording.discard()
+            return nil
+        }
+        return NoteAudio(file: file, locale: Locale.current.identifier)
+    }
+
+    private func discardRecording() {
+        recording?.discard()
+        recording = nil
+        speech.audioSink = nil
+    }
+
     private func cancel() {
         let hasText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         guard hasText, phase == .capturing else {
-            deferredSaveTime = nil
             speech.cancel()
+            discardRecording()
             close()
             return
         }
@@ -482,25 +498,21 @@ struct CaptureView: View {
         confirmDiscard = true
     }
 
-    private func save(captureTime: NoteCaptureTime = .now()) async {
+    private func save() async {
         guard canSave else { return }
-        // Recording for the gateway: stop, and save once its text has
-        // replaced the draft rather than saving the draft now.
-        if speech.isListening, speech.routesToGateway {
-            deferredSaveTime = captureTime
-            stopDictation()
-            return
-        }
         // Snapshot the text BEFORE stopping the recognizer — a late
         // final-transcript callback must not mutate what gets saved.
         let noteText = text
+        let captureTime = NoteCaptureTime.now()
         if speech.isListening { stopDictation() }
         keyboardFocused = false
         withAnimation(.easeInOut(duration: 0.15)) { phase = .saving }
+        let audio = takeRecording(for: noteText)
         let outcome = await store.notes.save(
             text: noteText,
             surface: surface,
-            captureTime: captureTime
+            captureTime: captureTime,
+            audio: audio
         )
         switch outcome {
         case .rejected(let reason):

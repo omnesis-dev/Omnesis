@@ -252,7 +252,6 @@ public struct AgentView: View {
                 // being read.
                 store.agent.agentSurfaceVisibilityChanged(true)
                 applyComposerFocusRequest()
-                speechRecognizer.routeDictation(through: store)
             }
             .onDisappear { store.agent.agentSurfaceVisibilityChanged(false) }
             .onChange(of: composerFocusRequest) { _, _ in
@@ -1534,7 +1533,6 @@ struct AgentComposer: View {
     /// `×`), so it never leaks into the following turn. Seeding it is the only
     /// way to arm Deep Research — there is no implicit auto-gating.
     @State private var armedCommand: SlashCommand?
-    @State private var fallbackNoteExpired = false
 
     init(
         text: Binding<String>,
@@ -1582,7 +1580,6 @@ struct AgentComposer: View {
                         .padding(.bottom, 2)
                         .transition(.move(edge: .leading).combined(with: .opacity))
                 }
-                dictationStatusLine
                 HStack(alignment: .bottom, spacing: 6) {
                     TextField(
                         placeholder,
@@ -1595,8 +1592,7 @@ struct AgentComposer: View {
                     .padding(.leading, 20)
                     .padding(.vertical, 20)
                     .foregroundStyle(Theme.textPrimary)
-                    .dictationDraftReceding(speech.state)
-                    .disabled(disabled || speech.isListening || speech.isWrappingUp)
+                    .disabled(disabled || speech.isListening)
                     .submitLabel(.send)
                     .onSubmit { submit() }
                     .accessibilityIdentifier("agentComposer")
@@ -1617,7 +1613,6 @@ struct AgentComposer: View {
         .padding(.horizontal, Theme.Spacing.md)
         .padding(.bottom, Theme.Spacing.sm)
         .animation(.easeInOut(duration: 0.2), value: speech.isListening)
-        .animation(.easeInOut(duration: 0.2), value: speech.state)
         .animation(.easeInOut(duration: 0.2), value: armedCommand)
         .animation(.easeInOut(duration: 0.18), value: menu.isOpen)
         .onChange(of: speech.transcript) { _, newValue in
@@ -1626,17 +1621,14 @@ struct AgentComposer: View {
             }
         }
         .onChange(of: speech.state) { oldValue, newValue in
-            // When speech finishes (transitions from listening or wrapping
-            // up to idle), commit the final transcript into the text field —
-            // the gateway's text when it refined the draft.
-            if oldValue == .listening || oldValue.isWrappingUp,
+            // When speech finishes (transitions from listening/finishing
+            // to idle), commit the final transcript into the text field.
+            if oldValue == .listening || oldValue == .finishing,
                newValue == .idle,
                !speech.transcript.isEmpty {
                 text = speech.transcript
             }
         }
-        .dictationFallbackExpiry(raised: speech.usedOnDeviceFallback, expired: $fallbackNoteExpired)
-        .dictationAnnouncements(speech)
         .onAppear {
             speech.requestPermissionsIfNeeded()
         }
@@ -1669,14 +1661,12 @@ struct AgentComposer: View {
                 }
             }
             .accessibilityLabel("Stop listening")
-        } else if canSend || speech.isWrappingUp {
+        } else if canSend {
             Button(action: submit) {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.system(size: 30))
-                    .foregroundStyle(canSend ? Theme.accent : Theme.textMuted.opacity(0.4))
+                    .foregroundStyle(Theme.accent)
             }
-            // Held until the dictated text is final.
-            .disabled(!canSend)
             .accessibilityIdentifier("agentSendButton")
             .accessibilityLabel("Send")
         } else {
@@ -1696,26 +1686,6 @@ struct AgentComposer: View {
             .disabled(speech.state == .unavailable)
             .accessibilityIdentifier("agentDictateButton")
             .accessibilityLabel("Dictate")
-        }
-    }
-
-    /// Gateway dictation's line above the field: the wait while the gateway
-    /// transcribes, then — only if it failed — a brief note that the
-    /// on-device text was kept.
-    @ViewBuilder
-    private var dictationStatusLine: some View {
-        if speech.state == .refining {
-            DictationRefiningCue(skipLabel: DictationCopy.skip(hasDraft: speech.hasDraft)) {
-                speech.skipRefinement()
-            }
-            .padding(.leading, 20)
-            .padding(.top, 12)
-            .transition(.opacity)
-        } else if speech.usedOnDeviceFallback, !fallbackNoteExpired, !text.isEmpty {
-            DictationFallbackNote()
-                .padding(.leading, 20)
-                .padding(.top, 12)
-                .transition(.opacity)
         }
     }
 
@@ -1805,8 +1775,7 @@ struct AgentComposer: View {
     }
 
     private var canSend: Bool {
-        !busy && !disabled && !speech.isWrappingUp
-            && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !busy && !disabled && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func submit() {

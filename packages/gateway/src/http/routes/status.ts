@@ -475,11 +475,11 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       // once iOS and Android read `brain`.
       brain: brainGate,
       briefs: brainGate,
-      // Gateway dictation (experimental): whether the setting may show, whether
-      // the operator switched it on, whether a runnable transcriber is
-      // assigned, and whether the mobile apps should send dictation audio to
-      // `POST /dictation/transcribe`. A client that finds no field, or finds it
-      // inactive, keeps its on-device recognizer.
+      // Tell Omnesis voice notes (experimental): whether the setting may show,
+      // whether the operator switched it on, whether a runnable transcriber is
+      // assigned, and whether the mobile apps should send a voice note's audio
+      // to `POST /notes/voice`. A client that finds no field, or finds it
+      // inactive, saves the phone's own transcript as a plain note.
       dictation: getDictationStatus?.() ?? inactiveDictationStatus(),
       // How long the gateway believes a client's "I am showing this
       // conversation" mark without a refresh. Clients pace their own refresh

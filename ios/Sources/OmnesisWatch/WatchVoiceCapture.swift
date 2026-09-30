@@ -7,16 +7,14 @@ import Observation
 import SwiftUI
 import WatchKit
 
-/// Records a question or a note for gateway dictation and hands it to the
-/// iPhone — fire and forget. The watch shows no live words: it records,
-/// sends, says so, and returns to its flow. The phone transcribes the
-/// recording with the gateway (or on the device when it cannot) and saves
-/// the note or asks the question; a question's answer arrives as a
-/// notification, the way a slow answer does.
+/// Records a note for gateway dictation and hands it to the iPhone — fire
+/// and forget. The watch shows no live words: it records, sends, says so,
+/// and returns to the note screen. The phone saves the note at once with its
+/// own transcript, and the gateway's transcription replaces it when ready.
 ///
 /// Used only while the iPhone reports gateway dictation on
 /// (`WatchDictationGate`); otherwise, and whenever recording cannot start,
-/// dictation stays with the system's own screen.
+/// the note is dictated on the system's own screen.
 @MainActor
 @Observable
 final class WatchVoiceCapture: NSObject, AVAudioRecorderDelegate {
@@ -29,8 +27,8 @@ final class WatchVoiceCapture: NSObject, AVAudioRecorderDelegate {
 
     enum State: Equatable {
         case idle
-        case recording(kind: WatchVoiceKind, startedAt: Date, limit: TimeInterval)
-        case sent(kind: WatchVoiceKind)
+        case recording(startedAt: Date, limit: TimeInterval)
+        case sent
         /// The recording could not be handed to the iPhone.
         case failed
     }
@@ -66,7 +64,7 @@ final class WatchVoiceCapture: NSObject, AVAudioRecorderDelegate {
     /// Start recording. False when the watch should use system dictation
     /// instead: microphone access was refused, or the recorder could not
     /// start. A second start while recording is absorbed.
-    func start(_ kind: WatchVoiceKind, limit: TimeInterval) async -> Bool {
+    func start(limit: TimeInterval) async -> Bool {
         if isRecording { return true }
         guard await AVAudioApplication.requestRecordPermission() else { return false }
         let ref = UUID().uuidString
@@ -98,14 +96,13 @@ final class WatchVoiceCapture: NSObject, AVAudioRecorderDelegate {
         }
         self.recorder = recorder
         pending[ObjectIdentifier(recorder)] = WatchVoiceRecording(
-            kind: kind,
             ref: ref,
             captureTime: .now(),
             locale: Locale.current.identifier
         )
         observeInterruptions()
         dismissal?.cancel()
-        state = .recording(kind: kind, startedAt: Date(), limit: limit)
+        state = .recording(startedAt: Date(), limit: limit)
         WKInterfaceDevice.current().play(.start)
         return true
     }
@@ -196,7 +193,7 @@ final class WatchVoiceCapture: NSObject, AVAudioRecorderDelegate {
         WKInterfaceDevice.current().play(handedOver ? .success : .failure)
         // Only the recording on screen changes the screen.
         guard current else { return }
-        show(handedOver ? .sent(kind: recording.kind) : .failed)
+        show(handedOver ? .sent : .failed)
     }
 
     private func show(_ confirmation: State) {
@@ -254,18 +251,18 @@ struct WatchVoiceCaptureView: View {
         switch capture.state {
         case .idle:
             EmptyView()
-        case .recording(let kind, let startedAt, let limit):
-            recording(kind: kind, startedAt: startedAt, limit: limit)
-        case .sent(let kind):
-            sent(kind: kind)
+        case .recording(let startedAt, let limit):
+            recording(startedAt: startedAt, limit: limit)
+        case .sent:
+            sent
         case .failed:
             failed
         }
     }
 
-    private func recording(kind: WatchVoiceKind, startedAt: Date, limit: TimeInterval) -> some View {
+    private func recording(startedAt: Date, limit: TimeInterval) -> some View {
         VStack(spacing: 8) {
-            Text(kind == .ask ? "Ask Omnesis" : "Omnesis note")
+            Text("Omnesis note")
                 .font(.headline)
             TimelineView(.periodic(from: startedAt, by: 1)) { context in
                 Label(elapsed(from: startedAt, to: context.date, limit: limit), systemImage: "waveform")
@@ -290,7 +287,7 @@ struct WatchVoiceCaptureView: View {
         .padding(.horizontal)
     }
 
-    private func sent(kind: WatchVoiceKind) -> some View {
+    private var sent: some View {
         VStack(spacing: 8) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 34))
@@ -298,12 +295,6 @@ struct WatchVoiceCaptureView: View {
             Text("Sent to your iPhone.")
                 .font(.headline)
                 .multilineTextAlignment(.center)
-            if kind == .ask {
-                Text("The answer arrives as a notification.")
-                    .font(.footnote)
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-            }
         }
         .padding()
         .onTapGesture { capture.dismiss() }
@@ -339,18 +330,13 @@ struct WatchVoiceCaptureView: View {
 #Preview("Recording") {
     WatchVoiceCaptureView()
         .onAppear {
-            WatchVoiceCapture.shared.stage(.recording(kind: .ask, startedAt: Date().addingTimeInterval(-12), limit: 120))
+            WatchVoiceCapture.shared.stage(.recording(startedAt: Date().addingTimeInterval(-12), limit: 120))
         }
 }
 
-#Preview("Sent — ask") {
+#Preview("Sent") {
     WatchVoiceCaptureView()
-        .onAppear { WatchVoiceCapture.shared.stage(.sent(kind: .ask)) }
-}
-
-#Preview("Sent — note") {
-    WatchVoiceCaptureView()
-        .onAppear { WatchVoiceCapture.shared.stage(.sent(kind: .note)) }
+        .onAppear { WatchVoiceCapture.shared.stage(.sent) }
 }
 
 #Preview("Couldn't send") {

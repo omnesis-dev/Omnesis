@@ -30,7 +30,7 @@
 		</dict>
 	</array>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>When gateway dictation is on, Omnesis records your question or note and sends the recording through your iPhone to your own Omnesis gateway to be transcribed.</string>
+	<string>When gateway dictation is on, Omnesis records your notes and sends the recording through your iPhone to your own Omnesis gateway to be transcribed.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>WKApplication</key>

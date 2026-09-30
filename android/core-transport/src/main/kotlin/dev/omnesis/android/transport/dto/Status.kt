@@ -39,7 +39,7 @@ data class StatusSnapshot(
     val briefs: BriefsStatusDto? = null,
     /**
      * The gateway-dictation gate (experimental). Absent on a gateway that predates
-     * the field, which reads as inactive: dictation stays on the phone.
+     * the field, which reads as inactive: notes keep only the phone's transcript.
      */
     val dictation: DictationStatusDto? = null,
 ) {
@@ -137,10 +137,13 @@ data class DictationStatusDto(
     val enabled: Boolean = false,
     /** A runnable transcriber model is assigned. */
     val modelAssigned: Boolean = false,
-    /** All three hold: dictation should record audio and send it to the gateway. */
+    /**
+     * All three hold: Tell Omnesis keeps the audio it dictates and sends it with the note
+     * (`POST /notes/voice`), for the gateway to transcribe after the note is saved.
+     */
     val active: Boolean = false,
     /** Why the transcriber cannot run, when it cannot; addressed to the settings surface. */
     val reason: String? = null,
-    /** The largest audio body `POST /dictation/transcribe` accepts. */
+    /** The largest audio part `POST /notes/voice` accepts. */
     val maxAudioBytes: Long = 0,
 )

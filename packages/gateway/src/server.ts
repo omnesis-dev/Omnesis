@@ -52,7 +52,8 @@ import { mountPushRoutes } from "./http/routes/push.js";
 import { type EventBus } from "./events.js";
 import { registerModelRoutes } from "./models/routes.js";
 import { mountTranscribeRoutes } from "./http/routes/transcribe.js";
-import { mountDictationRoutes } from "./http/routes/dictation.js";
+import { mountVoiceNoteRoutes } from "./http/routes/voice-notes.js";
+import { VoiceNoteService } from "./voice-notes/index.js";
 import { mountOcrRoutes } from "./http/routes/ocr.js";
 import { HttpError, errorResponse } from "./http/errors.js";
 import { requestIdMiddleware } from "./http/middleware/request-id.js";
@@ -384,10 +385,12 @@ export function createServer(
     getBriefsStatus?: () => import("./brain/index.js").BriefsFeatureStatus;
     /**
      * Gateway dictation gate (experimental) — advertised as `dictation` on
-     * `GET /status` and enforced by `POST /dictation/transcribe`. Omitted ⇒
-     * the route is not mounted and `/status` advertises it inactive.
+     * `GET /status` and enforced by `POST /notes/voice`. Omitted ⇒ the route
+     * is not mounted and `/status` advertises it inactive.
      */
     getDictationStatus?: () => import("./dictation/index.js").DictationFeatureStatus;
+    /** Receives the voice-note queue so the composition root can stop it on shutdown. */
+    onVoiceNoteService?: (service: import("./voice-notes/index.js").VoiceNoteService) => void;
     getBriefTalkback?: () =>
       | import("./brain/talkback/talkback-service.js").BriefTalkbackPort
       | null;
@@ -1253,17 +1256,10 @@ export function createServer(
     });
   }
 
-  // Speech-to-text routes: source audio from the collector, and dictation from
-  // the mobile apps (experimental, gated inside its own module). Mounted only
+  // Speech-to-text route for source audio from the collector. Mounted only
   // when a transcribe service was wired.
   if (opts?.transcribeService) {
     mountTranscribeRoutes(app, { transcribeService: opts.transcribeService });
-    if (opts.getDictationStatus) {
-      mountDictationRoutes(app, {
-        transcribeService: opts.transcribeService,
-        getStatus: opts.getDictationStatus,
-      });
-    }
   }
 
   // OCR route. Mounted only when an OCR service was wired.
@@ -1624,6 +1620,25 @@ export function createServer(
     opts.onOmnesisNotesRuntime(runtime);
   }
   mountNotesRoutes(app, { runtime: getOmnesisNotesRuntime });
+
+  // Voice notes (experimental): Tell Omnesis captures that arrive with their
+  // audio, saved at once and transcribed afterwards. The queue runs whenever a
+  // transcriber is wired, so notes accepted before a restart, or before the
+  // feature was switched off, are still transcribed.
+  if (opts?.transcribeService && opts.getDictationStatus) {
+    const transcribeService = opts.transcribeService;
+    const voiceNotes = new VoiceNoteService({
+      notes: getOmnesisNotesRuntime,
+      writeGate: w,
+      readDb: db,
+      transcribe: (audio, mimeType, transcribeOpts) =>
+        transcribeService.transcribe(audio, mimeType, transcribeOpts),
+      readiness: () => transcribeService.readiness(),
+    });
+    voiceNotes.start();
+    opts.onVoiceNoteService?.(voiceNotes);
+    mountVoiceNoteRoutes(app, { service: voiceNotes, getStatus: opts.getDictationStatus });
+  }
 
   // agent-conversations: the pushed-transcript ingest surface for the managed
   // OpenClaw / Hermes plugins. Generally available — a paired harness ingests

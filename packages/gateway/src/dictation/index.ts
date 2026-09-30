@@ -2,10 +2,9 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Gateway dictation (experimental): the mobile apps send the audio they record
- * and the gateway's transcriber returns the text. The gate lives here; the
- * route is `http/routes/dictation.ts`; the transcription itself is the shared
- * `TranscribeService`, on its interactive lane.
+ * Gateway dictation (experimental): the gate that decides whether the mobile
+ * apps send Tell Omnesis voice notes' audio to this gateway. The notes
+ * themselves are handled by `voice-notes/`.
  */
 
 export {

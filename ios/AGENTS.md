@@ -39,23 +39,25 @@ contracts `Sources/Omnesis/Intents/SiriAsk.swift` (ask),
 `Sources/Omnesis/Intents/WatchRelayDelivery.swift` (the delivery window, the
 `transferUserInfo` fallback a relay is queued on when the iPhone app never
 picks it up live, and the phone's handling of queued relays) and
-`Sources/Omnesis/Intents/WatchVoice.swift` (gateway dictation on the watch —
-see below).
+`Sources/Omnesis/Intents/WatchVoice.swift` (a note recorded on the watch for
+gateway dictation — see below).
 
-**Gateway dictation on the watch (experimental).** While the iPhone reports
-gateway dictation on — the gate it keeps in `WatchDictationGateStore` and
-publishes in the WatchConnectivity application context, only once it has
-read the gateway's status — the watch's Ask and Note (complications and
-in-app buttons) record the audio themselves (`WatchVoiceCapture`, which
-needs the watch's microphone permission) instead of opening system
-dictation, hand the file to the phone with `transferFile`, and show "Sent to
-your iPhone." The phone keeps each recording in `WatchVoiceInbox`, transcribes
-it with the gateway — or on the device, strictly on-device, when the gateway
-cannot — and feeds the text to the same note and queued-ask paths
-(`WatchVoicePipeline`). A question's answer arrives as a notification. With
-the gate off or stale, or without microphone access, the watch keeps system
-dictation. Recording and transfer can only be checked on a physical watch
-paired with a phone.
+**Gateway dictation for notes (experimental).** While the paired gateway
+reports gateway dictation on, a Tell Omnesis capture on the iPhone also
+records what is dictated (`DictationAudioRecorder`), and a note saved exactly
+as dictated goes to `POST /notes/voice` with the recording and the phone's
+transcript (`VoiceNoteDelivery`): the note is saved at once, and the
+gateway's transcript replaces the text when ready. Nobody waits for the
+gateway, and the offline queue carries the recording like the note. On the
+watch, Note (complication and in-app button) records instead of opening
+system dictation while the gate the phone publishes in the WatchConnectivity
+application context (`WatchDictationGateStore`) is on — `WatchVoiceCapture`,
+which needs the watch's microphone permission — hands the file to the phone
+with `transferFile`, and shows "Sent to your iPhone." The phone keeps it in
+`WatchVoiceInbox`, transcribes it strictly on-device for the text shown at
+once, and saves it as a voice note (`WatchVoicePipeline`). Ask always uses
+system dictation. Recording and transfer can only be checked on a physical
+watch paired with a phone.
 
 The watch also ships two complications, **Ask Omnesis** and **Omnesis note**,
 from the `OmnesisWatchWidgets` WidgetKit extension embedded in the watch app. A

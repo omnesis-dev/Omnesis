@@ -52,9 +52,8 @@ final class WatchVoiceTests: XCTestCase {
 
     // MARK: - Recording metadata
 
-    private func recording(kind: WatchVoiceKind = .note, locale: String? = "en_GB") -> WatchVoiceRecording {
+    private func recording(locale: String? = "en_GB") -> WatchVoiceRecording {
         WatchVoiceRecording(
-            kind: kind,
             ref: "3b7c2f0e-8a41-4d7e-9f52-1c6a0e5d9b21",
             captureTime: NoteCaptureTime(capturedAt: now, timeZoneId: "Europe/Paris", utcOffsetSeconds: 7200),
             locale: locale
@@ -62,23 +61,18 @@ final class WatchVoiceTests: XCTestCase {
     }
 
     func testMetadataRoundTrips() throws {
-        for kind in [WatchVoiceKind.ask, .note] {
-            let original = recording(kind: kind)
-            let decoded = try XCTUnwrap(WatchVoiceRecording(metadata: original.metadata))
-            XCTAssertEqual(decoded.kind, kind)
-            XCTAssertEqual(decoded.ref, original.ref)
-            XCTAssertEqual(decoded.captureTime.timeZoneId, "Europe/Paris")
-            XCTAssertEqual(decoded.captureTime.utcOffsetSeconds, 7200)
-            XCTAssertEqual(decoded.captureTime.capturedAt.timeIntervalSince1970, now.timeIntervalSince1970, accuracy: 0.001)
-            XCTAssertEqual(decoded.locale, "en_GB")
-            XCTAssertEqual(decoded.languageCode, "en", "the gateway's hint is the ISO 639 code")
-        }
+        let original = recording()
+        let decoded = try XCTUnwrap(WatchVoiceRecording(metadata: original.metadata))
+        XCTAssertEqual(decoded.ref, original.ref)
+        XCTAssertEqual(decoded.captureTime.timeZoneId, "Europe/Paris")
+        XCTAssertEqual(decoded.captureTime.utcOffsetSeconds, 7200)
+        XCTAssertEqual(decoded.captureTime.capturedAt.timeIntervalSince1970, now.timeIntervalSince1970, accuracy: 0.001)
+        XCTAssertEqual(decoded.locale, "en_GB")
     }
 
     func testLocaleIsOptional() throws {
         let decoded = try XCTUnwrap(WatchVoiceRecording(metadata: recording(locale: nil).metadata))
         XCTAssertNil(decoded.locale)
-        XCTAssertNil(decoded.languageCode)
     }
 
     func testIncompleteMetadataIsRejected() {
@@ -89,7 +83,7 @@ final class WatchVoiceTests: XCTestCase {
             XCTAssertNil(WatchVoiceRecording(metadata: partial), "missing \(key)")
         }
         var unknownKind = full
-        unknownKind["voiceKind"] = "photo"
+        unknownKind["voiceKind"] = "ask"
         XCTAssertNil(WatchVoiceRecording(metadata: unknownKind))
     }
 }

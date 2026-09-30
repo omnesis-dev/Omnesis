@@ -15,17 +15,30 @@
  */
 
 import { createLogger } from "@omnesis/core";
+import { bodyLimit } from "hono/body-limit";
 import { scope } from "../scope.js";
 import { BadRequestError } from "../errors.js";
-import {
-  MAX_AUDIO_BYTES,
-  audioBodyLimit,
-  audioTooLargeBody,
-  type TranscribeService,
-} from "../../transcribe/index.js";
+import { MAX_AUDIO_BYTES, type TranscribeService } from "../../transcribe/index.js";
 import type { RouteApp } from "./types.js";
 
 const log = createLogger("gateway:http").child("routes:transcribe");
+
+// Reject oversized audio at the body layer — `bodyLimit` rejects on a declared
+// Content-Length over the cap before reading anything, and aborts a chunked
+// upload once it exceeds the cap, so the gateway never buffers an abusive
+// payload (the in-handler byteLength check is only a backstop for the rare
+// chunked/unknown-length case). Mirrors the agent route's body limit.
+const transcribeBodyLimit = bodyLimit({
+  maxSize: MAX_AUDIO_BYTES,
+  onError: (c) =>
+    c.json(
+      {
+        error: `Audio body too large (max ${Math.floor(MAX_AUDIO_BYTES / (1024 * 1024))} MB)`,
+        code: "PAYLOAD_TOO_LARGE",
+      },
+      413,
+    ),
+});
 
 export interface TranscribeRoutesDeps {
   transcribeService: TranscribeService;
@@ -34,22 +47,27 @@ export interface TranscribeRoutesDeps {
 export function mountTranscribeRoutes(app: RouteApp, deps: TranscribeRoutesDeps): void {
   const { transcribeService } = deps;
 
-  app.post("/inference/transcribe", scope.writeAny(), audioBodyLimit, async (c) => {
+  app.post("/inference/transcribe", scope.writeAny(), transcribeBodyLimit, async (c) => {
     const body = new Uint8Array(await c.req.arrayBuffer());
     if (body.byteLength === 0) {
       throw new BadRequestError("empty audio body");
     }
     // Backstop for the chunked / unknown-Content-Length case the bodyLimit
-    // middleware can't reject up front.
-    if (body.byteLength > MAX_AUDIO_BYTES) return c.json(audioTooLargeBody, 413);
+    // middleware can't reject up front. Match its 413 response shape.
+    if (body.byteLength > MAX_AUDIO_BYTES) {
+      return c.json(
+        {
+          error: `Audio body too large (max ${Math.floor(MAX_AUDIO_BYTES / (1024 * 1024))} MB)`,
+          code: "PAYLOAD_TOO_LARGE",
+        },
+        413,
+      );
+    }
 
     const mimeType = c.req.header("content-type") ?? "application/octet-stream";
     const language = c.req.query("language") || undefined;
 
-    const result = await transcribeService.transcribe(body, mimeType, {
-      language,
-      priority: "background",
-    });
+    const result = await transcribeService.transcribe(body, mimeType, { language });
     if (result === null) {
       // No transcriber configured/loadable. The collector treats this as
       // "no transcript" and renders the plain placeholder.

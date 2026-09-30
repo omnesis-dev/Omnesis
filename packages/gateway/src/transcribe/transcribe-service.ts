@@ -10,14 +10,11 @@
  *   the next transcription without a gateway restart.
  * - Serializes transcriptions: Whisper is CPU/GPU-heavy, so running one at a
  *   time avoids thrashing the model runner under concurrent voice notes.
- * - Orders the queue in two lanes. A person waiting on dictation
- *   (`"interactive"`) goes ahead of every queued source voice note
- *   (`"background"`), so a sync backlog never delays the text a person is
- *   waiting to see. A transcription already running is never interrupted.
  *
- * Callers are the HTTP routes — `/inference/transcribe` for source audio and
- * `/dictation/transcribe` for the mobile apps — which own their gates and
- * request-size limits. This service is pure capability+lifecycle infra.
+ * Callers are the `/inference/transcribe` route (source audio from the
+ * collector) and the voice-note queue (Tell Omnesis recordings); each owns its
+ * own gate and request-size limit. This service is pure capability+lifecycle
+ * infra.
  */
 
 import { createLogger, assertNever } from "@omnesis/core";
@@ -52,16 +49,6 @@ function signatureOf(resolved: ResolvedAssignment): string {
     default:
       return assertNever(resolved);
   }
-}
-
-/** Queue lane for a transcription. See the module comment. */
-export type TranscriptionPriority = "interactive" | "background";
-
-interface QueuedJob {
-  run: () => Promise<void>;
-  /** Settle without running, for a job whose caller has gone away. */
-  abandon: () => void;
-  signal?: AbortSignal;
 }
 
 /** Whether the assigned transcriber can run, and why not when it cannot. */
@@ -105,11 +92,7 @@ export class TranscribeService {
   private readonly deps: LoadTranscriberDeps;
   private current: { signature: string; capability: TranscribeCapability | null } | null = null;
   private loading: Promise<TranscribeCapability | null> | null = null;
-  private readonly lanes: Record<TranscriptionPriority, QueuedJob[]> = {
-    interactive: [],
-    background: [],
-  };
-  private running = false;
+  private tail: Promise<unknown> = Promise.resolve();
   /** Result of probing the local Whisper runtime; null until the probe settles. */
   private localRuntime: boolean | null = null;
   private probing: Promise<void> | null = null;
@@ -161,11 +144,6 @@ export class TranscribeService {
     return this.localRuntime ? readiness : { runnable: false, reason: LOCAL_RUNTIME_MISSING };
   }
 
-  /** Interactive transcriptions waiting behind the running one. */
-  interactiveBacklog(): number {
-    return this.lanes.interactive.length;
-  }
-
   /**
    * Transcribe audio bytes. Returns null when no transcriber is configured or
    * loadable, AND when the transcription itself fails — a worker crash
@@ -176,74 +154,39 @@ export class TranscribeService {
    * isolated subprocess precisely so its crash can't take the gateway down, and
    * surfacing it as a 5xx would defeat that — the supervisor already respawns
    * the worker for the next call.
-   *
-   * `signal` marks the caller as gone: a job whose signal has aborted by the
-   * time it reaches the front of the queue returns null without running.
    */
   async transcribe(
     audio: Uint8Array,
     mimeType: string,
-    opts?: { language?: string; priority?: TranscriptionPriority; signal?: AbortSignal },
+    opts?: { language?: string },
   ): Promise<TranscriptionResult | null> {
-    const language = opts?.language;
     // Resolve/load the capability AND run the transcription inside the same
     // serialization fence. A model reassignment disposes the previous
     // capability (kills its worker subprocess); doing that resolution inside the
     // fence guarantees no earlier-queued transcription is still running on the
     // old worker when it's torn down.
-    const priority = opts?.priority ?? "background";
-    return this.enqueue(priority, opts?.signal, null, async () => {
+    return this.serialize(async () => {
       const capability = await this.ensureCapability();
       if (!capability) return null;
       try {
-        return await capability.transcribe(
-          audio,
-          mimeType,
-          language !== undefined ? { language } : undefined,
-        );
+        return await capability.transcribe(audio, mimeType, opts);
       } catch (err) {
         log.warn(
-          `Transcription failed (${priority}): ${err instanceof Error ? err.message : String(err)}`,
+          `Transcription failed (will retry on a later sync): ${err instanceof Error ? err.message : String(err)}`,
         );
         return null;
       }
     });
   }
 
-  /**
-   * Run `fn` once nothing else is running and every job queued ahead of it in
-   * its lane, plus every queued interactive job, has run. A job whose `signal`
-   * aborted while it waited settles with `abandoned` instead.
-   */
-  private enqueue<T>(
-    priority: TranscriptionPriority,
-    signal: AbortSignal | undefined,
-    abandoned: T,
-    fn: () => Promise<T>,
-  ): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      this.lanes[priority].push({
-        run: () => Promise.resolve().then(fn).then(resolve, reject),
-        abandon: () => resolve(abandoned),
-        signal,
-      });
-      this.pump();
-    });
-  }
-
-  private pump(): void {
-    if (this.running) return;
-    let next: QueuedJob | undefined;
-    while ((next = this.lanes.interactive.shift() ?? this.lanes.background.shift())) {
-      if (!next.signal?.aborted) break;
-      next.abandon();
-    }
-    if (!next) return;
-    this.running = true;
-    void next.run().finally(() => {
-      this.running = false;
-      this.pump();
-    });
+  /** Run `fn` after all previously-queued transcriptions complete. */
+  private serialize<T>(fn: () => Promise<T>): Promise<T> {
+    const result = this.tail.then(fn, fn);
+    this.tail = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
   }
 
   async dispose(): Promise<void> {

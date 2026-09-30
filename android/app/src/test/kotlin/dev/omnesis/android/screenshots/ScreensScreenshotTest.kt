@@ -9,7 +9,6 @@ import dev.omnesis.android.designsystem.components.DeleteDocumentDialog
 import dev.omnesis.android.ui.common.CursorPagingState
 import dev.omnesis.android.ui.briefs.BriefsListContent
 import dev.omnesis.android.ui.briefs.BriefsFeedState
-import dev.omnesis.android.ui.briefs.BriefDictationProgress
 import dev.omnesis.android.ui.briefs.BriefDetailSheet
 import dev.omnesis.android.ui.briefs.BriefDismissSheet
 import dev.omnesis.android.transport.dto.BriefRecordDto
@@ -84,8 +83,6 @@ import dev.omnesis.android.ui.settings.AppearanceMode
 import dev.omnesis.android.ui.settings.SettingsContent
 import dev.omnesis.android.ui.settings.SettingsViewModel
 import dev.omnesis.android.ui.settings.VoiceSection
-import dev.omnesis.android.ui.voice.DictationFailureNotice
-import dev.omnesis.android.ui.voice.VoiceRecording
 import dev.omnesis.android.ui.settings.VoiceSettingsState
 import dev.omnesis.android.ui.settings.sampleAppVersion
 import dev.omnesis.android.ui.sources.SourceDetailContent
@@ -391,53 +388,6 @@ class ScreensScreenshotTest {
         BriefsSample(briefsFeed, dictatingBriefId = "b1", dictationText = "")
     }
 
-    // --- Gateway dictation at a brief: recording, transcribing, failed ---
-
-    @Test
-    fun briefs_gateway_recording_dark() = capture("briefs_gateway_recording_dark", dark = true) {
-        BriefsSample(
-            briefsFeed,
-            dictatingBriefId = "b1",
-            dictationProgress = BriefDictationProgress(recording = VoiceRecording(0.55f, 6_000)),
-        )
-    }
-
-    @Test
-    fun briefs_gateway_recording_light() = capture("briefs_gateway_recording_light", dark = false) {
-        BriefsSample(
-            briefsFeed,
-            dictatingBriefId = "b1",
-            dictationProgress = BriefDictationProgress(recording = VoiceRecording(0.55f, 6_000)),
-        )
-    }
-
-    @Test
-    fun briefs_gateway_transcribing_dark() = capture("briefs_gateway_transcribing_dark", dark = true) {
-        BriefsSample(briefsFeed, dictatingBriefId = "b1", dictationProgress = BriefDictationProgress(transcribing = true))
-    }
-
-    @Test
-    fun briefs_gateway_failed_dark() = capture("briefs_gateway_failed_dark", dark = true) {
-        BriefsSample(
-            briefsFeed,
-            dictatingBriefId = "b1",
-            dictationProgress = BriefDictationProgress(
-                failure = DictationFailureNotice("Couldn't reach your gateway.", canRetry = true, canDictateOnDevice = true),
-            ),
-        )
-    }
-
-    @Test
-    fun briefs_gateway_failed_light() = capture("briefs_gateway_failed_light", dark = false) {
-        BriefsSample(
-            briefsFeed,
-            dictatingBriefId = "b1",
-            dictationProgress = BriefDictationProgress(
-                failure = DictationFailureNotice("Couldn't reach your gateway.", canRetry = true, canDictateOnDevice = true),
-            ),
-        )
-    }
-
     @Test
     fun briefs_swipe_actions_light() = capture("briefs_swipe_actions_light", dark = false) {
         BriefsSample(briefsFeed, revealedActionsBriefId = "b1")
@@ -491,7 +441,6 @@ class ScreensScreenshotTest {
         paging: CursorPagingState = CursorPagingState(),
         dictatingBriefId: String? = null,
         dictationText: String = "",
-        dictationProgress: BriefDictationProgress = BriefDictationProgress(),
         revealedActionsBriefId: String? = null,
         needsBackgroundAgent: Boolean = false,
     ) {
@@ -509,7 +458,6 @@ class ScreensScreenshotTest {
                 onRetry = {}, onRefresh = {},
                 dictatingBriefId = dictatingBriefId,
                 dictationText = dictationText,
-                dictationProgress = dictationProgress,
                 revealedActionsBriefId = revealedActionsBriefId,
                 needsBackgroundAgent = needsBackgroundAgent,
                 now = briefsNow,

@@ -35,7 +35,6 @@ import dev.omnesis.android.transport.client.AgentClient
 import dev.omnesis.android.transport.client.AgentEventSource
 import dev.omnesis.android.transport.client.AnalyticsClient
 import dev.omnesis.android.transport.client.BriefsClient
-import dev.omnesis.android.transport.client.DictationClient
 import dev.omnesis.android.transport.client.DocumentsClient
 import dev.omnesis.android.transport.client.GatewayClient
 import dev.omnesis.android.transport.client.NotesClient
@@ -236,7 +235,6 @@ class SessionManager @Inject constructor(
         val notes: NotesClient,
         val watches: WatchesClient,
         val briefs: BriefsClient,
-        val dictation: DictationClient,
         val socket: DeviceSocket,
         val analytics: AnalyticsClient,
         val documents: DocumentsClient,
@@ -546,7 +544,6 @@ class SessionManager @Inject constructor(
             notes = NotesClient(http),
             watches = WatchesClient(http),
             briefs = BriefsClient(http),
-            dictation = DictationClient(http),
             socket = socket,
             analytics = analytics,
             documents = documents,

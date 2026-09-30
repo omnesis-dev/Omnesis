@@ -4,10 +4,7 @@
 package dev.omnesis.android.voice
 
 import dev.omnesis.android.voice.SilenceDetector.Verdict
-import java.util.Locale
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SilenceDetectorTest {
@@ -63,24 +60,5 @@ class SilenceDetectorTest {
         val detector = SilenceDetector()
         val (verdict, _) = detector.feed(List(70) { quiet } + List(20) { loud })
         assertEquals(Verdict.LISTENING, verdict)
-    }
-
-    @Test
-    fun audio_level_maps_amplitude_onto_a_decibel_scale() {
-        assertEquals(0f, audioLevel(0), 0f)
-        assertEquals(1f, audioLevel(32_767), 0.001f)
-        assertEquals(1f, audioLevel(90_000), 0.001f)
-        // Quiet speech still registers visibly; room tone barely does.
-        assertTrue(audioLevel(3_000) > 0.5f)
-        assertTrue(audioLevel(200) < 0.2f)
-    }
-
-    @Test
-    fun language_hint_is_the_iso_639_code_of_the_device_language() {
-        assertEquals("fr", dictationLanguageHint(Locale.FRANCE))
-        assertEquals("en", dictationLanguageHint(Locale.US))
-        // The language tag maps the legacy Indonesian code the transcriber would reject.
-        assertEquals("id", dictationLanguageHint(Locale("in", "ID")))
-        assertNull(dictationLanguageHint(Locale.ROOT))
     }
 }

@@ -50,6 +50,17 @@ public struct PendingNoteDeliveryDiagnostics: Codable, Equatable, Sendable {
     }
 }
 
+/// Marks a queued note as a voice note: its recording waits beside it in the
+/// queue (`PendingNoteStore.audioFile(for:)`) and is delivered with it.
+public struct PendingNoteVoice: Codable, Equatable, Sendable {
+    /// The locale the recording was dictated in, such as `en_GB`.
+    public let locale: String?
+
+    public init(locale: String?) {
+        self.locale = locale
+    }
+}
+
 /// One quick-capture note waiting to be delivered to the gateway.
 /// Carries the original capture time so a note drained hours (or days)
 /// later still lands in the day it was actually spoken.
@@ -74,6 +85,9 @@ public struct PendingNote: Codable, Equatable, Sendable, Identifiable {
     /// Delivery diagnostics were added after the original queue format;
     /// nil means the file came from an older build with no attempt data.
     public let deliveryDiagnostics: PendingNoteDeliveryDiagnostics?
+    /// Set for a voice note. Optional so older queue files decode as plain
+    /// notes.
+    public let voice: PendingNoteVoice?
 
     public init(
         id: String = PendingNote.makeId(),
@@ -84,7 +98,8 @@ public struct PendingNote: Codable, Equatable, Sendable, Identifiable {
         capturedUtcOffsetSeconds: Int? = nil,
         surface: String,
         location: NoteLocation? = nil,
-        deliveryDiagnostics: PendingNoteDeliveryDiagnostics? = nil
+        deliveryDiagnostics: PendingNoteDeliveryDiagnostics? = nil,
+        voice: PendingNoteVoice? = nil
     ) {
         self.id = id
         self.noteId = noteId
@@ -95,6 +110,7 @@ public struct PendingNote: Codable, Equatable, Sendable, Identifiable {
         self.surface = surface
         self.location = location
         self.deliveryDiagnostics = deliveryDiagnostics
+        self.voice = voice
     }
 
     /// Five minutes avoids alarming on a normal short connectivity flap.
@@ -124,7 +140,8 @@ public struct PendingNote: Codable, Equatable, Sendable, Identifiable {
             capturedUtcOffsetSeconds: capturedUtcOffsetSeconds,
             surface: surface,
             location: location,
-            deliveryDiagnostics: diagnostics
+            deliveryDiagnostics: diagnostics,
+            voice: voice
         )
     }
 
@@ -202,15 +219,30 @@ public actor PendingNoteStore {
         ProtectedStore.pendingNotes.applyBackupExclusion(to: directory, fileManager: fileManager)
     }
 
-    /// Persist a note. Throws on write failure so the caller can tell
-    /// the user their note was NOT kept (silent loss is the one
-    /// unacceptable outcome for this store).
-    public func enqueue(_ note: PendingNote) throws {
+    /// Persist a note, and move a voice note's recording in beside it.
+    /// Throws on write failure so the caller can tell the user their note
+    /// was NOT kept (silent loss is the one unacceptable outcome for this
+    /// store); the recording is then left where it was.
+    public func enqueue(_ note: PendingNote, audio: URL? = nil) throws {
         try ProtectedStore.pendingNotes.requireBackupExclusion(
             to: directory, fileManager: fileManager
         )
-        let data = try encoder.encode(note)
-        try data.write(to: fileURL(for: note.id), options: ProtectedStore.pendingNotes.writingOptions)
+        if let audio {
+            try fileManager.moveItem(at: audio, to: audioURL(for: note.id))
+        }
+        do {
+            let data = try encoder.encode(note)
+            try data.write(to: fileURL(for: note.id), options: ProtectedStore.pendingNotes.writingOptions)
+        } catch {
+            if let audio { try? fileManager.moveItem(at: audioURL(for: note.id), to: audio) }
+            throw error
+        }
+    }
+
+    /// A queued voice note's recording, when it is still there.
+    public func audioFile(for id: String) -> URL? {
+        let url = audioURL(for: id)
+        return fileManager.fileExists(atPath: url.path) ? url : nil
     }
 
     /// All queued notes, oldest first. Unreadable/corrupt files are
@@ -243,6 +275,7 @@ public actor PendingNoteStore {
         if fileManager.fileExists(atPath: diagnostics.path) {
             try fileManager.removeItem(at: diagnostics)
         }
+        try? fileManager.removeItem(at: audioURL(for: id))
     }
 
     /// Record a failed drain attempt without rewriting the queued note.
@@ -281,7 +314,8 @@ public actor PendingNoteStore {
         let contents = (try? fileManager.contentsOfDirectory(
             at: directory, includingPropertiesForKeys: nil
         )) ?? []
-        for url in contents where url.pathExtension == "delivery-state" {
+        for url in contents where url.pathExtension == "delivery-state"
+            || url.pathExtension == DictationRecordingFormat.fileExtension {
             try? fileManager.removeItem(at: url)
         }
     }
@@ -290,6 +324,10 @@ public actor PendingNoteStore {
 
     private func fileURL(for id: String) -> URL {
         directory.appendingPathComponent("\(id).json")
+    }
+
+    private func audioURL(for id: String) -> URL {
+        directory.appendingPathComponent("\(id).\(DictationRecordingFormat.fileExtension)")
     }
 
     private func diagnosticsURL(for id: String) -> URL {

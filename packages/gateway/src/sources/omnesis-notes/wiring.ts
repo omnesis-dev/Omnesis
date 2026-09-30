@@ -99,6 +99,17 @@ export interface OmnesisNotesRuntime {
   /** Replace an entry's text; null when the id is unknown. */
   edit(id: string, text: string): Promise<NoteEntry | null>;
   /**
+   * Replace an entry's text only while it still reads `expected`, for a
+   * writer that is not the user (a voice note's transcript): an edit the user
+   * made in the meantime wins. `changed` when the text no longer matches,
+   * `missing` when the entry is gone.
+   */
+  replaceTextIf(
+    id: string,
+    expected: string,
+    text: string,
+  ): Promise<"replaced" | "changed" | "missing">;
+  /**
    * Hard-delete an entry (false when the id is unknown). The day's
    * re-render drops the projected document when the day is now empty.
    */
@@ -227,6 +238,20 @@ export function bootOmnesisNotes(deps: OmnesisNotesBootDeps): OmnesisNotesRuntim
       if (!updated) return null;
       upserter.enqueue(existing.day);
       return { ...existing, text: trimmed, updatedAt: now };
+    },
+    replaceTextIf: async (id, expected, text) => {
+      const trimmed = text.trim();
+      if (trimmed.length === 0) {
+        throw new Error("note text must not be empty");
+      }
+      const result = await deps.writeGate.replaceNoteEntryTextIf(
+        id,
+        expected,
+        trimmed,
+        new Date().toISOString(),
+      );
+      if (result.outcome === "replaced") upserter.enqueue(result.day);
+      return result.outcome;
     },
     remove: async (id) => {
       const { deleted, day } = await deps.writeGate.deleteNoteEntry(id);

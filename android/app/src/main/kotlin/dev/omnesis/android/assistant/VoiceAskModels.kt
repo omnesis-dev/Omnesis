@@ -3,8 +3,6 @@
 
 package dev.omnesis.android.assistant
 
-import dev.omnesis.android.ui.voice.DictationFailureNotice
-
 /** The terminal result of one Google Assistant/Gemini-launched Omnesis ask. */
 sealed interface VoiceAskOutcome {
     data class Answered(val text: String) : VoiceAskOutcome
@@ -63,18 +61,6 @@ sealed interface AssistantActionUiState {
         val kind: AssistantActionKind,
         val partialText: String = "",
         val deliveryId: Long = 0,
-    ) : AssistantActionUiState
-    /** Recording for the gateway's transcriber; [level] is 0–1. */
-    data class Recording(
-        val kind: AssistantActionKind,
-        val level: Float,
-        val elapsedMs: Long,
-        val deliveryId: Long,
-    ) : AssistantActionUiState
-    data class Transcribing(val kind: AssistantActionKind) : AssistantActionUiState
-    data class DictationFailed(
-        val kind: AssistantActionKind,
-        val notice: DictationFailureNotice,
     ) : AssistantActionUiState
     data class Confirming(val kind: AssistantActionKind, val text: String) : AssistantActionUiState
     data class Working(val kind: AssistantActionKind, val text: String) : AssistantActionUiState

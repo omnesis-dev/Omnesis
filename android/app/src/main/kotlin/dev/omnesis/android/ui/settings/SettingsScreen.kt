@@ -510,8 +510,8 @@ private fun UrlEditor(currentUrl: String, onSave: (String) -> String?) {
 }
 
 /**
- * Gateway dictation (experimental): whether this app's dictation goes to the
- * gateway's transcriber. A gateway setting, so the copy says it reaches every device.
+ * Gateway dictation (experimental): whether Tell Omnesis notes carry their audio for the
+ * gateway to transcribe. A gateway setting, so the copy says it reaches every device.
  * The whole row is the switch, so TalkBack reads its label with its state.
  */
 @Composable
@@ -562,7 +562,7 @@ internal fun VoiceSection(
                         color = c.textPrimary,
                     )
                     Text(
-                        "Dictation uses on-device transcription until the gateway's transcriber can run.",
+                        "Tell Omnesis notes keep this phone's transcript until the gateway's transcriber can run.",
                         style = MaterialTheme.typography.bodySmall,
                         color = c.textSecondary,
                     )
@@ -592,9 +592,10 @@ internal fun VoiceSection(
     }
     Spacer(Modifier.height(OmSpacing.sm))
     Text(
-        "When on, the audio you dictate in this app — the agent, Briefs and Tell Omnesis — is sent " +
-            "to your gateway, which transcribes it and returns the text. Nothing is stored. This is " +
-            "a gateway setting, so it applies to every device paired with it.",
+        "When on, Tell Omnesis also records what you dictate and sends the audio with the note. " +
+            "The note is saved at once, with this phone's transcript when it has one, and your " +
+            "gateway replaces it with its own transcript when it is ready. This is a gateway " +
+            "setting, so it applies to every device paired with it.",
         style = MaterialTheme.typography.labelMedium,
         color = c.textSecondary,
     )

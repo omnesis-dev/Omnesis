@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The gateway dictation gate — the single answer to "may a mobile app send the
- * audio it records to this gateway for transcription?".
+ * The gateway dictation gate — the single answer to "may a mobile app send a
+ * Tell Omnesis voice note's audio to this gateway for transcription?".
  *
  * Three levers, all required:
  *
@@ -14,10 +14,10 @@
  *     voice notes, judged by `TranscribeService.readiness()`.
  *
  * The verdict is advertised verbatim as `dictation` on `GET /status`, and
- * `POST /dictation/transcribe` enforces the same predicates. A client only
- * records for the gateway while `active` is true, and otherwise keeps its
- * on-device recognizer, so an old gateway (no field) and an inactive gateway
- * look the same to it.
+ * `POST /notes/voice` enforces the same predicates. A client only sends audio
+ * while `active` is true, and otherwise saves the phone's own transcript as a
+ * plain note, so an old gateway (no field) and an inactive gateway look the
+ * same to it.
  */
 
 import { experimentalEnabled, experimentalVisible } from "@omnesis/core";

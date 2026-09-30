@@ -53,7 +53,7 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Omnesis Demo uses your location to record the places you spend time when Places is on, and to attach a location to a note you capture. Both are securely sent to your paired gateway.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Omnesis Demo uses the microphone when you dictate to the agent, a brief or Tell Omnesis. When gateway dictation is on, the recording is sent to your own Omnesis gateway to be transcribed.</string>
+	<string>Omnesis Demo uses the microphone when you dictate to the agent, a brief or Tell Omnesis. When gateway dictation is on, what you dictate to Tell Omnesis is also recorded and sent to your own Omnesis gateway to be transcribed.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>Omnesis Demo reads the motion-activity history you enable and securely sends it to your paired gateway for your private search and analytics.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

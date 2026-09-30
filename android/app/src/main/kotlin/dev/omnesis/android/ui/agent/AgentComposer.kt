@@ -32,18 +32,14 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowCircleUp
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.StopCircle
-import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -53,25 +49,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.omnesis.android.designsystem.theme.OmTheme
-import dev.omnesis.android.ui.capture.joinUtterances
 import dev.omnesis.android.ui.common.landingPalette
-import dev.omnesis.android.ui.voice.DictationFailureCard
-import dev.omnesis.android.ui.voice.RecordingMeter
-import dev.omnesis.android.ui.voice.TranscribingStatus
-import dev.omnesis.android.ui.voice.VoiceRecording
 
 /**
  * The floating glass composer pill — a chrome-less rounded-24 pill that floats over the
@@ -86,9 +73,7 @@ import dev.omnesis.android.ui.voice.VoiceRecording
  * command's send options (today only `deepResearch`), then the pill clears. The `×` dismisses
  * without sending. A default send (no pill) is an ordinary turn — explicit-only, no auto-gating.
  *
- * Dictation: a mic beside the trailing button fills the draft and never sends (see
- * [ComposerDictationViewModel]). Live on-device words show after the draft while they
- * are heard; a gateway dictation shows its recording and transcription above the field.
+ * Dictation (a mic button) is not yet implemented on Android — tracked in #35.
  */
 @Composable
 fun AgentComposer(
@@ -112,7 +97,6 @@ fun AgentComposer(
     requestFocus: Boolean = false,
     /** Changes when the coordinator explicitly replaces the local draft with a fresh composer. */
     composerGeneration: Long = 0,
-    dictation: ComposerDictation = ComposerDictation.NONE,
 ) {
     var text by rememberSaveable(composerGeneration) { mutableStateOf(initialText) }
     // Per-message local state — NOT view-model/coordinator state: an ephemeral
@@ -136,36 +120,7 @@ fun AgentComposer(
         else -> "Ask Omnesis"
     }
 
-    val voice = dictation.state
-    // A new conversation's fresh draft owes nothing to a dictation begun for the old one.
-    var dictationGeneration by rememberSaveable { mutableLongStateOf(composerGeneration) }
-    LaunchedEffect(composerGeneration) {
-        if (composerGeneration != dictationGeneration) {
-            dictationGeneration = composerGeneration
-            dictation.onDraftReplaced()
-        }
-    }
-    // A finished dictation is folded into the draft exactly once: here, or by an edit
-    // that already carried it (the field shows it before it is folded in).
-    var foldedDeliveryId by rememberSaveable { mutableStateOf<Long?>(null) }
-    val delivery = voice.delivery?.takeIf { it.id != foldedDeliveryId }
-    fun foldDelivery(into: String): String {
-        val pending = delivery?.takeIf { it.id != foldedDeliveryId } ?: return into
-        foldedDeliveryId = pending.id
-        dictation.onDeliveryConsumed(pending.id)
-        return into
-    }
-    LaunchedEffect(delivery?.id) {
-        // Re-checked here: an edit may have folded it in between composition and this effect.
-        if (delivery != null && delivery.id != foldedDeliveryId) text = foldDelivery(joinUtterances(text, delivery.text))
-    }
-    // What the field shows: the draft, then any words still arriving from the mic.
-    val shown = joinUtterances(joinUtterances(text, delivery?.text.orEmpty()), voice.liveText)
-    // A gateway dictation's words are still on their way; sending now would leave them behind.
-    val awaitingTranscript = voice.phase is ComposerDictationPhase.Recording ||
-        voice.phase == ComposerDictationPhase.Transcribing
-
-    val canSend = enabled && !busy && !awaitingTranscript && shown.trim().isNotEmpty()
+    val canSend = enabled && !busy && text.trim().isNotEmpty()
 
     fun arm(cmd: SlashCommand) {
         armedId = cmd.id
@@ -178,15 +133,14 @@ fun AgentComposer(
         // follow-up. The IME action must still obey the same busy gate as the trailing Stop
         // button: otherwise pressing Send during cancellation clears the draft and races the
         // gateway's one-active-turn guard.
-        if (!enabled || busy || awaitingTranscript) return
-        val trimmed = shown.trim()
+        if (!enabled || busy) return
+        val trimmed = text.trim()
         if (trimmed.isEmpty()) return
         val command = armedCommand
         // Per-message: the pill governs THIS send only, then clears.
         armedId = null
         onSend(trimmed, command)
-        dictation.onSent()
-        text = foldDelivery("")
+        text = ""
     }
 
     // A rejected send offers its text back — restore it (unless the user already started a new
@@ -235,11 +189,6 @@ fun AgentComposer(
                     shape = pillShape,
                 ),
         ) {
-            ComposerDictationStrip(
-                dictation = dictation,
-                modifier = Modifier.padding(start = 20.dp, end = 12.dp, top = 12.dp),
-            )
-
             // The armed-command pill: top-left, glyph + label + tap-to-dismiss `×`.
             AnimatedVisibility(
                 visible = armedCommand != null,
@@ -267,13 +216,8 @@ fun AgentComposer(
                     contentAlignment = Alignment.CenterStart,
                 ) {
                     BasicTextField(
-                        value = shown,
-                        onValueChange = {
-                            // The field showed any live words and pending transcript, so the
-                            // edit already holds them.
-                            dictation.onDraftEdited()
-                            text = foldDelivery(it)
-                        },
+                        value = text,
+                        onValueChange = { text = it },
                         enabled = enabled,
                         textStyle = LocalTextStyle.current.merge(
                             MaterialTheme.typography.bodyLarge.copy(fontSize = 19.sp, color = colors.textPrimary),
@@ -287,7 +231,7 @@ fun AgentComposer(
                             .fillMaxWidth()
                             .testTag("agentComposer"),
                     )
-                    if (shown.isEmpty()) {
+                    if (text.isEmpty()) {
                         Text(
                             placeholder,
                             style = MaterialTheme.typography.bodyLarge.copy(fontSize = 19.sp),
@@ -296,13 +240,6 @@ fun AgentComposer(
                     }
                 }
 
-                if (voice.available) {
-                    // The mic's 48dp touch target is 18dp taller than the 30dp send button, so
-                    // 9dp less bottom padding keeps their centres on one line.
-                    Box(Modifier.padding(bottom = 5.dp), contentAlignment = Alignment.Center) {
-                        ComposerMicButton(phase = voice.phase, enabled = enabled, onTap = dictation.onMicTap)
-                    }
-                }
                 Box(Modifier.padding(end = 10.dp, bottom = 14.dp), contentAlignment = Alignment.Center) {
                     ComposerTrailingButton(
                         busy = busy,
@@ -410,6 +347,7 @@ private fun ComposerTrailingButton(
     onSend: () -> Unit,
 ) {
     val colors = OmTheme.colors
+    // No dictation affordance on Android yet — implementing the mic button is tracked in #35.
     when {
         busy -> Icon(
             Icons.Filled.StopCircle,
@@ -430,91 +368,6 @@ private fun ComposerTrailingButton(
                 .then(if (canSend) Modifier.noRippleClickable(onSend) else Modifier),
         )
     }
-}
-
-/**
- * The composer's mic: idle, lit while it hears you (tap to stop), and resting while
- * the gateway transcribes — the strip above the field carries that wait.
- */
-@Composable
-private fun ComposerMicButton(phase: ComposerDictationPhase, enabled: Boolean, onTap: () -> Unit) {
-    val colors = OmTheme.colors
-    when (phase) {
-        ComposerDictationPhase.Transcribing -> Icon(
-            Icons.Outlined.Mic,
-            contentDescription = null,
-            tint = colors.textMuted.copy(alpha = 0.4f),
-            modifier = Modifier
-                .minimumInteractiveComponentSize()
-                .size(30.dp)
-                .padding(3.dp)
-                .semantics { stateDescription = "Transcribing" },
-        )
-        ComposerDictationPhase.Listening, is ComposerDictationPhase.Recording -> Box(
-            Modifier
-                .minimumInteractiveComponentSize()
-                .testTag("agentMicButton")
-                .micClickable(onTap),
-            contentAlignment = Alignment.Center,
-        ) {
-            Box(
-                Modifier.size(30.dp).clip(CircleShape).background(colors.accent),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Filled.Stop, contentDescription = "Stop dictation", tint = Color.White, modifier = Modifier.size(16.dp))
-            }
-        }
-        ComposerDictationPhase.Idle, is ComposerDictationPhase.Failed -> Box(
-            Modifier
-                .minimumInteractiveComponentSize()
-                .testTag("agentMicButton")
-                .then(if (enabled) Modifier.micClickable(onTap) else Modifier),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                Icons.Outlined.Mic,
-                contentDescription = "Dictate",
-                tint = if (enabled) colors.textSecondary else colors.textMuted.copy(alpha = 0.4f),
-                modifier = Modifier.size(30.dp).padding(3.dp),
-            )
-        }
-    }
-}
-
-/**
- * Gateway dictation's progress above the field — the recording level and time, the
- * transcription wait — and a failed dictation's notice with its ways forward. Nothing
- * for live on-device dictation, whose words appear in the field itself.
- */
-@Composable
-private fun ComposerDictationStrip(dictation: ComposerDictation, modifier: Modifier = Modifier) {
-    when (val phase = dictation.state.phase) {
-        is ComposerDictationPhase.Recording -> RecordingMeter(
-            VoiceRecording(phase.level, phase.elapsedMs),
-            modifier = modifier.testTag("agentDictationRecording"),
-            barHeight = 16.dp,
-        )
-        ComposerDictationPhase.Transcribing -> TranscribingStatus(modifier)
-        is ComposerDictationPhase.Failed -> DictationFailureCard(
-            notice = phase.notice,
-            onRetry = dictation.onRetry,
-            onDictateOnDevice = dictation.onDictateOnDevice,
-            onDismiss = dictation.onDismissFailure,
-            modifier = modifier,
-            onOpenSettings = dictation.onOpenSettings,
-        )
-        ComposerDictationPhase.Idle, ComposerDictationPhase.Listening -> Unit
-    }
-}
-
-/** The mic's tap target: a button to accessibility services, without a ripple on the glass pill. */
-private fun Modifier.micClickable(onClick: () -> Unit): Modifier = composed {
-    clickable(
-        interactionSource = remember { MutableInteractionSource() },
-        indication = null,
-        role = Role.Button,
-        onClick = onClick,
-    )
 }
 
 private fun Modifier.noRippleClickable(onClick: () -> Unit): Modifier = composed {

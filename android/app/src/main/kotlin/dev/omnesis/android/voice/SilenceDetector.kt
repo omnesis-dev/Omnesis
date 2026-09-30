@@ -3,8 +3,6 @@
 
 package dev.omnesis.android.voice
 
-import kotlin.math.log10
-
 /**
  * Decides from microphone peak amplitudes when a hands-free speaker has finished:
  * speech first has to be heard (enough loud samples that a single click does not
@@ -42,16 +40,3 @@ class SilenceDetector(
         const val SPEECH_THRESHOLD = 1_800
     }
 }
-
-/**
- * A 0–1 level for the recording visual from a peak amplitude (0–32767): its
- * loudness in decibels over the bottom [floorDb] of the range, so quiet speech
- * still moves the meter visibly.
- */
-fun audioLevel(amplitude: Int, floorDb: Float = 50f): Float {
-    if (amplitude <= 0) return 0f
-    val db = 20f * log10(amplitude.coerceAtMost(MAX_AMPLITUDE) / MAX_AMPLITUDE.toFloat())
-    return ((db + floorDb) / floorDb).coerceIn(0f, 1f)
-}
-
-private const val MAX_AMPLITUDE = 32_767

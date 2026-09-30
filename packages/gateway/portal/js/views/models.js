@@ -404,11 +404,11 @@ function EntailmentPromptStyle() {
   `;
 }
 
-// Gateway dictation opt-in (experimental). The gateway's `dictation` verdict
-// on /status decides whether the setting shows at all (`visible` = experimental
-// mode) and carries the live state, so this control never reasons about
-// experimental mode or the assignment itself. With it on, the mobile apps send
-// the audio they record for dictation to this transcriber.
+// Tell Omnesis voice-note opt-in (experimental). The gateway's `dictation`
+// verdict on /status decides whether the setting shows at all (`visible` =
+// experimental mode) and carries the live state, so this control never reasons
+// about experimental mode or the assignment itself. With it on, the mobile apps
+// send voice notes' audio for this transcriber to transcribe.
 export function GatewayDictationSetting() {
   const [dictation, setDictation] = useState(null); // null = loading or hidden
   const [busy, setBusy] = useState(false);
@@ -446,24 +446,24 @@ export function GatewayDictationSetting() {
   return html`
     <div class="detail-section cap-dictation">
       <div class="models-cloud-control">
-        <h2>Dictation from the mobile apps <span class="experimental-tag" title="Experimental feature">Experimental</span></h2>
+        <h2>Tell Omnesis voice notes <span class="experimental-tag" title="Experimental feature">Experimental</span></h2>
         <button type="button" class="models-cloud-switch" role="switch"
           aria-checked=${dictation.enabled}
-          aria-label="Transcribe mobile dictation on the gateway" disabled=${busy}
+          aria-label="Transcribe Tell Omnesis voice notes on the gateway" disabled=${busy}
           onClick=${toggle}>
           <span class="models-cloud-switch-thumb" aria-hidden="true"></span>
         </button>
         <span role="status">${busy ? "Saving…" : dictation.enabled ? "On" : "Off"}</span>
       </div>
       <p class="cap-detail-desc">
-        The iOS and Android apps send what you dictate — in agent conversations, brief replies,
-        Tell Omnesis and from the Apple Watch — to this transcriber instead of relying on the
-        phone's own speech recognition. Siri, Shortcuts and assistant requests that already carry
-        their words are unaffected.
+        The iOS and Android apps send the audio of what you dictate in Tell Omnesis, on the
+        phone or the Apple Watch, with the note. The note is saved right away with the phone's
+        own transcript and updated once this transcriber has transcribed it. Agent
+        conversations, Siri, and assistant requests that already carry their words are unaffected.
       </p>
       ${dictation.enabled && !dictation.modelAssigned
         ? html`<div class="cap-detail-warn">
-            <strong>Not in use.</strong> ${dictation.reason ?? "No transcriber model can run."} The apps use on-device recognition until a transcriber is available.
+            <strong>Not in use.</strong> ${dictation.reason ?? "No transcriber model can run."} Notes keep the phone's own transcript until a transcriber is available.
           </div>`
         : null}
       ${error ? html`<div class="cap-detail-warn" role="alert">${error}</div>` : null}

@@ -132,15 +132,11 @@ fun BriefsScreen(
                 // hot mic they have forgotten about.
                 dictatingBriefId = state.dictatingBriefId,
                 dictationText = state.dictationDisplayText,
-                dictationProgress = state.dictationProgress,
                 onStopDictation = {
                     vm.stopDictationAndSend { conversationId, spoken ->
                         onOpenConversation(conversationId, spoken)
                     }
                 },
-                onRetryTranscription = vm::retryTranscription,
-                onDictateOnDevice = vm::dictateOnDevice,
-                onDiscardDictation = vm::discardDictation,
             )
         }
     }
@@ -151,10 +147,6 @@ fun BriefsScreen(
             openingThread = state.openingThreadBriefId == brief.id,
             dictating = state.dictatingBriefId == brief.id,
             dictationText = state.dictationDisplayText,
-            dictationProgress = state.dictationProgress,
-            onRetryTranscription = vm::retryTranscription,
-            onDictateOnDevice = vm::dictateOnDevice,
-            onDiscardDictation = vm::discardDictation,
             onAsk = { vm.openThread(brief) { onOpenConversation(it, null) } },
             onDictate = {
                 if (state.dictatingBriefId == brief.id) {
@@ -241,11 +233,7 @@ fun BriefsListContent(
     /** The brief whose row is the recording strip, if any. */
     dictatingBriefId: String? = null,
     dictationText: String = "",
-    dictationProgress: BriefDictationProgress = BriefDictationProgress(),
     onStopDictation: () -> Unit = {},
-    onRetryTranscription: () -> Unit = {},
-    onDictateOnDevice: () -> Unit = {},
-    onDiscardDictation: () -> Unit = {},
     /** Screenshot seam: freeze one row with its trailing actions exposed. */
     revealedActionsBriefId: String? = null,
     now: Instant = Instant.now(),
@@ -286,10 +274,6 @@ fun BriefsListContent(
                                     title = brief.title,
                                     displayText = dictationText,
                                     onStop = onStopDictation,
-                                    progress = dictationProgress,
-                                    onRetry = onRetryTranscription,
-                                    onDictateOnDevice = onDictateOnDevice,
-                                    onDiscard = onDiscardDictation,
                                 )
                             } else {
                                 BriefSwipeRow(

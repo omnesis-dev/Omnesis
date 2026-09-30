@@ -7,10 +7,13 @@ import android.util.Log
 import dev.omnesis.android.transport.GatewayException
 import dev.omnesis.android.transport.client.NotesClient
 import dev.omnesis.android.transport.dto.CreateNoteBody
-import dev.omnesis.android.transport.dto.NoteEntryDto
+import dev.omnesis.android.transport.dto.VoiceNoteBody
 import java.time.Instant
+import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,9 +40,15 @@ enum class QueueReason {
 
 /** Result of a capture save: posted straight to the gateway, or queued for a later drain. */
 sealed interface CaptureOutcome {
-    data class Posted(val entry: NoteEntryDto) : CaptureOutcome
+    data object Posted : CaptureOutcome
     data class Queued(val reason: QueueReason) : CaptureOutcome
 }
+
+/**
+ * A voice note with no phone transcript that the gateway would not take with its audio:
+ * sending it as text would save an empty note, so nothing was saved.
+ */
+class VoiceNoteNotSavedException : Exception("Couldn't save your voice note.")
 
 /**
  * The single owner of quick-capture note flow: online saves POST `/notes`
@@ -51,14 +60,24 @@ sealed interface CaptureOutcome {
  * [gateway] resolves the CURRENT session's client on every call (sessions are
  * rebuilt on pair/unpair/url-change), so a long-lived repository never holds a
  * client bound to a stale gateway.
+ *
+ * A note captured with [VoiceNoteAudio] goes to `POST /notes/voice` instead, queued
+ * with its audio when the gateway cannot be reached. A gateway that cannot transcribe
+ * voice notes (404 / 409 / 503 / 413) gets the phone's transcript as a plain note and
+ * the audio is deleted; the audio file is deleted too once its note is delivered.
  */
 class NotesRepository(
     private val store: PendingNotesStore,
     private val gateway: () -> NotesGateway?,
     private val now: () -> Instant = Instant::now,
+    private val audioFiles: VoiceNoteFiles? = null,
+    private val language: () -> String = { Locale.getDefault().toLanguageTag() },
 ) {
 
     private val drainMutex = Mutex()
+
+    /** Dictation audio written before this repository existed belongs to an earlier process. */
+    private val createdAtMs = now().toEpochMilli()
 
     private val _pending = MutableStateFlow<List<PendingNote>>(emptyList())
 
@@ -78,10 +97,14 @@ class NotesRepository(
      * deterministic per-note rejections (400/413/422) propagate so the caller
      * can explain them — queueing those would wedge the queue on a note the
      * gateway will never accept.
+     *
+     * With [audio], [text] is the phone's transcript and may be empty; see the class
+     * notes for delivery. Throws [VoiceNoteNotSavedException] when the gateway refuses
+     * the audio and there is no transcript to fall back on.
      */
-    suspend fun capture(text: String, surface: String): CaptureOutcome {
+    suspend fun capture(text: String, surface: String, audio: VoiceNoteAudio? = null): CaptureOutcome {
         val normalizedText = text.trim()
-        require(normalizedText.isNotEmpty()) { "Note text must not be empty" }
+        if (audio == null) require(normalizedText.isNotEmpty()) { "Note text must not be empty" }
         require(normalizedText.length <= MAX_TEXT_LENGTH) {
             "Too long — notes are capped at $MAX_TEXT_LENGTH characters. Shorten it and try again."
         }
@@ -94,22 +117,70 @@ class NotesRepository(
         } catch (_: Exception) {
             // Draining the backlog is best effort; the new note still gets its own attempt.
         }
+        val ownedAudio = audio?.let {
+            requireNotNull(audioFiles) { "voice notes need an audio folder" }.adopt(it, noteId)
+        }
+        val noteLanguage = ownedAudio?.let { language() }
         val g = gateway() ?: run {
-            enqueue(noteId, normalizedText, capturedAt, surface, lastFailure = "Not paired with a gateway")
+            enqueue(
+                noteId,
+                normalizedText,
+                capturedAt,
+                surface,
+                lastFailure = "Not paired with a gateway",
+                audio = ownedAudio,
+                language = noteLanguage,
+            )
             return CaptureOutcome.Queued(QueueReason.UNPAIRED)
         }
+        if (ownedAudio != null) {
+            try {
+                g.client.createVoice(
+                    VoiceNoteBody(noteId, normalizedText, capturedAt, surface, g.deviceId, noteLanguage),
+                    ownedAudio.file,
+                    ownedAudio.mimeType,
+                )
+                ownedAudio.file.delete()
+                return CaptureOutcome.Posted
+            } catch (error: GatewayException) {
+                when {
+                    error.refusesVoiceNotes() -> {
+                        ownedAudio.file.delete()
+                        Log.i(TAG, "Gateway did not take a voice note's audio; saving the phone's transcript")
+                        if (normalizedText.isEmpty()) throw VoiceNoteNotSavedException()
+                    }
+                    error.isDeterministicNoteRejection() -> {
+                        ownedAudio.file.delete()
+                        throw error
+                    }
+                    else -> {
+                        Log.i(TAG, "Gateway did not accept a voice note; queuing it captured at $capturedAt")
+                        enqueue(
+                            noteId,
+                            normalizedText,
+                            capturedAt,
+                            surface,
+                            lastAttemptAt = now().toString(),
+                            lastFailure = failureReason(error),
+                            audio = ownedAudio,
+                            language = noteLanguage,
+                        )
+                        return CaptureOutcome.Queued(error.queueReason())
+                    }
+                }
+            }
+        }
         return try {
-            CaptureOutcome.Posted(
-                g.client.create(
-                    CreateNoteBody(
-                        text = normalizedText,
-                        id = noteId,
-                        capturedAt = capturedAt,
-                        surface = surface,
-                        deviceId = g.deviceId,
-                    ),
+            g.client.create(
+                CreateNoteBody(
+                    text = normalizedText,
+                    id = noteId,
+                    capturedAt = capturedAt,
+                    surface = surface,
+                    deviceId = g.deviceId,
                 ),
             )
+            CaptureOutcome.Posted
         } catch (error: GatewayException) {
             if (error.isDeterministicNoteRejection()) throw error
             val reason = error.queueReason()
@@ -144,6 +215,7 @@ class NotesRepository(
      * No-op while unpaired.
      */
     suspend fun drain(): Unit = drainMutex.withLock {
+        sweepOrphanAudioUnlocked()
         val g = gateway() ?: return
         val queued = store.readAll()
         if (queued.isEmpty()) {
@@ -153,15 +225,7 @@ class NotesRepository(
         var drained = 0
         for (note in queued) {
             try {
-                g.client.create(
-                    CreateNoteBody(
-                        text = note.text,
-                        id = note.noteId,
-                        capturedAt = note.capturedAt,
-                        surface = note.surface,
-                        deviceId = g.deviceId,
-                    ),
-                )
+                if (!deliverQueued(g, note)) continue
             } catch (error: GatewayException) {
                 store.recordRetryFailure(note.id, now().toString(), failureReason(error))
                 if (error.isDeterministicNoteRejection()) {
@@ -171,7 +235,7 @@ class NotesRepository(
                 Log.i(TAG, "Drain stopped after $drained/${queued.size} notes: ${failureReason(error)}")
                 break
             }
-            store.delete(note.id)
+            deleteRow(note)
             drained++
         }
         if (drained > 0) Log.i(TAG, "Drained $drained queued note(s) to the gateway")
@@ -184,8 +248,64 @@ class NotesRepository(
      * snapshotted the row and would still POST it after the discard.
      */
     suspend fun deletePending(id: Long): Unit = drainMutex.withLock {
-        store.delete(id)
+        store.readAll().firstOrNull { it.id == id }?.let { deleteRow(it) }
         refreshPendingUnlocked()
+    }
+
+    /**
+     * Deletes dictation audio no queued note references, left behind by a process that
+     * died mid-recording or mid-delivery. Runs with every drain — at each app start and
+     * foreground — and keeps files written since this repository was created, which
+     * belong to this process's recordings.
+     */
+    private suspend fun sweepOrphanAudioUnlocked() {
+        val files = audioFiles ?: return
+        val referenced = store.readAll().mapNotNull { it.audio?.file?.absolutePath }.toSet()
+        withContext(Dispatchers.IO) { files.sweepOrphans(referenced, createdAtMs) }
+    }
+
+    /**
+     * Delivers one queued note. False when the row must stay queued without stopping the
+     * drain: a voice note with no phone transcript whose audio the gateway will not take
+     * now, kept with its audio for a gateway that can transcribe it later.
+     */
+    private suspend fun deliverQueued(g: NotesGateway, note: PendingNote): Boolean {
+        val audio = note.audio?.takeIf { it.file.exists() }
+        if (audio != null) {
+            try {
+                g.client.createVoice(
+                    VoiceNoteBody(note.noteId, note.text, note.capturedAt, note.surface, g.deviceId, note.language),
+                    audio.file,
+                    audio.mimeType,
+                )
+                return true
+            } catch (error: GatewayException) {
+                if (!error.refusesVoiceNotes()) throw error
+                if (note.text.isBlank()) {
+                    store.recordRetryFailure(note.id, now().toString(), "Gateway can't transcribe voice notes")
+                    return false
+                }
+                audio.file.delete()
+                store.dropAudio(note.id)
+            }
+        }
+        // Audio and transcript both gone: there is nothing left to deliver.
+        if (note.text.isBlank()) return true
+        g.client.create(
+            CreateNoteBody(
+                text = note.text,
+                id = note.noteId,
+                capturedAt = note.capturedAt,
+                surface = note.surface,
+                deviceId = g.deviceId,
+            ),
+        )
+        return true
+    }
+
+    private suspend fun deleteRow(note: PendingNote) {
+        store.delete(note.id)
+        note.audio?.file?.let { withContext(Dispatchers.IO) { it.delete() } }
     }
 
     /** Reload from disk without racing a drain's delete-and-publish sequence. */
@@ -204,8 +324,10 @@ class NotesRepository(
         surface: String,
         lastAttemptAt: String? = null,
         lastFailure: String,
+        audio: VoiceNoteAudio? = null,
+        language: String? = null,
     ) {
-        store.insert(noteId, text, capturedAt, surface, lastAttemptAt, lastFailure)
+        store.insert(noteId, text, capturedAt, surface, lastAttemptAt, lastFailure, audio, language)
         refreshPending()
     }
 
@@ -216,6 +338,15 @@ class NotesRepository(
         const val MAX_TEXT_LENGTH = 8192
     }
 }
+
+/**
+ * The gateway will not transcribe voice notes — not in experimental mode or too old (404),
+ * dictation switched off (409), no runnable transcriber (503) — or not this audio (413).
+ * The note itself is still fine as text.
+ */
+private fun GatewayException.refusesVoiceNotes(): Boolean =
+    this is GatewayException.NotFound ||
+        (this is GatewayException.ServerError && (status == 409 || status == 503 || status == 413))
 
 /** Only these statuses say that retrying this exact note can never succeed. */
 private fun GatewayException.isDeterministicNoteRejection(): Boolean =

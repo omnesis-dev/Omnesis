@@ -58,6 +58,11 @@ public enum NoteCaptureService {
     /// `noteId` is that key when the caller already has one that outlives
     /// this call (a watch recording's ref, retried after a relaunch);
     /// otherwise one is minted.
+    ///
+    /// `audio` makes it a voice note (`VoiceNoteDelivery`): the text is the
+    /// phone's own transcript and may be empty. The call owns the recording
+    /// from here — it is deleted once delivered or refused, or kept with the
+    /// note in the queue.
     public static func capture(
         text: String,
         surface: NoteSurface,
@@ -66,12 +71,14 @@ public enum NoteCaptureService {
         store: PendingNoteStore,
         captureTime: NoteCaptureTime = .now(),
         location: NoteLocation? = nil,
-        noteId: String? = nil
+        noteId: String? = nil,
+        audio: NoteAudio? = nil
     ) async
         -> Outcome {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return .failed("empty note") }
+        guard !trimmed.isEmpty || audio != nil else { return .failed("empty note") }
         guard trimmed.count <= maxTextLength else {
+            audio.map { try? FileManager.default.removeItem(at: $0.file) }
             return .rejected("Too long — notes are capped at \(maxTextLength) characters. Shorten it and try again.")
         }
         let noteId = noteId ?? UUID().uuidString.lowercased()
@@ -83,19 +90,30 @@ public enum NoteCaptureService {
         )
         if let client {
             do {
-                _ = try await client.createNote(
-                    id: noteId,
-                    text: trimmed,
-                    capturedAt: captureTime.capturedAt,
-                    capturedTimeZoneId: captureTime.timeZoneId,
-                    capturedUtcOffsetSeconds: captureTime.utcOffsetSeconds,
-                    surface: surface.rawValue,
-                    deviceId: deviceId,
+                try await VoiceNoteDelivery.deliver(
+                    VoiceNoteUpload(
+                        id: noteId,
+                        text: trimmed,
+                        capturedAt: captureTime.capturedAt,
+                        capturedTimeZoneId: captureTime.timeZoneId,
+                        capturedUtcOffsetSeconds: captureTime.utcOffsetSeconds,
+                        surface: surface.rawValue,
+                        deviceId: deviceId,
+                        location: location,
+                        language: audio?.locale
+                    ),
+                    audio: audio?.file,
+                    client: client,
                     location: location
                 )
+                audio.map { try? FileManager.default.removeItem(at: $0.file) }
                 return .saved
+            } catch is VoiceNoteDelivery.TextlessVoiceNoteRefused {
+                audio.map { try? FileManager.default.removeItem(at: $0.file) }
+                return .rejected(VoiceNoteDelivery.refusedMessage)
             } catch {
                 if let rejection = deterministicRejection(error) {
+                    audio.map { try? FileManager.default.removeItem(at: $0.file) }
                     return .rejected(rejection)
                 }
                 reason = queueReason(for: error)
@@ -117,11 +135,14 @@ public enum NoteCaptureService {
                     capturedUtcOffsetSeconds: captureTime.utcOffsetSeconds,
                     surface: surface.rawValue,
                     location: location,
-                    deliveryDiagnostics: diagnostics
-                )
+                    deliveryDiagnostics: diagnostics,
+                    voice: audio.map { PendingNoteVoice(locale: $0.locale) }
+                ),
+                audio: audio?.file
             )
             return .queued(reason)
         } catch {
+            audio.map { try? FileManager.default.removeItem(at: $0.file) }
             return .failed(String(describing: error))
         }
     }
@@ -136,7 +157,8 @@ public enum NoteCaptureService {
         surface: NoteSurface,
         captureTime: NoteCaptureTime = .now(),
         location: NoteLocation? = nil,
-        noteId: String? = nil
+        noteId: String? = nil,
+        audio: NoteAudio? = nil
     ) async
         -> Outcome {
         let pairing = (try? PairingService().current()).flatMap { $0 }
@@ -149,7 +171,8 @@ public enum NoteCaptureService {
             store: PendingNoteStore(),
             captureTime: captureTime,
             location: location,
-            noteId: noteId
+            noteId: noteId,
+            audio: audio
         )
     }
 

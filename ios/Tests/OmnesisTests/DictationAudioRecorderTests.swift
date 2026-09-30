@@ -5,9 +5,10 @@ import AVFoundation
 @testable import Omnesis
 import XCTest
 
-/// The gateway-dictation recorder, fed synthetic microphone buffers: it
-/// produces a readable AAC `.m4a`, stops at the byte budget exactly once, and
-/// leaves nothing behind when discarded or when nothing was recorded.
+/// The Tell Omnesis capture recorder, fed synthetic microphone buffers: it
+/// produces a readable mono AAC `.m4a` from any input, keeps nothing that
+/// would cover only part of the note, and leaves nothing behind when
+/// discarded or when nothing was recorded.
 final class DictationAudioRecorderTests: XCTestCase {
     private let format = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 1)!
     private var directory: URL!
@@ -41,7 +42,7 @@ final class DictationAudioRecorderTests: XCTestCase {
     /// Records one second from `input` and returns the file's format and
     /// duration.
     private func recordOneSecond(from input: AVAudioFormat) throws -> (AVAudioFormat, Double) {
-        let recorder = try DictationAudioRecorder(format: input, maxAudioBytes: 25 * 1024 * 1024, directory: directory) {}
+        let recorder = DictationAudioRecorder(maxAudioBytes: 25 * 1024 * 1024, directory: directory)
         for _ in 0 ..< 10 {
             recorder.append(buffer(format: input))
         }
@@ -50,29 +51,8 @@ final class DictationAudioRecorderTests: XCTestCase {
         return (file.fileFormat, Double(file.length) / file.fileFormat.sampleRate)
     }
 
-    private final class Counter: @unchecked Sendable {
-        private let lock = NSLock()
-        private var count = 0
-
-        var value: Int {
-            lock.lock()
-            defer { lock.unlock() }
-            return count
-        }
-
-        func bump() {
-            lock.lock()
-            count += 1
-            lock.unlock()
-        }
-    }
-
     func testFinishHandsOverAReadableRecording() throws {
-        let recorder = try DictationAudioRecorder(
-            format: format,
-            maxAudioBytes: 25 * 1024 * 1024,
-            directory: directory
-        ) {}
+        let recorder = DictationAudioRecorder(maxAudioBytes: 25 * 1024 * 1024, directory: directory)
         for _ in 0 ..< 10 {
             recorder.append(buffer())
         }
@@ -87,24 +67,43 @@ final class DictationAudioRecorderTests: XCTestCase {
         XCTAssertGreaterThan(Double(file.length) / file.fileFormat.sampleRate, 0.5)
     }
 
-    func testBudgetStopsTheRecordingOnce() throws {
-        let exhausted = Counter()
+    /// A recording past the gateway's limit would cover only part of the
+    /// note, so it is not kept at all.
+    func testARecordingOverTheLimitIsNotKept() {
         // 0.9 s of audio at 64 kbps.
-        let recorder = try DictationAudioRecorder(
-            format: format,
-            maxAudioBytes: 8000,
-            directory: directory
-        ) {
-            exhausted.bump()
-        }
+        let recorder = DictationAudioRecorder(maxAudioBytes: 8000, directory: directory)
         for _ in 0 ..< 30 {
             recorder.append(buffer())
         }
 
-        XCTAssertEqual(exhausted.value, 1)
+        XCTAssertNil(recorder.finish())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: recorder.url.path))
+    }
+
+    /// Every dictation run in a capture adds to one recording.
+    func testRunsAddToOneRecording() throws {
+        let recorder = DictationAudioRecorder(maxAudioBytes: 25 * 1024 * 1024, directory: directory)
+        for _ in 0 ..< 5 {
+            recorder.append(buffer())
+        }
+        for _ in 0 ..< 5 {
+            recorder.append(buffer())
+        }
+
         let url = try XCTUnwrap(recorder.finish())
         let seconds = try Double(AVAudioFile(forReading: url).length) / format.sampleRate
-        XCTAssertLessThan(seconds, 1.5, "buffers after the budget are not written")
+        XCTAssertGreaterThan(seconds, 0.8)
+    }
+
+    /// An input that changes format between runs (a headset connected
+    /// mid-capture) leaves a recording that no longer matches the note.
+    func testAFormatChangeMakesTheRecordingUnusable() throws {
+        let recorder = DictationAudioRecorder(maxAudioBytes: 25 * 1024 * 1024, directory: directory)
+        recorder.append(buffer())
+        let headset = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 8000, channels: 1))
+        recorder.append(buffer(format: headset))
+
+        XCTAssertNil(recorder.finish())
     }
 
     /// A Bluetooth headset's narrowband input.
@@ -138,19 +137,40 @@ final class DictationAudioRecorderTests: XCTestCase {
         XCTAssertGreaterThan(seconds, 0.5)
     }
 
-    func testNothingRecordedLeavesNothingBehind() throws {
-        let recorder = try DictationAudioRecorder(format: format, maxAudioBytes: 1_000_000, directory: directory) {}
+    func testNothingRecordedLeavesNothingBehind() {
+        let recorder = DictationAudioRecorder(maxAudioBytes: 1_000_000, directory: directory)
 
         XCTAssertNil(recorder.finish())
         XCTAssertFalse(FileManager.default.fileExists(atPath: recorder.url.path))
     }
 
-    func testDiscardDeletesTheFile() throws {
-        let recorder = try DictationAudioRecorder(format: format, maxAudioBytes: 1_000_000, directory: directory) {}
+    func testDiscardDeletesTheFile() {
+        let recorder = DictationAudioRecorder(maxAudioBytes: 1_000_000, directory: directory)
         recorder.append(buffer())
 
         recorder.discard()
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: recorder.url.path))
+    }
+
+    // MARK: - Format
+
+    /// The encoder's offer decides: the preferred rate when it is there, the
+    /// highest below it for a narrowband input.
+    func testBitRateComesFromTheEncodersOffer() {
+        XCTAssertEqual(DictationRecordingFormat.bitRate(choosingFrom: [32000, 48000, 64000, 96000]), 64000)
+        XCTAssertEqual(DictationRecordingFormat.bitRate(choosingFrom: [8000, 12000, 16000, 20000, 24000]), 24000)
+        XCTAssertEqual(DictationRecordingFormat.bitRate(choosingFrom: [96000, 128_000]), 96000)
+        XCTAssertNil(DictationRecordingFormat.bitRate(choosingFrom: []))
+    }
+
+    func testRecordingsStopAtTheDurationCapOrUnderTheLimit() {
+        XCTAssertEqual(
+            DictationRecordingFormat.maxDuration(forMaxAudioBytes: 25 * 1024 * 1024, bitRate: 64000),
+            DictationRecordingFormat.maxRecordingDuration
+        )
+        let seconds = DictationRecordingFormat.maxDuration(forMaxAudioBytes: 1_000_000, bitRate: 64000)
+        XCTAssertLessThan(seconds * 64000 / 8, 1_000_000)
+        XCTAssertEqual(DictationRecordingFormat.maxDuration(forMaxAudioBytes: 0, bitRate: 64000), 0)
     }
 }

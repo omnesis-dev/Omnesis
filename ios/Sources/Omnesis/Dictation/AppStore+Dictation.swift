@@ -6,8 +6,8 @@ import Foundation
 import Observation
 
 /// Gateway dictation as the app's views see it: the gate the paired gateway
-/// advertises on `GET /status`, and the route a mic session starting now
-/// should record for.
+/// advertises on `GET /status`, and whether a Tell Omnesis capture records
+/// its audio for the gateway to transcribe.
 extension AppStore {
     /// The paired gateway's dictation gate; nil from a gateway that predates it.
     var dictationStatus: DictationStatus? {
@@ -19,13 +19,12 @@ extension AppStore {
         pairing.map { DictationClient(baseURL: $0.url, token: $0.token) }
     }
 
-    /// Where a mic session starting now sends its recording, or nil to keep
-    /// the on-device recognizer's text. Read once per session start.
-    var gatewayDictationRoute: GatewayDictationRoute? {
-        guard let status = dictationStatus, status.routesToGateway, let client = dictationClient else {
-            return nil
-        }
-        return GatewayDictationRoute(transcriber: client, maxAudioBytes: status.maxAudioBytes)
+    /// The byte limit a Tell Omnesis recording must stay under, when a
+    /// capture starting now should record its audio for the gateway; nil to
+    /// keep the phone's transcript alone.
+    var voiceNoteAudioLimit: Int? {
+        guard pairing != nil, let status = dictationStatus, status.routesToGateway else { return nil }
+        return status.maxAudioBytes
     }
 
     /// Switch gateway dictation on or off for this gateway, then re-read
@@ -59,12 +58,4 @@ extension AppStore {
     }
 }
 #endif
-
-extension SpeechRecognizer {
-    /// Route this recognizer's sessions through `store`'s gateway dictation
-    /// gate, read afresh each time a session starts.
-    func routeDictation(through store: AppStore) {
-        gatewayRoute = { [weak store] in store?.gatewayDictationRoute }
-    }
-}
 #endif

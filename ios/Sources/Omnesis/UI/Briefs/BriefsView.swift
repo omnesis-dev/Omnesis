@@ -142,7 +142,6 @@ struct BriefsView: View {
             .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
             .background(Theme.bgPrimary.ignoresSafeArea())
             .task {
-                speech.routeDictation(through: store)
                 await load()
                 consumeRouterTarget()
                 // The row's mic can be the very first dictation
@@ -151,18 +150,16 @@ struct BriefsView: View {
                 speech.requestPermissionsIfNeeded()
             }
             // Dictation hand-off. Only a user stop commits: stopping via
-            // the mic always passes through .finishing (then .refining while
-            // the gateway transcribes), so wrapping up → .idle is the "user
-            // finished" signal, and it carries the final text. A direct
-            // .listening → .idle transition is a recognizer-initiated end (phone call,
+            // the mic always passes through .finishing, so .finishing →
+            // .idle is the "user finished" signal. A direct .listening →
+            // .idle transition is a recognizer-initiated end (phone call,
             // Siri, route change, service error) — committing there would
             // send a half-finished sentence and yank the user away
             // mid-speech, so it discards instead. Empty transcripts
             // commit nothing either way.
-            .dictationAnnouncements(speech)
             .onChange(of: speech.state) { oldValue, newValue in
                 guard newValue == .idle, let brief = dictationTarget else { return }
-                if oldValue.isWrappingUp {
+                if oldValue == .finishing {
                     dictationTarget = nil
                     let text = speech.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !text.isEmpty else { return }
@@ -248,7 +245,7 @@ struct BriefsView: View {
     /// with no detail sheet covering it.
     private var rowDictatingBriefId: String? {
         guard sheet == nil,
-              speech.isListening || speech.isWrappingUp
+              speech.isListening || speech.state == .finishing
         else { return nil }
         return dictationTarget?.id
     }
@@ -335,8 +332,8 @@ struct BriefsView: View {
             // dictated to (dismissed from another device, expired) — its
             // recording strip just unmounted, so without this the mic
             // would stay live with no visible surface or stop
-            // affordance. A recording that is wrapping up is exempt
-            // (committed intent; the hand-off is already in flight).
+            // affordance. A .finishing recording is exempt (committed
+            // intent; the hand-off is already in flight).
             if let target = dictationTarget, feed.brief(withId: target.id) == nil {
                 discardDictation()
             }
@@ -452,19 +449,19 @@ struct BriefsView: View {
                 speech.startListening()
                 if speech.state != .listening { dictationTarget = nil }
             }
-        case .finishing, .refining, .unavailable:
+        case .finishing, .unavailable:
             break
         }
     }
 
     /// Closing the detail sheet mid-RECORDING discards the recording —
     /// the transcript was about the brief that was on screen. A
-    /// recognizer wrapping up is different: the user already tapped
+    /// recognizer in `.finishing` is different: the user already tapped
     /// "stop and send", so that committed intent is left to finalize and
     /// hand off even as the sheet closes. A commit already in flight
     /// (target cleared) is unaffected either way.
     private func discardDictation() {
-        guard dictationTarget != nil, !speech.isWrappingUp else { return }
+        guard dictationTarget != nil, speech.state != .finishing else { return }
         dictationTarget = nil
         speech.cancel()
     }
@@ -751,7 +748,7 @@ struct BriefRowDictatingView: View {
                 Circle()
                     .fill(Theme.accent)
                     .frame(width: 36, height: 36)
-                if speech.isWrappingUp {
+                if speech.state == .finishing {
                     ProgressView()
                         .controlSize(.small)
                         .tint(.white)
@@ -773,18 +770,10 @@ struct BriefRowDictatingView: View {
                     .truncationMode(.head)
             }
             Spacer(minLength: 0)
-            if speech.state == .refining {
-                Button(skipLabel) { speech.skipRefinement() }
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.accent)
-                    .buttonStyle(.plain)
-                    .accessibilityHidden(true)
-            } else {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 26))
-                    .foregroundStyle(Theme.accent)
-                    .accessibilityHidden(true)
-            }
+            Image(systemName: "arrow.up.circle.fill")
+                .font(.system(size: 26))
+                .foregroundStyle(Theme.accent)
+                .accessibilityHidden(true)
         }
         // Same breathing room above and below as the other rows.
         .padding(.vertical, Theme.Spacing.md)
@@ -793,15 +782,9 @@ struct BriefRowDictatingView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Recording a question about \(brief.title)")
         .accessibilityHint("Tap to stop and send to the agent")
-        .accessibilityAction(named: skipLabel) { speech.skipRefinement() }
-    }
-
-    private var skipLabel: String {
-        DictationCopy.skip(hasDraft: speech.hasDraft)
     }
 
     private var transcriptLine: String {
-        if speech.state == .refining { return DictationCopy.refining }
         if speech.state == .finishing { return "Sending…" }
         return speech.transcript.isEmpty ? "Listening… tap to send" : speech.transcript
     }
@@ -833,7 +816,6 @@ struct BriefDetailSheet: View {
 
     @State private var path: [BriefsRoute] = []
     @State private var showDismissOptions = false
-    @State private var fallbackNoteExpired = false
     /// Preselected reason for the form sheet — "Pick a time…" routes
     /// there with Snooze already chosen so only the picker remains.
     @State private var dismissSheetInitialReason: BriefDismissReason?
@@ -866,19 +848,7 @@ struct BriefDetailSheet: View {
                     }
                     actionBar
                         .padding(.top, Theme.Spacing.sm)
-                    if speech.state == .refining {
-                        // The gateway is transcribing; the question is sent
-                        // to the talk-back thread as soon as its text lands.
-                        DictationRefiningCue(skipLabel: DictationCopy.skip(hasDraft: speech.hasDraft)) {
-                            speech.skipRefinement()
-                        }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 20)
-                    } else if speech.usedOnDeviceFallback, !fallbackNoteExpired {
-                        DictationFallbackNote()
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 20)
-                    } else if speech.isListening || speech.state == .finishing {
+                    if speech.isListening || speech.state == .finishing {
                         // Live transcript while dictating — head-truncated
                         // so the words just spoken stay visible.
                         Text(speech.transcript.isEmpty ? "Listening…" : speech.transcript)
@@ -940,7 +910,6 @@ struct BriefDetailSheet: View {
                 Text(talkError.wrappedValue ?? "")
             }
         }
-        .dictationFallbackExpiry(raised: speech.usedOnDeviceFallback, expired: $fallbackNoteExpired)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .devTarget(.brief(brief.id, label: brief.title))
@@ -962,7 +931,7 @@ struct BriefDetailSheet: View {
             // Also disabled while dictation is active: a talk-tap racing
             // the dictation hand-off would open the thread WITHOUT the
             // transcript and the spoken question would silently vanish.
-            .disabled(openingThread || speech.isListening || speech.isWrappingUp)
+            .disabled(openingThread || speech.state == .listening || speech.state == .finishing)
             optionsMenu
         }
         .frame(maxWidth: .infinity)
@@ -1289,6 +1258,5 @@ private struct EmptyBriefsView: View {
     }
     .preferredColorScheme(.dark)
 }
-
 #endif
 #endif

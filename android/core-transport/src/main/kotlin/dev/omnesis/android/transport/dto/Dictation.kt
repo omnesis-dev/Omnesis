@@ -5,15 +5,6 @@ package dev.omnesis.android.transport.dto
 
 import kotlinx.serialization.Serializable
 
-/** `POST /dictation/transcribe` 200: the transcript of the posted audio. */
-@Serializable
-data class TranscriptionDto(
-    val text: String,
-    /** The language the transcriber heard, when it reports one. */
-    val language: String? = null,
-    val durationSec: Double? = null,
-)
-
 /**
  * `PATCH /admin/config` body that switches gateway dictation on or off:
  * `{ "inference": { "dictation": { "transcribeOnGateway": <bool> } } }`.

@@ -4,13 +4,13 @@
 import Foundation
 
 /// Where the iPhone keeps a watch recording from the moment it arrives until
-/// it has been turned into a note or a question.
+/// it has been handed to the note pipeline.
 ///
 /// WatchConnectivity deletes a received file as soon as its delegate call
-/// returns, and the work that follows — a gateway transcription, then a save
-/// or an ask — can outlast the background time the delivery was granted. So
-/// each recording is moved here first, beside a small state file recording
-/// its metadata and progress; one still here when iOS ended the process is
+/// returns, and the work that follows — an on-device transcription, then the
+/// save — can outlast the background time the delivery was granted. So each
+/// recording is moved here first, beside a small state file recording its
+/// metadata and progress; one still here when iOS ended the process is
 /// picked up at the next launch, from where it got to.
 ///
 /// Every item has one owner in the process: whoever admitted it, or the
@@ -29,10 +29,9 @@ final class WatchVoiceInbox: @unchecked Sendable {
         /// the process before it finishes is given up rather than retried
         /// forever.
         var attempts = 0
-        /// The text, once transcribed. The recording is deleted at that
-        /// point, so a later attempt goes straight to acting on it.
+        /// The phone's transcript, once attempted — empty when it heard
+        /// nothing — so a later attempt goes straight to saving the note.
         var transcript: String?
-        var transcribedOnDevice = false
     }
 
     /// One recording held in the inbox, owned by whoever received it.
@@ -74,9 +73,8 @@ final class WatchVoiceInbox: @unchecked Sendable {
     }
 
     /// Claim the recordings a previous process left behind. An item already
-    /// owned in this process is skipped; a state file without a recording
-    /// and without a transcript, or a recording without a state file, is
-    /// deleted.
+    /// owned in this process is skipped; a state file without its recording,
+    /// or a recording without its state file, is deleted.
     func claimLeftovers() -> [Item] {
         let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
         let ids = Set(files.map { $0.deletingPathExtension().lastPathComponent })
@@ -88,9 +86,9 @@ final class WatchVoiceInbox: @unchecked Sendable {
             lock.unlock()
             guard free else { continue }
             let audioExists = FileManager.default.fileExists(atPath: audioURL(id).path)
-            guard let data = try? Data(contentsOf: stateURL(id)),
-                  let state = try? JSONDecoder().decode(State.self, from: data),
-                  audioExists || state.transcript != nil
+            guard audioExists,
+                  let data = try? Data(contentsOf: stateURL(id)),
+                  let state = try? JSONDecoder().decode(State.self, from: data)
             else {
                 discard(Item(id: id, state: State(metadata: [:])))
                 continue
@@ -103,11 +101,6 @@ final class WatchVoiceInbox: @unchecked Sendable {
     /// Persist an owned item's progress.
     func save(_ item: Item) throws {
         try JSONEncoder().encode(item.state).write(to: stateURL(item.id), options: .atomic)
-    }
-
-    /// Delete an owned item's recording, keeping its state.
-    func removeAudio(_ item: Item) {
-        try? FileManager.default.removeItem(at: audioURL(item.id))
     }
 
     /// Delete an owned item and give up its ownership.
@@ -129,63 +122,60 @@ final class WatchVoiceInbox: @unchecked Sendable {
     }
 }
 
-/// What the iPhone tells the person about a watch recording it could not
-/// turn into a note or a question. Never silent: the watch said "Sent".
-enum WatchVoiceNotice: Equatable, Sendable {
-    /// Neither transcriber produced text.
-    case untranscribed(WatchVoiceKind)
-    /// The question arrived too late to be worth asking.
+/// What the iPhone tells the person about a watch relay that came to nothing.
+/// Never silent: the watch said it was sent.
+enum WatchRelayNotice: Equatable, Sendable {
+    /// A recorded note could not be saved.
+    case voiceNoteFailed
+    /// A queued question arrived too late to be worth asking.
     case questionExpired
 }
 
-/// What the iPhone does with a recording the watch sent for gateway
-/// dictation: transcribe it — with the gateway, or on the device when the
-/// gateway cannot — and hand the text to the note or ask pipeline a dictated
-/// relay goes through. Every dependency is injected, so the logic lane drives
-/// the whole path with fakes.
+/// What the iPhone does with a note the watch recorded for gateway
+/// dictation: transcribe it on the device for the text shown at once, then
+/// save it as a voice note — the gateway transcribes the recording and
+/// replaces that text when it is ready, or the note goes as text when the
+/// gateway does not take voice notes. Nothing waits on the gateway here.
+/// Every dependency is injected, so the logic lane drives the whole path
+/// with fakes.
 struct WatchVoicePipeline: Sendable {
-    enum Transcriber: Equatable {
-        case gateway
-        case onDevice
-    }
-
     enum DropReason: Equatable {
-        /// Not a watch recording, or missing what the pipelines need.
+        /// Not a watch recording, or missing what the note needs.
         case malformed
-        /// Already acted on from another copy of the same recording.
+        /// Already saved from another copy of the same recording.
         case duplicate
-        /// A question older than `WatchRelayQueue.askExpiry`.
-        case expired
         /// Processing started too many times without finishing.
         case exhausted
     }
 
     enum Outcome: Equatable {
-        case savedNote(text: String, by: Transcriber)
-        case asked(question: String, by: Transcriber)
-        /// Neither transcriber produced text. The person was told; nothing
-        /// was kept.
-        case untranscribed(WatchVoiceKind)
+        /// Handed to the note pipeline, with the phone's transcript (empty
+        /// when the phone heard nothing).
+        case saved(text: String)
+        /// The note pipeline could not keep it. The person was told.
+        case failed
         case dropped(DropReason)
     }
 
     /// Processing attempts before an item is given up.
     static let maxAttempts = 3
 
-    /// The gateway to transcribe with, or nil when gateway dictation is off
-    /// or the phone is not paired.
-    let gatewayRoute: @Sendable () async -> GatewayDictationRoute?
     /// On-device transcription of a recording file, nil when it produced
     /// nothing.
     let transcribeOnDevice: @Sendable (_ audio: URL, _ locale: String?) async -> String?
-    /// Save a note. `id` is the recording's ref, the note's idempotency key,
-    /// so a note saved just before the process ended is not saved twice.
-    let saveNote: @Sendable (_ text: String, _ captureTime: NoteCaptureTime, _ id: String) async -> Void
-    let ask: @Sendable (_ question: String) async -> Void
-    let notify: @Sendable (WatchVoiceNotice) async -> Void
+    /// Save a voice note, taking the recording. `id` is the recording's ref,
+    /// the note's idempotency key, so a note saved just before the process
+    /// ended is not saved twice. False when it could not be kept.
+    let saveVoiceNote: @Sendable (
+        _ text: String,
+        _ captureTime: NoteCaptureTime,
+        _ id: String,
+        _ audio: NoteAudio
+    ) async
+        -> Bool
+    let notify: @Sendable (WatchRelayNotice) async -> Void
     /// Record a ref as handled; false when it already was.
     let claim: @Sendable (_ ref: String) -> Bool
-    let now: @Sendable () -> Date
 
     /// Act on one owned inbox item, then discard it.
     func handle(_ owned: WatchVoiceInbox.Item, inbox: WatchVoiceInbox) async -> Outcome {
@@ -194,65 +184,30 @@ struct WatchVoicePipeline: Sendable {
         guard let recording = WatchVoiceRecording(metadata: item.state.metadata) else { return .dropped(.malformed) }
         item.state.attempts += 1
         guard item.state.attempts <= Self.maxAttempts else {
-            await notify(.untranscribed(recording.kind))
+            await notify(.voiceNoteFailed)
             return .dropped(.exhausted)
         }
         try? inbox.save(item)
-        // A question answered long after it was asked arrives as a
-        // notification about something the person has moved on from — the
-        // same limit a queued question has.
-        if recording.kind == .ask,
-           now().timeIntervalSince(recording.captureTime.capturedAt) > WatchRelayQueue.askExpiry {
-            await notify(.questionExpired)
-            return .dropped(.expired)
-        }
         guard claim(recording.ref) else { return .dropped(.duplicate) }
+        let audio = inbox.audioURL(item.id)
         if item.state.transcript == nil {
-            guard let transcript = await transcribe(inbox.audioURL(item.id), recording: recording) else {
-                await notify(.untranscribed(recording.kind))
-                return .untranscribed(recording.kind)
-            }
-            item.state.transcript = transcript.text
-            item.state.transcribedOnDevice = transcript.by == .onDevice
+            let heard = await transcribeOnDevice(audio, recording.locale)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            item.state.transcript = heard ?? ""
             try? inbox.save(item)
-            inbox.removeAudio(item)
         }
         let text = item.state.transcript ?? ""
-        let by: Transcriber = item.state.transcribedOnDevice ? .onDevice : .gateway
-        switch recording.kind {
-        case .note:
-            await saveNote(text, recording.captureTime, recording.ref)
-            return .savedNote(text: text, by: by)
-        case .ask:
-            await ask(text)
-            return .asked(question: text, by: by)
-        }
-    }
-
-    private func transcribe(_ audio: URL, recording: WatchVoiceRecording) async -> (text: String, by: Transcriber)? {
-        if let route = await gatewayRoute(),
-           let text = await Self.gatewayText(audio, route: route, language: recording.languageCode) {
-            return (text, .gateway)
-        }
-        let local = await transcribeOnDevice(audio, recording.locale)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let local, !local.isEmpty { return (local, .onDevice) }
-        return nil
-    }
-
-    /// The gateway's text for a recording, or nil on any failure — including
-    /// a recording over the gateway's limit, and gateway dictation having
-    /// been switched off since the watch recorded.
-    static func gatewayText(_ audio: URL, route: GatewayDictationRoute, language: String?) async -> String? {
-        guard let data = try? Data(contentsOf: audio), !data.isEmpty, data.count <= route.maxAudioBytes else {
-            return nil
-        }
-        let result = try? await route.transcriber.transcribe(
-            audio: data,
-            contentType: WatchVoiceFormat.contentType,
-            language: language
+        let saved = await saveVoiceNote(
+            text,
+            recording.captureTime,
+            recording.ref,
+            NoteAudio(file: audio, locale: recording.locale)
         )
-        let text = result?.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return text?.isEmpty == false ? text : nil
+        guard saved else {
+            await notify(.voiceNoteFailed)
+            return .failed
+        }
+        return .saved(text: text)
     }
 }
 
@@ -266,7 +221,7 @@ struct WatchQueuedRelayHandler: Sendable {
     /// idempotency key.
     let saveNote: @Sendable (_ text: String, _ captureTime: NoteCaptureTime, _ id: String?) async -> Void
     let ask: @Sendable (_ question: String) async -> Void
-    let notify: @Sendable (WatchVoiceNotice) async -> Void
+    let notify: @Sendable (WatchRelayNotice) async -> Void
 
     @discardableResult
     func handle(_ payload: [String: Any]) async -> WatchRelayInbox.Action {

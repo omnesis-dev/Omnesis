@@ -39,62 +39,101 @@ const surfaceSlug = z
   .max(64)
   .regex(/^[a-z0-9][a-z0-9-]*$/, "must be a lowercase slug (a-z, 0-9, hyphens)");
 
-// POST /notes
-export const createNoteBody = z
-  .object({
-    /**
-     * Client-supplied idempotency key. A retried capture (e.g. the
-     * first attempt timed out after the gateway committed) re-sends
-     * the same id and gets the stored entry back instead of creating
-     * a duplicate.
-     */
-    id: z.string().uuid().optional(),
-    text: noteText,
-    capturedAt: isoDateTime.optional(),
-    capturedTimeZoneId: captureTimeZone.optional(),
-    capturedUtcOffsetSeconds: z.number().int().min(-64_800).max(64_800).optional(),
-    surface: surfaceSlug.optional(),
-    deviceId: z.string().max(128).optional(),
-    /**
-     * WGS-84 capture location. The device attaches it best-effort when
-     * location permission is granted and a fix is available (photo
-     * parity); every field is optional so a fix-less capture just omits
-     * them. `latitude`/`longitude` travel as a pair — the refine below
-     * rejects one without the other.
-     */
-    latitude: z.number().min(-90).max(90).optional(),
-    longitude: z.number().min(-180).max(180).optional(),
-    /**
-     * Reverse-geocoded place name (device-side), e.g. "Paris". Newlines
-     * and runs of whitespace are collapsed to single spaces: the place
-     * name is folded into the day document's `## HH:MM · …` heading
-     * (`render.ts`), which is the structural, deterministic part of the
-     * projection — a stray newline would split the heading line.
-     */
-    placeName: z
-      .string()
-      .max(200)
-      .transform((s) => s.replace(/\s+/g, " ").trim())
-      .optional(),
-  })
-  .strict()
-  .refine((b) => (b.latitude === undefined) === (b.longitude === undefined), {
-    message: "latitude and longitude must be provided together",
-    path: ["latitude"],
-  })
-  .refine(
-    (b) => (b.capturedTimeZoneId === undefined) === (b.capturedUtcOffsetSeconds === undefined),
-    {
+// Fields shared by a text capture and a voice note.
+const noteFields = {
+  /**
+   * Client-supplied idempotency key. A retried capture (e.g. the
+   * first attempt timed out after the gateway committed) re-sends
+   * the same id and gets the stored entry back instead of creating
+   * a duplicate.
+   */
+  id: z.string().uuid().optional(),
+  capturedAt: isoDateTime.optional(),
+  capturedTimeZoneId: captureTimeZone.optional(),
+  capturedUtcOffsetSeconds: z.number().int().min(-64_800).max(64_800).optional(),
+  surface: surfaceSlug.optional(),
+  deviceId: z.string().max(128).optional(),
+  /**
+   * WGS-84 capture location. The device attaches it best-effort when
+   * location permission is granted and a fix is available (photo
+   * parity); every field is optional so a fix-less capture just omits
+   * them. `latitude`/`longitude` travel as a pair — the refine below
+   * rejects one without the other.
+   */
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
+  /**
+   * Reverse-geocoded place name (device-side), e.g. "Paris". Newlines
+   * and runs of whitespace are collapsed to single spaces: the place
+   * name is folded into the day document's `## HH:MM · …` heading
+   * (`render.ts`), which is the structural, deterministic part of the
+   * projection — a stray newline would split the heading line.
+   */
+  placeName: z
+    .string()
+    .max(200)
+    .transform((s) => s.replace(/\s+/g, " ").trim())
+    .optional(),
+};
+
+/**
+ * Cross-field rules both captures share: a location and a capture offset each
+ * travel as a pair, and a place name — derived from the coordinate on-device —
+ * never arrives without one.
+ */
+function checkNoteFields(
+  b: {
+    latitude?: number;
+    longitude?: number;
+    capturedTimeZoneId?: string;
+    capturedUtcOffsetSeconds?: number;
+    placeName?: string;
+  },
+  ctx: z.RefinementCtx,
+): void {
+  if ((b.latitude === undefined) !== (b.longitude === undefined)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "latitude and longitude must be provided together",
+      path: ["latitude"],
+    });
+  }
+  if ((b.capturedTimeZoneId === undefined) !== (b.capturedUtcOffsetSeconds === undefined)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
       message: "capturedTimeZoneId and capturedUtcOffsetSeconds must be provided together",
       path: ["capturedTimeZoneId"],
-    },
-  )
-  // A place name is derived from the coordinate on-device, so it never
-  // arrives on its own — reject a placeName with no fix.
-  .refine((b) => b.placeName === undefined || b.placeName === "" || b.latitude !== undefined, {
-    message: "placeName requires latitude and longitude",
-    path: ["placeName"],
-  });
+    });
+  }
+  if (b.placeName !== undefined && b.placeName !== "" && b.latitude === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "placeName requires latitude and longitude",
+      path: ["placeName"],
+    });
+  }
+}
+
+// POST /notes
+export const createNoteBody = z
+  .object({ ...noteFields, text: noteText })
+  .strict()
+  .superRefine(checkNoteFields);
+
+/**
+ * The `note` part of POST /notes/voice: a capture whose text is the device's
+ * own transcript, empty when it had none, plus the recording's language.
+ */
+export const voiceNoteMetadata = z
+  .object({
+    ...noteFields,
+    id: z.string().uuid(),
+    text: z.string().max(8192).optional(),
+    /** Locale or language tag the audio was recorded in, e.g. "en-GB". */
+    language: z.string().max(35).optional(),
+  })
+  .strict()
+  .superRefine(checkNoteFields);
 export type CreateNoteBody = z.infer<typeof createNoteBody>;
 
 // PATCH /notes/:id

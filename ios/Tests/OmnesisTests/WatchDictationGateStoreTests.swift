@@ -4,9 +4,8 @@
 @testable import Omnesis
 import XCTest
 
-/// When the iPhone tells the watch about gateway dictation, what it keeps,
-/// and how it chooses the gateway for a recording — plus the queued-relay
-/// handling a watch question shares.
+/// When the iPhone tells the watch about gateway dictation and what it
+/// keeps — plus how it handles relays the watch queued.
 final class WatchDictationGateStoreTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_790_000_000)
     private let limit = 26_214_400
@@ -76,39 +75,6 @@ final class WatchDictationGateStoreTests: XCTestCase {
         let loaded = try XCTUnwrap(WatchDictationGateStore(defaults: defaults).load())
         XCTAssertTrue(loaded.active)
         XCTAssertEqual(loaded.maxAudioBytes, limit)
-    }
-
-    // MARK: - Choosing the gateway for a recording
-
-    private struct SilentTranscriber: DictationTranscribing {
-        func transcribe(audio: Data, contentType: String, language: String?) async throws -> DictationTranscription {
-            DictationTranscription(text: "")
-        }
-    }
-
-    func testTheStoredGateDecidesWithoutAStatusRead() async {
-        let stored = WatchDictationGate(active: true, maxAudioBytes: limit, updatedAt: now)
-        let gate = await WatchVoiceRouting.gate(stored: stored) {
-            XCTFail("the stored gate is enough")
-            return nil
-        }
-        XCTAssertEqual(gate, stored)
-        XCTAssertEqual(WatchVoiceRouting.route(gate: gate, transcriber: SilentTranscriber())?.maxAudioBytes, limit)
-    }
-
-    /// A phone that never knew the gate reads the status before choosing.
-    func testNoStoredGateReadsTheStatus() async {
-        let fresh = WatchDictationGate(active: true, maxAudioBytes: limit, updatedAt: now)
-        let gate = await WatchVoiceRouting.gate(stored: nil) { fresh }
-        XCTAssertEqual(gate, fresh)
-    }
-
-    func testNoRouteWhenOffUnknownOrUnpaired() {
-        let off = WatchDictationGate(active: false, maxAudioBytes: limit, updatedAt: now)
-        XCTAssertNil(WatchVoiceRouting.route(gate: off, transcriber: SilentTranscriber()))
-        XCTAssertNil(WatchVoiceRouting.route(gate: nil, transcriber: SilentTranscriber()))
-        let on = WatchDictationGate(active: true, maxAudioBytes: limit, updatedAt: now)
-        XCTAssertNil(WatchVoiceRouting.route(gate: on, transcriber: nil))
     }
 
     // MARK: - Queued relays

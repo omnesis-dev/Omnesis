@@ -37,9 +37,9 @@ enum WatchGatePublishing {
     }
 }
 
-/// The gate the iPhone last published, kept across launches. It is both
-/// what the watch was told and what the phone itself goes by when a
-/// recording arrives, so the two never disagree.
+/// The gate the iPhone last published, kept across launches, so it is
+/// published again only when it changes and can be re-sent to a watch app
+/// installed later.
 struct WatchDictationGateStore: @unchecked Sendable {
     static let key = "watchDictationGate"
     private let defaults: UserDefaults
@@ -54,30 +54,5 @@ struct WatchDictationGateStore: @unchecked Sendable {
 
     func save(_ gate: WatchDictationGate) {
         defaults.set(gate.applicationContext, forKey: Self.key)
-    }
-}
-
-/// Which gateway, if any, transcribes a watch recording on the iPhone.
-enum WatchVoiceRouting {
-    /// The gate to act on: the one last published, or — when the phone has
-    /// never known one, as on a first background launch — a fresh read of
-    /// the gateway's status, bounded by the caller.
-    static func gate(
-        stored: WatchDictationGate?,
-        refresh: () async -> WatchDictationGate?
-    ) async
-        -> WatchDictationGate? {
-        if let stored { return stored }
-        return await refresh()
-    }
-
-    /// The route for `gate`, when it is on.
-    static func route(
-        gate: WatchDictationGate?,
-        transcriber: (any DictationTranscribing)?
-    )
-        -> GatewayDictationRoute? {
-        guard let gate, gate.active, gate.maxAudioBytes > 0, let transcriber else { return nil }
-        return GatewayDictationRoute(transcriber: transcriber, maxAudioBytes: gate.maxAudioBytes)
     }
 }

@@ -2867,10 +2867,10 @@ const entailmentSettings = z
   .strict()
   .default({ promptStyle: "judge" });
 
-// Dictation from the mobile apps (experimental). When on, the apps send the
-// audio they record at the agent composer, Tell Omnesis and similar
-// touchpoints to the gateway's `transcriber` instead of relying only on the
-// phone's on-device recognizer. Has effect only in experimental mode and with a
+// Tell Omnesis voice notes (experimental). When on, the mobile apps send the
+// audio of a voice note — dictated on the phone or the Apple Watch — with the
+// note, and the gateway's `transcriber` replaces the phone's own transcript
+// once it has transcribed it. Has effect only in experimental mode and with a
 // runnable transcriber assigned; the gateway advertises the combined verdict as
 // `dictation` on `GET /status`.
 const dictationSettings = z
@@ -2878,7 +2878,7 @@ const dictationSettings = z
     transcribeOnGateway: z
       .boolean()
       .describe(
-        "Experimental. Transcribe dictation from the mobile apps with the gateway's transcriber model instead of the phone's on-device recognizer. Off by default; needs experimental mode and an assigned transcriber.",
+        "Experimental. The mobile apps send the audio of Tell Omnesis voice notes with the note, and the gateway's transcriber replaces the phone's own transcript. Off by default; needs experimental mode and an assigned transcriber.",
       )
       .optional(),
   })

@@ -24,14 +24,6 @@ const localUnavailable: ResolvedAssignment = {
   reason: "not installed",
 };
 
-const localReady: ResolvedAssignment = {
-  role: "transcriber",
-  kind: "local",
-  catalogId: "whisper-small",
-  modelPath: "/m.bin",
-  available: true,
-};
-
 /** In-memory worker stand-in: decodes requests, lets a test drive responses. */
 class FakeWorker implements WhisperWorkerProcess {
   killed = false;
@@ -312,113 +304,16 @@ describe("TranscribeService", () => {
     expect(order).toHaveLength(3);
   });
 
-  test("an interactive transcription runs ahead of queued background ones, never preempting the running one", async () => {
-    const resolved: ResolvedAssignment = {
-      role: "transcriber",
-      kind: "local",
-      catalogId: "whisper-small",
-      modelPath: "/m.bin",
-      available: true,
-    };
-    // Each request is identified by its audio length: the decoder maps n bytes
-    // to n float samples, i.e. 4n PCM bytes on the wire.
-    const started: number[] = [];
-    let releaseFirst: (() => void) | null = null;
-    const w = new FakeWorker();
-    w.onRequest = (req) => {
-      const size = req.pcmBytes / 4;
-      started.push(size);
-      const finish = () => w.emit({ type: "result", id: req.id, text: `t${size}` });
-      if (size === 1) releaseFirst = finish;
-      else setTimeout(finish, 0);
-    };
-    const svc = new TranscribeService({
-      resolveAssignment: () => resolved,
-      deps: {
-        loadModule: async () => ({ Whisper: class {} as never }),
-        spawnWorker: (() => {
-          setTimeout(() => w.emitReady(), 0);
-          return w;
-        }) as WhisperWorkerSpawner,
-        decodeAudio: async (bytes) => new Float32Array(bytes.length),
-      },
-    });
-
-    const running = svc.transcribe(new Uint8Array(1), "audio/ogg");
-    await vi.waitFor(() => expect(started).toEqual([1]));
-    const background = [
-      svc.transcribe(new Uint8Array(2), "audio/ogg", { priority: "background" }),
-      svc.transcribe(new Uint8Array(3), "audio/ogg"),
-    ];
-    const interactive = svc.transcribe(new Uint8Array(4), "audio/m4a", {
-      priority: "interactive",
-    });
-    releaseFirst!();
-
-    const results = await Promise.all([running, ...background, interactive]);
-    expect(started).toEqual([1, 4, 2, 3]);
-    expect(results.map((r) => r?.text)).toEqual(["t1", "t2", "t3", "t4"]);
-  });
-
-  test("a failing job does not stall the queue behind it", async () => {
-    let calls = 0;
-    const exploding = new TranscribeService({
-      resolveAssignment: () => {
-        calls++;
-        if (calls === 1) throw new Error("resolver failed");
-        return replay;
-      },
-    });
-    await expect(exploding.transcribe(enc("a"), "audio/ogg")).rejects.toThrow("resolver failed");
-    expect((await exploding.transcribe(enc("b"), "audio/ogg"))?.text).toBe("b");
-  });
-
-  test("a queued job whose caller went away is dropped without running", async () => {
-    let releaseFirst: (() => void) | null = null;
-    const started: number[] = [];
-    const w = new FakeWorker();
-    w.onRequest = (req) => {
-      const size = req.pcmBytes / 4;
-      started.push(size);
-      const finish = () => w.emit({ type: "result", id: req.id, text: `t${size}` });
-      if (size === 1) releaseFirst = finish;
-      else setTimeout(finish, 0);
-    };
-    const svc = new TranscribeService({
-      resolveAssignment: () => localReady,
-      deps: {
-        loadModule: async () => ({ Whisper: class {} as never }),
-        spawnWorker: (() => {
-          setTimeout(() => w.emitReady(), 0);
-          return w;
-        }) as WhisperWorkerSpawner,
-        decodeAudio: async (bytes) => new Float32Array(bytes.length),
-      },
-    });
-
-    const running = svc.transcribe(new Uint8Array(1), "audio/ogg");
-    await vi.waitFor(() => expect(started).toEqual([1]));
-    const gone = new AbortController();
-    const abandoned = svc.transcribe(new Uint8Array(2), "audio/m4a", {
-      priority: "interactive",
-      signal: gone.signal,
-    });
-    const waiting = svc.transcribe(new Uint8Array(3), "audio/m4a", { priority: "interactive" });
-    expect(svc.interactiveBacklog()).toBe(2);
-    gone.abort();
-    releaseFirst!();
-
-    expect(await abandoned).toBeNull();
-    expect((await waiting)?.text).toBe("t3");
-    expect((await running)?.text).toBe("t1");
-    expect(started).toEqual([1, 3]);
-    expect(svc.interactiveBacklog()).toBe(0);
-  });
-
   test("readiness: a local model also needs the Whisper runtime, probed once", async () => {
     let probes = 0;
     const svc = new TranscribeService({
-      resolveAssignment: () => localReady,
+      resolveAssignment: () => ({
+        role: "transcriber",
+        kind: "local",
+        catalogId: "whisper-small",
+        modelPath: "/m.bin",
+        available: true,
+      }),
       deps: {
         loadModule: async () => {
           probes++;

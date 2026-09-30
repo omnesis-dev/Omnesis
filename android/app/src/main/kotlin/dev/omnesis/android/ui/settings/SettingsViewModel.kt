@@ -249,8 +249,8 @@ data class VoiceSettingsState(
     /** Whether a gateway is paired to write the setting to. */
     val canChange: Boolean = true,
     /**
-     * Why dictation still runs on the phone although the switch is on — the
-     * transcriber cannot run. Null when nothing stands in the way, or while the
+     * Why notes still carry only the phone's transcript although the switch is on —
+     * the transcriber cannot run. Null when nothing stands in the way, or while the
      * status it comes from is being rewritten.
      */
     val blockedReason: String? = null,

@@ -34,13 +34,12 @@ import WatchConnectivity
 /// when the push will not come (`QueuedAskNotice`). Refs make each relay act
 /// at most once, however it arrives.
 ///
-/// With gateway dictation on, the watch sends a recording instead of text
-/// (`transferFile`), and does not wait for it. The recording is kept in the
-/// `WatchVoiceInbox`, transcribed — by the gateway, or on this device when
-/// the gateway cannot — and then goes the way a queued relay does. The
-/// receiver also keeps the watch told whether to record for the gateway,
-/// through the session's application context, and goes by the same gate
-/// itself when a recording arrives.
+/// With gateway dictation on, the watch records a note instead of dictating
+/// it (`transferFile`), and does not wait for it. The recording is kept in the
+/// `WatchVoiceInbox`, transcribed on this device for the text shown at once,
+/// and saved as a voice note for the gateway to transcribe. The receiver also
+/// keeps the watch told whether to record, through the session's application
+/// context.
 public final class WatchRelayReceiver: NSObject, WCSessionDelegate, @unchecked Sendable {
     public static let shared = WatchRelayReceiver()
 
@@ -64,9 +63,6 @@ public final class WatchRelayReceiver: NSObject, WCSessionDelegate, @unchecked S
     private var liveAsks = LiveAskLedger<([String: Any]) -> Void>()
     private let voiceInbox = WatchVoiceInbox()
     private let gateStore = WatchDictationGateStore()
-    /// How long a recording waits for a fresh read of the gateway's status
-    /// when the phone has never known the gate.
-    private static let statusRefreshTimeout: Duration = .seconds(8)
 
     init(
         makeRunner: @escaping @Sendable (@escaping @Sendable (SiriAskActivityEvent) -> Void) -> SiriAskRunner
@@ -305,13 +301,13 @@ public final class WatchRelayReceiver: NSObject, WCSessionDelegate, @unchecked S
 
     private func processRecording(_ item: WatchVoiceInbox.Item) {
         let pipeline = WatchVoicePipeline(
-            gatewayRoute: { await self.gatewayRoute() },
             transcribeOnDevice: { await OnDeviceFileTranscriber.transcribe($0, locale: $1) },
-            saveNote: { text, captureTime, id in await self.saveNote(text, captureTime: captureTime, id: id) },
-            ask: { await self.handOff($0) },
+            saveVoiceNote: { text, captureTime, id, audio in
+                let outcome = await self.saveNote(text, captureTime: captureTime, id: id, audio: audio)
+                return outcome == .saved || outcome == .queuedOnPhone
+            },
             notify: { await self.notify($0) },
-            claim: { self.claim($0) },
-            now: now
+            claim: { self.claim($0) }
         )
         let inbox = voiceInbox
         Task {
@@ -321,42 +317,6 @@ public final class WatchRelayReceiver: NSObject, WCSessionDelegate, @unchecked S
             self.log.info("Watch recording settled as \(String(describing: outcome), privacy: .private)")
             await assertion.end()
         }
-    }
-
-    /// The gateway to transcribe a watch recording with: this phone's
-    /// pairing, while the gate it last published is on. A phone that has
-    /// never known the gate reads the gateway's status first, briefly. A gate
-    /// switched off since then answers the upload with a refusal, and the
-    /// recording is transcribed on the device instead.
-    private func gatewayRoute() async -> GatewayDictationRoute? {
-        guard let pairing = (try? PairingService().current()).flatMap({ $0 }) else { return nil }
-        let gate = await WatchVoiceRouting.gate(stored: gateStore.load()) {
-            await self.readGate(pairing: pairing)
-        }
-        return WatchVoiceRouting.route(
-            gate: gate,
-            transcriber: DictationClient(baseURL: pairing.url, token: pairing.token)
-        )
-    }
-
-    /// The gate the gateway's status implies right now, recorded and passed
-    /// on to the watch; nil when the status could not be read in time.
-    private func readGate(pairing: Pairing) async -> WatchDictationGate? {
-        let client = SearchClient(baseURL: pairing.url, token: pairing.token)
-        let status = await withTaskGroup(of: StatusSnapshot?.self) { group in
-            group.addTask { try? await client.getStatus() }
-            group.addTask {
-                try? await Task.sleep(for: Self.statusRefreshTimeout)
-                return nil
-            }
-            let first = await group.next().flatMap { $0 }
-            group.cancelAll()
-            return first
-        }
-        guard let status else { return nil }
-        let gate = WatchGatePublishing.gate(status: status.dictation, statusKnown: true, paired: true, now: now())
-        if let gate { update(gate) }
-        return gate
     }
 
     /// A question nobody is waiting on: asked on the gateway, and announced
@@ -369,18 +329,12 @@ public final class WatchRelayReceiver: NSObject, WCSessionDelegate, @unchecked S
         await post(title: notice.title, body: notice.body, userInfo: notice.userInfo)
     }
 
-    private func notify(_ notice: WatchVoiceNotice) async {
+    private func notify(_ notice: WatchRelayNotice) async {
         switch notice {
-        case .untranscribed(.note):
+        case .voiceNoteFailed:
             await post(
-                title: "Couldn't transcribe your note",
-                body: "Your watch recording couldn't be turned into text, so nothing was saved.",
-                userInfo: [:]
-            )
-        case .untranscribed(.ask):
-            await post(
-                title: "Couldn't transcribe your question",
-                body: "Your watch recording couldn't be turned into text, so nothing was asked.",
+                title: "Couldn't save your voice note",
+                body: "The note you recorded on your watch couldn't be saved. Record it again.",
                 userInfo: [:]
             )
         case .questionExpired:
@@ -414,16 +368,23 @@ public final class WatchRelayReceiver: NSObject, WCSessionDelegate, @unchecked S
     ///
     /// `id` is the relay's ref: sent as the note's idempotency key when it
     /// is a UUID, so a note saved again after an interruption is not saved
-    /// twice.
+    /// twice. `audio` makes it a voice note.
     @discardableResult
-    private func saveNote(_ text: String, captureTime: NoteCaptureTime, id: String?) async -> WatchNoteOutcome {
+    private func saveNote(
+        _ text: String,
+        captureTime: NoteCaptureTime,
+        id: String?,
+        audio: NoteAudio? = nil
+    ) async
+        -> WatchNoteOutcome {
         let location = await NoteLocationProvider.shared.current(promptIfNeeded: false)
         let outcome = await WatchNoteOutcome(capture: NoteCaptureService.captureStandalone(
             text: text,
             surface: .watch,
             captureTime: captureTime,
             location: location,
-            noteId: id.flatMap(UUID.init(uuidString:))?.uuidString.lowercased()
+            noteId: id.flatMap(UUID.init(uuidString:))?.uuidString.lowercased(),
+            audio: audio
         ))
         log.info("Watch note settled as \(outcome.tag, privacy: .public)")
         return outcome

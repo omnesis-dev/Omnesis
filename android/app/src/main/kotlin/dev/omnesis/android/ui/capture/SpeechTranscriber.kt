@@ -5,11 +5,15 @@ package dev.omnesis.android.ui.capture
 
 import android.content.Context
 import android.content.Intent
+import android.media.AudioFormat
+import android.os.Build
 import android.os.Bundle
+import android.os.ParcelFileDescriptor
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
+import androidx.annotation.RequiresApi
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 
@@ -67,11 +71,26 @@ open class SpeechTranscriber @Inject constructor(
 
     private var recognizer: SpeechRecognizer? = null
 
+    /** The pipe the current session reads from, when the app is recording the microphone itself. */
+    private var audioInput: RecognizerAudioInput? = null
+
     open fun isAvailable(): Boolean = SpeechRecognizer.isRecognitionAvailable(context)
 
     /** Starts one recognition session. The caller restarts on [Listener.onEnded] to keep listening. */
-    open fun start(listener: Listener) {
+    open fun start(listener: Listener) = begin(listener, audio = null)
+
+    /**
+     * Starts one recognition session that reads [audio] instead of opening the microphone
+     * (`EXTRA_AUDIO_SOURCE`, Android 13+) — for when the app records the microphone and
+     * shares it. A recognizer that does not take the extra either fails the session or
+     * opens the microphone anyway; callers watch for both.
+     */
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    open fun startWithAudio(listener: Listener, audio: RecognizerAudioInput) = begin(listener, audio)
+
+    private fun begin(listener: Listener, audio: RecognizerAudioInput?) {
         cancel()
+        audioInput = audio
         val r = SpeechRecognizer.createSpeechRecognizer(context)
         recognizer = r
         r.setRecognitionListener(object : RecognitionListener {
@@ -106,6 +125,12 @@ open class SpeechTranscriber @Inject constructor(
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                 putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+                if (audio != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, audio.pipe)
+                    putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1)
+                    putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
+                    putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, audio.sampleRateHz)
+                }
             },
         )
     }
@@ -122,6 +147,8 @@ open class SpeechTranscriber @Inject constructor(
             it.destroy()
         }
         recognizer = null
+        audioInput?.close()
+        audioInput = null
     }
 
     /**
@@ -143,5 +170,15 @@ open class SpeechTranscriber @Inject constructor(
 
     private companion object {
         const val TAG = "Omnesis:capture"
+    }
+}
+
+/**
+ * The read end of a pipe carrying 16-bit mono PCM at [sampleRateHz], handed to one
+ * recognition session in place of the microphone. The session's transcriber closes it.
+ */
+class RecognizerAudioInput(val pipe: ParcelFileDescriptor, val sampleRateHz: Int) {
+    fun close() {
+        runCatching { pipe.close() }
     }
 }

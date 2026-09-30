@@ -15,8 +15,7 @@
  */
 
 export { TranscribeService, MAX_AUDIO_BYTES, assignmentReadiness } from "./transcribe-service.js";
-export type { TranscriberReadiness, TranscriptionPriority } from "./transcribe-service.js";
-export { audioBodyLimit, audioTooLargeBody } from "./audio-body.js";
+export type { TranscriberReadiness } from "./transcribe-service.js";
 export {
   WhisperTranscriber,
   whisperDepsAvailable,

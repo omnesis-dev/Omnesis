@@ -248,22 +248,17 @@ suspend inline fun <reified B, reified T> GatewayHttp.putJson(path: String, body
 }
 
 /**
- * POST of a raw [body] (binary media, not JSON), returning the 2xx body string.
- * [timeout] replaces the engine's call, read and write timeouts for this one call,
- * for requests whose server-side work outlasts an ordinary API round trip.
+ * POST of a prebuilt body (a multipart upload, not JSON), decoding the 2xx reply into [T].
+ * [timeout] replaces the engine's call, read and write timeouts for this one call, for an
+ * upload whose size outlasts an ordinary API round trip.
  */
-suspend fun GatewayHttp.postBody(
-    path: String,
-    query: Map<String, String>,
-    body: RequestBody,
-    timeout: Duration,
-): String {
+suspend inline fun <reified T> GatewayHttp.postBody(path: String, body: RequestBody, timeout: Duration): T {
     val callClient = client.newBuilder()
         .callTimeout(timeout)
         .readTimeout(timeout)
         .writeTimeout(timeout)
         .build()
-    return execute(newRequest(urlFor(path, query)).post(body).build(), callClient)
+    return decodeBody(execute(newRequest(urlFor(path)).post(body).build(), callClient))
 }
 
 /** DELETE; discards the `{ok:true}` response. */

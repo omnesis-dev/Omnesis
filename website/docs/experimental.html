@@ -153,9 +153,9 @@
           <strong>Omnesis Brain</strong>, which reads your data in the background and keeps cited
           notes, loops and briefs about it, <strong>Omnesis Watch</strong>, which tells you or an
           agent when a condition you describe becomes true, and <strong>gateway dictation</strong>,
-          which transcribes what you dictate in the mobile apps with the gateway's transcriber. This
-          page is for operators who want to run them: how each works, what it spends, how to observe
-          it and how to stop it.
+          which transcribes Tell Omnesis voice notes from the mobile apps with the gateway's
+          transcriber. This page is for operators who want to run them: how each works, what it
+          spends, how to observe it and how to stop it.
         </p>
         <div class="callout warn">
           <strong>These features are experimental</strong> as they are unstable and
@@ -1937,44 +1937,32 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/admin/watch/compile" \
 
         <h2 id="gateway-dictation">Gateway dictation</h2>
         <p>
-          The iOS and Android apps turn speech into text with the phone's own recognizer. With
-          gateway dictation on, they record what you dictate and send the audio to your gateway,
-          whose <strong>Transcriber</strong> model — the same local Whisper model that transcribes
-          voice notes from your sources — returns the text. The audio goes only to your gateway, is
-          held for the length of the request and is never stored.
+          The iOS and Android apps turn what you say to Tell Omnesis into text with the phone's own
+          recognizer. With gateway dictation on, they also send the recording with the note, and
+          your gateway's <strong>Transcriber</strong> model — the same local Whisper model that
+          transcribes voice notes from your sources — transcribes it again and replaces the phone's
+          text with its own. It applies to Tell Omnesis only:
         </p>
-        <p>It applies where the app itself holds the microphone:</p>
         <ul>
-          <li>the microphone in an agent conversation;</li>
-          <li>replying to a brief by voice;</li>
           <li>
-            Tell Omnesis, including its Control Center control, Quick Settings tile and app
-            shortcut;
+            Tell Omnesis in the app, including its Control Center control, Quick Settings tile and
+            app shortcut;
           </li>
-          <li>
-            an Ask or Tell Omnesis request from Google Assistant that opens the app to listen;
-          </li>
-          <li>the Apple Watch's Ask and Note complications and the watch app's Ask and Dictate.</li>
+          <li>a Tell Omnesis request from Google Assistant that opens the app to listen;</li>
+          <li>the Apple Watch's Note complication and the watch app's Dictate.</li>
         </ul>
         <p>
-          Siri, Shortcuts and a Google Assistant request that already carries its words hand the app
-          finished text, so they are unaffected.
-        </p>
-        <p>
-          The watch sends its recording through your iPhone, which transcribes it with the gateway
-          and then saves the note or asks the question. It does not show the words: once you tap
-          Send it says the recording was sent, and a question's answer arrives as a notification. If
-          the gateway cannot transcribe it, the iPhone transcribes it on the phone instead, and if
-          that fails too it says so in a notification.
+          Agent conversations, replies to briefs, Ask Omnesis, Siri, Shortcuts and assistant
+          requests that already carry their words keep the phone's or the system's recognition.
         </p>
 
         <h3 id="gateway-dictation-turning-on">Turning it on</h3>
         <p>
           It needs three things: the gateway in experimental mode, a Transcriber model assigned
           under <strong>Settings → Models → Transcriber</strong>, and the
-          <strong>Dictation from the mobile apps</strong> switch on that same page. The apps show
-          the same switch under <strong>Settings → Voice</strong>. It is a gateway setting, so it
-          applies to every phone paired with the gateway. In <code>omnesis.json</code> it is:
+          <strong>Tell Omnesis voice notes</strong> switch on that same page. The apps show the same
+          switch under <strong>Settings → Voice</strong>. It is a gateway setting, so it applies to
+          every phone paired with the gateway. In <code>omnesis.json</code> it is:
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -1988,34 +1976,33 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/admin/watch/compile" \
         </div>
         <p>
           <code>GET /status</code> reports the combined verdict as <code>dictation</code>, and the
-          apps use the gateway only while its <code>active</code> field is true. Switched on without
-          a runnable transcriber, the setting shows why it has no effect and the apps keep
-          transcribing on the phone.
+          apps send recordings only while its <code>active</code> field is true. Switched on without
+          a runnable transcriber, the setting shows why it has no effect, and notes keep the phone's
+          own text.
         </p>
 
-        <h3 id="gateway-dictation-behaviour">What changes while you dictate</h3>
+        <h3 id="gateway-dictation-behaviour">What happens to a voice note</h3>
         <p>
-          The text now arrives after you stop speaking rather than word by word, and the app says it
-          is transcribing on your gateway until it does. A recording is capped at five minutes.
-          Dictation goes ahead of voice notes still queued for your sources, but it waits for one
-          already being transcribed, and a transcriber that has been idle loads its model first, so
-          the first dictation after a quiet spell takes longest. While several dictations are
-          already waiting, the gateway turns new ones away at once rather than let them time out.
+          Saving is immediate: the note appears with the phone's transcript while the gateway works
+          on the recording, and its text changes when the transcriber finishes. How long that takes
+          depends on the gateway's hardware and on the voice notes it is already transcribing for
+          your sources; nothing waits on it. If you edit the note first, your edit stays.
         </p>
         <p>
-          On iOS the phone's recognizer still runs alongside when it can, so your words appear as a
-          draft while you speak, and the gateway's text replaces the draft when it arrives. You can
-          keep the draft instead of waiting, and if the gateway cannot be reached or the
-          transcription fails, the draft is kept and the app says so. Recording for the gateway
-          needs only microphone access, so it works where the phone's recognizer cannot. Android
-          cannot run its recognizer while the app records, so it shows the recording level instead;
-          if the gateway fails, the app keeps the recording and offers to try again or to dictate on
-          the phone.
+          A note from the Apple Watch travels through your iPhone, which transcribes it on the phone
+          first. When the phone has no transcript to offer, the note reads "Voice note —
+          transcribing…" until the gateway's arrives.
         </p>
         <p>
-          To stop, switch the setting off. The apps return to the phone's recognizer once they next
+          The gateway keeps the recording in its database, alongside the rest of your data and under
+          the same encryption at rest, only until it has transcribed it, and retries a failed
+          transcription for up to a week. A note it cannot transcribe keeps the phone's text.
+          Deleting the note deletes its recording.
+        </p>
+        <p>
+          To stop, switch the setting off. The apps return to saving the phone's text once they next
           read the gateway's status, which they do at the latest when they come back to the
-          foreground.
+          foreground. Recordings already sent are still transcribed.
         </p>
 
         <nav class="docs-pager" aria-label="Pages">
