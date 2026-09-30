@@ -44,7 +44,7 @@ function mintToken(scopes: readonly Scope[]): string {
 
 function voiceNoteForm(
   note: Record<string, unknown>,
-  audio: Uint8Array | null = new TextEncoder().encode("water the ferns on sunday"),
+  audio: Uint8Array<ArrayBuffer> | null = new TextEncoder().encode("water the ferns on sunday"),
 ): FormData {
   const form = new FormData();
   form.set("note", JSON.stringify(note));
