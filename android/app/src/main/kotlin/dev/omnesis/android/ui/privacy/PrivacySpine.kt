@@ -428,19 +428,14 @@ internal fun PrivacyExchangeSpine(
                             style = MaterialTheme.typography.bodySmall,
                             color = c.textSecondary,
                         )
-                        // What left beside the answer, measured against the
-                        // draft so a citation the check withheld is marked
-                        // withheld rather than simply missing. Without a
-                        // recorded draft the draft card already shows the
-                        // shared answer and these same citations.
-                        if (!exchange.draftAnswer.isNullOrBlank()) {
-                            PrivacyCitationList(
-                                heading = PRIVACY_CITATIONS_SHARED_HEADING,
-                                rows = privacyCitationRows(exchange.sharedCitations, privacyCitationBaseline(exchange)),
-                                catalog = catalog,
-                                onOpenUrl = onOpenUrl,
-                            )
-                        }
+                        // What left beside the answer, only where it differs
+                        // from what the draft card already lists.
+                        PrivacyCitationList(
+                            heading = PRIVACY_CITATIONS_SHARED_HEADING,
+                            rows = privacySharedCitationRows(exchange),
+                            catalog = catalog,
+                            onOpenUrl = onOpenUrl,
+                        )
                     }
                 }
                 order.afterRelease.forEach { event ->

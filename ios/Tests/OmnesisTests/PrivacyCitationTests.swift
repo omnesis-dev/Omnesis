@@ -251,6 +251,50 @@ final class PrivacyCitationTests: XCTestCase {
         XCTAssertNotNil(list.withheldNote)
     }
 
+    func testSharedListIsLeftOutWhenTheReleaseCitedExactlyWhatTheDraftDid() {
+        let cited = [
+            citation("doc-1", title: "A", web: "https://example.com/a"),
+            citation("doc-2", title: "B", app: "message://b"),
+        ]
+        XCTAssertNil(privacySharedCitationList(exchange(outcome: .shared, shared: cited, draft: cited)))
+    }
+
+    func testSharedListIsShownWithWithheldMarksWhenAFieldWasWithheld() throws {
+        let list = try XCTUnwrap(privacySharedCitationList(exchange(
+            outcome: .sharedWithReductions,
+            shared: [citation("doc-1", title: nil, web: "https://example.com/a"), citation("doc-2", title: "B")],
+            draft: [citation("doc-1", title: "A", web: "https://example.com/a"), citation("doc-2", title: "B")]
+        )))
+
+        XCTAssertEqual(list.heading, "Citations shared")
+        XCTAssertEqual(list.rows.map(\.id), ["doc-1", "doc-2"])
+        XCTAssertEqual(list.rows.map(\.titleWithheld), [true, false])
+        XCTAssertEqual(list.rows.map(\.removed), [false, false])
+        XCTAssertNotNil(list.withheldNote)
+    }
+
+    func testSharedListIsShownWhenTheOrderDiffersFromTheDraft() {
+        XCTAssertNotNil(privacySharedCitationList(exchange(
+            outcome: .shared,
+            shared: [citation("doc-2", title: "B"), citation("doc-1", title: "A")],
+            draft: [citation("doc-1", title: "A"), citation("doc-2", title: "B")]
+        )))
+    }
+
+    func testSharedListIsShownWhenNoDraftWasRecordedEvenIfTheCitationsMatch() throws {
+        let cited = [citation("doc-1", title: "A")]
+        let list = try XCTUnwrap(privacySharedCitationList(exchange(
+            outcome: .shared,
+            shared: cited,
+            draft: cited,
+            draftAnswer: nil
+        )))
+
+        XCTAssertEqual(list.heading, "Citations shared")
+        XCTAssertEqual(list.rows.map(\.id), ["doc-1"])
+        XCTAssertNil(list.withheldNote)
+    }
+
     func testSharedListWithoutARecordedDraftListsWhatLeftPlainly() throws {
         let list = try XCTUnwrap(privacySharedCitationList(exchange(
             outcome: .shared,

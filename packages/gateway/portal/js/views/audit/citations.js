@@ -51,6 +51,24 @@ function citationDate(timestamp) {
   return formatPrivacyDay(Date.parse(timestamp)) ?? timestamp;
 }
 
+const CITATION_FIELDS = ["documentId", "sourceType", ...WITHHOLDABLE_FIELDS];
+
+/**
+ * Whether two citation lists are the same documents with the same fields in
+ * the same order — what a shared list is when the privacy check withheld
+ * nothing, and so need not be shown a second time.
+ */
+export function sameCitations(left, right) {
+  const a = citationList(left);
+  const b = citationList(right);
+  return (
+    a.length === b.length &&
+    a.every((citation, index) =>
+      CITATION_FIELDS.every((field) => citation[field] === b[index][field]),
+    )
+  );
+}
+
 /**
  * The list's rows: one per citation, and — against a baseline — one per
  * baseline citation the answer no longer carries, in the baseline's order.

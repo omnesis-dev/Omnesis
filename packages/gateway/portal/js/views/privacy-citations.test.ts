@@ -22,7 +22,7 @@ vi.mock("../api.js", () => ({
 // @ts-expect-error — portal is plain JS without sibling declarations.
 import { PrivacyReviewCard, pinnedApprovalRecord } from "./audit/activity.js";
 // @ts-expect-error — portal is plain JS without sibling declarations.
-import { PrivacyCitationList, privacyCitationRows } from "./audit/citations.js";
+import { PrivacyCitationList, privacyCitationRows, sameCitations } from "./audit/citations.js";
 // @ts-expect-error — portal is plain JS without sibling declarations.
 import { PrivacyExchangeSpine } from "./audit/exchange-detail.js";
 
@@ -215,10 +215,40 @@ describe("a citation list", () => {
   });
 });
 
+describe("sameCitations", () => {
+  test("is true only for the same documents with the same fields in the same order", () => {
+    expect(sameCitations([BUDGET_EMAIL, PLANNING_CHAT], [BUDGET_EMAIL, PLANNING_CHAT])).toBe(true);
+    expect(sameCitations([PLANNING_CHAT, BUDGET_EMAIL], [BUDGET_EMAIL, PLANNING_CHAT])).toBe(false);
+    expect(sameCitations([BUDGET_EMAIL], [BUDGET_EMAIL, PLANNING_CHAT])).toBe(false);
+    const { sourceUrl: _withheld, ...withoutLink } = BUDGET_EMAIL;
+    expect(sameCitations([withoutLink], [BUDGET_EMAIL])).toBe(false);
+  });
+});
+
 describe("citations on the exchange spine", () => {
   test("an exchange without citations shows no citation block", () => {
     const nodes = expandToHostNodes(PrivacyExchangeSpine({ exchange: EXCHANGE, events: [] }));
     expect(citationBlocks(nodes)).toEqual([]);
+  });
+
+  test("citations shared exactly as drafted are not listed a second time", () => {
+    const nodes = expandToHostNodes(PrivacyExchangeSpine({
+      exchange: {
+        ...EXCHANGE,
+        draftCitations: [BUDGET_EMAIL, PLANNING_CHAT],
+        sharedCitations: [BUDGET_EMAIL, PLANNING_CHAT],
+      },
+      events: [],
+    }));
+    expect(citationBlocks(nodes)).toEqual(["Cited in this draft"]);
+  });
+
+  test("with no recorded draft, the shared citations are the only list", () => {
+    const nodes = expandToHostNodes(PrivacyExchangeSpine({
+      exchange: { ...EXCHANGE, draftAnswer: null, sharedCitations: [BUDGET_EMAIL] },
+      events: [],
+    }));
+    expect(citationBlocks(nodes)).toEqual(["Citations shared"]);
   });
 
   test("the draft lists its citations and the release lists what left, with what was withheld", () => {

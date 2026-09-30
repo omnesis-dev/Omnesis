@@ -219,6 +219,41 @@ class PrivacyCitationsUiTest {
     }
 
     @Test
+    fun theSharedRowsAreEmptyWhenTheSharedCitationsMatchTheDraftsAndMeasuredWhenTheyDiffer() {
+        val identical = sharedExchange.copy(sharedCitations = sharedExchange.draftCitations)
+        assertEquals(emptyList<PrivacyCitationRow>(), privacySharedCitationRows(identical))
+        // Same documents in another order is a difference worth showing.
+        val reordered = sharedExchange.copy(sharedCitations = listOf(notes, budget))
+        assertEquals(2, privacySharedCitationRows(reordered).size)
+        assertEquals(
+            privacyCitationRows(sharedExchange.sharedCitations, sharedExchange.draftCitations),
+            privacySharedCitationRows(sharedExchange),
+        )
+        assertEquals(emptyList<PrivacyCitationRow>(), privacySharedCitationRows(sharedExchange.copy(draftAnswer = null)))
+    }
+
+    @Test
+    fun theReleasedBandListsNothingWhenEveryDraftedCitationLeftUnchanged() {
+        showSpine(sharedExchange.copy(sharedCitations = sharedExchange.draftCitations))
+
+        compose.onNodeWithText(PRIVACY_CITATIONS_DRAFT_HEADING).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(PRIVACY_CITATIONS_SHARED_HEADING).assertDoesNotExist()
+        compose.onNodeWithText(PRIVACY_CITATIONS_WITHHELD_NOTE).assertDoesNotExist()
+        // Each link is listed once, in the draft card.
+        compose.onAllNodesWithText("examplemail://thread/q4-budget").assertCountEquals(1)
+        compose.onAllNodesWithText("https://notes.example.com/page/planning").assertCountEquals(1)
+    }
+
+    @Test
+    fun withoutADraftTheSharedCitationsAppearOnceInTheDraftCard() {
+        showSpine(sharedExchange.copy(draftAnswer = null))
+
+        compose.onNodeWithText(PRIVACY_CITATIONS_SHARED_HEADING).performScrollTo().assertIsDisplayed()
+        compose.onAllNodesWithText(PRIVACY_CITATIONS_SHARED_HEADING).assertCountEquals(1)
+        compose.onNodeWithText(PRIVACY_CITATIONS_WITHHELD_NOTE).assertDoesNotExist()
+    }
+
+    @Test
     fun anExchangeWithNoCitationsShowsNoCitationsAtAll() {
         showSpine(
             sharedExchange.copy(sharedCitations = emptyList(), draftCitations = emptyList()),

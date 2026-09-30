@@ -344,16 +344,33 @@ func privacyPendingCitationList(
     )
 }
 
-/// The release's list, only for an answer that was shared.
+/// Whether two citation lists name the same documents in the same order with
+/// the same printed fields. A field is compared as it is printed, so a blank
+/// value and a missing one are the same.
+func privacyCitationsMatch(_ lhs: [AnswerCitation], _ rhs: [AnswerCitation]) -> Bool {
+    let fields: [PrivacyCitationField] = [.title, .timestamp, .sourceUrl, .appUrl]
+    return lhs.count == rhs.count && zip(lhs, rhs).allSatisfy { left, right in
+        left.documentId == right.documentId
+            && left.sourceType == right.sourceType
+            && fields.allSatisfy { $0.value(in: left) == $0.value(in: right) }
+    }
+}
+
+/// The release's list, only for an answer that was shared. When the draft was
+/// recorded and the release cited exactly what it did, there is no list: the
+/// draft card's list already shows those citations, as the released text is
+/// not repeated when it matches the draft.
 func privacySharedCitationList(
     _ exchange: PrivacyExchangePresentation,
     timeZone: TimeZone = .current
 )
     -> PrivacyCitationList? {
     guard let shared = exchange.externallyVisibleCitations else { return nil }
+    let baseline = privacyCitationBaseline(exchange)
+    if let baseline, privacyCitationsMatch(shared, baseline) { return nil }
     return privacyCitationList(
         shared,
-        baseline: privacyCitationBaseline(exchange),
+        baseline: baseline,
         heading: "Citations shared",
         timeZone: timeZone
     )

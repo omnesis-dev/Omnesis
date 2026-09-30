@@ -50,7 +50,7 @@ import {
   privacyInstant,
 } from "../shared/privacy-vocabulary.js";
 import { PrivacyAnswerComparison, answerDiffLines } from "./answer-comparison.js";
-import { PrivacyCitationList } from "./citations.js";
+import { PrivacyCitationList, sameCitations } from "./citations.js";
 import { chatMessagesToTurns } from "../agent-reducer.js";
 import {
   PRIVACY_PROSE_QUOTE_CLASS,
@@ -591,7 +591,10 @@ export function PrivacyExchangeSpine({
               ${order.released
                 ? html`<${PrivacyLedgerStep} event=${order.released} />`
                 : null}
-              ${shared
+              ${/* Like the released answer, the shared citations are shown
+                    only when they differ from the draft's: identical ones
+                    are already listed under the draft. */ null}
+              ${shared && !(citationBaseline && sameCitations(exchange.sharedCitations, citationBaseline))
                 ? html`<${PrivacyCitationList}
                     citations=${exchange.sharedCitations}
                     baseline=${citationBaseline}

@@ -111,6 +111,20 @@ internal fun privacyCitationBaseline(exchange: PrivacyExchangePresentation): Lis
     exchange.draftCitations.takeIf { !exchange.draftAnswer.isNullOrEmpty() }
 
 /**
+ * The rows of the list of what left beside a shared answer, measured against
+ * the recorded draft so a citation the check withheld is marked withheld
+ * rather than simply missing. Empty without a recorded draft, since the draft
+ * card then shows the shared answer and these same citations, and empty when
+ * the shared citations equal the draft's in documents, fields and order, since
+ * the draft card's list already shows exactly what left.
+ */
+internal fun privacySharedCitationRows(exchange: PrivacyExchangePresentation): List<PrivacyCitationRow> {
+    if (exchange.draftAnswer.isNullOrBlank()) return emptyList()
+    if (exchange.sharedCitations == exchange.draftCitations) return emptyList()
+    return privacyCitationRows(exchange.sharedCitations, privacyCitationBaseline(exchange))
+}
+
+/**
  * The citations beside the answer the draft card shows: the list recorded
  * beside the first of draftAnswer, pendingCandidate and sharedAnswer that is
  * present, the same precedence [privacyDisplayedAnswer] uses, and none when
