@@ -63,6 +63,7 @@ function result(decision: PrivacyReviewResult["decision"]): PrivacyReviewResult 
         },
         reviewStage: "initial",
         candidateAnswer: "",
+        candidateCitations: [],
         watchDisclosure: null,
       },
       envelopeDigest: "digest-fictional",
