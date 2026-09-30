@@ -6,9 +6,9 @@
  *
  * Mirrors the collector's per-source credentials registry
  * (`packages/collector/src/source-ws-handlers.ts:listCredentialEntries`)
- * but for *model-provider* credentials (Anthropic, and TypeSafe when
- * experimental mode is visible). Lives on the gateway because the gateway
- * is the process that makes these API calls; in multi-host deployments,
+ * but for *model-provider* credentials (Anthropic and TypeSafe). Lives on
+ * the gateway because the gateway is the process that makes these API calls;
+ * in multi-host deployments,
  * model-provider credentials must reside on the gateway host even when
  * sources reside on a remote collector.
  *
@@ -19,7 +19,6 @@
  */
 import {
   ANTHROPIC_CREDENTIALS_SPEC,
-  experimentalVisible,
   TYPESAFE_CREDENTIALS_SPEC,
   hasProviderCredentials,
   providerCredentialsPath,
@@ -39,8 +38,6 @@ const MODEL_PROVIDER_SPECS: ReadonlyArray<{
   providerName: string;
   /** Environment variables that supply the key ahead of the file, in precedence order. */
   envVars: readonly string[];
-  /** Serves only experimental capabilities: listed only while experimental mode is visible. */
-  experimental?: boolean;
 }> = [
   {
     spec: ANTHROPIC_CREDENTIALS_SPEC,
@@ -53,7 +50,6 @@ const MODEL_PROVIDER_SPECS: ReadonlyArray<{
     providerType: "typesafe",
     providerName: "TypeSafe",
     envVars: ["OMNESIS_TYPESAFE_API_KEY", "TYPESAFE_API_KEY"],
-    experimental: true,
   },
 ];
 
@@ -70,7 +66,7 @@ export interface ModelCredentialEntry {
 
 /** All model-provider credential entries plus current configured-state. */
 export function listModelCredentialEntries(configDir: string): ModelCredentialEntry[] {
-  return visibleProviderSpecs().map(({ spec, providerType, providerName, envVars }) => ({
+  return MODEL_PROVIDER_SPECS.map(({ spec, providerType, providerName, envVars }) => ({
     fileKey: spec.fileKey,
     providerType,
     providerName,
@@ -82,12 +78,7 @@ export function listModelCredentialEntries(configDir: string): ModelCredentialEn
 
 /** Look up a spec by fileKey for server-side validation. */
 export function getModelProviderSpec(fileKey: string): ProviderCredentialsSpec | null {
-  return visibleProviderSpecs().find((e) => e.spec.fileKey === fileKey)?.spec ?? null;
-}
-
-function visibleProviderSpecs(): typeof MODEL_PROVIDER_SPECS {
-  const experimental = experimentalVisible();
-  return MODEL_PROVIDER_SPECS.filter((e) => experimental || !e.experimental);
+  return MODEL_PROVIDER_SPECS.find((e) => e.spec.fileKey === fileKey)?.spec ?? null;
 }
 
 /** The first non-empty environment value among a provider's key variables. */

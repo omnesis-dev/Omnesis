@@ -46,6 +46,7 @@ import { createCollectorDeviceResolver } from "./collector-device-resolver.js";
 import { mountBriefsRoutes } from "./brain/http.js";
 import { mountBrainAdminRoutes } from "./brain/admin-http.js";
 import { mountCognitionRoutes } from "./http/routes/cognition.js";
+import { mountTemporalRoutes } from "./http/routes/temporal.js";
 import { CognitionQueryService } from "./http/services/CognitionQueryService.js";
 import { cognitionTranscriptsDir } from "./brain/transcripts.js";
 import { mountPushRoutes } from "./http/routes/push.js";
@@ -283,6 +284,8 @@ export function createServer(
     searchPipeline?: SearchPipeline;
     /** Read-worker gate for the Direct MCP `lookup_people` port. */
     personLookupGate?: PersonLookupGate;
+    /** Whether the mention worth gate is active, so Direct `temporal_query` hides unworthy mentions. */
+    mentionWorthGateActive?: () => boolean;
     /** Test/embedding override for the fixed Direct MCP façade. */
     directMcpService?: import("./agent/direct-mcp.js").DirectMcpService;
     /** Receives the stateless MCP HTTP runtime for graceful shutdown. */
@@ -1482,6 +1485,9 @@ export function createServer(
           analyticsDb: opts.analyticsDb,
           syncStatus: opts.syncStatus,
           personLookupGate: opts.personLookupGate,
+          ...(opts.mentionWorthGateActive
+            ? { mentionWorthGateActive: opts.mentionWorthGateActive }
+            : {}),
         })
       : undefined);
   const directMcpBoundary = directMcpService
@@ -1659,11 +1665,19 @@ export function createServer(
   // /briefs/* + /loops* (experimental; feed/triage survive a parked background model).
   mountBriefsRoutes(app, {
     db,
-    analyticsDb: opts?.analyticsDb,
     writeGate: w,
     getStatus: opts?.getBriefsStatus,
     clock: opts?.briefsClock,
     getTalkback: opts?.getBriefTalkback,
+  });
+
+  // /temporal/* — the time index the portal's Calendar reads. Not gated on
+  // experimental mode: projections and date mentions exist on every install.
+  mountTemporalRoutes(app, {
+    db,
+    analyticsDb: opts?.analyticsDb,
+    hideUnworthyMentions: opts?.mentionWorthGateActive,
+    clock: opts?.briefsClock,
   });
 
   // /admin/brain/* — the operator inspection surface the `omnesis

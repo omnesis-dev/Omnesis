@@ -142,24 +142,33 @@ describe("date-enrichment pipeline (fetch → extract → persist → read)", ()
     expect(dates.map((d) => d.resolvedStart)).toContain("2027-09-30");
   });
 
-  it("stamps a document in a language without a recognizer culture (zero dates, never rescanned)", () => {
+  it("stores each mention's days and its document's thread through fetch → extract → persist", () => {
     upsertDocuments(db, [
       makeDoc({
-        externalId: "de-1",
-        title: "Zahlungserinnerung",
-        content:
-          "Wir erinnern daran, dass die angegebene Rechnung bis zum 30. September fällig ist. " +
-          "Bitte überweisen Sie den offenen Betrag auf das genannte Konto.",
+        externalId: "reply-1",
+        title: "Re: invented plans",
+        content: "Confirmed for 30 September 2024. Also sometime in Q4.",
+        metadata: { extra: { threadId: "thread-1" } },
         sourceCreatedAt: "2024-06-15T10:00:00.000Z",
       }),
     ]);
-    const id = (
-      db.prepare("SELECT id FROM documents WHERE external_id = ?").get("de-1") as { id: string }
-    ).id;
 
     expect(runTick(db, 50, 20_000).applied).toBe(1);
 
-    expect(getExtractedDatesForDocument(db, id)).toEqual([]);
-    expect(countPendingDateExtraction(db)).toBe(0); // stamped — not rescanned
+    const rows = db
+      .prepare(
+        "SELECT matched_text, mention_start_day, mention_end_day, thread_key FROM document_extracted_dates ORDER BY id",
+      )
+      .all() as Array<Record<string, string | null>>;
+    expect(rows.find((row) => row.matched_text === "30 September 2024")).toMatchObject({
+      mention_start_day: "2024-09-30",
+      mention_end_day: "2024-10-01",
+    });
+    expect(
+      rows.find((row) => /q4/i.test(String(row.matched_text)))?.mention_start_day ?? null,
+    ).toBeNull();
+    expect(new Set(rows.map((row) => row.thread_key))).toEqual(
+      new Set(["test:acct\u0000thread-1"]),
+    );
   });
 });

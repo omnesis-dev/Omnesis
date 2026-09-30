@@ -1,0 +1,124 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Adrien Conrath
+
+import { existsSync, unlinkSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { SCOPE_ADMIN } from "@omnesis/types";
+import { createDatabase } from "../../db.js";
+import { createServer } from "../../server.js";
+import { createToken } from "../../data/repositories/TokenRepository.js";
+import { createDevice } from "../../data/repositories/DeviceRepository.js";
+import { upsertDocuments } from "../../data/repositories/DocumentRepository.js";
+import { applyExtractedDates } from "../../enrichment/dates/storage.js";
+import type { StatusCache } from "../services/StatusCache.js";
+import type { DocumentInput } from "@omnesis/types";
+import type Database from "better-sqlite3";
+
+describe("GET /temporal/window", () => {
+  let db: Database.Database;
+  let dbPath: string;
+  let statusCache: StatusCache | undefined;
+  let gateActive = false;
+  let app: ReturnType<typeof createServer>;
+  let token: string;
+
+  beforeEach(() => {
+    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    db = createDatabase(dbPath);
+    const device = createDevice(db, { name: `test-${randomUUID()}`, kind: "cli" });
+    token = createToken(db, device.id, [SCOPE_ADMIN]).token;
+    gateActive = false;
+    // The Brain is off: no briefs feature status at all.
+    app = createServer(db, dbPath, {
+      mentionWorthGateActive: () => gateActive,
+      onStatusCache: (cache) => {
+        statusCache = cache;
+      },
+    });
+  });
+
+  afterEach(() => {
+    statusCache?.stop();
+    db.close();
+    for (const suffix of ["", "-wal", "-shm"]) {
+      if (existsSync(dbPath + suffix)) unlinkSync(dbPath + suffix);
+    }
+  });
+
+  function seedMention(externalId: string, verdict?: "keep" | "drop"): string {
+    const doc: DocumentInput = {
+      providerId: "test" as DocumentInput["providerId"],
+      sourceId: "fictional-mail:primary" as DocumentInput["sourceId"],
+      externalId,
+      title: `Subject ${externalId}`,
+      content: "See you on 12 October 2026.",
+      contentHash: `hash-${externalId}`,
+      metadata: { documentType: "email" },
+      sourceCreatedAt: "2026-10-01T00:00:00.000Z",
+      sourceUpdatedAt: "2026-10-01T00:00:00.000Z",
+    };
+    upsertDocuments(db, [doc]);
+    const id = db
+      .prepare<[string], { id: string }>("SELECT id FROM documents WHERE external_id = ?")
+      .get(externalId)!.id;
+    applyExtractedDates(db, [
+      {
+        id,
+        dates: [
+          {
+            kind: "date",
+            resolvedStart: "2026-10-12",
+            resolvedEnd: null,
+            relative: false,
+            text: "12 October 2026",
+            timex: "2026-10-12",
+            charStart: 11,
+            charEnd: 26,
+          },
+        ],
+        mentions: [{ startDay: "2026-10-12", endDay: "2026-10-13", deadline: false }],
+        threadKey: null,
+      },
+    ]);
+    if (verdict) {
+      db.prepare("UPDATE date_mention_judgements SET verdict = ? WHERE document_id = ?").run(
+        verdict,
+        id,
+      );
+    }
+    return id;
+  }
+
+  const read = async (origins = "projection,annotation,mention") => {
+    const from = Date.UTC(2026, 9, 12);
+    const res = await app.request(
+      `/temporal/window?from=${from}&to=${from + 86_400_000}&timeZone=UTC&origins=${origins}`,
+      { headers: { authorization: `Bearer ${token}` } },
+    );
+    expect(res.status).toBe(200);
+    return (await res.json()) as {
+      items: Array<{ origin: string; mention?: { documentId: string } }>;
+      coverage: { mentions?: { unworthyHidden?: true } };
+    };
+  };
+
+  test("serves date mentions with the Brain off, and hides unworthy mail while the gate is active", async () => {
+    const kept = seedMention("kept", "keep");
+    const dropped = seedMention("dropped", "drop");
+
+    const all = await read();
+    expect(all.items.map((item) => item.mention?.documentId).sort()).toEqual(
+      [kept, dropped].sort(),
+    );
+    expect(all.coverage.mentions?.unworthyHidden).toBeUndefined();
+
+    gateActive = true;
+    const gated = await read();
+    expect(gated.items.map((item) => item.mention?.documentId)).toEqual([kept]);
+    expect(gated.coverage.mentions?.unworthyHidden).toBe(true);
+
+    // Mentions come only when named.
+    expect((await read("projection,annotation")).items).toEqual([]);
+  });
+});

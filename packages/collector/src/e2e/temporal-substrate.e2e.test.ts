@@ -6,7 +6,7 @@
  *
  * Every assertion here rides the production path — `POST /analytics/ingest`
  * through `AnalyticsService` → `ensureTable` → the projection derivation →
- * DuckDB, then out through `GET /briefs/temporal/window`'s federation of the
+ * DuckDB, then out through `GET /temporal/window`'s federation of the
  * analytics store, the document store and the annotation store.
  *
  * What this file exists to pin:
@@ -198,7 +198,7 @@ describe("shared temporal substrate (real gateway)", () => {
   }, 30_000);
 
   const windowUrl = (extra = "", timeZone = "UTC"): string =>
-    `/briefs/temporal/window?from=${now - DAY_MS}&to=${now + 20 * DAY_MS}` +
+    `/temporal/window?from=${now - DAY_MS}&to=${now + 20 * DAY_MS}` +
     `&timeZone=${encodeURIComponent(timeZone)}${extra}`;
 
   test("one spec maps a kind per row from the row's own values", async () => {
@@ -256,7 +256,7 @@ describe("shared temporal substrate (real gateway)", () => {
     // A point overlaps a window that begins exactly on it — the case a plain
     // half-open test (`end > from`) drops.
     const edge = await harness.gatewayJson<WindowDto>(
-      `/briefs/temporal/window?from=${episodeStart}&to=${episodeStart + HOUR_MS}` +
+      `/temporal/window?from=${episodeStart}&to=${episodeStart + HOUR_MS}` +
         `&timeZone=UTC&origins=projection&kinds=episode`,
     );
     expect(edge.items.map((item) => item.label)).toContain("Deep work block");
@@ -307,7 +307,7 @@ describe("shared temporal substrate (real gateway)", () => {
     expect(queried.rows.flat()).toEqual(["amb_1"]);
 
     const body = await harness.gatewayJson<WindowDto>(
-      `/briefs/temporal/window?from=${Date.UTC(2026, 6, 21)}&to=${Date.UTC(2026, 6, 24)}` +
+      `/temporal/window?from=${Date.UTC(2026, 6, 21)}&to=${Date.UTC(2026, 6, 24)}` +
         `&timeZone=UTC&origins=projection`,
     );
     expect(body.items.map((item) => item.label)).not.toContain("Ambient reading");

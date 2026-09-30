@@ -20,12 +20,12 @@ const STABLE_DIRECT_TOOL_NAMES = [
   "lookup_people",
   "trace_connections",
   "run_sql",
+  "temporal_query",
   "list_tables",
 ] as const;
 
 const DIRECT_TOOL_NAMES = [
   ...STABLE_DIRECT_TOOL_NAMES.filter((name) => name !== "list_tables"),
-  "temporal_query",
   "entity_context",
   "search_loops",
   "list_loops",

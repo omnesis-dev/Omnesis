@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The (experimental) date-enrichment background pass.
+ * The date-enrichment background pass.
  *
  * A `background`-priority periodic drip that, each tick, discovers documents
  * still needing extraction (`dates_extracted_at IS NULL`), extracts their
@@ -18,12 +18,10 @@
  * worker. The one cpu op per tick keeps the compute pool gently loaded (one
  * worker at a time) rather than fanning out and saturating it.
  *
- * Gating: the work is done only when `experimentalEnabled()` AND the
- * `enrichment.dates.enabled` config knob are both on. Both are re-checked every
- * tick, so toggling either takes effect live (the task idles otherwise).
+ * Gating: the work is done only when the `enrichment.dates.enabled` config
+ * knob is on. It is re-checked every tick, so toggling it takes effect live
+ * (the task idles otherwise).
  */
-
-import { experimentalEnabled, experimentalVisible, type Logger } from "@omnesis/core";
 
 import { runWithPriority } from "../../priority.js";
 import {
@@ -33,6 +31,8 @@ import {
 } from "../../scheduler/tasks/backfill-helpers.js";
 import { periodicJob } from "../../background-jobs/scheduler-job.js";
 import { QueueTracker } from "../../background-jobs/trackers.js";
+import { resolveNumericDateOrder, type ResolvedDateEnrichmentSettings } from "./config.js";
+import type { Logger } from "@omnesis/core";
 import type { Scheduler } from "../../scheduler/scheduler.js";
 import type { PeriodicTask, TaskOutcome } from "../../scheduler/types.js";
 import type { IoGate } from "../../scheduler/io-ops.js";
@@ -40,7 +40,6 @@ import type { CpuGate } from "../../scheduler/cpu-ops.js";
 import type { WriteGate } from "../../write-gate.js";
 import type { BackgroundJobsRegistry } from "../../background-jobs/registry.js";
 import type { DateExtractionDocRow } from "./extractor.js";
-import type { ResolvedDateEnrichmentSettings } from "./config.js";
 
 export const DATE_EXTRACTION_TASK_NAME = "enrichment.extractDates";
 
@@ -56,30 +55,21 @@ export const DATE_EXTRACTION_TASK_NAME = "enrichment.extractDates";
 // batch spreads across the pool.
 const CPU_CHUNK = 8;
 
-/** Whether the date-enrichment engine may run / be surfaced. */
-export function dateEnrichmentStatus(getEnabled: () => boolean): {
-  visible: boolean;
-  active: boolean;
-} {
-  return {
-    visible: experimentalVisible(),
-    active: experimentalEnabled() && getEnabled(),
-  };
-}
-
 interface DateExtractionTaskDeps {
   ioGate: IoGate;
   cpuGate: CpuGate;
   writeGate: WriteGate;
   getSettings: () => ResolvedDateEnrichmentSettings;
   tracker: QueueTracker;
+  /** Called after a tick stored documents, which may have queued work for the worth gate. */
+  onApplied?: () => void;
   log: Logger;
 }
 
 export function dateExtractionTask(
   deps: DateExtractionTaskDeps,
 ): PeriodicTask<unknown, IdleResult> {
-  const { ioGate, cpuGate, writeGate, getSettings, tracker, log } = deps;
+  const { ioGate, cpuGate, writeGate, getSettings, tracker, onApplied, log } = deps;
   // Cadence is read once at construction (a periodic reads periodMs once);
   // batchSize / maxCharsPerDoc / scanBudgetMs / enabled are read live per tick.
   const { periodMs, idlePeriodMs } = getSettings();
@@ -102,8 +92,8 @@ export function dateExtractionTask(
       return runBackfillTick(DATE_EXTRACTION_TASK_NAME, log, async () =>
         runWithPriority("background", async () => {
           const settings = getSettings();
-          // Live gate: idle out cleanly if experimental / enabled flipped off.
-          if (!(experimentalEnabled() && settings.enabled)) return { idle: true };
+          // Live gate: idle out cleanly if the knob flipped off.
+          if (!settings.enabled) return { idle: true };
 
           const rows = await ioGate.fetchDateExtractionBatch(
             settings.batchSize,
@@ -134,6 +124,7 @@ export function dateExtractionTask(
                 cpuGate.extractDatesFromDocs(c, {
                   maxCharsPerDoc: settings.maxCharsPerDoc,
                   scanBudgetMs: settings.scanBudgetMs,
+                  numericDateOrder: resolveNumericDateOrder(settings.numericDateOrder),
                 }),
               ),
             )
@@ -141,6 +132,7 @@ export function dateExtractionTask(
           const { applied, datesWritten } = await writeGate.applyExtractedDates(results);
           total += applied;
           tracker.recordTick(applied);
+          if (applied > 0) onApplied?.();
           const prev = total - applied;
           if (Math.floor(prev / 1000) !== Math.floor(total / 1000)) {
             log.info(`date extraction progress: ${total} docs (+${datesWritten} dates this tick)`);
@@ -161,15 +153,15 @@ export interface BootDateEnrichmentDeps {
   getSettings: () => ResolvedDateEnrichmentSettings;
   /** Cheap count of documents still needing extraction — seeds the tracker. */
   countPending: () => number;
+  /** Called after a tick stored documents, which may have queued work for the worth gate. */
+  onApplied?: () => void;
   log: Logger;
 }
 
 /**
  * Register the date-enrichment periodic pass. The task is always scheduled but
  * self-gates each tick, so the `enrichment.dates.enabled` knob toggles the pass
- * live (and it is inert when experimental mode is off). The background-jobs
- * surface is registered only when experimental is visible, so nothing
- * experimental shows on the jobs page otherwise.
+ * live.
  *
  * Returns a `kick` that fires the next tick immediately — wired to the
  * document-upsert seam so freshly ingested documents are picked up promptly.
@@ -182,22 +174,22 @@ export function bootDateEnrichment(deps: BootDateEnrichmentDeps): { kick: () => 
     writeGate: deps.writeGate,
     getSettings: deps.getSettings,
     tracker,
+    ...(deps.onApplied ? { onApplied: deps.onApplied } : {}),
     log: deps.log,
   });
   deps.scheduler.schedule(task);
 
-  if (experimentalVisible()) {
-    const job = periodicJob(task, {
+  deps.backgroundJobs.registerAll([
+    periodicJob(task, {
       scheduler: deps.scheduler,
       displayName: "Date extraction",
       description:
-        "Extracts dates from every document's text, resolved against its emission date (experimental).",
+        "Extracts the dates written in every document's text, resolved against the document's own date.",
       category: "indexer",
       tracker,
-      isDisabled: () => !(experimentalEnabled() && deps.getSettings().enabled),
-    });
-    deps.backgroundJobs.registerAll([job]);
-  }
+      isDisabled: () => !deps.getSettings().enabled,
+    }),
+  ]);
 
   // The kick re-arms the periodic timer; when it fires from inside the
   // realtime ingest scope (onDocumentsUpserted), force background so the tick

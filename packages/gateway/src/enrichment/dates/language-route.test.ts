@@ -43,33 +43,46 @@ describe("routeDateCulture — supported languages route to their culture", () =
   });
 });
 
-describe("routeDateCulture — languages without a recognizer culture SKIP", () => {
-  // The JS build of @microsoft/recognizers-text-date-time registers models
-  // for en/fr/es/zh only. A confident detection outside that set must return
-  // null — parsing with a wrong culture would produce noise.
-  it("returns null for a German invoice", () => {
+describe("routeDateCulture — every document reaches a culture", () => {
+  // Detection chooses only among the languages with a date-time model, so no
+  // document is skipped. English mail thick with tracking links and markup —
+  // which unrestricted detection reads as Klingon, Berber or Latin — stays
+  // English.
+  it("reads a link-heavy English notification as English", () => {
+    const links = Array.from(
+      { length: 12 },
+      (_, index) =>
+        `https://links.example.com/ls/click?upn=${"u001".repeat(20)}${index}&amp;utm_source=digest`,
+    ).join("\n");
+    expect(
+      routeDateCulture(
+        "Your weekly digest",
+        `${links}\nYou have 5 new invitations waiting. See who viewed your profile this week.\n${links}`,
+      ),
+    ).toBe("en-us");
+  });
+
+  it("routes a language without a model to a supported culture rather than skipping it", () => {
     expect(
       routeDateCulture(
         "Zahlungserinnerung",
         "Wir erinnern daran, dass die angegebene Rechnung bis zum 30. September fällig ist. " +
           "Bitte überweisen Sie den offenen Betrag auf das genannte Konto.",
       ),
-    ).toBeNull();
+    ).not.toBeNull();
   });
 
-  it("returns null for Finnish", () => {
+  it("reads English numeric dates day-first when asked", () => {
+    expect(
+      routeDateCulture("Meeting", "let us meet tomorrow to review the numbers", "day-first"),
+    ).toBe("en-*");
     expect(
       routeDateCulture(
-        "Kokouskutsu",
-        "Kokous on siirretty ensi viikolle, pahoittelut myöhäisestä ilmoituksesta.",
+        "Réunion",
+        "Bonjour, la réunion est confirmée pour le 30 septembre.",
+        "day-first",
       ),
-    ).toBeNull();
-  });
-
-  it("returns null for Japanese (the base library exports the culture code, the date-time build has no model)", () => {
-    expect(
-      routeDateCulture("会議のお知らせ", "会議は9月30日に予定されています。ご確認ください。"),
-    ).toBeNull();
+    ).toBe("fr-fr");
   });
 });
 

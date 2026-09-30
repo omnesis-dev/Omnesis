@@ -288,11 +288,7 @@ function formatEvent(event: ICAL.Event, vevent: ICAL.Component): string {
         lines.push(`**When:** ${formatDate(dtstart)} (all day)`);
       }
     } else {
-      if (dtend) {
-        lines.push(`**When:** ${formatDateTime(dtstart)} – ${formatDateTime(dtend)}`);
-      } else {
-        lines.push(`**When:** ${formatDateTime(dtstart)}`);
-      }
+      lines.push(`**When:** ${formatTimedSpan(dtstart, dtend)}`);
     }
   }
 
@@ -329,7 +325,7 @@ function formatTodo(vtodo: ICAL.Component): string {
 
   const due = vtodo.getFirstPropertyValue("due") as ICAL.Time | null;
   if (due) {
-    lines.push(`**Due:** ${due.isDate ? formatDate(due) : formatDateTime(due)}`);
+    lines.push(`**Due:** ${due.isDate ? formatDate(due) : formatTimedSpan(due, null)}`);
   }
 
   const status = vtodo.getFirstPropertyValue("status") as string | null;
@@ -350,8 +346,34 @@ function formatDate(dt: ICAL.Time): string {
   return `${dt.year}-${String(dt.month).padStart(2, "0")}-${String(dt.day).padStart(2, "0")}`;
 }
 
+/**
+ * Clock times with the zone they are written in. An invitation usually states
+ * its times in UTC or under a TZID; without the zone the reader takes the wall
+ * clock for local time and lands an hour or more off. The zone is written once,
+ * after the times ("… – … (UTC)"), so the pair still reads as one range; a
+ * floating time is local wherever it is read and carries none.
+ */
+function formatTimedSpan(start: ICAL.Time, end: ICAL.Time | null): string {
+  const startZone = zoneOf(start);
+  const endZone = end ? zoneOf(end) : startZone;
+  if (!end) return `${formatDateTime(start)}${startZone ? ` (${startZone})` : ""}`;
+  if (startZone === endZone) {
+    return `${formatDateTime(start)} – ${formatDateTime(end)}${startZone ? ` (${startZone})` : ""}`;
+  }
+  const label = (zone: string | null) => (zone ? ` (${zone})` : "");
+  return `${formatDateTime(start)}${label(startZone)} – ${formatDateTime(end)}${label(endZone)}`;
+}
+
 function formatDateTime(dt: ICAL.Time): string {
   const date = formatDate(dt);
   const time = `${String(dt.hour).padStart(2, "0")}:${String(dt.minute).padStart(2, "0")}`;
   return `${date} ${time}`;
+}
+
+/** The zone a time is written in, or null for a floating time. */
+function zoneOf(dt: ICAL.Time): string | null {
+  // A TZID with no VTIMEZONE block stays on `timezone`; the zone reads floating.
+  const tzid = (dt as { timezone?: string }).timezone ?? dt.zone?.tzid;
+  if (!tzid || tzid === "floating") return null;
+  return tzid === "Z" ? "UTC" : tzid;
 }

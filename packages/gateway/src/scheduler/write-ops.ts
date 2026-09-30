@@ -251,6 +251,10 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   // bounded batch. Background priority so it never starts ahead of user /
   // realtime writes.
   { name: "db.applyExtractedDates", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
+  // The mention worth gate's verdicts: a primary-key UPDATE per judged
+  // document, a few dozen per call; the rubric requeue is batched by its caller.
+  { name: "db.applyMentionJudgements", priority: "background" },
+  { name: "db.requeueStaleMentionJudgements", priority: "background" },
   { name: "edges.drainPending", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   {
     name: "links.upsertExtractedLinksBatch",

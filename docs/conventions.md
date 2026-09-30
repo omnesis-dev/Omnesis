@@ -649,7 +649,7 @@ user-driven column deletion for genuinely dynamic tables.
 
 ### Source-owned temporal projections beside LLM-owned annotations
 
-Time-addressable facts have two deliberately separate owners. A source may
+Time-addressable facts have three deliberately separate owners. A source may
 declare a deterministic `temporalProjection` on its analytics or document
 schema when the source already exposes a low-volume, structurally defined
 interval (for example, a calendar occurrence or location visit). The gateway
@@ -660,8 +660,17 @@ is added.
 
 The cognition agent owns `temporal_annotations`: selective interpretations that
 add meaning beyond a source fact. Agent mutation tools accept annotation ids
-only; projections are immutable through the agent surface. Reads go through the
-single `temporal_query` contract, which returns both origins with provenance,
+only; projections are immutable through the agent surface. The date recognizer owns
+mentions: dates written in a document's text, extracted deterministically in
+the background and read from `document_extracted_dates`. A mention says only
+that a document names a day, a span or a month. Which extracted dates count is
+decided once, at extraction (`enrichment/dates/mention-bounds.ts`), and stored
+as day bounds beside the date. A mention matches a window only when it starts
+or ends inside it, a conversation repeating it counts once, and the layer is
+paginated in SQL because it is corpus-sized. The gateway reads mentions only
+for callers that name the `mention` origin; the agents' `temporal_query` tool
+names every origin by default. Reads go through the
+single `temporal_query` contract, which returns every origin with provenance,
 coverage, and query-bound cursor pagination. `semanticTimeColumn` remains the
 analytics table's primary event-time hint for SQL, discovery, and citation; it
 does not opt a table into projection materialization.
@@ -671,6 +680,7 @@ does not opt a table into projection materialization.
 - Materialization: `packages/gateway/src/analytics/temporal-projection-store.ts`,
   `packages/gateway/src/enrichment/temporal-projections/document-storage.ts`
 - Federation: `packages/gateway/src/enrichment/temporal/temporal-query-service.ts`
+- Mentions: `packages/gateway/src/enrichment/temporal/temporal-mentions.ts`
 
 ### Zod at the route boundary
 

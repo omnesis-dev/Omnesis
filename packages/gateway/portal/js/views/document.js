@@ -79,7 +79,7 @@ function DeleteButton({ onClick, busy }) {
   `;
 }
 
-export function DocumentView({ id, experimental = false }) {
+export function DocumentView({ id }) {
   const [doc, setDoc] = useState(null);
   const [resolvedPeople, setResolvedPeople] = useState(null);
   const [attachmentChildren, setAttachmentChildren] = useState([]);
@@ -126,9 +126,7 @@ export function DocumentView({ id, experimental = false }) {
       getDocument(id),
       getDocumentPeople(id),
       getDocumentAttachments(id),
-      // Omnesis-enriched extracted dates remain experimental;
-      // skip the requests entirely when experimental mode is off.
-      experimental ? getDocumentDates(id) : Promise.resolve({ dates: [] }),
+      getDocumentDates(id),
     ])
       .then(([docData, peopleData, attData, datesData]) => {
         setDoc(docData);
@@ -141,7 +139,7 @@ export function DocumentView({ id, experimental = false }) {
         setError(`${err.message}${reqId}`);
       })
       .finally(() => setLoading(false));
-  }, [id, experimental]);
+  }, [id]);
 
   if (loading) return html`<div class="loading"><span class="spinner"></span> Loading document...</div>`;
   if (error) return html`<div class="empty-state"><h2>Error</h2><p>${error}</p></div>`;

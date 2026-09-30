@@ -846,10 +846,11 @@ export interface ToolPorts {
    */
   loopRead?: LoopReadPort;
   /**
-   * Optional READ-ONLY temporal port (experimental). When omitted — or when
-   * the gateway is not in experimental mode — the registry does not register
-   * `temporal_query`. Lets BOTH agents query deterministic projections and
-   * LLM-owned annotations; only annotation mutation lives on the Cognition Steward.
+   * Optional READ-ONLY temporal port. The registry registers `temporal_query`
+   * whenever it is wired; a caller restricted to some sources is never given
+   * one, because the port reads every source. Lets BOTH agents query source
+   * projections, date mentions and LLM-owned annotations; only annotation
+   * mutation lives on the Cognition Steward.
    */
   temporal?: TemporalReadPort;
   /**

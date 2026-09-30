@@ -25,6 +25,7 @@ import {
   invalidateTemporalAnnotation,
   type CreateTemporalAnnotationInput,
 } from "../enrichment/temporal-annotations/storage.js";
+import { TEMPORAL_WINDOW_MAX_SPAN_MS } from "../http/temporal-query-params.js";
 import { createBrief, getBrief, type CreateBriefInput } from "./storage/briefs.js";
 import {
   appendOpenLoopLedger,
@@ -32,7 +33,6 @@ import {
   updateOpenLoop,
   type CreateOpenLoopInput,
 } from "./storage/open-loops.js";
-import { TEMPORAL_ANNOTATION_WINDOW_MAX_SPAN_MS } from "./temporal-annotation-window.js";
 import type { StatusCache } from "../http/services/StatusCache.js";
 import type { BriefsFeatureStatus } from "./feature-gate.js";
 import type Database from "better-sqlite3";
@@ -207,7 +207,7 @@ function timeWindow(qs: string, token = ADMIN_TOKEN) {
 }
 
 function temporalWindow(qs: string, token = ADMIN_TOKEN) {
-  return app.request(`/briefs/temporal/window${qs}`, {
+  return app.request(`/temporal/window${qs}`, {
     headers: { authorization: `Bearer ${token}` },
   });
 }
@@ -218,7 +218,7 @@ function canonicalTemporalAnnotationDetail(
   token = ADMIN_TOKEN,
 ) {
   return app.request(
-    `/briefs/temporal/annotations/${encodeURIComponent(id)}?timeZone=${encodeURIComponent(timeZone)}`,
+    `/temporal/annotations/${encodeURIComponent(id)}?timeZone=${encodeURIComponent(timeZone)}`,
     { headers: { authorization: `Bearer ${token}` } },
   );
 }
@@ -1004,13 +1004,9 @@ describe("GET /briefs/time-index/window", () => {
     expect((await timeWindow(`?from=abc&to=${to}`)).status).toBe(400); // non-numeric
     expect((await timeWindow(`?from=1.5&to=${to}`)).status).toBe(400); // non-integer
     expect((await timeWindow(`?from=${to}&to=${from}`)).status).toBe(400); // inverted
-    expect(
-      (await timeWindow(`?from=0&to=${TEMPORAL_ANNOTATION_WINDOW_MAX_SPAN_MS + 1}`)).status,
-    ).toBe(400);
+    expect((await timeWindow(`?from=0&to=${TEMPORAL_WINDOW_MAX_SPAN_MS + 1}`)).status).toBe(400);
     // Exactly the max span is still a valid window.
-    expect((await timeWindow(`?from=0&to=${TEMPORAL_ANNOTATION_WINDOW_MAX_SPAN_MS}`)).status).toBe(
-      200,
-    );
+    expect((await timeWindow(`?from=0&to=${TEMPORAL_WINDOW_MAX_SPAN_MS}`)).status).toBe(200);
     const thirteen = Array.from({ length: 13 }, (_, i) => `k${i}`).join(",");
     expect((await timeWindow(`${WINDOW_QS}&kinds=${thirteen}`)).status).toBe(400);
     // limit: junk, zero, and over-cap all 400; the bounds are valid.
@@ -1110,7 +1106,7 @@ describe("GET /briefs/time-index/window", () => {
   });
 });
 
-describe("GET /briefs/temporal/window", () => {
+describe("GET /temporal/window", () => {
   const temporalQs = `${WINDOW_QS}&timeZone=Europe%2FLondon`;
 
   function seedDocumentProjection(): string {
@@ -1237,17 +1233,18 @@ describe("GET /briefs/temporal/window", () => {
     expect(JSON.stringify(body)).not.toMatch(/document_temporal_projections/);
   });
 
-  test("validates the canonical contract, feature gate, and admin scope", async () => {
+  test("validates the canonical contract and admin scope, whatever the Brain's state", async () => {
     expect((await temporalWindow(WINDOW_QS)).status).toBe(400);
     expect((await temporalWindow(`${WINDOW_QS}&timeZone=Not%2FAZone`)).status).toBe(400);
     expect((await temporalWindow(`${temporalQs}&origins=projection,wrong`)).status).toBe(400);
     expect((await temporalWindow(`${temporalQs}&limit=101`)).status).toBe(400);
     expect((await temporalWindow(temporalQs, READ_TOKEN)).status).toBe(403);
-    expect((await app.request(`/briefs/temporal/window${temporalQs}`)).status).toBe(401);
+    expect((await app.request(`/temporal/window${temporalQs}`)).status).toBe(401);
+    // The time index exists without the Brain: served when it is hidden too.
     status = { visible: true, enabled: true, modelAssigned: false, active: false };
     expect((await temporalWindow(temporalQs)).status).toBe(200);
-    status = { visible: false, enabled: false, modelAssigned: true, active: false };
-    expect((await temporalWindow(temporalQs)).status).toBe(404);
+    status = { visible: false, enabled: false, modelAssigned: false, active: false };
+    expect((await temporalWindow(temporalQs)).status).toBe(200);
   });
 
   test("resolves an addressable annotation in the requested timezone outside any UI window", async () => {
@@ -1267,15 +1264,13 @@ describe("GET /briefs/temporal/window", () => {
     });
   });
 
-  test("guards canonical annotation detail by visibility, timezone, scope, and existence", async () => {
+  test("guards canonical annotation detail by timezone, scope, and existence", async () => {
     const id = seedTemporalAnnotation({ id: "ta_detail_guard" });
     expect((await canonicalTemporalAnnotationDetail(id, "Not/AZone")).status).toBe(400);
     expect((await canonicalTemporalAnnotationDetail("ta_missing")).status).toBe(404);
     expect((await canonicalTemporalAnnotationDetail(id, "UTC", READ_TOKEN)).status).toBe(403);
-    status = { visible: true, enabled: true, modelAssigned: false, active: false };
+    status = { visible: false, enabled: false, modelAssigned: false, active: false };
     expect((await canonicalTemporalAnnotationDetail(id)).status).toBe(200);
-    status = { visible: false, enabled: false, modelAssigned: true, active: false };
-    expect((await canonicalTemporalAnnotationDetail(id)).status).toBe(404);
   });
 });
 

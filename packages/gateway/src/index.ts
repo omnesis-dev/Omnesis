@@ -18,7 +18,6 @@ import {
   createLogger,
   DEFAULT_CONFIG_DIR,
   ensurePrivateDirSync,
-  experimentalEnabled,
   experimentalVisible,
   loadManifest,
   primeSecretFileKeyCache,
@@ -55,7 +54,13 @@ import {
   ENTAILMENT_GATE_SPEND_MECHANISM,
 } from "./agent/spend-recorder.js";
 import { bootDateEnrichment } from "./enrichment/dates/task.js";
-import { resolveDateEnrichmentSettings } from "./enrichment/dates/config.js";
+import { recordDecisionSpend } from "./brain/decision-call.js";
+import { bootMentionWorthGate } from "./enrichment/dates/worth-gate-task.js";
+import { countPendingMentionJudgements } from "./enrichment/dates/mention-judgements.js";
+import {
+  MENTION_WORTH_GATE_SPEND_MECHANISM,
+  resolveDateEnrichmentSettings,
+} from "./enrichment/dates/config.js";
 import { countPendingDateExtraction } from "./enrichment/dates/storage.js";
 import { resolveBriefsVirtualClock } from "./brain/virtual-clock.js";
 import { backgroundAgentBackendResolver } from "./brain/backend-resolver.js";
@@ -1213,6 +1218,38 @@ const subscriptionsPolicyStore = new PrivacyPolicyStore(configDir, { db, writeGa
 // same initialized authorization state on a fresh gateway.
 await subscriptionsPolicyStore.get();
 
+// Decision model — typed judgements (TypeSafe Jev, or recorded replay). The
+// Brain's worth gate asks it whether an email is worth a background-agent run,
+// and the mention worth gate whether an email's date mentions belong in time
+// queries; unset, both gates are absent. Re-resolved per use, so assigning Jev or pasting
+// a key from the portal takes effect without a restart.
+const decisionService = new DecisionService({
+  resolveAssignment: () => inferenceRegistry.resolve("decision"),
+  readTypeSafeApiKey: () => resolveTypeSafeApiKey(configDir),
+  defaultReplayFixture: () => process.env.OMNESIS_DECISION_FIXTURE || undefined,
+});
+
+// The mention worth gate hides date mentions from email judged not worth
+// recording — only while its setting is on and the decision model is ready.
+// Every time query asks, and resolving the model reads its key file, so the
+// answer is held for a few seconds.
+const MENTION_WORTH_GATE_ACTIVE_TTL_MS = 5_000;
+let mentionWorthGateActiveCache: { value: boolean; at: number } | null = null;
+const mentionWorthGateActive = (): boolean => {
+  const now = Date.now();
+  if (
+    mentionWorthGateActiveCache &&
+    now - mentionWorthGateActiveCache.at < MENTION_WORTH_GATE_ACTIVE_TTL_MS
+  ) {
+    return mentionWorthGateActiveCache.value;
+  }
+  const value =
+    resolveDateEnrichmentSettings(configStore.get().enrichment).worthGate &&
+    decisionService.get() !== null;
+  mentionWorthGateActiveCache = { value, at: now };
+  return value;
+};
+
 const agentLifecycle = new AgentLifecycle({
   inferenceRegistry,
   config,
@@ -1251,6 +1288,7 @@ const agentLifecycle = new AgentLifecycle({
   // Read-worker gate — `lookup_people` runs its heavy assembly off the main
   // event loop (fires on nearly every agent turn).
   personLookupGate: ioGate,
+  mentionWorthGateActive,
   deleteDocumentIndexBatch: async (documentId, limit, sourceDeleted) => {
     return indexerLifecycle.deleteDocumentIndexBatch(documentId, limit, sourceDeleted);
   },
@@ -1413,11 +1451,33 @@ const backgroundJobs = new BackgroundJobsRegistry({
 });
 backgroundJobs.start();
 
-// Date-enrichment pass (experimental): extract dates from every document,
-// resolved against its emission date. Registered always but self-gates each
-// tick on experimental + the enrichment.dates.enabled knob; the io→cpu→writer
-// split keeps it off every user-serving lane. `kick` nudges it when new docs
-// land (wired into onDocumentsUpserted below).
+// The mention worth gate judges the documents date extraction queues; each
+// extraction tick that stores documents kicks it.
+const mentionWorthGate = bootMentionWorthGate({
+  scheduler,
+  backgroundJobs,
+  ioGate,
+  writeGate,
+  getSettings: () => resolveDateEnrichmentSettings(configStore.get().enrichment),
+  getDecision: () => decisionService.get(),
+  recordSpend: (modelId, inputTokens) =>
+    recordDecisionSpend(
+      writeGate,
+      cognitionSpendDay(Date.now()),
+      MENTION_WORTH_GATE_SPEND_MECHANISM,
+      modelId,
+      inputTokens,
+    ),
+  countPending: () => countPendingMentionJudgements(db),
+  active: mentionWorthGateActive,
+  log: log.child("enrichment:mention-worth-gate"),
+});
+
+// Date-enrichment pass: extract dates from every document, resolved against
+// the document's own date. Registered always but self-gates each tick on the
+// enrichment.dates.enabled knob; the io→cpu→writer split keeps it off every
+// user-serving lane. `kick` nudges it when new docs land (wired into
+// onDocumentsUpserted below).
 const dateEnrichment = bootDateEnrichment({
   scheduler,
   backgroundJobs,
@@ -1426,6 +1486,7 @@ const dateEnrichment = bootDateEnrichment({
   writeGate,
   getSettings: () => resolveDateEnrichmentSettings(configStore.get().enrichment),
   countPending: () => countPendingDateExtraction(db),
+  onApplied: mentionWorthGate.kick,
   log: log.child("enrichment:dates"),
 });
 
@@ -1621,16 +1682,6 @@ const ocrService = new OcrService({
     getGgufConfig: () => configStore.get().inference?.ocr?.gguf,
     getPageConcurrency: () => configStore.get().inference?.ocr?.pageConcurrency,
   },
-});
-
-// Decision model — typed judgements (TypeSafe Jev, or recorded replay). The
-// Brain's worth gate asks it whether an email is worth a background-agent run;
-// unset, the gate is absent. Re-resolved per use, so assigning Jev or pasting
-// a key from the portal takes effect without a restart.
-const decisionService = new DecisionService({
-  resolveAssignment: () => inferenceRegistry.resolve("decision"),
-  readTypeSafeApiKey: () => resolveTypeSafeApiKey(configDir),
-  defaultReplayFixture: () => process.env.OMNESIS_DECISION_FIXTURE || undefined,
 });
 
 // Entailment verifier — the annotation write gate's entailment firewall.
@@ -2204,6 +2255,7 @@ const app = createServer(db, DB_PATH, {
   indexDb,
   searchPipeline,
   personLookupGate: ioGate,
+  mentionWorthGateActive,
   searchSnapshot,
   agentRouteDeps: agentLifecycle.routeDeps,
   privacyPolicyStore: subscriptionsPolicyStore,
@@ -2446,9 +2498,7 @@ const briefJudge = new LlmBriefJudge({
 const activeDerivationStages = (): readonly DerivationStage[] =>
   DERIVATION_STAGES.filter(
     (stage) =>
-      stage.id !== "dates" ||
-      (experimentalEnabled() &&
-        resolveDateEnrichmentSettings(configStore.get().enrichment).enabled),
+      stage.id !== "dates" || resolveDateEnrichmentSettings(configStore.get().enrichment).enabled,
   );
 
 // Durable conversational memory and its evidence lifecycle are available in every mode.

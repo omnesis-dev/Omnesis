@@ -58,6 +58,7 @@ import { queueTranscriptEviction } from "../brain/transcript-eviction.js";
 import {
   createExtractedDatesTables,
   createDatesUnprocessedIndex,
+  addDateMentions,
 } from "../enrichment/dates/storage.js";
 import {
   cascadeTemporalAnnotationPrivacyDelete,
@@ -4701,12 +4702,17 @@ export const MIGRATIONS: readonly Migration[] = [
     },
   },
   {
+    version: 185,
+    description: "store date mentions by day for the temporal query and rescan every document",
+    up: addDateMentions,
+  },
+  {
     // A voice note's gateway transcript stamps when it replaced the note's
     // text, so clients tell it apart from the user's own edit. Existing notes
     // were never transcribed that way and keep a null stamp. Idempotent via
     // the pragma_table_info guard, and a no-op on a fresh DB whose table
     // already carries the column.
-    version: 185,
+    version: 186,
     description: "stamp when a voice note's gateway transcript replaced its text",
     up(db) {
       const cols = db

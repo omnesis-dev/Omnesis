@@ -57,7 +57,7 @@ const TAIL_VERSIONS = Array.from(
  * `windBack` to undo; its input is planted by the test that replays it, and
  * it is named here on the same terms as the rest.
  */
-const WOUND_BACK = [172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185];
+const WOUND_BACK = [172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186];
 
 let dir: string;
 let dbPath: string;
@@ -176,6 +176,21 @@ function windBack(db: Db): void {
       .some((row) => row.name === column);
     if (has) db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
   }
+  db.exec("DROP INDEX IF EXISTS idx_document_extracted_dates_mention_start");
+  db.exec("DROP INDEX IF EXISTS idx_document_extracted_dates_mention_range");
+  db.exec("DROP INDEX IF EXISTS idx_document_extracted_dates_mention_thread");
+  db.exec("DROP TABLE IF EXISTS date_mention_judgements");
+  const dateColumns = db
+    .prepare<[], { name: string }>(
+      "SELECT name FROM pragma_table_xinfo('document_extracted_dates')",
+    )
+    .all()
+    .map((row) => row.name);
+  for (const column of ["mention_start_day", "mention_end_day", "mention_deadline", "thread_key"]) {
+    if (dateColumns.includes(column)) {
+      db.exec(`ALTER TABLE document_extracted_dates DROP COLUMN ${column}`);
+    }
+  }
   db.exec(`DELETE FROM schema_migrations WHERE version > ${BEFORE_TAIL}`);
   db.exec(`PRAGMA user_version = ${BEFORE_TAIL}`);
 }
@@ -292,6 +307,29 @@ describe("an install several versions behind, upgrading", () => {
             .map((row) => row.name),
         ).toContain(column);
       }
+      expect(
+        db
+          .prepare<[], { name: string }>(
+            "SELECT name FROM pragma_table_xinfo('document_extracted_dates')",
+          )
+          .all()
+          .map((row) => row.name),
+      ).toEqual(
+        expect.arrayContaining([
+          "mention_start_day",
+          "mention_end_day",
+          "mention_deadline",
+          "thread_key",
+        ]),
+      );
+      expect(
+        db
+          .prepare<
+            [],
+            { name: string }
+          >("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'date_mention_judgements'")
+          .get(),
+      ).toBeDefined();
     } finally {
       (db as unknown as Database.Database).close();
     }
