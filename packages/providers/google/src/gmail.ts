@@ -689,6 +689,7 @@ export class GmailSource {
     if (labels.includes("SPAM") || labels.includes("TRASH")) return { documents: [] };
 
     const payload = msg.payload;
+    await this.fetchDeferredBodyText(msg.id, payload);
     const getHeader = (name: string) => partHeader(payload, name) ?? "";
 
     const subject = getHeader("subject") || "(no subject)";
@@ -905,6 +906,28 @@ export class GmailSource {
     for (const child of part.parts ?? []) {
       this.walkAttachmentParts(child, result);
     }
+  }
+
+  /**
+   * Fill in body text Gmail left out of the message. A large text or HTML
+   * part comes back with an attachment id in place of its data, and read
+   * without it the message would lose its body. A part with a file name is an
+   * attached file, fetched with the attachments instead.
+   */
+  private async fetchDeferredBodyText(
+    messageId: string,
+    part: gmail_v1.Schema$MessagePart,
+  ): Promise<void> {
+    const isText = part.mimeType === "text/plain" || part.mimeType === "text/html";
+    if (isText && !part.filename && part.body?.attachmentId && !part.body.data) {
+      const res = await this.gmail.users.messages.attachments.get({
+        userId: "me",
+        messageId,
+        id: part.body.attachmentId,
+      });
+      if (res.data.data) part.body.data = res.data.data;
+    }
+    for (const child of part.parts ?? []) await this.fetchDeferredBodyText(messageId, child);
   }
 
   /**
