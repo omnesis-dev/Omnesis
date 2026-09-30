@@ -365,9 +365,20 @@ export interface DocumentMetadata {
    * batch deferral and the volume gates that exist to suppress noise the
    * user never meant for the assistant. Set by the producing source on its
    * own documents (a generic descriptor, never a source-name branch
-   * downstream). Omitted (never `false`) otherwise.
+   * downstream). Its written dates are also read loosely as time-index
+   * mentions: "next week" or "in October" counts. Omitted (never `false`)
+   * otherwise.
    */
   addressedToAgent?: boolean;
+
+  /**
+   * The calendar day (`YYYY-MM-DD`) that relative dates in the text are
+   * counted from, when the source knows the writer's own day better than its
+   * UTC timestamps do — a note captured just after local midnight is written
+   * on the local day. Absent: relative dates count from the document's last
+   * edit.
+   */
+  dateAnchorDay?: string;
 
   /**
    * Stable, model-safe context for independently authored entries aggregated

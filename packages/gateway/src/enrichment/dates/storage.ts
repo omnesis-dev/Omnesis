@@ -155,7 +155,9 @@ export function createDatesUnprocessedIndex(db: Db): void {
  * Fetch up to `limit` documents that still need date extraction, truncating
  * `content` to `maxChars` so a large body never bloats the io→main→cpu copy
  * (the extractor caps its own input to the same budget). `title` rides along
- * for the extractor's language routing. Newest documents first (the partial
+ * for the extractor's language routing. Relative dates count from the
+ * document's `metadata.dateAnchorDay` when its source sets one, else from its
+ * last edit; `addressed` carries `metadata.addressedToAgent`. Newest documents first (the partial
  * pending-age index serves exactly this), so live ingest clears the agent
  * readiness barrier promptly even while a large re-extraction backlog
  * drains behind it. Runs on the io pool's read-only handle.
@@ -169,7 +171,9 @@ export function fetchDateExtractionBatch(
     .prepare(
       `SELECT id, title, substr(content, 1, ?) AS content,
               LENGTH(content) AS contentLength,
-              COALESCE(source_updated_at, source_created_at) AS anchorAt,
+              COALESCE(json_extract(metadata, '$.dateAnchorDay'),
+                       source_updated_at, source_created_at) AS anchorAt,
+              json_extract(metadata, '$.addressedToAgent') IS 1 AS addressed,
               source_id || char(0) || COALESCE(
                 json_extract(metadata, '$.extra.threadId'),
                 json_extract(metadata, '$.extra.conversationId')
@@ -179,7 +183,13 @@ export function fetchDateExtractionBatch(
         ORDER BY ingested_at DESC
         LIMIT ?`,
     )
-    .all(maxChars, limit) as DateExtractionDocRow[];
+    .all(maxChars, limit)
+    .map((raw) => {
+      const { addressed, ...row } = raw as Omit<DateExtractionDocRow, "addressed"> & {
+        addressed: number;
+      };
+      return addressed === 1 ? { ...row, addressed: true } : row;
+    });
 }
 
 export interface ApplyExtractedDatesResult {

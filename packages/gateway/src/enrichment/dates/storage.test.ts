@@ -97,6 +97,23 @@ describe("date-enrichment storage", () => {
     expect(countPendingDateExtraction(db)).toBe(2);
   });
 
+  it("counts relative dates from the source's anchor day and flags addressed content", () => {
+    upsertDocuments(db, [
+      makeDoc({
+        externalId: "note-day",
+        metadata: { addressedToAgent: true, dateAnchorDay: "2026-10-01" },
+        sourceUpdatedAt: "2026-09-30T23:30:00.000Z",
+      }),
+      makeDoc({ externalId: "mail", sourceUpdatedAt: "2026-09-30T23:30:00.000Z" }),
+    ]);
+    const rows = Object.fromEntries(
+      fetchDateExtractionBatch(db, 10, 1000).map((row) => [row.id, row]),
+    );
+    expect(rows[docId(db, "note-day")]).toMatchObject({ anchorAt: "2026-10-01", addressed: true });
+    expect(rows[docId(db, "mail")]).toMatchObject({ anchorAt: "2026-09-30T23:30:00.000Z" });
+    expect(rows[docId(db, "mail")]).not.toHaveProperty("addressed");
+  });
+
   it("reads each document's conversation with its batch row", () => {
     upsertDocuments(db, [
       makeDoc({ externalId: "threaded", metadata: { extra: { threadId: "t-1" } } }),

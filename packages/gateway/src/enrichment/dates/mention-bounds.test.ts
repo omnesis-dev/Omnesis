@@ -236,4 +236,54 @@ describe("mentionDays", () => {
       ),
     ).toEqual(days("2027-09-28", "2027-10-01"));
   });
+
+  it("reads what the user addressed to the assistant loosely", () => {
+    const addressed = { addressed: true };
+    const week = date({
+      kind: "range",
+      resolvedStart: "2026-10-05",
+      resolvedEnd: "2026-10-12",
+      text: "next week",
+      timex: "2026-W41",
+      relative: true,
+    });
+    expect(mentionDays(week)).toBeNull();
+    expect(mentionDays(week, addressed)).toEqual(days("2026-10-05", "2026-10-12"));
+
+    const month = date({ resolvedStart: "2026-10", text: "in October", timex: "XXXX-10" });
+    expect(mentionDays(month)).toBeNull();
+    expect(mentionDays(month, addressed)).toEqual(days("2026-10-01", "2026-11-01"));
+
+    const within = date({
+      kind: "range",
+      resolvedStart: "2026-10-01",
+      resolvedEnd: "2026-10-11",
+      text: "within 10 days",
+      timex: "(2026-10-01,2026-10-11,P10D)",
+    });
+    expect(mentionDays(within, addressed)).toEqual(days("2026-10-01", "2026-10-12"));
+
+    // Still not dates: a digit run, a year, a span past the cap.
+    expect(
+      mentionDays(
+        date({ resolvedStart: "2048-01-05", text: "204815", timex: "2048-01-05" }),
+        addressed,
+      ),
+    ).toBeNull();
+    expect(
+      mentionDays(date({ resolvedStart: "2027", text: "2027", timex: "2027" }), addressed),
+    ).toBeNull();
+    expect(
+      mentionDays(
+        date({
+          kind: "range",
+          resolvedStart: "2026-10-01",
+          resolvedEnd: "2027-04-01",
+          text: "the next six months",
+          timex: "(2026-10-01,2027-04-01,P6M)",
+        }),
+        addressed,
+      ),
+    ).toBeNull();
+  });
 });

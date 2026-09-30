@@ -58,6 +58,8 @@ export interface DateExtractionDocRow {
   contentLength?: number;
   /** The conversation the document belongs to, for collapsing repeated mentions; null outside one. */
   threadKey?: string | null;
+  /** The user addressed the document to the assistant: its dates are read loosely as mentions. */
+  addressed?: boolean;
 }
 
 /** Per-document extraction output. */
@@ -714,7 +716,7 @@ export function extractDatesForDocs(
     return {
       id: row.id,
       dates: scan.dates,
-      mentions: scan.dates.map(mentionDays),
+      mentions: scan.dates.map((date) => mentionDays(date, { addressed: row.addressed === true })),
       threadKey: row.threadKey ?? null,
       truncated: charTruncated || scan.budgetExhausted,
     };

@@ -351,6 +351,88 @@ describe("temporal query mentions — the worth gate on a stable gateway", () =>
       db.close();
     }
   }, 240_000);
+
+  test("a note told to Omnesis reaches the time index, read loosely and never judged", async () => {
+    // Captured at 00:30 London time on Wednesday 30 September, which is still
+    // Tuesday in UTC: "tomorrow" is Thursday 1 October only when counted from
+    // the note's own day.
+    const captured = await fetch(`${harness.gatewayUrl}/notes`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${harness.apiKey}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        text: "Call the plumber tomorrow about the boiler. Book the ferry for next week.",
+        capturedAt: "2026-09-29T23:30:00.000Z",
+        capturedTimeZoneId: "Europe/London",
+        capturedUtcOffsetSeconds: 3600,
+        surface: "portal",
+      }),
+    });
+    expect(captured.status).toBeLessThan(300);
+
+    const db = new Database(harness.getDbPath(), { readonly: true });
+    let noteId: string;
+    try {
+      const deadline = Date.now() + 60_000;
+      for (;;) {
+        const row = db
+          .prepare<[], { id: string; scanned: string | null; verdict: string | null }>(
+            `SELECT d.id, d.dates_extracted_at AS scanned, j.verdict
+               FROM documents d LEFT JOIN date_mention_judgements j ON j.document_id = d.id
+              WHERE d.source_id = 'omnesis-notes' AND d.external_id = '2026-09-30'`,
+          )
+          .get();
+        if (row?.scanned && row.verdict && row.verdict !== "pending") {
+          // Not an email: exempt, never sent to the decision model.
+          expect(row.verdict).toBe("exempt");
+          noteId = row.id;
+          break;
+        }
+        if (Date.now() > deadline)
+          throw new Error(`Note not scanned and settled: ${JSON.stringify(row)}`);
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    } finally {
+      db.close();
+    }
+    expect(
+      decision.calls.some((call) =>
+        String((call.request.state as { subject?: unknown }).subject).startsWith("Notes"),
+      ),
+    ).toBe(false);
+
+    const authorized = await authorizeMcpClient(
+      { gatewayUrl: harness.gatewayUrl, apiKey: harness.apiKey },
+      {
+        principalName: "Note follow-up assistant",
+        grantName: "Note follow-up access",
+        credentialLabel: "Fictional note desktop",
+        capabilities: ["direct"],
+      },
+    );
+    try {
+      const mentionsOf = async (from: string, to: string) => {
+        const result = await authorized.client.callTool({
+          name: "temporal_query",
+          arguments: { from, to, timeZone: "Europe/London", origins: ["mention"], limit: 100 },
+        });
+        expect(result.isError).not.toBe(true);
+        return (
+          result.structuredContent as {
+            data: { items: Array<{ mention?: { documentId: string; text: string } }> };
+          }
+        ).data.items
+          .filter((item) => item.mention?.documentId === noteId)
+          .map((item) => item.mention!.text);
+      };
+      // "tomorrow" lands on Thursday 1 October, not on the UTC date's next day.
+      expect(await mentionsOf("2026-10-01", "2026-10-01")).toContain("tomorrow");
+      expect(await mentionsOf("2026-09-30", "2026-09-30")).not.toContain("tomorrow");
+      // "next week" names no day, yet counts for a note: the week of 5 October.
+      expect(await mentionsOf("2026-10-05", "2026-10-11")).toContain("next week");
+    } finally {
+      await closeAuthorized(authorized);
+    }
+  }, 120_000);
 });
 
 async function closeAuthorized(authorized: AuthorizedMcpClient): Promise<void> {

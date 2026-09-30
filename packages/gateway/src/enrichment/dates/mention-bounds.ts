@@ -18,6 +18,12 @@
  *   "mid-2022"), or counts days from the document's own date ("the next 7
  *   days"). A span the phrase lays out day by day ("1 to 3 October",
  *   "26 October – 2 November") stays.
+ *
+ * Content the user addressed to the assistant (`metadata.addressedToAgent`,
+ * such as a note told to it) is read loosely instead: the user is asking to
+ * be reminded, so "next week", "in October" or "within ten days" is a date to
+ * follow up on, not noise. Only digit runs, years and spans past the cap are
+ * left out of it.
  */
 
 import type { ExtractedDate } from "@omnesis/types";
@@ -90,21 +96,27 @@ function bounded(startDay: string, endDay: string): Days | null {
   return span > 0 && span <= MENTION_MAX_SPAN_DAYS ? { startDay, endDay } : null;
 }
 
+/** How strictly a document's dates are read as mentions. */
+export interface MentionReading {
+  /** The user addressed the document to the assistant: every date it can place counts. */
+  addressed?: boolean;
+}
+
 /** The days a date covers as a mention and whether it is a deadline, or null when it is not one. */
-export function mentionDays(date: ExtractedDate): MentionDays | null {
-  const days = coveredDays(date);
+export function mentionDays(date: ExtractedDate, reading: MentionReading = {}): MentionDays | null {
+  const days = coveredDays(date, reading.addressed === true);
   if (!days) return null;
   return { ...days, deadline: Boolean(date.mod?.startsWith("before")) };
 }
 
-function coveredDays(date: ExtractedDate): Days | null {
+function coveredDays(date: ExtractedDate, addressed: boolean): Days | null {
   if (DIGITS_ONLY.test(date.text)) return null;
   const { resolvedStart: start, resolvedEnd: end } = date;
 
   if (start && end) {
     // Clock times within one day ("Thursday between 9 and 1pm") are that day.
     if (start === end) return bounded(start, addDays(start, 1));
-    if (!DAY_NUMBER.test(date.text) || DURATION.test(date.text)) return null;
+    if (!addressed && (!DAY_NUMBER.test(date.text) || DURATION.test(date.text))) return null;
     return bounded(start, INCLUSIVE_END_TIMEX.test(date.timex) ? addDays(end, 1) : end);
   }
 
@@ -120,7 +132,7 @@ function coveredDays(date: ExtractedDate): Days | null {
     // A month counts only when the phrase writes its year: "October 2026",
     // not "October", "next month" or "in 2 months".
     const named = MONTH.test(date.timex) && WRITTEN_YEAR.test(date.text);
-    return named ? bounded(`${point}-01`, nextMonth(point)) : null;
+    return named || addressed ? bounded(`${point}-01`, nextMonth(point)) : null;
   }
   return null;
 }
