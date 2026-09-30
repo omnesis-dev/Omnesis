@@ -112,18 +112,30 @@ export class VoiceNoteService {
       latitude: input.latitude,
       longitude: input.longitude,
       placeName: input.placeName,
+      // The day's document is published once the recording is queued, so a
+      // reader that waits on pending transcriptions never sees the note
+      // without it.
+      deferProjection: true,
     });
-    if (entry.text !== savedText) return { id: entry.id };
-    const queued = await this.deps.writeGate.enqueueVoiceNote({
-      noteId: entry.id,
-      audio: input.audio,
-      mimeType: input.mimeType,
-      language: input.language ?? null,
-      savedText,
-      placeholder: fallback.length === 0,
-      nextAttemptAt: this.now().toISOString(),
-      createdAt: this.now().toISOString(),
-    });
+    if (entry.text !== savedText) {
+      this.deps.notes().project(entry.day);
+      return { id: entry.id };
+    }
+    let queued: boolean;
+    try {
+      queued = await this.deps.writeGate.enqueueVoiceNote({
+        noteId: entry.id,
+        audio: input.audio,
+        mimeType: input.mimeType,
+        language: input.language ?? null,
+        savedText,
+        placeholder: fallback.length === 0,
+        nextAttemptAt: this.now().toISOString(),
+        createdAt: this.now().toISOString(),
+      });
+    } finally {
+      this.deps.notes().project(entry.day);
+    }
     if (queued) {
       log.info(
         `Queued voice note ${entry.id} (${input.audio.byteLength} bytes, ${input.mimeType})`,

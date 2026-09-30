@@ -41,7 +41,11 @@
 import { randomUUID } from "node:crypto";
 import { QueueTracker } from "../../background-jobs/trackers.js";
 import { periodicJob } from "../../background-jobs/scheduler-job.js";
-import { getPendingRunByDedupeKey, listBarrierHeldDataRuns } from "../storage/run-queue.js";
+import {
+  getPendingRunByDedupeKey,
+  listBarrierHeldDataRuns,
+  type BarrierHeldRun,
+} from "../storage/run-queue.js";
 import {
   DERIVATION_STAGES,
   derivationReadyDocIds,
@@ -109,6 +113,16 @@ export interface BriefsWakerDrainOpts {
    * column, so including it would hold every run for the full barrier.
    */
   activeDerivationStages?: () => readonly DerivationStage[];
+  /**
+   * Which of these documents still hold content due to be replaced — a voice
+   * note the gateway is still transcribing. A run for one is held until that
+   * content lands or is given up on, up to `pendingContentBarrierMs`, so the
+   * agent reasons over the final text once rather than the interim text first.
+   * Omitted: no document is ever pending.
+   */
+  contentPending?: (docIds: readonly string[]) => Set<string>;
+  /** Ceiling (ms) on the pending-content hold, re-read per tick; 0 disables it. */
+  pendingContentBarrierMs?: () => number;
   clock?: Clock;
   intervalMs?: number;
   idleMs?: number;
@@ -193,6 +207,9 @@ export function briefsWakerDrainTask(
   // back). Additive, so an overlapping `flushNow` and tick both count.
   let inFlight = 0;
 
+  const contentPendingFor = (docId: string): boolean =>
+    opts.contentPending?.([docId]).has(docId) ?? false;
+
   async function flush(): Promise<{ hadWork: boolean; enqueued: number }> {
     const wakes = buffer.drain();
     if (wakes.length === 0) {
@@ -227,19 +244,27 @@ export function briefsWakerDrainTask(
         // assistant deliberately has already bypassed every volume gate and
         // carries no debounce, so making it wait on background derivation would
         // contradict the one property that marker exists to guarantee.
+        //
+        // Content still due to be replaced is a third wait that applies to
+        // `immediate` wakes too: the point of holding is to hand the agent the
+        // user's own words once, not a rough interim version first.
         const debounceUntil = now + wake.debounceMs;
-        const barrierMs = wake.immediate ? 0 : (opts.derivationBarrierMs?.() ?? 0);
-        const barrierUntil = now + barrierMs;
-        const derivation = barrierMs > 0 ? documentDerivationState(db, wake.docId, stages()) : null;
+        const derivationBarrierMs = wake.immediate ? 0 : (opts.derivationBarrierMs?.() ?? 0);
+        const derivation =
+          derivationBarrierMs > 0 ? documentDerivationState(db, wake.docId, stages()) : null;
+        const derivationHold =
+          derivation !== null && derivation.exists && !derivation.complete
+            ? derivationBarrierMs
+            : 0;
+        const pendingContentHold = contentPendingFor(wake.docId)
+          ? (opts.pendingContentBarrierMs?.() ?? 0)
+          : 0;
+        const barrierUntil = now + Math.max(derivationHold, pendingContentHold);
         // Only a barrier deadline that actually pushes the run out is a hold; if
         // the debounce already runs longer, there is nothing for the release pass
         // to give back and the row must not advertise a claim on its schedule.
-        const heldForDerivation =
-          derivation !== null &&
-          derivation.exists &&
-          !derivation.complete &&
-          barrierUntil > debounceUntil;
-        const notBefore = heldForDerivation ? barrierUntil : debounceUntil;
+        const held = barrierUntil > debounceUntil;
+        const notBefore = held ? barrierUntil : debounceUntil;
         try {
           const pending = getPendingRunByDedupeKey(db, dedupeKey);
           const payload = buildDataRunPayload(wake, pending?.payload ?? null, now, opts.diffLimits);
@@ -250,7 +275,7 @@ export function briefsWakerDrainTask(
               payload: {
                 ...payload,
                 debounceUntil,
-                ...(heldForDerivation ? { barrierUntil } : {}),
+                ...(held ? { barrierUntil } : {}),
               },
               notBefore,
               dedupeKey,
@@ -299,36 +324,57 @@ export function briefsWakerDrainTask(
    * slowest document it ever contained.
    */
   async function releaseReadyRuns(now: number): Promise<number> {
-    if ((opts.derivationBarrierMs?.() ?? 0) <= 0) return 0;
+    const derivationBarrierOn = (opts.derivationBarrierMs?.() ?? 0) > 0;
+    const pendingContentBarrierOn = (opts.pendingContentBarrierMs?.() ?? 0) > 0;
+    if (!derivationBarrierOn && !pendingContentBarrierOn) return 0;
     // A disabled engine has no runs to be timely for; leave the queue alone.
     if (!opts.isEnabled()) return 0;
     const held = listBarrierHeldDataRuns(db, now, READINESS_PASS_LIMIT);
     if (held.length === 0) return 0;
 
-    const ready = derivationReadyDocIds(
-      db,
-      held.map((r) => r.docId),
-      stages(),
+    const heldDocIds = held.map((r) => r.docId);
+    // A released run is ready on both counts: derived (when that barrier is
+    // on) and no longer waiting on content due to be replaced. Content
+    // addressed to the assistant is exempt from the derivation wait, so only
+    // its pending content can be holding it.
+    const releaseStages = derivationBarrierOn ? stages() : [];
+    const ready = derivationReadyDocIds(db, heldDocIds, releaseStages);
+    const stillPending = opts.contentPending?.(heldDocIds) ?? new Set<string>();
+    const released = await releaseWhere(
+      held.filter((r) => !r.immediate && ready.has(r.docId) && !stillPending.has(r.docId)),
+      releaseStages,
+      now,
     );
-    const entries = held
-      .filter((r) => ready.has(r.docId))
-      .map((r) => ({
-        id: r.id,
-        docId: r.docId,
-        observedDebounceUntil: r.debounceUntil,
-        nextAttemptAt: Math.max(now, r.debounceUntil),
-        expectedNextAttemptAt: r.barrierUntil,
-      }));
+    const releasedImmediate = await releaseWhere(
+      held.filter((r) => r.immediate && !stillPending.has(r.docId)),
+      [],
+      now,
+    );
+    const total = released + releasedImmediate;
+    if (total > 0) {
+      log.debug(`readiness barrier released ${total} data run(s) after datum became ready`);
+    }
+    return total;
+  }
+
+  async function releaseWhere(
+    runs: readonly BarrierHeldRun[],
+    releaseStages: readonly DerivationStage[],
+    now: number,
+  ): Promise<number> {
+    const entries = runs.map((r) => ({
+      id: r.id,
+      docId: r.docId,
+      observedDebounceUntil: r.debounceUntil,
+      nextAttemptAt: Math.max(now, r.debounceUntil),
+      expectedNextAttemptAt: r.barrierUntil,
+    }));
     if (entries.length === 0) return 0;
 
-    const released = await writeGate.pullForwardCognitionRuns(
+    return writeGate.pullForwardCognitionRuns(
       entries,
-      stages().map((stage) => stage.id),
+      releaseStages.map((stage) => stage.id),
     );
-    if (released > 0) {
-      log.debug(`readiness barrier released ${released} data run(s) after datum became ready`);
-    }
-    return released;
   }
 
   const task: PeriodicTask<unknown, IdleResult> = {

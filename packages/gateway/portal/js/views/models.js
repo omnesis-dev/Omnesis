@@ -462,8 +462,8 @@ export function GatewayDictationSetting() {
         conversations, Siri, and assistant requests that already carry their words are unaffected.
       </p>
       ${dictation.enabled && !dictation.modelAssigned
-        ? html`<div class="cap-detail-warn">
-            <strong>Not in use.</strong> ${dictation.reason ?? "No transcriber model can run."} Notes keep the phone's own transcript until a transcriber is available.
+        ? html`<div class="cap-detail-hint">
+            <strong>Not in use yet.</strong> ${dictation.reason ?? "No transcriber model can run."} Notes keep the phone's own transcript until a transcriber is available.
           </div>`
         : null}
       ${error ? html`<div class="cap-detail-warn" role="alert">${error}</div>` : null}

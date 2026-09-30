@@ -42,6 +42,7 @@ import { createReleaseCheckTask } from "./release-check/task.js";
 import { GatewayHttpShutdown } from "./gateway-http-shutdown.js";
 import { seedWebSourceMeta } from "./sources/web/source-meta.js";
 import { dictationFeatureStatus } from "./dictation/index.js";
+import { documentsAwaitingTranscription } from "./voice-notes/index.js";
 import {
   bootBriefs,
   briefsFeatureStatus,
@@ -2492,6 +2493,9 @@ await bootBriefs({
     activity: cognitionActivity,
     sweeps: sweepService,
     getSettings: () => resolveBrainSettings(configStore.get().brain),
+    // A notes day holding a voice note still being transcribed waits for the
+    // gateway's transcript before the Brain reads it.
+    contentPending: (docIds) => documentsAwaitingTranscription(db, docIds),
     activeDerivationStages,
     resolveBackend: resolveBackgroundAgentBackend,
     getDecision: () => decisionService.get(),

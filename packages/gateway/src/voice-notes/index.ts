@@ -16,4 +16,4 @@ export {
   MAX_AGE_MS,
 } from "./service.js";
 export type { VoiceNoteInput, VoiceNoteServiceDeps } from "./service.js";
-export { pendingVoiceNoteIds } from "./storage.js";
+export { pendingVoiceNoteIds, documentsAwaitingTranscription } from "./storage.js";

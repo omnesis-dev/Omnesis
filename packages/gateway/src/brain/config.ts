@@ -39,6 +39,11 @@ export const BRAIN_DEFAULTS = {
   // a datum the agent would already have waited 30m to reason about is not
   // made materially less timely by waiting the same span for its edges.
   derivationBarrier: "30m",
+  // Ceiling on waiting for content still due to be replaced (a voice note
+  // awaiting its gateway transcript). A first transcription attempt normally
+  // lands within minutes; retries can take hours, which is too long to hold a
+  // note the user addressed to the assistant.
+  pendingContentBarrier: "1h",
   recencyWindow: "7d",
   decay: {
     backoffBase: "1d",
@@ -162,6 +167,12 @@ export interface ResolvedBrainSettings {
    * picture, which the prompt states and the drain logs.
    */
   derivationBarrierMs: number;
+  /**
+   * Ceiling on how long a `data` run waits while its datum still holds content
+   * due to be replaced (a voice note awaiting its gateway transcript). Past it
+   * the run is claimed with the interim text.
+   */
+  pendingContentBarrierMs: number;
   /** Daily ceilings on background cognition; `null` per dimension = no limit. */
   budget: CognitionBudgetSettings;
   /** First stale-loop status-check delay for an UNDATED loop; doubles each check. */
@@ -364,6 +375,9 @@ export function resolveBrainSettings(settings?: BrainSettings): ResolvedBrainSet
     ),
     recencyWindowMs,
     derivationBarrierMs,
+    pendingContentBarrierMs: parseDuration(
+      settings?.pendingContentBarrier ?? BRAIN_DEFAULTS.pendingContentBarrier,
+    ),
     budget,
     decayBackoffBaseMs: parseDuration(
       settings?.decay?.backoffBase ?? BRAIN_DEFAULTS.decay.backoffBase,

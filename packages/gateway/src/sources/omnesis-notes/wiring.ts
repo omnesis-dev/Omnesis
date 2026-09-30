@@ -91,6 +91,12 @@ export interface CaptureNoteInput {
   longitude?: number;
   /** Device-side reverse-geocoded place name (e.g. "Paris"). */
   placeName?: string;
+  /**
+   * Leave the day document as it is for now; the caller calls `project(day)`
+   * once whatever must accompany the note (a voice note's queued recording)
+   * is in place, so readers never see the day without it.
+   */
+  deferProjection?: boolean;
 }
 
 export interface OmnesisNotesRuntime {
@@ -133,6 +139,8 @@ export interface OmnesisNotesRuntime {
    * debounce window before SIGTERM still lands as a corpus document.
    */
   flushAll(): Promise<void>;
+  /** Re-render a day's document; see `CaptureNoteInput.deferProjection`. */
+  project(day: string): void;
   /** Tear-down on gateway shutdown. Drops timers; does NOT flush. */
   dispose(): void;
 }
@@ -220,7 +228,7 @@ export function bootOmnesisNotes(deps: OmnesisNotesBootDeps): OmnesisNotesRuntim
         // read-side WAL visibility catches up.
         throw new Error(`captured note ${entry.id} is not visible yet; retry`);
       }
-      upserter.enqueue(entry.day);
+      if (!input.deferProjection) upserter.enqueue(entry.day);
       log.info(`Captured note ${entry.id} for ${entry.day} (${text.length} chars)`);
       return entry;
     },
@@ -259,6 +267,7 @@ export function bootOmnesisNotes(deps: OmnesisNotesBootDeps): OmnesisNotesRuntim
       upserter.enqueue(day);
       return true;
     },
+    project: (day) => upserter.enqueue(day),
     listDay: (day) =>
       listNoteEntriesForDay(deps.readDb, day ?? dayKeyFor(new Date().toISOString())),
     listHistory: (options) =>

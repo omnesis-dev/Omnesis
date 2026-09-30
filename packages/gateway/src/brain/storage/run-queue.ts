@@ -499,6 +499,11 @@ export interface BarrierHeldRun {
   readonly barrierUntil: number;
   /** When the run would be claimable on its debounce alone; the release target. */
   readonly debounceUntil: number;
+  /**
+   * Content addressed to the assistant: exempt from the derivation wait, so
+   * only a pending-content hold can be holding it.
+   */
+  readonly immediate: boolean;
 }
 
 /**
@@ -514,18 +519,19 @@ export interface BarrierHeldRun {
  * The predicate lives in SQL rather than in the caller so `limit` bounds
  * CANDIDATES rather than rows scanned: filtering after a plain "not yet due"
  * read would let a population of debounce-deferred runs fill the window every
- * tick and starve the barrier's own rows indefinitely. Only the four scalars
- * the decision needs are selected — a `data` payload can carry a whole
+ * tick and starve the barrier's own rows indefinitely. Only the scalars the
+ * decision needs are selected — a `data` payload can carry a whole
  * pre-update document body, and parsing 200 of those per tick would put
  * megabytes of JSON on the event loop to read two numbers.
  */
 export function listBarrierHeldDataRuns(db: Db, now: number, limit: number): BarrierHeldRun[] {
   return db
-    .prepare<[number, number], BarrierHeldRun>(
+    .prepare<[number, number], Omit<BarrierHeldRun, "immediate"> & { immediate: number }>(
       `SELECT id,
               json_extract(payload_json, '$.docId')         AS docId,
               json_extract(payload_json, '$.barrierUntil')  AS barrierUntil,
-              json_extract(payload_json, '$.debounceUntil') AS debounceUntil
+              json_extract(payload_json, '$.debounceUntil') AS debounceUntil,
+              COALESCE(json_extract(payload_json, '$.immediate'), 0) AS immediate
          FROM cognition_runs
         WHERE status = 'pending'
           AND kind = 'data'
@@ -537,7 +543,8 @@ export function listBarrierHeldDataRuns(db: Db, now: number, limit: number): Bar
         LIMIT ?`,
     )
     .all(now, limit)
-    .filter((r) => typeof r.debounceUntil === "number");
+    .filter((r) => typeof r.debounceUntil === "number")
+    .map((r) => ({ ...r, immediate: Boolean(r.immediate) }));
 }
 
 /**

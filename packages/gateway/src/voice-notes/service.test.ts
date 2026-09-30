@@ -34,6 +34,8 @@ let service: VoiceNoteService;
 let now: Date;
 let readiness: TranscriberReadiness;
 let transcripts: (TranscriptionResult | null)[];
+/** Called with each day document the notes runtime publishes. */
+let onIngest: (() => void) | null;
 let calls: { mimeType: string; language?: string; bytes: number; minTimeoutMs?: number }[];
 /** While set, a transcription waits until `release` is called. */
 let held: Promise<void> | null;
@@ -43,6 +45,7 @@ function hold(): void {
   held = new Promise((resolve) => {
     release = () => {
       held = null;
+      onIngest = null;
       resolve();
     };
   });
@@ -82,7 +85,9 @@ beforeEach(() => {
   notes = bootOmnesisNotes({
     writeGate: gate,
     readDb: db,
-    ingest: async () => {},
+    ingest: async () => {
+      onIngest?.();
+    },
     deleteByIds: async () => {},
     debounceMs: 0,
   });
@@ -136,6 +141,18 @@ describe("VoiceNoteService", () => {
       { mimeType: "audio/mp4", language: "en", bytes: audio().byteLength, minTimeoutMs: 300_000 },
     ]);
     expect(getPendingVoiceNote(db, input.id)).toBeNull();
+  });
+
+  test("the day document is published only once the recording is queued", async () => {
+    const input = voiceNote();
+    const queuedAtPublish: boolean[] = [];
+    onIngest = () => queuedAtPublish.push(getPendingVoiceNote(db, input.id) !== null);
+    hold();
+    await service.accept(input);
+    await notes.flushAll();
+    expect(queuedAtPublish.length).toBeGreaterThan(0);
+    expect(queuedAtPublish[0]).toBe(true);
+    release();
   });
 
   test("a note without a device transcript shows a placeholder until transcribed", async () => {
