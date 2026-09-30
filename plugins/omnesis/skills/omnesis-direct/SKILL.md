@@ -79,17 +79,20 @@ The user's earlier conversations with the Omnesis agent are indexed and can come
 
 ## Time-bounded requests
 
-For “what is on today”, “next week”, deadlines, reminders, or any other bounded window:
+For “what is on today”, “next week”, deadlines, reminders, “which emails mention …” a date, or any other bounded window:
 
-1. Call `temporal_query` once over the complete absolute window first. Pass the user's time zone when it is known.
-2. Follow `nextCursor` while `truncated` is true. Never present a partial page as a complete period.
+1. Call `temporal_query` over the absolute window first; it reads every layer unless you name `origins`. Pass the user's time zone when it is known.
+2. Read the whole result. While `truncated` is true, follow `nextCursor` — or, for a window of more than a few days that keeps truncating, query it again day by day or week by week. Never present a partial page as a complete period, and never conclude "nothing else" from the first page of a truncated result. A query you have already run returns the same result; do not repeat it.
 3. Inspect `coverage.projectionSources` and their `slots`. They describe only the source-owned fields that projected into this result, not every dated fact in those sources.
 4. Inspect `coverage.specialistSources`. Follow `queryVia: "search"` with `search_many` over the same window and `queryVia: "analytics"` with a bounded `run_sql` query when that source is relevant. A timeless source can be skipped for a purely temporal request.
 5. Treat `origin: "projection"` as a source-owned dated fact, while still reading its modality and status. A scheduled plan is not proof it happened; a declined invitation may still project until its source row is checked.
 6. Treat `origin: "annotation"` as an LLM-generated prior, not ground truth. Re-ground it with `fetch_many` over `annotation.documentIds` before asserting it. An annotation with no documents is only a lead to verify through search or analytics.
-7. Run `search_many` over the same date window for non-projecting reminders, tasks, messages, notes, and threads before claiming the agenda is complete.
+7. Treat `origin: "mention"` as a lead: a date written in a document's text, found by a deterministic recognizer — `mention.text` is the phrase, `mention.documentId` the document. It says only that the document names that day, span or month, never what happens then; a phrase bounding it from above ("before 30 September", "by 12 October") reads as kind `deadline`, every other as `event`. Many are incidental (a newsletter's event listing, a sale ending, a statement period), so `fetch_many` the documents that look personal and judge them from their text before using one — bookings, registrations, replies from people, and deadlines in the user's own threads usually matter; marketing rarely does. A thread that repeats a date in every reply shows it once, from its latest message. A mention matches a window when it starts or ends inside it (a month only when the window holds its first day). When `coverage.mentions.pendingDocuments` is non-zero, some documents have not been scanned yet.
+8. Run `search_many` over the same date window for non-projecting reminders, tasks, messages, notes, and threads before claiming the agenda is complete.
 
-An empty or thin temporal result means only that little was projected or annotated. It does not prove that nothing is happening.
+For “when is …” about one thing (an inspection, a flight, a completion): find its documents with `search_many`, then call `temporal_query` with those `documentIds` over a wide window (for example six months either side of today) to list every date they mention, and read the latest ones before answering. A later message often moves a date an earlier one set.
+
+An empty or thin temporal result means only that little was projected, annotated, or written down with a date. It does not prove that nothing is happening.
 
 # The background agent's loops (read-only)
 

@@ -459,6 +459,23 @@
           index (HNSW).
         </p>
         <p>
+          The gateway also reads the dates written in each document's text, such as “next Friday” or
+          “12 October”, and resolves each against the document's own date. The agent's time query
+          uses them to find documents that mention a given day: a day, a span the text lays out by
+          day (“1 to 3 October”), or a month named with its year. Years, month names without a year,
+          vague spans such as “the next few weeks” or “Q4”, and bare digit runs are left out, and a
+          conversation that repeats a date in every reply counts it once. A phrase such as “before
+          30 September” or “by 12 October” reads as a deadline. A document's page in the portal
+          lists all of its dates under <strong>Enriched by Omnesis</strong>.
+        </p>
+        <p>
+          All-numeric English dates such as “10/07/2026” read day-first (10 July) unless the gateway
+          runs in an Americas time zone, where they read month-first. Set
+          <code>enrichment.dates.numericDateOrder</code> to <code>day-first</code> or
+          <code>month-first</code> to choose; the setting applies to documents scanned after the
+          change.
+        </p>
+        <p>
           A search queries both indexes and merges the results, so exact terms and paraphrases both
           match. Without an embedding model, search falls back to keywords alone. How ranking works,
           and the query syntax, are on <a href="/docs/search">Search</a>.

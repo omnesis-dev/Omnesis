@@ -370,8 +370,8 @@ describe("Brain waker — volume gates and the readiness barrier", () => {
         mergeAdjudication: { enabled: false },
       },
       extraGatewayConfig: {
-        // Date extraction off for the whole file: the stage is gated on
-        // experimental AND this flag, so switching it off drops `dates` from
+        // Date extraction off for the whole file: the stage is gated on this
+        // flag, so switching it off drops `dates` from
         // the barrier's active set and leaves it waiting on links and people
         // — the two stages this file can drive. A switched-off stage never
         // stamps its column, so had it stayed active the barrier could never

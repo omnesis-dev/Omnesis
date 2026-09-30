@@ -387,6 +387,7 @@ export function createAgentService(
       selfMemory,
       selfPersonId,
       memoryWrites: options.memoryWrites === true && !restricted,
+      temporal: !restricted,
       operatorInstructions,
       citationSurface: options.citationSurface,
     });
@@ -423,12 +424,13 @@ export function createAgentService(
       // briefs. Wired only in experimental mode (the loop system exists only
       // then); the registry additionally gates the two tools on experimental.
       loopRead: experimentalVisible() ? createGatewayLoopReadPort(db) : undefined,
-      // Read-only temporal port (experimental): lets the interactive agent
-      // answer "what's coming up?" from BOTH temporal origins in one call —
-      // source-owned dated facts, which the ingest path materializes whether or
-      // not the background agent runs, and that agent's own selective
-      // interpretations. No write surface.
-      temporal: experimentalVisible() ? createGatewayTemporalPort(db, analyticsDb) : undefined,
+      // Read-only temporal port: lets the interactive agent answer "what's
+      // coming up?" in one call — source-owned dated facts and date mentions,
+      // both produced on the ingest path whether or not the background agent
+      // runs, plus that agent's own selective interpretations when it does.
+      // Unscoped, so the source-restricted answer scope below never gets it.
+      // No write surface.
+      temporal: createGatewayTemporalPort(db, analyticsDb),
       // Read-only cognitive-context (reap) port (experimental): lets the
       // interactive agent pull the whole neighbourhood the background agent
       // linked around one entity in a single call — no write surface.

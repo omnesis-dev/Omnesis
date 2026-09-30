@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Date extraction over document text — the compute half of the (experimental)
+ * Date extraction over document text — the compute half of the
  * date-enrichment signal.
  *
  * Every document is run through Microsoft Recognizers-Text, with the
@@ -14,8 +14,8 @@
  * language detection over its title + content head (see `language-route.ts`).
  * Running multiple cultures over one text is a measured precision disaster
  * (English "an" parses as French "an" = one year), so routing is
- * single-culture by design; a document in a language with no culture is
- * skipped (zero dates).
+ * single-culture by design. Each date also comes back marked with the days it
+ * covers as a mention, or none (`mention-bounds.ts`).
  *
  * Pure and stateless apart from the one-time per-culture model build; runs on
  * the CPU worker pool (`cpu.extractDatesFromDocs`), so it never touches the
@@ -27,7 +27,13 @@
  */
 
 import { DateTimeRecognizer } from "@microsoft/recognizers-text-date-time";
-import { routeDateCulture, ENGLISH_CULTURE, type DateCulture } from "./language-route.js";
+import {
+  routeDateCulture,
+  ENGLISH_CULTURE,
+  type DateCulture,
+  type NumericDateOrder,
+} from "./language-route.js";
+import { mentionDays, type MentionDays } from "./mention-bounds.js";
 import type { ExtractedDate } from "@omnesis/types";
 
 /** A document row handed to the extractor (pre-fetched; no DB access here). */
@@ -50,12 +56,21 @@ export interface DateExtractionDocRow {
    * supplied untruncated content.
    */
   contentLength?: number;
+  /** The conversation the document belongs to, for collapsing repeated mentions; null outside one. */
+  threadKey?: string | null;
 }
 
 /** Per-document extraction output. */
 export interface DateExtractionResult {
   id: string;
   dates: ExtractedDate[];
+  /**
+   * The days each date covers as a mention, index-aligned with `dates`; null
+   * for a date that is not one. Absent means none of the dates are.
+   */
+  mentions?: Array<MentionDays | null>;
+  /** Carried from the row: the conversation the document belongs to. */
+  threadKey?: string | null;
   /** True when the scan covered only a truncated prefix of the document (absent = full scan). */
   truncated?: boolean;
 }
@@ -78,6 +93,8 @@ export interface DateExtractionOptions {
    * time it spent queued.
    */
   scanBudgetMs?: number;
+  /** How English numeric dates ("10/07/2026") read. Defaults to month-first. */
+  numericDateOrder?: NumericDateOrder;
 }
 
 /** What one document's scan produced, and whether it covered everything. */
@@ -191,14 +208,17 @@ interface CultureTextRules {
   backwardDurationAfter: RegExp | null;
 }
 
+const ENGLISH_RULES: CultureTextRules = {
+  dateHint: DATE_HINT,
+  relativeMarker: RELATIVE_MARKER,
+  forwardDurationBefore: FORWARD_DURATION_CONTEXT,
+  backwardDurationBefore: null,
+  backwardDurationAfter: BACKWARD_DURATION_CONTEXT,
+};
+
 const CULTURE_RULES: Record<DateCulture, CultureTextRules> = {
-  "en-us": {
-    dateHint: DATE_HINT,
-    relativeMarker: RELATIVE_MARKER,
-    forwardDurationBefore: FORWARD_DURATION_CONTEXT,
-    backwardDurationBefore: null,
-    backwardDurationAfter: BACKWARD_DURATION_CONTEXT,
-  },
+  "en-us": ENGLISH_RULES,
+  "en-*": ENGLISH_RULES,
   "fr-fr": {
     dateHint: null,
     relativeMarker:
@@ -529,6 +549,15 @@ function normalizeResult(
  * the region is indistinguishable from a table without parsing it, which is
  * the cost this pass exists to avoid.
  */
+/**
+ * Rewrite the first-of-the-month ordinals the recognizer cannot read — French
+ * "1er"/"1re", Spanish "1º"/"1°" — as a plain "1" padded to the same length,
+ * so "le 1er octobre" parses and every offset still points into the original.
+ */
+export function plainOrdinals(text: string): string {
+  return text.replace(/\b1(?:er|re)\b/gi, "1  ").replace(/\b1[º°]/g, "1 ");
+}
+
 export function neutralizeDenseSpans(text: string): string {
   const blank = (span: string): string => span.replace(/[^\n]/g, " ");
   let out = text.replace(/\bhttps?:\/\/[^\s<>"')\]]{8,}/gi, blank);
@@ -574,7 +603,7 @@ export function scanDatesFromText(
   const maxDates = opts.maxDatesPerDoc ?? DEFAULT_MAX_DATES;
   const budgetMs = opts.scanBudgetMs ?? DEFAULT_SCAN_BUDGET_MS;
   const text = content.length > maxChars ? content.slice(0, maxChars) : content;
-  const scanText = neutralizeDenseSpans(text);
+  const scanText = plainOrdinals(neutralizeDenseSpans(text));
   const rules = CULTURE_RULES[culture];
   if (rules.dateHint && !rules.dateHint.test(scanText)) {
     return { dates: [], budgetExhausted: false };
@@ -664,8 +693,8 @@ export function extractDatesFromText(
  * The `cpu.extractDatesFromDocs` handler. Synchronous (the CPU worker invokes
  * handlers inline). Routes each pre-fetched document row to its language's
  * recognizer culture, then extracts dates against the row's own anchor
- * (last edit, else emission). A row with an unparseable timestamp — or in a language the
- * recognizer has no culture for — yields an empty date list (still marked
+ * (last edit, else emission), and marks which of them read as mentions. A
+ * row with an unparseable timestamp yields an empty date list (still marked
  * processed by the writer so it isn't retried forever).
  */
 export function extractDatesForDocs(
@@ -680,12 +709,13 @@ export function extractDatesForDocs(
     const charTruncated = (row.contentLength ?? 0) > maxChars || row.content.length > maxChars;
     const anchor = anchorFromIso(row.anchorAt);
     if (!anchor) return { id: row.id, dates: [], truncated: charTruncated };
-    const culture = routeDateCulture(row.title, row.content);
-    if (!culture) return { id: row.id, dates: [], truncated: charTruncated };
+    const culture = routeDateCulture(row.title, row.content, opts.numericDateOrder);
     const scan = scanDatesFromText(row.content, anchor, opts, culture);
     return {
       id: row.id,
       dates: scan.dates,
+      mentions: scan.dates.map(mentionDays),
+      threadKey: row.threadKey ?? null,
       truncated: charTruncated || scan.budgetExhausted,
     };
   });

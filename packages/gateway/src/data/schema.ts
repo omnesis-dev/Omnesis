@@ -1440,8 +1440,8 @@ function runSchemaSetupInTxn(db: Db): void {
   createAnswerPrivacyTables(db);
   createDirectAuditTables(db);
   createSubscriptionTables(db);
-  // Omnesis-derived date-enrichment signal (experimental): dates extracted
-  // from document text, resolved against each document's emission date.
+  // Omnesis-derived date-enrichment signal: dates extracted from document
+  // text, resolved against each document's own date.
   createExtractedDatesTables(db);
   // Temporal annotations (experimental): interval-addressed semantic time the
   // background agent adds to and queries.

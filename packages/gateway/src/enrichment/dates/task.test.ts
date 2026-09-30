@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { createLogger } from "@omnesis/core";
 
 import { getActivePriority, runWithPriority, type Priority } from "../../priority.js";
@@ -51,9 +51,6 @@ function buildTask(opts: { enabled: boolean }) {
 }
 
 describe("dateExtractionTask — contention guarantee", () => {
-  beforeEach(() => {
-    vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
-  });
   afterEach(() => {
     vi.unstubAllEnvs();
   });
@@ -72,10 +69,12 @@ describe("dateExtractionTask — contention guarantee", () => {
     expect(seen).toEqual([]);
   });
 
-  it("does no work when experimental mode is off", async () => {
-    vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
-    const { task, seen } = buildTask({ enabled: true });
-    await task.run();
-    expect(seen).toEqual([]);
+  it("runs whether or not experimental mode is on", async () => {
+    for (const flag of ["0", "1"]) {
+      vi.stubEnv("OMNESIS_EXPERIMENTAL", flag);
+      const { task, seen } = buildTask({ enabled: true });
+      await task.run();
+      expect(seen.length).toBe(3);
+    }
   });
 });

@@ -482,7 +482,7 @@ export interface AddressedEntryContext {
  *
  * This is an **Omnesis-derived enrichment** signal — distinct from
  * source-provided {@link DocumentMetadata}, which the source populates. It is
- * produced by the (experimental) date-extraction pass and surfaced in clients
+ * produced by the date-extraction pass and surfaced in clients
  * as an "enriched by Omnesis" section, visually separated from source metadata.
  */
 export interface ExtractedDate {

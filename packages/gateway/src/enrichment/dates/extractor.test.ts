@@ -241,7 +241,7 @@ describe("extractDatesFromText — routed cultures", () => {
 });
 
 describe("extractDatesForDocs — routes each row by its detected language", () => {
-  it("French rows extract under the French culture; unsupported languages record zero dates", () => {
+  it("French rows extract under the French culture; every row is scanned", () => {
     const out = extractDatesForDocs([
       {
         id: "fr",
@@ -269,11 +269,59 @@ describe("extractDatesForDocs — routes each row by its detected language", () 
     expect(out[0].dates.map((d) => d.resolvedStart)).toEqual(
       expect.arrayContaining(["2027-09-30", "2027"]),
     );
-    // German is confidently detected but has no JS recognizer culture: the
-    // row is skipped — zero dates, yet still present in the results so the
-    // writer stamps dates_extracted_at and never rescans it.
-    expect(out[1].dates).toEqual([]);
+    // German has no model; it is read with the nearest supported culture, so
+    // its row is present and stamped like any other.
+    expect(out[1].id).toBe("de");
     expect(out[2].dates.map((d) => d.resolvedStart)).toEqual(["2024-06-16"]);
+  });
+
+  it("marks which dates are mentions and carries the row's thread", () => {
+    const [out] = extractDatesForDocs([
+      {
+        id: "t",
+        title: "Invented booking",
+        content: "Check-in on 12 October 2027. Offer valid in Q4. Reference 204815.",
+        anchorAt: ROUTED_ANCHOR_ISO,
+        threadKey: "fictional-mail:primary\u0000thread-1",
+      },
+    ]);
+    expect(out.threadKey).toBe("fictional-mail:primary\u0000thread-1");
+    expect(out.mentions).toHaveLength(out.dates.length);
+    const byText = new Map(out.dates.map((d, index) => [d.text, out.mentions?.[index]]));
+    expect(byText.get("12 October 2027")).toEqual({
+      startDay: "2027-10-12",
+      endDay: "2027-10-13",
+      deadline: false,
+    });
+    for (const [text, mention] of byText) {
+      if (text !== "12 October 2027") expect(mention, text).toBeNull();
+    }
+  });
+
+  it("reads a first-of-the-month ordinal and keeps the phrase as written", () => {
+    const [out] = extractDatesForDocs([
+      {
+        id: "o",
+        title: "Rendez-vous",
+        content: "Bonjour, le rendez-vous est confirmé pour le 1er octobre 2027 à 10h. Merci.",
+        anchorAt: ROUTED_ANCHOR_ISO,
+      },
+    ]);
+    const first = out.dates.find((d) => d.resolvedStart === "2027-10-01");
+    expect(first?.text).toContain("1er octobre 2027");
+  });
+
+  it("reads English numeric dates in the configured order", () => {
+    const row = {
+      id: "n",
+      title: "Statement",
+      content: "Interest was credited on 10/07/2027 as usual.",
+      anchorAt: ROUTED_ANCHOR_ISO,
+    };
+    const dayFirst = extractDatesForDocs([row], { numericDateOrder: "day-first" })[0];
+    const monthFirst = extractDatesForDocs([row], { numericDateOrder: "month-first" })[0];
+    expect(dayFirst.dates.map((d) => d.resolvedStart)).toEqual(["2027-07-10"]);
+    expect(monthFirst.dates.map((d) => d.resolvedStart)).toEqual(["2027-10-07"]);
   });
 });
 

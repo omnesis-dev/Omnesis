@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createDatabase } from "../../db.js";
 import { upsertDocuments, deleteDocuments } from "../../data/repositories/DocumentRepository.js";
 import {
+  addDateMentions,
   applyExtractedDates,
   countExtractedDocuments,
   countPendingDateExtraction,
@@ -83,6 +84,31 @@ describe("date-enrichment storage", () => {
   afterEach(() => {
     db.close();
     cleanupDb(dbPath);
+  });
+
+  it("migration 185 marks every scanned document for a rescan", () => {
+    upsertDocuments(db, [makeDoc({ externalId: "a" }), makeDoc({ externalId: "b" })]);
+    applyExtractedDates(db, [
+      { id: docId(db, "a"), dates: [] },
+      { id: docId(db, "b"), dates: [] },
+    ]);
+    expect(countPendingDateExtraction(db)).toBe(0);
+    addDateMentions(db);
+    expect(countPendingDateExtraction(db)).toBe(2);
+  });
+
+  it("reads each document's conversation with its batch row", () => {
+    upsertDocuments(db, [
+      makeDoc({ externalId: "threaded", metadata: { extra: { threadId: "t-1" } } }),
+      makeDoc({ externalId: "chat", metadata: { extra: { conversationId: "c-1" } } }),
+      makeDoc({ externalId: "alone" }),
+    ]);
+    const keys = Object.fromEntries(
+      fetchDateExtractionBatch(db, 10, 1000).map((row) => [row.id, row.threadKey]),
+    );
+    expect(keys[docId(db, "threaded")]).toBe("test:acct\u0000t-1");
+    expect(keys[docId(db, "chat")]).toBe("test:acct\u0000c-1");
+    expect(keys[docId(db, "alone")]).toBeNull();
   });
 
   it("marks a freshly ingested document as pending extraction", () => {

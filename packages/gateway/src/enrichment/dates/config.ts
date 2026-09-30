@@ -9,8 +9,12 @@
  * (`periodMs` / `idlePeriodMs`) is read once when the task is constructed.
  */
 
+import { hostTimeZone } from "@omnesis/core";
 import { DEFAULT_MAX_CHARS, DEFAULT_SCAN_BUDGET_MS } from "./extractor.js";
+import type { NumericDateOrder } from "./language-route.js";
 import type { EnrichmentSettings } from "@omnesis/config";
+
+export type NumericDateOrderSetting = NumericDateOrder | "auto";
 
 export interface ResolvedDateEnrichmentSettings {
   enabled: boolean;
@@ -19,6 +23,7 @@ export interface ResolvedDateEnrichmentSettings {
   scanBudgetMs: number;
   periodMs: number;
   idlePeriodMs: number;
+  numericDateOrder: NumericDateOrderSetting;
 }
 
 export const DATE_ENRICHMENT_DEFAULTS: ResolvedDateEnrichmentSettings = {
@@ -28,6 +33,7 @@ export const DATE_ENRICHMENT_DEFAULTS: ResolvedDateEnrichmentSettings = {
   scanBudgetMs: DEFAULT_SCAN_BUDGET_MS,
   periodMs: 1_500,
   idlePeriodMs: 300_000,
+  numericDateOrder: "auto",
 };
 
 export function resolveDateEnrichmentSettings(
@@ -41,5 +47,57 @@ export function resolveDateEnrichmentSettings(
     scanBudgetMs: d?.scanBudgetMs ?? DATE_ENRICHMENT_DEFAULTS.scanBudgetMs,
     periodMs: d?.periodMs ?? DATE_ENRICHMENT_DEFAULTS.periodMs,
     idlePeriodMs: d?.idlePeriodMs ?? DATE_ENRICHMENT_DEFAULTS.idlePeriodMs,
+    numericDateOrder: d?.numericDateOrder ?? DATE_ENRICHMENT_DEFAULTS.numericDateOrder,
   };
+}
+
+/**
+ * Time zones where English numeric dates are written month-first: the United
+ * States and its territories, and the Philippines. Everywhere else — the rest
+ * of the Americas included — writes them day-first.
+ */
+const MONTH_FIRST_ZONE_PREFIXES = [
+  "US/",
+  "America/Indiana/",
+  "America/Kentucky/",
+  "America/North_Dakota/",
+];
+const MONTH_FIRST_ZONES: ReadonlySet<string> = new Set([
+  "America/New_York",
+  "America/Detroit",
+  "America/Chicago",
+  "America/Menominee",
+  "America/Denver",
+  "America/Boise",
+  "America/Phoenix",
+  "America/Los_Angeles",
+  "America/Anchorage",
+  "America/Juneau",
+  "America/Sitka",
+  "America/Metlakatla",
+  "America/Yakutat",
+  "America/Nome",
+  "America/Adak",
+  "America/Puerto_Rico",
+  "Pacific/Honolulu",
+  "Pacific/Guam",
+  "Pacific/Saipan",
+  "Pacific/Pago_Pago",
+  "Asia/Manila",
+]);
+
+/**
+ * The order an all-numeric English date reads in. `auto` follows where the
+ * gateway runs: month-first where that is the common writing, day-first
+ * elsewhere.
+ */
+export function resolveNumericDateOrder(
+  setting: NumericDateOrderSetting,
+  timeZone: string = hostTimeZone(),
+): NumericDateOrder {
+  if (setting !== "auto") return setting;
+  const monthFirst =
+    MONTH_FIRST_ZONES.has(timeZone) ||
+    MONTH_FIRST_ZONE_PREFIXES.some((prefix) => timeZone.startsWith(prefix));
+  return monthFirst ? "month-first" : "day-first";
 }

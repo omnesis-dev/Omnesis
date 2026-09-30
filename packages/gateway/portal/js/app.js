@@ -690,7 +690,7 @@ function App() {
 
       <main class="app-main">
         ${route.view === "document"
-          ? html`<${DocumentView} id=${route.id} experimental=${experimental} />`
+          ? html`<${DocumentView} id=${route.id} />`
           : route.view === "people"
           ? html`<${PeopleView} personId=${route.personId} tab=${route.tab} initialQuery=${route.query} experimental=${experimental} />`
           : route.view === "sources"

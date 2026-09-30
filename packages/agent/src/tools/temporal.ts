@@ -3,9 +3,9 @@
 
 /**
  * `temporal_query` — the shared READ-ONLY temporal query. The gateway composes
- * deterministic, immutable source projections with LLM-owned temporal
- * annotations behind this one surface. Annotation mutation remains exclusive
- * to the background Cognition Steward.
+ * deterministic, immutable source projections, date mentions found in
+ * document text, and LLM-owned temporal annotations behind this one surface.
+ * Annotation mutation remains exclusive to the background Cognition Steward.
  *
  * The agent queries by a window expressed in plain date terms; overlap (an entry
  * whose interval intersects the window) is resolved server-side. A point query
@@ -23,7 +23,7 @@ import {
   TEMPORAL_ORIGINS,
   TEMPORAL_STATUSES,
 } from "@omnesis/core";
-import type { TemporalKind, ToolResult } from "@omnesis/core";
+import type { TemporalKind, TemporalOrigin, ToolResult } from "@omnesis/core";
 
 import type { ToolContext, ToolHandle } from "../backend.js";
 import type { TemporalReadPort } from "./types.js";
@@ -68,7 +68,15 @@ const temporalQueryArgsSchema = z
         "IANA time zone for dates and relative expressions. Defaults to the " +
           "caller's own zone — pass one only to ask about a different zone.",
       ),
-    origins: z.array(z.enum(TEMPORAL_ORIGINS)).min(1).optional(),
+    origins: z
+      .array(z.enum(TEMPORAL_ORIGINS))
+      .min(1)
+      .optional()
+      .describe(
+        'Layers to read; defaults to all three. "projection": dated fields a source ' +
+          'publishes. "annotation": the background agent\'s interpretations. "mention": ' +
+          "a date written in a document's text.",
+      ),
     kinds: z
       .array(z.enum(ACCEPTED_TEMPORAL_KINDS))
       .min(1)
@@ -88,15 +96,26 @@ const temporalQueryArgsSchema = z
 
 export interface TemporalQueryToolDeps {
   port: TemporalReadPort;
+  /**
+   * The layers read when the caller names none. Every layer by default: a
+   * caller asking about time wants all that speaks to it.
+   */
+  defaultOrigins?: readonly TemporalOrigin[];
 }
 
 export function createTemporalQueryTool(deps: TemporalQueryToolDeps): ToolHandle {
   return {
     name: "temporal_query",
     description:
-      "Query time across deterministic source projections and " +
-      "LLM-owned temporal annotations. Give a plain-date window; returns every " +
-      "overlapping temporal result with its origin and source document ids. " +
+      "Query time across deterministic source projections, " +
+      "LLM-owned temporal annotations and date mentions (documents whose " +
+      "text names a day, a span of days or a month in the window; a phrase " +
+      'like "before 30 September" reads as a deadline). Give a plain-date ' +
+      "window; returns every overlapping temporal result with its origin and " +
+      "source document ids. To learn when something happens, pass the " +
+      "documentIds you found about it with a wide window. Mentions are " +
+      "numerous: when a result is truncated, follow nextCursor or narrow the " +
+      "window — never stop at the first page of a long one. " +
       "Each item is marked `anchored` (it starts or ends inside the window) " +
       "or not (it merely spans it), and `summary` counts both across the " +
       "whole window: a window with 0 anchored items is UNDESCRIBED however " +
@@ -128,6 +147,7 @@ export function createTemporalQueryTool(deps: TemporalQueryToolDeps): ToolHandle
           {
             ...rest,
             from: parsed.data.from ?? "now",
+            origins: parsed.data.origins ?? [...(deps.defaultOrigins ?? TEMPORAL_ORIGINS)],
             // The caller's zone, not the host's: the machine running the
             // gateway and the person asking "what's on today" are often on
             // different continents, and a window framed in the wrong zone

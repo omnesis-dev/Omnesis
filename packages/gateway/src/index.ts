@@ -18,7 +18,6 @@ import {
   createLogger,
   DEFAULT_CONFIG_DIR,
   ensurePrivateDirSync,
-  experimentalEnabled,
   experimentalVisible,
   loadManifest,
   primeSecretFileKeyCache,
@@ -1412,11 +1411,11 @@ const backgroundJobs = new BackgroundJobsRegistry({
 });
 backgroundJobs.start();
 
-// Date-enrichment pass (experimental): extract dates from every document,
-// resolved against its emission date. Registered always but self-gates each
-// tick on experimental + the enrichment.dates.enabled knob; the io→cpu→writer
-// split keeps it off every user-serving lane. `kick` nudges it when new docs
-// land (wired into onDocumentsUpserted below).
+// Date-enrichment pass: extract dates from every document, resolved against
+// the document's own date. Registered always but self-gates each tick on the
+// enrichment.dates.enabled knob; the io→cpu→writer split keeps it off every
+// user-serving lane. `kick` nudges it when new docs land (wired into
+// onDocumentsUpserted below).
 const dateEnrichment = bootDateEnrichment({
   scheduler,
   backgroundJobs,
@@ -2445,9 +2444,7 @@ const briefJudge = new LlmBriefJudge({
 const activeDerivationStages = (): readonly DerivationStage[] =>
   DERIVATION_STAGES.filter(
     (stage) =>
-      stage.id !== "dates" ||
-      (experimentalEnabled() &&
-        resolveDateEnrichmentSettings(configStore.get().enrichment).enabled),
+      stage.id !== "dates" || resolveDateEnrichmentSettings(configStore.get().enrichment).enabled,
   );
 
 // Durable conversational memory and its evidence lifecycle are available in every mode.

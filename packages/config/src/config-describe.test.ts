@@ -92,6 +92,7 @@ const EXPECTED_INVENTORY = [
   "/enrichment/dates/enabled [boolean]",
   "/enrichment/dates/idlePeriodMs [number]",
   "/enrichment/dates/maxCharsPerDoc [number]",
+  "/enrichment/dates/numericDateOrder [enum]",
   "/enrichment/dates/periodMs [number]",
   "/enrichment/dates/scanBudgetMs [number]",
   "/gateway/analyticsMemoryLimitMb [number]",

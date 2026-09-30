@@ -2977,14 +2977,13 @@ const self = z
   })
   .strict();
 
-// Omnesis-derived enrichment signals (experimental prototypes). Each is active
-// only when experimental mode is on; the knobs below tune the background pass.
+// Omnesis-derived enrichment signals; the knobs below tune the background pass.
 const enrichmentDates = z
   .object({
     enabled: z
       .boolean()
       .describe(
-        "Enable the date-enrichment pass — extract dates from every document, resolved against its emission date. Active only when experimental mode is on.",
+        "Enable the date-enrichment pass — extract the dates written in every document's text, resolved against the document's own date. The dates feed the temporal query's mention layer.",
       )
       .optional(),
     batchSize: z
@@ -3018,6 +3017,12 @@ const enrichmentDates = z
       .int()
       .positive()
       .describe("Idle-cadence period when no documents need extraction, in milliseconds.")
+      .optional(),
+    numericDateOrder: z
+      .enum(["auto", "day-first", "month-first"])
+      .describe(
+        'How an all-numeric English date such as "10/07/2026" reads: "day-first" (10 July), "month-first" (7 October), or "auto" — month-first when the gateway host\'s time zone is in the Americas, day-first elsewhere. Applies to documents scanned after the change.',
+      )
       .optional(),
   })
   .strict();

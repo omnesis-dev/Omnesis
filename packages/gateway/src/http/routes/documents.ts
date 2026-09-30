@@ -900,8 +900,8 @@ export function mountDocumentRefsRoute(
    * `GET /documents/:id/dates` — the Omnesis-derived dates extracted from a
    * document's text, each resolved against the document's emission date.
    * Distinct from source-provided metadata; clients render these as an
-   * "enriched by Omnesis" section. Empty until the (experimental)
-   * date-enrichment pass has processed the document.
+   * "enriched by Omnesis" section. Empty until the date-enrichment pass has
+   * processed the document.
    */
   app.get("/documents/:id/dates", scope.read(), (c) => {
     const id = c.req.param("id");

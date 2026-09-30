@@ -233,6 +233,103 @@ describe("extractTextContent", () => {
     });
   });
 
+  describe("calendar (event times)", () => {
+    const event = (dtstart: string, dtend: string) =>
+      encode(
+        [
+          "BEGIN:VCALENDAR",
+          "BEGIN:VEVENT",
+          "UID:invented-event@example.com",
+          "SUMMARY:Invented coffee",
+          dtstart,
+          dtend,
+          "END:VEVENT",
+          "END:VCALENDAR",
+        ].join("\r\n"),
+      );
+
+    test("names UTC on a UTC time, so it is not read as local", async () => {
+      const result = await extractTextContent(
+        event("DTSTART:20260930T120000Z", "DTEND:20260930T124500Z"),
+        "text/calendar",
+      );
+      expect(result!.text).toContain("**When:** 2026-09-30 12:00 – 2026-09-30 12:45 (UTC)");
+    });
+
+    test("names the TZID a time is written in", async () => {
+      const result = await extractTextContent(
+        event(
+          "DTSTART;TZID=Europe/Paris:20260930T140000",
+          "DTEND;TZID=Europe/Paris:20260930T143000",
+        ),
+        "text/calendar",
+      );
+      expect(result!.text).toContain(
+        "**When:** 2026-09-30 14:00 – 2026-09-30 14:30 (Europe/Paris)",
+      );
+    });
+
+    test("names the zone once for a VTIMEZONE-backed TZID", async () => {
+      const ics = encode(
+        [
+          "BEGIN:VCALENDAR",
+          "BEGIN:VTIMEZONE",
+          "TZID:Europe/Paris",
+          "BEGIN:STANDARD",
+          "DTSTART:19701025T030000",
+          "TZOFFSETFROM:+0200",
+          "TZOFFSETTO:+0100",
+          "END:STANDARD",
+          "END:VTIMEZONE",
+          "BEGIN:VEVENT",
+          "UID:invented-zone@example.com",
+          "SUMMARY:Invented review",
+          "DTSTART;TZID=Europe/Paris:20261130T140000",
+          "DTEND;TZID=Europe/Paris:20261130T150000",
+          "END:VEVENT",
+          "END:VCALENDAR",
+        ].join("\r\n"),
+      );
+      const result = await extractTextContent(ics, "text/calendar");
+      expect(result!.text).toContain(
+        "**When:** 2026-11-30 14:00 – 2026-11-30 15:00 (Europe/Paris)",
+      );
+    });
+
+    test("leaves an all-day event's dates as they are", async () => {
+      const result = await extractTextContent(
+        event("DTSTART;VALUE=DATE:20260930", "DTEND;VALUE=DATE:20261001"),
+        "text/calendar",
+      );
+      expect(result!.text).toMatch(/\*\*When:\*\* 2026-09-30( \(all day\)| – )/);
+      expect(result!.text).not.toContain("UTC");
+    });
+
+    test("names the zone of a to-do's due time", async () => {
+      const ics = encode(
+        [
+          "BEGIN:VCALENDAR",
+          "BEGIN:VTODO",
+          "UID:invented-todo@example.com",
+          "SUMMARY:Invented task",
+          "DUE:20261001T170000Z",
+          "END:VTODO",
+          "END:VCALENDAR",
+        ].join("\r\n"),
+      );
+      const result = await extractTextContent(ics, "text/calendar");
+      expect(result!.text).toContain("**Due:** 2026-10-01 17:00 (UTC)");
+    });
+
+    test("leaves a floating time without a zone", async () => {
+      const result = await extractTextContent(
+        event("DTSTART:20260930T090000", "DTEND:20260930T093000"),
+        "text/calendar",
+      );
+      expect(result!.text).toContain("**When:** 2026-09-30 09:00 – 2026-09-30 09:30");
+    });
+  });
+
   describe("calendar (UID extraction)", () => {
     test("exposes RFC 5545 UID in result.extra.iCalUIDs", async () => {
       const ics = [
