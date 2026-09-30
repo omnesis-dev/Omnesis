@@ -281,7 +281,14 @@ class AssistantActionViewModelTest {
         vm.handle(Intent(AssistantActionActivity.ACTION_CAPTURE), freshDelivery = true, trustedDelivery = true)
         vm.startListening()
         assertEquals(1, transcriber.audioStarts)
+        assertEquals(
+            AssistantActionUiState.Listening(AssistantActionKind.CAPTURE, deliveryId = 1, recordingVoiceNote = true),
+            vm.state.value,
+        )
 
+        // The overlay shows the recording, never the phone's words.
+        transcriber.listeners.last().onPartial("Buy a birth")
+        assertEquals("", (vm.state.value as AssistantActionUiState.Listening).partialText)
         transcriber.listeners.last().onFinal("Buy a birthday card")
         transcriber.listeners.last().onEnded(SpeechTranscriber.EndReason.NORMAL)
         awaitFinished(vm)
@@ -325,6 +332,8 @@ class AssistantActionViewModelTest {
         vm.startListening()
         assertEquals(0, transcriber.audioStarts)
         assertEquals(1, transcriber.startCount)
+        transcriber.listeners.last().onPartial("What is on")
+        assertEquals("What is on", (vm.state.value as AssistantActionUiState.Listening).partialText)
     }
 
     @Test

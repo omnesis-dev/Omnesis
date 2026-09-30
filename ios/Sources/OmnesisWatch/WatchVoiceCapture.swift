@@ -295,6 +295,10 @@ struct WatchVoiceCaptureView: View {
             Text("Sent to your iPhone.")
                 .font(.headline)
                 .multilineTextAlignment(.center)
+            Text("Your gateway will transcribe it.")
+                .font(.footnote)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
         }
         .padding()
         .onTapGesture { capture.dismiss() }

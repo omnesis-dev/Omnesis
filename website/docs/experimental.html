@@ -2004,10 +2004,13 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/admin/watch/compile" \
 
         <h3 id="gateway-dictation-behaviour">What happens to a voice note</h3>
         <p>
-          Saving is immediate: the note appears with the phone's transcript while the gateway works
-          on the recording, and its text changes when the transcriber finishes. How long that takes
-          depends on the gateway's hardware and on the voice notes it is already transcribing for
-          your sources; nothing waits on it. If you edit the note first, your edit stays.
+          While you dictate, Tell Omnesis shows that it is recording rather than what the phone
+          heard: the gateway's transcript is the one that counts. The phone still transcribes in the
+          background, and that text is saved with the note at once so it is never empty. The gateway
+          then works on the recording and replaces the text when its transcriber finishes. How long
+          that takes depends on the gateway's hardware and on the voice notes it is already
+          transcribing for your sources; nothing waits on it. If you edit the note first, your edit
+          stays.
         </p>
         <p>
           A note from the Apple Watch travels through your iPhone, which transcribes it on the phone

@@ -61,4 +61,14 @@ class SilenceDetectorTest {
         val (verdict, _) = detector.feed(List(70) { quiet } + List(20) { loud })
         assertEquals(Verdict.LISTENING, verdict)
     }
+
+    @Test
+    fun audio_level_maps_a_peak_onto_a_decibel_scale() {
+        assertEquals(0f, audioLevel(0), 0f)
+        assertEquals(1f, audioLevel(32_767), 0.001f)
+        assertEquals(1f, audioLevel(90_000), 0.001f)
+        // Quiet speech still registers visibly; room tone barely does.
+        assertEquals(true, audioLevel(3_000) > 0.5f)
+        assertEquals(true, audioLevel(200) < 0.2f)
+    }
 }

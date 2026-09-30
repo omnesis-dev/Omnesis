@@ -20,11 +20,22 @@ extension AppStore {
     }
 
     /// The byte limit a Tell Omnesis recording must stay under, when a
-    /// capture starting now should record its audio for the gateway; nil to
-    /// keep the phone's transcript alone.
+    /// capture starting now should be a voice note for the gateway; nil for
+    /// today's on-device transcript. Read when the capture opens.
+    ///
+    /// Before this launch has read the gateway's status — the capture opened
+    /// from Control Center on a cold start — the gate last read, kept for the
+    /// watch, stands in while it is fresh.
     var voiceNoteAudioLimit: Int? {
-        guard pairing != nil, let status = dictationStatus, status.routesToGateway else { return nil }
-        return status.maxAudioBytes
+        guard pairing != nil else { return nil }
+        if statusSnapshot != nil {
+            guard let status = dictationStatus, status.routesToGateway else { return nil }
+            return status.maxAudioBytes
+        }
+        guard let gate = WatchDictationGateStore().load(), gate.active, gate.maxAudioBytes > 0,
+              Date().timeIntervalSince(gate.updatedAt) < WatchDictationGate.staleAfter
+        else { return nil }
+        return gate.maxAudioBytes
     }
 
     /// Switch gateway dictation on or off for this gateway, then re-read

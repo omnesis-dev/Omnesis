@@ -61,6 +61,11 @@ sealed interface AssistantActionUiState {
         val kind: AssistantActionKind,
         val partialText: String = "",
         val deliveryId: Long = 0,
+        /**
+         * A capture recorded as a voice note for the gateway: the overlay shows the
+         * recording and never the phone's words, which stay out of sight as a stand-in.
+         */
+        val recordingVoiceNote: Boolean = false,
     ) : AssistantActionUiState
     data class Confirming(val kind: AssistantActionKind, val text: String) : AssistantActionUiState
     data class Working(val kind: AssistantActionKind, val text: String) : AssistantActionUiState

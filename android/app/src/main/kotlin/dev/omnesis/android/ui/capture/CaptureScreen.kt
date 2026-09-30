@@ -133,6 +133,7 @@ fun CaptureScreen(
         onSave = vm::save,
         onCancel = onClose,
         onDismissError = vm::dismissError,
+        onDiscardVoiceNote = vm::discardVoiceNote,
     )
 }
 
@@ -145,6 +146,7 @@ fun CaptureContent(
     onSave: () -> Unit,
     onCancel: () -> Unit,
     onDismissError: () -> Unit,
+    onDiscardVoiceNote: () -> Unit = {},
 ) {
     val c = OmTheme.colors
     // The same wash the agent landing screen sits on, with the halo centred on the
@@ -182,6 +184,7 @@ fun CaptureContent(
                     onSave = onSave,
                     onCancel = onCancel,
                     onDismissError = onDismissError,
+                    onDiscardVoiceNote = onDiscardVoiceNote,
                 )
             }
         }
@@ -198,8 +201,10 @@ private fun CaptureForm(
     onSave: () -> Unit,
     onCancel: () -> Unit,
     onDismissError: () -> Unit,
+    onDiscardVoiceNote: () -> Unit,
 ) {
     val c = OmTheme.colors
+    val voiceNote = state.voiceNote
     Column(
         Modifier
             .fillMaxSize()
@@ -209,10 +214,10 @@ private fun CaptureForm(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Spacer(Modifier.height(OmSpacing.lg))
-        MicVisual(speech = state.speech, onTap = onMicTap)
+        MicVisual(speech = state.speech, hasVoiceNote = voiceNote != null, onTap = onMicTap)
         Spacer(Modifier.height(OmSpacing.md))
         Text(
-            statusLine(state.speech),
+            if (voiceNote != null) voiceNoteStatusLine(voiceNote) else statusLine(state.speech),
             style = MaterialTheme.typography.bodySmall,
             color = when (state.speech) {
                 SpeechState.LISTENING, SpeechState.RECORDING -> c.accent
@@ -225,7 +230,15 @@ private fun CaptureForm(
         )
         Spacer(Modifier.height(OmSpacing.lg))
 
-        OutlinedTextField(
+        // A voice note has no text to show or edit: its words come from the gateway.
+        if (voiceNote != null) {
+            VoiceNoteCard(
+                note = voiceNote,
+                enabled = !saving,
+                onRecordMore = onMicTap,
+                onDiscard = onDiscardVoiceNote,
+            )
+        } else OutlinedTextField(
             value = state.textWithPartial(),
             onValueChange = onTextChange,
             modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
@@ -288,9 +301,8 @@ private fun CaptureForm(
             Button(
                 onClick = onSave,
                 modifier = Modifier.weight(2f),
-                // A recording-only note may be saved with an empty field: its text comes
-                // from the gateway.
-                enabled = (state.textWithPartial().isNotBlank() || state.voiceNoteOnly) && !saving,
+                // A voice note is saved as recorded: its text comes from the gateway.
+                enabled = (state.textWithPartial().isNotBlank() || voiceNote != null) && !saving,
                 colors = ButtonDefaults.buttonColors(containerColor = c.accent, contentColor = Color.White),
             ) {
                 if (saving) {
@@ -310,7 +322,7 @@ private fun CaptureForm(
  * the way the Omnesis mark is lit on the agent landing screen.
  */
 @Composable
-private fun MicVisual(speech: SpeechState, onTap: () -> Unit) {
+private fun MicVisual(speech: SpeechState, hasVoiceNote: Boolean, onTap: () -> Unit) {
     val listening = speech == SpeechState.LISTENING || speech == SpeechState.RECORDING
     val muted = !listening && speech != SpeechState.IDLE
 
@@ -325,9 +337,10 @@ private fun MicVisual(speech: SpeechState, onTap: () -> Unit) {
                 .size(88.dp)
                 .clip(CircleShape)
                 .clickable(
-                    onClickLabel = when (speech) {
-                        SpeechState.RECORDING -> "Stop recording"
-                        SpeechState.LISTENING -> "Stop listening"
+                    onClickLabel = when {
+                        speech == SpeechState.RECORDING -> "Stop recording"
+                        speech == SpeechState.LISTENING -> "Stop listening"
+                        hasVoiceNote -> "Record more"
                         else -> "Start listening"
                     },
                     onClick = onTap,
@@ -387,9 +400,16 @@ private fun SavedConfirmation(queued: QueueReason?) {
     }
 }
 
+private fun voiceNoteStatusLine(note: VoiceNoteUi): String =
+    if (note.recording) {
+        "Recording — your gateway will transcribe this note."
+    } else {
+        "Your gateway will transcribe this note. Tap the mic to record more."
+    }
+
 private fun statusLine(speech: SpeechState): String = when (speech) {
     SpeechState.LISTENING -> "Listening…"
-    SpeechState.RECORDING -> "Recording… your gateway will transcribe this note"
+    SpeechState.RECORDING -> "Recording — your gateway will transcribe this note."
     SpeechState.IDLE -> "Tap the mic to talk, or just type"
     SpeechState.DENIED -> "Microphone access is off — type your note, or tap the mic to allow access"
     SpeechState.LANGUAGE_NOT_DOWNLOADED ->

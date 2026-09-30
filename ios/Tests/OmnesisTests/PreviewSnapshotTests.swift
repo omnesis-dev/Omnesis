@@ -6355,6 +6355,27 @@ final class PreviewSnapshotTests: XCTestCase {
 
     // MARK: - Gateway dictation
 
+    /// Tell Omnesis as a voice note, recording: the recording and its length,
+    /// never the phone's transcript.
+    func testCaptureVoiceNoteRecording() {
+        let view = CaptureView(
+            speech: .preview(state: .listening),
+            previewVoiceNote: .previewRecording(seconds: 12)
+        )
+        .environment(AppStore.preview())
+        snapshot(view, name: "299a-capture-voice-note-recording")
+    }
+
+    /// Stopped: the voice note's length, record more, discard to type.
+    func testCaptureVoiceNoteRecorded() {
+        let view = CaptureView(
+            speech: .preview(state: .idle),
+            previewVoiceNote: .previewRecorded(seconds: 72)
+        )
+        .environment(AppStore.preview())
+        snapshot(view, name: "299b-capture-voice-note-recorded")
+    }
+
     /// Settings → Voice in each state the gateway can advertise.
     func testSettingsVoiceSectionStates() {
         struct VoiceCase {

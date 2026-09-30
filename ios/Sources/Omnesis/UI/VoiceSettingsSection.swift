@@ -45,7 +45,7 @@ struct VoiceSettingsSection: View {
                 VStack(alignment: .leading, spacing: 4) {
                     notice(reason, color: Theme.warning)
                         .font(.subheadline.weight(.semibold))
-                    Text("Notes keep this device's transcript until the gateway's transcriber can run.")
+                    Text("Voice notes keep this device's transcript until the gateway's transcriber can run.")
                         .font(.footnote)
                         .foregroundStyle(Theme.textMuted)
                 }
@@ -68,10 +68,10 @@ struct VoiceSettingsSection: View {
             Text("Voice")
         } footer: {
             Text(
-                "When on, what you dictate to Tell Omnesis — on this iPhone and in Apple Watch notes — is also "
-                    + "recorded and sent to your gateway to transcribe. Notes are saved at once with this "
-                    + "device's transcript, and the gateway's replaces it when ready. This is a gateway "
-                    + "setting, so it applies to every device paired with it."
+                "When on, Tell Omnesis — on this iPhone and in Apple Watch notes — records a voice note and "
+                    + "your gateway transcribes it. The note is saved at once; this device's own transcript "
+                    + "isn't shown, and is used only if the gateway can't transcribe the recording. This is a "
+                    + "gateway setting, so it applies to every device paired with it."
             )
         }
         .listRowBackground(Theme.bgSecondary)

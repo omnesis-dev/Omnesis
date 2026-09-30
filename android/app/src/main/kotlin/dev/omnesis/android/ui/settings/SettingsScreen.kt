@@ -592,10 +592,10 @@ internal fun VoiceSection(
     }
     Spacer(Modifier.height(OmSpacing.sm))
     Text(
-        "When on, Tell Omnesis also records what you dictate and sends the audio with the note. " +
-            "The note is saved at once, with this phone's transcript when it has one, and your " +
-            "gateway replaces it with its own transcript when it is ready. This is a gateway " +
-            "setting, so it applies to every device paired with it.",
+        "When on, Tell Omnesis records what you say and saves it as a voice note at once; your " +
+            "gateway transcribes it. The phone's own transcript is not shown, and is used only if " +
+            "the gateway can't transcribe the recording. This is a gateway setting, so it applies " +
+            "to every device paired with it.",
         style = MaterialTheme.typography.labelMedium,
         color = c.textSecondary,
     )

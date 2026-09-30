@@ -151,34 +151,68 @@ final class VoiceNoteTests: XCTestCase {
         XCTAssertNotNil(note["capturedAt"] as? String)
     }
 
-    // MARK: - When a capture attaches its recording
+    // MARK: - A voice-note capture
 
-    func testAttachesOnlyWhatWasDictatedUntouched() {
-        XCTAssertTrue(VoiceNoteCapture.attachesAudio(
-            savedText: "Book the dentist ",
-            dictatedText: "Book the dentist",
-            recordingIncomplete: false
-        ))
-        XCTAssertFalse(
-            VoiceNoteCapture.attachesAudio(
-                savedText: "Book the dentist on Friday",
-                dictatedText: "Book the dentist",
-                recordingIncomplete: false
-            ),
-            "an edit after dictating wins"
-        )
-        XCTAssertFalse(
-            VoiceNoteCapture.attachesAudio(
-                savedText: "Groceries: book the dentist",
-                dictatedText: "Groceries: book the dentist",
-                recordingIncomplete: true
-            ),
-            "typed text the recording does not cover"
-        )
-        XCTAssertFalse(
-            VoiceNoteCapture.attachesAudio(savedText: "Typed only", dictatedText: nil, recordingIncomplete: false),
-            "nothing dictated"
-        )
+    func testRunsBuildOneVoiceNoteWithAHiddenTranscript() {
+        let start = Date(timeIntervalSince1970: 1_790_000_000)
+        var state = VoiceNoteCaptureState()
+        XCTAssertFalse(state.hasRecording)
+
+        state.startRun(at: start)
+        XCTAssertTrue(state.isRecording)
+        XCTAssertTrue(state.hasRecording)
+        state.heard("book the")
+        state.heard("book the dentist")
+        XCTAssertEqual(state.duration(at: start.addingTimeInterval(5)), 5, accuracy: 0.001)
+        state.stopRun(at: start.addingTimeInterval(8))
+        // The final result arrives after the run stopped.
+        state.heard("book the dentist for Thursday")
+        XCTAssertFalse(state.isRecording)
+        XCTAssertEqual(state.duration(at: start.addingTimeInterval(60)), 8, accuracy: 0.001)
+
+        state.startRun(at: start.addingTimeInterval(20))
+        state.heard("and call the garage")
+        state.stopRun(at: start.addingTimeInterval(24))
+
+        XCTAssertEqual(state.hiddenTranscript, "book the dentist for Thursday and call the garage")
+        XCTAssertEqual(state.duration(at: start.addingTimeInterval(100)), 12, accuracy: 0.001)
+    }
+
+    /// Discarding the recording makes the capture an empty typed note.
+    func testDiscardingTheRecordingStartsOverAsTyping() {
+        var state = VoiceNoteCaptureState()
+        state.startRun(at: Date())
+        state.heard("something private")
+        state.discard()
+
+        XCTAssertFalse(state.hasRecording)
+        XCTAssertEqual(state.hiddenTranscript, "")
+        XCTAssertEqual(state, VoiceNoteCaptureState())
+    }
+
+    func testTheLengthReadsAsAClockAndAloud() {
+        XCTAssertEqual(VoiceNoteCaptureState.clock(0), "0:00")
+        XCTAssertEqual(VoiceNoteCaptureState.clock(12.9), "0:12")
+        XCTAssertEqual(VoiceNoteCaptureState.clock(72), "1:12")
+        XCTAssertTrue(VoiceNoteCaptureState.spokenDuration(12).contains("12"))
+        XCTAssertTrue(VoiceNoteCaptureState.spokenDuration(72).contains("1"))
+    }
+
+    /// A voice note is saved with its recording and, as its text, the
+    /// transcript the screen never showed.
+    func testAVoiceNoteSavesItsHiddenTranscriptWithTheRecording() async throws {
+        var state = VoiceNoteCaptureState()
+        state.startRun(at: Date())
+        state.heard("Book the dentist")
+        state.stopRun(at: Date())
+        let session = ScriptedSession()
+
+        let outcome = try await capture(state.hiddenTranscript, audio: recording(), session: session, store: store)
+
+        XCTAssertEqual(outcome, .saved)
+        XCTAssertEqual(session.paths, ["/notes/voice"])
+        let body = try XCTUnwrap(session.requests.first?.httpBody)
+        XCTAssertNotNil(body.range(of: Data(#""text":"Book the dentist""#.utf8)))
     }
 
     // MARK: - Delivery

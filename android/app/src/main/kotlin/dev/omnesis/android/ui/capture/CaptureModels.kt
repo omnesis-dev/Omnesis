@@ -26,8 +26,8 @@ enum class SpeechState {
     LISTENING,
 
     /**
-     * Recording for the gateway with no live transcript: the phone's recognizer cannot
-     * run on this dictation. The words arrive once the gateway transcribes the note.
+     * Recording a voice note for the gateway to transcribe. The phone's own transcript
+     * is kept out of sight: it only stands in if the gateway cannot transcribe.
      */
     RECORDING,
 
@@ -70,9 +70,20 @@ data class CaptureUiState(
     val partialText: String = "",
     val speech: SpeechState = SpeechState.IDLE,
     /**
-     * This visit records for the gateway without a live transcript, so the note may be
-     * saved with an empty field: its text comes from the gateway.
+     * The voice note this capture is, when the gateway transcribes voice notes; null for
+     * a typed or on-device dictated note. While it exists the note has no editable text:
+     * its words come from the gateway.
      */
-    val voiceNoteOnly: Boolean = false,
+    val voiceNote: VoiceNoteUi? = null,
     val save: SaveState = SaveState.Idle,
+)
+
+/** A voice note being recorded, or recorded and ready to save. */
+data class VoiceNoteUi(
+    /** The microphone is open. */
+    val recording: Boolean,
+    /** How much audio the note holds. */
+    val elapsedMs: Long,
+    /** 0–1 microphone level while recording, for the meter. */
+    val level: Float = 0f,
 )

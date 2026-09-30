@@ -19,18 +19,80 @@ public struct NoteAudio: Equatable, Sendable {
     }
 }
 
-/// When a Tell Omnesis capture carries its recording. The recording covers
-/// only what was dictated, and the gateway's transcript replaces the note's
-/// whole text — so the audio goes only when the text being saved is exactly
-/// what was dictated into it. A capture the person edited after dictating,
-/// or typed into before a dictation run, is saved as the text they see.
-enum VoiceNoteCapture {
-    /// `dictatedText` is the text as dictation last left it;
-    /// `recordingIncomplete` says some of it was never recorded.
-    static func attachesAudio(savedText: String, dictatedText: String?, recordingIncomplete: Bool) -> Bool {
-        guard !recordingIncomplete, let dictatedText else { return false }
-        let saved = savedText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !saved.isEmpty && saved == dictatedText.trimmingCharacters(in: .whitespacesAndNewlines)
+/// A Tell Omnesis capture while gateway transcription is on: a voice note.
+///
+/// The screen shows the recording — whether it is running, and how long it
+/// is — never the phone's own transcript. A poor on-device transcript on
+/// screen is what makes people give up on a note the gateway would have
+/// transcribed well. That transcript is still kept, out of sight, as the
+/// text the note carries until the gateway's replaces it, and the text the
+/// note falls back to if the gateway cannot transcribe it.
+///
+/// A capture is either a voice note or a typed note. Discarding the
+/// recording turns it back into an empty typed note. Pure, so the logic lane
+/// covers every transition.
+struct VoiceNoteCaptureState: Equatable {
+    /// The phone's transcript of every run so far, never shown.
+    private(set) var hiddenTranscript = ""
+    /// `hiddenTranscript` when the current run started: a run's partials
+    /// replace one another on top of it.
+    private var runBase = ""
+    /// Length of the runs already stopped.
+    private(set) var recordedDuration: TimeInterval = 0
+    /// When the running run started; nil between runs.
+    private(set) var runStartedAt: Date?
+
+    var isRecording: Bool {
+        runStartedAt != nil
+    }
+
+    /// There is a recording to save or discard — running or stopped.
+    var hasRecording: Bool {
+        isRecording || recordedDuration > 0
+    }
+
+    /// Length of the recording so far, the running run included.
+    func duration(at now: Date) -> TimeInterval {
+        recordedDuration + (runStartedAt.map { max(0, now.timeIntervalSince($0)) } ?? 0)
+    }
+
+    /// A run started: record more, adding to the note.
+    mutating func startRun(at now: Date) {
+        guard !isRecording else { return }
+        runBase = hiddenTranscript
+        runStartedAt = now
+    }
+
+    /// The phone's recognizer heard `partial` in the current run — or its
+    /// final result once the run has stopped.
+    mutating func heard(_ partial: String) {
+        hiddenTranscript = DictationTranscript.compose(base: runBase, partial: partial)
+    }
+
+    mutating func stopRun(at now: Date) {
+        guard let runStartedAt else { return }
+        recordedDuration += max(0, now.timeIntervalSince(runStartedAt))
+        self.runStartedAt = nil
+    }
+
+    /// Throw the recording away; what follows is typed.
+    mutating func discard() {
+        self = VoiceNoteCaptureState()
+    }
+
+    /// `0:12`, `1:05` — the recording's length on screen.
+    static func clock(_ duration: TimeInterval) -> String {
+        let seconds = max(0, Int(duration))
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+
+    /// The recording's length for VoiceOver: "12 seconds", "1 minute 5 seconds".
+    static func spokenDuration(_ duration: TimeInterval) -> String {
+        let seconds = max(0, Int(duration))
+        let formatter = DateComponentsFormatter()
+        formatter.unitsStyle = .full
+        formatter.allowedUnits = seconds >= 60 ? [.minute, .second] : [.second]
+        return formatter.string(from: TimeInterval(seconds)) ?? "\(seconds) seconds"
     }
 }
 

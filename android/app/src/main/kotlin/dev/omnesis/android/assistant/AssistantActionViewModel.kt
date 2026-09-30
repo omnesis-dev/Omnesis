@@ -25,10 +25,12 @@ import kotlinx.coroutines.launch
 /**
  * Owns exactly one foreground App Action request across Activity recreation.
  *
- * A capture dictated hands-free is also recorded when the gateway transcribes voice
- * notes ([VoiceNoteSessions]), and the note is saved with its audio. The recognizer's end
- * of speech still ends it; when the recognizer cannot run on the recording, the
- * [SilenceDetector] does.
+ * A capture dictated hands-free becomes a voice note when the gateway transcribes voice
+ * notes ([VoiceNoteSessions]): the overlay shows the recording, never the recognizer's
+ * words, and the note is saved with its audio. The recognizer still listens to a copy,
+ * out of sight — its end of speech ends the capture and its words stand in if the
+ * gateway cannot transcribe. When it cannot run on the recording, the
+ * [SilenceDetector] ends the capture instead.
  */
 @HiltViewModel
 class AssistantActionViewModel @Inject constructor(
@@ -112,7 +114,10 @@ class AssistantActionViewModel @Inject constructor(
         val listening = _state.value as? AssistantActionUiState.Listening ?: return
         if (request == null) return
         if (listening.kind == AssistantActionKind.CAPTURE && voiceNote == null) {
-            voiceNote = voiceNotes.begin()?.also { it.listener = voiceNoteListener(it) }
+            voiceNote = voiceNotes.begin()?.also {
+                it.listener = voiceNoteListener(it)
+                _state.value = listening.copy(recordingVoiceNote = true)
+            }
         }
         if (!transcriber.isAvailable()) {
             if (voiceNote != null) {
@@ -300,6 +305,8 @@ class AssistantActionViewModel @Inject constructor(
         override fun onPartial(text: String) {
             if (!recognitionIsCurrent(delivery, recognition)) return
             recognizerHeardRecording = true
+            // A voice note's words stay out of sight; the gateway writes the note.
+            if (voiceNote != null) return
             val kind = request?.kind ?: return
             _state.value = AssistantActionUiState.Listening(
                 kind,

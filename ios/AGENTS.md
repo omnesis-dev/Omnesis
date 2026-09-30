@@ -43,11 +43,13 @@ picks it up live, and the phone's handling of queued relays) and
 gateway dictation — see below).
 
 **Gateway dictation for notes (experimental).** While the paired gateway
-reports gateway dictation on, a Tell Omnesis capture on the iPhone also
-records what is dictated (`DictationAudioRecorder`), and a note saved exactly
-as dictated goes to `POST /notes/voice` with the recording and the phone's
-transcript (`VoiceNoteDelivery`): the note is saved at once, and the
-gateway's transcript replaces the text when ready. Nobody waits for the
+reports gateway dictation on, a Tell Omnesis capture on the iPhone is a voice
+note (`VoiceNoteCaptureState`): it records (`DictationAudioRecorder`) and
+shows the recording — never the phone's transcript, which it keeps out of
+sight as the note's fallback text — and Done sends both to
+`POST /notes/voice` (`VoiceNoteDelivery`): the note is saved at once, and the
+gateway's transcript replaces the text when ready. Discarding the recording
+makes it a typed note. Nobody waits for the
 gateway, and the offline queue carries the recording like the note. On the
 watch, Note (complication and in-app button) records instead of opening
 system dictation while the gate the phone publishes in the WatchConnectivity

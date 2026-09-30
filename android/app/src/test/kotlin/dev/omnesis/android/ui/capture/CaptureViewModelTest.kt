@@ -81,11 +81,12 @@ class CaptureViewModelTest {
 
     private fun makeVm(
         gateway: () -> NotesGateway?,
-        voiceNote: VoiceNoteSession? = null,
+        vararg voiceNotes: VoiceNoteSession,
     ): CaptureViewModel {
         val context = ApplicationProvider.getApplicationContext<Context>()
         transcriber = FakeTranscriber(context)
         store = PendingNotesStore(context)
+        val sessions = ArrayDeque(voiceNotes.toList())
         return CaptureViewModel(
             transcriber = transcriber,
             repository = NotesRepository(
@@ -93,17 +94,21 @@ class CaptureViewModelTest {
                 gateway = gateway,
                 audioFiles = VoiceNoteFiles(File(context.noBackupFilesDir, "voice-notes")),
             ),
-            voiceNotes = { voiceNote },
+            voiceNotes = {
+                beginCount++
+                sessions.removeFirstOrNull()
+            },
             savedStateHandle = SavedStateHandle(),
         )
     }
 
     private lateinit var store: PendingNotesStore
+    private var beginCount = 0
 
-    private fun recordingSession(captured: Boolean = true): FakeVoiceNoteSession {
+    private fun recordingSession(name: String = "recording-test.wav", captured: Boolean = true): FakeVoiceNoteSession {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val dir = File(context.noBackupFilesDir, "voice-notes").apply { mkdirs() }
-        return FakeVoiceNoteSession(File(dir, "recording-test.wav"), captured)
+        return FakeVoiceNoteSession(File(dir, name), captured)
     }
 
     private fun awaitQueued(): PendingNote {
@@ -111,55 +116,115 @@ class CaptureViewModelTest {
         return runBlocking { store.readAll().single() }
     }
 
+    // --- Voice notes: the gateway transcribes, the phone's words never show ---
+
     @Test
-    fun a_dictated_note_is_saved_with_its_recording() {
+    fun a_voice_note_records_and_never_shows_the_phones_words() {
         val session = recordingSession()
-        vm = makeVm(gateway = { null }, voiceNote = session)
+        vm = makeVm(gateway = { null }, session)
         vm.onMicPermission(true)
-        // The recognizer reads the recording rather than opening the microphone.
+
+        assertEquals(SpeechState.RECORDING, vm.state.value.speech)
+        assertEquals(VoiceNoteUi(recording = true, elapsedMs = 0), vm.state.value.voiceNote)
+        // The recognizer listens to a copy of the recording, out of sight.
         assertEquals(1, transcriber.audioStarts)
-        transcriber.listener!!.onFinal("pick up the parcel")
-        transcriber.listener!!.onEnded(SpeechTranscriber.EndReason.NORMAL)
+        transcriber.listener!!.onPartial("remind me about the")
+        transcriber.listener!!.onFinal("remind me about the dentist")
+        assertEquals("", vm.state.value.text)
+        assertEquals("", vm.state.value.partialText)
+
+        session.listener!!.onPeak(12_000, 3_400)
+        assertEquals(3_400, vm.state.value.voiceNote!!.elapsedMs)
+        assertTrue(vm.state.value.voiceNote!!.level > 0.5f)
+    }
+
+    @Test
+    fun stopping_keeps_the_recording_and_record_more_appends_to_it() {
+        val session = recordingSession()
+        vm = makeVm(gateway = { null }, session)
+        vm.onMicPermission(true)
+        session.listener!!.onPeak(9_000, 4_000)
+
+        vm.stopListening()
+        assertEquals(SpeechState.IDLE, vm.state.value.speech)
+        assertEquals(VoiceNoteUi(recording = false, elapsedMs = 4_000), vm.state.value.voiceNote)
+        assertEquals(1, session.paused)
+        // Peaks after the stop do not move a stopped note.
+        session.listener!!.onPeak(9_000, 5_000)
+        assertEquals(4_000, vm.state.value.voiceNote!!.elapsedMs)
+
+        vm.startListening()
+        assertEquals(1, session.resumed)
+        assertEquals(true, vm.state.value.voiceNote!!.recording)
+        assertEquals(1, beginCount)
         assertEquals(2, transcriber.audioStarts)
-        assertEquals(2, session.inputs)
+    }
+
+    @Test
+    fun saving_sends_the_audio_with_the_hidden_transcript_as_its_stand_in() {
+        val session = recordingSession()
+        vm = makeVm(gateway = { null }, session)
+        vm.onMicPermission(true)
+        transcriber.listener!!.onFinal("pick up the parcel")
+        transcriber.listener!!.onPartial("before noon")
 
         vm.save()
 
         val queued = awaitQueued()
-        assertEquals("pick up the parcel", queued.text)
+        assertEquals("pick up the parcel before noon", queued.text)
         assertTrue(queued.audio!!.file.exists())
         assertTrue(session.finished)
+        assertEquals("", vm.state.value.text)
     }
 
     @Test
-    fun a_keyboard_edit_saves_the_typed_text_without_the_recording() {
+    fun discarding_the_recording_turns_the_capture_into_a_typed_note() {
         val session = recordingSession()
-        vm = makeVm(gateway = { null }, voiceNote = session)
+        vm = makeVm(gateway = { null }, session)
         vm.onMicPermission(true)
-        transcriber.listener!!.onFinal("pick up the parcel")
-        vm.onTextEdited("pick up the parcel at noon")
-        assertEquals(1, session.paused)
+        transcriber.listener!!.onFinal("never shown")
+        vm.stopListening()
 
+        vm.discardVoiceNote()
+        assertTrue(session.discarded)
+        assertNull(vm.state.value.voiceNote)
+        assertEquals("", vm.state.value.text)
+
+        vm.onTextEdited("Typed instead")
         vm.save()
-
         val queued = awaitQueued()
-        assertEquals("pick up the parcel at noon", queued.text)
+        assertEquals("Typed instead", queued.text)
         assertNull(queued.audio)
-        assertFalse(File(ApplicationProvider.getApplicationContext<Context>().noBackupFilesDir, "voice-notes/recording-test.wav").exists())
     }
 
     @Test
-    fun a_recognizer_that_fails_on_the_recording_leaves_it_recording_alone() {
+    fun a_voice_note_ignores_keyboard_edits() {
+        vm = makeVm(gateway = { null }, recordingSession())
+        vm.onMicPermission(true)
+        vm.onTextEdited("sneaky")
+        assertEquals("", vm.state.value.text)
+    }
+
+    @Test
+    fun typed_words_stay_a_typed_note_when_the_mic_is_tapped() {
+        vm = makeVm(gateway = { null }, recordingSession())
+        vm.onTextEdited("Groceries:")
+        vm.startListening()
+        assertEquals(0, beginCount)
+        assertEquals(SpeechState.LISTENING, vm.state.value.speech)
+        assertNull(vm.state.value.voiceNote)
+    }
+
+    @Test
+    fun a_recognizer_that_fails_on_the_recording_stops_listening_but_the_note_records_on() {
         val session = recordingSession()
-        vm = makeVm(gateway = { null }, voiceNote = session)
+        vm = makeVm(gateway = { null }, session)
         vm.onMicPermission(true)
         transcriber.listener!!.onEnded(SpeechTranscriber.EndReason.FAULT)
 
         assertEquals(SpeechState.RECORDING, vm.state.value.speech)
-        assertTrue(vm.state.value.voiceNoteOnly)
-        assertEquals(1, transcriber.startCount)
+        assertEquals(1, transcriber.audioStarts)
 
-        // An empty field still saves: the gateway writes the text.
         vm.save()
         val queued = awaitQueued()
         assertEquals("", queued.text)
@@ -167,42 +232,38 @@ class CaptureViewModelTest {
     }
 
     @Test
-    fun without_a_recognizer_the_screen_records_for_the_gateway() {
-        val session = recordingSession()
-        vm = makeVm(gateway = { null }, voiceNote = session)
+    fun a_voice_note_records_even_without_a_recognizer() {
+        vm = makeVm(gateway = { null }, recordingSession())
         transcriber.available = false
         vm.onMicPermission(true)
         assertEquals(SpeechState.RECORDING, vm.state.value.speech)
         assertEquals(0, transcriber.startCount)
-        vm.stopListening()
-        assertEquals(SpeechState.IDLE, vm.state.value.speech)
-        assertEquals(1, session.paused)
     }
 
     @Test
     fun a_recording_that_captured_nothing_saves_nothing_and_says_so() {
-        vm = makeVm(gateway = { null }, voiceNote = recordingSession(captured = false))
-        transcriber.available = false
+        vm = makeVm(gateway = { null }, recordingSession(captured = false))
         vm.onMicPermission(true)
         vm.save()
         assertTrue(vm.state.value.save is SaveState.Failed)
+        assertNull(vm.state.value.voiceNote)
         assertTrue(runBlocking { store.readAll() }.isEmpty())
     }
 
     @Test
-    fun a_lost_recording_leaves_the_phone_transcript_only() {
+    fun a_lost_recording_hands_over_the_phones_words_as_an_editable_note() {
         val session = recordingSession()
-        vm = makeVm(gateway = { null }, voiceNote = session)
+        vm = makeVm(gateway = { null }, session, recordingSession("second.wav"))
         vm.onMicPermission(true)
-        session.listener!!.onLost()
         transcriber.listener!!.onFinal("book the ferry")
-        transcriber.listener!!.onEnded(SpeechTranscriber.EndReason.NORMAL)
-        assertEquals(1, transcriber.audioStarts)
+        session.listener!!.onLost()
 
-        vm.save()
-        val queued = awaitQueued()
-        assertEquals("book the ferry", queued.text)
-        assertNull(queued.audio)
+        assertNull(vm.state.value.voiceNote)
+        assertEquals("book the ferry", vm.state.value.text)
+        // This visit stays on the phone from here.
+        vm.startListening()
+        assertEquals(1, beginCount)
+        assertEquals(SpeechState.LISTENING, vm.state.value.speech)
     }
 
     @Test
@@ -210,17 +271,20 @@ class CaptureViewModelTest {
         vm.onMicPermission(true)
         assertEquals(0, transcriber.audioStarts)
         assertEquals(1, transcriber.startCount)
+        transcriber.listener!!.onPartial("live words")
+        assertEquals("live words", vm.state.value.textWithPartial())
     }
 
     @Test
-    fun audio_goes_with_a_note_only_when_its_text_is_what_was_dictated() {
-        assertTrue(attachesVoiceNote(savedText = "call mum", dictatedText = "call mum "))
-        assertFalse(attachesVoiceNote(savedText = "call mum today", dictatedText = "call mum"))
-        assertFalse(attachesVoiceNote(savedText = "call mum", dictatedText = null))
-        assertTrue(attachesVoiceNote(savedText = "", dictatedText = ""))
+    fun durations_read_as_a_clock_and_as_speech() {
+        assertEquals("0:07", clockDuration(7_400))
+        assertEquals("1:32", clockDuration(92_000))
+        assertEquals("1 second", spokenDuration(1_200))
+        assertEquals("12 seconds", spokenDuration(12_000))
+        assertEquals("1 minute", spokenDuration(60_000))
+        assertEquals("2 minutes 5 seconds", spokenDuration(125_000))
     }
 
-    /** The save runs a real coroutine + (for gateway tests) real HTTP; poll for its terminal state. */
     private fun awaitSaveSettled(vm: CaptureViewModel): SaveState {
         val deadline = System.currentTimeMillis() + 5_000
         while (System.currentTimeMillis() < deadline) {
