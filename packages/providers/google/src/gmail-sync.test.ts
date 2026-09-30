@@ -243,6 +243,42 @@ describe("Gmail attachments", () => {
     expect(result.documents[0]!.content).not.toContain("image001.png");
   });
 
+  test("an inline image whose text adds a phone number the message lacks is kept", async () => {
+    const signature = {
+      filename: "image001.png",
+      mimeType: "image/png",
+      headers: [{ name: "Content-ID", value: "<sig-1@example.com>" }],
+      body: { attachmentId: "att-sig", size: 6_000 },
+    };
+    const badge = {
+      filename: "image002.png",
+      mimeType: "image/png",
+      headers: [{ name: "Content-ID", value: "<badge-1@example.com>" }],
+      body: { attachmentId: "att-badge", size: 3_000 },
+    };
+    const ocr: Record<string, string> = {
+      "att-sig": "Maya\nMobile +44 7700 900123",
+      "att-badge": "Maya",
+    };
+    extract.mockImplementation((data: Uint8Array) =>
+      Promise.resolve({ text: ocr[Buffer.from(data).toString()], truncated: false }),
+    );
+    gmail.users.messages.get = vi.fn(() =>
+      Promise.resolve({
+        data: messageWith(
+          "m-1",
+          [signature, badge],
+          '<p>Thanks, Maya</p><img src="cid:sig-1@example.com"><img src="cid:badge-1@example.com">',
+        ),
+      }),
+    );
+    const result = await source().sync(null);
+    expect(result.documents[0]!.metadata.extra?.attachments).toEqual([
+      expect.objectContaining({ filename: "image001.png", extracted: true }),
+    ]);
+    expect(result.documents.map((d) => d.content).join("\n")).toContain("+44 7700 900123");
+  });
+
   test("a text attachment is extracted in the charset its part declares", async () => {
     const notes = {
       filename: "notes.txt",
