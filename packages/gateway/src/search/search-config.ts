@@ -164,6 +164,8 @@ export function resolveVectorConfig(config?: SearchConfig): Required<SearchVecto
 }
 
 export interface SearchConfig {
+  /** Default-off grouping and graph provenance for unrestricted agent searches. */
+  v2?: Partial<SearchV2Config>;
   /** Fusion + limit tunables; see {@link DEFAULT_SEARCH_PARAMS}. */
   params?: Partial<SearchParams>;
   /** Per-type and relevance score boosts; see {@link DEFAULT_SEARCH_BOOSTS}. */
@@ -262,6 +264,28 @@ export interface SearchConfig {
    */
   embedderPrefixes?: {
     enabled?: boolean;
+  };
+}
+
+export interface SearchV2Config {
+  enabled: boolean;
+  topN: number;
+  maxDepth: number;
+  fanout: number;
+  maxNodes: number;
+  maxCopies: number;
+  maxSummaryChars: number;
+}
+
+export function resolveSearchV2Config(config?: SearchConfig): SearchV2Config {
+  return {
+    enabled: config?.v2?.enabled === true,
+    topN: config?.v2?.topN ?? 3,
+    maxDepth: config?.v2?.maxDepth ?? 4,
+    fanout: config?.v2?.fanout ?? 6,
+    maxNodes: config?.v2?.maxNodes ?? 24,
+    maxCopies: config?.v2?.maxCopies ?? 8,
+    maxSummaryChars: config?.v2?.maxSummaryChars ?? 700,
   };
 }
 

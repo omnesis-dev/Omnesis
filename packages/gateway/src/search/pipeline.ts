@@ -45,7 +45,9 @@ import {
   resolveDiversityConfig,
   resolveSourcePriorsConfig,
   resolveVectorConfig,
+  resolveSearchV2Config,
 } from "./search-config.js";
+import { enrichAgentSearch } from "./agent-provenance.js";
 import { parseQuery, pillTokenForRoles } from "./query-parser.js";
 import { resolvePersonDocIds } from "./person-filter.js";
 import { shouldBrowse } from "./browse.js";
@@ -65,7 +67,6 @@ import type { Embedder } from "../indexer/types.js";
 import type { SearchConfig } from "./search-config.js";
 import type { SourceDocCount } from "./source-isf-prior.js";
 import type {
-  SearchResultItem,
   LinkRefSource,
   QueryEnricher,
   SearchFilters,
@@ -282,7 +283,15 @@ export class SearchPipeline {
 
   async search(
     query: SearchQuery,
-    authorization?: { readonly sourceIds: readonly string[] },
+    authorization?: {
+      readonly sourceIds: readonly string[];
+      /** Server-derived all-sources grant; never supplied by a search body. */
+      readonly graphContext?: "unrestricted";
+    },
+    options?: {
+      agentContext?: boolean;
+      excludeDocumentIds?: readonly string[] | (() => readonly string[]);
+    },
   ): Promise<SearchResponse> {
     const startMs = Date.now();
     // Capture the scheduler's inflight state at search start so we can
@@ -463,18 +472,29 @@ export class SearchPipeline {
       await this.refCountStage.execute(ctx);
     }
 
-    // Final pass: collapse byte-identical documents (Drive re-uploads,
-    // duplicate page captures, etc.) so a top-k frame of all-duplicates doesn't
-    // drown out a single distinct answer. Fusion already dedupes by
-    // `document_id`; this pass dedupes by `content_hash` — consuming the map
-    // the core fetched, so finalize issues no `index.db` read. It operates on
-    // the full pool (capped at `candidateLimit`) and slices to `limit`. The
-    // final chunk-text hydration the pipeline used to do here is gone: the core
-    // hydrated the whole pool, so every survivor already carries its text.
-    // Facets are built off the deduped frame so the counts match what the
-    // caller sees.
-    ctx.results = dedupeByContentHashWith(cg.contentHashByDoc, ctx.results, ctx.limit);
-    this.hydrateMetadataFields(ctx.results);
+    // Finalize the full ranked pool before limiting. Legacy searches collapse
+    // equal formatted-content hashes. Opt-in unrestricted agent searches group
+    // eligible extracted-text identities and retain their provenance. Neither
+    // hash establishes identical file bytes. The candidate core already
+    // hydrated chunk text and fetched hashes, so neither path rereads index.db.
+    const v2 = resolveSearchV2Config(this.searchConfig);
+    if (
+      options?.agentContext &&
+      v2.enabled &&
+      this.gatewayDb &&
+      (!authorization || authorization.graphContext === "unrestricted")
+    ) {
+      this.hydrateMetadataFields(ctx.results);
+      ctx.results = enrichAgentSearch(this.gatewayDb, ctx.results, {
+        ...v2,
+        limit: ctx.limit,
+        excludeDocumentIds: options.excludeDocumentIds,
+        indexedContentHashes: cg.contentHashByDoc,
+      });
+    } else {
+      ctx.results = dedupeByContentHashWith(cg.contentHashByDoc, ctx.results, ctx.limit);
+      this.hydrateMetadataFields(ctx.results);
+    }
     if (query.includeBoundRow) await this.hydrateBoundRows(ctx.results);
 
     const facets = buildFacets(ctx.results);
@@ -535,6 +555,11 @@ export class SearchPipeline {
       notices: notices.length > 0 ? notices : undefined,
       debug: query.verbose ? this.buildDebug(query) : undefined,
     };
+  }
+
+  /** Internal prompt gate; public search never opts into the agent projection. */
+  get agentSearchV2Enabled(): boolean {
+    return resolveSearchV2Config(this.searchConfig).enabled;
   }
 
   private buildDebug(query: SearchQuery): import("./types.js").SearchDebug {

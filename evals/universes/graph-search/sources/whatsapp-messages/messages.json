@@ -1,0 +1,30 @@
+[
+  {
+    "externalId": "graph-chat",
+    "chatId": "graph-chat-contract",
+    "chatTitle": "Jamie Lopez",
+    "date": "2025-02-02",
+    "counterparty": "p_jamie",
+    "messages": [
+      {
+        "from": "p_jamie",
+        "at": "2025-02-02T12:00:00Z",
+        "text": "Here is the equipment agreement: https://drive.google.com/file/d/graph-contract-1/view"
+      }
+    ]
+  },
+  {
+    "externalId": "graph-chat-unrelated",
+    "chatId": "graph-chat-unrelated",
+    "chatTitle": "Jamie Lopez",
+    "date": "2025-02-09",
+    "counterparty": "p_jamie",
+    "messages": [
+      {
+        "from": "p_jamie",
+        "at": "2025-02-09T12:00:00Z",
+        "text": "Unrelated conversation about the weekend picnic."
+      }
+    ]
+  }
+]

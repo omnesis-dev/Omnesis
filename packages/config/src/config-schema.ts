@@ -425,6 +425,18 @@ const searchBm25 = z
   })
   .strict();
 
+const searchV2 = z
+  .object({
+    enabled: z.boolean().default(false),
+    topN: z.number().int().min(1).max(10).default(3),
+    maxDepth: z.number().int().min(1).max(5).default(4),
+    fanout: z.number().int().min(1).max(12).default(6),
+    maxNodes: z.number().int().min(1).max(48).default(24),
+    maxCopies: z.number().int().min(1).max(24).default(8),
+    maxSummaryChars: z.number().int().min(100).max(2000).default(700),
+  })
+  .strict();
+
 const search = z
   .object({
     params: searchParams.describe("Fusion + limit tunables.").optional(),
@@ -440,6 +452,11 @@ const search = z
     readHandle: searchReadHandle.describe("Read-only index.db connection tunables.").optional(),
     sourcePriors: searchSourcePriors.describe("Per-source ranking priors.").optional(),
     diversity: searchDiversity.describe("Post-fusion per-source diversity / MMR.").optional(),
+    v2: searchV2
+      .describe(
+        "Opt-in agent search: group matching files and attach bounded graph provenance. Disabled by default; ordinary client search is unchanged.",
+      )
+      .optional(),
     embedderPrefixes: searchEmbedderPrefixes
       .describe("Family-aware embedder task prefixes.")
       .optional(),

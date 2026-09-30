@@ -5606,7 +5606,9 @@
         "packages/collector/src/e2e/restart-durability.e2e.test.ts",
         "packages/gateway/src/privacy/answer-diff.test.ts",
         "packages/providers/whatsapp/src/normalizer.test.ts",
-        "packages/gateway/src/privacy/reviewer.test.ts"
+        "packages/gateway/src/privacy/reviewer.test.ts",
+        "evals/universes/graph-search/sources/gmail/messages.json",
+        "evals/universes/graph-search/sources/google-drive/files.json"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -6432,7 +6434,11 @@
         "evals/universes/loops-test-life/decision-cassettes/worth-gate.jsonl",
         "packages/collector/src/e2e/maildir-lifecycle.e2e.test.ts",
         "packages/providers/maildir/src/message.test.ts",
-        "packages/providers/maildir/src/source.test.ts"
+        "packages/providers/maildir/src/source.test.ts",
+        "evals/universes/graph-search/cast.json",
+        "evals/universes/graph-search/sources/whatsapp-messages/messages.json",
+        "packages/collector/src/e2e/graph-search-v2.e2e.test.ts",
+        "packages/gateway/src/search/agent-provenance.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -7100,7 +7106,9 @@
         "packages/collector/src/e2e/maildir-lifecycle.e2e.test.ts",
         "packages/providers/maildir/src/index.test.ts",
         "packages/providers/maildir/src/message.test.ts",
-        "packages/providers/maildir/src/source.test.ts"
+        "packages/providers/maildir/src/source.test.ts",
+        "evals/universes/graph-search/cast.json",
+        "packages/gateway/src/search/agent-provenance.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -8643,7 +8651,8 @@
         "packages/gateway/src/workers/indexer-worker-boot.test.ts",
         "packages/providers/outlook/src/onedrive.test.ts",
         "packages/collector/src/e2e/maildir-lifecycle.e2e.test.ts",
-        "packages/providers/maildir/src/source.test.ts"
+        "packages/providers/maildir/src/source.test.ts",
+        "evals/universes/graph-search/cast.json"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -10164,6 +10173,22 @@
         "packages/providers/maildir/src/layout.test.ts"
       ],
       "reason": "Gmail's folder name as mail tools mirror it to a Maildir, not a person"
+    },
+    {
+      "value": "Northstar Equipment Agreement",
+      "paths": [
+        "evals/universes/graph-search/agent-demos/filtered.jsonl",
+        "evals/universes/graph-search/agent-demos/journey.jsonl",
+        "evals/universes/graph-search/agent-demos/versions.jsonl",
+        "evals/universes/graph-search/sources/gmail/messages.json",
+        "evals/universes/graph-search/sources/google-drive/files.json"
+      ],
+      "reason": "Invented graph-search test corpus; no personal corpus data."
+    },
+    {
+      "value": "Forwarded Northstar Equipment",
+      "paths": ["evals/universes/graph-search/sources/gmail/messages.json"],
+      "reason": "Invented graph-search test corpus; no personal corpus data."
     }
   ],
   "secretFixtures": [

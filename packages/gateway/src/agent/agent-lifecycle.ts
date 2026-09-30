@@ -384,6 +384,7 @@ export function createAgentService(
       catalog,
       sourceTypes,
       experimental,
+      searchV2: searchPipeline.agentSearchV2Enabled && !restricted,
       selfMemory,
       selfPersonId,
       memoryWrites: options.memoryWrites === true && !restricted,

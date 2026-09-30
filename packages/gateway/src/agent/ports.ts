@@ -140,6 +140,16 @@ export function createGatewaySearchPort(
       if (parsed) rejectUnsupportedRestrictedFilters(parsed.tokens);
       const requestedFilters = parsed ? mergeFilters(parsed.filters, input.filters) : input.filters;
       const permitted = authorization && db ? permittedSourceIds(db, authorization) : null;
+      const currentConversationId = input.currentConversationId;
+      const findOwnConversation = (): string | null =>
+        db && currentConversationId
+          ? findConversationDocId(
+              db,
+              OMNESIS_CHAT_PROVIDER_ID,
+              OMNESIS_CHAT_SOURCE_ID,
+              currentConversationId,
+            )
+          : null;
       const response = await pipeline.search(
         {
           text: parsed?.text ?? input.query,
@@ -159,7 +169,21 @@ export function createGatewaySearchPort(
           // on experimental defensively.
           cognitiveProjection: authorization?.restricted ? false : experimentalVisible(),
         },
-        permitted ? { sourceIds: searchSourceIntersection(permitted) } : undefined,
+        permitted
+          ? {
+              sourceIds: searchSourceIntersection(permitted),
+              ...(!authorization?.restricted ? { graphContext: "unrestricted" as const } : {}),
+            }
+          : undefined,
+        {
+          agentContext: !authorization?.restricted,
+          excludeDocumentIds: currentConversationId
+            ? () => {
+                const id = findOwnConversation();
+                return id ? [id] : [];
+              }
+            : undefined,
+        },
       );
       // SearchPipeline does not yet expose a cancellation seam for its worker
       // and embedder phases. Never release a result after the HTTP/MCP caller
@@ -171,17 +195,10 @@ export function createGatewaySearchPort(
       let results: DocRef[] = response.results
         .filter((item) => !permitted || permitted.has(item.sourceId))
         .map((item) => searchResultToDocRef(item, syncStatus, !authorization?.restricted));
-      // Resolved before the breadcrumb walk, because the walk can reach the
-      // conversation too — see `attachBreadcrumbs`.
-      const ownConversationDocId =
-        db && input.currentConversationId
-          ? findConversationDocId(
-              db,
-              OMNESIS_CHAT_PROVIDER_ID,
-              OMNESIS_CHAT_SOURCE_ID,
-              input.currentConversationId,
-            )
-          : null;
+      // Resolve after async retrieval too: ingestion may have created the
+      // conversation while the search was waiting for its worker or embedder.
+      // V2 resolves the same exclusion within its graph read snapshot.
+      const ownConversationDocId = findOwnConversation();
       if (ownConversationDocId) {
         results = results.filter((r) => r.documentId !== ownConversationDocId);
       }
@@ -264,6 +281,7 @@ const BREADCRUMB_FANOUT = 3;
 function attachBreadcrumbs(db: Db, results: DocRef[], excludeDocId: string | null = null): void {
   for (let i = 0; i < results.length && i < BREADCRUMB_TOP_N; i++) {
     const r = results[i]!;
+    if (r.provenance) continue;
     const { neighbors } = expandOneHop(db, r.documentId, { fanout: BREADCRUMB_FANOUT });
     const visible = excludeDocId
       ? neighbors.filter((n) => n.documentId !== excludeDocId)
@@ -296,7 +314,7 @@ function attachDocConnections(db: Db, results: DocRef[]): void {
 function searchResultToDocRef(
   item: SearchResultItem,
   syncStatus: SyncStatusRegistry | undefined,
-  includeRefCount = false,
+  includeGraphContext = false,
 ): DocRef {
   const ref: DocRef = {
     documentId: item.documentId,
@@ -311,11 +329,12 @@ function searchResultToDocRef(
     mimeType: item.mimeType,
     people: item.author ? [item.author] : undefined,
     unitName: unitNameFor(syncStatus, item.sourceId),
+    ...(includeGraphContext && item.provenance ? { provenance: item.provenance } : {}),
   };
   // refCount is computed for free by the ref-count search stage; surface it to
   // the agent only under the adjacency gate. Sparse by construction —
   // the stage sets it only when > 0, so an isolated doc simply has no field.
-  if (includeRefCount && item.refCount !== undefined && item.refCount > 0) {
+  if (includeGraphContext && item.refCount !== undefined && item.refCount > 0) {
     ref.refCount = item.refCount;
   }
   return ref;

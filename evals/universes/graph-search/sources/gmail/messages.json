@@ -1,0 +1,22 @@
+[
+  {
+    "externalId": "graph-mail",
+    "subject": "Forwarded Northstar Equipment Agreement",
+    "from": "p_maya",
+    "fromEmail": "maya@example.com",
+    "to": ["p_sarah"],
+    "toEmails": ["sarah@example.org"],
+    "body": "Attached is the agreement Jamie shared. Please retain this copy.",
+    "sentAt": "2025-02-03T10:00:00Z",
+    "threadId": "graph-mail-thread",
+    "labels": ["SENT"],
+    "attachments": [
+      {
+        "filename": "Northstar-Equipment-Agreement.pdf",
+        "mimeType": "application/pdf",
+        "sizeBytes": 4096,
+        "extractedText": "Northstar Equipment Agreement. Contract reference LANTERN-482. The equipment rental lasts thirty days. The refundable deposit is 240 units. The delivery address is 42 Example Street. The agreement is signed by both parties.\n\nClause 1: The equipment inventory and return procedure require an inspection, a recorded serial number and written confirmation. The renter records the condition on arrival and return. The deposit is released after inspection.\n\nClause 2: The equipment inventory and return procedure require an inspection, a recorded serial number and written confirmation. The renter records the condition on arrival and return. The deposit is released after inspection.\n\nClause 3: The equipment inventory and return procedure require an inspection, a recorded serial number and written confirmation. The renter records the condition on arrival and return. The deposit is released after inspection.\n\nClause 4: The equipment inventory and return procedure require an inspection, a recorded serial number and written confirmation. The renter records the condition on arrival and return. The deposit is released after inspection.\n\nClause 5: The equipment inventory and return procedure require an inspection, a recorded serial number and written confirmation. The renter records the condition on arrival and return. The deposit is released after inspection.\n\nClause 6: The equipment inventory and return procedure require an inspection, a recorded serial number and written confirmation. The renter records the condition on arrival and return. The deposit is released after inspection.\n\nClause 7: The equipment inventory and return procedure require an inspection, a recorded serial number and written confirmation. The renter records the condition on arrival and return. The deposit is released after inspection.\n\nClause 8: The equipment inventory and return procedure require an inspection, a recorded serial number and written confirmation. The renter records the condition on arrival and return. The deposit is released after inspection.\n\nSupporting catalogue: https://drive.google.com/file/d/graph-hub/view"
+      }
+    ]
+  }
+]

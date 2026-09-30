@@ -1,0 +1,7 @@
+{
+  "triggers": ["Inspect graph versions"],
+  "placeholders": {
+    "docExternalIds": [],
+    "personNames": []
+  }
+}
