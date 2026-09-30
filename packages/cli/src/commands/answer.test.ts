@@ -29,6 +29,7 @@ import {
   assertNotInsideAgentHarness,
   WAIT_POLL_INTERVAL_MS,
 } from "./answer.js";
+import type { AnswerResponse } from "@omnesis/types/privacy";
 
 function response(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -259,7 +260,7 @@ describe("omnesis answer", () => {
   });
 
   it("keeps citations in --json output", () => {
-    const result = {
+    const result: AnswerResponse = {
       status: "released",
       workflowId: "wf_example",
       conversationId: "conv_example",
@@ -267,7 +268,7 @@ describe("omnesis answer", () => {
       releaseId: "release_example",
       answer: "A concise answer.",
       citations: [{ documentId: "doc_budget", sourceType: "gmail", title: "Q4 budget review" }],
-    } as const;
+    };
     expect(JSON.parse(formatAnswer(result, true))).toEqual(result);
   });
 
