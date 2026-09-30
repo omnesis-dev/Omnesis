@@ -4895,6 +4895,34 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view, name: "108-sticky-tabs", size: CGSize(width: 240, height: 80))
     }
 
+    /// A tab resolves its icon from the event's own source, not its family:
+    /// each account carries renderable art while the family's entry is a
+    /// remote SVG the image loader cannot decode. Every tab must show the
+    /// account art, never the placeholder glyph.
+    func testStickyTabsPreferAccountArt() {
+        let events = Array(PreviewMocks.trailVoucherJourney.prefix(4))
+        let sourceIds = Set(events.compactMap(\.eventSourceId))
+        let store = AppStore.preview(
+            sourceIconByType: Dictionary(uniqueKeysWithValues: Set(sourceIds.map(sourceTypeFromId)).map {
+                ($0, "https://example.com/brand/\($0).svg")
+            }),
+            sourceIconById: Dictionary(uniqueKeysWithValues: sourceIds.map {
+                ($0, PreviewMocks.agentSourceLayoutIcon)
+            }),
+            agentPreview: voucherTrailSeed()
+        )
+        let view = ZStack {
+            Theme.bgPrimary.ignoresSafeArea()
+            HStack(spacing: 12) {
+                ForEach(Array(events.enumerated()), id: \.0) { _, ev in
+                    TimelineEventStickyTab(event: ev, onTap: {})
+                }
+            }
+        }
+        .environment(store)
+        snapshot(view, name: "108b-sticky-tabs-account-art", size: CGSize(width: 240, height: 80))
+    }
+
     /// Long Timeline with mixed sources — exercises long-list rendering +
     /// multi-source spine accent changes over many annotated documents.
     func testCitationsDrawerTimelineLong() {

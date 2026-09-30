@@ -829,8 +829,11 @@ struct TimelineEventStickyTab: View {
     @ViewBuilder
     private var tab: some View {
         let content = HStack(spacing: 0) {
+            // The full source id, not its family: `SourceIconView` prefers
+            // the account's own art (rasterized at sync) over the family's,
+            // which may be a remote SVG the image loader cannot decode.
             SourceIconView(
-                sourceId: sourceTypeKey,
+                sourceId: eventSourceId,
                 store: store,
                 size: Self.iconSize
             )
