@@ -8,6 +8,7 @@ import dev.omnesis.android.transport.client.NotesClient
 import dev.omnesis.android.transport.http.GatewayHttp
 import java.io.File
 import java.nio.file.Files
+import java.time.Instant
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
@@ -60,6 +61,9 @@ class VoiceNoteDeliveryTest {
         },
         audioFiles = files,
         language = { "fr-FR" },
+        // The cutoff predates newly recorded files; filesystem timestamps need not keep
+        // millisecond precision with Instant.now(). The explicit orphan uses epoch 1_000.
+        now = { Instant.parse("2020-01-01T00:00:00Z") },
     )
 
     private fun recording(): VoiceNoteAudio =
