@@ -248,7 +248,6 @@ export function CalendarTab({ selectedId = null, developer = false } = {}) {
     () => filterCalendarEntries(result.items, preferences),
     [result.items, preferences],
   );
-  const filtered = preferences.origin !== "all";
   const days = useMemo(
     () => visibleCalendarDays(zoom === "upcoming" ? "week" : zoom, anchor),
     [zoom, anchor],
@@ -466,7 +465,6 @@ export function CalendarTab({ selectedId = null, developer = false } = {}) {
           today=${dayKeyInTimeZone(result.nowMs, result.timeZone)}
           onOpen=${openEntry}
           mentionsExpanded=${preferences.origin === "mention"}
-          filtered=${filtered}
         />
       </div>`}
       ${(zoom === "week" || zoom === "day") &&
@@ -482,7 +480,6 @@ export function CalendarTab({ selectedId = null, developer = false } = {}) {
               today=${dayKeyInTimeZone(result.nowMs, result.timeZone)}
               onOpen=${openEntry}
               mentionsExpanded=${preferences.origin === "mention"}
-              filtered=${filtered}
             />`,
         )}
       </div>`}

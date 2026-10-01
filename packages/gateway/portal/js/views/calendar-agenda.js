@@ -220,7 +220,6 @@ export function DaySection({
   today,
   onOpen,
   mentionsExpanded = false,
-  filtered = false,
 }) {
   const key = localDayKey(day);
   const groups = groupDayEntries(entries);
@@ -232,7 +231,7 @@ export function DaySection({
     </header>
     <div class="calendar-day-entries">
       ${entries.length === 0
-        ? filtered ? null : html`<span class="calendar-day-empty">Nothing filed for this day.</span>`
+        ? null
         : html`
             <${EntryGroup}
               label="Timed"
