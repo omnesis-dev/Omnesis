@@ -10,7 +10,7 @@ export const ORIGIN_LABELS = {
     heading: "Source record",
     icon: "▱",
     description:
-      "Taken from a structured date field supplied by this source, such as a calendar booking or task due date.",
+      "Taken from a structured date field supplied by this source",
   },
   mention: {
     row: "Date mention",
