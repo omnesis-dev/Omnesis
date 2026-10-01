@@ -163,7 +163,8 @@ describe("website docs", () => {
     const experimental = html["experimental.html"];
     expect(idsOf("experimental.html").has("brain")).toBe(true);
     expect(idsOf("experimental.html").has("watch")).toBe(true);
-    expect(idsOf("experimental.html").has("gateway-dictation")).toBe(true);
+    expect(idsOf("experimental.html").has("gateway-dictation")).toBe(false);
+    expect(idsOf("apps.html").has("gateway-dictation")).toBe(true);
     expect(idsOf("experimental.html").has("plaid")).toBe(false);
     expect(idsOf("sources.html").has("plaid")).toBe(true);
     expect(idsOf("sources.html").has("local-files")).toBe(true);
@@ -172,11 +173,7 @@ describe("website docs", () => {
 
     const sidebar = experimental.match(/<aside class="docs-sidebar">[\s\S]*?<\/aside>/)?.[0] ?? "";
     const subnav = sidebar.match(/<ul class="side-sub">[\s\S]*?<\/ul>/)?.[0] ?? "";
-    expect([...subnav.matchAll(/href="([^"]+)"/g)].map((m) => m[1])).toEqual([
-      "#brain",
-      "#watch",
-      "#gateway-dictation",
-    ]);
+    expect([...subnav.matchAll(/href="([^"]+)"/g)].map((m) => m[1])).toEqual(["#brain", "#watch"]);
   });
 
   it.each(sharedChromePages)("%s: carries the shared chrome", (f) => {
