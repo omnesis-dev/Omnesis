@@ -60,10 +60,12 @@ describe("daily note references", () => {
       loops: [loop],
     });
     await mount({ experimental: true });
-    expect(host.textContent).toContain("this day's combined notes");
+    expect(host.querySelector("summary").textContent).toContain("3 related items");
+    expect(host.querySelector("details").hasAttribute("open")).toBe(false);
+    expect(host.textContent).not.toContain("Linked to this day's combined notes");
     expect(
       Array.from(host.querySelectorAll(".note-reference-heading")).map((el) => el.textContent),
-    ).toEqual(["Time mentions", "Brain time annotations", "Open loops"]);
+    ).toEqual(["Dates mentioned", "Related events", "Open loops"]);
     const links = Array.from(host.querySelectorAll("a"));
     expect(links.map((link) => link.getAttribute("href"))).toEqual([
       "/portal/debug/calendar/dm_example%2F1",
@@ -85,10 +87,25 @@ describe("daily note references", () => {
       loops: [loop],
     });
     await mount();
+    expect(host.querySelector("summary").textContent).toContain("1 date mentioned");
     expect(host.querySelectorAll("a")).toHaveLength(1);
     expect(host.textContent).toContain("next Tuesday");
     expect(host.textContent).not.toContain("Brain");
     expect(host.textContent).not.toContain("Open loops");
+  });
+
+  test("reports the daily document for the combined-note link and preserves disclosure state", async () => {
+    const onDocument = vi.fn();
+    mocks.getProvenance.mockResolvedValue({ ...empty, documentId: "doc_daily", mentions: [mention] });
+    await mount({ onDocument });
+    expect(onDocument).toHaveBeenLastCalledWith("doc_daily");
+    const details = host.querySelector("details");
+    details.setAttribute("open", "");
+    await mount({ onDocument });
+    expect(details.hasAttribute("open")).toBe(true);
+    await mount({ revision: "edited", onDocument });
+    expect(onDocument).toHaveBeenCalledWith(null);
+    expect(onDocument).toHaveBeenLastCalledWith("doc_daily");
   });
 
   test("polls new references in place, avoids overlapping reads and pauses while hidden", async () => {

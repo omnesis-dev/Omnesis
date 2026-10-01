@@ -18602,9 +18602,10 @@ a.agent-loop-row.agent-ephemeral-result-link:hover .agent-loop-state {
 
 /* ── Tell Omnesis (quick capture) ─────────────────────────────────────────── */
 /* The typed sibling of the mobile capture screens: one composer, one button.
-   Page layout stays on `.app-main`; the column only bounds the composer. */
+   The left-aligned column bounds both the composer and the notes for reading. */
 
 .capture-view {
+  max-width: 760px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -18616,7 +18617,7 @@ a.agent-loop-row.agent-ephemeral-result-link:hover .agent-loop-state {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  max-width: 720px;
+  width: 100%;
 }
 
 .capture-lead {
@@ -18721,55 +18722,98 @@ a.agent-loop-row.agent-ephemeral-result-link:hover .agent-loop-state {
   flex-wrap: wrap;
 }
 
-.capture-day {
-  margin: 8px 0 4px;
-  font-size: 12.5px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
+.capture-day-group {
+  margin-top: 20px;
 }
 
-.note-day-references {
-  margin: 0 0 8px;
-  padding: 8px 12px;
-  border-left: 2px solid var(--border);
+.capture-day-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  margin-bottom: 8px;
+}
+
+.capture-day-heading,
+.capture-day-actions {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.capture-day {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.capture-day-date,
+.capture-day-count {
+  color: var(--text-muted);
   font-size: 12px;
 }
 
-.note-reference-intro {
-  margin: 0;
-  color: var(--text-muted);
-}
-
-.note-reference-group {
-  margin-top: 6px;
-}
-
-.note-reference-heading {
-  font-weight: 600;
-  color: var(--text-secondary);
-}
-
-.note-reference-group ul {
-  margin: 4px 0 0;
-  padding-left: 16px;
-}
-
-.note-reference-group li + li {
-  margin-top: 4px;
-}
-
+.capture-day-link,
 .note-reference-link {
-  display: inline-flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  max-width: 100%;
-  overflow-wrap: anywhere;
+  color: color-mix(in srgb, var(--accent) 75%, var(--text-secondary));
+  font-size: 12px;
+  text-decoration: none;
 }
 
+.capture-day-link:hover,
+.note-reference-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.note-day-references {
+  margin-top: 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-secondary) 45%, var(--bg-primary));
+  font-size: 12px;
+}
+
+.note-reference-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  list-style: none;
+}
+
+.note-reference-summary::-webkit-details-marker { display: none; }
+.note-reference-summary::marker { content: ""; }
+.note-reference-summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.note-reference-chevron { font-size: 17px; line-height: 1; transition: transform 120ms; }
+.note-day-references[open] .note-reference-chevron { transform: rotate(90deg); }
+.note-reference-count { color: var(--text-muted); margin-left: auto; }
+.note-reference-content { padding: 0 12px 10px; }
+
+.note-reference-row {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: baseline;
+  padding: 8px 0;
+  border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+.note-reference-heading { color: var(--text-muted); font-size: 11px; }
+.note-reference-link { min-width: 0; overflow-wrap: anywhere; line-height: 1.5; }
 .note-reference-detail {
   color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+  border-radius: 4px;
 }
 
 .note-reference-error {
@@ -18780,22 +18824,41 @@ a.agent-loop-row.agent-ephemeral-result-link:hover .agent-loop-state {
   color: var(--text-muted);
 }
 
-.note-reference-error .btn-secondary {
-  padding: 3px 8px;
-  font-size: 12px;
-}
+.note-reference-error .btn-secondary { padding: 3px 8px; font-size: 12px; }
 
+.notes-table { table-layout: fixed; width: 100%; }
 .notes-table td {
   vertical-align: top;
+  padding: 14px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+.notes-table tbody tr:hover { background: transparent; }
+.notes-table .portal-table-actions-col { width: 32px; padding-left: 8px; }
+.notes-table .row-action-trigger {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 18px;
+}
+.notes-table .row-action-trigger:hover { color: var(--text-primary); background: var(--bg-hover); }
+
+@media (max-width: 560px) {
+  .capture-day-actions { gap: 8px; }
+  .note-reference-row { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; }
+  .note-reference-heading { grid-column: 1 / -1; }
+  .note-reference-count { font-size: 11px; }
 }
 
 .note-item-text {
-  margin: 0 0 6px;
+  margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--text-primary);
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.65;
 }
 
 .note-item-meta {

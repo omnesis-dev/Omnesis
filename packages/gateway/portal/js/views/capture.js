@@ -366,6 +366,52 @@ function pinWinsOver(pin, current) {
   return pin?.text !== current?.text;
 }
 
+/** Day labels follow the browser's calendar, just like the history grouping. */
+export function noteDayHeading(day, now = new Date()) {
+  const date = new Date(`${day}T12:00:00`);
+  const dayKey = (value) =>
+    `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  return {
+    label: day === dayKey(now)
+      ? "Today"
+      : day === dayKey(yesterday)
+        ? "Yesterday"
+        : date.toLocaleDateString([], { month: "short", day: "numeric" }),
+    fullDate: date.toLocaleDateString([], { year: "numeric", month: "long", day: "numeric" }),
+  };
+}
+
+function CaptureDayGroup({ group, incomplete, experimental, children }) {
+  const [documentId, setDocumentId] = useState(null);
+  const heading = noteDayHeading(group.day);
+  const href = documentId ? `/portal/doc/${encodeURIComponent(documentId)}` : null;
+  return html`<section class="capture-day-group" aria-label=${heading.fullDate}>
+    <header class="capture-day-header">
+      <div class="capture-day-heading">
+        <h3 class="capture-day" data-day=${group.day}>${heading.label}</h3>
+        <time class="capture-day-date" datetime=${group.day}>${heading.fullDate}</time>
+      </div>
+      <div class="capture-day-actions">
+        <span class="capture-day-count">${group.entries.length} ${group.entries.length === 1 ? "note" : "notes"}${incomplete ? " shown" : ""}</span>
+        ${href && html`<a class="capture-day-link" href=${href} onClick=${(event) => {
+          if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+          event.preventDefault();
+          navigate(href);
+        }}>View combined note</a>`}
+      </div>
+    </header>
+    ${children}
+    <${NoteDayReferences}
+      day=${group.day}
+      revision=${group.entries.map((entry) => `${entry.id}:${entry.updatedAt ?? entry.capturedAt}:${entry.transcription ?? ""}`).join("|")}
+      experimental=${experimental}
+      onDocument=${setDocumentId}
+    />
+  </section>`;
+}
+
 /** How often notes awaiting their gateway transcript are re-read. */
 const PENDING_REFRESH_MS = 15_000;
 
@@ -496,14 +542,8 @@ function NoteHistory({ seedDay, lastCapture, experimental }) {
           ${seedDay ? `No notes on or before ${seedDay}.` : "No notes yet — tell Omnesis something above."}
         </p>
       </div>`}
-      ${groups.map((group) => html`
-        <div key=${group.day}>
-          <h3 class="capture-day">${group.day}</h3>
-          <${NoteDayReferences}
-            day=${group.day}
-            revision=${group.entries.map((entry) => `${entry.id}:${entry.updatedAt ?? entry.capturedAt}:${entry.transcription ?? ""}`).join("|")}
-            experimental=${experimental}
-          />
+      ${groups.map((group, index) => html`
+        <${CaptureDayGroup} key=${group.day} group=${group} incomplete=${boundary.hasMore && index === groups.length - 1} experimental=${experimental}>
           <div class="portal-table-wrap">
             <table class="portal-table notes-table">
               <tbody>
@@ -535,7 +575,7 @@ function NoteHistory({ seedDay, lastCapture, experimental }) {
               </tbody>
             </table>
           </div>
-        </div>
+        </${CaptureDayGroup}>
       `)}
       <${LoadMore}
         hasMore=${boundary.hasMore}

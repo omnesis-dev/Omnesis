@@ -24,7 +24,7 @@ function referenceDate(item) {
   });
 }
 
-function ReferenceLink({ href, label, detail }) {
+function ReferenceLink({ href, label }) {
   return html`<a
     class="note-reference-link"
     href=${href}
@@ -34,31 +34,25 @@ function ReferenceLink({ href, label, detail }) {
       navigate(href);
     }}
   >
-    <span>${label}</span>
-    ${detail && html`<span class="note-reference-detail">${detail}</span>`}
+    ${label}
   </a>`;
 }
 
 function TimeReferences({ title, items }) {
   if (items.length === 0) return null;
-  return html`<div class="note-reference-group">
-    <span class="note-reference-heading">${title}</span>
-    <ul>
-      ${items.map(
-        (item) =>
-          html`<li key=${item.id}>
-            <${ReferenceLink}
-              href=${`/portal/debug/calendar/${encodeURIComponent(item.id)}`}
-              label=${item.label}
-              detail=${referenceDate(item)}
-            />
-          </li>`,
-      )}
-    </ul>
-  </div>`;
+  return items.map(
+    (item) => html`<div class="note-reference-row" key=${item.id}>
+      <span class="note-reference-heading">${title}</span>
+      <${ReferenceLink}
+        href=${`/portal/debug/calendar/${encodeURIComponent(item.id)}`}
+        label=${item.label}
+      />
+      <span class="note-reference-detail">${referenceDate(item)}</span>
+    </div>`,
+  );
 }
 
-export function NoteDayReferences({ day, revision, experimental = false }) {
+export function NoteDayReferences({ day, revision, experimental = false, onDocument }) {
   const [result, setResult] = useState({ data: null, error: null });
   const reloadRef = useRef(null);
 
@@ -90,31 +84,41 @@ export function NoteDayReferences({ day, revision, experimental = false }) {
 
   useVisiblePoll(() => reloadRef.current?.(), REFRESH_MS);
 
+  useEffect(() => {
+    onDocument?.(result.data?.documentId ?? null);
+  }, [result.data?.documentId, onDocument]);
+
   const mentions = result.data?.mentions ?? [];
   const annotations = experimental ? (result.data?.annotations ?? []) : [];
   const loops = experimental ? (result.data?.loops ?? []) : [];
-  const hasReferences = mentions.length + annotations.length + loops.length > 0;
-  return html`<section class="note-day-references" aria-label=${`References for notes from ${day}`}>
-    ${hasReferences &&
-    html`<p class="note-reference-intro">Linked to this day's combined notes</p>`}
-    <${TimeReferences} title="Time mentions" items=${mentions} />
-    <${TimeReferences} title="Brain time annotations" items=${annotations} />
-    ${loops.length > 0 &&
-    html`<div class="note-reference-group">
-      <span class="note-reference-heading">Open loops</span>
-      <ul>
-        ${loops.map(
-          (loop) =>
-            html`<li key=${loop.id}>
-              <${ReferenceLink}
-                href=${`/portal/debug/cognition/loops/${encodeURIComponent(loop.id)}`}
-                label=${loop.title}
-                detail=${loop.status}
-              />
-            </li>`,
-        )}
-      </ul>
-    </div>`}
+  const count = mentions.length + annotations.length + loops.length;
+  const hasReferences = count > 0;
+  const summary = result.error
+    ? "Couldn't load references"
+    : !result.data
+      ? "Checking references…"
+      : count === mentions.length && count > 0
+        ? `${count} ${count === 1 ? "date" : "dates"} mentioned`
+        : `${count} related ${count === 1 ? "item" : "items"}`;
+  return html`<details class="note-day-references">
+    <summary class="note-reference-summary">
+      <span class="note-reference-chevron" aria-hidden="true">›</span>
+      <span>Related to this day</span>
+      <span class="note-reference-count">${summary}</span>
+    </summary>
+    <div class="note-reference-content">
+    <${TimeReferences} title="Dates mentioned" items=${mentions} />
+    <${TimeReferences} title="Related events" items=${annotations} />
+    ${loops.map(
+      (loop) => html`<div class="note-reference-row" key=${loop.id}>
+        <span class="note-reference-heading">Open loops</span>
+        <${ReferenceLink}
+          href=${`/portal/debug/cognition/loops/${encodeURIComponent(loop.id)}`}
+          label=${loop.title}
+        />
+        <span class="note-reference-detail">${loop.status}</span>
+      </div>`,
+    )}
     ${!result.data &&
     !result.error &&
     html`<p class="note-reference-intro">Checking references…</p>`}
@@ -131,5 +135,6 @@ export function NoteDayReferences({ day, revision, experimental = false }) {
         Retry references
       </button>
     </div>`}
-  </section>`;
+    </div>
+  </details>`;
 }

@@ -24,7 +24,7 @@ vi.mock("../api.js", () => ({
 // @ts-expect-error — portal is plain JS without sibling declarations.
 import * as captureModule from "./capture.js";
 
-const { CONFIRMATION_MS, CaptureView, MAX_NOTE_LENGTH, captureErrorMessage, captureRequest } =
+const { CONFIRMATION_MS, CaptureView, MAX_NOTE_LENGTH, captureErrorMessage, captureRequest, noteDayHeading } =
   captureModule;
 
 type Parsed = ReturnType<typeof parseHTML>;
@@ -314,6 +314,16 @@ async function click(label: string, scope: ParentNode = host) {
   await act(async () => {});
 }
 
+describe("day headings", () => {
+  test("uses the local calendar for Today and Yesterday across a month boundary", () => {
+    const now = new Date(2026, 9, 1, 9);
+    expect(noteDayHeading("2026-10-01", now).label).toBe("Today");
+    expect(noteDayHeading("2026-09-30", now).label).toBe("Yesterday");
+    expect(noteDayHeading("2026-09-29", now).label).toBe(new Date(2026, 8, 29, 12).toLocaleDateString([], { month: "short", day: "numeric" }));
+    expect(noteDayHeading("2026-09-29", now).fullDate).toBe(new Date(2026, 8, 29, 12).toLocaleDateString([], { year: "numeric", month: "long", day: "numeric" }));
+  });
+});
+
 describe("note history", () => {
   test("lists newest first under day headers and loads more without duplicates", async () => {
     getNotesHistory.mockImplementation(async ({ cursor }: { cursor?: string }) => {
@@ -335,18 +345,39 @@ describe("note history", () => {
     await act(async () => {});
 
     expect(noteTexts()).toEqual(["Second"]);
-    expect(host.querySelector(".capture-day")?.textContent).toBe("2026-09-11");
+    expect(host.querySelector(".capture-day-count")?.textContent).toBe("1 note shown");
+    expect(host.querySelector(".capture-day")?.getAttribute("data-day")).toBe("2026-09-11");
 
     // linkedom has no IntersectionObserver, so the pager falls back to an
     // explicit "Show more" button (real browsers auto-load on scroll).
     await click("Show more");
     expect(noteTexts()).toEqual(["Second", "First"]);
-    const days = Array.from(host.querySelectorAll(".capture-day")).map((d) => d.textContent);
+    const days = Array.from(host.querySelectorAll(".capture-day")).map((d) => d.getAttribute("data-day"));
     expect(days).toEqual(["2026-09-11", "2026-09-10"]);
     // Mount (beforeEach default), remount with the override, then load-more.
     expect(getNotesHistory).toHaveBeenCalledTimes(3);
     const lastCall = getNotesHistory.mock.calls[2][0];
     expect(lastCall).toMatchObject({ cursor: "cursor-1", limit: 25 });
+  });
+
+  test("puts notes before day-level relationships and links the combined document from the heading", async () => {
+    getNotesHistory.mockResolvedValue({
+      entries: [noteEntry({ id: "n1", text: "Workshop preparation" }), noteEntry({ id: "n2", text: "Bring the registration form" })],
+      pageInfo: { hasMore: false },
+    });
+    getNotesProvenance.mockResolvedValue({ documentId: "daily/document", mentions: [], annotations: [], loops: [] });
+    await act(async () => {
+      render(null, host);
+      render(h(CaptureView, {}), host);
+    });
+    await act(async () => {});
+    const group = host.querySelector(".capture-day-group")!;
+    expect(group.querySelector(".capture-day-count")?.textContent).toBe("2 notes");
+    expect(group.querySelector(".capture-day-link")?.getAttribute("href")).toBe("/portal/doc/daily%2Fdocument");
+    expect(group.querySelector(".capture-day-link")?.textContent).toBe("View combined note");
+    expect(group.querySelector("time")?.getAttribute("datetime")).toBe("2026-09-11");
+    const children = Array.from(group.children);
+    expect(children.indexOf(group.querySelector(".portal-table-wrap")!)).toBeLessThan(children.indexOf(group.querySelector(".note-day-references")!));
   });
 
   test("rows are flat: title and one actions menu on the same row", async () => {
