@@ -33,12 +33,11 @@ const FOCUSABLE =
  * @param {boolean} props.open
  * @param {() => void} props.onClose      fired on Esc / backdrop click / ✕.
  * @param {string} [props.title]          rendered in the header when set.
- * @param {import("preact").ComponentChildren} [props.titleIcon] optional icon before the title.
  * @param {string} [props.subtitle]       muted line under the title.
  * @param {string} [props.size="md"]      "sm" | "md" | "lg" → panel width.
  * @param {*} props.children              the modal body.
  */
-export function Modal({ open, onClose, title, titleIcon, subtitle, size = "md", children }) {
+export function Modal({ open, onClose, title, subtitle, size = "md", children }) {
   const panelRef = useRef(null);
   const bodyRef = useRef(null);
 
@@ -115,7 +114,7 @@ export function Modal({ open, onClose, title, titleIcon, subtitle, size = "md", 
         ${title
           ? html`<div class="modal-head">
               <div>
-                <div class="modal-title">${titleIcon}${title}</div>
+                <div class="modal-title">${title}</div>
                 ${subtitle ? html`<div class="modal-subtitle">${subtitle}</div>` : null}
               </div>
               <button class="modal-close" aria-label="Close" onClick=${onClose}>✕</button>

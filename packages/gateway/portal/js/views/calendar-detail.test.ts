@@ -87,13 +87,15 @@ describe("Calendar entry explanations", () => {
     expect(text(content)).not.toContain("Revision");
   });
 
-  it("marks the agent title with its icon without repeating its annotation", () => {
+  it("keeps the agent card title separate and precedes its annotation with the AI icon", () => {
     const value = { ...entry, origin: "annotation", projection: undefined,
       annotation: { documentIds: [], rationale: entry.label } };
     const modal = CalendarEntryDetail({ entry: value });
-    expect(modal.props.title).toBe(entry.label);
-    expect(text(modal.props.titleIcon)).toBe("✦");
-    expect(text(modal.props.children)).not.toContain(entry.label);
+    expect(modal.props.title).toBe("Agent interpretation");
+    const quote = nodes(modal.props.children, "blockquote")[0];
+    expect(quote.props.class).toBe("calendar-agent-quote");
+    expect(text(quote)).toBe(`✦ ${entry.label}`);
+    expect(text(modal.props.children).split(entry.label)).toHaveLength(2);
   });
 
   it("explains missing evidence and handles absent details", () => {

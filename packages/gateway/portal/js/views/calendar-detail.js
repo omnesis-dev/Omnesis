@@ -68,13 +68,16 @@ export function CalendarEntryDetail({
   const mention = entry.mention;
   const origin = ORIGIN_LABELS[entry.origin] ?? { row: entry.origin, heading: entry.origin };
   const kind = kindMeta(entry.kind);
-  const titleIcon = entry.origin === "annotation"
-    ? html`<span class="calendar-agent-title-icon" aria-hidden="true">${origin.icon}</span>`
-    : null;
-  return html`<${Modal} open=${true} onClose=${onClose} title=${entry.label} titleIcon=${titleIcon} size="lg">
+  const title = entry.origin === "annotation" ? origin.heading : entry.label;
+  return html`<${Modal} open=${true} onClose=${onClose} title=${title} size="lg">
     <div class=${`calendar-detail calendar-detail--${entry.origin}`}>
       <section class="calendar-provenance">
-        <strong>${origin.heading}</strong>
+        ${entry.origin === "annotation"
+          ? html`<blockquote class="calendar-agent-quote">
+              <span class="calendar-agent-quote-icon" aria-hidden="true">${origin.icon}</span>
+              <span>${entry.label}</span>
+            </blockquote>`
+          : html`<strong>${origin.heading}</strong>`}
         ${entry.origin !== "projection" && html`<p>${whyHere(entry, timeZone)}</p>`}
         ${mention && html`<blockquote class="calendar-mentioned-quote">${mention.text}</blockquote>`}
         ${mention?.relative && html`<p class="debug-sub">This relative expression was resolved using the document's own date, rather than today's date.</p>`}
