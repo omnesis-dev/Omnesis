@@ -157,7 +157,7 @@ describe("Calendar", () => {
     expect(text).toContain("Calendar");
     expect(text).toContain("Source");
     expect(text).toContain("Project review");
-    expect(text).not.toContain("▤ 1");
+    expect(text).toContain("▤ 1");
     expect(text).not.toMatch(/\b(ask|talk|fix)\b/i);
 
     const annotationText = renderedText(
