@@ -814,3 +814,238 @@ test.describe("Portal", () => {
     expect(realErrorsOf(errors)).toHaveLength(0);
   });
 });
+
+test.describe("Assistant value copying", () => {
+  async function renderAnswer(page: Page, done: boolean, role = "assistant") {
+    await loginToPortal(page);
+    await page.evaluate(
+      async ({ done, role }) => {
+        const preactPath = "/portal/vendor/preact.js";
+        const { h, render } = await import(preactPath);
+        const partsPath = "/portal/js/components/agent/parts.js";
+        const { MessageBubble } = await import(partsPath);
+        const host = document.createElement("section");
+        host.id = "copy-answer-fixture";
+        host.style.cssText =
+          "max-width:680px;padding:24px;background:var(--bg-primary);position:fixed;inset:40px auto auto 40px;z-index:10000";
+        document.body.appendChild(host);
+        const text =
+          'The address is `42 Example Street`.\n\n- Reference: `00123`\n\n| Contact |\n| --- |\n| `+1 (555) 010-0123` |\n\n```javascript\n\n42 Example Street  \nExampleville\n```\n\n[`example.org`](https://example.org)\n\n<code id="forged-copy">raw HTML</code><img src=x onerror="window.copyInjected=true"><script>window.copyInjected=true</script>';
+        Object.defineProperty(navigator, "clipboard", {
+          configurable: true,
+          value: {
+            writeText: async (text: string) => {
+              (window as unknown as { copiedValue: string }).copiedValue = text;
+            },
+          },
+        });
+        render(
+          h(MessageBubble, {
+            turn: { role, done, parts: [{ kind: "text", text }], citationCount: 0 },
+            citations: [],
+            dispatch: () => {},
+          }),
+          host,
+        );
+      },
+      { done, role },
+    );
+  }
+
+  test("copies exact Markdown values with sanitized HTML and accessible controls", async ({
+    page,
+  }) => {
+    await renderAnswer(page, true);
+    const fixture = page.locator("#copy-answer-fixture");
+    const buttons = fixture.locator(".agent-value-copy-btn");
+    await expect(buttons.first()).toHaveAttribute("aria-label", "Copy value: 42 Example Street");
+    await expect(buttons).toHaveCount(5);
+    await buttons.nth(0).click();
+    await expect(fixture.getByRole("button", { name: "Copied", exact: true })).toBeVisible();
+    expect(
+      await page.evaluate(() => (window as unknown as { copiedValue: string }).copiedValue),
+    ).toBe("42 Example Street");
+    await fixture.locator(".agent-value-copy-block button").click();
+    expect(
+      await page.evaluate(() => (window as unknown as { copiedValue: string }).copiedValue),
+    ).toBe("\n42 Example Street  \nExampleville\n");
+    await expect(fixture.locator("a")).toHaveAttribute("href", "https://example.org");
+    await expect(fixture.locator("a button")).toHaveCount(0);
+    await expect(fixture.locator("script, [onerror]")).toHaveCount(0);
+    expect(
+      await page.evaluate(() => (window as unknown as { copyInjected?: boolean }).copyInjected),
+    ).toBeUndefined();
+    await fixture.screenshot({ path: "/tmp/omnesis-copy-answer-portal.png" });
+  });
+
+  test("keeps streaming and user turns free of per-value copy controls", async ({ page }) => {
+    await renderAnswer(page, false);
+    await expect(page.locator("#copy-answer-fixture .agent-value-copy-btn")).toHaveCount(0);
+    await page.reload();
+    await renderAnswer(page, true, "user");
+    await expect(page.locator("#copy-answer-fixture .agent-value-copy-btn")).toHaveCount(0);
+  });
+
+  test("restores completed marked Ask answers through route navigation and reload", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      class QuietEventSource {
+        close() {}
+      }
+      window.EventSource = QuietEventSource as unknown as typeof EventSource;
+    });
+    await page.route("**/admin/agent/config", (route) =>
+      route.fulfill({ json: { enabled: true, backend: "test", model: "test-model" } }),
+    );
+    await page.route("**/agent/conversations?*", (route) =>
+      route.fulfill({ json: { conversations: [] } }),
+    );
+    await page.route("**/agent/sessions?*", (route) =>
+      route.fulfill({
+        json: {
+          sessionId: "s-copy-history",
+          conversationId: "s-copy-history",
+          model: "test-model",
+          backend: "test",
+          busy: false,
+          messageCount: 2,
+          messagesAreVisible: true,
+          messagePageInfo: { hasMore: false, nextCursor: null },
+          messages: [
+            { role: "user", parts: [{ kind: "text", text: "Where is the fictional venue?" }] },
+            {
+              role: "assistant",
+              parts: [
+                {
+                  kind: "text",
+                  text: "Reference: `00123`\n\n```text\n42 Example Street\nExampleville\n```",
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+    await page.goto(`/portal/agent/s-copy-history?token=${encodeURIComponent(getToken())}`);
+    await expect(page.locator(".agent-msg-assistant .agent-value-copy-btn")).toHaveCount(2);
+    await expect(page.locator(".agent-value-text-block")).toContainText("Exampleville");
+    await page.reload();
+    await expect(page.locator(".agent-msg-assistant .agent-value-copy-btn")).toHaveCount(2);
+    await expect(page.locator(".agent-msg-user .agent-value-copy-btn")).toHaveCount(0);
+  });
+
+  test("reopens marked conversation answers with plain multiline trailing controls", async ({
+    page,
+  }) => {
+    await loginToPortal(page);
+    await page.evaluate(async () => {
+      const preactPath = "/portal/vendor/preact.js";
+      const { h, render } = await import(preactPath);
+      const sharedPath = "/portal/js/views/audit/shared.js";
+      const { PrivacyAnswerContent } = await import(sharedPath);
+      const host = document.createElement("section");
+      host.id = "copy-history-fixture";
+      host.style.cssText =
+        "max-width:680px;padding:24px;background:var(--bg-primary);position:fixed;inset:40px auto auto 40px;z-index:10000";
+      document.body.appendChild(host);
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: {
+          writeText: async (text: string) => {
+            (window as unknown as { copiedValue: string }).copiedValue = text;
+          },
+        },
+      });
+      const props = {
+        answer: "```TEXT\n42 Example Street  \nExampleville\n\n```",
+        className: "privacy-quote",
+      };
+      render(h(PrivacyAnswerContent, props), host);
+      render(h(PrivacyAnswerContent, { ...props }), host);
+      render(null, host);
+      render(h(PrivacyAnswerContent, props), host);
+    });
+    const fixture = page.locator("#copy-history-fixture");
+    const block = fixture.locator(".agent-value-text-block");
+    await expect(fixture.locator("pre, code, .agent-value-code-block")).toHaveCount(0);
+    await expect(block.locator("button")).toHaveCount(1);
+    const layout = await block.evaluate((element) => {
+      const text = document.createRange();
+      text.setStart(element.firstChild!, "42 Example Street  \n".length);
+      text.setEnd(element.firstChild!, element.firstChild!.textContent!.length);
+      const line = text.getBoundingClientRect();
+      const button = element.querySelector("button")!.getBoundingClientRect();
+      return {
+        lineTop: line.top,
+        lineBottom: line.bottom,
+        lineRight: line.right,
+        buttonTop: button.top,
+        buttonBottom: button.bottom,
+        buttonLeft: button.left,
+        background: getComputedStyle(element).backgroundColor,
+      };
+    });
+    expect(layout.buttonTop).toBeLessThan(layout.lineBottom);
+    expect(layout.buttonBottom).toBeGreaterThan(layout.lineTop);
+    expect(layout.buttonLeft).toBeGreaterThanOrEqual(layout.lineRight);
+    expect(layout.background).toBe("rgba(0, 0, 0, 0)");
+    await block.locator("button").click();
+    expect(
+      await page.evaluate(() => (window as unknown as { copiedValue: string }).copiedValue),
+    ).toBe("42 Example Street  \nExampleville\n\n");
+    await fixture.screenshot({ path: "/tmp/omnesis-copy-answer-portal-history.png" });
+  });
+
+  test("reports clipboard denial and allows retry", async ({ page }) => {
+    await renderAnswer(page, true);
+    await page.evaluate(() => {
+      navigator.clipboard.writeText = async () => {
+        throw new Error("Clipboard denied");
+      };
+    });
+    const fixture = page.locator("#copy-answer-fixture");
+    await fixture.locator(".agent-value-copy-btn").first().click();
+    await expect(
+      fixture.getByRole("button", {
+        name: "Could not copy. Select the text and copy it manually.",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(fixture.getByRole("button", { name: "Copied", exact: true })).toHaveCount(0);
+    await page.evaluate(() => {
+      navigator.clipboard.writeText = async (text: string) => {
+        (window as unknown as { copiedValue: string }).copiedValue = text;
+      };
+    });
+    await fixture.locator(".agent-value-copy-btn").first().click();
+    await expect(fixture.getByRole("button", { name: "Copied", exact: true })).toBeVisible();
+    await expect(fixture.locator(".copy-feedback-error")).toHaveCount(0);
+    expect(
+      await page.evaluate(() => (window as unknown as { copiedValue: string }).copiedValue),
+    ).toBe("42 Example Street");
+    await page.evaluate(() => {
+      navigator.clipboard.writeText = async () => {
+        throw new Error("Clipboard denied");
+      };
+    });
+    await fixture.locator(".agent-value-copy-block button").click();
+    const failure = fixture.locator(".agent-value-copy-block .copy-feedback-error");
+    await expect(failure).toBeVisible();
+    const geometry = await failure.evaluate((element) => {
+      const message = element.getBoundingClientRect();
+      const block = element.closest(".agent-value-code-block")!.getBoundingClientRect();
+      return {
+        insidePre: !!element.closest("pre"),
+        left: message.left,
+        right: message.right,
+        blockLeft: block.left,
+        blockRight: block.right,
+      };
+    });
+    expect(geometry.insidePre).toBe(false);
+    expect(geometry.left).toBeGreaterThanOrEqual(geometry.blockLeft);
+    expect(geometry.right).toBeLessThanOrEqual(geometry.blockRight);
+    await fixture.screenshot({ path: "/tmp/omnesis-copy-answer-portal-denied.png" });
+  });
+});

@@ -3,6 +3,8 @@
 
 package dev.omnesis.android.designsystem.components
 
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -32,7 +34,7 @@ class MarkdownTest {
     fun fenced_code_block_is_captured_verbatim() {
         val blocks = parseMarkdownBlocks("before\n\n```\nval x = 1\nval y = 2\n```\n\nafter")
         val code = blocks.filterIsInstance<MdBlock.Code>().single()
-        assertEquals("val x = 1\nval y = 2", code.code)
+        assertEquals("val x = 1\nval y = 2\n", code.code)
     }
 
     @Test
@@ -49,8 +51,85 @@ class MarkdownTest {
     }
 
     @Test
+    fun inline_values_keep_monospace_without_a_background_in_nested_styles() {
+        val parsed = parseInline("Reference: `0012` and **`A12`**.")
+        for (text in listOf(parsed, inlineCopyText(parsed, true))) {
+            val values = text.getStringAnnotations(CopyCodeAnnotation, 0, text.length)
+            assertEquals(listOf("0012", "A12"), values.map { it.item })
+            for (value in values) {
+                assertTrue(text.spanStyles.any {
+                    it.start <= value.start && it.end >= value.end && it.item.fontFamily == FontFamily.Monospace
+                })
+            }
+            assertTrue(text.spanStyles.all { it.item.background == Color.Unspecified })
+        }
+    }
+
+    @Test
     fun unmatched_markers_are_literal() {
         assertEquals("a * b", parseInline("a * b").text)
         assertEquals("trailing `", parseInline("trailing `").text)
     }
+    @Test
+    fun copy_spans_use_commonmark_delimiters_and_whitespace() {
+        val text = parseInline("Use `` A`B `` or ` 0012  34 ` and `first\nsecond`.")
+        assertEquals("Use A`B or 0012  34 and first second.", text.text)
+        assertEquals(listOf("A`B", "0012  34", "first second"),
+            text.getStringAnnotations(CopyCodeAnnotation, 0, text.length).map { it.item })
+        assertEquals("   ", parseInline("`   `").text)
+        assertEquals("``unfinished`", parseInline("``unfinished`").text)
+    }
+
+    @Test
+    fun copy_controls_preserve_links_and_nested_styles_and_can_be_disabled() {
+        val text = parseInline("[Map](https://example.com) **`0012`** then `0012`.")
+        val copied = inlineCopyText(text, true)
+        assertEquals("Map 0012\uFFFC then 0012\uFFFC.", copied.text)
+        assertEquals(text.getLinkAnnotations(0, 3), copied.getLinkAnnotations(0, 3))
+        assertEquals(text, inlineCopyText(text, false))
+        assertEquals(2, copied.getStringAnnotations(CopyCodeAnnotation, 0, copied.length).size)
+    }
+
+    @Test
+    fun fences_preserve_blank_lines_spaces_and_require_a_matching_close() {
+        val closed = parseMarkdownBlocks("````text\n\n42 Example Street  \n```\nExampleville\n````").single() as MdBlock.Code
+        assertEquals("\n42 Example Street  \n```\nExampleville\n", closed.code)
+        assertTrue(closed.closed)
+        val open = parseMarkdownBlocks("~~~\n0012\n```").single() as MdBlock.Code
+        assertEquals("0012\n```", open.code)
+        assertEquals(false, open.closed)
+    }
+
+    @Test
+    fun escaped_backticks_stay_literal_but_code_inside_emphasis_and_links_is_copyable() {
+        val escaped = parseInline("\\`literal\\`")
+        assertEquals("`literal`", escaped.text)
+        assertTrue(escaped.getStringAnnotations(CopyCodeAnnotation, 0, escaped.length).isEmpty())
+        val nested = parseInline("*`0012`* [**`A12`**](https://example.org)")
+        assertEquals("0012 A12", nested.text)
+        assertEquals(listOf("0012", "A12"), nested.getStringAnnotations(CopyCodeAnnotation, 0, nested.length).map { it.item })
+        assertEquals(1, inlineCopyText(nested, true).getLinkAnnotations(6, 9).size)
+    }
+
+    @Test
+    fun plain_value_fences_use_literal_body_with_full_clipboard_payload() {
+        for (info in listOf("", "text", "plain", "plaintext", "txt", "TEXT title", "Plain")) {
+            val block = parseMarkdownBlocks("```$info\n42 Example Street  \nExampleville\n```").single() as MdBlock.Code
+            assertTrue(block.isPlainValue)
+            val value = copyValueText(block.code)
+            assertEquals("42 Example Street  \nExampleville", value.text)
+            assertEquals(block.code, value.getStringAnnotations(CopyCodeAnnotation, 0, value.length).single().item)
+            assertTrue(value.spanStyles.isEmpty())
+        }
+        assertEquals(false, (parseMarkdownBlocks("```kotlin\nval x = 12\n```").single() as MdBlock.Code).isPlainValue)
+    }
+
+    @Test
+    fun trailing_blank_lines_do_not_move_the_value_copy_icon_but_stay_in_clipboard() {
+        val raw = "42 Example Street  \nExampleville\n\n\n"
+        val text = copyValueText(raw)
+        assertEquals("42 Example Street  \nExampleville", text.text)
+        assertEquals(raw, text.getStringAnnotations(CopyCodeAnnotation, 0, text.length).single().item)
+    }
+
 }

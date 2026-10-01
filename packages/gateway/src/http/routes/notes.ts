@@ -20,13 +20,22 @@ import { enforceWriteScopeForSource, scope } from "../scope.js";
 import { validateJson } from "../validate.js";
 import { createNoteBody, patchNoteBody } from "../schemas/index.js";
 import { clientIp, isLoopbackRequest } from "./admin/internals.js";
-import type { OmnesisNotesRuntime } from "../../sources/omnesis-notes/index.js";
+import type { NoteEntry, OmnesisNotesRuntime } from "../../sources/omnesis-notes/index.js";
 import type { RouteApp } from "./types.js";
 
 export interface NotesRoutesDeps {
   /** Resolve the notes runtime. The server defers boot until first use when no lifecycle owner exists. */
   runtime: OmnesisNotesRuntime | (() => OmnesisNotesRuntime);
+  /**
+   * Which of these notes are voice notes still waiting on the gateway's
+   * transcriber. Listings mark them `transcription: "pending"`, so a client
+   * can say the text it shows is the device's and is due to be replaced.
+   */
+  pendingTranscriptions?: (noteIds: readonly string[]) => Set<string>;
 }
+
+/** A listed note, marked when its gateway transcript is still to come. */
+type ListedNote = NoteEntry & { transcription?: "pending" };
 
 const HISTORY_DEFAULT_LIMIT = 25;
 const HISTORY_MAX_LIMIT = 100;
@@ -87,6 +96,13 @@ export function mountNotesRoutes(app: RouteApp, deps: NotesRoutesDeps): void {
   const captureLimiter = notesRateLimiter();
   const runtime = (): OmnesisNotesRuntime =>
     typeof deps.runtime === "function" ? deps.runtime() : deps.runtime;
+  const markPending = (entries: NoteEntry[]): ListedNote[] => {
+    const pending = deps.pendingTranscriptions?.(entries.map((entry) => entry.id));
+    if (!pending || pending.size === 0) return entries;
+    return entries.map((entry) =>
+      pending.has(entry.id) ? { ...entry, transcription: "pending" as const } : entry,
+    );
+  };
 
   app.post("/notes", scope.writeAny(), validateJson(createNoteBody), async (c) => {
     // Per-IP rate limit with the loopback exemption (a same-host client
@@ -121,7 +137,7 @@ export function mountNotesRoutes(app: RouteApp, deps: NotesRoutesDeps): void {
     if (day !== undefined && !DAY_KEY_RE.test(day)) {
       throw new BadRequestError("day must be YYYY-MM-DD");
     }
-    const entries = runtime().listDay(day);
+    const entries = markPending(runtime().listDay(day));
     return c.json({ day: day ?? dayKeyFor(new Date().toISOString()), entries });
   });
 
@@ -155,7 +171,7 @@ export function mountNotesRoutes(app: RouteApp, deps: NotesRoutesDeps): void {
       beforeDay: day ?? null,
     });
     return c.json({
-      entries: page.entries,
+      entries: markPending(page.entries),
       pageInfo: {
         hasMore: page.nextCursor !== null,
         limit,

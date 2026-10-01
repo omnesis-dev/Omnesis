@@ -307,6 +307,65 @@ class AgentParityScreenshotTest {
         agentContent(loadingState())()
     }
 
+
+    private fun copyValuesTurn() = AgentTurn.Assistant(
+        id = "copy-values",
+        stopReason = null,
+        parts = listOf(AgentPart.Text("""
+            The address is `42 Example Street, Exampleville`. See [the map](https://example.com).
+
+            - Reference: **`0012 3456`**
+            - Email: `tickets@example.org`
+
+            | Value | Details |
+            | --- | --- |
+            | ``A`B`` | Literal backtick |
+
+            ```
+            42 Example Street
+            Exampleville
+            EX1 2AB
+            ```
+
+            ```kotlin
+            val reference = 12
+            ```
+        """.trimIndent())),
+    )
+
+    @Composable
+    private fun copyValuesContent(finished: Boolean) {
+        Column(Modifier.fillMaxWidth().background(OmTheme.colors.bgPrimary).padding(16.dp)) {
+            AssistantTurn(
+                turn = copyValuesTurn(),
+                isStreaming = !finished,
+                catalog = catalog,
+                onFlushEphemeral = {},
+                onOpenDocument = {},
+            )
+        }
+    }
+
+    @Test
+    fun copy_values_light() = capture("agent_copy_values_light", dark = false) {
+        copyValuesContent(finished = true)
+    }
+
+    @Test
+    fun copy_values_dark() = capture("agent_copy_values_dark", dark = true) {
+        copyValuesContent(finished = true)
+    }
+
+    @Test
+    fun copy_values_streaming_light() = capture("agent_copy_values_streaming_light", dark = false) {
+        copyValuesContent(finished = false)
+    }
+
+    @Test
+    fun copy_values_streaming_dark() = capture("agent_copy_values_streaming_dark", dark = true) {
+        copyValuesContent(finished = false)
+    }
+
     // Live thinking: an in-flight turn whose trailing part is a thinking block
     // (no stopReason). Renders the animated "Thinking" indicator. Mirrors the
     // iOS PNG 79-agent-thinking-live.

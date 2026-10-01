@@ -62,6 +62,8 @@ fun MarkdownText(
      * splitting into two typefaces at every heading.
      */
     headingFontFamily: FontFamily? = null,
+    copyableCode: Boolean = false,
+    plainValueFences: Boolean = false,
 ) {
     val blocks = remember(markdown) { parseMarkdownBlocks(markdown) }
     val linkColor = MaterialTheme.colorScheme.primary
@@ -69,37 +71,47 @@ fun MarkdownText(
         blocks.forEachIndexed { i, block ->
             if (i > 0) Spacer(Modifier.padding(top = blockGap(block)))
             when (block) {
-                is MdBlock.Heading -> Text(
+                is MdBlock.Heading -> MarkdownInlineText(
                     text = parseInline(block.text, linkColor),
+                    copyableCode = copyableCode,
                     style = headingStyle(block.level).let {
                         if (headingFontFamily == null) it else it.copy(fontFamily = headingFontFamily)
                     },
                     color = color,
                 )
 
-                is MdBlock.Paragraph -> Text(
+                is MdBlock.Paragraph -> MarkdownInlineText(
                     text = parseInline(block.text, linkColor),
+                    copyableCode = copyableCode,
                     style = style,
                     color = color,
                 )
 
                 is MdBlock.ListItem -> Row(Modifier.fillMaxWidth()) {
                     Spacer(Modifier.width((12 * block.indent).dp))
-                    Text(block.marker, style = style, color = OmTheme.colors.textMuted)
+                    Text(block.marker, style = style, color = OmTheme.colors.textMuted, modifier = Modifier.alignByBaseline())
                     Spacer(Modifier.width(6.dp))
-                    Text(parseInline(block.text, linkColor), style = style, color = color)
+                    MarkdownInlineText(parseInline(block.text, linkColor), copyableCode = copyableCode, style = style, color = color, modifier = Modifier.alignByBaseline())
                 }
 
-                is MdBlock.Code -> Surface(
+                is MdBlock.Code -> if (plainValueFences && block.isPlainValue) {
+                    MarkdownInlineText(
+                        text = copyValueText(block.code),
+                        copyableCode = copyableCode && block.closed,
+                        style = style,
+                        color = color,
+                    )
+                } else Surface(
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text(
-                        text = block.code,
-                        style = style.copy(fontFamily = FontFamily.Monospace),
-                        modifier = Modifier.padding(10.dp),
-                    )
+                    Column(Modifier.padding(10.dp)) {
+                        if (copyableCode && block.closed) {
+                            CopyMarkdownButton(block.code, Modifier.align(Alignment.End), label = "code block")
+                        }
+                        Text(text = block.code.removeSuffix("\n"), style = style.copy(fontFamily = FontFamily.Monospace))
+                    }
                 }
 
                 is MdBlock.Quote -> Row(Modifier.fillMaxWidth()) {
@@ -108,14 +120,15 @@ fun MarkdownText(
                         modifier = Modifier.width(3.dp).padding(end = 0.dp),
                     ) { Spacer(Modifier.width(3.dp)) }
                     Spacer(Modifier.width(8.dp))
-                    Text(
+                    MarkdownInlineText(
                         text = parseInline(block.text, linkColor),
+                        copyableCode = copyableCode,
                         style = style.copy(fontStyle = FontStyle.Italic),
                         color = OmTheme.colors.textSecondary,
                     )
                 }
 
-                is MdBlock.Table -> MarkdownTable(block, style, color, linkColor)
+                is MdBlock.Table -> MarkdownTable(block, style, color, linkColor, copyableCode)
 
                 MdBlock.Rule -> HorizontalDivider(Modifier.padding(vertical = 2.dp))
             }
@@ -129,7 +142,7 @@ fun MarkdownText(
  * SQL-card approach). The header row is emphasised; rows are separated by hairlines.
  */
 @Composable
-private fun MarkdownTable(table: MdBlock.Table, baseStyle: TextStyle, color: Color, linkColor: Color) {
+private fun MarkdownTable(table: MdBlock.Table, baseStyle: TextStyle, color: Color, linkColor: Color, copyableCode: Boolean) {
     val cols = maxOf(table.headers.size, table.rows.maxOfOrNull { it.size } ?: 0).coerceAtLeast(1)
     val border = MaterialTheme.colorScheme.outlineVariant
     Column(
@@ -138,20 +151,21 @@ private fun MarkdownTable(table: MdBlock.Table, baseStyle: TextStyle, color: Col
             .border(1.dp, border, RoundedCornerShape(8.dp))
             .horizontalScroll(rememberScrollState()),
     ) {
-        TableRowView(table.headers, cols, baseStyle.copy(fontWeight = FontWeight.SemiBold), color, linkColor, MaterialTheme.colorScheme.surfaceVariant)
+        TableRowView(table.headers, cols, baseStyle.copy(fontWeight = FontWeight.SemiBold), color, linkColor, MaterialTheme.colorScheme.surfaceVariant, copyableCode)
         table.rows.forEach { row ->
             HorizontalDivider(color = border)
-            TableRowView(row, cols, baseStyle, color, linkColor, Color.Transparent)
+            TableRowView(row, cols, baseStyle, color, linkColor, Color.Transparent, copyableCode)
         }
     }
 }
 
 @Composable
-private fun TableRowView(cells: List<String>, cols: Int, style: TextStyle, color: Color, linkColor: Color, bg: Color) {
+private fun TableRowView(cells: List<String>, cols: Int, style: TextStyle, color: Color, linkColor: Color, bg: Color, copyableCode: Boolean) {
     Row(Modifier.background(bg)) {
         for (c in 0 until cols) {
-            Text(
+            MarkdownInlineText(
                 text = parseInline(cells.getOrElse(c) { "" }, linkColor),
+                copyableCode = copyableCode,
                 style = style,
                 color = color,
                 modifier = Modifier.width(TableCellWidth).padding(horizontal = 8.dp, vertical = 6.dp),
@@ -183,7 +197,10 @@ sealed interface MdBlock {
     data class Heading(val level: Int, val text: String) : MdBlock
     data class Paragraph(val text: String) : MdBlock
     data class ListItem(val ordered: Boolean, val marker: String, val text: String, val indent: Int) : MdBlock
-    data class Code(val code: String) : MdBlock
+    data class Code(val code: String, val closed: Boolean = true, val info: String = "") : MdBlock {
+        val isPlainValue: Boolean
+            get() = info.isBlank() || info.split(Regex("\\s+"))[0].lowercase() in setOf("text", "plain", "plaintext", "txt")
+    }
     data class Quote(val text: String) : MdBlock
     data class Table(val headers: List<String>, val rows: List<List<String>>) : MdBlock
     data object Rule : MdBlock
@@ -192,6 +209,7 @@ sealed interface MdBlock {
 private val ORDERED = Regex("""^(\s*)(\d+)[.)]\s+(.*)$""")
 private val BULLET = Regex("""^(\s*)[-*+]\s+(.*)$""")
 private val HEADING = Regex("""^(#{1,6})\s+(.*)$""")
+private val FENCE = Regex("""^ {0,3}(`{3,}|~{3,})(.*)$""")
 private val TABLE_SEP_CELL = Regex("""^:?-+:?$""")
 
 /** A GFM table separator row: pipe-delimited cells of dashes (with optional `:` alignment). */
@@ -228,18 +246,29 @@ fun parseMarkdownBlocks(md: String): List<MdBlock> {
         val line = lines[i]
         val trimmed = line.trim()
 
-        // Fenced code block
-        if (trimmed.startsWith("```")) {
+        // Only a matching fence of at least the opening length closes the block.
+        val fence = FENCE.matchEntire(line)
+        if (fence != null && !(fence.groupValues[1][0] == '`' && fence.groupValues[2].contains('`'))) {
             flushParagraph()
+            val marker = fence.groupValues[1]
             val body = StringBuilder()
+            val indent = line.takeWhile { it == ' ' }.length
             i++
-            while (i < lines.size && !lines[i].trim().startsWith("```")) {
-                if (body.isNotEmpty()) body.append('\n')
-                body.append(lines[i])
+            var closed = false
+            while (i < lines.size) {
+                val closing = FENCE.matchEntire(lines[i])
+                if (closing != null && closing.groupValues[1][0] == marker[0] &&
+                    closing.groupValues[1].length >= marker.length && closing.groupValues[2].isBlank()) {
+                    closed = true
+                    i++
+                    break
+                }
+                val content = lines[i].drop(minOf(indent, lines[i].takeWhile { it == ' ' }.length))
+                body.append(content)
+                if (i < lines.lastIndex) body.append('\n')
                 i++
             }
-            i++ // consume closing fence (if present)
-            out.add(MdBlock.Code(body.toString()))
+            out.add(MdBlock.Code(body.toString(), closed, fence.groupValues[2].trim()))
             continue
         }
 
@@ -312,6 +341,12 @@ fun parseMarkdownBlocks(md: String): List<MdBlock> {
     return out
 }
 
+private fun backtickRun(text: String, start: Int): Int {
+    var end = start
+    while (end < text.length && text[end] == '`') end++
+    return end - start
+}
+
 private val INLINE_LINK = Regex("""\[([^\]]+)]\(([^)\s]+)\)""")
 
 /**
@@ -325,15 +360,31 @@ fun parseInline(text: String, linkColor: Color = Color.Unspecified): AnnotatedSt
     while (i < n) {
         val c = text[i]
         when {
+            c == '\\' && i + 1 < n && text[i + 1] in "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~" -> {
+                append(text[i + 1]); i += 2
+            }
+
             c == '`' -> {
-                val end = text.indexOf('`', i + 1)
-                if (end > i) {
-                    withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = CodeBg)) {
-                        append(text.substring(i + 1, end))
+                val length = backtickRun(text, i)
+                var end = i + length
+                var match = -1
+                while (end < n) {
+                    if (text[end] != '`') { end++; continue }
+                    val run = backtickRun(text, end)
+                    if (run == length) { match = end; break }
+                    end += run
+                }
+                if (match >= 0) {
+                    var value = text.substring(i + length, match).replace("\r\n", " ").replace('\n', ' ').replace('\r', ' ')
+                    if (value.startsWith(" ") && value.endsWith(" ") && value.any { it != ' ' }) {
+                        value = value.substring(1, value.length - 1)
                     }
-                    i = end + 1
+                    pushStringAnnotation(CopyCodeAnnotation, value)
+                    withStyle(SpanStyle(fontFamily = FontFamily.Monospace)) { append(value) }
+                    pop()
+                    i = match + length
                 } else {
-                    append(c); i++
+                    append(text.substring(i, i + length)); i += length
                 }
             }
 
@@ -350,7 +401,7 @@ fun parseInline(text: String, linkColor: Color = Color.Unspecified): AnnotatedSt
             (c == '*' || c == '_') -> {
                 val end = text.indexOf(c, i + 1)
                 if (end > i && end != i + 1) {
-                    withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(text.substring(i + 1, end)) }
+                    withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(parseInline(text.substring(i + 1, end), linkColor)) }
                     i = end + 1
                 } else {
                     append(c); i++
@@ -363,7 +414,7 @@ fun parseInline(text: String, linkColor: Color = Color.Unspecified): AnnotatedSt
                     val label = m.groupValues[1]
                     val url = m.groupValues[2]
                     withLink(LinkAnnotation.Url(url)) {
-                        withStyle(SpanStyle(color = linkColor, fontWeight = FontWeight.Medium)) { append(label) }
+                        withStyle(SpanStyle(color = linkColor, fontWeight = FontWeight.Medium)) { append(parseInline(label, linkColor)) }
                     }
                     i = m.range.last + 1
                 } else {
@@ -378,4 +429,4 @@ fun parseInline(text: String, linkColor: Color = Color.Unspecified): AnnotatedSt
     }
 }
 
-private val CodeBg = Color(0x1F808080)
+internal const val CopyCodeAnnotation = "markdown-copy-code"

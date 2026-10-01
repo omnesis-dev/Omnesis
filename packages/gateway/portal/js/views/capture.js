@@ -12,6 +12,7 @@ import { navigate } from "../lib/router.js";
 import { createNote, deleteNoteEntry, getNotesHistory, patchNoteEntry } from "../api.js";
 import { NOTE_DAY_RE, NOTES_HISTORY_PAGE_SIZE } from "../lib/notes.js";
 import { useCursorPage } from "../lib/use-cursor-page.js";
+import { useVisiblePoll } from "../lib/use-visible-poll.js";
 import { LoadMore, cursorPageBoundaryState } from "../components/load-more.js";
 import { ConfirmModal } from "../components/confirm-modal.js";
 import { RowActionMenu } from "../components/row-action-menu.js";
@@ -298,10 +299,24 @@ function NoteRow({ entry, onChanged, onRemoved }) {
     <tr class="note-row" key=${entry.id}>
       <td>
         <p class="note-item-text">${entry.text}</p>
+        ${entry.transcription === "pending" &&
+          // A voice note whose gateway transcript is still to come: the text
+          // is the device's own (or a placeholder) and is due to be replaced.
+          html`
+            <div
+              class="note-item-meta note-item-transcribing"
+              title="Editing the note keeps your version instead."
+            >
+              <span class="spinner" aria-hidden="true"></span>
+              <span>Transcribing on your gateway — this text is temporary and will be replaced.</span>
+            </div>
+          `}
         ${entry.updatedAt && entry.updatedAt !== entry.capturedAt &&
+          entry.updatedAt !== entry.transcribedAt &&
           // The row already files under a day header — a relative
           // timestamp would repeat it. Only an edit marker carries
-          // new information.
+          // new information; the gateway's transcript of a voice note
+          // (`transcribedAt`) is not an edit.
           html`
             <div class="note-item-meta"><span>edited</span></div>
           `}
@@ -349,6 +364,9 @@ function pinWinsOver(pin, current) {
   }
   return pin?.text !== current?.text;
 }
+
+/** How often notes awaiting their gateway transcript are re-read. */
+const PENDING_REFRESH_MS = 15_000;
 
 function NoteHistory({ seedDay, lastCapture }) {
   const page = useCursorPage({
@@ -421,6 +439,31 @@ function NoteHistory({ seedDay, lastCapture }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seedDay, page.items, page.loading]);
+
+  // Voice notes still waiting on the gateway's transcript: re-read the first
+  // page while any is shown and swap in the transcribed version, so the text
+  // changes in place without a reload. Pending notes are fresh captures, so
+  // the first page holds them.
+  const pendingIds = page.items
+    .filter((item) => item?.transcription === "pending")
+    .map((item) => item.id);
+  useVisiblePoll(
+    async () => {
+      if (pendingIds.length === 0) return;
+      try {
+        const payload = await getNotesHistory({ limit: NOTES_HISTORY_PAGE_SIZE, day: seedDay });
+        for (const entry of payload?.entries ?? []) {
+          if (pendingIds.includes(entry.id) && entry.transcription !== "pending") {
+            page.replaceItem(entry.id, entry);
+          }
+        }
+      } catch {
+        // The next tick tries again; the row keeps saying it is transcribing.
+      }
+    },
+    PENDING_REFRESH_MS,
+    { enabled: pendingIds.length > 0 },
+  );
 
   // Group the ordered items under day headers for scannability.
   const groups = [];

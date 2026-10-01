@@ -35,6 +35,12 @@ export interface NoteEntry {
   capturedUtcOffsetSeconds: number | null;
   /** Gateway receipt instant; null when unavailable. */
   receivedAt: string | null;
+  /**
+   * When the gateway's transcript of a voice note replaced the text; absent
+   * for any other note. An `updatedAt` equal to it is that transcript, not an
+   * edit.
+   */
+  transcribedAt?: string;
   text: string;
   /** Capture surface slug (e.g. "cli", "portal", "ios-app", "ios-siri"). */
   surface: string | null;
@@ -73,7 +79,8 @@ export function createNoteEntriesTables(db: Db): void {
       captured_time_zone_id TEXT,
       captured_utc_offset_seconds INTEGER,
       received_at TEXT,
-      capture_context TEXT
+      capture_context TEXT,
+      transcribed_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_note_entries_day ON note_entries(day);
     CREATE INDEX IF NOT EXISTS idx_note_entries_captured_at ON note_entries(captured_at);
@@ -96,6 +103,8 @@ export function createNoteEntriesTables(db: Db): void {
   if (!columns.has("capture_context"))
     db.exec("ALTER TABLE note_entries ADD COLUMN capture_context TEXT");
   if (!columns.has("received_at")) db.exec("ALTER TABLE note_entries ADD COLUMN received_at TEXT");
+  if (!columns.has("transcribed_at"))
+    db.exec("ALTER TABLE note_entries ADD COLUMN transcribed_at TEXT");
 }
 
 interface NoteEntryRow {
@@ -113,6 +122,7 @@ interface NoteEntryRow {
   captured_time_zone_id: string | null;
   captured_utc_offset_seconds: number | null;
   received_at: string | null;
+  transcribed_at: string | null;
 }
 
 function rowToEntry(row: NoteEntryRow): NoteEntry {
@@ -133,6 +143,7 @@ function rowToEntry(row: NoteEntryRow): NoteEntry {
     capturedTimeZoneId: row.captured_time_zone_id,
     capturedUtcOffsetSeconds: row.captured_utc_offset_seconds,
     receivedAt: row.received_at,
+    ...(row.transcribed_at ? { transcribedAt: row.transcribed_at } : {}),
   };
 }
 
@@ -200,13 +211,14 @@ export function updateNoteEntryText(db: Db, id: string, text: string, nowIso: st
 }
 
 /**
- * Replace an entry's text only while it still reads `expected`, bumping
- * `updated_at`. A background writer (a voice note's transcript) uses it so an
- * edit the user made in the meantime is never overwritten. Returns the entry's
- * day on success, so the caller can re-render it; `changed` when the text no
- * longer matches, `missing` when the entry is gone.
+ * Write a voice note's gateway transcript over the entry's text, only while
+ * the text still reads `expected` — so an edit the user made in the meantime
+ * is never overwritten. Stamps both `updated_at` (the day document must notice
+ * the change) and `transcribed_at` (so the change is not mistaken for an
+ * edit). Returns the entry's day on success, so the caller can re-render it;
+ * `changed` when the text no longer matches, `missing` when the entry is gone.
  */
-export function replaceNoteEntryTextIf(
+export function applyNoteEntryTranscript(
   db: Db,
   id: string,
   expected: string,
@@ -221,7 +233,9 @@ export function replaceNoteEntryTextIf(
     .get(id);
   if (!row) return { outcome: "missing" };
   if (row.text !== expected) return { outcome: "changed" };
-  db.prepare(`UPDATE note_entries SET text = ?, updated_at = ? WHERE id = ?`).run(text, nowIso, id);
+  db.prepare(
+    `UPDATE note_entries SET text = ?, updated_at = ?, transcribed_at = ? WHERE id = ?`,
+  ).run(text, nowIso, nowIso, id);
   return { outcome: "replaced", day: row.day };
 }
 

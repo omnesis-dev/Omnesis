@@ -147,6 +147,7 @@ fun AssistantTurn(
      * (no per-sub-agent attribution). Empty for an ordinary turn.
      */
     citations: List<AgentCitation> = emptyList(),
+    isStreaming: Boolean = false,
 ) {
     val pillRuns = remember(turn.parts) { computeCitationPillRuns(turn.parts) }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -155,6 +156,8 @@ fun AssistantTurn(
                 is AgentPart.Text ->
                     MarkdownText(
                         part.text,
+                        copyableCode = !isStreaming,
+                        plainValueFences = true,
                         style = MaterialTheme.typography.bodyMedium.copy(fontFamily = OmFonts.inter),
                         color = OmTheme.colors.textPrimary,
                     )

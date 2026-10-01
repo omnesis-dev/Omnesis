@@ -70,6 +70,14 @@ describe("Codex runtime update UI", () => {
       expect(button.getAttribute("aria-label")).toBe("Copy login code");
       writeText.mockRejectedValue(new Error("Clipboard denied"));
       await act(async () => button.click());
+      expect(button.getAttribute("aria-label")).toBe("Could not copy. Select the text and copy it manually.");
+      expect(host.querySelector('[role="status"]')?.textContent).toContain("Could not copy");
+      expect(button.getAttribute("aria-label")).not.toBe("Copied");
+      writeText.mockResolvedValue(undefined);
+      await act(async () => button.click());
+      expect(button.getAttribute("aria-label")).toBe("Copied");
+      expect(host.querySelector(".copy-feedback-error")).toBeNull();
+      await act(async () => vi.advanceTimersByTime(1500));
       expect(button.getAttribute("aria-label")).toBe("Copy login code");
     } finally {
       vi.useRealTimers();

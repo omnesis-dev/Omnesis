@@ -258,3 +258,7 @@ data class AgentChatState(
     val deepResearch: Boolean = false,
     val lastTurnError: String? = null,
 )
+
+/** Persisted turns need no stop reason; only the active conversation's trailing turn streams. */
+fun AgentChatState.isTurnStreaming(turn: AgentTurn.Assistant): Boolean =
+    busy && turn.stopReason == null && turns.lastOrNull()?.id == turn.id

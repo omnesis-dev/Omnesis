@@ -3,7 +3,7 @@
 
 /**
  * HTTP-level coverage for POST /notes/voice: the experimental 404, the
- * operator opt-in, the transcriber requirement, the scope guard, multipart
+ * operator's setting (on unless switched off), the transcriber requirement, the scope guard, multipart
  * validation, the size limit, and the save-now-transcribe-later contract. The
  * synthetic (replay) transcriber echoes the audio bytes back as text.
  */
@@ -31,11 +31,14 @@ let dbPath: string;
 let app: ReturnType<typeof createServer>;
 let ADMIN_TOKEN: string;
 let resolved: ResolvedAssignment;
-let optedIn: boolean;
+/** The operator's setting; undefined leaves it unset (which means on). */
+let optedIn: boolean | undefined;
 let priorExperimental: string | undefined;
 let voiceNotes: VoiceNoteService | undefined;
 let notesRuntime: OmnesisNotesRuntime | undefined;
 let languages: (string | undefined)[];
+/** While set, a transcription waits for it. */
+let held: Promise<void> | null = null;
 
 function mintToken(scopes: readonly Scope[]): string {
   const dev = createDevice(db, { name: `test-${randomUUID()}`, kind: "ios" });
@@ -71,12 +74,14 @@ beforeEach(() => {
   db = createDatabase(dbPath);
   ADMIN_TOKEN = mintToken([SCOPE_ADMIN, SCOPE_READ]);
   resolved = { role: "transcriber", kind: "replay" };
-  optedIn = true;
+  optedIn = undefined;
   languages = [];
+  held = null;
   const transcribeService = new TranscribeService({ resolveAssignment: () => resolved });
   const transcribe = transcribeService.transcribe.bind(transcribeService);
-  transcribeService.transcribe = (audio, mime, opts) => {
+  transcribeService.transcribe = async (audio, mime, opts) => {
     languages.push(opts?.language);
+    if (held) await held;
     return transcribe(audio, mime, opts);
   };
   app = createServer(db, dbPath, {
@@ -85,7 +90,9 @@ beforeEach(() => {
       dictationFeatureStatus({
         transcriberReadiness: () => transcribeService.readiness(),
         getConfig: () =>
-          ({ inference: { dictation: { transcribeOnGateway: optedIn } } }) as OmnesisConfig,
+          (optedIn === undefined
+            ? {}
+            : { inference: { dictation: { transcribeOnGateway: optedIn } } }) as OmnesisConfig,
       }),
     onVoiceNoteService: (service) => {
       voiceNotes = service;
@@ -130,6 +137,32 @@ describe("POST /notes/voice", () => {
     expect(noteText(id)).toBe(TRANSCRIBING_PLACEHOLDER);
   });
 
+  test("note listings mark a voice note pending until its transcript lands", async () => {
+    const listed = async (path: string) => {
+      const res = await app.request(path, { headers: { authorization: `Bearer ${ADMIN_TOKEN}` } });
+      return ((await res.json()) as { entries: { id: string; transcription?: string }[] }).entries;
+    };
+    let release!: () => void;
+    held = new Promise((resolve) => (release = resolve));
+    const id = randomUUID();
+    expect((await post(voiceNoteForm({ id, text: "water the ferns" }))).status).toBe(202);
+    const typed = await notesRuntime!.capture({ text: "a typed note" });
+
+    for (const path of ["/notes", "/notes/history"]) {
+      const entries = await listed(path);
+      expect(entries.find((entry) => entry.id === id)?.transcription).toBe("pending");
+      expect(entries.find((entry) => entry.id === typed.id)).not.toHaveProperty("transcription");
+    }
+
+    release();
+    held = null;
+    await vi.waitFor(async () =>
+      expect((await listed("/notes/history")).find((entry) => entry.id === id)).not.toHaveProperty(
+        "transcription",
+      ),
+    );
+  });
+
   test("a retried capture is accepted again without a duplicate", async () => {
     const id = randomUUID();
     expect((await post(voiceNoteForm({ id, text: "water the ferns" }))).status).toBe(202);
@@ -145,7 +178,7 @@ describe("POST /notes/voice", () => {
     expect(unauthenticated.status).toBe(404);
   });
 
-  test("refuses with DICTATION_DISABLED until the operator opts in", async () => {
+  test("refuses with DICTATION_DISABLED once the operator switches it off", async () => {
     optedIn = false;
     const res = await post(voiceNoteForm({ id: randomUUID() }));
     expect(res.status).toBe(409);
@@ -196,7 +229,7 @@ describe("GET /status dictation", () => {
     return ((await res.json()) as { dictation: Record<string, unknown> }).dictation;
   }
 
-  test("advertises active only when every lever is set", async () => {
+  test("is on by default, and active only when every lever allows it", async () => {
     expect(await statusDictation()).toEqual({
       visible: true,
       enabled: true,

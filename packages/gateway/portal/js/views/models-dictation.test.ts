@@ -69,7 +69,7 @@ describe("Gateway dictation setting", () => {
       dictation: dictation({ enabled: true, modelAssigned: false, reason: "No transcriber model is assigned." }),
     });
     await mount();
-    expect(host.textContent).toContain("Not in use.");
+    expect(host.textContent).toContain("Not in use yet.");
     expect(host.textContent).toContain("No transcriber model is assigned.");
   });
 

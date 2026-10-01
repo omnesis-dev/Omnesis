@@ -155,6 +155,23 @@ describe("buildSystemPrompt — citation surface", () => {
   });
 });
 
+describe("buildSystemPrompt — copyable values", () => {
+  test("offers standard Markdown copying only on an opted-in interactive surface", () => {
+    const interactive = buildSystemPrompt({ copyableValues: true });
+    expect(interactive).toContain("# Copyable values");
+    expect(interactive).toContain("just that value in inline code");
+    expect(interactive).toContain("plain fenced code block");
+    expect(interactive).toContain("leading zeros");
+    expect(buildSystemPrompt({})).not.toContain("# Copyable values");
+    expect(buildSystemPrompt({ citationSurface: false, copyableValues: false })).not.toContain(
+      "# Copyable values",
+    );
+    expect(buildSystemPrompt({ audience: "subagent", copyableValues: true })).not.toContain(
+      "# Copyable values",
+    );
+  });
+});
+
 describe("buildSystemPrompt — sub-agent audience", () => {
   test("shares live retrieval context while withholding parent-only capabilities", () => {
     const prompt = buildSystemPrompt({

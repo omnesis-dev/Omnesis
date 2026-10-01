@@ -734,7 +734,8 @@ struct CitationsDrawer: View {
 /// the drawer open.
 ///
 /// The background fill comes from the source's provider package via
-/// the registry (`sourceBgColorByType`) — Gmail red, WhatsApp green,
+/// the registry (the account's `sourceBgColorById`, else the family's
+/// `sourceBgColorByType`) — Gmail red, WhatsApp green,
 /// Drive yellow, etc. When the source hasn't shipped a colour the
 /// tab falls back to a neutral Theme token. No outline stroke is
 /// drawn: the tinted fill already telegraphs the source.
@@ -829,8 +830,11 @@ struct TimelineEventStickyTab: View {
     @ViewBuilder
     private var tab: some View {
         let content = HStack(spacing: 0) {
+            // The full source id, not its family: `SourceIconView` prefers
+            // the account's own art (rasterized at sync) over the family's,
+            // which may be a remote SVG the image loader cannot decode.
             SourceIconView(
-                sourceId: sourceTypeKey,
+                sourceId: eventSourceId,
                 store: store,
                 size: Self.iconSize
             )

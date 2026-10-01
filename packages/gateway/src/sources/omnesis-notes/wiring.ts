@@ -91,6 +91,12 @@ export interface CaptureNoteInput {
   longitude?: number;
   /** Device-side reverse-geocoded place name (e.g. "Paris"). */
   placeName?: string;
+  /**
+   * Leave the day document as it is for now; the caller calls `project(day)`
+   * once whatever must accompany the note (a voice note's queued recording)
+   * is in place, so readers never see the day without it.
+   */
+  deferProjection?: boolean;
 }
 
 export interface OmnesisNotesRuntime {
@@ -99,12 +105,12 @@ export interface OmnesisNotesRuntime {
   /** Replace an entry's text; null when the id is unknown. */
   edit(id: string, text: string): Promise<NoteEntry | null>;
   /**
-   * Replace an entry's text only while it still reads `expected`, for a
-   * writer that is not the user (a voice note's transcript): an edit the user
-   * made in the meantime wins. `changed` when the text no longer matches,
-   * `missing` when the entry is gone.
+   * Write a voice note's gateway transcript over its text, only while the
+   * text still reads `expected`: an edit the user made in the meantime wins.
+   * Stamps `transcribedAt`, so the change never reads as an edit. `changed`
+   * when the text no longer matches, `missing` when the entry is gone.
    */
-  replaceTextIf(
+  applyTranscript(
     id: string,
     expected: string,
     text: string,
@@ -133,6 +139,8 @@ export interface OmnesisNotesRuntime {
    * debounce window before SIGTERM still lands as a corpus document.
    */
   flushAll(): Promise<void>;
+  /** Re-render a day's document; see `CaptureNoteInput.deferProjection`. */
+  project(day: string): void;
   /** Tear-down on gateway shutdown. Drops timers; does NOT flush. */
   dispose(): void;
 }
@@ -220,7 +228,7 @@ export function bootOmnesisNotes(deps: OmnesisNotesBootDeps): OmnesisNotesRuntim
         // read-side WAL visibility catches up.
         throw new Error(`captured note ${entry.id} is not visible yet; retry`);
       }
-      upserter.enqueue(entry.day);
+      if (!input.deferProjection) upserter.enqueue(entry.day);
       log.info(`Captured note ${entry.id} for ${entry.day} (${text.length} chars)`);
       return entry;
     },
@@ -239,12 +247,12 @@ export function bootOmnesisNotes(deps: OmnesisNotesBootDeps): OmnesisNotesRuntim
       upserter.enqueue(existing.day);
       return { ...existing, text: trimmed, updatedAt: now };
     },
-    replaceTextIf: async (id, expected, text) => {
+    applyTranscript: async (id, expected, text) => {
       const trimmed = text.trim();
       if (trimmed.length === 0) {
         throw new Error("note text must not be empty");
       }
-      const result = await deps.writeGate.replaceNoteEntryTextIf(
+      const result = await deps.writeGate.applyNoteEntryTranscript(
         id,
         expected,
         trimmed,
@@ -259,6 +267,7 @@ export function bootOmnesisNotes(deps: OmnesisNotesBootDeps): OmnesisNotesRuntim
       upserter.enqueue(day);
       return true;
     },
+    project: (day) => upserter.enqueue(day),
     listDay: (day) =>
       listNoteEntriesForDay(deps.readDb, day ?? dayKeyFor(new Date().toISOString())),
     listHistory: (options) =>

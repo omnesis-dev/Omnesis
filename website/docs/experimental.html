@@ -427,8 +427,10 @@
           (<code>documentUpdateDebounce</code>) but never more than four hours
           (<code>documentMaxDefer</code>), and each waits up to 30 minutes
           (<code>derivationBarrier</code>) for people resolution, links and date extraction to
-          finish with it. Older records never wake the live lane, so a large sync of history does
-          not flood it.
+          finish with it. A note told to Omnesis by voice and still being transcribed by the gateway
+          is held until its transcript lands or is given up on, for up to an hour
+          (<code>pendingContentBarrier</code>), so the Brain reads it once, in the gateway's words.
+          Older records never wake the live lane, so a large sync of history does not flood it.
         </p>
         <p>
           History is the <strong>catch-up lane</strong> (the portal calls it Bootstrap). It walks
@@ -986,6 +988,13 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
                 <td><code>30m</code></td>
                 <td>
                   Longest wait for links, people and dates to be derived before a run proceeds.
+                </td>
+              </tr>
+              <tr>
+                <td><code>pendingContentBarrier</code></td>
+                <td><code>1h</code></td>
+                <td>
+                  Longest wait for a voice note's gateway transcript before a run reads the note.
                 </td>
               </tr>
               <tr>
@@ -1982,29 +1991,29 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/admin/watch/compile" \
           requests that already carry their words keep the phone's or the system's recognition.
         </p>
 
-        <h3 id="gateway-dictation-turning-on">Turning it on</h3>
+        <h3 id="gateway-dictation-turning-on">Turning it on and off</h3>
         <p>
-          It needs three things: the gateway in experimental mode, a Transcriber model assigned
-          under <strong>Settings → Models → Transcriber</strong>, and the
-          <strong>Tell Omnesis voice notes</strong> switch on that same page. The apps show the same
-          switch under <strong>Settings → Voice</strong>. It is a gateway setting, so it applies to
-          every phone paired with the gateway. In <code>omnesis.json</code> it is:
+          It is on whenever the gateway is in experimental mode and a Transcriber model is assigned
+          under <strong>Settings → Models → Transcriber</strong>. The
+          <strong>Tell Omnesis voice notes</strong> switch on that same page turns it off, and the
+          apps show the same switch under <strong>Settings → Voice</strong>. It is a gateway
+          setting, so it applies to every phone paired with the gateway. In
+          <code>omnesis.json</code>, switching it off is:
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
           <div class="term-body">
             <pre>
 "inference": {
-  "dictation": { "transcribeOnGateway": true }
+  "dictation": { "transcribeOnGateway": false }
 }</pre
             >
           </div>
         </div>
         <p>
           <code>GET /status</code> reports the combined verdict as <code>dictation</code>, and the
-          apps send recordings only while its <code>active</code> field is true. Switched on without
-          a runnable transcriber, the setting shows why it has no effect, and notes keep the phone's
-          own text.
+          apps send recordings only while its <code>active</code> field is true. Without a runnable
+          transcriber, the setting says what is missing, and notes keep the phone's own text.
         </p>
 
         <h3 id="gateway-dictation-behaviour">What happens to a voice note</h3>
@@ -2014,13 +2023,16 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/admin/watch/compile" \
           background, and that text is saved with the note at once so it is never empty. The gateway
           then works on the recording and replaces the text when its transcriber finishes. How long
           that takes depends on the gateway's hardware and on the voice notes it is already
-          transcribing for your sources; nothing waits on it. If you edit the note first, your edit
-          stays.
+          transcribing for your sources; nothing waits on it. The portal's Tell Omnesis page marks
+          such a note as transcribing until the gateway's text arrives. If you edit the note first,
+          your edit stays.
         </p>
         <p>
           A note from the Apple Watch travels through your iPhone, which transcribes it on the phone
-          first. When the phone has no transcript to offer, the note reads "Voice note —
-          transcribing…" until the gateway's arrives.
+          first. The watch keeps each note, recorded or dictated, until the iPhone confirms it has
+          it, retrying for up to a week when the phone is out of reach. When the phone has no
+          transcript to offer, the note reads "Voice note — transcribing…" until the gateway's
+          arrives.
         </p>
         <p>
           The gateway keeps the recording in its database, alongside the rest of your data and under

@@ -76,6 +76,7 @@ const EXPECTED_INVENTORY = [
   "/brain/judge/enabled [boolean]",
   "/brain/mergeAdjudication/enabled [boolean]",
   "/brain/notesMaxBytes [number]",
+  "/brain/pendingContentBarrier [duration]",
   "/brain/provenanceRecheck/enabled [boolean]",
   "/brain/recencyWindow [duration]",
   "/brain/reverification/batchSize [number]",

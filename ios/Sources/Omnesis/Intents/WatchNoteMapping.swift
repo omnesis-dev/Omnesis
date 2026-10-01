@@ -9,10 +9,8 @@ extension WatchNoteOutcome {
     ///
     /// Lives on the phone (not in the shared `WatchNote` contract) because
     /// it maps `NoteCaptureService.Outcome`, which the watch target does
-    /// not compile. The watch-only relay outcomes (`reachedPhone`,
-    /// `phoneUnreachable`, `watchLinkInactive`, `relayFailed`,
-    /// `queuedForPhone`) are produced on the watch and never come from a
-    /// capture.
+    /// not compile. `reachedPhone` and `relayFailed` answer a duplicate or
+    /// an unreadable message, and never come from a capture.
     init(capture outcome: NoteCaptureService.Outcome) {
         switch outcome {
         case .saved: self = .saved

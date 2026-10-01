@@ -1627,6 +1627,52 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view.environment(store), name: "30e-document-annotations-enriched")
     }
 
+    func testMarkdownCopyValues() {
+        let view = ScrollView {
+            MarkdownView(text: PreviewMocks.copyableMarkdown, copyValues: true)
+                .padding()
+        }
+        .background(Theme.bgPrimary)
+        snapshot(view, name: "32e-markdown-copy-values", size: CGSize(width: 393, height: 1000))
+        snapshot(view.preferredColorScheme(.dark), name: "32f-markdown-copy-values-dark", size: CGSize(width: 320, height: 1100))
+        snapshot(
+            view.environment(\.dynamicTypeSize, .accessibility3),
+            name: "32g-markdown-copy-values-large",
+            size: CGSize(width: 393, height: 1500)
+        )
+    }
+
+    func testMarkdownCopyValuesStreaming() {
+        let view = ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                AgentPartView(part: .text(PreviewMocks.copyableMarkdownInline), turnDone: false)
+                AgentPartView(part: .text(PreviewMocks.copyableMarkdownInline), turnDone: true)
+            }
+            .padding()
+        }
+        .background(Theme.bgPrimary)
+        snapshot(view, name: "32h-markdown-copy-streaming", size: CGSize(width: 393, height: 600))
+    }
+
+    func testMarkdownCopyValuesHistory() {
+        let view = ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                ForEach(AgentTurnBuilder.turns(from: PreviewMocks.copyableHistory)) { turn in
+                    AgentTurnBubble(turn: turn)
+                }
+                MarkdownView(text: PreviewMocks.copyableMarkdownValueAndCode, copyValues: true)
+            }
+            .padding()
+        }
+        .background(Theme.bgPrimary)
+        snapshot(view, name: "32i-markdown-copy-history", size: CGSize(width: 393, height: 700))
+        snapshot(
+            view.environment(\.dynamicTypeSize, .accessibility3),
+            name: "32j-markdown-copy-history-large",
+            size: CGSize(width: 320, height: 1200)
+        )
+    }
+
     func testMarkdownKitchenSink() {
         let view = ScrollView {
             MarkdownView(text: """
@@ -4847,6 +4893,34 @@ final class PreviewSnapshotTests: XCTestCase {
         }
         .environment(store)
         snapshot(view, name: "108-sticky-tabs", size: CGSize(width: 240, height: 80))
+    }
+
+    /// A tab resolves its icon from the event's own source, not its family:
+    /// each account carries renderable art while the family's entry is a
+    /// remote SVG the image loader cannot decode. Each tab renders the
+    /// account art rather than the placeholder glyph.
+    func testStickyTabsPreferAccountArt() {
+        let events = Array(PreviewMocks.trailVoucherJourney.prefix(4))
+        let sourceIds = Set(events.compactMap(\.eventSourceId))
+        let store = AppStore.preview(
+            sourceIconByType: Dictionary(uniqueKeysWithValues: Set(sourceIds.map(sourceTypeFromId)).map {
+                ($0, "https://example.com/brand/\($0).svg")
+            }),
+            sourceIconById: Dictionary(uniqueKeysWithValues: sourceIds.map {
+                ($0, PreviewMocks.agentSourceLayoutIcon)
+            }),
+            agentPreview: voucherTrailSeed()
+        )
+        let view = ZStack {
+            Theme.bgPrimary.ignoresSafeArea()
+            HStack(spacing: 12) {
+                ForEach(Array(events.enumerated()), id: \.0) { _, ev in
+                    TimelineEventStickyTab(event: ev, onTap: {})
+                }
+            }
+        }
+        .environment(store)
+        snapshot(view, name: "108b-sticky-tabs-account-art", size: CGSize(width: 240, height: 80))
     }
 
     /// Long Timeline with mixed sources — exercises long-list rendering +

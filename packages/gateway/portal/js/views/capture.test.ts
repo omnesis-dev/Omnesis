@@ -377,6 +377,75 @@ describe("note history", () => {
     });
   });
 
+  test("a voice note awaiting its gateway transcript says so, then shows the transcript", async () => {
+    vi.useFakeTimers();
+    const pending = noteEntry({
+      id: "voice-1",
+      text: "water the fens",
+      transcription: "pending",
+    });
+    const typed = noteEntry({ id: "typed-1", text: "A typed note" });
+    getNotesHistory.mockResolvedValueOnce({
+      entries: [pending, typed],
+      pageInfo: { hasMore: false },
+    });
+    await act(async () => {
+      render(null, host);
+      render(h(CaptureView, {}), host);
+    });
+    await act(async () => {});
+
+    const badge = () => host.querySelectorAll(".note-item-transcribing");
+    expect(badge()).toHaveLength(1);
+    expect(noteItems()[0].querySelector(".note-item-transcribing")?.textContent).toContain(
+      "Transcribing on your gateway",
+    );
+    expect(noteItems()[1].querySelector(".note-item-transcribing")).toBeNull();
+
+    getNotesHistory.mockResolvedValue({
+      entries: [{ ...pending, text: "Water the ferns.", transcription: undefined }, typed],
+      pageInfo: { hasMore: false },
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(15_000);
+    });
+    await act(async () => {});
+    expect(noteItems()[0].querySelector(".note-item-text")?.textContent).toBe("Water the ferns.");
+    expect(badge()).toHaveLength(0);
+
+    // Nothing pending any more: the list stops re-reading.
+    const calls = getNotesHistory.mock.calls.length;
+    await act(async () => {
+      vi.advanceTimersByTime(60_000);
+    });
+    expect(getNotesHistory.mock.calls.length).toBe(calls);
+  });
+
+  test("a transcribed voice note is not marked edited; an edit after it is", async () => {
+    getNotesHistory.mockResolvedValue({
+      entries: [
+        noteEntry({
+          id: "transcribed",
+          updatedAt: "2026-09-11T10:02:00.000Z",
+          transcribedAt: "2026-09-11T10:02:00.000Z",
+        }),
+        noteEntry({
+          id: "edited-after",
+          updatedAt: "2026-09-11T10:05:00.000Z",
+          transcribedAt: "2026-09-11T10:02:00.000Z",
+        }),
+      ],
+      pageInfo: { hasMore: false },
+    });
+    await act(async () => {
+      render(null, host);
+      render(h(CaptureView, {}), host);
+    });
+    await act(async () => {});
+    const edited = noteItems().map((row) => row.textContent?.includes("edited"));
+    expect(edited).toEqual([false, true]);
+  });
+
   test("a fresh capture appears on top without a refetch", async () => {
     getNotesHistory.mockResolvedValue({ entries: [], pageInfo: { hasMore: false } });
     createNote.mockResolvedValueOnce(

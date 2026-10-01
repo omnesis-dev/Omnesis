@@ -2699,6 +2699,11 @@ const brain = z
         "Ceiling on how long a document's agent run waits for the deterministic derivation pipeline (reference-graph edges, people resolution, date extraction) to finish with it. The run is claimable as soon as derivation completes, or after this window with an incomplete picture — whichever comes first.",
       )
       .optional(),
+    pendingContentBarrier: duration
+      .describe(
+        "Ceiling on how long a document's agent run waits while part of its content is still due to be replaced — a voice note the gateway is still transcribing. The run is claimable as soon as that content lands (or is given up on), or after this window with the interim text.",
+      )
+      .optional(),
     recencyWindow: duration
       .describe(
         "Recency gate: only documents whose source timestamp falls within this window of now can wake the agent — history backfills never flood it.",
@@ -2942,7 +2947,7 @@ const entailmentSettings = z
   .strict()
   .default({ promptStyle: "judge" });
 
-// Tell Omnesis voice notes (experimental). When on, the mobile apps send the
+// Tell Omnesis voice notes (experimental). On unless set to false: the mobile apps send the
 // audio of a voice note — dictated on the phone or the Apple Watch — with the
 // note, and the gateway's `transcriber` replaces the phone's own transcript
 // once it has transcribed it. Has effect only in experimental mode and with a
@@ -2953,7 +2958,7 @@ const dictationSettings = z
     transcribeOnGateway: z
       .boolean()
       .describe(
-        "Experimental. The mobile apps send the audio of Tell Omnesis voice notes with the note, and the gateway's transcriber replaces the phone's own transcript. Off by default; needs experimental mode and an assigned transcriber.",
+        "Experimental. The mobile apps send the audio of Tell Omnesis voice notes with the note, and the gateway's transcriber replaces the phone's own transcript. On by default whenever experimental mode is on and a transcriber is assigned; set false to keep the phone's transcript only.",
       )
       .optional(),
   })

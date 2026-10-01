@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 vi.mock("../lib/markdown.js", () => ({
   renderMarkdown: (value: string) => value,
+  renderCopyableMarkdown: (value: string) => ({ html: value, targets: [] }),
 }));
 
 vi.mock("../lib/router.js", async (importOriginal) => ({

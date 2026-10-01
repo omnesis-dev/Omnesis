@@ -851,7 +851,11 @@ private fun Transcript(
             items(turns, key = { it.id }) { turn ->
                 when (turn) {
                     is AgentTurn.User -> UserBubble(turn.text)
-                    is AgentTurn.Assistant -> AssistantTurn(turn, catalog, onFlushEphemeral, onOpenDocument, citations = state.chat.citations)
+                    is AgentTurn.Assistant -> AssistantTurn(
+                        turn, catalog, onFlushEphemeral, onOpenDocument,
+                        citations = state.chat.citations,
+                        isStreaming = state.chat.isTurnStreaming(turn),
+                    )
                 }
             }
             // The item is added only once the dots have actually revealed (a genuine quiet gap),

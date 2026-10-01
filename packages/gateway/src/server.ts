@@ -54,7 +54,7 @@ import { type EventBus } from "./events.js";
 import { registerModelRoutes } from "./models/routes.js";
 import { mountTranscribeRoutes } from "./http/routes/transcribe.js";
 import { mountVoiceNoteRoutes } from "./http/routes/voice-notes.js";
-import { VoiceNoteService } from "./voice-notes/index.js";
+import { VoiceNoteService, pendingVoiceNoteIds } from "./voice-notes/index.js";
 import { mountOcrRoutes } from "./http/routes/ocr.js";
 import { HttpError, errorResponse } from "./http/errors.js";
 import { requestIdMiddleware } from "./http/middleware/request-id.js";
@@ -1629,7 +1629,10 @@ export function createServer(
     const runtime = getOmnesisNotesRuntime();
     opts.onOmnesisNotesRuntime(runtime);
   }
-  mountNotesRoutes(app, { runtime: getOmnesisNotesRuntime });
+  mountNotesRoutes(app, {
+    runtime: getOmnesisNotesRuntime,
+    pendingTranscriptions: (noteIds) => pendingVoiceNoteIds(db, noteIds),
+  });
 
   // Voice notes (experimental): Tell Omnesis captures that arrive with their
   // audio, saved at once and transcribed afterwards. The queue runs whenever a

@@ -12,6 +12,43 @@ import SwiftUI
 /// Everything here is `#if DEBUG` only — never shipped in release.
 @available(iOS 17.0, *)
 enum PreviewMocks {
+    static let copyableMarkdownInline = "Address: `42 Example Street, Exampleville`. Reference: `000042`. **Keep** this [link](https://example.com)."
+    static let copyableMarkdownBlock = "42 Example Street\nExampleville\n"
+    static let copyableMarkdownValueAndCode = """
+    ```text
+    42 Example Street
+    Exampleville
+    ```
+
+    ```swift
+    let reference = "000042"
+    ```
+    """
+    static let copyableHistory: [ChatMessage] = [
+        .user(parts: [.text("What is the reference?")]),
+        .assistant(parts: [.text("Reference: `000042`.")]),
+        .user(parts: [.text("And the address?")]),
+        .assistant(parts: [.text("```text\n42 Example Street\nExampleville\n```")]),
+    ]
+    static let copyableMarkdown = """
+    ## Useful values
+
+    Address: `42 Example Street, Exampleville`. Reference: `000042`.
+
+    - Phone: `+1 (555) 010-0123`
+    - **Email:** `hello@example.com`, with a [link](https://example.com).
+
+    | Item | Value |
+    | --- | --- |
+    | Reference | `000042` |
+    | Long identifier | `abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ` |
+
+    ```
+    42 Example Street
+    Exampleville
+    ```
+    """
+
     static let modelReasoningControls = ModelControls(
         providerId: "openai",
         source: "models.dev",
