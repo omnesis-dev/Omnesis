@@ -239,10 +239,17 @@ function appFixture(
         ? (options.answerProfile ?? null)
         : null,
   }));
+  const getResponse = vi.fn(
+    async (
+      _taskId: string,
+      _ownerId: string,
+      _options?: { waitSeconds?: number; signal?: AbortSignal },
+    ) => answerResponse,
+  );
   const answerService = {
     answer,
     answerWithProfile,
-    getResponse: vi.fn(async () => answerResponse),
+    getResponse,
     getCompletion,
     recordEgress,
   } as unknown as AnswerService;
@@ -277,6 +284,7 @@ function appFixture(
     answer,
     answerWithProfile,
     getCompletion,
+    getResponse,
     recordEgress,
     recordMcpToolInvocation,
     recordDirectAuditEvent,
@@ -422,6 +430,71 @@ describe("gateway-hosted Streamable HTTP MCP", () => {
     await Promise.allSettled(closeables.splice(0).map((value) => value.close()));
     if (previousExperimental === undefined) delete process.env.OMNESIS_EXPERIMENTAL;
     else process.env.OMNESIS_EXPERIMENTAL = previousExperimental;
+  });
+
+  it("delegates bounded waiting and records one audited egress per status tool call", async () => {
+    const { app, runtime, getResponse, recordEgress, recordMcpToolInvocation } = appFixture();
+    closeables.push(runtime);
+    const { client, transport } = await connect(app, answerToken);
+    closeables.push(client, transport);
+    const result = await client.callTool({
+      name: "get_answer_status",
+      arguments: { taskId: "task-test", waitSeconds: 30 },
+    });
+    expect(result.structuredContent).toMatchObject({ status: "released" });
+    expect(getResponse).toHaveBeenCalledTimes(1);
+    expect(getResponse).toHaveBeenCalledWith("task-test", expect.any(String), {
+      waitSeconds: 30,
+      signal: expect.any(AbortSignal),
+    });
+    expect(recordEgress).toHaveBeenCalledTimes(1);
+    expect(recordMcpToolInvocation).toHaveBeenCalledTimes(1);
+    expect(recordMcpToolInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({ tool: "get_answer_status", requireActiveAuthority: true }),
+    );
+  });
+
+  it("rechecks authority after a waiting status read before releasing the answer", async () => {
+    let active = true;
+    let finishRead: (() => void) | undefined;
+    let markReadStarted: (() => void) | undefined;
+    const readGate = new Promise<void>((resolve) => {
+      finishRead = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      markReadStarted = resolve;
+    });
+    const { app, runtime, getResponse, recordMcpToolInvocation } = appFixture(service(), {
+      recordMcpToolInvocation: async (input) => {
+        if (input.requireActiveAuthority && !active)
+          throw new Error("Fictional revoked authority.");
+      },
+    });
+    const originalRead = getResponse.getMockImplementation()!;
+    getResponse.mockImplementation(async (...args) => {
+      markReadStarted?.();
+      await readGate;
+      return originalRead(...args);
+    });
+    closeables.push(runtime);
+    const { client, transport } = await connect(app, answerToken);
+    closeables.push(client, transport);
+    const pending = client.callTool({
+      name: "get_answer_status",
+      arguments: { taskId: "task-test", waitSeconds: 30 },
+    });
+    await started;
+    active = false;
+    finishRead?.();
+    const result = await pending;
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).not.toContain("Fictional released answer.");
+    expect(recordMcpToolInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({ requireActiveAuthority: true }),
+    );
+    expect(recordMcpToolInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({ requireActiveAuthority: false }),
+    );
   });
 
   it("serves Answer with experimental mode disabled and preserves the released result", async () => {
