@@ -275,7 +275,7 @@ describe("Calendar loading and addressability", () => {
     await act(async () => { render(h(CalendarTab, { selectedId: "dm_old" }), host); });
     await flushEffects();
     expect(mocks.getAnnotation).toHaveBeenCalledWith("dm_old", expect.any(String));
-    expect(host.querySelector(".modal-panel")?.textContent).toContain("Date written in a document");
+    expect(host.querySelector(".modal-panel")?.textContent).toContain("Date mention");
     expect(host.querySelector(".modal-panel")?.textContent).toContain("September date");
     await act(async () => { render(h(CalendarTab, { selectedId: null }), host); });
     await flushEffects();
