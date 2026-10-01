@@ -361,11 +361,7 @@ export function CalendarTab({ selectedId = null, developer = false } = {}) {
 
   const mentionsHidden = result.coverage?.mentions?.unworthyHidden === true;
   return html`<div class="calendar-view">
-    <p class="debug-sub calendar-intro">
-      Source records and agent interpretations form the agenda. Date mentions are grouped
-      separately; they may not describe an event.
-      ${mentionsHidden && " Dates in mail judged not worth recording are hidden."}
-    </p>
+    ${mentionsHidden && html`<p class="debug-sub">Dates in mail judged not worth recording are hidden.</p>`}
     <div class="calendar-toolbar">
       <div class="calendar-zoom" role="group" aria-label="Calendar view">
         ${ZOOMS.map(

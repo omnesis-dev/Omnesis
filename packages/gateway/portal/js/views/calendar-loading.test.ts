@@ -355,7 +355,7 @@ describe("Calendar loading and addressability", () => {
       nowMs: Date.now(),
     });
     mocks.getDocuments.mockResolvedValue({
-      docs: { "doc-registration": { title: "Registration dates" } },
+      docs: { "doc-registration": { title: "Registration dates", sourceId: "fictional-mail:account" } },
     });
     await act(async () => {
       render(h(CalendarTab), host);
@@ -366,6 +366,10 @@ describe("Calendar loading and addressability", () => {
     expect(section.querySelector("summary").textContent).toContain("2");
     expect(section.querySelector("summary").textContent).toContain("1 possible deadline");
     expect(section.querySelectorAll(".calendar-mention-document")).toHaveLength(1);
+    const title = section.querySelector(".calendar-mention-document h4");
+    expect(title.firstElementChild.tagName).toBe("IMG");
+    expect(title.firstElementChild.getAttribute("src")).toBe("/icons/fictional-mail%3Aaccount.svg");
+    expect(title.lastElementChild.textContent).toBe("Registration dates");
     expect(section.querySelectorAll(".calendar-entry")).toHaveLength(2);
     expect(host.querySelector(".calendar-day-counts")).toBeNull();
     await act(async () => {

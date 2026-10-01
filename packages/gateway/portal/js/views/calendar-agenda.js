@@ -185,11 +185,18 @@ export function MentionSection({
     <div class="calendar-mention-documents">
       ${groups.map((group) => {
         const doc = documents[group.documentId];
+        const sourceId = doc?.sourceId ?? doc?.source_id ?? doc?.sourceType ?? group.entries[0].mention?.sourceId;
+        const icon = sourceIconUrl(sourceId);
         return html`<section
           key=${group.documentId ?? group.entries[0].id}
           class="calendar-mention-document"
         >
-          <h4>${doc?.title ?? group.entries[0].label}</h4>
+          <h4>
+            ${icon
+              ? html`<img class="source-icon" src=${icon} alt="" />`
+              : html`<span class="calendar-mention-source-fallback" aria-hidden="true">▤</span>`}
+            <span>${doc?.title ?? group.entries[0].label}</span>
+          </h4>
           ${group.entries.map(
             (entry) =>
               html`<${CalendarEntryRow}
