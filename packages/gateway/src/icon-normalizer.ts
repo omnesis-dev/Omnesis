@@ -10,6 +10,7 @@ import { Worker } from "node:worker_threads";
 import { classifyInferenceIp, createLogger, resolveWorkerEntry } from "@omnesis/core";
 import { SOURCE_ICON_MAX_BYTES, SOURCE_ICON_MAX_INPUT_CHARS } from "./icon-limits.js";
 import type { IncomingHttpHeaders, RequestOptions } from "node:http";
+import type { SourceSyncMeta } from "@omnesis/source-sdk";
 import type { LookupAddress } from "node:dns";
 
 const log = createLogger("gateway:icon-normalizer");
@@ -131,6 +132,26 @@ export async function normalizeIcon(
     return `data:image/png;base64,${trimmed}`;
   }
   return null;
+}
+
+/**
+ * Rasterise every icon a source meta push carries: the source's own and its
+ * family's. The family's icon is a declaration in exactly the same form as the
+ * source's — a URL or a data URI, as `defineSource` wrote it — so it needs the
+ * same treatment. Normalising only one of them stores a URL where every
+ * consumer expects an embedded image, which renders as a missing glyph rather
+ * than an error. An icon that cannot be normalised is dropped, so the stored
+ * value is left as it was.
+ */
+export async function normalizeSourceMetaIcons<T extends SourceSyncMeta>(meta: T): Promise<T> {
+  const icon =
+    meta.icon !== undefined ? ((await normalizeIcon(meta.icon)) ?? undefined) : undefined;
+  if (!meta.family) return { ...meta, icon };
+  const familyIcon =
+    meta.family.icon !== undefined
+      ? ((await normalizeIcon(meta.family.icon)) ?? undefined)
+      : undefined;
+  return { ...meta, icon, family: { ...meta.family, icon: familyIcon } };
 }
 
 async function normalizeDataUri(uri: string): Promise<string | null> {
