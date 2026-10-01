@@ -121,4 +121,39 @@ describe("GET /temporal/window", () => {
     // Mentions come only when named.
     expect((await read("projection,annotation")).items).toEqual([]);
   });
+
+  test("opens a recognized date directly in the requested zone, even outside the current window", async () => {
+    const documentId = seedMention("direct-date", "drop");
+    const row = db
+      .prepare("SELECT id FROM document_extracted_dates WHERE document_id = ?")
+      .get(documentId) as { id: number };
+    const id = `dm_${String(row.id).padStart(16, "0")}`;
+    gateActive = true;
+    const url = `/temporal/items/${id}?timeZone=America%2FLos_Angeles`;
+    const response = await app.request(url, { headers: { authorization: `Bearer ${token}` } });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      item: {
+        id,
+        origin: "mention",
+        start: "2026-10-12T07:00:00.000Z",
+        endExclusive: "2026-10-13T07:00:00.000Z",
+        mention: { documentId },
+      },
+    });
+    expect((await app.request(url)).status).toBe(401);
+    expect(
+      (
+        await app.request(`/temporal/items/${id}?timeZone=invalid`, {
+          headers: { authorization: `Bearer ${token}` },
+        })
+      ).status,
+    ).toBe(400);
+
+    // Editing a document retires its old recognized dates until extraction completes.
+    db.prepare("UPDATE documents SET dates_extracted_at = NULL WHERE id = ?").run(documentId);
+    expect((await app.request(url, { headers: { authorization: `Bearer ${token}` } })).status).toBe(
+      404,
+    );
+  });
 });
