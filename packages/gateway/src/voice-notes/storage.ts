@@ -155,9 +155,15 @@ export function pendingVoiceNoteIds(db: Db, noteIds: readonly string[]): Set<str
 /**
  * Which of `docIds` are notes day documents holding a voice note still waiting
  * on the transcriber — content due to be replaced, which background readers
- * (the Brain) should wait for.
+ * (the Brain, date extraction) should wait for. `queuedAfter` (ISO-8601)
+ * counts only recordings queued since then, for a reader that waits a bounded
+ * time.
  */
-export function documentsAwaitingTranscription(db: Db, docIds: readonly string[]): Set<string> {
+export function documentsAwaitingTranscription(
+  db: Db,
+  docIds: readonly string[],
+  opts: { queuedAfter?: string } = {},
+): Set<string> {
   if (docIds.length === 0) return new Set();
   const rows = db
     .prepare<string[], { id: string }>(
@@ -166,9 +172,10 @@ export function documentsAwaitingTranscription(db: Db, docIds: readonly string[]
          JOIN note_entries n ON n.day = d.external_id
          JOIN voice_note_transcriptions v ON v.note_id = n.id
         WHERE d.provider_id = ? AND d.source_id = ?
+          AND v.created_at > ?
           AND d.id IN (${docIds.map(() => "?").join(", ")})`,
     )
-    .all(OMNESIS_NOTES_PROVIDER_ID, OMNESIS_NOTES_SOURCE_ID, ...docIds);
+    .all(OMNESIS_NOTES_PROVIDER_ID, OMNESIS_NOTES_SOURCE_ID, opts.queuedAfter ?? "", ...docIds);
   return new Set(rows.map((row) => row.id));
 }
 

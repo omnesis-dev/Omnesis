@@ -1487,6 +1487,12 @@ const dateEnrichment = bootDateEnrichment({
   getSettings: () => resolveDateEnrichmentSettings(configStore.get().enrichment),
   countPending: () => countPendingDateExtraction(db),
   onApplied: mentionWorthGate.kick,
+  // A notes day holding a voice note still being transcribed is read once the
+  // gateway's transcript lands, within the configured wait.
+  contentPending: (docIds, maxWaitMs) =>
+    documentsAwaitingTranscription(db, docIds, {
+      queuedAfter: new Date(Date.now() - maxWaitMs).toISOString(),
+    }),
   log: log.child("enrichment:dates"),
 });
 
