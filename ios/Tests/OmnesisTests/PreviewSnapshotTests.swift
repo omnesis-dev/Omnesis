@@ -6547,7 +6547,7 @@ final class PreviewSnapshotTests: XCTestCase {
         }
     }
 
-    /// The Voice section in place: an experimental gateway advertising the
+    /// The Voice section in place: a stable gateway advertising the
     /// setting, switched on with a transcriber that cannot run. Tall canvas so
     /// the render reaches it below Notifications.
     func testSettingsWithVoiceSection() {

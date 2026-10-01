@@ -1118,12 +1118,12 @@ enum PreviewMocks {
         experimental: true
     )
 
-    // MARK: - Gateway dictation (experimental)
+    // MARK: - Gateway dictation
 
     /// 25 MB, the gateway's audio body limit.
     static let dictationMaxAudioBytes = 25 * 1024 * 1024
 
-    /// Experimental gateway; the operator has not switched dictation on.
+    /// The operator has switched gateway dictation off.
     static let dictationStatusOff = DictationStatus(
         visible: true,
         enabled: false,
@@ -1151,14 +1151,14 @@ enum PreviewMocks {
         maxAudioBytes: dictationMaxAudioBytes
     )
 
-    /// An experimental gateway advertising the dictation setting, switched
+    /// A stable gateway advertising the dictation setting, switched
     /// on with its transcriber unable to run — Settings shows the Voice
     /// section with the gateway's reason.
     static let statusSnapshotDictationBlocked = StatusSnapshot(
         documents: statusSnapshot.documents,
         dbSizeBytes: statusSnapshot.dbSizeBytes,
         latestActivityBySource: nil,
-        experimental: true,
+        experimental: false,
         dictation: dictationStatusBlocked
     )
 

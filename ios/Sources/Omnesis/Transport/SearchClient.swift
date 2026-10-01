@@ -1311,7 +1311,7 @@ public struct StatusSnapshot: Decodable, Sendable {
     /// gateway that predates the feature — reads as inactive, so the
     /// Briefs entry stays hidden.
     public let briefs: BriefsStatus?
-    /// The gateway dictation gate (experimental). `nil` from a gateway that
+    /// The gateway dictation gate. `nil` from a gateway that
     /// predates it, which keeps every mic on the on-device recognizer.
     public let dictation: DictationStatus?
 
