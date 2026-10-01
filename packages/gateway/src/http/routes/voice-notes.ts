@@ -3,7 +3,7 @@
 
 /**
  * `POST /notes/voice` — a Tell Omnesis capture that arrives with its audio
- * (experimental).
+ * for gateway transcription.
  *
  * A phone sends `multipart/form-data` with two parts: `note`, the capture's
  * JSON (the POST /notes fields, with `text` as the device's own transcript —
@@ -13,8 +13,6 @@
  *
  * Responses:
  *   - 202 `{ id, transcription: "pending" }`, also for a retried id.
- *   - 404 when the gateway is not in experimental mode — the path does not
- *     exist, as on a gateway that predates it.
  *   - 409 `DICTATION_DISABLED` when the operator has not opted in.
  *   - 503 `TRANSCRIBER_UNAVAILABLE` when no transcriber can run.
  *   - 413 `PAYLOAD_TOO_LARGE`, 400 on a malformed body.
@@ -23,18 +21,16 @@
  * Scope: that of POST /notes (`write:omnesis-notes`, satisfied by admin).
  */
 
-import { experimentalEnabled } from "@omnesis/core";
 import { bodyLimit } from "hono/body-limit";
 import { notesRateLimiter } from "../../rate-limit.js";
 import { MAX_AUDIO_BYTES } from "../../transcribe/index.js";
-import { BadRequestError, HttpError, NotFoundError, ValidationError } from "../errors.js";
+import { BadRequestError, HttpError, ValidationError } from "../errors.js";
 import { enforceWriteScopeForSource, scope } from "../scope.js";
 import { voiceNoteMetadata } from "../schemas/index.js";
 import { clientIp, isLoopbackRequest } from "./admin/internals.js";
 import type { DictationFeatureStatus } from "../../dictation/index.js";
 import type { VoiceNoteService } from "../../voice-notes/index.js";
-import type { MiddlewareHandler } from "hono";
-import type { AppEnv, RouteApp } from "./types.js";
+import type { RouteApp } from "./types.js";
 
 /** Room for the `note` part and multipart framing beside the largest recording. */
 const METADATA_ALLOWANCE_BYTES = 64 * 1024;
@@ -63,14 +59,7 @@ export interface VoiceNoteRoutesDeps {
 export function mountVoiceNoteRoutes(app: RouteApp, deps: VoiceNoteRoutesDeps): void {
   const captureLimiter = notesRateLimiter();
 
-  // Before auth: with experimental mode off the path does not exist. Read per
-  // request, so the answer follows the environment the gateway runs with.
-  const gate: MiddlewareHandler<AppEnv> = async (_c, next) => {
-    if (!experimentalEnabled()) throw new NotFoundError("Not found");
-    await next();
-  };
-
-  app.post("/notes/voice", gate, scope.writeAny(), voiceNoteBodyLimit, async (c) => {
+  app.post("/notes/voice", scope.writeAny(), voiceNoteBodyLimit, async (c) => {
     if (!isLoopbackRequest(c) && captureLimiter.consume(clientIp(c))) {
       return c.json({ error: "Too many capture requests — try again later" }, 429, {
         "Retry-After": "60",
