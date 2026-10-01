@@ -122,7 +122,11 @@ export class NativeAnswerMcpClient {
     this.authProvider =
       typeof authProvider === "string" ? { token: async () => authProvider } : authProvider;
     this.endpoint = mcpEndpointUrl(base);
-    const fetch = pinnedFetch(base, trust);
+    // The transport hands this fetch to the auth provider when a request is
+    // refused, so it renews through it: it must reach the authorization server
+    // the gateway advertises, which may sit on another origin than the MCP
+    // endpoint, under the same OAuth-path rules as `integrationOAuthFetch`.
+    const fetch = pinnedFetch(base, trust, true, OAUTH_HTTP_TIMEOUT_MS);
     this.fetch = hasTrackedFetch(this.authProvider) ? this.authProvider.trackFetch(fetch) : fetch;
   }
 
