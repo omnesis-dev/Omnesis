@@ -8,11 +8,18 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase } from "../db.js";
 import { createDevice } from "../data/repositories/DeviceRepository.js";
 import {
+  beginAnswerTask,
+  completeAnswerTask,
+  digestCandidate,
+  resolvePrivacyApproval,
+} from "../privacy/store.js";
+import {
   claimNotification,
   cleanupExpiredNotifications,
   CLAIM_CANDIDATE_SQL,
   confirmNotification,
   enqueueNotification,
+  leaseNotificationWakes,
   expireDeliveriesSql,
   expireNotifications,
   PENDING_COUNT_SQL,
@@ -62,6 +69,140 @@ function state(deliveryId: string): string | undefined {
     >("SELECT state FROM notification_deliveries WHERE id = ? OR lease_token = ?")
     .get(deliveryId, deliveryId)?.state;
 }
+
+function privacyMessage(): NotificationMessage {
+  return {
+    kind: "privacy-approval",
+    title: "Privacy review needed",
+    body: "Review the fictional response.",
+    data: { approvalId: "approval-fictional" },
+    collapseId: "privacy:approval-fictional",
+  };
+}
+
+function seedPrivacyApproval(expiresAt = BASE_TIME + 60_000): void {
+  const task = beginAnswerTask(db, {
+    ownerId: "token:fictional",
+    clientRequestId: "request-fictional",
+    question: "When is the fictional meeting?",
+    ids: {
+      workflowId: "workflow-fictional",
+      conversationId: "conversation-fictional",
+      taskId: "task-fictional",
+    },
+    now: BASE_TIME,
+    workflowExpiresAt: BASE_TIME + 120_000,
+  });
+  const candidate = "The fictional meeting is on Friday.";
+  completeAnswerTask(db, {
+    taskId: task.taskId,
+    ownerId: "token:fictional",
+    review: {
+      recipeVersion: "privacy-reviewer-v1",
+      provider: "test",
+      model: "reviewer",
+      confidence: 0.7,
+      policyRevision: "fictional-policy",
+      findings: [],
+      rationale: "An invented request needs review.",
+    },
+    now: BASE_TIME,
+    outcome: {
+      kind: "approval",
+      approvalId: "approval-fictional",
+      candidateAnswer: candidate,
+      candidateCitations: [],
+      candidateDigest: digestCandidate(candidate),
+      releaseStatus: "released",
+      reductions: [],
+      expiresAt,
+    },
+  });
+}
+
+describe("privacy notification eligibility", () => {
+  test.each(["approve", "deny"] as const)("suppresses queued prompts after %s", (action) => {
+    seedPrivacyApproval();
+    const device = createDevice(db, { name: "fictional-review-phone", kind: "ios" });
+    enqueueNotification(db, {
+      message: privacyMessage(),
+      deviceIds: [device.id],
+      createdAt: BASE_TIME,
+      expiresAt: BASE_TIME + 120_000,
+    });
+    resolvePrivacyApproval(db, {
+      approvalId: "approval-fictional",
+      action,
+      requestContext: { requestId: "request-fictional-review", tokenId: null, deviceId: null },
+      releaseId: "release-fictional",
+      now: BASE_TIME + 1,
+    });
+    expect(
+      enqueueNotification(db, {
+        message: privacyMessage(),
+        deviceIds: [device.id],
+        createdAt: BASE_TIME + 2,
+        expiresAt: BASE_TIME + 120_000,
+      }),
+    ).toBeNull();
+    expect(pendingNotificationCount(db, device.id, BASE_TIME + 2)).toBe(0);
+    expect(leaseNotificationWakes(db, { now: BASE_TIME + 2, limit: 10, maxAttempts: 3 })).toEqual(
+      [],
+    );
+    expect(claimNotification(db, { deviceId: device.id, now: BASE_TIME + 2 })).toBeNull();
+  });
+
+  test.each(["expired", "deleted"] as const)(
+    "skips %s approvals and drains the next notification",
+    (status) => {
+      seedPrivacyApproval(BASE_TIME + 10);
+      const device = createDevice(db, { name: "fictional-backlog-phone", kind: "ios" });
+      enqueueNotification(db, {
+        message: privacyMessage(),
+        deviceIds: [device.id],
+        createdAt: BASE_TIME,
+        expiresAt: BASE_TIME + 120_000,
+      });
+      enqueueNotification(db, {
+        message: message("next"),
+        deviceIds: [device.id],
+        createdAt: BASE_TIME + 1,
+        expiresAt: BASE_TIME + 120_000,
+      });
+      if (status === "deleted")
+        db.prepare("DELETE FROM answer_approvals WHERE id = ?").run("approval-fictional");
+      const now = BASE_TIME + 10;
+      expect(pendingNotificationCount(db, device.id, now)).toBe(1);
+      expect(leaseNotificationWakes(db, { now, limit: 10, maxAttempts: 3 })).toHaveLength(1);
+      expect(claimNotification(db, { deviceId: device.id, now })).toMatchObject({
+        targetId: "brf_next",
+        remaining: 0,
+      });
+      expect(claimNotification(db, { deviceId: device.id, now })).toBeNull();
+    },
+  );
+
+  test("delivers a prompt while its approval is pending", () => {
+    seedPrivacyApproval();
+    const device = createDevice(db, { name: "fictional-pending-phone", kind: "ios" });
+    expect(
+      enqueueNotification(db, {
+        message: privacyMessage(),
+        deviceIds: [device.id],
+        createdAt: BASE_TIME,
+        expiresAt: BASE_TIME + 120_000,
+      }),
+    ).not.toBeNull();
+    expect(pendingNotificationCount(db, device.id, BASE_TIME + 1)).toBe(1);
+    expect(
+      leaseNotificationWakes(db, { now: BASE_TIME + 1, limit: 10, maxAttempts: 3 }),
+    ).toHaveLength(1);
+    expect(claimNotification(db, { deviceId: device.id, now: BASE_TIME + 1 })).toMatchObject({
+      kind: "privacy-approval",
+      targetId: "approval-fictional",
+    });
+  });
+});
 
 describe("notification queue", () => {
   test("fresh schema includes durable wake columns and indexes", () => {
@@ -557,8 +698,20 @@ describe("notification claim query plans", () => {
     const deviceId = seedHistory();
 
     const plans = {
-      candidate: explain(CLAIM_CANDIDATE_SQL, [deviceId, BASE_TIME + 200, BASE_TIME + 200]),
-      remaining: explain(PENDING_COUNT_SQL, [deviceId, BASE_TIME + 200, BASE_TIME + 200]),
+      candidate: explain(CLAIM_CANDIDATE_SQL, [
+        deviceId,
+        BASE_TIME + 200,
+        BASE_TIME + 200,
+        BASE_TIME + 200,
+        BASE_TIME + 200,
+      ]),
+      remaining: explain(PENDING_COUNT_SQL, [
+        deviceId,
+        BASE_TIME + 200,
+        BASE_TIME + 200,
+        BASE_TIME + 200,
+        BASE_TIME + 200,
+      ]),
       expiry: explain(expireDeliveriesSql(true), [BASE_TIME + 200, BASE_TIME + 200, deviceId]),
     };
 
@@ -567,6 +720,20 @@ describe("notification claim query plans", () => {
         "idx_notification_deliveries_claim (device_id=? AND state=?",
       );
     }
+  });
+
+  test("approval eligibility uses indexed lookups instead of retained request history", () => {
+    const deviceId = seedHistory();
+    const plan = explain(CLAIM_CANDIDATE_SQL, [
+      deviceId,
+      BASE_TIME + 200,
+      BASE_TIME + 200,
+      BASE_TIME + 200,
+      BASE_TIME + 200,
+    ]);
+    expect(plan).toContain("sqlite_autoindex_answer_approvals_1");
+    expect(plan).toContain("idx_oauth_authorization_requests_expiry");
+    expect(plan).not.toMatch(/SCAN a\b/);
   });
 
   test("the narrowed predicate still claims a lapsed lease ahead of a fresh one", () => {

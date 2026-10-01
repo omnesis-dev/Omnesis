@@ -166,6 +166,37 @@ interface ClaimedRow {
   route_data: string | null;
 }
 
+/** Approval prompts remain actionable only while a matching request is waiting. */
+function notificationIsActionable(db: Db, kind: string, targetId: string, now: number): boolean {
+  if (kind === "access-authorization") {
+    return (
+      db
+        .prepare<
+          [number],
+          { present: number }
+        >("SELECT 1 AS present FROM oauth_authorization_requests WHERE status = 'pending' AND expires_at > ? LIMIT 1")
+        .get(now) !== undefined
+    );
+  }
+  if (kind !== "privacy-approval") return true;
+  return (
+    db
+      .prepare<
+        [string, number],
+        { present: number }
+      >("SELECT 1 AS present FROM answer_approvals WHERE id = ? AND status = 'pending' AND expires_at > ?")
+      .get(targetId, now) !== undefined
+  );
+}
+
+const ACTIONABLE_NOTIFICATION_SQL = `((n.kind <> 'privacy-approval' OR EXISTS (
+  SELECT 1 FROM answer_approvals a
+   WHERE a.id = n.target_id AND a.status = 'pending' AND a.expires_at > ?
+)) AND (n.kind <> 'access-authorization' OR EXISTS (
+  SELECT 1 FROM oauth_authorization_requests a
+   WHERE a.status = 'pending' AND a.expires_at > ?
+)))`;
+
 /** Install the current queue shape for fresh databases and migration replay. */
 export function createNotificationQueueTables(db: Db): void {
   db.exec(`
@@ -245,6 +276,11 @@ export function enqueueNotification(
   if (deviceIds.length === 0) return null;
 
   const transaction = db.transaction((): EnqueueNotificationResult | null => {
+    if (
+      !notificationIsActionable(db, message.kind, notificationTargetId(message), input.createdAt)
+    ) {
+      return null;
+    }
     const hasDevice = db.prepare<[string], { present: number }>(
       "SELECT 1 AS present FROM devices WHERE id = ?",
     );
@@ -360,6 +396,7 @@ export function leaseNotificationWakes(
                FROM notification_deliveries d
                JOIN notifications n ON n.id = d.notification_id
               WHERE n.expires_at > ?
+                AND ${ACTIONABLE_NOTIFICATION_SQL}
                 AND (
                   d.state = 'pending'
                   OR (d.state = 'leased' AND d.leased_until <= ?)
@@ -377,6 +414,8 @@ export function leaseNotificationWakes(
             LIMIT ?`,
         )
         .all(
+          input.now,
+          input.now,
           input.now,
           input.now,
           input.maxAttempts,
@@ -603,6 +642,7 @@ export const CLAIM_CANDIDATE_SQL = `SELECT d.id AS delivery_id
   WHERE d.device_id = ?
     AND d.state IN ('pending', 'leased')
     AND n.expires_at > ?
+    AND ${ACTIONABLE_NOTIFICATION_SQL}
     AND (d.state = 'pending' OR d.leased_until <= ?)
   ORDER BY n.created_at ASC, n.rowid ASC, d.rowid ASC
   LIMIT 1`;
@@ -614,6 +654,7 @@ export const PENDING_COUNT_SQL = `SELECT COUNT(*) AS count
     WHERE d.device_id = ?
       AND d.state IN ('pending', 'leased')
       AND n.expires_at > ?
+      AND ${ACTIONABLE_NOTIFICATION_SQL}
       AND (d.state = 'pending' OR d.leased_until <= ?)`;
 
 /** Atomically lease the oldest actionable delivery for one paired device. */
@@ -632,8 +673,11 @@ export function claimNotification(
   const transaction = db.transaction((): ClaimedNotificationDelivery | null => {
     expireNotificationsInTransaction(db, input.now, input.deviceId);
     const candidate = db
-      .prepare<[string, number, number], { delivery_id: string }>(CLAIM_CANDIDATE_SQL)
-      .get(input.deviceId, input.now, input.now);
+      .prepare<
+        [string, number, number, number, number],
+        { delivery_id: string }
+      >(CLAIM_CANDIDATE_SQL)
+      .get(input.deviceId, input.now, input.now, input.now, input.now);
     if (!candidate) return null;
 
     const leasedUntil = input.now + leaseMs;
@@ -788,6 +832,6 @@ function expireNotificationsInTransaction(
 
 export function pendingNotificationCount(db: Db, deviceId: DeviceId, now: number): number {
   return db
-    .prepare<[string, number, number], { count: number }>(PENDING_COUNT_SQL)
-    .get(deviceId, now, now)!.count;
+    .prepare<[string, number, number, number, number], { count: number }>(PENDING_COUNT_SQL)
+    .get(deviceId, now, now, now, now)!.count;
 }
