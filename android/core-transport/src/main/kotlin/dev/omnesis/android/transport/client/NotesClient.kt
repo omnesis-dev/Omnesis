@@ -30,10 +30,10 @@ class NotesClient(private val http: GatewayHttp) {
         http.postJson("notes", body)
 
     /**
-     * `POST /notes/voice` (experimental) — capture a note with the audio it was dictated
+     * `POST /notes/voice` — capture a note with the audio it was dictated
      * from; the gateway saves it at once (202) and replaces its text with its own
-     * transcript later. Idempotent per [VoiceNoteBody.id]. A gateway that is not in
-     * experimental mode or predates the route answers 404; one with dictation switched
+     * transcript later. Idempotent per [VoiceNoteBody.id]. A gateway that
+     * predates the route answers 404; one with dictation switched
      * off 409 `DICTATION_DISABLED`; one without a runnable transcriber 503
      * `TRANSCRIBER_UNAVAILABLE`. All surface as [dev.omnesis.android.transport.GatewayException].
      */
