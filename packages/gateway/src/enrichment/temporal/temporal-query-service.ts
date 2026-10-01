@@ -345,6 +345,46 @@ export class TemporalQueryService {
     private readonly options: TemporalQueryOptions = {},
   ) {}
 
+  /** Resolve a recognized date or annotation using the same live index rules as a window. */
+  async itemById(id: string, timeZone: string): Promise<TemporalItem | null> {
+    if (!/^dm_\d{16}$/.test(id)) return this.annotationById(id, timeZone);
+    const rowId = Number(id.slice(3));
+    if (!Number.isSafeInteger(rowId) || rowId < 1) return null;
+    const stored = this.db
+      .prepare(
+        `SELECT document_id, mention_start_day, mention_end_day
+           FROM document_extracted_dates WHERE id = ?`,
+      )
+      .get(rowId) as
+      | { document_id: string; mention_start_day: string | null; mention_end_day: string | null }
+      | undefined;
+    if (!stored?.mention_start_day || !stored.mention_end_day) return null;
+    const input: TemporalQueryInput = {
+      from: stored.mention_start_day,
+      to: stored.mention_end_day,
+      timeZone,
+      documentIds: [stored.document_id],
+      origins: ["mention"],
+    };
+    const range = requestedRange(input);
+    const page = readMentionPage(
+      this.db,
+      input,
+      range,
+      {
+        startMs: range.fromMs,
+        endExclusiveMs: range.toExclusiveMs,
+        originRank: MENTION_ORIGIN_RANK,
+        id: `dm_${String(rowId - 1).padStart(16, "0")}`,
+      },
+      1,
+      compareKeys,
+    );
+    const item = page.items.find((entry) => entry.item.id === id)?.item ?? null;
+    if (item) delete item.anchored;
+    return item;
+  }
+
   /**
    * Resolve one live annotation through the same timezone-aware normalization
    * as a window query. The stored interval supplies only a narrow lookup range;
@@ -653,10 +693,9 @@ export class TemporalQueryService {
     if (input.documentIds) {
       if (input.documentIds.length === 0) return [];
       where.push(
-        `EXISTS (
-          SELECT 1 FROM temporal_annotation_documents d
-          WHERE d.annotation_id = e.id
-            AND d.document_id IN (${placeholders(input.documentIds)})
+        `e.id IN (
+          SELECT d.annotation_id FROM temporal_annotation_documents d
+          WHERE d.document_id IN (${placeholders(input.documentIds)})
         )`,
       );
       values.push(...input.documentIds);

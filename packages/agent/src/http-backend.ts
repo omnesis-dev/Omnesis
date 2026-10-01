@@ -15,6 +15,7 @@ import {
 } from "@omnesis/core";
 
 import { zodToJsonSchema } from "./zod-to-json-schema.js";
+import { serializeToolResultForModel } from "./tool-result-text.js";
 import { thinkingBudgetTokens } from "./thinking-budget.js";
 import { modelReasoningRequestFields } from "./model-reasoning-wire.js";
 import {
@@ -905,7 +906,7 @@ export class HttpChatBackend implements ChatBackend {
           messages.push({
             role: "tool",
             tool_call_id: r.tc.id,
-            content: JSON.stringify(r.result),
+            content: serializeToolResultForModel(r.result),
           });
         }
         iter += 1;
@@ -1364,7 +1365,7 @@ export function convertHistoryToOpenAI(
           out.push({
             role: "tool",
             tool_call_id: part.toolCallId,
-            content: JSON.stringify(part.result),
+            content: serializeToolResultForModel(part.result),
           });
         }
       }

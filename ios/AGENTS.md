@@ -42,7 +42,7 @@ picks it up live, and the phone's handling of queued relays) and
 `Sources/Omnesis/Intents/WatchVoice.swift` (a note recorded on the watch for
 gateway dictation — see below).
 
-**Gateway dictation for notes (experimental).** While the paired gateway
+**Gateway dictation for notes.** While the paired gateway
 reports gateway dictation on, a Tell Omnesis capture on the iPhone is a voice
 note (`VoiceNoteCaptureState`): it records (`DictationAudioRecorder`) and
 shows the recording — never the phone's transcript, which it keeps out of

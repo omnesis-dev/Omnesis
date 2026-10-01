@@ -69,6 +69,69 @@ describe("which listed tools an integration hosts", () => {
 });
 
 describe("what a forwarded call returns", () => {
+  test("new integrations forward legacy and additive graph search batches without a new capability", () => {
+    const legacy = {
+      kind: "search.results",
+      query: "equipment",
+      durationMs: 2,
+      results: [
+        {
+          documentId: "agreement_example",
+          sourceType: "files",
+          snippet: "Fictional equipment terms.",
+          url: "https://example.org/agreement",
+        },
+      ],
+    };
+    const enriched = {
+      ...legacy,
+      results: [
+        {
+          ...legacy.results[0],
+          provenance: {
+            summary: "Matching text also appears in an archive.",
+            copies: [],
+            paths: [],
+            truncated: false,
+            stopReasons: [],
+            modelContext: {
+              facts: ["Matching extracted text also appears in [D2]."],
+              documents: [
+                {
+                  ref: "D2",
+                  documentId: "archive_example",
+                  sourceId: "files:example",
+                  url: "https://example.org/archive",
+                },
+              ],
+              limits: [],
+            },
+          },
+        },
+      ],
+    };
+    for (const search of [legacy, enriched]) {
+      const structuredContent = {
+        kind: "search.batch",
+        items: [
+          search,
+          { kind: "error", code: "search_failed", message: "Fictional unavailable source." },
+        ],
+      };
+      const before = JSON.stringify(structuredContent);
+      const outcome = forwardedToolOutcome({
+        content: [{ type: "text", text: "Untrusted corpus data." }],
+        structuredContent,
+      });
+      expect(outcome).toEqual({
+        isError: false,
+        text: "Untrusted corpus data.",
+        structuredContent,
+      });
+      expect(JSON.stringify(outcome.structuredContent)).toBe(before);
+      expect(JSON.stringify(structuredContent)).toBe(before);
+    }
+  });
   test("joins the gateway's text and keeps its structured result", () => {
     expect(
       forwardedToolOutcome({

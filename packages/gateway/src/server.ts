@@ -103,6 +103,7 @@ import { mountDocumentGraphRoute } from "./http/routes/document-graph.js";
 import { mountGraphWalkRoute } from "./http/routes/graph.js";
 import { mountDocumentTrailRoute } from "./http/routes/document-trail.js";
 import { mountNotesRoutes } from "./http/routes/notes.js";
+import { NotesProvenanceService } from "./sources/omnesis-notes/provenance.js";
 import { bootOmnesisNotes, type OmnesisNotesRuntime } from "./sources/omnesis-notes/index.js";
 import { mountAgentMessagesRoutes } from "./http/routes/agent-messages.js";
 import {
@@ -110,6 +111,7 @@ import {
   type AgentConversationsRuntime,
 } from "./sources/agent-conversations/index.js";
 import { mountSearchRoutes } from "./http/routes/search.js";
+import { createGatewaySearchPort } from "./agent/ports.js";
 import {
   mountAgentRoutes,
   withCallerResolver,
@@ -1469,6 +1471,9 @@ export function createServer(
   mountSearchRoutes(app, {
     db,
     searchPipeline: opts?.searchPipeline,
+    agentSearchPort: opts?.searchPipeline?.agentSearchV2Enabled
+      ? createGatewaySearchPort(opts.searchPipeline, opts.syncStatus, db)
+      : undefined,
     indexerReadiness: opts?.indexerReadiness,
     // Read-worker gate — routes the legacy LIKE scan off the main event loop.
     ioGate: opts?.ioGate,
@@ -1626,6 +1631,7 @@ export function createServer(
     opts.onOmnesisNotesRuntime(runtime);
   }
   mountNotesRoutes(app, {
+    provenance: new NotesProvenanceService(db),
     runtime: getOmnesisNotesRuntime,
     pendingTranscriptions: (noteIds) => pendingVoiceNoteIds(db, noteIds),
   });

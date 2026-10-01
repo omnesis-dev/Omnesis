@@ -71,6 +71,10 @@ The Sources page install cards show the Chrome, Apple and Android marks to ident
 
 The website architecture diagram uses the Claude, OpenClaw, Hermes, and ChatGPT marks to identify supported external agent integrations. The portal's Connect an agent dialog identifies the agents it gives setup steps for with the Claude, Google Antigravity, OpenClaw and Hermes marks, bundled in `packages/gateway/portal/img/agents/` because its content-security policy forbids remote images, and with the OpenAI mark the gateway already serves for model providers (Codex, ChatGPT). `claude.svg` is the [Simple Icons](https://simpleicons.org) glyph (CC0-1.0) filled in the brand's colour; `antigravity.svg` is the Antigravity icon from the MIT-licensed [LobeHub Icons](https://github.com/lobehub/lobe-icons) package, which draws Google's published mark; `openclaw.svg` is the OpenClaw interface icon without its animation, from the MIT-licensed OpenClaw repository; `hermes.png` is a raster of the Hermes Agent app icon from the MIT-licensed Hermes Agent repository. These marks remain the property of Anthropic PBC, Google LLC, the OpenClaw and Hermes projects, and OpenAI, L.L.C., respectively. Their display is nominative and does not imply endorsement, partnership, or sponsorship.
 
+## Blog illustrations
+
+The author-supplied ChatGPT illustrations in `website/blog/images/brain-prompt-caching/` include Gmail and Google Drive marks (Google LLC), WhatsApp marks (WhatsApp LLC), and Apple Messages marks (Apple Inc.) to identify the kinds of documents the Brain processes. These marks remain the property of their respective owners. Their display is nominative and does not imply endorsement, partnership, or sponsorship.
+
 ## Community links
 
 The website footer uses the X and Discord marks to identify Omnesis's public account and community invite. The bundled SVGs come from [Simple Icons](https://simpleicons.org) under CC0-1.0. X and Discord own their respective marks; their use here does not imply endorsement or partnership.

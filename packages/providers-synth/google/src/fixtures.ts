@@ -11,6 +11,7 @@ import {
 } from "@omnesis/providers-synth-common";
 import {
   buildAttachmentDocument,
+  computeContentHash,
   formatAttachmentMarkers,
   type AttachmentInfo,
 } from "@omnesis/core";
@@ -261,6 +262,8 @@ export function mapDriveFile(
     title: e.name,
     content: e.content,
     contentHash: sha256Hex(`${e.externalId}:${e.content}:${e.modifiedAt}`),
+    // Like the real Drive normalizer, join attachments/files by raw extraction.
+    extractedContentHash: computeContentHash(e.content),
     metadata: {
       documentType: "file",
       sourceUrl: `https://drive.google.com/file/d/${e.externalId}/view`,

@@ -3,7 +3,7 @@
 
 import { afterEach, describe, expect, test, vi } from "vitest";
 // @ts-expect-error — portal is plain JS without sibling declarations.
-import { deleteNoteEntry } from "./api.js";
+import { deleteNoteEntry, getNotesProvenance, getCalendarItem } from "./api.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -19,6 +19,29 @@ describe("note entry delete", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       "/notes/note-1",
       expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+});
+
+
+describe("note reference reads", () => {
+  test("passes the note day and calendar timezone to the provenance endpoint", async () => {
+    const fetchMock = vi.fn(async () => Response.json({ mentions: [], annotations: [], loops: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    await getNotesProvenance("2026-09-11", "America/New_York");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/notes/provenance?day=2026-09-11&timeZone=America%2FNew_York",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  test("calendar deep links read a temporal item by its encoded id", async () => {
+    const fetchMock = vi.fn(async () => Response.json({ item: {} }));
+    vi.stubGlobal("fetch", fetchMock);
+    await getCalendarItem("dm_example/1", "UTC");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/temporal/items/dm_example%2F1?timeZone=UTC",
+      expect.objectContaining({ method: "GET" }),
     );
   });
 });

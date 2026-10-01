@@ -267,6 +267,10 @@ export async function search(text, { verbose = false, limit = 30 } = {}) {
  */
 export const getSearchReadiness = () => request("GET", "/search/readiness");
 
+/** Supplemental operator diagnostics; ordinary search remains authoritative. */
+export const searchAgentContext = (text, limit = 30) =>
+  request("POST", "/admin/search/agent-context", { body: { text, limit } });
+
 /**
  * GET /status — system-wide snapshot (document counts per source, index
  * status, DB size, uptime, etc.). Used by the search view to pick a
@@ -299,6 +303,11 @@ export const createNote = (body) => request("POST", "/notes", { body });
 // Manage-notes link from an old daily document lands on relevant notes.
 export const getNotesHistory = ({ limit = NOTES_HISTORY_PAGE_SIZE, cursor, day } = {}) =>
   request("GET", "/notes/history", { query: { limit, cursor, day } });
+
+// References backed by one day's combined note document. Dates recognised in
+// the text are always available; the gateway gates Brain artifacts.
+export const getNotesProvenance = (day, timeZone) =>
+  request("GET", "/notes/provenance", { query: { day, timeZone } });
 
 // Amend / remove one original note. The day's generated search document
 // rebuilds from the remaining entries (or is dropped when empty).
@@ -755,8 +764,8 @@ export const getCognitionCalibration = (query) =>
 // The time index the Calendar reads: projections, date mentions and the
 // Brain's annotations, ungated.
 export const getCalendarWindow = (query) => request("GET", "/temporal/window", { query });
-export const getCalendarAnnotation = (id, timeZone) =>
-  request("GET", `/temporal/annotations/${encodeURIComponent(id)}`, {
+export const getCalendarItem = (id, timeZone) =>
+  request("GET", `/temporal/items/${encodeURIComponent(id)}`, {
     query: { timeZone },
   });
 
