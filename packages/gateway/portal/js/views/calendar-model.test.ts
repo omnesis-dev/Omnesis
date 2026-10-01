@@ -21,13 +21,14 @@ describe("Calendar organization", () => {
       record("block", "event"),
       record("due", "deadline", false),
       record("activity", "episode", false),
+      record("legacy-activity", "episodic", false),
       record("visit", "visit", false),
       record("phrase", "event", true, "mention"),
     ];
     const groups = groupDayEntries(entries);
     expect(groups.timed.map((entry) => entry.id)).toEqual(["booking"]);
     expect(groups.allDay.map((entry) => entry.id)).toEqual(["block", "due"]);
-    expect(groups.activity.map((entry) => entry.id)).toEqual(["activity", "visit"]);
+    expect(groups.activity.map((entry) => entry.id)).toEqual(["activity", "legacy-activity", "visit"]);
     expect(groups.mentions.map((entry) => entry.id)).toEqual(["phrase"]);
   });
 
