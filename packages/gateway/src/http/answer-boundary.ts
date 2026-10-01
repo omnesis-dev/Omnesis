@@ -17,6 +17,8 @@ export type DeviceAnswerAuthority = NonNullable<RecordAnswerEgressInput["deviceA
 
 /** What the egress commit revalidates and how the released response is shaped for the caller. */
 export interface AnswerEgressOptions {
+  /** MCP status calls may wait on a hold before recording their single egress. */
+  waitSeconds?: number;
   mcpInvocationAudit?: McpToolInvocationAuditInput;
   deviceAnswerAuthority?: DeviceAnswerAuthority;
   /** The caller declared it accepts citations; see `AnswerResponseShape`. */
@@ -93,7 +95,9 @@ export async function getAnswerBoundary(
   signal?: AbortSignal,
   egress: AnswerEgressOptions = {},
 ): Promise<RecordedAnswerEgress> {
-  const response = await service.getResponse(taskId, ownerId);
+  const response = egress.waitSeconds
+    ? await service.getResponse(taskId, ownerId, { waitSeconds: egress.waitSeconds, signal })
+    : await service.getResponse(taskId, ownerId);
   if (!response) throw new ConflictError("Answer task has not reached a release decision.");
   return releaseAnswerBoundary(service, taskId, ownerId, endpoint, signal, egress);
 }
