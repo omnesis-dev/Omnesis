@@ -5,7 +5,7 @@ import { SourceId, sourceAccountOf } from "@omnesis/types";
 import { BadRequestError } from "../errors.js";
 import { getSyncState, getWipeEpoch } from "../../db.js";
 import { isSourceRemoved } from "../../data/repositories/SourceRepository.js";
-import { normalizeIcon } from "../../icon-normalizer.js";
+import { normalizeSourceMetaIcons } from "../../icon-normalizer.js";
 import { invalidateUrlPatternCache } from "../../links.js";
 import { epochScope, type SourceWriteEpochFence } from "../../source-write-epoch-fence.js";
 import type Database from "better-sqlite3";
@@ -16,26 +16,6 @@ interface SourceSyncStateDeps {
   db: Database.Database;
   writeGate: WriteGate;
   sourceWriteEpochFence?: SourceWriteEpochFence;
-}
-
-/**
- * Rasterise every icon a meta push carries.
- *
- * The family's icon is a declaration in exactly the same form as the source's
- * own — a URL or a data URI, as `defineSource` wrote it — so it needs the same
- * treatment. Normalising only one of them stores a URL where every consumer
- * expects an embedded image, which renders as a missing glyph rather than an
- * error.
- */
-async function normalizeMetaIcons(meta: SourceSyncMeta): Promise<SourceSyncMeta> {
-  const icon =
-    meta.icon !== undefined ? ((await normalizeIcon(meta.icon)) ?? undefined) : undefined;
-  if (!meta.family) return { ...meta, icon };
-  const familyIcon =
-    meta.family.icon !== undefined
-      ? ((await normalizeIcon(meta.family.icon)) ?? undefined)
-      : undefined;
-  return { ...meta, icon, family: { ...meta.family, icon: familyIcon } };
 }
 
 function validateAccount(sourceId: string, meta: SourceSyncMeta): void {
@@ -107,7 +87,7 @@ export class SourceSyncStateService {
 
   private async setMetaFenced(sourceId: string, meta: SourceSyncMeta): Promise<void> {
     validateAccount(sourceId, meta);
-    await this.deps.writeGate.setSourceMeta(sourceId, await normalizeMetaIcons(meta));
+    await this.deps.writeGate.setSourceMeta(sourceId, await normalizeSourceMetaIcons(meta));
     if (meta.urlPatterns) invalidateUrlPatternCache();
   }
 
@@ -141,7 +121,7 @@ export class SourceSyncStateService {
     const written = await this.deps.writeGate.setSyncState(
       sourceId,
       cursor,
-      await normalizeMetaIcons(meta),
+      await normalizeSourceMetaIcons(meta),
       writeEpoch,
       deviceId,
     );
