@@ -1,0 +1,30 @@
+{
+  "name": "graph-search",
+  "description": "Invented file journeys for bounded agent search provenance, exact extracted-text copies, independent revisions and graph hubs.",
+  "cast": "cast.json",
+  "agentDemos": "agent-demos",
+  "devices": [
+    {
+      "id": "laptop",
+      "name": "Example-Laptop-collector",
+      "kind": "collector"
+    }
+  ],
+  "sources": [
+    {
+      "descriptorId": "gmail",
+      "accountIds": ["maya@example.com"],
+      "device": "laptop"
+    },
+    {
+      "descriptorId": "google-drive",
+      "accountIds": ["maya@example.com"],
+      "device": "laptop"
+    },
+    {
+      "descriptorId": "whatsapp-messages",
+      "accountIds": ["+15550100100"],
+      "device": "laptop"
+    }
+  ]
+}

@@ -6,23 +6,25 @@ import { act } from "preact/test-utils";
 import { parseHTML } from "linkedom";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-const { createNote, deleteNoteEntry, getNotesHistory, patchNoteEntry } = vi.hoisted(() => ({
+const { createNote, deleteNoteEntry, getNotesHistory, getNotesProvenance, patchNoteEntry } = vi.hoisted(() => ({
   createNote: vi.fn(),
   deleteNoteEntry: vi.fn(),
   getNotesHistory: vi.fn(),
+  getNotesProvenance: vi.fn(),
   patchNoteEntry: vi.fn(),
 }));
 vi.mock("../api.js", () => ({
   createNote,
   deleteNoteEntry,
   getNotesHistory,
+  getNotesProvenance,
   patchNoteEntry,
 }));
 
 // @ts-expect-error — portal is plain JS without sibling declarations.
 import * as captureModule from "./capture.js";
 
-const { CONFIRMATION_MS, CaptureView, MAX_NOTE_LENGTH, captureErrorMessage, captureRequest } =
+const { CONFIRMATION_MS, CaptureView, MAX_NOTE_LENGTH, captureErrorMessage, captureRequest, noteDayHeading } =
   captureModule;
 
 type Parsed = ReturnType<typeof parseHTML>;
@@ -75,6 +77,8 @@ beforeEach(async () => {
   deleteNoteEntry.mockReset();
   patchNoteEntry.mockReset();
   getNotesHistory.mockReset();
+  getNotesProvenance.mockReset();
+  getNotesProvenance.mockResolvedValue({ mentions: [], annotations: [], loops: [] });
   getNotesHistory.mockResolvedValue({ entries: [], pageInfo: { hasMore: false } });
   await act(async () => {
     render(h(CaptureView, {}), host);
@@ -162,7 +166,8 @@ describe("capture page", () => {
     createNote.mockResolvedValueOnce({ id: "stored", day: "2026-09-11", text: "Renew the domain before the end of the month", capturedAt: "2026-09-11T10:00:00.000Z", updatedAt: "2026-09-11T10:00:00.000Z" });
     await type("Order printer paper");
     await submit();
-    expect(vi.getTimerCount()).toBe(1);
+    expect(host.querySelector(".capture-told")).not.toBeNull();
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
     render(null, host);
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -309,6 +314,16 @@ async function click(label: string, scope: ParentNode = host) {
   await act(async () => {});
 }
 
+describe("day headings", () => {
+  test("uses the local calendar for Today and Yesterday across a month boundary", () => {
+    const now = new Date(2026, 9, 1, 9);
+    expect(noteDayHeading("2026-10-01", now).label).toBe("Today");
+    expect(noteDayHeading("2026-09-30", now).label).toBe("Yesterday");
+    expect(noteDayHeading("2026-09-29", now).label).toBe(new Date(2026, 8, 29, 12).toLocaleDateString([], { month: "short", day: "numeric" }));
+    expect(noteDayHeading("2026-09-29", now).fullDate).toBe(new Date(2026, 8, 29, 12).toLocaleDateString([], { year: "numeric", month: "long", day: "numeric" }));
+  });
+});
+
 describe("note history", () => {
   test("lists newest first under day headers and loads more without duplicates", async () => {
     getNotesHistory.mockImplementation(async ({ cursor }: { cursor?: string }) => {
@@ -330,18 +345,45 @@ describe("note history", () => {
     await act(async () => {});
 
     expect(noteTexts()).toEqual(["Second"]);
-    expect(host.querySelector(".capture-day")?.textContent).toBe("2026-09-11");
+    expect(host.querySelector(".capture-day-count")?.textContent).toBe("1 note shown");
+    expect(host.querySelector(".capture-day")?.getAttribute("data-day")).toBe("2026-09-11");
 
     // linkedom has no IntersectionObserver, so the pager falls back to an
     // explicit "Show more" button (real browsers auto-load on scroll).
     await click("Show more");
     expect(noteTexts()).toEqual(["Second", "First"]);
-    const days = Array.from(host.querySelectorAll(".capture-day")).map((d) => d.textContent);
+    const days = Array.from(host.querySelectorAll(".capture-day")).map((d) => d.getAttribute("data-day"));
     expect(days).toEqual(["2026-09-11", "2026-09-10"]);
     // Mount (beforeEach default), remount with the override, then load-more.
     expect(getNotesHistory).toHaveBeenCalledTimes(3);
     const lastCall = getNotesHistory.mock.calls[2][0];
     expect(lastCall).toMatchObject({ cursor: "cursor-1", limit: 25 });
+  });
+
+  test("puts notes before day-level relationships and links the combined document from the heading", async () => {
+    getNotesHistory.mockResolvedValue({
+      entries: [noteEntry({ id: "n1", text: "Workshop preparation" }), noteEntry({ id: "n2", text: "Bring the registration form" })],
+      pageInfo: { hasMore: false },
+    });
+    getNotesProvenance.mockResolvedValue({ documentId: "daily/document", mentions: [], annotations: [], loops: [] });
+    await act(async () => {
+      render(null, host);
+      render(h(CaptureView, {}), host);
+    });
+    await act(async () => {});
+    // Provenance arrives after history and then updates the parent day heading.
+    // Wait for that observable update rather than assuming a fixed effect count.
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      expect(host.querySelector(".capture-day-link")?.getAttribute("href")).toBe("/portal/doc/daily%2Fdocument");
+    });
+    const group = host.querySelector(".capture-day-group")!;
+    expect(group.querySelector(".capture-day-count")?.textContent).toBe("2 notes");
+    expect(group.querySelector(".capture-day-link")?.getAttribute("href")).toBe("/portal/doc/daily%2Fdocument");
+    expect(group.querySelector(".capture-day-link")?.textContent).toBe("View combined note");
+    expect(group.querySelector("time")?.getAttribute("datetime")).toBe("2026-09-11");
+    const children = Array.from(group.children);
+    expect(children.indexOf(group.querySelector(".portal-table-wrap")!)).toBeLessThan(children.indexOf(group.querySelector(".note-day-references")!));
   });
 
   test("rows are flat: title and one actions menu on the same row", async () => {
@@ -444,6 +486,24 @@ describe("note history", () => {
     await act(async () => {});
     const edited = noteItems().map((row) => row.textContent?.includes("edited"));
     expect(edited).toEqual([false, true]);
+  });
+
+  test("references are requested once per day even when it contains several notes", async () => {
+    getNotesHistory.mockResolvedValue({
+      entries: [
+        noteEntry({ id: "same-day-a" }),
+        noteEntry({ id: "same-day-b" }),
+        noteEntry({ id: "older", day: "2026-09-10" }),
+      ],
+      pageInfo: { hasMore: false },
+    });
+    await act(async () => {
+      render(null, host);
+      render(h(CaptureView, {}), host);
+    });
+    await act(async () => {});
+    expect(host.querySelectorAll(".note-day-references")).toHaveLength(2);
+    expect(getNotesProvenance.mock.calls.map(([day]) => day)).toEqual(["2026-09-11", "2026-09-10"]);
   });
 
   test("a fresh capture appears on top without a refetch", async () => {

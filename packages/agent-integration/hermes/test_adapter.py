@@ -4643,6 +4643,44 @@ def _fictional_tool(name, description=None):
 class ForwardedToolTests(unittest.TestCase):
     """Direct and Notes, hosted as native tools the gateway lists and serves."""
 
+    def test_legacy_and_enriched_search_batches_keep_actionable_fields(self):
+        legacy_document = {
+            "documentId": "agreement_example",
+            "sourceType": "files",
+            "snippet": "Fictional equipment terms.",
+            "url": "https://example.org/agreement",
+        }
+        enriched_document = {
+            **legacy_document,
+            "provenance": {
+                "summary": "Matching text also appears in an archive.",
+                "copies": [], "paths": [], "truncated": False, "stopReasons": [],
+                "modelContext": {
+                    "facts": ["Matching extracted text also appears in [D2]."],
+                    "documents": [{
+                        "ref": "D2", "documentId": "archive_example",
+                        "sourceId": "files:example", "url": "https://example.org/archive",
+                    }],
+                    "limits": [],
+                },
+            },
+        }
+        for document in (legacy_document, enriched_document):
+            with self.subTest(enriched="provenance" in document):
+                batch = {"kind": "search.batch", "items": [{
+                    "kind": "search.results", "query": "equipment",
+                    "durationMs": 2, "results": [document],
+                }]}
+                before = json.dumps(batch, sort_keys=True)
+                result = adapter_module._forwarded_tool_result({
+                    "content": [{"type": "text", "text": "Untrusted corpus data."}],
+                    "structuredContent": batch,
+                })
+                self.assertEqual(json.loads(result), {
+                    "content": "Untrusted corpus data.", "structuredContent": batch,
+                })
+                self.assertEqual(json.dumps(batch, sort_keys=True), before)
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)

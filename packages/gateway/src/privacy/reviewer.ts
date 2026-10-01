@@ -158,44 +158,9 @@ export class PrivacyReviewer {
     const hardStop = detectCredentialHardStop(
       `${envelope.currentRequest}\n${credentialScanText(envelope.candidateAnswer, candidateCitations)}`,
     );
-    if (hardStop) {
-      if (input.policy.includes(PRIVACY_POLICY_CREDENTIAL_APPROVAL_CLAUSE)) {
-        const approvalFinding: PrivacyFinding = {
-          ...hardStop,
-          disposition: "approval",
-          description: "A detected credential requires explicit approval for this request.",
-        };
-        const rationale =
-          "The policy explicitly permits this credential only after one-time approval.";
-        return {
-          decision: "ask",
-          reductions: [],
-          hardStop: false,
-          review: {
-            ...makeReviewRecord(
-              input,
-              null,
-              null,
-              1,
-              envelopeDigest,
-              "policy_requires_review",
-              [approvalFinding],
-              rationale,
-            ),
-            credentialApprovalRequired: true,
-          },
-          audit: {
-            stage: envelope.reviewStage,
-            envelope,
-            envelopeDigest,
-            rawModelOutput: null,
-            parsedModelOutput: null,
-            fallbackCause: "policy_requires_review",
-            fallbackReason: rationale,
-            hardStop: false,
-          },
-        };
-      }
+    const credentialApprovalRequired =
+      hardStop !== null && input.policy.includes(PRIVACY_POLICY_CREDENTIAL_APPROVAL_CLAUSE);
+    if (hardStop && !credentialApprovalRequired) {
       return {
         decision: "deny",
         reductions: [],
@@ -223,6 +188,52 @@ export class PrivacyReviewer {
       };
     }
 
+    const result = await this.reviewModel(
+      input,
+      envelope,
+      envelopeDigest,
+      payload,
+      signal,
+      options,
+    );
+    if (!hardStop || !credentialApprovalRequired || result.decision === "deny") return result;
+
+    // Credential approval is a minimum requirement, not permission to bypass
+    // the rest of the policy. A denied disclosure stays denied; every other
+    // result holds the original candidate for a fresh approval.
+    const rationale = "A detected credential requires explicit approval for this request.";
+    return {
+      ...result,
+      decision: "ask",
+      reducedAnswer: undefined,
+      reducedCitations: undefined,
+      reductions: [],
+      review: {
+        ...result.review,
+        credentialApprovalRequired: true,
+        rationale: `${result.review.rationale} ${rationale}`,
+        fallbackCause: result.review.fallbackCause ?? "policy_requires_review",
+        findings: [
+          ...result.review.findings,
+          { ...hardStop, disposition: "approval", description: rationale },
+        ],
+      },
+      audit: {
+        ...result.audit,
+        fallbackCause: result.audit.fallbackCause ?? "policy_requires_review",
+      },
+    };
+  }
+
+  private async reviewModel(
+    input: ReviewCandidateInput,
+    envelope: PrivacyReviewEnvelope,
+    envelopeDigest: string,
+    payload: string,
+    signal?: AbortSignal,
+    options?: Parameters<PrivacyReviewer["review"]>[2],
+  ): Promise<PrivacyReviewResult> {
+    const candidateCitations = input.candidateCitations ?? [];
     const backend = this.deps.resolveBackend();
     if (!backend) {
       return fallbackReview(

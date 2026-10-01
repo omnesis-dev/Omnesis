@@ -386,12 +386,14 @@
         </p>
         <p>
           Identity-document contents are never released automatically, and Guarded, Balanced and
-          Open also never release exact health or financial details automatically.
+          Open also hold exact health or financial details for your approval. The built-in templates
+          ask you to approve sensitive answers instead of refusing them outright.
         </p>
         <p>
-          Credentials depend on the template. Guarded, Balanced and Open block credentials outright:
-          they cannot be released even with your approval. Unfiltered holds them for your approval,
-          one request at a time.
+          Every template holds credentials for your approval, one request at a time. A prior
+          approval never authorizes a later credential release. You can still configure an explicit
+          <strong>Deny</strong> rule to block information even with approval, or disable credential
+          approval to block credentials outright.
         </p>
         <p>
           The reviewer judges an answer's <a href="#citations">citations</a> under the same policy

@@ -85,7 +85,6 @@ import dev.omnesis.android.transport.PermissionHealthEntry
 import dev.omnesis.android.transport.PushHealth
 import dev.omnesis.android.transport.ws.DeviceSocket
 import dev.omnesis.android.transport.ws.DeviceSocket.ConnectionState
-import dev.omnesis.android.ui.common.ExperimentalBadge
 import dev.omnesis.android.ui.common.NotificationHealthBanner
 import dev.omnesis.android.ui.common.NotificationSetupBanner
 import dev.omnesis.android.ui.common.NotificationSetupIssue
@@ -510,8 +509,8 @@ private fun UrlEditor(currentUrl: String, onSave: (String) -> String?) {
 }
 
 /**
- * Gateway dictation (experimental): whether Tell Omnesis notes carry their audio for the
- * gateway to transcribe. A gateway setting, so the copy says it reaches every device.
+ * Gateway dictation: whether Tell Omnesis notes carry their audio for the
+ * gateway to transcribe. This setting applies to every paired device.
  * The whole row is the switch, so TalkBack reads its label with its state.
  */
 @Composable
@@ -534,11 +533,12 @@ internal fun VoiceSection(
                 ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                Text("Transcribe on gateway", style = MaterialTheme.typography.bodyMedium, color = c.textPrimary)
-                Spacer(Modifier.width(OmSpacing.sm))
-                ExperimentalBadge()
-            }
+            Text(
+                "Transcribe voice notes in the Gateway",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium,
+                color = c.textPrimary,
+            )
             if (voice.saving) {
                 OmSpinner(modifier = Modifier.size(16.dp).padding(end = OmSpacing.xs), strokeWidth = 2.dp)
             }
@@ -592,10 +592,8 @@ internal fun VoiceSection(
     }
     Spacer(Modifier.height(OmSpacing.sm))
     Text(
-        "When on, Tell Omnesis records what you say and saves it as a voice note at once; your " +
-            "gateway transcribes it. The phone's own transcript is not shown, and is used only if " +
-            "the gateway can't transcribe the recording. This is a gateway setting, so it applies " +
-            "to every device paired with it.",
+        "When enabled, the raw audio will be sent to your gateway to be transcribed. " +
+            "The watch/phone’s local audio transcription will still be sent as fallback.",
         style = MaterialTheme.typography.labelMedium,
         color = c.textSecondary,
     )

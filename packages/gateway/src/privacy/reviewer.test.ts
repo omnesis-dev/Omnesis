@@ -20,7 +20,9 @@ import {
   DEFAULT_PRIVACY_POLICY,
   PRIVACY_POLICY_CREDENTIAL_APPROVAL_CLAUSE,
   PRIVACY_POLICY_THIRD_PARTY_SENTENCE,
+  PRIVACY_POLICY_TEMPLATES,
 } from "./policy-store.js";
+import { applyPrivacyPolicySchemaEdit } from "./policy-schema.js";
 import type { ChatBackend, TurnInput } from "@omnesis/agent";
 
 class JsonBackend implements ChatBackend {
@@ -378,9 +380,136 @@ describe("PrivacyReviewer", () => {
     expect(result.audit.hardStop).toBe(true);
   });
 
-  it("holds detected credentials for explicit approval when the policy opts in", async () => {
-    const backend = new JsonBackend("unused");
-    const reviewer = new PrivacyReviewer({ resolveBackend: () => backend });
+  describe.each(PRIVACY_POLICY_TEMPLATES)("$name template credential approval", (template) => {
+    it.each(["answer", "question", "citation"] as const)(
+      "holds credentials in the %s for approval even when the reviewer allows them",
+      async (location) => {
+        const backend = new JsonBackend(
+          JSON.stringify({
+            decision: "allow",
+            confidence: 0.99,
+            findings: [
+              {
+                category: "authentication_secret",
+                detailLevel: "original",
+                subject: "user",
+                disposition: "allow",
+                description: "Scripted permissive verdict.",
+              },
+            ],
+            rationale: "Scripted permissive verdict.",
+          }),
+        );
+        const reviewer = new PrivacyReviewer({ resolveBackend: () => backend });
+        const result = await reviewer.review({
+          ...input,
+          policy: template.policy,
+          ...(location === "answer"
+            ? { candidateAnswer: "Use password: synthetic-secret-value" }
+            : location === "question"
+              ? { currentQuestion: "Is password: synthetic-secret-value still current?" }
+              : {
+                  candidateCitations: [
+                    {
+                      documentId: "doc-example",
+                      sourceType: "notes",
+                      title: "password: synthetic-secret-value",
+                    },
+                  ],
+                }),
+        });
+
+        expect(result).toMatchObject({
+          decision: "ask",
+          hardStop: false,
+          review: { credentialApprovalRequired: true },
+          audit: { hardStop: false },
+        });
+        expect(backend.turns).toHaveLength(1);
+      },
+    );
+
+    it("honors the user's choice to block credentials outright", async () => {
+      const backend = new JsonBackend("unused");
+      const reviewer = new PrivacyReviewer({ resolveBackend: () => backend });
+      const policy = applyPrivacyPolicySchemaEdit(template.policy, {
+        credentialApprovalEnabled: false,
+      })!;
+      const result = await reviewer.review({
+        ...input,
+        policy,
+        candidateAnswer: "Use password: synthetic-secret-value",
+      });
+
+      expect(result).toMatchObject({ decision: "deny", hardStop: true });
+      expect(backend.turns).toHaveLength(0);
+    });
+  });
+
+  it.each(["allow", "deny"] as const)(
+    "preserves an explicit deny finding when the reviewer returns %s for an answer containing a credential",
+    async (decision) => {
+      const backend = new JsonBackend(
+        JSON.stringify({
+          decision,
+          confidence: 0.99,
+          findings: [
+            {
+              category: "health",
+              detailLevel: "exact",
+              subject: "user",
+              disposition: "deny",
+              description: "The policy denies exact health information.",
+            },
+          ],
+          rationale: "Exact health information is explicitly denied.",
+        }),
+      );
+      const result = await new PrivacyReviewer({ resolveBackend: () => backend }).review({
+        ...input,
+        policy: `${DEFAULT_PRIVACY_POLICY}\nDeny exact health information, even with approval.\n`,
+        candidateAnswer: "The recorded pulse was 72 bpm. Use password: synthetic-secret-value",
+      });
+      expect(result).toMatchObject({ decision: "deny", hardStop: false });
+      expect(result.review.credentialApprovalRequired).not.toBe(true);
+      expect(backend.turns).toHaveLength(1);
+    },
+  );
+
+  it("does not let reductions bypass approval for a detected credential", async () => {
+    const backend = new JsonBackend(
+      JSON.stringify({
+        decision: "reduce",
+        confidence: 0.99,
+        findings: [
+          {
+            category: "private_communication",
+            detailLevel: "exact",
+            subject: "user",
+            disposition: "reduce",
+            description: "Private details require reduction.",
+          },
+        ],
+        rationale: "Generalize the answer.",
+        reducedAnswer: "A password is recorded.",
+      }),
+    );
+    const result = await new PrivacyReviewer({ resolveBackend: () => backend }).review({
+      ...input,
+      policy: DEFAULT_PRIVACY_POLICY,
+      candidateAnswer: "Use password: synthetic-secret-value",
+    });
+    expect(result).toMatchObject({
+      decision: "ask",
+      reductions: [],
+      review: { credentialApprovalRequired: true },
+    });
+    expect(result.reducedAnswer).toBeUndefined();
+    expect(result.reducedCitations).toBeUndefined();
+  });
+
+  it("holds detected credentials for explicit approval when the reviewer is unavailable", async () => {
+    const reviewer = new PrivacyReviewer({ resolveBackend: () => null });
 
     const result = await reviewer.review({
       ...input,
@@ -393,8 +522,7 @@ describe("PrivacyReviewer", () => {
       hardStop: false,
       reductions: [],
       review: {
-        confidence: 1,
-        fallbackCause: "policy_requires_review",
+        fallbackCause: "not_configured",
         credentialApprovalRequired: true,
         findings: [
           {
@@ -405,11 +533,10 @@ describe("PrivacyReviewer", () => {
         ],
       },
       audit: {
-        fallbackCause: "policy_requires_review",
+        fallbackCause: "not_configured",
         hardStop: false,
       },
     });
-    expect(backend.turns).toHaveLength(0);
   });
 
   it("requires approval when the reviewer is missing, malformed, or uncertain", async () => {

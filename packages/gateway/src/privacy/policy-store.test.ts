@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_PRIVACY_POLICY,
   PRIVACY_POLICY_CREDENTIAL_APPROVAL_CLAUSE,
-  PRIVACY_POLICY_DENY_FLOOR,
+  PRIVACY_POLICY_PROTECTIVE_FLOOR,
   PRIVACY_POLICY_THIRD_PARTY_SENTENCE,
   PRIVACY_POLICY_TEMPLATES,
   PrivacyPolicyConflictError,
@@ -40,6 +40,15 @@ describe("PrivacyPolicyStore", () => {
       "| Schedule availability | Allow | Allow | Approval required |",
     );
     expect((await stat(store.path)).mode & 0o777).toBe(0o600);
+  });
+
+  it("preserves an existing policy that explicitly denies sensitive details", async () => {
+    const store = await makeStore();
+    const policy =
+      "# My policy\n\nDeny exact health details and credentials, even with approval.\n";
+    await writeFile(store.path, policy, "utf8");
+    expect((await store.get()).policy).toBe(policy);
+    expect(await readFile(store.path, "utf8")).toBe(policy);
   });
 
   it("preserves direct file edits and exposes a new revision", async () => {
@@ -163,18 +172,23 @@ categories: documents
       expect(document.policy).toBe(guarded?.policy);
     });
 
-    it("keeps the same deny floor in the three protective templates", () => {
+    it("keeps the same approval floor in the three protective templates", () => {
       for (const template of PRIVACY_POLICY_TEMPLATES.filter(
         (candidate) => candidate.id !== "unfiltered",
       )) {
-        // The shared floor section appears verbatim...
-        expect(template.policy).toContain(PRIVACY_POLICY_DENY_FLOOR);
-        // ...and the sensitive rows are Deny at exact detail in the table too.
-        expect(template.policy).toMatch(/\| Health \|[^\n]+\| Deny \|/);
-        expect(template.policy).toMatch(/\| Money and payment information \|[^\n]+\| Deny \|/);
-        expect(template.policy).toMatch(/\| Identity documents \|[^\n]+\| Deny \|/);
+        // The shared floor section appears verbatim.
+        expect(template.policy).toContain(PRIVACY_POLICY_PROTECTIVE_FLOOR);
+        expect(template.policy).toContain(PRIVACY_POLICY_CREDENTIAL_APPROVAL_CLAUSE);
+        expect(template.policy).not.toMatch(/\| Deny \|/);
+        expect(template.policy).not.toContain("cannot be released even with approval");
+        // Sensitive exact details wait for approval in the table too.
+        expect(template.policy).toMatch(/\| Health \|[^\n]+\| Approval required \|/);
+        expect(template.policy).toMatch(
+          /\| Money and payment information \|[^\n]+\| Approval required \|/,
+        );
+        expect(template.policy).toMatch(/\| Identity documents \|[^\n]+\| Approval required \|/);
         expect(template.policy).toContain(
-          "| Passwords, authentication codes, tokens, private keys, and recovery codes | Deny | Deny | Deny |",
+          "| Passwords, authentication codes, tokens, private keys, and recovery codes | Approval required | Approval required | Approval required |",
         );
       }
     });
@@ -216,7 +230,7 @@ categories: documents
       expect(policy).toContain(PRIVACY_POLICY_CREDENTIAL_APPROVAL_CLAUSE);
       expect(policy).not.toContain("Release with reductions");
       expect(policy).not.toContain("Deny");
-      expect(policy).not.toContain(PRIVACY_POLICY_DENY_FLOOR);
+      expect(policy).not.toContain(PRIVACY_POLICY_PROTECTIVE_FLOOR);
     });
 
     it("makes each template adoptable through the store", async () => {
