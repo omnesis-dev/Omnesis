@@ -2,8 +2,12 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, expect, it } from "vitest";
-
+import Database from "better-sqlite3";
 import { BACKGROUND_RATE_LIMIT_PATIENCE, type AgentEvent, type ToolResult } from "@omnesis/core";
+import { directWriteGate } from "../write-gate.js";
+import { AnswerService } from "./answer-service.js";
+import { createAnswerPrivacyTables, resolvePrivacyApproval } from "./store.js";
+
 import {
   CITATION_REDUCTION_RELEASE_LABEL,
   MAX_PRIVACY_REVIEW_OUTPUT_BYTES,
@@ -209,7 +213,7 @@ describe("PrivacyReviewer", () => {
 
     expect(result.decision).toBe("allow");
     expect(result.review).toMatchObject({
-      recipeVersion: "privacy-reviewer-v5",
+      recipeVersion: "privacy-reviewer-v6",
       provider: "review-provider",
       model: "review-model",
       confidence: 0.97,
@@ -690,6 +694,109 @@ describe("PrivacyReviewer", () => {
     });
 
     await expect(reviewer.review(input)).resolves.toMatchObject({ decision: "ask" });
+  });
+
+  describe("reductions must answer the request", () => {
+    const candidate = "The project budget is 12,000 credits; the bank account is EXAMPLE-ACCOUNT.";
+    const question = "What is the project's total budget?";
+    const findings = [
+      {
+        category: "financial_information",
+        detailLevel: "exact",
+        subject: "user",
+        disposition: "reduce",
+        description: "Exact financial amounts require reduction under this policy.",
+      },
+    ];
+
+    it("instructs the reviewer to escalate an unresponsive reduction despite a reduction policy", async () => {
+      const backend = new JsonBackend(
+        JSON.stringify({
+          decision: "ask",
+          confidence: 0.99,
+          findings,
+          rationale: "Removing the requested amount would leave the question unanswered.",
+        }),
+      );
+      const result = await new PrivacyReviewer({ resolveBackend: () => backend }).review({
+        ...input,
+        currentQuestion: question,
+        candidateAnswer: candidate,
+      });
+      expect(result.decision).toBe("ask");
+      expect(result).not.toHaveProperty("reducedAnswer");
+      expect(backend.turns[0]?.systemPrompt).toContain(
+        'remaining answer still answers "currentRequest" at the requested specificity',
+      );
+      expect(backend.turns[0]?.systemPrompt).toContain(
+        "candidate for approval EVEN WHEN the policy says to release with reduction",
+      );
+      expect(backend.turns[0]?.systemPrompt).toContain(
+        'forbids that disclosure even with approval, choose "deny"',
+      );
+      expect(JSON.parse(backend.turns[0]?.userMessage ?? "")).toMatchObject({
+        currentRequest: question,
+        candidateAnswer: candidate,
+      });
+    });
+
+    it("holds the original candidate and releases it only after approval despite a reduction finding", async () => {
+      const db = new Database(":memory:");
+      try {
+        db.exec("CREATE TABLE devices (id TEXT PRIMARY KEY)");
+        createAnswerPrivacyTables(db);
+        const backend = new JsonBackend(
+          JSON.stringify({
+            decision: "ask",
+            confidence: 0.99,
+            findings,
+            rationale: "Removing the requested amount would leave the question unanswered.",
+          }),
+        );
+        const policy = {
+          policy: "Reduce exact financial amounts.",
+          revision: "policy-a",
+          updatedAt: 1,
+        };
+        const service = new AnswerService({
+          db,
+          writeGate: directWriteGate(db),
+          agent: {
+            generateReadOnlyAnswerCandidate: async () => ({ answer: candidate, citations: [] }),
+          },
+          reviewer: new PrivacyReviewer({ resolveBackend: () => backend }),
+          policyStore: {
+            get: async () => policy,
+            runIfRevision: async (_revision, operation) => operation(),
+          },
+          notifyApproval: async () => undefined,
+          now: () => 1_000,
+        });
+        const request = {
+          ownerId: "owner-example",
+          question,
+          clientRequestId: "budget-example",
+          approvalMode: "allow" as const,
+        };
+        const held = await service.answer(request);
+        expect(held.status).toBe("approval_required");
+        expect(held).not.toHaveProperty("answer");
+        expect(backend.turns).toHaveLength(1);
+        if (held.status !== "approval_required") throw new Error("Expected approval hold");
+        resolvePrivacyApproval(db, {
+          approvalId: held.approvalId,
+          action: "approve",
+          requestContext: { requestId: "request-example", tokenId: null, deviceId: null },
+          releaseId: "release-example",
+          now: 1_001,
+        });
+        const approved = await service.answer(request);
+        expect(approved).toMatchObject({ status: "released", answer: candidate });
+        expect(backend.turns).toHaveLength(1);
+      } finally {
+        db.close();
+      }
+    });
   });
 
   it("never releases model-authored reduction metadata", async () => {
