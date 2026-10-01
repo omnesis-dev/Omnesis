@@ -4,7 +4,6 @@
 // @ts-nocheck — the portal ships plain browser JavaScript.
 
 import { describe, expect, it } from "vitest";
-import { OriginBadge } from "./calendar-agenda.js";
 import { CalendarEntryDetail } from "./calendar-detail.js";
 
 const entry = {
@@ -24,7 +23,6 @@ function text(node) {
   if (node == null || typeof node === "boolean") return "";
   if (Array.isArray(node)) return node.map(text).join(" ");
   if (typeof node !== "object") return String(node);
-  if (node.type === OriginBadge) return node.props.origin;
   if (typeof node.type === "function") return text(node.type(node.props));
   return text(node.props?.children);
 }
@@ -32,7 +30,6 @@ function text(node) {
 function nodes(node, tag) {
   if (node == null || typeof node !== "object") return [];
   if (Array.isArray(node)) return node.flatMap((item) => nodes(item, tag));
-  if (node.type === OriginBadge) return [];
   if (typeof node.type === "function") return nodes(node.type(node.props), tag);
   return [...(node.type === tag ? [node] : []), ...nodes(node.props?.children, tag)];
 }
@@ -52,6 +49,17 @@ describe("Calendar entry explanations", () => {
     expect(text(content)).not.toContain("Projection slot");
     expect(text(content)).not.toContain("fictional-tasks:account");
     expect(nodes(content, "a")[0].props.href).toBe("/portal/doc/doc-1");
+  });
+
+  it("hides a source title only when it exactly matches a supporting document title", () => {
+    const matched = body(entry, { "doc-1": { title: entry.label } });
+    const blocks = (content) => nodes(content, "section").filter((node) => node.props.class === "calendar-provenance");
+    expect(blocks(matched)).toHaveLength(0);
+    expect(text(matched).split(entry.label)).toHaveLength(2);
+    const different = body(entry, { "doc-1": { title: "Workshop registration" } });
+    expect(text(blocks(different)[0]).trim()).toBe(entry.label);
+    const unavailable = body(entry);
+    expect(text(blocks(unavailable)[0]).trim()).toBe(entry.label);
   });
 
   it("quotes a mention and explains its relative reference date without claiming an event", () => {

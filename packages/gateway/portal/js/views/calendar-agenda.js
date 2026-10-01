@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { useId, useState } from "preact/hooks";
 import { html } from "htm/preact";
 import { sourceIconUrl } from "../lib/format.js";
 import {
@@ -19,43 +18,11 @@ import {
   groupMentionDocuments,
 } from "./calendar-model.js";
 
-/** A separate button keeps origin help reachable without opening the entry. */
+/** Native hover help matches the kind pills and never opens on modal focus. */
 export function OriginBadge({ origin }) {
-  const [open, setOpen] = useState(false);
-  const [dismissed, setDismissed] = useState(false);
-  const tooltipId = useId();
   const meta = ORIGIN_LABELS[origin] ?? { row: origin, icon: "○", description: origin };
-  return html`<span
-    class=${`calendar-origin-help calendar-origin-help--${origin}${open ? " is-open" : ""}${dismissed ? " is-dismissed" : ""}`}
-    onMouseLeave=${() => {
-      setOpen(false);
-      setDismissed(false);
-    }}
-  >
-    <button
-      type="button"
-      aria-describedby=${tooltipId}
-      aria-expanded=${open}
-      onFocus=${() => setDismissed(false)}
-      onBlur=${() => {
-        setOpen(false);
-        setDismissed(false);
-      }}
-      onClick=${() => {
-        setOpen(!open);
-        setDismissed(open);
-      }}
-      onKeyDown=${(event) => {
-        if (event.key === "Escape") {
-          if (open || !dismissed) event.stopPropagation();
-          setOpen(false);
-          setDismissed(true);
-        }
-      }}
-    >
-      <span aria-hidden="true">${meta.icon}</span> ${meta.row}
-    </button>
-    <span id=${tooltipId} role="tooltip" class="calendar-origin-tooltip">${meta.description}</span>
+  return html`<span class=${`calendar-origin-pill calendar-origin-pill--${origin}`} title=${meta.description}>
+    <span aria-hidden="true">${meta.icon}</span>${meta.row}
   </span>`;
 }
 
@@ -96,11 +63,15 @@ export function CalendarEntryRow({
   return html`<div
     class=${`calendar-item calendar-item--${entry.origin}`}
     style=${`--calendar-kind:${meta.color}`}
+    onClick=${() => onOpen?.(entry)}
   >
     <button
       type="button"
       class=${`calendar-entry${MOMENT_KINDS.has(entry.kind) && !mention ? " actionable" : ""}`}
-      onClick=${() => onOpen?.(entry)}
+      onClick=${(event) => {
+        event.stopPropagation();
+        onOpen?.(entry);
+      }}
     >
       <span class="calendar-entry-spine" aria-hidden="true"></span>
       <span class="calendar-entry-body">

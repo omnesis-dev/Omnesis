@@ -29,7 +29,7 @@ vi.mock("../lib/format.js", () => ({
 }));
 
 import { CalendarTab } from "./calendar.js";
-import { DaySection } from "./calendar-agenda.js";
+import { DaySection, CalendarEntryRow } from "./calendar-agenda.js";
 
 function deferred() {
   let resolve;
@@ -103,6 +103,19 @@ describe("Calendar loading and addressability", () => {
     expect(group.querySelectorAll(".calendar-entry")).toHaveLength(2);
     expect(group.closest("details")).toBeNull();
     expect(host.querySelector(".calendar-activity-group")).toBeNull();
+  });
+
+  it("opens a whole entry once", async () => {
+    const onOpen = vi.fn();
+    const value = entry("source-click", "Workshop planning");
+    await act(async () => {
+      render(h(CalendarEntryRow, { entry: value, onOpen }), host);
+    });
+    for (const selector of [".calendar-item", ".calendar-entry"]) {
+      await act(async () => { host.querySelector(selector).dispatchEvent(new window.Event("click", { bubbles: true })); });
+    }
+    expect(onOpen).toHaveBeenCalledTimes(2);
+    expect(onOpen).toHaveBeenLastCalledWith(value);
   });
 
   it("ignores a stale period response after a newer request wins", async () => {
@@ -415,41 +428,17 @@ describe("Calendar loading and addressability", () => {
     expect(host.querySelector(".calendar-day-empty")).toBeNull();
   });
 
-  it("keeps origin help separate, uniquely labelled, and dismissible without opening an entry", async () => {
-    const item = entry("tp-span", "Spanning source record");
-    const now = new Date();
-    item.precision = "range";
-    item.start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-    item.endExclusive = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate() + 2,
-    ).toISOString();
-    mocks.getWindow.mockResolvedValue({ items: [item], nowMs: Date.now() });
-    await act(async () => {
-      render(h(CalendarTab), host);
-    });
+  it("uses native hover help on adjacent origin and kind pills without custom popups", async () => {
+    mocks.getWindow.mockResolvedValue({ items: [entry("tp-help", "Source record")], nowMs: Date.now() });
+    await act(async () => { render(h(CalendarTab), host); });
     await flushEffects();
-    const badges = [...host.querySelectorAll(".calendar-origin-help button")];
-    expect(badges.length).toBeGreaterThan(0);
     const pair = host.querySelector(".calendar-entry-pills");
-    expect(pair.children[0].className).toContain("calendar-origin-help");
+    expect(pair.children[0].className).toContain("calendar-origin-pill");
     expect(pair.children[1].className).toBe("calendar-kind");
-    const ids = badges.map((button) => button.getAttribute("aria-describedby"));
-    expect(new Set(ids).size).toBe(ids.length);
-    expect(badges.every((button) => !button.closest(".calendar-entry"))).toBe(true);
-    await act(async () => {
-      badges[0].click();
-    });
-    expect(badges[0].getAttribute("aria-expanded")).toBe("true");
-    expect(host.querySelector(".modal-panel")).toBeNull();
-    const escape = new window.Event("keydown", { bubbles: true });
-    escape.key = "Escape";
-    await act(async () => {
-      badges[0].dispatchEvent(escape);
-    });
-    expect(badges[0].getAttribute("aria-expanded")).toBe("false");
-    expect(badges[0].parentElement.classList.contains("is-dismissed")).toBe(true);
+    expect(pair.children[0].getAttribute("title")).toBe("Taken from a structured date field supplied by this source");
+    expect(pair.children[1].getAttribute("title")).toBeTruthy();
+    expect(pair.children[0].tagName).toBe("SPAN");
+    expect(host.querySelector('[role="tooltip"]')).toBeNull();
   });
 
   it("does not attach stale supporting quotes to a different opened interpretation", async () => {

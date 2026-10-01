@@ -64,6 +64,8 @@ export function CalendarEntryDetail({
     id,
     document: documents[id] ?? null,
   }));
+  const showSourceTitle = !evidence.some((item) => item.document?.title === entry.label);
+  const showProvenance = entry.origin !== "projection" || showSourceTitle;
   const annotation = entry.annotation;
   const mention = entry.mention;
   const origin = ORIGIN_LABELS[entry.origin] ?? { row: entry.origin, heading: entry.origin };
@@ -90,7 +92,7 @@ export function CalendarEntryDetail({
         }
         <button type="button" class="modal-close calendar-detail-close" aria-label="Close" onClick=${onClose}>✕</button>
       </div>
-      <section class="calendar-provenance">
+      ${showProvenance && html`<section class="calendar-provenance">
         ${entry.origin === "annotation"
           ? html`<blockquote class="calendar-agent-quote">
               <span class="calendar-agent-quote-icon" aria-hidden="true">${origin.icon}</span>
@@ -101,7 +103,7 @@ export function CalendarEntryDetail({
         ${mention && html`<blockquote class="calendar-mentioned-quote">${mention.text}</blockquote>`}
         ${mention?.relative && html`<p class="debug-sub">This relative expression was resolved using the document's own date, rather than today's date.</p>`}
         ${annotation?.rationale && annotation.rationale !== entry.label && html`<p>${annotation.rationale}</p>`}
-      </section>
+      </section>`}
       ${annotation?.confidence != null && html`<p class="debug-sub">Agent confidence: ${Math.round(annotation.confidence * 100)}%</p>`}
       ${
         evidence.length > 0
