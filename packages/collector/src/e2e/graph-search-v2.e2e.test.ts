@@ -127,11 +127,33 @@ describe("Agent search v2 — synthetic file journey", () => {
           "SELECT id, external_id, source_id, extracted_content_hash FROM documents WHERE extracted_content_hash = ?",
         )
         .all(rows[0].extracted_content_hash) as StoredDoc[];
+      if (copies.length !== 5) return false;
       const links = db
         .prepare("SELECT COUNT(*) AS n FROM document_links WHERE link_type = 'duplicate-content'")
         .get() as { n: number };
       const urls = db
         .prepare("SELECT COUNT(*) AS n FROM document_links WHERE link_type = 'url'")
+        .get() as { n: number };
+      // A global edge count can be satisfied while a copy's own URL backfill
+      // is still pending. Await the full fixture trail before comparing
+      // separate CLI searches: every copy links to the catalogue, whose
+      // twelve resolved children make it a stable traversal hub.
+      const cataloguedCopies = db
+        .prepare(
+          `SELECT COUNT(DISTINCT link.source_doc_id) AS n FROM document_links link
+           JOIN documents target ON target.id = link.target_doc_id
+           WHERE link.source_doc_id IN (${copies.map(() => "?").join(",")})
+             AND target.external_id = 'graph-hub' AND link.link_type = 'url'`,
+        )
+        .get(...copies.map((copy) => copy.id)) as { n: number };
+      const catalogueChildren = db
+        .prepare(
+          `SELECT COUNT(DISTINCT link.target_doc_id) AS n FROM document_links link
+           JOIN documents origin ON origin.id = link.source_doc_id
+           JOIN documents target ON target.id = link.target_doc_id
+           WHERE origin.external_id = 'graph-hub' AND target.external_id GLOB 'graph-leaf-*'
+             AND link.link_type = 'url'`,
+        )
         .get() as { n: number };
       const shared = db
         .prepare(
@@ -155,8 +177,15 @@ describe("Agent search v2 — synthetic file journey", () => {
               .get(attachment.id, attachment.source_id) as { n: number }
           ).n
         : 0;
-      return copies.length === 5 && links.n >= 4 && urls.n >= 13 && shared.n > 0 && attached > 0;
-    }, "five ingested copies and resolved sharing, attachment and duplicate edges");
+      return (
+        links.n >= 4 &&
+        urls.n >= 13 &&
+        cataloguedCopies.n === 5 &&
+        catalogueChildren.n === 12 &&
+        shared.n > 0 &&
+        attached > 0
+      );
+    }, "five ingested copies and complete catalogue, sharing, attachment and duplicate edges");
     const index = new Database(join(harness.getConfigDir(), "index.db"), { readonly: true });
     try {
       await waitUntil(() => {
