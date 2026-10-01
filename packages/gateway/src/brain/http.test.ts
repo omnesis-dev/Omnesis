@@ -22,10 +22,8 @@ import { createToken } from "../data/repositories/TokenRepository.js";
 import { createDevice } from "../data/repositories/DeviceRepository.js";
 import {
   insertTemporalAnnotation,
-  invalidateTemporalAnnotation,
   type CreateTemporalAnnotationInput,
 } from "../enrichment/temporal-annotations/storage.js";
-import { TEMPORAL_WINDOW_MAX_SPAN_MS } from "../http/temporal-query-params.js";
 import { createBrief, getBrief, type CreateBriefInput } from "./storage/briefs.js";
 import {
   appendOpenLoopLedger,
@@ -200,12 +198,6 @@ function seedTemporalAnnotation(over: Partial<CreateTemporalAnnotationInput> = {
 // A window covering all of July 2026 — encloses every seeded entry.
 const WINDOW_QS = `?from=${Date.UTC(2026, 6, 1)}&to=${Date.UTC(2026, 7, 1)}`;
 
-function timeWindow(qs: string, token = ADMIN_TOKEN) {
-  return app.request(`/briefs/time-index/window${qs}`, {
-    headers: { authorization: `Bearer ${token}` },
-  });
-}
-
 function temporalWindow(qs: string, token = ADMIN_TOKEN) {
   return app.request(`/temporal/window${qs}`, {
     headers: { authorization: `Bearer ${token}` },
@@ -221,12 +213,6 @@ function canonicalTemporalAnnotationDetail(
     `/temporal/annotations/${encodeURIComponent(id)}?timeZone=${encodeURIComponent(timeZone)}`,
     { headers: { authorization: `Bearer ${token}` } },
   );
-}
-
-function temporalAnnotationDetail(id: string, token = ADMIN_TOKEN) {
-  return app.request(`/briefs/time-index/${id}`, {
-    headers: { authorization: `Bearer ${token}` },
-  });
 }
 
 /** An open loop whose deadline day passed long ago — due in any timezone. */
@@ -975,137 +961,6 @@ describe("POST /briefs/:id/read", () => {
   });
 });
 
-describe("GET /briefs/time-index/window", () => {
-  test("404s when the feature is inactive — either prong (inert-when-off)", async () => {
-    seedTemporalAnnotation();
-    status = { visible: true, enabled: true, modelAssigned: false, active: false };
-    expect((await timeWindow(WINDOW_QS)).status).toBe(404);
-    status = { visible: false, enabled: false, modelAssigned: true, active: false };
-    expect((await timeWindow(WINDOW_QS)).status).toBe(404);
-    const bare = createServer(db, dbPath, {});
-    const res = await bare.request(`/briefs/time-index/window${WINDOW_QS}`, {
-      headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
-    });
-    expect(res.status).toBe(404);
-  });
-
-  test("requires admin scope: read-only token 403s, unauthenticated 401s", async () => {
-    expect((await timeWindow(WINDOW_QS, READ_TOKEN)).status).toBe(403);
-    expect((await app.request(`/briefs/time-index/window${WINDOW_QS}`)).status).toBe(401);
-  });
-
-  test("400s: missing/non-integer from/to, from > to, over-wide span, too many kinds", async () => {
-    const from = Date.UTC(2026, 6, 1);
-    const to = Date.UTC(2026, 7, 1);
-    expect((await timeWindow(`?to=${to}`)).status).toBe(400); // missing from
-    expect((await timeWindow(`?from=${from}`)).status).toBe(400); // missing to
-    expect((await timeWindow(`?from=&to=${to}`)).status).toBe(400); // empty string
-    expect((await timeWindow(`?from=%20&to=${to}`)).status).toBe(400); // whitespace only
-    expect((await timeWindow(`?from=abc&to=${to}`)).status).toBe(400); // non-numeric
-    expect((await timeWindow(`?from=1.5&to=${to}`)).status).toBe(400); // non-integer
-    expect((await timeWindow(`?from=${to}&to=${from}`)).status).toBe(400); // inverted
-    expect((await timeWindow(`?from=0&to=${TEMPORAL_WINDOW_MAX_SPAN_MS + 1}`)).status).toBe(400);
-    // Exactly the max span is still a valid window.
-    expect((await timeWindow(`?from=0&to=${TEMPORAL_WINDOW_MAX_SPAN_MS}`)).status).toBe(200);
-    const thirteen = Array.from({ length: 13 }, (_, i) => `k${i}`).join(",");
-    expect((await timeWindow(`${WINDOW_QS}&kinds=${thirteen}`)).status).toBe(400);
-    // limit: junk, zero, and over-cap all 400; the bounds are valid.
-    expect((await timeWindow(`${WINDOW_QS}&limit=abc`)).status).toBe(400);
-    expect((await timeWindow(`${WINDOW_QS}&limit=0`)).status).toBe(400);
-    expect((await timeWindow(`${WINDOW_QS}&limit=501`)).status).toBe(400);
-    expect((await timeWindow(`${WINDOW_QS}&limit=1`)).status).toBe(200);
-    expect((await timeWindow(`${WINDOW_QS}&limit=500`)).status).toBe(200);
-  });
-
-  test("an empty window is nowMs + truncated:false + an empty entries array", async () => {
-    const res = await timeWindow(WINDOW_QS);
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { nowMs: number; truncated: boolean; entries: unknown[] };
-    expect(typeof body.nowMs).toBe("number");
-    expect(body.truncated).toBe(false);
-    expect(body.entries).toEqual([]);
-  });
-
-  test("limit caps the page and truncation is signalled, never silent", async () => {
-    seedTemporalAnnotation({ id: "tix_a" });
-    seedTemporalAnnotation({ id: "tix_b" });
-    seedTemporalAnnotation({ id: "tix_c" });
-    const res = await timeWindow(`${WINDOW_QS}&limit=2`);
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { truncated: boolean; entries: { id: string }[] };
-    expect(body.entries).toHaveLength(2);
-    expect(body.truncated).toBe(true);
-    // A limit exactly matching the window's population is not truncation.
-    const exact = (await (await timeWindow(`${WINDOW_QS}&limit=3`)).json()) as {
-      truncated: boolean;
-      entries: unknown[];
-    };
-    expect(exact.entries).toHaveLength(3);
-    expect(exact.truncated).toBe(false);
-  });
-
-  test("an empty kinds param filters nothing (all kinds returned)", async () => {
-    seedTemporalAnnotation({ id: "tix_deadline", kind: "deadline" });
-    seedTemporalAnnotation({ id: "tix_nokind", kind: null });
-    const res = await timeWindow(`${WINDOW_QS}&kinds=`);
-    expect(res.status).toBe(200);
-    const { entries } = (await res.json()) as { entries: { id: string }[] };
-    expect(entries.map((e) => e.id).sort()).toEqual(["tix_deadline", "tix_nokind"]);
-  });
-
-  test("serializes entries with ISO created/updated stamps and resolved documents", async () => {
-    seedDoc("doc_policy", "Insurance policy renewal");
-    seedTemporalAnnotation({ id: "tix_1", documentIds: ["doc_policy"] });
-    const res = await timeWindow(WINDOW_QS);
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { nowMs: number; entries: unknown[] };
-    // Deep-equal pins the whole DTO — internals like createdByRun and the
-    // raw documentIds must not leak.
-    expect(body.entries).toEqual([
-      {
-        id: "tix_1",
-        intervalStartMs: Date.UTC(2026, 6, 8),
-        intervalEndMs: Date.UTC(2026, 6, 9) - 1,
-        granularity: "day",
-        canonical: "2026-07-08",
-        sentence: "Travel insurance quote expires",
-        kind: "expiry",
-        createdAt: new Date(1000).toISOString(),
-        updatedAt: new Date(1000).toISOString(),
-        documents: [
-          {
-            docId: "doc_policy",
-            title: "Insurance policy renewal",
-            providerId: "test-provider",
-            sourceId: "test-source",
-          },
-        ],
-      },
-    ]);
-  });
-
-  test("kinds filters end-to-end (CSV, whitespace tolerated)", async () => {
-    seedTemporalAnnotation({ id: "tix_deadline", kind: "deadline" });
-    seedTemporalAnnotation({ id: "tix_event", kind: "event" });
-    seedTemporalAnnotation({ id: "tix_expiry", kind: "expiry" });
-    const res = await timeWindow(`${WINDOW_QS}&kinds=deadline,%20expiry`);
-    expect(res.status).toBe(200);
-    const { entries } = (await res.json()) as { entries: { id: string }[] };
-    expect(entries.map((e) => e.id).sort()).toEqual(["tix_deadline", "tix_expiry"]);
-  });
-
-  test("a linked document that no longer exists is dropped, not rendered dead", async () => {
-    seedDoc("doc_gone", "Vanishing confirmation");
-    seedTemporalAnnotation({ id: "tix_orphan", documentIds: ["doc_gone"] });
-    db.prepare("DELETE FROM documents WHERE id = ?").run("doc_gone");
-    const res = await timeWindow(WINDOW_QS);
-    expect(res.status).toBe(200);
-    const { entries } = (await res.json()) as { entries: { id: string; documents: unknown[] }[] };
-    expect(entries.map((e) => e.id)).toEqual(["tix_orphan"]);
-    expect(entries[0]!.documents).toEqual([]);
-  });
-});
-
 describe("GET /temporal/window", () => {
   const temporalQs = `${WINDOW_QS}&timeZone=Europe%2FLondon`;
 
@@ -1271,59 +1126,6 @@ describe("GET /temporal/window", () => {
     expect((await canonicalTemporalAnnotationDetail(id, "UTC", READ_TOKEN)).status).toBe(403);
     status = { visible: false, enabled: false, modelAssigned: false, active: false };
     expect((await canonicalTemporalAnnotationDetail(id)).status).toBe(200);
-  });
-});
-
-describe("GET /briefs/time-index/:id", () => {
-  test("returns the single entry in the window's DTO shape", async () => {
-    seedDoc("doc_policy", "Insurance policy renewal");
-    seedTemporalAnnotation({ id: "tix_one", documentIds: ["doc_policy"] });
-    const res = await temporalAnnotationDetail("tix_one");
-    expect(res.status).toBe(200);
-    const { entry } = (await res.json()) as { entry: Record<string, unknown> };
-    expect(entry).toMatchObject({
-      id: "tix_one",
-      sentence: "Travel insurance quote expires",
-      kind: "expiry",
-      createdAt: new Date(1000).toISOString(),
-      updatedAt: new Date(1000).toISOString(),
-    });
-    expect(entry.documents).toEqual([
-      {
-        docId: "doc_policy",
-        title: "Insurance policy renewal",
-        providerId: "test-provider",
-        sourceId: "test-source",
-      },
-    ]);
-  });
-
-  test("404s for an unknown or invalidated entry", async () => {
-    const res = await temporalAnnotationDetail("tix_missing");
-    expect(res.status).toBe(404);
-    expect(((await res.json()) as { error: string }).error).toBe("Temporal annotation not found");
-    const id = seedTemporalAnnotation();
-    invalidateTemporalAnnotation(db, id, 2000);
-    expect((await temporalAnnotationDetail(id)).status).toBe(404);
-  });
-
-  test("404s when the feature is inactive — either prong (inert-when-off)", async () => {
-    const id = seedTemporalAnnotation();
-    status = { visible: true, enabled: true, modelAssigned: false, active: false };
-    expect((await temporalAnnotationDetail(id)).status).toBe(404);
-    status = { visible: false, enabled: false, modelAssigned: true, active: false };
-    expect((await temporalAnnotationDetail(id)).status).toBe(404);
-    const bare = createServer(db, dbPath, {});
-    const res = await bare.request(`/briefs/time-index/${id}`, {
-      headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
-    });
-    expect(res.status).toBe(404);
-  });
-
-  test("requires admin scope: read-only token 403s, unauthenticated 401s", async () => {
-    const id = seedTemporalAnnotation();
-    expect((await temporalAnnotationDetail(id, READ_TOKEN)).status).toBe(403);
-    expect((await app.request(`/briefs/time-index/${id}`)).status).toBe(401);
   });
 });
 

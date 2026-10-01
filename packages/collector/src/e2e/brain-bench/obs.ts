@@ -211,17 +211,26 @@ export interface AnnotationDto {
   dependentCount: number;
 }
 
-export interface TemporalAnnotationDto {
+/**
+ * One temporal annotation as `/admin/brain/time-index` serves it: the storage
+ * row — `precision`, unix-ms timestamps, the revision and the link sets.
+ */
+export interface AdminTemporalAnnotation {
   id: string;
   intervalStartMs: number;
   intervalEndMs: number;
-  granularity: string;
-  canonical: string;
+  precision: string;
+  canonical: string | null;
   sentence: string;
-  kind: string;
-  createdAt: string;
-  updatedAt: string;
-  documents: Array<{ id: string; title: string }>;
+  kind: string | null;
+  createdByRun: string;
+  createdAt: number;
+  updatedAt: number;
+  revision: number;
+  loopIds: string[];
+  personIds: string[];
+  projectionIds: string[];
+  documents: Array<{ id: string; title: string | null; sourceType: string | null }>;
 }
 
 /** A tool result as the transcript carries it. */
@@ -597,7 +606,7 @@ export class BrainObs {
 
   async timeIndex(
     opts: { limit?: number; order?: string; upcoming?: boolean } = {},
-  ): Promise<{ stats: unknown; items: TemporalAnnotationDto[] }> {
+  ): Promise<{ stats: unknown; items: AdminTemporalAnnotation[] }> {
     return this.h.gatewayJson(`/admin/brain/time-index${this.q({ limit: 500, ...opts })}`);
   }
 
@@ -651,15 +660,6 @@ export class BrainObs {
     return this.h.gatewayJson(
       `/temporal/window${this.q({ timeZone: "UTC", limit: 100, ...opts })}`,
     );
-  }
-
-  async timeIndexWindow(opts: {
-    from: number;
-    to: number;
-    kinds?: string;
-    limit?: number;
-  }): Promise<{ nowMs: number; truncated: boolean; entries: TemporalAnnotationDto[] }> {
-    return this.h.gatewayJson(`/briefs/time-index/window${this.q(opts)}`);
   }
 
   // ── accounting ──────────────────────────────────────────────────────────
