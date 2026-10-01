@@ -26,6 +26,12 @@ export interface ResolvedDateEnrichmentSettings {
   scanBudgetMs: number;
   periodMs: number;
   idlePeriodMs: number;
+  /**
+   * How long a document with content still due to be replaced (a voice note
+   * awaiting its gateway transcript) is left for that content before its dates
+   * are read from the interim text. 0 never waits.
+   */
+  pendingContentWaitMs: number;
   numericDateOrder: NumericDateOrderSetting;
   /** Hide mentions from email the decision model judges not worth recording. */
   worthGate: boolean;
@@ -38,6 +44,7 @@ export const DATE_ENRICHMENT_DEFAULTS: ResolvedDateEnrichmentSettings = {
   scanBudgetMs: DEFAULT_SCAN_BUDGET_MS,
   periodMs: 1_500,
   idlePeriodMs: 300_000,
+  pendingContentWaitMs: 3_600_000,
   numericDateOrder: "auto",
   worthGate: false,
 };
@@ -53,6 +60,7 @@ export function resolveDateEnrichmentSettings(
     scanBudgetMs: d?.scanBudgetMs ?? DATE_ENRICHMENT_DEFAULTS.scanBudgetMs,
     periodMs: d?.periodMs ?? DATE_ENRICHMENT_DEFAULTS.periodMs,
     idlePeriodMs: d?.idlePeriodMs ?? DATE_ENRICHMENT_DEFAULTS.idlePeriodMs,
+    pendingContentWaitMs: d?.pendingContentWaitMs ?? DATE_ENRICHMENT_DEFAULTS.pendingContentWaitMs,
     numericDateOrder: d?.numericDateOrder ?? DATE_ENRICHMENT_DEFAULTS.numericDateOrder,
     worthGate: d?.worthGate ?? DATE_ENRICHMENT_DEFAULTS.worthGate,
   };
