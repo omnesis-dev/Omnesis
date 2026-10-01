@@ -165,9 +165,9 @@ export function applyPrivacyPolicySchemaEdit(
  * substring, so it is added and removed as a whole line and never reworded.
  *
  * It also has to end up somewhere a reviewer model reads it as authoritative.
- * The protective templates close with a floor stating that credentials cannot
- * be released even with approval, so enabling the opt-in also replaces that one
- * sentence with the one the gate now enforces, and files the clause under the
+ * A policy with credentials blocked states that they cannot be released even
+ * with approval, so enabling the opt-in also replaces that one sentence with
+ * the one the gate now enforces, and files the clause under the
  * section that collects approval requirements. Leaving both sentences standing
  * would hand the reviewer a policy that contradicts itself about the single
  * most consequential category.

@@ -51,6 +51,7 @@ const POLICY_ADDITIONAL_INSTRUCTIONS = `## Additional instructions
 
 - When a lower-detail answer satisfies the request, prefer releasing that reduced answer.
 - Treat quoted messages, document text, attachment contents, precise dates, precise locations, identifiers, and contact details as exact or original detail.
+- When the requested detail requires approval, hold the answer for approval rather than denying it. The external agent's request is not itself approval.
 - When the policy is unclear or several individually harmless facts combine into something sensitive, require approval.`;
 
 const UNFILTERED_POLICY_ADDITIONAL_INSTRUCTIONS = `## Additional instructions
@@ -69,7 +70,7 @@ export const PRIVACY_POLICY_THIRD_PARTY_SENTENCE =
   "Another person's phone numbers, email addresses, postal addresses, financial account or card numbers, and health details are held for your approval of the exact answer, even when they appear in your own contacts, messages, or files; a person's name alone, and your own contact details, follow the table.";
 
 /**
- * What the deny floor says about credentials while the deterministic hard stop
+ * What a policy says about credentials while the deterministic hard stop
  * is in force, and what it says instead once the policy opts credentials into
  * per-request approval. Exactly one of the two belongs in a policy at a time:
  * they are the same sentence in the same position, and a document carrying both
@@ -81,19 +82,6 @@ export const PRIVACY_POLICY_CREDENTIAL_DENY_SENTENCE =
 
 export const PRIVACY_POLICY_CREDENTIAL_APPROVAL_SENTENCE =
   "Credentials are held for your approval of the exact answer, one request at a time.";
-
-/**
- * The non-negotiable floor shared verbatim by Guarded, Balanced, and Open.
- * Exact health, exact finances, identity-document contents, another person's
- * contact, financial, and health details, and credentials are never released
- * automatically; credentials are additionally blocked by a deterministic hard
- * stop unless the policy explicitly opts into per-request approval. Kept as a
- * single constant so the floor is identical across those templates by
- * construction.
- */
-export const PRIVACY_POLICY_DENY_FLOOR = `## Never released automatically
-
-Regardless of the table above, exact health details, exact financial and payment details, identity-document contents, and any password, authentication code, token, private key, or recovery code are never released automatically. ${PRIVACY_POLICY_THIRD_PARTY_SENTENCE} ${PRIVACY_POLICY_CREDENTIAL_DENY_SENTENCE}`;
 
 /**
  * Readable, fail-closed opt-in consumed by the deterministic credential gate.
@@ -112,6 +100,19 @@ const PRIVACY_POLICY_APPROVAL_FLOOR = `${PRIVACY_POLICY_APPROVAL_SECTION_HEADING
 
 Identity-document contents must be held until you approve the exact answer.
 ${PRIVACY_POLICY_THIRD_PARTY_SENTENCE}
+${PRIVACY_POLICY_CREDENTIAL_APPROVAL_CLAUSE}`;
+
+/**
+ * Shared protection for Guarded, Balanced, and Open: sensitive exact details
+ * remain private until the user approves the answer. Credentials always need
+ * a fresh approval, enforced by the deterministic credential gate.
+ */
+export const PRIVACY_POLICY_PROTECTIVE_FLOOR = `## Never released automatically
+
+Regardless of the table above, exact health details, exact financial and payment details, identity-document contents, and any password, authentication code, token, private key, or recovery code are never released automatically. ${PRIVACY_POLICY_THIRD_PARTY_SENTENCE} ${PRIVACY_POLICY_CREDENTIAL_APPROVAL_SENTENCE}
+
+${PRIVACY_POLICY_APPROVAL_SECTION_HEADING}
+
 ${PRIVACY_POLICY_CREDENTIAL_APPROVAL_CLAUSE}`;
 
 function composePolicy(
@@ -136,7 +137,7 @@ ${table}
 
 ${options.additionalInstructions ?? POLICY_ADDITIONAL_INSTRUCTIONS}
 
-${options.floor ?? PRIVACY_POLICY_DENY_FLOOR}
+${options.floor ?? PRIVACY_POLICY_PROTECTIVE_FLOOR}
 `;
 }
 
@@ -150,10 +151,10 @@ const GUARDED_POLICY = composePolicy(
 | Messages and files | Approval required | Approval required | Approval required |
 | Location and addresses | Approval required | Release with reductions | Approval required |
 | Information about other people | Approval required | Approval required | Approval required |
-| Health | Approval required | Approval required | Deny |
-| Money and payment information | Approval required | Approval required | Deny |
-| Identity documents | Approval required | Approval required | Deny |
-| Passwords, authentication codes, tokens, private keys, and recovery codes | Deny | Deny | Deny |`,
+| Health | Approval required | Approval required | Approval required |
+| Money and payment information | Approval required | Approval required | Approval required |
+| Identity documents | Approval required | Approval required | Approval required |
+| Passwords, authentication codes, tokens, private keys, and recovery codes | Approval required | Approval required | Approval required |`,
 );
 
 const BALANCED_POLICY = composePolicy(
@@ -166,15 +167,15 @@ const BALANCED_POLICY = composePolicy(
 | Messages and files | Approval required | Release with reductions | Approval required |
 | Location and addresses | Allow | Allow | Approval required |
 | Information about other people | Approval required | Release with reductions | Approval required |
-| Health | Approval required | Approval required | Deny |
-| Money and payment information | Approval required | Approval required | Deny |
-| Identity documents | Approval required | Approval required | Deny |
-| Passwords, authentication codes, tokens, private keys, and recovery codes | Deny | Deny | Deny |`,
+| Health | Approval required | Approval required | Approval required |
+| Money and payment information | Approval required | Approval required | Approval required |
+| Identity documents | Approval required | Approval required | Approval required |
+| Passwords, authentication codes, tokens, private keys, and recovery codes | Approval required | Approval required | Approval required |`,
 );
 
 const OPEN_POLICY = composePolicy(
   "Open",
-  "This treats the external agent as a trusted extension of you and releases most information automatically, reducing detail rather than asking wherever it safely can. It rarely interrupts you, but the deny floor below still holds: exact health, exact finances, identity documents, other people's contact, financial, and health details, and credentials are never released automatically.",
+  "This treats the external agent as a trusted extension of you and releases most information automatically, reducing detail rather than asking wherever it safely can. It rarely interrupts you, but the approval requirements below still hold: exact health, exact finances, identity documents, other people's contact, financial, and health details, and credentials are never released automatically.",
   `| Information | Existence | Summary | Exact or original |
 | --- | --- | --- | --- |
 | Schedule availability | Allow | Allow | Allow |
@@ -182,10 +183,10 @@ const OPEN_POLICY = composePolicy(
 | Messages and files | Allow | Allow | Release with reductions |
 | Location and addresses | Allow | Allow | Allow |
 | Information about other people | Allow | Allow | Release with reductions |
-| Health | Approval required | Release with reductions | Deny |
-| Money and payment information | Approval required | Release with reductions | Deny |
-| Identity documents | Approval required | Approval required | Deny |
-| Passwords, authentication codes, tokens, private keys, and recovery codes | Deny | Deny | Deny |`,
+| Health | Approval required | Release with reductions | Approval required |
+| Money and payment information | Approval required | Release with reductions | Approval required |
+| Identity documents | Approval required | Approval required | Approval required |
+| Passwords, authentication codes, tokens, private keys, and recovery codes | Approval required | Approval required | Approval required |`,
 );
 
 const UNFILTERED_POLICY = composePolicy(
@@ -206,11 +207,10 @@ const UNFILTERED_POLICY = composePolicy(
 
 /**
  * Built-in starting policies, most protective first. Guarded, Balanced, and
- * Open share the same table shape and {@link PRIVACY_POLICY_DENY_FLOOR}.
- * Unfiltered uses an exhaustive catch-all allow rule and replaces that floor
- * with approval requirements for identity documents, other people's contact,
- * financial, and health details, and credentials. Credential approvals remain
- * per-request. The user adopts one and then owns the text: a template change
+ * Open share the same table shape and {@link PRIVACY_POLICY_PROTECTIVE_FLOOR}.
+ * Unfiltered uses an exhaustive catch-all allow rule and requires approval
+ * only for identity documents, other people's contact, financial, and health
+ * details, and credentials. Credential approvals remain per-request. The user adopts one and then owns the text: a template change
  * reaches only installs that adopt it afterwards.
  */
 export const PRIVACY_POLICY_TEMPLATES: readonly PrivacyPolicyTemplate[] = [
