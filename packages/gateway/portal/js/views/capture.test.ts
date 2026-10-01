@@ -371,6 +371,12 @@ describe("note history", () => {
       render(h(CaptureView, {}), host);
     });
     await act(async () => {});
+    // Provenance arrives after history and then updates the parent day heading.
+    // Wait for that observable update rather than assuming a fixed effect count.
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      expect(host.querySelector(".capture-day-link")?.getAttribute("href")).toBe("/portal/doc/daily%2Fdocument");
+    });
     const group = host.querySelector(".capture-day-group")!;
     expect(group.querySelector(".capture-day-count")?.textContent).toBe("2 notes");
     expect(group.querySelector(".capture-day-link")?.getAttribute("href")).toBe("/portal/doc/daily%2Fdocument");
