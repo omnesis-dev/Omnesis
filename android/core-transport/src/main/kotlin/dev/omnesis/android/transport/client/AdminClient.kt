@@ -609,9 +609,9 @@ class AdminClient(private val http: GatewayHttp) {
     }
 
     /**
-     * `PATCH /admin/config` — switch gateway dictation (experimental) on or off.
+     * `PATCH /admin/config` — switch gateway dictation on or off.
      * A gateway-wide setting: it applies to every paired phone, and takes effect
-     * only in experimental mode with a runnable transcriber assigned.
+     * with a runnable transcriber assigned.
      */
     suspend fun setTranscribeOnGateway(enabled: Boolean) {
         http.patchJson<DictationConfigPatch, OkResponse>(

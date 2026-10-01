@@ -202,14 +202,13 @@ class SettingsViewModel @Inject constructor(
     /** A gateway-dictation switch write in flight, or what it left behind. */
     private val voiceWrite = MutableStateFlow(VoiceWrite())
 
-    /** The Voice section, or null to hide it: only an experimental gateway offers the switch. */
+    /** The Voice section, or null to hide it: shown while the gateway offers the switch. */
     val voice: StateFlow<VoiceSettingsState?> = combine(
-        session.experimentalEnabled,
         session.dictation,
         session.state,
         voiceWrite,
-    ) { experimental, dictation, appState, write ->
-        voiceSettingsState(experimental, dictation, write, paired = appState is SessionManager.AppState.Paired)
+    ) { dictation, appState, write ->
+        voiceSettingsState(dictation, write, paired = appState is SessionManager.AppState.Paired)
     }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
@@ -273,12 +272,11 @@ internal data class VoiceWrite(
 )
 
 internal fun voiceSettingsState(
-    experimental: Boolean,
     dictation: DictationStatusDto?,
     write: VoiceWrite,
     paired: Boolean = true,
 ): VoiceSettingsState? {
-    if (!experimental || dictation?.visible != true) return null
+    if (dictation?.visible != true) return null
     val saved = write.saved?.takeIf { write.savedOver == dictation }
     val statusCurrent = write.pending == null && saved == null
     return VoiceSettingsState(

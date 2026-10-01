@@ -4,9 +4,9 @@
 #if canImport(SwiftUI) && canImport(UIKit)
 import SwiftUI
 
-/// Settings → Voice: the gateway dictation switch (experimental), which has
+/// Settings → Voice: the gateway dictation switch, which has
 /// Tell Omnesis notes transcribed by the gateway. Shown only while the paired
-/// gateway runs in experimental mode and advertises the setting.
+/// gateway advertises the setting.
 ///
 /// The switch is a gateway setting, written with `PATCH /admin/config`, so it
 /// applies to every device paired with the gateway. When it is on but the
@@ -33,10 +33,7 @@ struct VoiceSettingsSection: View {
     var body: some View {
         Section {
             Toggle(isOn: Binding(get: { shown }, set: write)) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Transcribe on gateway")
-                    ExperimentalTag()
-                }
+                Text("Transcribe voice notes in the Gateway")
             }
             .disabled(pending != nil || store.pairing == nil)
             .accessibilityIdentifier("gatewayDictationToggle")
@@ -68,10 +65,8 @@ struct VoiceSettingsSection: View {
             Text("Voice")
         } footer: {
             Text(
-                "When on, Tell Omnesis — on this iPhone and in Apple Watch notes — records a voice note and "
-                    + "your gateway transcribes it. The note is saved at once; this device's own transcript "
-                    + "isn't shown, and is used only if the gateway can't transcribe the recording. This is a "
-                    + "gateway setting, so it applies to every device paired with it."
+                "When enabled, the raw audio will be sent to your gateway to be transcribed. "
+                    + "The watch/phone’s local audio transcription will still be sent as fallback."
             )
         }
         .listRowBackground(Theme.bgSecondary)
