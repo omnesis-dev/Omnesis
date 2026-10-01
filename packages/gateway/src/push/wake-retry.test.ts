@@ -4,6 +4,8 @@
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { DeviceId, type DeviceRecord } from "@omnesis/types";
+import { createAnswerPrivacyTables } from "../privacy/store.js";
+import { createAccessTables } from "../access/store.js";
 import { DEFAULT_PUSH_WAKE_RETRY_POLICY, PushBroadcaster } from "./broadcast.js";
 import {
   allWatchNotificationWakeOutcomes,
@@ -28,6 +30,8 @@ function setupDb(): Database.Database {
   db.exec("CREATE TABLE devices (id TEXT PRIMARY KEY)");
   db.prepare("INSERT INTO devices (id) VALUES (?)").run(deviceId);
   createNotificationQueueTables(db);
+  createAnswerPrivacyTables(db);
+  createAccessTables(db);
   return db;
 }
 
