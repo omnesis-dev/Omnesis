@@ -11342,9 +11342,6 @@ div.source-activity-popover-link:hover {
 .calendar-evidence-fallback { color: var(--text-muted); }
 
 /* Calendar hierarchy and provenance. */
-.calendar-technical-details dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: 0; }
-.calendar-technical-details dt { color: var(--text-secondary); }
-.calendar-technical-details dd { margin: 0; color: var(--text-muted); overflow-wrap: anywhere; }
 .calendar-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 12px; }
 .calendar-origin-filters { display: inline-flex; flex-wrap: wrap; gap: 3px; }
 .calendar-origin-filters button { padding: 5px 10px; border: 1px solid var(--border-light); border-radius: 6px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 12px; cursor: pointer; }
@@ -11382,9 +11379,6 @@ div.source-activity-popover-link:hover {
 .calendar-mentioned-quote, .calendar-evidence-quote { margin: 8px 0 0; padding: 8px 12px; border-left: 3px solid var(--border); color: var(--text-secondary); font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .calendar-detail--annotation .calendar-provenance { border-left: 3px solid #a78bfa; }
 .calendar-detail--mention .calendar-provenance { border: 1px dashed var(--border); }
-.calendar-technical-details { color: var(--text-muted); font-size: 12px; }
-.calendar-technical-details > summary { cursor: pointer; }
-.calendar-technical-details dl { margin-top: 12px; }
 .calendar-related-entries { display: grid; gap: 6px; }
 .calendar-related-entries p { margin: 0 0 6px; }
 .calendar-related-entry { display: grid; gap: 5px; padding: 10px; border: 1px solid var(--border-light); border-radius: 7px; background: var(--bg-secondary); color: var(--text-primary); text-align: left; font: inherit; cursor: pointer; }
@@ -11393,8 +11387,6 @@ div.source-activity-popover-link:hover {
 .calendar-mentions summary:focus-visible,
 .calendar-activity-group summary:focus-visible, .calendar-origin-filters button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (max-width: 640px) {
-  .calendar-technical-details dl { grid-template-columns: 1fr; gap: 4px; }
-  .calendar-technical-details dd { margin-bottom: 6px; }
   .calendar-day > header { flex-wrap: wrap; }
 }
 

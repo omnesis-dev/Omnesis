@@ -109,11 +109,6 @@ export function CalendarEntryDetail({
           />`
         }
       </div>
-      <p class="debug-sub">Dates and times shown in ${timeZone}.${
-        entry.status === "active"
-          ? " Active is the stored status; it does not mean this is happening now or is confirmed."
-          : ""
-      }</p>
       ${annotation?.confidence != null && html`<p class="debug-sub">Agent confidence: ${Math.round(annotation.confidence * 100)}%</p>`}
       ${
         evidence.length > 0
@@ -172,37 +167,6 @@ export function CalendarEntryDetail({
           )}
         </section>`
       }
-      <details class="calendar-technical-details">
-        <summary>Technical details</summary>
-        <dl>
-          <dt>Entry ID</dt><dd>${entry.id}</dd>
-          <dt>Origin</dt><dd>${entry.origin}</dd>
-          <dt>Start</dt><dd>${entry.start}</dd>
-          <dt>End (exclusive)</dt><dd>${entry.endExclusive}</dd>
-          ${
-            projection &&
-            html`
-              <dt>Source ID</dt>
-              <dd>${projection.sourceId}</dd>
-              <dt>Projection slot</dt>
-              <dd>${projection.slot}</dd>
-              ${projection.tableName &&
-              html`<dt>Analytics table</dt>
-                <dd>${projection.tableName}</dd>`}
-            `
-          }
-          ${
-            annotation?.revision != null &&
-            html`<dt>Revision</dt>
-              <dd>${annotation.revision}</dd>`
-          }
-          ${evidence.map(
-            (item) =>
-              html`<dt>Document ID</dt>
-                <dd>${item.id}</dd>`,
-          )}
-        </dl>
-      </details>
     </div>
   </${Modal}>`;
 }

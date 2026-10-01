@@ -40,14 +40,13 @@ function body(value, documents = {}, options = {}) {
 }
 
 describe("Calendar entry explanations", () => {
-  it("puts projection mapping identifiers in a closed technical section", () => {
+  it("shows source evidence without technical identifiers or explanatory footer", () => {
     const content = body(entry, { "doc-1": { title: "Workshop registration" } });
     expect(text(content)).toContain("A structured date supplied by the source");
-    expect(text(content)).toContain("does not mean this is happening now or is confirmed");
-    const technical = nodes(content, "details")[0];
-    expect(technical.props.open).toBeUndefined();
-    expect(text(technical)).toContain("Projection slot due");
-    expect(text(technical)).toContain("fictional-tasks:account");
+    expect(text(content)).not.toContain("Dates and times shown");
+    expect(nodes(content, "details")).toHaveLength(0);
+    expect(text(content)).not.toContain("Projection slot");
+    expect(text(content)).not.toContain("fictional-tasks:account");
     expect(nodes(content, "a")[0].props.href).toBe("/portal/doc/doc-1");
   });
 
@@ -66,7 +65,7 @@ describe("Calendar entry explanations", () => {
     expect(text(content)).toContain("Open supporting document");
   });
 
-  it("shows an agent rationale and linked evidence, leaving revision in technical details", () => {
+  it("shows an agent rationale and linked evidence without technical details", () => {
     const content = body(
       {
         ...entry,
@@ -83,7 +82,8 @@ describe("Calendar entry explanations", () => {
     expect(text(content)).toContain("The agent recorded this interpretation");
     expect(text(content)).toContain("The form specifies the final submission date");
     expect(nodes(content, "a")).toHaveLength(1);
-    expect(text(nodes(content, "details")[0])).toContain("Revision 4");
+    expect(nodes(content, "details")).toHaveLength(0);
+    expect(text(content)).not.toContain("Revision");
   });
 
   it("explains missing evidence and handles absent details", () => {
