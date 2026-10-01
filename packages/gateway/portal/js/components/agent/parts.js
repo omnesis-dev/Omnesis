@@ -15,7 +15,7 @@ import { html } from "htm/preact";
 import { useState, useRef, useEffect } from "preact/hooks";
 import { sourceIcon, sourceLabel } from "../../lib/format.js";
 import { navigate } from "../../lib/router.js";
-import { renderMarkdown } from "../../lib/markdown.js";
+import { AssistantMarkdown } from "./assistant-markdown.js";
 import { DocChip } from "../doc-chip.js";
 import { Modal } from "../modal.js";
 import { TimelineColumn } from "../timeline.js";
@@ -92,7 +92,8 @@ export function MessageBubble({ turn, citations, dispatch }) {
             pillRuns,
             !turn.done && i === turn.parts.length - 1,
             true,
-            turn.done === true,
+            turn.role === "assistant" && turn.done === true,
+            turn.role === "assistant",
           ))}
       </div>
       ${turn.error
@@ -227,14 +228,13 @@ function batchChildSummary(batchTool, argEntry, item) {
 // tool parts on resume, so only sub-agent `childTurns` (which retain them) need
 // the static path; without it the rolling cards animate-then-vanish, leaving
 // bare text blobs.
-export function renderPart(part, key, citations, dispatch, pillRuns, thinkingActive, live = true, turnDone = false) {
+export function renderPart(part, key, citations, dispatch, pillRuns, thinkingActive, live = true, turnDone = false, plainValueFences = true) {
   switch (part.kind) {
     case "text":
       // Assistant text is markdown — tables, bold, lists, code fences.
       // User-side text is in agent-msg-user (rendered elsewhere); the
       // markdown path is harmless either way and DOMPurify sanitises.
-      return html`<div key=${key} class="agent-part-text"
-        dangerouslySetInnerHTML=${{ __html: renderMarkdown(part.text) }} />`;
+      return html`<${AssistantMarkdown} key=${key} text=${part.text} copyable=${turnDone} plainValueFences=${plainValueFences} />`;
     case "thinking":
       return html`<${ThinkingBlock} key=${key} text=${part.text} active=${thinkingActive} />`;
     case "subagent":

@@ -8,6 +8,7 @@ import dev.omnesis.android.transport.client.NotesClient
 import dev.omnesis.android.transport.http.GatewayHttp
 import java.io.File
 import java.nio.file.Files
+import java.time.Instant
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
@@ -60,10 +61,15 @@ class VoiceNoteDeliveryTest {
         },
         audioFiles = files,
         language = { "fr-FR" },
+        now = { NOW },
     )
 
+    /** Audio timestamps share the repository clock instead of the host filesystem clock. */
     private fun recording(): VoiceNoteAudio =
-        VoiceNoteAudio(files.newRecording("wav").apply { writeText(AUDIO) }, "audio/wav")
+        VoiceNoteAudio(files.newRecording("wav").apply {
+            writeText(AUDIO)
+            assertTrue(setLastModified(NOW.toEpochMilli() + 1))
+        }, "audio/wav")
 
     private fun accepted() = MockResponse().setResponseCode(202).setBody("""{"id":"n1","transcription":"pending"}""")
 
@@ -202,12 +208,27 @@ class VoiceNoteDeliveryTest {
     }
 
     @Test
+    fun orphan_sweep_preserves_a_recording_written_at_repository_start() = runTest {
+        val repo = repo(paired = false)
+        val audio = recording().apply { assertTrue(file.setLastModified(NOW.toEpochMilli())) }
+        val orphan = files.newRecording("wav").apply {
+            writeText(AUDIO)
+            assertTrue(setLastModified(NOW.toEpochMilli() - 1))
+        }
+
+        assertEquals(CaptureOutcome.Queued(QueueReason.UNPAIRED), repo.capture("", "android-app", audio))
+
+        assertEquals(AUDIO, store.readAll().single().audio!!.file.readText())
+        assertFalse(orphan.exists())
+    }
+
+    @Test
     fun a_drain_deletes_only_earlier_audio_no_queued_note_needs() = runTest {
         val repo = repo(paired = false)
         repo.capture("", "android-app", recording())
         val kept = store.readAll().single().audio!!.file.apply { setLastModified(1_000) }
         val orphan = files.newRecording("wav").apply { writeText(AUDIO); setLastModified(1_000) }
-        val inProgress = files.newRecording("wav").apply { writeText(AUDIO) }
+        val inProgress = recording().file
 
         repo.drain()
 
@@ -226,5 +247,6 @@ class VoiceNoteDeliveryTest {
 
     private companion object {
         const val AUDIO = "RIFF-invented-audio-bytes"
+        val NOW = Instant.parse("2026-07-13T09:00:00.000Z")
     }
 }

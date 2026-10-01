@@ -21,7 +21,7 @@ import { html } from "htm/preact";
 
 import { LoadMore } from "../../components/load-more.js";
 import { KindIcon } from "../../lib/device-kind-icon.js";
-import { renderMarkdown } from "../../lib/markdown.js";
+import { AssistantMarkdown } from "../../components/agent/assistant-markdown.js";
 import { policyEditorPath } from "../../lib/policy-path.js";
 import { navigate } from "../../lib/router.js";
 import { AgentIcon, agentIconForApp } from "../access/agent-brand.js";
@@ -579,10 +579,8 @@ export function exchangeDecisionCopy(exchange) {
 }
 
 export function PrivacyAnswerContent({ answer, className }) {
-  return html`<div
-    class=${`${className} doc-content`}
-    dangerouslySetInnerHTML=${{ __html: renderMarkdown(answer || "") }}
-  ></div>`;
+  return html`<${AssistantMarkdown} text=${answer || ""} copyable=${true}
+    className=${`${className} doc-content`} />`;
 }
 
 /* ── Page chrome ──────────────────────────────────────────────────────────── */

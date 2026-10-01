@@ -675,7 +675,7 @@ public final class AgentCoordinator {
         let visible = session.messagesAreVisible
             ? session.messages
             : Self.visibleMessages(session.messages, origin: session.origin)
-        turns = AgentTurnBuilder.turns(from: visible)
+        turns = AgentTurnBuilder.turns(from: visible, busy: session.busy)
         // The record's own account of how the last turn died, which carries the
         // provider's disposition. `AgentTurnBuilder.turns(from:)` already lifted
         // a failure out of the history marker for a conversation stored before
@@ -2756,6 +2756,13 @@ struct AgentAssistantTurn: Equatable, Identifiable {
     var parts: [AgentPart]
     var stopReason: String?
     var failure: AgentTurnFailure?
+    /// Stored messages omit successful stop reasons. Only a busy session's
+    /// trailing turn remains live when reconstructing its transcript.
+    var historyCompleted: Bool = false
+    var isComplete: Bool {
+        stopReason != nil || historyCompleted || failure != nil
+    }
+
     /// The sentence a reopened conversation shows under a reply that was
     /// stopped — the marker the session leaves in history says whether the
     /// user stopped it. A stop is an outcome, not a failure, so it never
@@ -3207,7 +3214,7 @@ enum AgentTurnBuilder {
     /// new turn; subsequent assistant + user(tool_result) messages are
     /// folded into the same assistant turn until the next user-text
     /// arrives.
-    static func turns(from messages: [ChatMessage], idPrefix: String = "") -> [AgentTurn] {
+    static func turns(from messages: [ChatMessage], idPrefix: String = "", busy: Bool = false) -> [AgentTurn] {
         var out: [AgentTurn] = []
         var i = 0
         var n = 0
@@ -3380,6 +3387,7 @@ enum AgentTurnBuilder {
                         i += 1
                     }
                 }
+                assistant.historyCompleted = !busy || i < messages.count
                 out.append(.assistant(assistant))
             }
         }

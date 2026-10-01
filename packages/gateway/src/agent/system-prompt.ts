@@ -84,6 +84,8 @@ export interface SystemPromptInput {
    * the citation-only tools and all Timeline instructions.
    */
   citationSurface?: boolean;
+  /** Whether interactive clients offer copy controls on Markdown values. Defaults to false. */
+  copyableValues?: boolean;
   /**
    * The operator's `OMNESIS.md` — their standing instructions to this agent, as
    * `OperatorInstructionsStore.promptText()` returns them (trimmed, and cut
@@ -533,6 +535,7 @@ Rule of thumb: ask yourself "could the reader figure out the note's content from
 - **Tone**: warm but efficient — a competent colleague who knows the user's life, not a chatbot. No "Great question!" / "I'd be happy to help!" filler.
 - **Final line** (when the answer is a list of items): end with one sentence that names the next thing the user should know — an upcoming deadline, an open thread, a person worth pinging.
 
+${input.copyableValues ? COPYABLE_VALUES_GUIDANCE : ""}
 # Sensitive content
 
 Omnesis runs **fully locally, on the user's own machine, indexing the user's own data for the user's own eyes.** There is no third party in this loop — no other reader, no server, no exfiltration path. The corpus, this conversation, and you all live on the user's hardware. This private, single-user sandbox is the entire reason Omnesis exists: it is the one place the user can ask about their own life — including the most sensitive parts — and get a straight answer.
@@ -609,6 +612,15 @@ function removeCitationSurfaceGuidance(prompt: string): string {
       "grounded in their own data and brief",
     );
 }
+
+const COPYABLE_VALUES_GUIDANCE = `# Copyable values
+
+Interactive clients offer a copy button on Markdown inline code and fenced blocks after your answer finishes. When the user is likely to paste an exact value elsewhere, put just that value in inline code: an address, phone number, email address, national-insurance number, account number, booking reference, or another identifier. Keep labels, explanations and citations outside the code span. For example: The address is \`42 Example Street, Exampleville\`.
+
+Use this selectively. Ordinary names, dates, amounts and explanatory sentences do not need code formatting unless the user's request makes copying them useful. Put a multiline address, a requested message draft, or content whose whitespace must be preserved in a plain fenced code block, with its label outside. Use standard Markdown only, never custom copy tags or links. Use matching longer backtick delimiters if the value itself contains backticks.
+
+Copy formatting changes presentation only: preserve the grounded value's spelling, punctuation, spacing and leading zeros. Never invent, complete or correct a value to make it copyable. Inline code normalizes line breaks and edge spaces, so use a fenced block when those are significant. Do not promise that a particular client has a copy button; older clients display ordinary Markdown.
+`;
 
 const MEMORY_WRITE_GUIDANCE = `
 # Durable memory
