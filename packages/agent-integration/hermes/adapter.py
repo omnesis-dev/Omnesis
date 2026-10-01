@@ -4541,9 +4541,22 @@ class OmnesisAdapter(BasePlatformAdapter):
             if not is_principal_credential:
                 raise
             token = self._refresh_oauth_token(token)
-            response = self._request_json(
-                "POST", MCP_ENDPOINT, token, payload, timeout, headers
-            )
+            try:
+                response = self._request_json(
+                    "POST", MCP_ENDPOINT, token, payload, timeout, headers
+                )
+            except GatewayHttpError as retry_error:
+                if retry_error.status != 401:
+                    raise
+                # The renewal can adopt a token another process persisted
+                # rather than ask the gateway, and that token may itself have
+                # expired since: the keepalive in the Hermes gateway rotates
+                # the file while a tool instance elsewhere still holds an older
+                # bearer. Renew from the gateway once before giving up.
+                token = self._refresh_oauth_token(token, adopt_persisted=False)
+                response = self._request_json(
+                    "POST", MCP_ENDPOINT, token, payload, timeout, headers
+                )
         if (
             not isinstance(response, dict)
             or response.get("jsonrpc") != "2.0"
@@ -4567,15 +4580,26 @@ class OmnesisAdapter(BasePlatformAdapter):
             raise McpProtocolError("Omnesis returned an invalid MCP result payload")
         return result
 
-    def _refresh_oauth_token(self, stale_access_token: str) -> str:
-        """Refresh the principal credential and atomically persist it for later runs."""
+    def _refresh_oauth_token(
+        self, stale_access_token: str, *, adopt_persisted: bool = True
+    ) -> str:
+        """Refresh the principal credential and atomically persist it for later runs.
+
+        When another process already rotated the persisted credential, its
+        access token is adopted without a gateway round trip unless
+        ``adopt_persisted`` is false — the caller's answer when that adopted
+        token was refused too.
+        """
         with self._oauth_refresh_lock:
             lock_path = Path(f"{self._credential_path}.refresh.lock")
             descriptor = _acquire_refresh_lock(lock_path)
             try:
                 persisted = _load_credentials(self._credential_path)
                 self._credentials = persisted
-                if self._credentials.oauth_access_token != stale_access_token:
+                if (
+                    adopt_persisted
+                    and self._credentials.oauth_access_token != stale_access_token
+                ):
                     if self._credentials.oauth_access_token is None:
                         raise McpProtocolError("Omnesis corpus authorization needs repair")
                     return self._credentials.oauth_access_token
