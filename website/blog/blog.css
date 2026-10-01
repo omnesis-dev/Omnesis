@@ -9,6 +9,8 @@
 }
 
 .blog-shell {
+  --reading-width: 40rem;
+  --figure-width: 45rem;
   width: min(100%, 1020px);
   margin: 0 auto;
   padding: 150px 24px 100px;
@@ -37,6 +39,12 @@
   letter-spacing: -0.045em;
   text-wrap: balance;
   overflow-wrap: anywhere;
+}
+
+.post-header h1 {
+  font-size: clamp(2rem, 4vw, 3rem);
+  letter-spacing: -0.035em;
+  line-height: 1.18;
 }
 
 .lede,
@@ -149,7 +157,9 @@
 }
 
 .back-link {
-  display: inline-block;
+  display: block;
+  max-width: var(--reading-width);
+  margin-inline: auto;
   margin-bottom: 34px;
   color: var(--text-muted);
   font-size: 0.875rem;
@@ -161,6 +171,8 @@
 }
 
 .post-header {
+  max-width: var(--reading-width);
+  margin-inline: auto;
   padding-bottom: 36px;
   margin-bottom: 40px;
   border-bottom: 1px solid var(--border-subtle);
@@ -171,14 +183,28 @@
 }
 
 .post-body {
+  max-width: var(--figure-width);
+  margin-inline: auto;
   color: var(--text-primary);
-  font-size: 1.0625rem;
-  line-height: 1.85;
+  font-size: 1.1875rem;
+  line-height: 1.7;
+  text-align: left;
   overflow-wrap: anywhere;
 }
 
+.post-body > * {
+  max-width: var(--reading-width);
+  margin-inline: auto;
+}
+
+.post-body > p:has(img),
+.post-body > pre,
+.post-body > table {
+  max-width: 100%;
+}
+
 .post-body > * + * {
-  margin-top: 24px;
+  margin-top: 1.5em;
 }
 
 .post-body h2,
@@ -267,7 +293,7 @@
 }
 
 .post-body hr {
-  margin: 40px 0;
+  margin: 40px auto;
   border: 0;
   border-top: 1px solid var(--border-subtle);
 }
@@ -276,6 +302,7 @@
   display: block;
   max-width: 100%;
   height: auto;
+  margin-inline: auto;
   border-radius: 8px;
 }
 
@@ -299,6 +326,8 @@
 }
 
 .comments {
+  max-width: var(--reading-width);
+  margin-inline: auto;
   margin-top: 64px;
   padding-top: 32px;
   border-top: 1px solid var(--border-subtle);
@@ -375,7 +404,7 @@ html:not(.js) .blog-page #load-comments {
   }
 
   .post-body {
-    font-size: 1rem;
+    font-size: 1.125rem;
   }
 
   .post-body pre {

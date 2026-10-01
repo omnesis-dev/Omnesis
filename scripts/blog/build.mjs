@@ -153,7 +153,7 @@ export function renderPost(post, giscus, { preview = false } = {}) {
   const content = `<a class="back-link" href="/blog/">← All posts</a><article><header class="post-header"><p class="eyebrow">BUILDING OMNESIS</p><h1>${escapeHtml(post.title)}</h1><p class="post-deck">${escapeHtml(post.description)}</p>${metadata(post)}</header><div class="post-body">${renderMarkdown(post.body)}</div></article>
 ${
   preview
-    ? '<p class="post-tag">Comments are disabled in local preview.</p>'
+    ? ""
     : `<section id="comments" class="comments" aria-labelledby="comments-title" data-giscus-repo="${escapeHtml(giscus.repo)}" data-giscus-repo-id="${escapeHtml(giscus.repoId)}" data-giscus-category="${escapeHtml(giscus.category)}" data-giscus-category-id="${escapeHtml(giscus.categoryId)}" data-giscus-term="blog/${post.slug}">
 <h2 id="comments-title">Join the discussion</h2><p>Comments and reactions are public and stored on GitHub. Sign in with GitHub to participate.</p><p>The comments widget connects to Giscus and GitHub when you load it. <a href="/privacy">Privacy details</a>.</p>
 <button id="load-comments" type="button">Show comments &amp; reactions</button><p id="comments-status" role="status" aria-live="polite"></p><div id="giscus-container" class="giscus"></div>
