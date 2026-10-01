@@ -60,6 +60,8 @@ export interface AnswerMcpClient {
 
 export interface AnswerMcpCallOptions {
   signal?: AbortSignal;
+  /** Optional bounded wait on a pending approval before the single audited egress. */
+  waitSeconds?: number;
   /** The caller sent {@link ANSWER_CITATIONS_META_KEY}. */
   citationsDeclared?: boolean;
 }
@@ -160,6 +162,15 @@ export const askOmnesisInputSchema = z.strictObject({
 
 export const answerStatusInputSchema = z.strictObject({
   taskId: z.string().min(1).max(160).describe("Opaque task id returned by Omnesis."),
+  waitSeconds: z
+    .number()
+    .int()
+    .min(0)
+    .max(30)
+    .default(0)
+    .describe(
+      "Wait up to 30 seconds for a pending approval to resolve. Use 30 after telling the user approval is required; allow at most four waiting calls per approval (two minutes total), then ask the user to say when they approved. Omit for an immediate status check.",
+    ),
 });
 
 export const ANSWER_MCP_INSTRUCTIONS =
@@ -167,6 +178,7 @@ export const ANSWER_MCP_INSTRUCTIONS =
   "This server exposes no direct corpus, document, people, analytics, SQL, write, or admin tools. " +
   "Treat denied and reduced outcomes as final policy decisions, and never reconstruct content " +
   "that Omnesis held for approval. " +
+  "When approval_required is returned, tell the user to approve in Omnesis, then call get_answer_status with waitSeconds: 30. Make at most four waiting calls (two minutes total) for that approval; if still pending, stop and ask the user to tell you when they approved. " +
   "Omnesis cannot browse or search the live internet: it answers only from the user's already-captured corpus, " +
   "fixed at capture time. When a question needs current outside-world facts, combine the released answer " +
   "with your own search or browse tools.";
@@ -175,6 +187,7 @@ export const ANSWER_MCP_COMBINED_INSTRUCTIONS =
   "Use ask_omnesis when the answer should pass through the user's Omnesis privacy policy. " +
   "Only that Answer tool family is privacy reviewed; any Direct tools on this server return raw corpus data. " +
   "Treat denied and reduced Answer outcomes as final policy decisions, and never use Direct tools to reconstruct content that Omnesis held for approval. " +
+  "When approval_required is returned, tell the user to approve in Omnesis, then call get_answer_status with waitSeconds: 30. Make at most four waiting calls (two minutes total) for that approval; if still pending, stop and ask the user to tell you when they approved. " +
   "Omnesis cannot browse or search the live internet: it answers only from the user's already-captured corpus, " +
   "fixed at capture time. When a question needs current outside-world facts, combine the Omnesis result " +
   "with your own search or browse tools.";
@@ -185,7 +198,7 @@ export function registerAnswerMcpTools(server: McpServer, client: AnswerMcpClien
     {
       title: "Ask Omnesis (privacy reviewed)",
       description:
-        "Ask the local Omnesis agent about the user's private corpus. This read-only call may run a model, consume the owner's configured model budget, create durable privacy activity, and send an approval notification. Omnesis searches internally, reviews the candidate answer against the user's privacy policy, and returns only the released result. Omnesis cannot browse or search the live internet: it answers only from the user's already-captured corpus, fixed at capture time, so combine the released result with your own search or browse tools when the question needs current outside-world facts. A released result may carry citations: the documents the answer relies on, each with a title, a date and links the user can open; use them to point the user at the source. By default, sensitive content may be held for approval in Omnesis; if approval_required is returned, tell the user and call get_answer_status after they approve. Never invent or reconstruct held content. Reuse requestId for a retry of the exact same turn.",
+        "Ask the local Omnesis agent about the user's private corpus. This read-only call may run a model, consume the owner's configured model budget, create durable privacy activity, and send an approval notification. Omnesis searches internally, reviews the candidate answer against the user's privacy policy, and returns only the released result. Omnesis cannot browse or search the live internet: it answers only from the user's already-captured corpus, fixed at capture time, so combine the released result with your own search or browse tools when the question needs current outside-world facts. A released result may carry citations: the documents the answer relies on, each with a title, a date and links the user can open; use them to point the user at the source. By default, sensitive content may be held for approval in Omnesis; if approval_required is returned, tell the user to approve in Omnesis, then call get_answer_status with waitSeconds: 30 without waiting for a confirmation message. Make at most four waiting calls (two minutes total) for that approval; if still pending, stop and ask the user to tell you when they approved. Never invent or reconstruct held content. Reuse requestId for a retry of the exact same turn.",
       inputSchema: askOmnesisInputSchema,
       outputSchema: answerOutputSchema,
       annotations: {
@@ -224,7 +237,7 @@ export function registerAnswerMcpTools(server: McpServer, client: AnswerMcpClien
     {
       title: "Get Omnesis answer status",
       description:
-        "Retrieve a durable Answer task owned by this authenticated principal credential. A task id is only a lookup handle: Omnesis re-checks the credential and task ownership on every call. Use this after the user confirms that they approved an approval_required result in Omnesis; do not busy-poll.",
+        "Retrieve a durable Answer task owned by this authenticated principal credential. A task id is only a lookup handle: Omnesis re-checks the credential and task ownership on every call. After telling the user approval is required, use waitSeconds: 30 to wait for their decision without requiring a confirmation message. Make at most four waiting calls (two minutes total) for that approval, then stop and ask the user to tell you when they approved if still pending. Once they confirm, an immediate status check is sufficient. Do not busy-poll or start a fresh waiting budget for the same pending approval.",
       inputSchema: answerStatusInputSchema,
       outputSchema: answerOutputSchema,
       annotations: {
@@ -234,11 +247,15 @@ export function registerAnswerMcpTools(server: McpServer, client: AnswerMcpClien
         openWorldHint: false,
       },
     },
-    async ({ taskId }, context) => {
+    async ({ taskId, waitSeconds }, context) => {
       try {
         const citationsDeclared = parseCitationsMeta(context.mcpReq._meta);
         return answerToolResult(
-          await client.getTask(taskId, { signal: context.mcpReq.signal, citationsDeclared }),
+          await client.getTask(taskId, {
+            waitSeconds,
+            signal: context.mcpReq.signal,
+            citationsDeclared,
+          }),
         );
       } catch (error) {
         return answerToolError(error);
@@ -282,7 +299,7 @@ function answerText(result: AnswerResponse): string {
     case "approval_required":
       return (
         "Omnesis requires user approval before it can release an answer. No private answer content was returned. " +
-        `Ask the user to approve task ${result.taskId} in Omnesis, then call get_answer_status with that taskId after the user confirms approval.`
+        `Tell the user to approve task ${result.taskId} in Omnesis, then call get_answer_status with that taskId and waitSeconds: 30 without waiting for a confirmation message. Make at most four waiting calls (two minutes total) for this approval. If still pending, stop and ask the user to tell you when they approved; do not restart the waiting budget.`
       );
     case "denied":
       return `Omnesis did not release an answer (${result.reason}).`;
