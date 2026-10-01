@@ -10,6 +10,7 @@ import {
   AnswerMcpGatewayError,
   answerToolError,
   answerOutputSchema,
+  answerStatusInputSchema,
   answerToolResult,
   askOmnesisInputSchema,
   safeAnswerErrorMessage,
@@ -220,5 +221,19 @@ describe("Answer MCP privacy projection", () => {
     // The released answer itself is untouched by profiling.
     expect(profiled.structuredContent).toEqual(released);
     expect(profiled.content[0]?.text).toBe("Fictional released answer.");
+  });
+});
+
+describe("MCP approval waiting input", () => {
+  it("keeps omitted waiting backward compatible and bounds the tool input", () => {
+    expect(answerStatusInputSchema.parse({ taskId: "task-example" }).waitSeconds).toBe(0);
+    for (const waitSeconds of [-1, 31, 1.5]) {
+      expect(
+        answerStatusInputSchema.safeParse({ taskId: "task-example", waitSeconds }).success,
+      ).toBe(false);
+    }
+    expect(
+      answerStatusInputSchema.parse({ taskId: "task-example", waitSeconds: 30 }).waitSeconds,
+    ).toBe(30);
   });
 });

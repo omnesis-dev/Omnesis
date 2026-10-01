@@ -286,6 +286,15 @@
           excluded one.
         </p>
         <p>
+          When an MCP Answer needs approval, the external agent is instructed to tell you to approve
+          in Omnesis and wait for your decision. <code>get_answer_status</code> accepts
+          <code>waitSeconds</code> from 0 to 30, returning as soon as you approve or deny; omitting
+          it checks immediately. The agent is instructed to make at most four waiting calls for that
+          approval, about two minutes in total. If you have not decided by then, it asks you to tell
+          it when you have approved. This continuation depends on the external agent following the
+          tool instructions.
+        </p>
+        <p>
           Neither Answer nor Direct browses or searches the live internet: both answer only from
           data Omnesis has already captured. An agent that needs current outside facts, such as
           weather or transport delays, should combine the Omnesis result with its own search tools.
