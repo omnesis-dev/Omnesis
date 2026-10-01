@@ -14,7 +14,9 @@ import WatchKit
 ///
 /// Used only while the iPhone reports gateway dictation on
 /// (`WatchDictationGate`); otherwise, and whenever recording cannot start,
-/// the note is dictated on the system's own screen.
+/// the note is dictated on the system's own screen. Either way the note ends
+/// here: "Sent to your iPhone." once it is safely in the outbox, then back to
+/// the watch face.
 @MainActor
 @Observable
 final class WatchVoiceCapture: NSObject, AVAudioRecorderDelegate {
@@ -24,7 +26,8 @@ final class WatchVoiceCapture: NSObject, AVAudioRecorderDelegate {
         case idle
         case recording(startedAt: Date, limit: TimeInterval)
         /// The note is safely in the outbox, on its way to the iPhone.
-        case sent
+        /// `recorded`: the gateway will transcribe it.
+        case sent(recorded: Bool)
         /// The recording could not be kept.
         case failed
         /// Recorded notes that waited too long for the iPhone were removed.
@@ -32,6 +35,11 @@ final class WatchVoiceCapture: NSObject, AVAudioRecorderDelegate {
     }
 
     private(set) var state: State = .idle
+
+    var isShowingSent: Bool {
+        if case .sent = state { return true }
+        return false
+    }
 
     var isRecording: Bool {
         if case .recording = state { return true }
@@ -197,8 +205,16 @@ final class WatchVoiceCapture: NSObject, AVAudioRecorderDelegate {
         let carried = kept && WatchLink.shared.flushOutbox(.linkMayHaveChanged).contains(recording.ref)
         // Only the recording on screen changes the screen.
         guard current else { return }
-        show(kept ? .sent : .failed)
+        show(kept ? .sent(recorded: true) : .failed)
         if kept { leaveAfterConfirmation(carried: carried) }
+    }
+
+    /// A note dictated as text is safely in the outbox: confirm it the way a
+    /// recorded one is, and return to the watch face the same way.
+    func textNoteSent(carried: Bool) {
+        WKInterfaceDevice.current().play(.success)
+        show(.sent(recorded: false))
+        leaveAfterConfirmation(carried: carried)
     }
 
     /// Return to the watch face once "Sent" has been seen, when that is safe
@@ -207,10 +223,9 @@ final class WatchVoiceCapture: NSObject, AVAudioRecorderDelegate {
     private func leaveAfterConfirmation(carried: Bool) {
         Task {
             try? await Task.sleep(for: .seconds(WatchVoiceDismissal.confirmationDelay))
-            let otherWork = WatchAskRouter.shared.isAsking || WatchNoteRouter.shared.isRelaying
-                || WatchSpeaker.shared.isSpeaking || self.isRecording
+            let otherWork = WatchAskRouter.shared.isAsking || WatchSpeaker.shared.isSpeaking || self.isRecording
             guard WatchVoiceDismissal.shouldLeave(
-                showingSent: self.state == .sent,
+                showingSent: self.isShowingSent,
                 carriedByTransfer: carried,
                 otherWorkInFlight: otherWork
             ) else { return }
@@ -267,8 +282,8 @@ struct WatchVoiceCaptureView: View {
             EmptyView()
         case .recording(let startedAt, let limit):
             recording(startedAt: startedAt, limit: limit)
-        case .sent:
-            sent
+        case .sent(let recorded):
+            sent(recorded: recorded)
         case .failed:
             failed
         case .dropped(let count):
@@ -303,7 +318,7 @@ struct WatchVoiceCaptureView: View {
         .padding(.horizontal)
     }
 
-    private var sent: some View {
+    private func sent(recorded: Bool) -> some View {
         VStack(spacing: 8) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 34))
@@ -311,10 +326,12 @@ struct WatchVoiceCaptureView: View {
             Text("Sent to your iPhone.")
                 .font(.headline)
                 .multilineTextAlignment(.center)
-            Text("Your gateway will transcribe it.")
-                .font(.footnote)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
+            if recorded {
+                Text("Your gateway will transcribe it.")
+                    .font(.footnote)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding()
         .onTapGesture { capture.dismiss() }
@@ -372,9 +389,14 @@ struct WatchVoiceCaptureView: View {
         }
 }
 
-#Preview("Sent") {
+#Preview("Sent — recorded") {
     WatchVoiceCaptureView()
-        .onAppear { WatchVoiceCapture.shared.stage(.sent) }
+        .onAppear { WatchVoiceCapture.shared.stage(.sent(recorded: true)) }
+}
+
+#Preview("Sent — dictated") {
+    WatchVoiceCaptureView()
+        .onAppear { WatchVoiceCapture.shared.stage(.sent(recorded: false)) }
 }
 
 #Preview("Couldn't save") {

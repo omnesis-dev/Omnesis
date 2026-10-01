@@ -20,6 +20,7 @@ describe("resolveBrainSettings", () => {
       documentUpdateDebounceMs: 30 * 60 * 1000,
       documentMaxDeferMs: 4 * 60 * 60 * 1000,
       derivationBarrierMs: 30 * 60 * 1000,
+      pendingContentBarrierMs: 60 * 60 * 1000,
       recencyWindowMs: 7 * 24 * 60 * 60 * 1000,
       // No ceiling by default — a budget nobody set must not stop the Brain.
       budget: { dailyTokens: null, dailyRuns: null },

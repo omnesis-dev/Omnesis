@@ -166,29 +166,68 @@ final class WatchVoiceTests: XCTestCase {
         XCTAssertEqual(plan.values.filter { $0 == .drop }.count, 1)
     }
 
-    // MARK: - Queued text notes
+    // MARK: - Notes dictated as text
 
-    func testAFailedQueuedNoteIsQueuedAgainABoundedNumberOfTimes() throws {
-        let note = WatchNoteWire.request(text: "Water the tomatoes", captureTime: .now(date: now), ref: "q-ref")
-        var payload = WatchRelayQueue.queued(note, envelope: .init(queuedAt: now, attempts: 3, lastErrorCode: nil))
-        for round in 1 ... WatchRelayQueue.maxRequeues {
-            payload = try XCTUnwrap(WatchRelayQueue.requeued(payload, now: now), "round \(round)")
-            XCTAssertEqual(payload["ref"], "q-ref", "the same ref, so the phone saves it once")
-        }
-        XCTAssertNil(WatchRelayQueue.requeued(payload, now: now))
+    private func textEntry(_ ref: String, queuedAt: Date) -> WatchOutboxPolicy.Entry {
+        WatchOutboxPolicy.Entry(
+            metadata: WatchNoteWire.request(text: "Water the tomatoes", captureTime: .now(date: queuedAt), ref: ref),
+            queuedAt: queuedAt
+        )
     }
 
-    func testOnlyRecentNotesAreQueuedAgain() {
-        let note = WatchNoteWire.request(text: "Water the tomatoes", captureTime: .now(date: now), ref: "q-ref")
-        let old = WatchRelayQueue.queued(
-            note,
-            envelope: .init(queuedAt: now.addingTimeInterval(-WatchRelayQueue.noteRetention - 1), attempts: 1, lastErrorCode: nil)
+    /// A text note waits in the same outbox as a recording, and goes the
+    /// fastest way the link allows.
+    func testATextNoteGoesLiveWhenReachableAndQueuedOtherwise() {
+        let note = textEntry("t1", queuedAt: now)
+        XCTAssertTrue(note.isTextNote)
+        XCTAssertEqual(note.ref, "t1")
+        XCTAssertEqual(WatchOutboxPolicy.transport(for: note, phoneReachable: true), .liveMessage)
+        XCTAssertEqual(WatchOutboxPolicy.transport(for: note, phoneReachable: false), .queuedTransfer)
+        let recording = entry("r1", queuedAt: now)
+        XCTAssertFalse(recording.isTextNote)
+        XCTAssertEqual(WatchOutboxPolicy.transport(for: recording, phoneReachable: true), .file)
+    }
+
+    /// A text note carried by a live message or a queued transfer is not
+    /// handed over again; the rest follow the same rules as recordings.
+    func testTextNotesFollowTheSameOutboxRules() {
+        let failed = WatchOutboxPolicy.Entry(
+            metadata: WatchNoteWire.request(text: "Book the vet", captureTime: .now(date: now), ref: "t3"),
+            queuedAt: now,
+            failures: 1,
+            lastFailureAt: now
         )
-        XCTAssertNil(WatchRelayQueue.requeued(old, now: now))
-        let question = WatchRelayQueue.queued(
-            SiriAskWire.request(question: "Is it raining?", ref: "ask"),
-            envelope: .init(queuedAt: now, attempts: 1, lastErrorCode: nil)
+        let plan = WatchOutboxPolicy.plan(
+            [
+                textEntry("t1", queuedAt: now),
+                textEntry("t2", queuedAt: now),
+                failed,
+                textEntry("old", queuedAt: now.addingTimeInterval(-WatchOutboxPolicy.retention - 1)),
+            ],
+            carried: ["t2"],
+            trigger: .retry,
+            now: now
         )
-        XCTAssertNil(WatchRelayQueue.requeued(question, now: now), "a question is never queued again")
+        XCTAssertEqual(plan, ["t1": .send, "t2": .wait, "t3": .wait, "old": .drop])
+    }
+
+    // MARK: - The phone saves a note once
+
+    /// A note can reach the phone as a live message and as a queued copy;
+    /// both carry its ref, and whichever arrives second is dropped.
+    func testTheLiveAndQueuedCopiesOfANoteAreSavedOnce() {
+        let message = WatchNoteWire.request(text: "Water the tomatoes", captureTime: .now(date: now), ref: "shared-ref")
+        let queued = WatchRelayQueue.queued(message, envelope: .init(queuedAt: now, attempts: 0, lastErrorCode: nil))
+
+        var liveFirst = WatchRelayRecentRefs()
+        XCTAssertTrue(liveFirst.insert(WatchNoteWire.ref(from: message)), "the live copy is saved")
+        XCTAssertEqual(WatchRelayInbox.route(queued: queued, now: now, handled: &liveFirst), .drop(.duplicate))
+
+        var queuedFirst = WatchRelayRecentRefs()
+        XCTAssertEqual(
+            WatchRelayInbox.route(queued: queued, now: now, handled: &queuedFirst),
+            .saveNote(text: "Water the tomatoes", captureTime: .now(date: now))
+        )
+        XCTAssertFalse(queuedFirst.insert(WatchNoteWire.ref(from: message)), "the live copy is answered, not saved")
     }
 }

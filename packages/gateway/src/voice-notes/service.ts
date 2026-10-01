@@ -112,18 +112,30 @@ export class VoiceNoteService {
       latitude: input.latitude,
       longitude: input.longitude,
       placeName: input.placeName,
+      // The day's document is published once the recording is queued, so a
+      // reader that waits on pending transcriptions never sees the note
+      // without it.
+      deferProjection: true,
     });
-    if (entry.text !== savedText) return { id: entry.id };
-    const queued = await this.deps.writeGate.enqueueVoiceNote({
-      noteId: entry.id,
-      audio: input.audio,
-      mimeType: input.mimeType,
-      language: input.language ?? null,
-      savedText,
-      placeholder: fallback.length === 0,
-      nextAttemptAt: this.now().toISOString(),
-      createdAt: this.now().toISOString(),
-    });
+    if (entry.text !== savedText) {
+      this.deps.notes().project(entry.day);
+      return { id: entry.id };
+    }
+    let queued: boolean;
+    try {
+      queued = await this.deps.writeGate.enqueueVoiceNote({
+        noteId: entry.id,
+        audio: input.audio,
+        mimeType: input.mimeType,
+        language: input.language ?? null,
+        savedText,
+        placeholder: fallback.length === 0,
+        nextAttemptAt: this.now().toISOString(),
+        createdAt: this.now().toISOString(),
+      });
+    } finally {
+      this.deps.notes().project(entry.day);
+    }
     if (queued) {
       log.info(
         `Queued voice note ${entry.id} (${input.audio.byteLength} bytes, ${input.mimeType})`,
@@ -214,7 +226,7 @@ export class VoiceNoteService {
 
     const text = result.text.trim();
     if (text.length === 0) return this.giveUp(note, "no speech was recognised");
-    const outcome = await this.deps.notes().replaceTextIf(note.noteId, note.savedText, text);
+    const outcome = await this.deps.notes().applyTranscript(note.noteId, note.savedText, text);
     await this.deps.writeGate.deleteVoiceNote(note.noteId);
     log.info(`Transcribed voice note ${note.noteId}: ${outcome} (${text.length} chars)`);
   }
@@ -222,7 +234,7 @@ export class VoiceNoteService {
   /** Stop trying: a placeholder says so, the device's transcript stays. */
   private async giveUp(note: PendingVoiceNote, why: string): Promise<void> {
     if (note.placeholder) {
-      await this.deps.notes().replaceTextIf(note.noteId, note.savedText, UNTRANSCRIBED_TEXT);
+      await this.deps.notes().applyTranscript(note.noteId, note.savedText, UNTRANSCRIBED_TEXT);
     }
     await this.deps.writeGate.deleteVoiceNote(note.noteId);
     log.warn(`Voice note ${note.noteId} not transcribed (${why}); kept its saved text`);

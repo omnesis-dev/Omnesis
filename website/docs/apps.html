@@ -682,11 +682,13 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           The same Ask Omnesis and Omnesis note shortcuts are available on the Apple Watch and relay
           through its paired iPhone. The Watch app also offers <strong>Ask Omnesis</strong> and
           <strong>Omnesis note</strong> complications: add them to a watch face, and tapping one
-          opens dictation straight away; tap Done to send. When the iPhone app does not pick up a
-          question or note within about twenty seconds, the watch queues it for the next time the
-          iPhone app runs: a queued note is saved with its original time, and a queued question is
-          answered by notification, or dropped if the iPhone receives it more than ten minutes
-          later.
+          opens dictation straight away; tap Done to send. A note is kept on the watch until the
+          iPhone confirms it has it: the watch says it is sent at once, returns to the watch face,
+          and sends it again whenever the iPhone comes back in range, for up to a week, saving it
+          with its original time. When the iPhone app does not pick up a question within about
+          twenty seconds, the watch queues it for the next time the iPhone app runs; a queued
+          question is answered by notification, or dropped if the iPhone receives it more than ten
+          minutes later.
         </p>
         <p>
           On Android, Gemini or Google Assistant can invoke the installed App Actions for

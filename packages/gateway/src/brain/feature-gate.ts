@@ -144,6 +144,12 @@ export interface BriefsRunQueueBootDeps {
   backgroundJobs: { registerAll(jobs: BackgroundJob[]): void };
   /** Live briefs settings (worker concurrency, transcript retention). */
   getSettings: () => ResolvedBrainSettings;
+  /**
+   * Which of these documents still hold content due to be replaced (a voice
+   * note awaiting its gateway transcript); their runs wait for it, up to the
+   * pending-content barrier. Omitted: nothing is ever pending.
+   */
+  contentPending?: (docIds: readonly string[]) => Set<string>;
   /** Resolve the `background-agent` chat backend, fresh per run. */
   resolveBackend: () => ChatBackend | null;
   /**
@@ -698,6 +704,12 @@ export async function bootBriefs(deps: {
           log: wakerLog,
           isEnabled: () => briefsFeatureStatus(deps.registry, deps.readiness).active,
           derivationBarrierMs: () => rq.getSettings().derivationBarrierMs,
+          ...(rq.contentPending
+            ? {
+                contentPending: rq.contentPending,
+                pendingContentBarrierMs: () => rq.getSettings().pendingContentBarrierMs,
+              }
+            : {}),
           activeDerivationStages: rq.activeDerivationStages ?? (() => DERIVATION_STAGES),
           ...(rq.clock ? { clock: rq.clock } : {}),
           ...(rq.wakerIntervalMs !== undefined ? { intervalMs: rq.wakerIntervalMs } : {}),

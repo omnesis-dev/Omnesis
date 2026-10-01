@@ -452,7 +452,7 @@ import {
   insertNoteEntry,
   updateNoteEntryText,
   deleteNoteEntry,
-  replaceNoteEntryTextIf,
+  applyNoteEntryTranscript,
   type NoteEntry,
 } from "./sources/omnesis-notes/storage.js";
 import {
@@ -2038,10 +2038,11 @@ export interface WriteGate {
    */
   deleteNoteEntry(id: string): Promise<{ deleted: boolean; day: string | null }>;
   /**
-   * Replace an entry's text only while it still reads `expected` (bumps
-   * `updated_at`). Returns the day on success so the caller can re-render it.
+   * Write a voice note's transcript over an entry's text only while it still
+   * reads `expected` (stamps `updated_at` and `transcribed_at`). Returns the
+   * day on success so the caller can re-render it.
    */
-  replaceNoteEntryTextIf(
+  applyNoteEntryTranscript(
     id: string,
     expected: string,
     text: string,
@@ -2686,8 +2687,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     appendNoteEntry: (entry, audit) => call("notes.appendEntry", [entry, audit]),
     updateNoteEntry: (id, text, now) => call("notes.updateEntry", [id, text, now]),
     deleteNoteEntry: (id) => call("notes.deleteEntry", [id]),
-    replaceNoteEntryTextIf: (id, expected, text, now) =>
-      call("notes.replaceEntryTextIf", [id, expected, text, now]),
+    applyNoteEntryTranscript: (id, expected, text, now) =>
+      call("notes.applyTranscript", [id, expected, text, now]),
     enqueueVoiceNote: (row) => call("voiceNotes.enqueue", [row]),
     rescheduleVoiceNote: (noteId, attempts, nextAttemptAt) =>
       call("voiceNotes.reschedule", [noteId, attempts, nextAttemptAt]),
@@ -3341,8 +3342,8 @@ export function directWriteGate(db: Db): WriteGate {
     appendNoteEntry: async (entry, audit) => insertNoteEntry(db, entry, audit),
     updateNoteEntry: async (id, text, now) => updateNoteEntryText(db, id, text, now),
     deleteNoteEntry: async (id) => deleteNoteEntry(db, id),
-    replaceNoteEntryTextIf: async (id, expected, text, now) =>
-      replaceNoteEntryTextIf(db, id, expected, text, now),
+    applyNoteEntryTranscript: async (id, expected, text, now) =>
+      applyNoteEntryTranscript(db, id, expected, text, now),
     enqueueVoiceNote: async (row) => insertPendingVoiceNote(db, row),
     rescheduleVoiceNote: async (noteId, attempts, nextAttemptAt) =>
       reschedulePendingVoiceNote(db, noteId, attempts, nextAttemptAt),

@@ -9,10 +9,10 @@
  * quick-capture note to `POST /notes/voice` with its audio and its own
  * transcript. The gateway saves the note at once and its transcriber replaces
  * the text afterwards. This drives the lifecycle an operator goes through: the
- * feature advertised but off, the opt-in written through `PATCH /admin/config`
- * (what the portal and the apps' settings do), a note saved and later
+ * feature on by default once a transcriber is assigned, a note saved and later
  * transcribed, a note transcribed that the device had no text for, and the
- * opt-in withdrawn. The gateway runs the synthetic transcriber, which decodes
+ * setting switched off through `PATCH /admin/config` (what the portal and the
+ * apps' settings do). The gateway runs the synthetic transcriber, which decodes
  * the audio bytes as UTF-8, so no Whisper model is needed. A stable-mode
  * gateway proves the route does not exist outside experimental mode.
  */
@@ -85,21 +85,16 @@ describe("voice notes in experimental mode (E2E)", () => {
     await harness.destroy();
   });
 
-  test("the feature is advertised but off until the operator opts in", async () => {
+  test("the feature is on by default once a transcriber is assigned", async () => {
     expect(await dictationStatus(harness)).toMatchObject({
       visible: true,
-      enabled: false,
+      enabled: true,
       modelAssigned: true,
-      active: false,
+      active: true,
     });
-    const res = await sendVoiceNote(harness, { id: randomUUID(), text: "not yet" }, "not yet");
-    expect(res.status).toBe(409);
   });
 
-  test("once opted in, a voice note is saved at once and transcribed by the gateway", async () => {
-    await setOptIn(harness, true);
-    expect((await dictationStatus(harness)).active).toBe(true);
-
+  test("a voice note is saved at once and transcribed by the gateway", async () => {
     const id = randomUUID();
     const res = await sendVoiceNote(
       harness,
@@ -124,7 +119,7 @@ describe("voice notes in experimental mode (E2E)", () => {
     );
   });
 
-  test("withdrawing the opt-in takes effect without a restart", async () => {
+  test("switching it off takes effect without a restart", async () => {
     await setOptIn(harness, false);
     expect((await dictationStatus(harness)).active).toBe(false);
     const res = await sendVoiceNote(harness, { id: randomUUID(), text: "too late" }, "too late");
@@ -144,8 +139,7 @@ describe("voice notes outside experimental mode (E2E)", () => {
     await harness.destroy();
   });
 
-  test("the route does not exist and the status is inactive, even with the opt-in set", async () => {
-    await setOptIn(harness, true);
+  test("the route does not exist and the status is inactive, though the setting is on", async () => {
     expect(await dictationStatus(harness)).toMatchObject({
       visible: false,
       enabled: true,

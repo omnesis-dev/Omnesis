@@ -56,6 +56,7 @@ export const CONFIG_DEFAULTS = {
     documentUpdateDebounce: "30m",
     documentMaxDefer: "4h",
     derivationBarrier: "30m",
+    pendingContentBarrier: "1h",
     recencyWindow: "7d",
     decay: {
       backoffBase: "1d",

@@ -11,10 +11,10 @@ import Foundation
 /// at all — an iPhone-only App Shortcut never reaches watch Siri.
 ///
 /// The watch carries no gateway pairing: this intent dictates the note and
-/// hands it to `WatchNoteRouter`, which relays it to the paired iPhone.
-/// The iPhone saves it (attaching the phone's location) through the shared
-/// `NoteCaptureService`, so a watch note is identical to one captured on
-/// the phone.
+/// hands it to `WatchNoteRouter`, which keeps it in the watch's outbox until
+/// the paired iPhone confirms it. The iPhone saves it (attaching the phone's
+/// location) through the shared `NoteCaptureService`, so a watch note is
+/// identical to one captured on the phone.
 struct CaptureNoteIntent: AppIntent {
     static let title: LocalizedStringResource = "Omnesis note"
     /// Apple rejects (ITMS-90626) any App Intent description containing a
@@ -22,9 +22,10 @@ struct CaptureNoteIntent: AppIntent {
     static let description = IntentDescription(
         "Save a quick note into your Omnesis brain, dictated from your wrist."
     )
-    /// Foregrounds its app, exactly like the watch ask intent: relaying a
-    /// note over WatchConnectivity needs `WCSession.isReachable`, which on
-    /// watchOS holds only while the watch app is foreground.
+    /// Foregrounds its app, exactly like the watch ask intent: the app
+    /// confirms the note on screen, and a live message to the iPhone needs
+    /// `WCSession.isReachable`, which on watchOS holds only while the watch
+    /// app is foreground.
     static var openAppWhenRun: Bool {
         true
     }
@@ -41,8 +42,7 @@ struct CaptureNoteIntent: AppIntent {
         }
         // Hand the note to the app and return at once. Relaying here would
         // hold Siri open, which it will not wait for — opening the app
-        // already ended Siri's session. The view runs the relay and speaks
-        // the outcome when it lands.
+        // already ended Siri's session.
         await MainActor.run {
             WatchPresenter.shared.screen = .note
             WatchNoteRouter.shared.submit(text: trimmed)

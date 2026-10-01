@@ -8,8 +8,8 @@
  * Three levers, all required:
  *
  *   - **experimental mode** (`OMNESIS_EXPERIMENTAL`);
- *   - **the operator's opt-in**, `inference.dictation.transcribeOnGateway`,
- *     off by default;
+ *   - **the operator's setting**, `inference.dictation.transcribeOnGateway`,
+ *     on unless set to false;
  *   - **a runnable `transcriber`** — the same model that transcribes source
  *     voice notes, judged by `TranscribeService.readiness()`.
  *
@@ -43,9 +43,14 @@ export interface DictationFeatureStatus {
   maxAudioBytes: number;
 }
 
-/** Whether the operator opted in, read from the live config. */
+/**
+ * Whether the operator leaves gateway dictation on, read from the live config.
+ * On unless explicitly switched off: with a transcriber assigned, sending Tell
+ * Omnesis audio to it is the better default, and every path falls back to the
+ * device's own transcript.
+ */
 export function dictationOptedIn(config: OmnesisConfig): boolean {
-  return config.inference?.dictation?.transcribeOnGateway === true;
+  return config.inference?.dictation?.transcribeOnGateway !== false;
 }
 
 /**

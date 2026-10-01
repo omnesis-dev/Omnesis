@@ -66,6 +66,15 @@ once, and saves it as a voice note (`WatchVoicePipeline`). Ask always uses
 system dictation. Recording and transfer can only be checked on a physical
 watch paired with a phone.
 
+**Watch notes are fire-and-forget either way.** A note dictated on the
+system's screen (or through the "Omnesis note" Siri intent) goes into the same
+outbox as a recorded one, as its relay message (`WatchNoteWire`): it is sent
+live when the iPhone is reachable and queued (`transferUserInfo`) otherwise,
+and leaves the outbox only on the phone's reply or a queued transfer
+reported delivered — with the same retries, 7-day/50-note limit and dropped
+notice. The phone saves a note once by its ref, which is also its gateway
+note id. Questions keep their live relay.
+
 The watch also ships two complications, **Ask Omnesis** and **Omnesis note**,
 from the `OmnesisWatchWidgets` WidgetKit extension embedded in the watch app. A
 widget can only open its own app, so each complication is a `widgetURL` to its

@@ -106,6 +106,8 @@ describe("briefs waker drain", () => {
   let enabled: boolean;
   let barrierMs: number;
   let activeStages: readonly DerivationStage[];
+  let pendingDocs: Set<string>;
+  let pendingContentBarrierMs: number;
 
   beforeEach(() => {
     dbPath = testDbPath();
@@ -126,6 +128,8 @@ describe("briefs waker drain", () => {
     subscribeBriefsWaker({ eventBus: bus, buffer, getConfig: () => CFG, clock: () => now });
     barrierMs = 0;
     activeStages = DERIVATION_STAGES;
+    pendingDocs = new Set();
+    pendingContentBarrierMs = 0;
     bundle = briefsWakerDrainTask(
       {
         db,
@@ -135,6 +139,8 @@ describe("briefs waker drain", () => {
         isEnabled: () => enabled,
         derivationBarrierMs: () => barrierMs,
         activeDerivationStages: () => activeStages,
+        contentPending: (docIds) => new Set(docIds.filter((id) => pendingDocs.has(id))),
+        pendingContentBarrierMs: () => pendingContentBarrierMs,
         clock: () => now,
       },
       schedulerStub,
@@ -830,6 +836,92 @@ describe("briefs waker drain", () => {
       bus.emit("document.upserted", insertEvent({ metadata: { addressedToAgent: true } }));
       await bundle.flushNow();
       expect(dueAt()).toBe(NOW);
+    });
+
+    describe("content still due to be replaced", () => {
+      // A voice note awaiting its gateway transcript: the run waits for the
+      // final words rather than reasoning over the interim text first.
+      const PENDING_MS = 60 * 60_000;
+      const addressed = () => insertEvent({ metadata: { addressedToAgent: true } });
+
+      test("holds even content addressed to the assistant, up to its own ceiling", async () => {
+        pendingContentBarrierMs = PENDING_MS;
+        seedDatum("doc-1", { derived: true });
+        pendingDocs.add("doc-1");
+        bus.emit("document.upserted", addressed());
+        await bundle.flushNow();
+        expect(dueAt()).toBe(NOW + PENDING_MS);
+      });
+
+      test("is released as soon as nothing is pending, with the derivation barrier off", async () => {
+        pendingContentBarrierMs = PENDING_MS;
+        seedDatum("doc-1", { derived: true });
+        pendingDocs.add("doc-1");
+        bus.emit("document.upserted", addressed());
+        await bundle.flushNow();
+
+        // Transcription given up on: no new content arrives, the hold simply ends.
+        now = NOW + 90_000;
+        pendingDocs.delete("doc-1");
+        await bundle.flushNow();
+        expect(dueAt()).toBe(now);
+      });
+
+      test("addressed content is released on its content alone, not on derivation", async () => {
+        barrierMs = BARRIER_MS;
+        pendingContentBarrierMs = PENDING_MS;
+        seedDatum("doc-1");
+        pendingDocs.add("doc-1");
+        bus.emit("document.upserted", addressed());
+        await bundle.flushNow();
+        expect(dueAt()).toBe(NOW + PENDING_MS);
+
+        now = NOW + 90_000;
+        pendingDocs.delete("doc-1");
+        await bundle.flushNow();
+        expect(dueAt()).toBe(now);
+      });
+
+      test("stays held while the content is still pending", async () => {
+        pendingContentBarrierMs = PENDING_MS;
+        seedDatum("doc-1", { derived: true });
+        pendingDocs.add("doc-1");
+        bus.emit("document.upserted", addressed());
+        await bundle.flushNow();
+        now = NOW + 90_000;
+        await bundle.flushNow();
+        expect(dueAt()).toBe(NOW + PENDING_MS);
+      });
+
+      test("the transcript's own update folds into the held run and is due at once", async () => {
+        pendingContentBarrierMs = PENDING_MS;
+        seedDatum("doc-1", { derived: true });
+        pendingDocs.add("doc-1");
+        bus.emit("document.upserted", addressed());
+        await bundle.flushNow();
+
+        now = NOW + 120_000;
+        pendingDocs.delete("doc-1");
+        bus.emit(
+          "document.upserted",
+          updateEvent("hey rough words", "Hey, the gateway's words.", {
+            metadata: { addressedToAgent: true },
+          }),
+        );
+        await bundle.flushNow();
+        expect(pendingRows().filter((row) => row.kind === "data")).toHaveLength(1);
+        // Claimable immediately: addressed content never defers past its first
+        // enqueue, so the fold lands at or before now.
+        expect(dueAt()).toBeLessThanOrEqual(now);
+      });
+
+      test("a zero ceiling leaves scheduling exactly as it was", async () => {
+        seedDatum("doc-1", { derived: true });
+        pendingDocs.add("doc-1");
+        bus.emit("document.upserted", addressed());
+        await bundle.flushNow();
+        expect(dueAt()).toBe(NOW);
+      });
     });
 
     test("a stage that is switched off is not waited on", async () => {

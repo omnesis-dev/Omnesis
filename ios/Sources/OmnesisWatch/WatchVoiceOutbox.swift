@@ -4,11 +4,12 @@
 #if os(watchOS)
 import Foundation
 
-/// The watch's durable outbox of recorded notes (`WatchOutboxPolicy`): each
-/// note is its recording, `<ref>.m4a`, beside `<ref>.json` recording its
-/// metadata and delivery history. Both are flushed to disk before the note
-/// counts as sent, so a note survives the app ending — by itself, or by the
-/// system — and is sent again on the next launch. Not backed up.
+/// The watch's durable outbox of notes (`WatchOutboxPolicy`): each note is
+/// `<ref>.json`, recording its metadata and delivery history, beside its
+/// recording, `<ref>.m4a`, when it was recorded for gateway dictation. The
+/// files are flushed to disk before the note counts as sent, so a note
+/// survives the app ending — by itself, or by the system — and is sent again
+/// on the next launch. Not backed up.
 final class WatchVoiceOutbox: @unchecked Sendable {
     static let shared = WatchVoiceOutbox()
 
@@ -39,19 +40,31 @@ final class WatchVoiceOutbox: @unchecked Sendable {
         }
     }
 
-    /// The waiting notes. A recording without its metadata, or metadata
-    /// without its recording, is left over from a note that never made it
-    /// in, and is deleted.
+    /// Make a note dictated as text a waiting note: `message` is its relay
+    /// message (`WatchNoteWire.request`), ref included. Throws when it cannot
+    /// be made durable; the note is then not in the outbox.
+    func add(textNote message: [String: String], now: Date = Date()) throws {
+        guard let ref = WatchNoteWire.ref(from: message) else { throw CocoaError(.fileWriteUnknown) }
+        lock.lock()
+        defer { lock.unlock() }
+        try prepareDirectory()
+        let entry = WatchOutboxPolicy.Entry(metadata: message, queuedAt: now)
+        try Self.writeDurably(JSONEncoder().encode(entry), to: entryURL(ref))
+    }
+
+    /// The waiting notes. A recording without its metadata, or a recorded
+    /// note's metadata without its recording, is left over from a note that
+    /// never made it in, and is deleted.
     func entries() -> [WatchOutboxPolicy.Entry] {
         lock.lock()
         defer { lock.unlock() }
         let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
         var entries: [WatchOutboxPolicy.Entry] = []
         for ref in Set(files.map { $0.deletingPathExtension().lastPathComponent }) {
-            guard FileManager.default.fileExists(atPath: audioURL(ref).path),
-                  let data = try? Data(contentsOf: entryURL(ref)),
+            guard let data = try? Data(contentsOf: entryURL(ref)),
                   let entry = try? JSONDecoder().decode(WatchOutboxPolicy.Entry.self, from: data),
-                  entry.ref == ref
+                  entry.ref == ref,
+                  entry.isTextNote || FileManager.default.fileExists(atPath: audioURL(ref).path)
             else {
                 // A recording still being made has no metadata yet.
                 if !FileManager.default.fileExists(atPath: entryURL(ref).path), isRecent(audioURL(ref)) { continue }

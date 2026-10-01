@@ -184,7 +184,7 @@ enum WatchStateStaging {
             WatchPresenter.shared.screen = .note
             WatchNoteRouter.shared.reset()
             if state == "note-done" {
-                WatchNoteRouter.shared.stage(text: noteText, outcome: .saved)
+                WatchNoteRouter.shared.stage(sent: noteText)
             }
             return true
         }

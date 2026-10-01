@@ -15,6 +15,10 @@
  * (`voiceNotes.*` writer ops); reads run on the gateway's read handle.
  */
 
+import {
+  OMNESIS_NOTES_PROVIDER_ID,
+  OMNESIS_NOTES_SOURCE_ID,
+} from "../sources/omnesis-notes/index.js";
 import type Database from "better-sqlite3";
 
 type Db = Database.Database;
@@ -134,6 +138,38 @@ export function getPendingVoiceNote(db: Db, noteId: string): PendingVoiceNote | 
     )
     .get(noteId);
   return row ? toPending(row) : null;
+}
+
+/** Which of `noteIds` are still waiting on the transcriber. */
+export function pendingVoiceNoteIds(db: Db, noteIds: readonly string[]): Set<string> {
+  if (noteIds.length === 0) return new Set();
+  const rows = db
+    .prepare<string[], { note_id: string }>(
+      `SELECT note_id FROM voice_note_transcriptions
+        WHERE note_id IN (${noteIds.map(() => "?").join(", ")})`,
+    )
+    .all(...noteIds);
+  return new Set(rows.map((row) => row.note_id));
+}
+
+/**
+ * Which of `docIds` are notes day documents holding a voice note still waiting
+ * on the transcriber — content due to be replaced, which background readers
+ * (the Brain) should wait for.
+ */
+export function documentsAwaitingTranscription(db: Db, docIds: readonly string[]): Set<string> {
+  if (docIds.length === 0) return new Set();
+  const rows = db
+    .prepare<string[], { id: string }>(
+      `SELECT DISTINCT d.id
+         FROM documents d
+         JOIN note_entries n ON n.day = d.external_id
+         JOIN voice_note_transcriptions v ON v.note_id = n.id
+        WHERE d.provider_id = ? AND d.source_id = ?
+          AND d.id IN (${docIds.map(() => "?").join(", ")})`,
+    )
+    .all(OMNESIS_NOTES_PROVIDER_ID, OMNESIS_NOTES_SOURCE_ID, ...docIds);
+  return new Set(rows.map((row) => row.id));
 }
 
 /** A pending note's audio; null when not queued. */
