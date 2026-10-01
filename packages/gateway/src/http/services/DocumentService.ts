@@ -47,7 +47,7 @@ import { hasFreeDiskSpace, type DiskSpaceCheck } from "../../disk-guard.js";
 import { BadRequestError, InsufficientStorageError } from "../errors.js";
 import { normalizeSnapshot, vouchesForWholeSource } from "../../absence/snapshot-claims.js";
 import { finishDocumentCascade } from "../../absence/document-cascade.js";
-import { normalizeIcon } from "../../icon-normalizer.js";
+import { normalizeSourceMetaIcons } from "../../icon-normalizer.js";
 import { getUrlCanonicalizers, getUrlCanonicalizerSpecs } from "../../url-canonicalizers.js";
 import { enforceWriteScopeForSource, enforceWriteScopeForSourceType } from "../scope.js";
 import { listLiveAnnotationsForDoc } from "../../brain/index.js";
@@ -877,16 +877,12 @@ export class DocumentService {
       args.replicaVersionPolicy ? { [body.sourceId]: args.replicaVersionPolicy } : undefined,
     );
 
-    // Normalize the icon at the write boundary so every consumer (portal,
-    // iOS, iTerm OSC inline-image) reads back a uniform PNG data URI —
-    // mirrors the older `POST /sync-state/:sourceId` route. Hosted
-    // SVG URLs and SVG data URIs get rasterized once here instead of
-    // forcing each renderer to decode SVG.
-    let meta = body.meta;
-    if (meta?.icon !== undefined) {
-      const normalized = (await normalizeIcon(meta.icon)) ?? undefined;
-      meta = { ...meta, icon: normalized };
-    }
+    // Normalize the source's and its family's icons at the write boundary so
+    // every consumer (portal, iOS, iTerm OSC inline-image) reads back a uniform
+    // PNG data URI, as the `POST /sync-state/:sourceId` routes do. Hosted SVG
+    // URLs and SVG data URIs get rasterized once here instead of forcing each
+    // renderer to decode SVG.
+    const meta = body.meta ? await normalizeSourceMetaIcons(body.meta) : undefined;
 
     // Capture the before-projection for documents.upserted event emission —
     // same pattern as `ingest`, but this endpoint is per-source (single

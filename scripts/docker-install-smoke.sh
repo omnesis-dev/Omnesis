@@ -238,11 +238,11 @@ ok "the CLI wrapper runs in the gateway container"
 # can take the gateway most of that window to boot.
 for _ in $(seq 1 80); do
   docker compose -f "$COMPOSE_FILE" logs collector 2>/dev/null \
-    | grep -q "WebSocket authenticated with gateway" && break
+    | grep "WebSocket authenticated with gateway" >/dev/null && break
   sleep 3
 done
 docker compose -f "$COMPOSE_FILE" logs collector 2>/dev/null \
-  | grep -q "WebSocket authenticated with gateway" || die "the collector never authenticated"
+  | grep "WebSocket authenticated with gateway" >/dev/null || die "the collector never authenticated"
 ok "the collector paired itself and authenticated"
 
 # ── an update killed during the pull ────────────────────────────────────────
@@ -369,12 +369,12 @@ ok "a host client verifies the chain and the name without any bypass"
 
 for _ in $(seq 1 80); do
   docker compose -f "$TLS_COMPOSE_FILE" logs collector 2>/dev/null \
-    | grep -q "WebSocket authenticated with gateway" && break
+    | grep "WebSocket authenticated with gateway" >/dev/null && break
   sleep 3
 done
 docker compose -f "$TLS_COMPOSE_FILE" logs collector 2>/dev/null \
-  | grep -q "WebSocket authenticated with gateway" || die "the collector never authenticated over the supplied certificate"
-docker compose -f "$TLS_COMPOSE_FILE" logs collector 2>/dev/null | grep -q "OMNESIS_INSECURE_TLS" \
+  | grep "WebSocket authenticated with gateway" >/dev/null || die "the collector never authenticated over the supplied certificate"
+docker compose -f "$TLS_COMPOSE_FILE" logs collector 2>/dev/null | grep "OMNESIS_INSECURE_TLS" >/dev/null \
   && die "the collector connected with verification off"
 ok "the collector container dialled https://$TLS_NAME:7600 and verified it"
 

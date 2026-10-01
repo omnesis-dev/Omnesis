@@ -46,7 +46,7 @@ export type {
   AdminDocRef,
   FeedDocRef,
   AnnotationDto,
-  TemporalAnnotationDto,
+  AdminTemporalAnnotation,
   ExecutedTool,
   ToolResultView,
   DecisionDto,

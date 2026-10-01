@@ -3,6 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { searchModelContextResult } from "./test-fixtures/search-model-context.js";
 
 import { BACKGROUND_RATE_LIMIT_PATIENCE, type AgentEvent, type ToolResult } from "@omnesis/core";
 import {
@@ -1513,12 +1514,18 @@ describe("OpenAIResponsesBackend.runTurn", () => {
   });
 
   it("distinguishes the model request deadline from a connection failure", async () => {
+    const deadline = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    let responseRequests = 0;
     globalThis.fetch = vi.fn((input, init) => {
       if (String(input).endsWith("/input_tokens")) {
         return Promise.resolve(jsonResponse({ error: "unsupported" }, 404));
       }
+      responseRequests += 1;
       return new Promise<Response>((_resolve, reject) => {
         init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+        // The deadline expires with fetch pending, after the mock is listening.
+        deadline.abort(new DOMException("Request deadline expired", "TimeoutError"));
       });
     });
     const backend = new OpenAIResponsesBackend({
@@ -1528,6 +1535,8 @@ describe("OpenAIResponsesBackend.runTurn", () => {
     });
 
     const events = await collect(backend.runTurn(baseInput()));
+    expect(timeout).toHaveBeenCalled();
+    expect(responseRequests).toBe(1);
     expect(events.at(-1)).toMatchObject({
       type: "agent.message.end",
       payload: {
@@ -1574,17 +1583,30 @@ describe("OpenAIResponsesBackend.runTurn", () => {
   });
 
   it("types a deadline that expires after streaming headers arrive", async () => {
+    const deadline = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    let responseRequests = 0;
+    let bodyRead = false;
     globalThis.fetch = vi.fn((input: string | URL | Request, init?: RequestInit) => {
       if (String(input).endsWith("/input_tokens")) {
         return Promise.resolve(jsonResponse({ error: "unsupported" }, 404));
       }
-      const body = new ReadableStream<Uint8Array>({
-        start(stream) {
-          init?.signal?.addEventListener("abort", () => stream.error(init.signal?.reason), {
-            once: true,
-          });
+      responseRequests += 1;
+      const body = new ReadableStream<Uint8Array>(
+        {
+          start(stream) {
+            init?.signal?.addEventListener("abort", () => stream.error(init.signal?.reason), {
+              once: true,
+            });
+          },
+          pull() {
+            bodyRead = true;
+            deadline.abort(new DOMException("Request deadline expired", "TimeoutError"));
+          },
         },
-      });
+        // No eager prefetch: only the backend's reader can trigger the deadline.
+        { highWaterMark: 0 },
+      );
       return Promise.resolve(
         new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }),
       );
@@ -1595,6 +1617,9 @@ describe("OpenAIResponsesBackend.runTurn", () => {
       timeoutMs: 5,
     });
     const events = await collect(backend.runTurn(baseInput()));
+    expect(timeout).toHaveBeenCalled();
+    expect(responseRequests).toBe(1);
+    expect(bodyRead).toBe(true);
     expect(events.at(-1)).toMatchObject({
       type: "agent.message.end",
       payload: { failure: { code: "http_request_timeout" } },
@@ -1602,17 +1627,29 @@ describe("OpenAIResponsesBackend.runTurn", () => {
   });
 
   it("types a deadline while reading a rejected response body", async () => {
+    const deadline = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    let responseRequests = 0;
+    let bodyRead = false;
     globalThis.fetch = vi.fn((input: string | URL | Request, init?: RequestInit) => {
       if (String(input).endsWith("/input_tokens")) {
         return Promise.resolve(jsonResponse({ error: "unsupported" }, 404));
       }
-      const body = new ReadableStream<Uint8Array>({
-        start(stream) {
-          init?.signal?.addEventListener("abort", () => stream.error(init.signal?.reason), {
-            once: true,
-          });
+      responseRequests += 1;
+      const body = new ReadableStream<Uint8Array>(
+        {
+          start(stream) {
+            init?.signal?.addEventListener("abort", () => stream.error(init.signal?.reason), {
+              once: true,
+            });
+          },
+          pull() {
+            bodyRead = true;
+            deadline.abort(new DOMException("Request deadline expired", "TimeoutError"));
+          },
         },
-      });
+        { highWaterMark: 0 },
+      );
       return Promise.resolve(
         new Response(body, { status: 503, headers: { "Content-Type": "application/json" } }),
       );
@@ -1623,6 +1660,9 @@ describe("OpenAIResponsesBackend.runTurn", () => {
       timeoutMs: 5,
     });
     const events = await collect(backend.runTurn(baseInput()));
+    expect(timeout).toHaveBeenCalled();
+    expect(responseRequests).toBe(1);
+    expect(bodyRead).toBe(true);
     expect(events.at(-1)).toMatchObject({
       type: "agent.message.end",
       payload: { failure: { code: "http_request_timeout" } },
@@ -1657,5 +1697,68 @@ describe("OpenAIResponsesBackend.runTurn", () => {
       );
     const events = await collect(newBackend().runTurn(baseInput()));
     expect(textOf(events)).toBe("Hello world");
+  });
+});
+
+describe("model context serialization", () => {
+  it("projects historical tool evidence without mutating canonical history", () => {
+    const result = searchModelContextResult();
+    const canonical = JSON.stringify(result);
+    const { instructions, input } = convertHistoryToResponsesInput(
+      [{ role: "user", parts: [{ kind: "tool_result", toolCallId: "call-model", result }] }],
+      "next",
+      "Use the supplied evidence.",
+    );
+    expect(instructions).toBe("Use the supplied evidence.");
+    const output = input.find((item) => "type" in item && item.type === "function_call_output");
+    if (!output || !("output" in output)) throw new Error("Expected historical tool output");
+    expect(JSON.parse(output.output).results[0].provenance).toEqual(
+      result.results[0]!.provenance!.modelContext,
+    );
+    expect(JSON.stringify(result)).toBe(canonical);
+  });
+  it("projects live tool output while retaining the canonical emitted event", async () => {
+    const result = searchModelContextResult();
+    const canonical = JSON.stringify(result);
+    const fetchMock = routedFetch(
+      [jsonResponse({ error: { message: "not supported" } }, 404)],
+      [
+        sseResponse([
+          { type: "response.created", response: { id: "resp-model-1" } },
+          {
+            type: "response.output_item.done",
+            item: {
+              id: "fc-model",
+              type: "function_call",
+              call_id: "call-model",
+              name: "search_documents",
+              arguments: '{"query":"agreement"}',
+            },
+          },
+          { type: "response.completed", response: { id: "resp-model-1" } },
+        ]),
+        sseResponse([
+          { type: "response.created", response: { id: "resp-model-2" } },
+          { type: "response.output_text.delta", delta: "Done." },
+          { type: "response.completed", response: { id: "resp-model-2" } },
+        ]),
+      ],
+    );
+    globalThis.fetch = fetchMock;
+    const events = await collect(
+      new OpenAIResponsesBackend({
+        baseUrl: "http://localhost:18083",
+        model: "test",
+        apiKey: "test",
+      }).runTurn(baseInput({ tools: [fakeToolHandle("search_documents", () => result)] })),
+    );
+    const body = JSON.parse((fetchMock.mock.calls[2]![1] as RequestInit).body as string);
+    expect(JSON.parse(body.input[0].output).results[0].provenance).toEqual(
+      result.results[0]!.provenance!.modelContext,
+    );
+    expect(events.find((event) => event.type === "agent.tool.result")?.payload.result).toEqual(
+      result,
+    );
+    expect(JSON.stringify(result)).toBe(canonical);
   });
 });

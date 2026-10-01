@@ -3,6 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { searchModelContextResult } from "./test-fixtures/search-model-context.js";
 
 import { BACKGROUND_RATE_LIMIT_PATIENCE, type AgentEvent, type ToolResult } from "@omnesis/core";
 import { HttpChatBackend, convertHistoryToOpenAI, convertToolsToOpenAI } from "./http-backend.js";
@@ -2639,5 +2640,51 @@ describe("HttpChatBackend — resilience ladder", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const body = JSON.parse((fetchSpy.mock.calls[0] as [string, RequestInit])[1].body as string);
     expect(body.stream_options).toBeUndefined();
+  });
+});
+
+describe("model context serialization", () => {
+  it("projects historical tool evidence without mutating canonical history", () => {
+    const result = searchModelContextResult();
+    const canonical = JSON.stringify(result);
+    const messages = convertHistoryToOpenAI(
+      [{ role: "user", parts: [{ kind: "tool_result", toolCallId: "call-model", result }] }],
+      "next",
+      "system",
+    );
+    const modelResult = JSON.parse(
+      messages.find((message) => message.role === "tool")!.content as string,
+    );
+    expect(modelResult.results[0].provenance).toEqual(result.results[0]!.provenance!.modelContext);
+    expect(modelResult.results[0].documentId).toBe("doc-agreement");
+    expect(JSON.stringify(result)).toBe(canonical);
+  });
+  it("projects the live model request while emitting the original canonical tool event", async () => {
+    const result = searchModelContextResult();
+    const canonical = JSON.stringify(result);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        mockFetchResponse(
+          sseBody(toolUseSSE("call-model", "search_documents", { query: "agreement" })),
+        ),
+      )
+      .mockResolvedValueOnce(mockFetchResponse(sseBody(textOnlySSE(["Done."]))));
+    globalThis.fetch = fetchMock;
+    const events: AgentEvent[] = [];
+    for await (const event of new HttpChatBackend({
+      baseUrl: "http://localhost:18083",
+      model: "test",
+    }).runTurn(baseInput({ tools: [fakeToolHandle("search_documents", () => result)] })))
+      events.push(event);
+    const body = JSON.parse((fetchMock.mock.calls[1]![1] as RequestInit).body as string);
+    const toolMessage = body.messages.find((message: { role: string }) => message.role === "tool");
+    expect(JSON.parse(toolMessage.content).results[0].provenance).toEqual(
+      result.results[0]!.provenance!.modelContext,
+    );
+    expect(events.find((event) => event.type === "agent.tool.result")?.payload.result).toEqual(
+      result,
+    );
+    expect(JSON.stringify(result)).toBe(canonical);
   });
 });

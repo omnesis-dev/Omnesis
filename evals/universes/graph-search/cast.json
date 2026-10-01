@@ -1,0 +1,23 @@
+{
+  "self": "p_maya",
+  "people": [
+    {
+      "id": "p_maya",
+      "name": "Maya Reeves",
+      "emails": ["maya@example.com"],
+      "phones": ["+15550100100"]
+    },
+    {
+      "id": "p_jamie",
+      "name": "Jamie Lopez",
+      "emails": ["jamie@example.org"],
+      "phones": ["+15550100101"]
+    },
+    {
+      "id": "p_sarah",
+      "name": "Sarah Mendez",
+      "emails": ["sarah@example.org"]
+    }
+  ],
+  "orgs": []
+}

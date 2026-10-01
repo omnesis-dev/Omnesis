@@ -676,52 +676,6 @@ export function queryTemporalAnnotationOverlap(
   return rows.map(rowToAnnotation);
 }
 
-/**
- * Result-size clamps shared by every windowed/listed temporal-annotation read (the
- * calendar window route, the admin debug list). One definition so the
- * pair can't drift between the read paths.
- */
-export const TEMPORAL_ANNOTATION_READ_DEFAULT_LIMIT = 300;
-export const TEMPORAL_ANNOTATION_READ_MAX_LIMIT = 500;
-
-/**
- * The annotation calendar-window read: live annotations overlapping
- * `[startMs, endMs]` (inclusive), optionally filtered to
- * a kind set (the Upcoming rail passes deadline/expiry/reminder). Ordered by
- * interval start with id as a stable tiebreaker. Runs on a read-only handle.
- */
-export function queryTemporalAnnotationWindow(
-  db: Db,
-  opts: {
-    startMs: number;
-    endMs: number;
-    kinds?: readonly string[] | undefined;
-    limit?: number | undefined;
-  },
-): TemporalAnnotation[] {
-  const limit = Math.min(
-    Math.max(opts.limit ?? TEMPORAL_ANNOTATION_READ_DEFAULT_LIMIT, 1),
-    // +1 headroom so the window assembler can detect truncation by
-    // over-fetching one row past the client-visible cap.
-    TEMPORAL_ANNOTATION_READ_MAX_LIMIT + 1,
-  );
-  const kinds = opts.kinds?.filter((k) => k.length > 0) ?? [];
-  const kindFilter = kinds.length > 0 ? `AND e.kind IN (${kinds.map(() => "?").join(", ")})` : "";
-  const rows = db
-    .prepare(
-      `SELECT ${ANNOTATION_COLUMNS}
-         FROM temporal_annotations e
-        WHERE e.invalidated_at IS NULL
-          AND e.interval_start_ms <= ?
-          AND e.interval_end_ms   >= ?
-          ${kindFilter}
-        ORDER BY e.interval_start_ms ASC, e.id ASC
-        LIMIT ?`,
-    )
-    .all(opts.endMs, opts.startMs, ...kinds, limit) as AnnotationRow[];
-  return rows.map(rowToAnnotation);
-}
-
 /** Fetch one live annotation by id, or null. Runs on a read-only handle. */
 export function getTemporalAnnotationById(db: Db, id: string): TemporalAnnotation | null {
   return getTemporalAnnotationsByIds(db, [id])[0] ?? null;
@@ -820,6 +774,9 @@ export function listTemporalAnnotationsForPerson(db: Db, personId: string): Temp
     .all(personId, personId) as AnnotationRow[];
   return rows.map(rowToAnnotation);
 }
+
+/** The most annotations one page of the debug list may hold. */
+const TEMPORAL_ANNOTATION_READ_MAX_LIMIT = 500;
 
 /**
  * List live annotations in chronological order (by interval start), for the debug

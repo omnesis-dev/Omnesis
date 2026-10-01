@@ -61,8 +61,8 @@ public final class NotesClient: Sendable {
         return try decodeOrThrow(NoteEntry.self, from: data)
     }
 
-    /// `POST /notes/voice` — create one note from a recording (experimental
-    /// gateway dictation). The note exists at once with `text`, the phone's
+    /// `POST /notes/voice` — create one note from a recording (gateway
+    /// dictation). The note exists at once with `text`, the phone's
     /// own transcript (or a placeholder when that is empty), and the gateway
     /// replaces it with its transcription of `audio` when that is ready. The
     /// same `id` again is idempotent. A gateway that does not take voice

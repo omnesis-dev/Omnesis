@@ -888,7 +888,7 @@ class ScreensScreenshotTest {
         ) { AboutSection(sampleAppVersion()) }
     }
 
-    // The Voice section (experimental gateway dictation) renders on its own for the
+    // The Voice section (gateway dictation) renders on its own for the
     // same reason as About: it sits below the captured viewport.
     @Composable
     private fun VoiceSectionAlone(voice: VoiceSettingsState) {

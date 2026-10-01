@@ -10,10 +10,10 @@
 import { BadRequestError } from "./errors.js";
 
 /** Hard cap on a window's span — a year-plus view is a misuse, not a zoom. */
-export const TEMPORAL_WINDOW_MAX_SPAN_MS = 400 * 24 * 60 * 60 * 1000;
+const TEMPORAL_WINDOW_MAX_SPAN_MS = 400 * 24 * 60 * 60 * 1000;
 
 /** The most values one facet filter may name. */
-export const FACET_FILTER_MAX = 12;
+const FACET_FILTER_MAX = 12;
 
 interface QueryReader {
   req: { query(name: string): string | undefined };

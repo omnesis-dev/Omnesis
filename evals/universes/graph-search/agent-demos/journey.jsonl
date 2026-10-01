@@ -1,0 +1,4 @@
+{"afterMs":0,"event":{"type":"agent.message.start","payload":{"sessionId":"$SESSION","messageId":"$MSG","role":"assistant"}}}
+{"afterMs":0,"event":{"type":"agent.tool.start","payload":{"sessionId":"$SESSION","toolCallId":"graph-search","tool":"search_many","args":{"queries":[{"query":"\"Northstar Equipment Agreement copy 1.pdf\" source:google-drive","limit":1}]},"messageId":"$MSG"},"capture":{}},"capture":{"context":"items.0.results.0.provenance.summary"}}
+{"afterMs":0,"event":{"type":"agent.text.delta","payload":{"sessionId":"$SESSION","messageId":"$MSG","delta":"$CAP_context"}}}
+{"afterMs":0,"event":{"type":"agent.message.end","payload":{"sessionId":"$SESSION","messageId":"$MSG","stopReason":"end_turn"}}}

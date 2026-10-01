@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { defineCommand } from "citty";
-import { parseSourceKey } from "@omnesis/core";
+import { parseSourceKey, toolResultSchema } from "@omnesis/core";
 import {
   c,
   isJSON,
@@ -19,6 +19,7 @@ import {
   EXIT_GATEWAY_ERROR,
   EXIT_FAILURE,
 } from "../utils.js";
+import { requestSearch, renderAgentSearch } from "./search-agent-context.js";
 
 export const searchCommand = defineCommand({
   meta: {
@@ -45,6 +46,10 @@ export const searchCommand = defineCommand({
       type: "boolean",
       description: "Machine-readable JSON output",
     },
+    "agent-context": {
+      type: "boolean",
+      description: "Show graph context from agent search (requires gateway admin access)",
+    },
   },
   async run(ctx) {
     const { args } = ctx;
@@ -66,14 +71,12 @@ export const searchCommand = defineCommand({
     }
     const verbose = args.verbose;
 
-    const searchQuery: Record<string, unknown> = { text: query, limit };
-
-    const res = await withSpinner(`Searching "${query}"`, () =>
-      gw("/search", {
-        method: "POST",
-        body: JSON.stringify(searchQuery),
-      }),
+    const search = await withSpinner(`Searching "${query}"`, () =>
+      requestSearch(query, limit, args["agent-context"] === true, gw, (message) =>
+        console.error(message),
+      ),
     );
+    const res = search.response;
 
     if (!res.ok) {
       const data = (await res.json().catch(() => ({}))) as { error?: string };
@@ -89,6 +92,17 @@ export const searchCommand = defineCommand({
     }
 
     const data = await res.json();
+
+    if (search.agentContext) {
+      const parsed = toolResultSchema.safeParse(data);
+      if (!parsed.success || parsed.data.kind !== "search.results")
+        throw new CliError("Invalid agent context search response", EXIT_GATEWAY_ERROR);
+      if (isJSON) console.log(JSON.stringify(data, null, 2));
+      else
+        for (const line of renderAgentSearch(parsed.data, verbose === true, await buildCliFx()))
+          console.log(line);
+      return;
+    }
 
     if (isJSON) {
       console.log(JSON.stringify(data, null, 2));

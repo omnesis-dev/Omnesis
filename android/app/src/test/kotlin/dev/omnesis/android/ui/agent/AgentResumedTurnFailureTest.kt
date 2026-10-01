@@ -9,14 +9,8 @@ import dev.omnesis.android.transport.dto.AssistantPart
 import dev.omnesis.android.transport.dto.ChatMessage
 import dev.omnesis.android.transport.dto.CreateSessionResponse
 import dev.omnesis.android.transport.dto.UserPart
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.resetMain
-import kotlinx.coroutines.test.setMain
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -166,15 +160,12 @@ class AgentTerminalFailureMarkerTest {
  *
  * All fixture data is invented. The Android twin of the iOS `ResumedTurnFailureTests`.
  */
-@OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 class AgentResumedTurnFailureTest {
 
-    @Before fun setUp() = Dispatchers.setMain(Dispatchers.Unconfined)
-
-    @After fun tearDown() = Dispatchers.resetMain()
-
     private fun resume(assistantText: String, lastTurnFailure: AgentTerminalFailure?): AgentTurn.Assistant {
+        // This snapshot has no buffered/replay events or attached transport: applying it is
+        // synchronous, so the fixture does not need to replace the process-wide Main dispatcher.
         val coord = AgentCoordinator()
         coord.applySnapshotForTesting(
             CreateSessionResponse(

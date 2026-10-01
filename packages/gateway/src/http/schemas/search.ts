@@ -24,3 +24,11 @@ export const searchBody = z
   })
   .passthrough();
 export type SearchBody = z.infer<typeof searchBody>;
+
+/** Operator debugging surface; no caller-controlled authorization or graph knobs. */
+export const agentSearchContextBody = z
+  .object({
+    text: z.string().trim().min(1),
+    limit: z.number().int().min(1).max(100).optional(),
+  })
+  .strict();

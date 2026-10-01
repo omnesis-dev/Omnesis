@@ -2,10 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createLogger } from "@omnesis/core";
+import { SCOPE_ADMIN, SCOPE_READ, scopeSatisfies } from "@omnesis/types";
 import { scope } from "../scope.js";
 import { validateJson } from "../validate.js";
-import { searchBody } from "../schemas/index.js";
-import { BadRequestError, ServiceUnavailableError } from "../errors.js";
+import { agentSearchContextBody, searchBody } from "../schemas/index.js";
+import { BadRequestError, ForbiddenError, ServiceUnavailableError } from "../errors.js";
 import { searchRateLimiter } from "../../rate-limit.js";
 import { hiddenSourceIdsToExclude } from "../../search/hidden-sources.js";
 import { likeSearchDocuments } from "../../search/like-search.js";
@@ -15,6 +16,7 @@ import type { SearchQuery } from "../../search/types.js";
 import type { SearchPipeline } from "../../search/pipeline.js";
 import type { LikeSearchArgs, LikeSearchRow } from "../../search/like-search.js";
 import type Database from "better-sqlite3";
+import type { SearchPort } from "@omnesis/agent";
 
 type Db = Database.Database;
 
@@ -28,6 +30,8 @@ const log = createLogger("gateway:http").child("routes:search");
 export interface SearchRoutesDeps {
   db: Db;
   searchPipeline?: SearchPipeline;
+  /** Canonical unrestricted agent projection; omitted unless search v2 is enabled. */
+  agentSearchPort?: SearchPort;
   indexerReadiness?: () =>
     | { status: "spawning"; message?: string }
     | { status: "loading-model"; message?: string; stage?: string; progress?: number }
@@ -47,9 +51,53 @@ export function mountSearchRoutes(app: RouteApp, deps: SearchRoutesDeps): void {
   const { db, searchPipeline, indexerReadiness } = deps;
   const searchLimiter = searchRateLimiter();
 
+  if (deps.agentSearchPort) {
+    const agentSearchPort = deps.agentSearchPort;
+    app.post(
+      "/admin/search/agent-context",
+      scope.admin(),
+      scope.read(),
+      validateJson(agentSearchContextBody),
+      async (c) => {
+        if (c.get("auth").authMethod === "principal-oauth") {
+          throw new ForbiddenError("Operator credentials required for agent search context");
+        }
+        if (!isLoopbackRequest(c) && searchLimiter.consume(clientIp(c))) {
+          return c.json({ error: "Too many search requests — try again later" }, 429, {
+            "Retry-After": "60",
+          });
+        }
+        const body = c.req.valid("json");
+        const signal = c.req.raw.signal;
+        signal.throwIfAborted();
+        const result = await agentSearchPort.search(
+          { query: body.text, limit: body.limit },
+          signal,
+        );
+        signal.throwIfAborted();
+        return c.json({
+          kind: "search.results" as const,
+          query: result.query,
+          durationMs: result.durationMs,
+          candidates: result.totalCandidates,
+          results: result.results,
+        });
+      },
+    );
+  }
+
   app.get("/search/readiness", scope.read(), (c) => {
     const indexer = indexerReadiness?.() ?? { status: "ready" as const };
-    return c.json({ indexer });
+    const auth = c.get("auth");
+    const agentContextAvailable =
+      !!deps.agentSearchPort &&
+      auth.authMethod !== "principal-oauth" &&
+      scopeSatisfies(auth.scopes, SCOPE_ADMIN) &&
+      scopeSatisfies(auth.scopes, SCOPE_READ);
+    return c.json({
+      indexer,
+      ...(agentContextAvailable ? { agentContextAvailable: true } : {}),
+    });
   });
 
   app.post("/search", scope.read(), validateJson(searchBody), async (c) => {

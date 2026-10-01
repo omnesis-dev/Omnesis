@@ -6,6 +6,8 @@
  * pipeline, resolved from `omnesis.json` onto defaults.
  */
 
+import { DEFAULT_SEARCH_V2_SETTINGS } from "@omnesis/config";
+
 import { computeIsfPriors, type SourceDocCount } from "./source-isf-prior.js";
 import type {
   ResolvedSourcePriorsConfig,
@@ -164,6 +166,8 @@ export function resolveVectorConfig(config?: SearchConfig): Required<SearchVecto
 }
 
 export interface SearchConfig {
+  /** Default-on grouping and graph provenance for unrestricted agent searches. */
+  v2?: Partial<SearchV2Config>;
   /** Fusion + limit tunables; see {@link DEFAULT_SEARCH_PARAMS}. */
   params?: Partial<SearchParams>;
   /** Per-type and relevance score boosts; see {@link DEFAULT_SEARCH_BOOSTS}. */
@@ -262,6 +266,28 @@ export interface SearchConfig {
    */
   embedderPrefixes?: {
     enabled?: boolean;
+  };
+}
+
+export interface SearchV2Config {
+  enabled: boolean;
+  topN: number;
+  maxDepth: number;
+  fanout: number;
+  maxNodes: number;
+  maxCopies: number;
+  maxSummaryChars: number;
+}
+
+export function resolveSearchV2Config(config?: SearchConfig): SearchV2Config {
+  return {
+    enabled: (config?.v2?.enabled ?? DEFAULT_SEARCH_V2_SETTINGS.enabled) === true,
+    topN: config?.v2?.topN ?? DEFAULT_SEARCH_V2_SETTINGS.topN,
+    maxDepth: config?.v2?.maxDepth ?? DEFAULT_SEARCH_V2_SETTINGS.maxDepth,
+    fanout: config?.v2?.fanout ?? DEFAULT_SEARCH_V2_SETTINGS.fanout,
+    maxNodes: config?.v2?.maxNodes ?? DEFAULT_SEARCH_V2_SETTINGS.maxNodes,
+    maxCopies: config?.v2?.maxCopies ?? DEFAULT_SEARCH_V2_SETTINGS.maxCopies,
+    maxSummaryChars: config?.v2?.maxSummaryChars ?? DEFAULT_SEARCH_V2_SETTINGS.maxSummaryChars,
   };
 }
 

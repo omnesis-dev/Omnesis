@@ -2123,6 +2123,22 @@ a:hover { text-decoration: underline; }
   flex-direction: column;
 }
 .result-list > .result-card:last-child { border-bottom: none; }
+.search-result-with-context { border-bottom: 1px solid var(--border-light); }
+.search-result-with-context:last-child { border-bottom: none; }
+.search-result-with-context > .result-card { border-bottom: none; }
+.search-provenance {
+  margin: 2px 12px 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.search-provenance { scroll-margin-top: 20px; }
+.search-provenance-facts { margin: 0; padding-left: 18px; }
+.search-provenance-facts > li { margin: 5px 0; line-height: 1.6; }
+.search-graph-document { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; vertical-align: middle; }
+.search-graph-document-icon { display: inline-flex; align-items: center; flex-shrink: 0; }
+.search-graph-document-title { min-width: 0; overflow-wrap: anywhere; }
+.search-context-notice { color: var(--text-secondary); font-size: 12px; }
 
 .result-card {
   display: block;
@@ -2163,6 +2179,9 @@ a:hover { text-decoration: underline; }
 }
 
 .result-snippet {
+  margin: 0;
+  border-left: 4px solid var(--text-muted);
+  padding-left: 10px;
   font-size: 13px;
   color: var(--text-secondary);
   line-height: 1.4;
