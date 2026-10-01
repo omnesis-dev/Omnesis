@@ -632,6 +632,18 @@ describe("TemporalQueryService", () => {
         allDay: true,
       }),
     ]);
+    const direct = await service.itemById("ta_local_day", "America/Los_Angeles");
+    expect(direct).toMatchObject({
+      id: "ta_local_day",
+      start: "2026-07-23T07:00:00.000Z",
+      endExclusive: "2026-07-24T07:00:00.000Z",
+    });
+    expect(direct).not.toHaveProperty("anchored");
+    db.prepare("UPDATE temporal_annotations SET invalidated_at = ? WHERE id = ?").run(
+      Date.now(),
+      "ta_local_day",
+    );
+    expect(await service.itemById("ta_local_day", "UTC")).toBeNull();
   });
 
   it("uses the serialized event fallback when filtering kindless annotations", async () => {

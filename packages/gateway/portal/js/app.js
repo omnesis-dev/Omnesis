@@ -715,7 +715,7 @@ function App() {
               onLogout=${handleLogout}
             />`
           : route.view === "capture"
-          ? html`<${CaptureView} day=${route.day ?? null} />`
+          ? html`<${CaptureView} day=${route.day ?? null} experimental=${experimental} />`
           : route.view === "privacy"
           ? html`<${PrivacyView}
               approvalId=${route.approvalId}

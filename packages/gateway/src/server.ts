@@ -103,6 +103,7 @@ import { mountDocumentGraphRoute } from "./http/routes/document-graph.js";
 import { mountGraphWalkRoute } from "./http/routes/graph.js";
 import { mountDocumentTrailRoute } from "./http/routes/document-trail.js";
 import { mountNotesRoutes } from "./http/routes/notes.js";
+import { NotesProvenanceService } from "./sources/omnesis-notes/provenance.js";
 import { bootOmnesisNotes, type OmnesisNotesRuntime } from "./sources/omnesis-notes/index.js";
 import { mountAgentMessagesRoutes } from "./http/routes/agent-messages.js";
 import {
@@ -1630,6 +1631,7 @@ export function createServer(
     opts.onOmnesisNotesRuntime(runtime);
   }
   mountNotesRoutes(app, {
+    provenance: new NotesProvenanceService(db),
     runtime: getOmnesisNotesRuntime,
     pendingTranscriptions: (noteIds) => pendingVoiceNoteIds(db, noteIds),
   });

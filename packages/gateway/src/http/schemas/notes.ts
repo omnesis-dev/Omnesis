@@ -143,3 +143,14 @@ export const patchNoteBody = z
   })
   .strict();
 export type PatchNoteBody = z.infer<typeof patchNoteBody>;
+
+export const notesProvenanceQuery = z.object({
+  day: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "must be YYYY-MM-DD")
+    .refine((day) => {
+      const parsed = new Date(`${day}T00:00:00.000Z`);
+      return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === day;
+    }, "must be a calendar date"),
+  timeZone: captureTimeZone.default("UTC"),
+});
