@@ -490,6 +490,7 @@ export function CalendarTab({ selectedId = null, developer = false } = {}) {
             <p>No deadlines, expiries, or reminders in this window match the selected filters.</p>
           </div>`
         : html`<div class="calendar-upcoming">
+            <div class="calendar-upcoming-cards">
             ${upcomingFacts.map(
               (entry) =>
                 html`<${CalendarEntryRow}
@@ -501,6 +502,7 @@ export function CalendarTab({ selectedId = null, developer = false } = {}) {
                   onOpen=${openEntry}
                 />`,
             )}
+            </div>
             <${MentionSection}
               id="upcoming"
               entries=${upcomingMentions}

@@ -11267,7 +11267,7 @@ div.source-activity-popover-link:hover {
 .calendar-day.today .calendar-day-number { color: var(--accent); }
 .calendar-today-label { color: var(--accent); font-size: 10px; text-transform: uppercase; }
 .calendar-day-entries, .calendar-upcoming, .calendar-banners { display: grid; gap: 7px; }
-.calendar-day-entries { container-type: inline-size; min-width: 0; }
+.calendar-day-entries, .calendar-upcoming { container-type: inline-size; min-width: 0; }
 .calendar-entry {
   display: flex;
   align-items: stretch;
@@ -11308,8 +11308,12 @@ div.source-activity-popover-link:hover {
 .calendar-weekdays span { padding: 4px; color: var(--text-muted); font-size: 10px; font-weight: 650; text-align: center; }
 .calendar-month-grid { border: 1px solid var(--border-light); border-radius: 8px; overflow: hidden; min-width: 440px; }
 .calendar-month-day {
-  min-height: 68px;
-  padding: 6px;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px;
+  min-height: 34px;
+  padding: 4px;
   border: 0;
   border-right: 1px solid var(--border-light);
   border-bottom: 1px solid var(--border-light);
@@ -11322,7 +11326,7 @@ div.source-activity-popover-link:hover {
 .calendar-month-day.outside { opacity: .35; }
 .calendar-month-day.selected { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .calendar-month-day.today .calendar-month-number { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: white; }
-.calendar-month-marks { display: flex; align-items: center; gap: 3px; margin-top: 8px; }
+.calendar-month-marks { display: flex; align-items: center; gap: 3px; margin-top: 0; }
 .calendar-month-marks > span { width: 8px; height: 8px; border-radius: 50%; background: var(--calendar-kind); }
 .calendar-month-marks small { color: var(--text-muted); }
 .calendar-month-wrap + .calendar-day { margin-top: 16px; }
@@ -11346,9 +11350,10 @@ div.source-activity-popover-link:hover {
 .calendar-origin-filters { display: inline-flex; flex-wrap: wrap; gap: 3px; }
 .calendar-origin-filters button { padding: 5px 10px; border: 1px solid var(--border-light); border-radius: 6px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 12px; cursor: pointer; }
 .calendar-origin-filters button.active { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--accent); }
+.calendar-upcoming-cards { display: grid; gap: 7px; }
 .calendar-entry-group { display: grid; gap: 6px; }
 .calendar-entry-group h3 { grid-column: 1 / -1; margin: 8px 0 2px; color: var(--text-secondary); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
-.calendar-item { display: flex; flex-direction: column; min-width: 0; position: relative; border: 1px solid var(--border-light); border-radius: 8px; background: var(--bg-secondary); }
+.calendar-item { container-type: inline-size; display: flex; flex-direction: column; min-width: 0; position: relative; border: 1px solid var(--border-light); border-radius: 8px; background: var(--bg-secondary); }
 .calendar-item .calendar-entry { flex: 1; border: 0; border-radius: 8px 8px 0 0; background: transparent; padding-bottom: 5px; }
 .calendar-item:hover { border-color: var(--border); }
 .calendar-item--annotation { background: color-mix(in srgb, #a78bfa 7%, var(--bg-secondary)); border-left: 3px solid #a78bfa; }
@@ -11362,7 +11367,7 @@ div.source-activity-popover-link:hover {
 .calendar-origin-help--projection { color: var(--text-secondary); }
 .calendar-origin-help--annotation { color: #a78bfa; }
 .calendar-origin-tooltip::before { content: ""; position: absolute; left: 0; right: 0; top: -7px; height: 7px; }
-.calendar-origin-tooltip { display: none; position: absolute; z-index: 20; top: calc(100% + 5px); left: 0; width: min(290px, 65vw); padding: 10px 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-primary); color: var(--text-primary); box-shadow: 0 6px 18px #0003; font-size: 12px; line-height: 1.5; }
+.calendar-origin-tooltip { display: none; position: absolute; z-index: 20; top: calc(100% + 5px); left: 0; width: min(290px, 65vw, calc(100cqw - 42px)); padding: 10px 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-primary); color: var(--text-primary); box-shadow: 0 6px 18px #0003; font-size: 12px; line-height: 1.5; }
 .calendar-origin-help.is-open .calendar-origin-tooltip,
 .calendar-origin-help:not(.is-dismissed):focus-within .calendar-origin-tooltip { display: block; }
 @media (hover: hover) { .calendar-origin-help:not(.is-dismissed):hover .calendar-origin-tooltip { display: block; } }
@@ -11376,15 +11381,15 @@ div.source-activity-popover-link:hover {
 .calendar-mention-document { display: grid; gap: 6px; }
 .calendar-mention-document h4 { grid-column: 1 / -1; margin: 0; font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; }
 @container (min-width: 480px) {
-  .calendar-entry-group, .calendar-mention-document { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .calendar-entry-group, .calendar-mention-document, .calendar-upcoming-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @container (min-width: 720px) {
-  .calendar-entry-group, .calendar-mention-document { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .calendar-entry-group, .calendar-mention-document, .calendar-upcoming-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @container (min-width: 960px) {
-  .calendar-entry-group, .calendar-mention-document { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .calendar-entry-group, .calendar-mention-document, .calendar-upcoming-cards { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
-.calendar-month-mentions { display: block; margin-top: 4px; font-size: 10px; color: var(--text-muted); }
+.calendar-month-mentions { display: block; margin-top: 0; font-size: 10px; color: var(--text-muted); }
 .calendar-mentioned-quote, .calendar-evidence-quote { margin: 8px 0 0; padding: 8px 12px; border-left: 3px solid var(--border); color: var(--text-secondary); font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .calendar-detail--annotation .calendar-provenance { border-left: 3px solid #a78bfa; }
 .calendar-detail--mention .calendar-provenance { border: 1px dashed var(--border); }
