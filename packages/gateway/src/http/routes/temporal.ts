@@ -9,8 +9,8 @@
  * annotations — through the same `TemporalQueryService` the agents'
  * `temporal_query` tool reads, so the portal and the agent see one index.
  * Callers use unix-ms bounds; the service normalizes them into the tool's
- * half-open, time-zone-aware contract. An annotation is also addressable on
- * its own, through the same service.
+ * half-open, time-zone-aware contract. An annotation or recognized date is also
+ * addressable on its own, through the same service.
  *
  * Not gated on experimental mode or the Brain: projections and mentions exist
  * on every install. Admin-scoped like the rest of the operator surface.
@@ -134,6 +134,13 @@ export function mountTemporalRoutes(app: RouteApp, deps: TemporalRoutesDeps): vo
     const timeZone = requireTimeZone(c.req.query("timeZone"));
     const item = await service().annotationById(c.req.param("id"), timeZone).catch(toBadRequest);
     if (!item) throw new NotFoundError("Temporal annotation not found");
+    return c.json({ item });
+  });
+
+  app.get("/temporal/items/:id", scope.admin(), async (c) => {
+    const timeZone = requireTimeZone(c.req.query("timeZone"));
+    const item = await service().itemById(c.req.param("id"), timeZone).catch(toBadRequest);
+    if (!item) throw new NotFoundError("Temporal item not found");
     return c.json({ item });
   });
 }

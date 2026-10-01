@@ -20,7 +20,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../api.js", () => ({
   getCalendarWindow: mocks.getWindow,
   getDocumentSummariesBulk: mocks.getDocuments,
-  getCalendarAnnotation: mocks.getAnnotation,
+  getCalendarItem: mocks.getAnnotation,
   getStatus: mocks.getStatus,
 }));
 vi.mock("../lib/router.js", () => ({ navigate: mocks.navigate, replaceRoute: mocks.replaceRoute }));
@@ -54,7 +54,9 @@ function entry(id, label, origin = "projection") {
     status: "active",
     ...(origin === "annotation"
       ? { annotation: { documentIds: [], revision: 1 } }
-      : { projection: { sourceId: "fictional-calendar:account", slot: "event" } }),
+      : origin === "mention"
+        ? { mention: { documentId: "notes-document", text: label } }
+        : { projection: { sourceId: "fictional-calendar:account", slot: "event" } }),
   };
 }
 
@@ -198,6 +200,34 @@ describe("Calendar loading and addressability", () => {
     await act(async () => { render(h(CalendarTab, { selectedId: null }), host); });
     await flushEffects();
     expect(host.querySelector(".modal-panel")).toBeNull();
+  });
+
+  it("loads a routed deterministic mention outside the visible period and clears it on Back", async () => {
+    mocks.getWindow.mockResolvedValue({ items: [], nowMs: Date.now() });
+    mocks.getAnnotation.mockResolvedValue({ item: entry("dm_old", "September date", "mention") });
+    await act(async () => { render(h(CalendarTab, { selectedId: "dm_old" }), host); });
+    await flushEffects();
+    expect(mocks.getAnnotation).toHaveBeenCalledWith("dm_old", expect.any(String));
+    expect(host.querySelector(".modal-panel")?.textContent).toContain("Date written in a document");
+    expect(host.querySelector(".modal-panel")?.textContent).toContain("September date");
+    await act(async () => { render(h(CalendarTab, { selectedId: null }), host); });
+    await flushEffects();
+    expect(host.querySelector(".modal-panel")).toBeNull();
+  });
+
+  it("makes mentions in the visible calendar directly addressable and opens their local detail", async () => {
+    const mention = entry("dm_visible", "Visible date", "mention");
+    mocks.getWindow.mockResolvedValue({ items: [mention], nowMs: Date.now() });
+    await act(async () => { render(h(CalendarTab), host); });
+    await flushEffects();
+    await act(async () => { host.querySelector(".calendar-entry").click(); });
+    expect(mocks.navigate).toHaveBeenCalledWith("/portal/debug/calendar/dm_visible");
+    await act(async () => { render(h(CalendarTab, { selectedId: "dm_visible" }), host); });
+    await flushEffects();
+    expect(host.querySelector(".modal-panel")?.textContent).toContain("Visible date");
+    expect(mocks.getAnnotation).not.toHaveBeenCalled();
+    await act(async () => { host.querySelector(".modal-close").click(); });
+    expect(mocks.replaceRoute).toHaveBeenCalledWith("/portal/debug/calendar");
   });
 
   it("exposes the selected zoom state to assistive technology", async () => {

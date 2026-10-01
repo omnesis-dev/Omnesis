@@ -356,6 +356,44 @@ describe("GET /notes", () => {
   });
 });
 
+describe("GET /notes/provenance", () => {
+  test("read scope can inspect an empty day; unauthenticated and write-only callers cannot", async () => {
+    const res = await req("/notes/provenance?day=2026-10-01", {}, mintToken([SCOPE_READ]));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      day: "2026-10-01",
+      documentId: null,
+      mentions: [],
+      annotations: [],
+      loops: [],
+    });
+    expect((await app.request("/notes/provenance?day=2026-10-01")).status).toBe(401);
+    expect(
+      (await req("/notes/provenance?day=2026-10-01", {}, mintToken([Scope("write:omnesis-notes")])))
+        .status,
+    ).toBe(403);
+  });
+
+  test("validates required calendar day and time zone even when there is no day document", async () => {
+    for (const query of [
+      "",
+      "day=invalid",
+      "day=2026-02-30",
+      "day=2026-10-01&timeZone=Invalid/Zone",
+    ]) {
+      expect((await req(`/notes/provenance?${query}`)).status).toBe(400);
+    }
+  });
+
+  test("resolves the projected document for the captured day", async () => {
+    await capture({ text: "An invented studio outline", capturedAt: "2026-10-01T12:00:00.000Z" });
+    await notesRuntime!.flushAll();
+    const res = await req("/notes/provenance?day=2026-10-01&timeZone=America%2FNew_York");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ documentId: notesDocId("2026-10-01") });
+  });
+});
+
 describe("PATCH /notes/:id", () => {
   test("edits the entry text; 404 for an unknown id", async () => {
     const entry = (await (await capture({ text: "Call the plumber" })).json()) as NoteEntry;
