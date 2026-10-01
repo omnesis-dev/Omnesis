@@ -72,7 +72,7 @@ export function ResultCard({ result, verbose, onClick, peopleSummary }) {
           <${PeopleBubbles} people=${peopleSummary.people} totalCount=${peopleSummary.total} maxVisible=${4} />
         `}
       </div>
-      <div class="result-snippet">${truncatedSnippet}</div>
+      <blockquote class="result-snippet">${truncatedSnippet}</blockquote>
       ${verbose && result.scoreBreakdown && html`<${ScoreDetails} breakdown=${result.scoreBreakdown} />`}
     </a>
   `;

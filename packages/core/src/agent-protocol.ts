@@ -82,6 +82,75 @@ export const breadcrumbSchema = z.object({
 });
 export type Breadcrumb = z.infer<typeof breadcrumbSchema>;
 
+/** Bounded, evidence-backed file locations and graph paths on an agent search hit.
+ * Optional and additive so older clients can ignore it and newer clients can
+ * consume legacy results. Matching extracted text does not assert byte identity. */
+export const searchProvenanceSchema = z.object({
+  summary: z.string().max(2000),
+  copies: z
+    .array(
+      z.object({
+        documentId: z.string().min(1),
+        sourceId: z.string().min(1),
+        title: z.string().max(240).optional(),
+        url: z.string().max(2048).optional(),
+        appUrl: z.string().max(2048).optional(),
+        deviceName: z.string().max(240).optional(),
+        path: z.string().max(240).optional(),
+      }),
+    )
+    .max(24),
+  paths: z
+    .array(
+      z
+        .object({
+          documentIds: z.array(z.string().min(1)).min(2).max(6),
+          edges: z.array(z.string().min(1)).min(1).max(5),
+          /** Optional display phrases aligned with edges; technical labels remain authoritative. */
+          relations: z.array(z.string().min(1).max(160)).max(5).optional(),
+        })
+        .refine(
+          (path) => path.documentIds.length === path.edges.length + 1,
+          "Every path edge must connect two consecutive documents",
+        )
+        .refine(
+          (path) => path.relations === undefined || path.relations.length === path.edges.length,
+          "Every path relation must label its corresponding edge",
+        ),
+    )
+    .max(24),
+  truncated: z.boolean(),
+  stopReasons: z.array(z.enum(["hub", "depth", "nodes", "copies", "summary"])).max(5),
+  /** Optional compact presentation; canonical locations and paths remain available. */
+  modelContext: z
+    .object({
+      facts: z.array(z.string().max(2000)).max(64),
+      documents: z
+        .array(
+          z.object({
+            ref: z.string().regex(/^D[1-9][0-9]*$(?![\s\S])/),
+            documentId: z.string().min(1),
+            sourceId: z.string().min(1),
+            title: z.string().max(240).optional(),
+            url: z.string().max(2048).optional(),
+            appUrl: z.string().max(2048).optional(),
+            deviceName: z.string().max(240).optional(),
+            path: z.string().max(240).optional(),
+          }),
+        )
+        .max(64),
+      limits: z.array(z.string().max(240)).max(5),
+    })
+    .refine(
+      (context) =>
+        new Set(context.documents.map((document) => document.ref)).size ===
+        context.documents.length,
+      "Every model context document reference must be unique",
+    )
+    .optional(),
+});
+export type SearchProvenance = z.infer<typeof searchProvenanceSchema>;
+
 /**
  * A compact reference to an open loop the Cognition Steward tracks that this document
  * is a source for — the "what is this document part of" connection, attached
@@ -249,6 +318,7 @@ export const docRefSchema = z.object({
    * only on the highest-ranked hits of an agent search.
    */
   breadcrumb: z.array(breadcrumbSchema).optional(),
+  provenance: searchProvenanceSchema.optional(),
   /**
    * Open loops this document is a source for — the "what is this part of"
    * connection the Cognition Steward tracks, attached inline in experimental mode

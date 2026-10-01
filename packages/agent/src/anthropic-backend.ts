@@ -44,6 +44,7 @@ const log = createLogger("agent:anthropic");
 const UNKNOWN_MODEL_MAX_TOKENS = 4_096;
 export const DEFAULT_CONTEXT_SAFETY_MARGIN_TOKENS = 256;
 import { zodToJsonSchema } from "./zod-to-json-schema.js";
+import { serializeToolResultForModel } from "./tool-result-text.js";
 import { thinkingBudgetTokens } from "./thinking-budget.js";
 import {
   childEventHooks,
@@ -747,7 +748,7 @@ export class AnthropicBackend implements ChatBackend {
           toolResultBlocks.push({
             type: "tool_result",
             tool_use_id: r.use.id,
-            content: JSON.stringify(r.result),
+            content: serializeToolResultForModel(r.result),
             is_error: toolResultHasErrors(r.result) ? true : undefined,
           });
         }
@@ -1036,7 +1037,7 @@ function convertUserPart(part: UserPart): ContentBlockParam {
   return {
     type: "tool_result",
     tool_use_id: part.toolCallId,
-    content: JSON.stringify(part.result),
+    content: serializeToolResultForModel(part.result),
     is_error: toolResultHasErrors(part.result) ? true : undefined,
   };
 }

@@ -1,0 +1,5 @@
+{"afterMs":0,"event":{"type":"agent.message.start","payload":{"sessionId":"$SESSION","messageId":"$MSG","role":"assistant"}}}
+{"afterMs":0,"event":{"type":"agent.tool.start","payload":{"sessionId":"$SESSION","toolCallId":"graph-search","tool":"search_many","args":{"queries":[{"query":"Northstar Equipment Agreement","limit":20}]},"messageId":"$MSG"},"capture":{}},"capture":{"selected":"items.0.results.0.documentId"}}
+{"afterMs":0,"event":{"type":"agent.tool.start","payload":{"sessionId":"$SESSION","toolCallId":"graph-fetch","tool":"fetch_many","args":{"documents":[{"documentId":"$CAP_selected","includeNeighbors":true}]},"messageId":"$MSG"}}}
+{"afterMs":0,"event":{"type":"agent.text.delta","payload":{"sessionId":"$SESSION","messageId":"$MSG","delta":"The selected agreement and its indexed context were retrieved."}}}
+{"afterMs":0,"event":{"type":"agent.message.end","payload":{"sessionId":"$SESSION","messageId":"$MSG","stopReason":"end_turn"}}}

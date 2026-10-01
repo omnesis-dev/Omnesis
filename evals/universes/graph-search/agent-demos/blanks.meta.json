@@ -1,0 +1,7 @@
+{
+  "triggers": ["Inspect graph blanks"],
+  "placeholders": {
+    "docExternalIds": [],
+    "personNames": []
+  }
+}

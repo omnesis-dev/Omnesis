@@ -4,7 +4,7 @@
 import Foundation
 
 /// A recording that rides a note to the gateway for transcription
-/// (experimental gateway dictation). The note is saved at once with the
+/// (gateway dictation). The note is saved at once with the
 /// phone's transcript and replaced by the gateway's when it is ready.
 public struct NoteAudio: Equatable, Sendable {
     /// The recording. Whoever takes the note owns it: it is deleted once
@@ -99,7 +99,7 @@ struct VoiceNoteCaptureState: Equatable {
 /// Delivers one note, with its recording when it has one.
 ///
 /// A voice note goes to `POST /notes/voice`. A gateway that does not take
-/// voice notes — older or not experimental (404), gateway dictation switched
+/// voice notes — older (404), gateway dictation switched
 /// off (409), no transcriber (503) or a recording over its limit (413) — gets
 /// the note as plain text instead, and the recording is dropped. A voice note
 /// with no text of its own cannot fall back: that is a refusal.

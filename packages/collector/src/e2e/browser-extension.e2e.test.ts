@@ -149,6 +149,34 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
     return res.rows ?? [];
   }
 
+  async function waitForVisitRows(url: string): Promise<unknown[][]> {
+    const deadline = Date.now() + CAPTURE_WAIT_MS;
+    while (Date.now() < deadline) {
+      try {
+        const rows = await visitRows();
+        if (rows.some((row) => row[0] === url)) return rows;
+      } catch (error) {
+        if (
+          !(error instanceof Error) ||
+          !("status" in error) ||
+          error.status !== 400 ||
+          !("body" in error) ||
+          typeof error.body !== "string"
+        )
+          throw error;
+        const body = JSON.parse(error.body) as { code?: string; error?: string };
+        if (
+          body.code !== "BAD_REQUEST" ||
+          body.error?.toLowerCase() !==
+            "sql queries must be a single statement: catalog error: table with name page_visits does not exist!"
+        )
+          throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    throw new Error(`Timed out waiting for page_visits analytics for ${url}`);
+  }
+
   function currentWorker(): Promise<Worker> {
     const live = context.serviceWorkers()[0];
     return live ? Promise.resolve(live) : context.waitForEvent("serviceworker");
@@ -221,7 +249,8 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
         "the captured page must be searchable by its extracted text",
       ).toBe(true);
 
-      const rows = await visitRows();
+      // Documents and visit analytics arrive through separate push requests.
+      const rows = await waitForVisitRows(`${FIXTURE_ORIGIN}/notes-one`);
       expect(rows.length, "one page_visits row per dwell-confirmed visit").toBeGreaterThanOrEqual(
         1,
       );

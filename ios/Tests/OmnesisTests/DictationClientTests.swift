@@ -4,7 +4,7 @@
 @testable import Omnesis
 import XCTest
 
-/// The operator's gateway dictation opt-in, written as a partial config.
+/// The operator's gateway dictation setting, written as a partial config.
 final class DictationClientTests: XCTestCase {
     private let base = URL(string: "https://gateway.example.com:7600")!
 

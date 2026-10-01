@@ -38,7 +38,7 @@ data class StatusSnapshot(
      */
     val briefs: BriefsStatusDto? = null,
     /**
-     * The gateway-dictation gate (experimental). Absent on a gateway that predates
+     * The gateway-dictation gate. Absent on a gateway that predates
      * the field, which reads as inactive: notes keep only the phone's transcript.
      */
     val dictation: DictationStatusDto? = null,
@@ -131,7 +131,7 @@ enum class BriefsMenuEntry {
  */
 @Serializable
 data class DictationStatusDto(
-    /** The gateway runs in experimental mode, so the setting may be shown. */
+    /** The gateway offers the setting, so it may be shown. */
     val visible: Boolean = false,
     /** The operator switched gateway dictation on. */
     val enabled: Boolean = false,

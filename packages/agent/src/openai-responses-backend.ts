@@ -43,6 +43,7 @@ import {
 } from "@omnesis/core";
 
 import { zodToJsonSchema } from "./zod-to-json-schema.js";
+import { serializeToolResultForModel } from "./tool-result-text.js";
 import { isOpenAIApiEndpoint, modelReasoningRequestFields } from "./model-reasoning-wire.js";
 import {
   childEventHooks,
@@ -820,7 +821,7 @@ export class OpenAIResponsesBackend implements ChatBackend {
         nextItems.push({
           type: "function_call_output",
           call_id: r.call.callId,
-          output: JSON.stringify(r.result),
+          output: serializeToolResultForModel(r.result),
         });
       }
 
@@ -1033,7 +1034,7 @@ export function convertHistoryToResponsesInput(
           items.push({
             type: "function_call_output",
             call_id: part.toolCallId,
-            output: JSON.stringify(part.result),
+            output: serializeToolResultForModel(part.result),
           });
         }
       }

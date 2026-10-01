@@ -340,7 +340,7 @@ class NotesRepository(
 }
 
 /**
- * The gateway will not transcribe voice notes — not in experimental mode or too old (404),
+ * The gateway will not transcribe voice notes — too old (404),
  * dictation switched off (409), no runnable transcriber (503) — or not this audio (413).
  * The note itself is still fine as text.
  */

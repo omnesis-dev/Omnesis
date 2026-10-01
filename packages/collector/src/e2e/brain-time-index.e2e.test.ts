@@ -6,9 +6,8 @@
  *
  * Everything here is written by the Cognition Steward through its OWN tools
  * (`temporal_annotation_add` / `_update` / `_delete`) on a real spawned
- * gateway, and read back through the three shipped read surfaces:
- * `/admin/brain/time-index`, `/briefs/time-index/window` and the unified
- * `/temporal/window`. The sibling suites `temporal-substrate` and
+ * gateway, and read back through the two shipped read surfaces:
+ * `/admin/brain/time-index` and the unified `/temporal/window`. The sibling suites `temporal-substrate` and
  * `temporal-calendar` cover the window routes over rows seeded directly into
  * SQLite; this file covers what happens when the STEWARD is the author —
  * precision resolution, revisions, the two invalidation paths, the write
@@ -34,34 +33,15 @@ import {
   fileTemporal,
   ref,
 } from "./brain-bench/index.js";
-import type { ExecutedTool, PuppetBehavior } from "./brain-bench/index.js";
+import type { AdminTemporalAnnotation, ExecutedTool, PuppetBehavior } from "./brain-bench/index.js";
 
 compressCognitionCadences();
 
 // ── the shapes the routes actually serve ────────────────────────────────────
 //
-// `BrainObs.TemporalAnnotationDto` describes `/briefs/time-index/window`
-// (the display-ready serializer: `granularity`, ISO timestamps). The ADMIN
-// list route serves the storage row instead — `precision`, unix-ms
-// timestamps, plus `revision` and the link sets — so it needs its own type.
-
-interface AdminTemporalItem {
-  id: string;
-  intervalStartMs: number;
-  intervalEndMs: number;
-  precision: string;
-  canonical: string | null;
-  sentence: string;
-  kind: string | null;
-  createdByRun: string;
-  createdAt: number;
-  updatedAt: number;
-  revision: number;
-  loopIds: string[];
-  personIds: string[];
-  projectionIds: string[];
-  documents: Array<{ id: string; title: string | null; sourceType: string | null }>;
-}
+// The ADMIN list route serves the storage row (`BrainObs.AdminTemporalAnnotation`:
+// `precision`, unix-ms timestamps, the revision and the link sets); the unified
+// `/temporal/window` serves the display item below.
 
 interface TemporalWindowItem {
   id: string;
@@ -352,14 +332,11 @@ describe("Brain Bench — steward-written temporal annotations", () => {
   // follows it: how many `temporal_annotations` rows outlived the removal of
   // the document they cited, and a description of the state around that count.
 
-  const items = async (marker: string): Promise<AdminTemporalItem[]> => {
-    // The admin list serves the storage row; see AdminTemporalItem above.
-    const page = (await bench.obs.timeIndex({ limit: 500 })) as unknown as {
-      items: AdminTemporalItem[];
-    };
+  const items = async (marker: string): Promise<AdminTemporalAnnotation[]> => {
+    const page = await bench.obs.timeIndex({ limit: 500 });
     return page.items.filter((i) => i.sentence.includes(marker));
   };
-  const one = async (marker: string): Promise<AdminTemporalItem> => {
+  const one = async (marker: string): Promise<AdminTemporalAnnotation> => {
     const found = await items(marker);
     expect(found, `expected exactly one ${marker} annotation`).toHaveLength(1);
     return found[0]!;
@@ -458,8 +435,6 @@ describe("Brain Bench — steward-written temporal annotations", () => {
 
     const from = Date.UTC(2027, 11, 1);
     const to = Date.UTC(2027, 11, 31);
-    const legacy = await bench.obs.timeIndexWindow({ from, to });
-    expect(legacy.entries.some((e) => e.sentence.includes("TIX-DELETE"))).toBe(false);
     const unified = (await bench.obs.temporalWindow({ from, to, timeZone: "UTC" })) as {
       items: TemporalWindowItem[];
     };
@@ -644,8 +619,6 @@ describe("Brain Bench — steward-written temporal annotations", () => {
 
     // The unified read is timezone-aware by contract: it refuses to guess.
     expect(await bench.obs.statusOf(`/temporal/window?from=${from}&to=${to}`)).toBe(400);
-    // The legacy annotation-only read is deliberately timezone-ignorant.
-    expect(await bench.obs.statusOf(`/briefs/time-index/window?from=${from}&to=${to}`)).toBe(200);
   }, 60_000);
 
   test("the stored precision survives every read surface", async () => {
@@ -686,14 +659,6 @@ describe("Brain Bench — steward-written temporal annotations", () => {
       const admin = await one(c.marker);
       // Storage/admin spelling.
       expect(admin.precision, `${c.marker} admin precision`).toBe(c.precision);
-
-      // Legacy display serializer renames it to `granularity` on the wire.
-      const legacy = await bench.obs.timeIndexWindow({ from: c.from, to: c.to, limit: 500 });
-      const entry = legacy.entries.find((e) => e.sentence.includes(c.marker));
-      expect(entry, `${c.marker} in the legacy window`).toBeDefined();
-      expect(entry!.granularity, `${c.marker} granularity`).toBe(c.precision);
-      expect(entry!.id).toBe(admin.id);
-      expect(entry!.canonical).toBe(admin.canonical);
 
       // Unified read keeps the internal spelling.
       const unified = (await bench.obs.temporalWindow({
@@ -807,9 +772,7 @@ describe("Brain Bench — the entailment gate's reject arm on a temporal write",
     expect(adds[0]!.result?.code).toBe("evidence_does_not_entail_claim");
 
     // Nothing persisted — not even an invalidated row.
-    const page = (await bench.obs.timeIndex({ limit: 500 })) as unknown as {
-      items: AdminTemporalItem[];
-    };
+    const page = await bench.obs.timeIndex({ limit: 500 });
     expect(page.items.some((i) => i.sentence.includes("TIX-REJECT"))).toBe(false);
     const rows = bench.sql
       .prepare<

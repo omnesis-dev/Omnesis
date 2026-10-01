@@ -3,7 +3,7 @@
 
 import Foundation
 
-/// Client for the operator's gateway dictation opt-in (experimental),
+/// Client for the operator's gateway dictation setting,
 /// written through the same `PATCH /admin/config` the Models screen uses.
 /// The request is built by a pure static function so the logic lane can pin
 /// its shape.
@@ -68,13 +68,13 @@ private struct DictationOptInPatch: Encodable {
 /// predates the field sends none, which the app reads exactly like an
 /// inactive gate.
 public struct DictationStatus: Decodable, Equatable, Sendable {
-    /// The gateway runs in experimental mode, so the setting may show.
+    /// The gateway offers the setting, so it may show.
     public let visible: Bool
     /// The operator switched gateway dictation on.
     public let enabled: Bool
     /// A transcriber is assigned and its model can run.
     public let modelAssigned: Bool
-    /// Experimental, enabled and a runnable model: send dictation audio.
+    /// Enabled with a runnable model: send dictation audio.
     public let active: Bool
     /// Why the transcriber cannot run, when it cannot.
     public let reason: String?

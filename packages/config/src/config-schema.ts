@@ -425,6 +425,70 @@ const searchBm25 = z
   })
   .strict();
 
+/** Defaults shared by search validation, config metadata and agent search resolution. */
+export const DEFAULT_SEARCH_V2_SETTINGS = Object.freeze({
+  enabled: true,
+  topN: 3,
+  maxDepth: 4,
+  fanout: 6,
+  maxNodes: 24,
+  maxCopies: 8,
+  maxSummaryChars: 700,
+});
+
+const searchV2 = z
+  .object({
+    enabled: z
+      .boolean()
+      .default(DEFAULT_SEARCH_V2_SETTINGS.enabled)
+      .describe(
+        "Group files with matching extracted text and attach bounded graph provenance to agent search results. Set false to restore the legacy agent search projection.",
+      ),
+    topN: z
+      .number()
+      .int()
+      .min(1)
+      .max(10)
+      .default(DEFAULT_SEARCH_V2_SETTINGS.topN)
+      .describe("Number of leading agent search results enriched with graph provenance."),
+    maxDepth: z
+      .number()
+      .int()
+      .min(1)
+      .max(5)
+      .default(DEFAULT_SEARCH_V2_SETTINGS.maxDepth)
+      .describe("Maximum graph traversal depth for each enriched result."),
+    fanout: z
+      .number()
+      .int()
+      .min(1)
+      .max(12)
+      .default(DEFAULT_SEARCH_V2_SETTINGS.fanout)
+      .describe("Maximum eligible links at a node before traversal stops at that hub."),
+    maxNodes: z
+      .number()
+      .int()
+      .min(1)
+      .max(48)
+      .default(DEFAULT_SEARCH_V2_SETTINGS.maxNodes)
+      .describe("Maximum documents visited while building provenance for each enriched result."),
+    maxCopies: z
+      .number()
+      .int()
+      .min(1)
+      .max(24)
+      .default(DEFAULT_SEARCH_V2_SETTINGS.maxCopies)
+      .describe("Maximum locations with matching extracted text retained in each grouped result."),
+    maxSummaryChars: z
+      .number()
+      .int()
+      .min(100)
+      .max(2000)
+      .default(DEFAULT_SEARCH_V2_SETTINGS.maxSummaryChars)
+      .describe("Maximum characters in each agent search provenance summary."),
+  })
+  .strict();
+
 const search = z
   .object({
     params: searchParams.describe("Fusion + limit tunables.").optional(),
@@ -440,6 +504,11 @@ const search = z
     readHandle: searchReadHandle.describe("Read-only index.db connection tunables.").optional(),
     sourcePriors: searchSourcePriors.describe("Per-source ranking priors.").optional(),
     diversity: searchDiversity.describe("Post-fusion per-source diversity / MMR.").optional(),
+    v2: searchV2
+      .describe(
+        "Agent search: group matching files and attach bounded graph provenance. Enabled by default; set enabled to false for the legacy projection. Ordinary client search is unchanged.",
+      )
+      .optional(),
     embedderPrefixes: searchEmbedderPrefixes
       .describe("Family-aware embedder task prefixes.")
       .optional(),

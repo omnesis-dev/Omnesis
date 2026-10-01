@@ -4,7 +4,7 @@
 @testable import Omnesis
 import XCTest
 
-/// The `dictation` field on `GET /status`. It is optional and experimental:
+/// The `dictation` field on `GET /status`. It is optional for compatibility:
 /// every way it can be absent or unreadable must leave the app on its
 /// on-device recognizer, never fail the snapshot the rest of the app needs.
 final class DictationStatusDecodeTests: XCTestCase {
@@ -12,9 +12,9 @@ final class DictationStatusDecodeTests: XCTestCase {
         try JSONDecoder().decode(StatusSnapshot.self, from: Data(json.utf8))
     }
 
-    func testDecodesAnActiveGate() throws {
+    func testDecodesAnActiveGateWithoutExperimentalMode() throws {
         let snapshot = try decodeStatus("""
-        {"documents":{"total":0,"bySource":{}},"experimental":true,
+        {"documents":{"total":0,"bySource":{}},"experimental":false,
          "dictation":{"visible":true,"enabled":true,"modelAssigned":true,"active":true,
                       "maxAudioBytes":26214400}}
         """)
