@@ -7319,6 +7319,38 @@ describe("POST /documents/with-cursor cross-cutting concerns", () => {
     expect(stored?.icon).not.toEqual(svgDataUri);
   });
 
+  test("normalizes the family's icon on documents/with-cursor too", async () => {
+    // A collector's sync pushes its family declaration with every page. The
+    // family's icon must land rasterised like the source's own, or a client
+    // that looks an icon up by family receives an SVG it cannot draw.
+    const svg = (fill: string) =>
+      "data:image/svg+xml;base64," +
+      Buffer.from(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="${fill}"/></svg>`,
+      ).toString("base64");
+
+    const res = await req("/documents/with-cursor", {
+      method: "POST",
+      body: JSON.stringify({
+        providerId: "example",
+        sourceId: "example-mail:one@example.com",
+        hasMore: false,
+        cursor: { page: 1 },
+        meta: {
+          icon: svg("#111111"),
+          label: "example mail",
+          family: { icon: svg("#222222"), label: "example mail" },
+        },
+      }),
+    });
+    expect(res.status).toBe(200);
+
+    const meta = await (await req("/portal/source-meta.json")).json();
+    expect(meta["example-mail:one@example.com"].icon).toMatch(/^data:image\/png;base64,/);
+    expect(meta["example-mail"].icon).toMatch(/^data:image\/png;base64,/);
+    expect(meta["example-mail"].icon).not.toBe(meta["example-mail:one@example.com"].icon);
+  });
+
   test("does not persist an unnormalizable icon from documents/with-cursor", async () => {
     const safeIcon = "data:image/png;base64,iVBORw0KGgo=";
     for (const icon of [safeIcon, "not a usable icon"]) {
