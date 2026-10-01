@@ -33,11 +33,12 @@ const FOCUSABLE =
  * @param {boolean} props.open
  * @param {() => void} props.onClose      fired on Esc / backdrop click / ✕.
  * @param {string} [props.title]          rendered in the header when set.
+ * @param {string} [props.ariaLabel]      accessible name for a dialog without a header.
  * @param {string} [props.subtitle]       muted line under the title.
  * @param {string} [props.size="md"]      "sm" | "md" | "lg" → panel width.
  * @param {*} props.children              the modal body.
  */
-export function Modal({ open, onClose, title, subtitle, size = "md", children }) {
+export function Modal({ open, onClose, title, ariaLabel, subtitle, size = "md", children }) {
   const panelRef = useRef(null);
   const bodyRef = useRef(null);
 
@@ -94,8 +95,19 @@ export function Modal({ open, onClose, title, subtitle, size = "md", children })
         firstEl.focus();
       }
     };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
+    // A nested widget may use Escape to dismiss its own tooltip or menu first.
+    const onEscape = (event) => {
+      if (event.key === "Escape" && !event.defaultPrevented) onKey(event);
+    };
+    const onTab = (event) => {
+      if (event.key === "Tab") onKey(event);
+    };
+    window.addEventListener("keydown", onEscape);
+    window.addEventListener("keydown", onTab, true);
+    return () => {
+      window.removeEventListener("keydown", onEscape);
+      window.removeEventListener("keydown", onTab, true);
+    };
   }, [open, onClose]);
 
   if (!open) return null;
@@ -106,7 +118,7 @@ export function Modal({ open, onClose, title, subtitle, size = "md", children })
         class="modal-panel modal-panel--${size}"
         role="dialog"
         aria-modal="true"
-        aria-label=${title ?? "Dialog"}
+        aria-label=${ariaLabel ?? title ?? "Dialog"}
         tabindex="-1"
         ref=${panelRef}
         onClick=${(e) => e.stopPropagation()}
