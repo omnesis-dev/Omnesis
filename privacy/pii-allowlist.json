@@ -2967,7 +2967,6 @@
         "packages/gateway/src/brain/talkback/transcript-history.test.ts",
         "packages/gateway/src/brain/temporal-annotation-invalidator.integration.test.ts",
         "packages/gateway/src/brain/temporal-annotation-invalidator.test.ts",
-        "packages/gateway/src/brain/time-index-window-contract.test.ts",
         "packages/gateway/src/brain/transcripts.test.ts",
         "packages/gateway/src/brain/virtual-clock.test.ts",
         "packages/gateway/src/brain/waker/diff.test.ts",

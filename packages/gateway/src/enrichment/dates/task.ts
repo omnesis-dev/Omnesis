@@ -63,13 +63,20 @@ interface DateExtractionTaskDeps {
   tracker: QueueTracker;
   /** Called after a tick stored documents, which may have queued work for the worth gate. */
   onApplied?: () => void;
+  /**
+   * Which of these documents still hold content due to be replaced — a voice
+   * note the gateway is still transcribing — counting only content pending for
+   * less than `maxWaitMs`. Their dates are read once that content lands, not
+   * from the interim text first. Omitted: nothing is ever pending.
+   */
+  contentPending?: (docIds: readonly string[], maxWaitMs: number) => Set<string>;
   log: Logger;
 }
 
 export function dateExtractionTask(
   deps: DateExtractionTaskDeps,
 ): PeriodicTask<unknown, IdleResult> {
-  const { ioGate, cpuGate, writeGate, getSettings, tracker, onApplied, log } = deps;
+  const { ioGate, cpuGate, writeGate, getSettings, tracker, onApplied, contentPending, log } = deps;
   // Cadence is read once at construction (a periodic reads periodMs once);
   // batchSize / maxCharsPerDoc / scanBudgetMs / enabled are read live per tick.
   const { periodMs, idlePeriodMs } = getSettings();
@@ -95,10 +102,21 @@ export function dateExtractionTask(
           // Live gate: idle out cleanly if the knob flipped off.
           if (!settings.enabled) return { idle: true };
 
-          const rows = await ioGate.fetchDateExtractionBatch(
+          const fetched = await ioGate.fetchDateExtractionBatch(
             settings.batchSize,
             settings.maxCharsPerDoc,
           );
+          // A document whose content is still due to be replaced stays unstamped:
+          // replacing it resets the stamp, and a give-up leaves it for a later
+          // tick once nothing is pending.
+          const pending =
+            contentPending && settings.pendingContentWaitMs > 0 && fetched.length > 0
+              ? contentPending(
+                  fetched.map((row) => row.id),
+                  settings.pendingContentWaitMs,
+                )
+              : new Set<string>();
+          const rows = fetched.filter((row) => !pending.has(row.id));
           if (rows.length === 0) {
             if (total > 0) {
               log.info(`date extraction caught up: ${total} docs processed this run`);
@@ -155,6 +173,8 @@ export interface BootDateEnrichmentDeps {
   countPending: () => number;
   /** Called after a tick stored documents, which may have queued work for the worth gate. */
   onApplied?: () => void;
+  /** See `DateExtractionTaskDeps.contentPending`. */
+  contentPending?: (docIds: readonly string[], maxWaitMs: number) => Set<string>;
   log: Logger;
 }
 
@@ -175,6 +195,7 @@ export function bootDateEnrichment(deps: BootDateEnrichmentDeps): { kick: () => 
     getSettings: deps.getSettings,
     tracker,
     ...(deps.onApplied ? { onApplied: deps.onApplied } : {}),
+    ...(deps.contentPending ? { contentPending: deps.contentPending } : {}),
     log: deps.log,
   });
   deps.scheduler.schedule(task);

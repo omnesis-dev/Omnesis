@@ -119,6 +119,7 @@ export const CONFIG_DEFAULTS = {
       scanBudgetMs: 3_000,
       periodMs: 1_500,
       idlePeriodMs: 300_000,
+      pendingContentWaitMs: 3_600_000,
       numericDateOrder: "auto",
       worthGate: false,
     },

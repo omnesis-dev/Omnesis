@@ -2025,7 +2025,9 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/admin/watch/compile" \
           that takes depends on the gateway's hardware and on the voice notes it is already
           transcribing for your sources; nothing waits on it. The portal's Tell Omnesis page marks
           such a note as transcribing until the gateway's text arrives. If you edit the note first,
-          your edit stays.
+          your edit stays. Date extraction waits for the gateway's text too, for up to an hour
+          (<code>enrichment.dates.pendingContentWaitMs</code>), so the dates the note mentions are
+          read from its final words.
         </p>
         <p>
           A note from the Apple Watch travels through your iPhone, which transcribes it on the phone

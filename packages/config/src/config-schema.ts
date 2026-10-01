@@ -3092,6 +3092,14 @@ const enrichmentDates = z
       .positive()
       .describe("Idle-cadence period when no documents need extraction, in milliseconds.")
       .optional(),
+    pendingContentWaitMs: z
+      .number()
+      .int()
+      .nonnegative()
+      .describe(
+        "How long a document waits for content still due to be replaced — a voice note the gateway is still transcribing — before its dates are read from the interim text, in milliseconds. 0 never waits.",
+      )
+      .optional(),
     numericDateOrder: z
       .enum(["auto", "day-first", "month-first"])
       .describe(

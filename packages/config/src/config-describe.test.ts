@@ -96,6 +96,7 @@ const EXPECTED_INVENTORY = [
   "/enrichment/dates/idlePeriodMs [number]",
   "/enrichment/dates/maxCharsPerDoc [number]",
   "/enrichment/dates/numericDateOrder [enum]",
+  "/enrichment/dates/pendingContentWaitMs [number]",
   "/enrichment/dates/periodMs [number]",
   "/enrichment/dates/scanBudgetMs [number]",
   "/enrichment/dates/worthGate [boolean]",

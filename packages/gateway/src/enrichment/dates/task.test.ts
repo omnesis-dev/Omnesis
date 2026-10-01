@@ -86,3 +86,65 @@ describe("dateExtractionTask — contention guarantee", () => {
     }
   });
 });
+
+describe("dateExtractionTask — content still due to be replaced", () => {
+  function build(opts: { pending: Set<string>; waitMs?: number }) {
+    const extracted: string[] = [];
+    const asked: number[] = [];
+    const task = dateExtractionTask({
+      ioGate: {
+        fetchDateExtractionBatch: async () => [
+          { id: "voice-day", content: "dentist on friday", anchorAt: "2026-09-30T10:00:00Z" },
+          { id: "email", content: "meet tomorrow", anchorAt: "2026-09-30T10:00:00Z" },
+        ],
+      } as unknown as IoGate,
+      cpuGate: {
+        extractDatesFromDocs: async (rows: unknown) => {
+          const docs = rows as { id: string }[];
+          extracted.push(...docs.map((r) => r.id));
+          return docs.map((r) => ({ id: r.id, dates: [] }));
+        },
+      } as unknown as CpuGate,
+      writeGate: {
+        applyExtractedDates: async (results: unknown[]) => ({
+          applied: results.length,
+          datesWritten: 0,
+        }),
+      } as unknown as WriteGate,
+      getSettings: () => ({
+        ...DATE_ENRICHMENT_DEFAULTS,
+        enabled: true,
+        ...(opts.waitMs !== undefined ? { pendingContentWaitMs: opts.waitMs } : {}),
+      }),
+      tracker: new QueueTracker(),
+      contentPending: (docIds, maxWaitMs) => {
+        asked.push(maxWaitMs);
+        return new Set(docIds.filter((id) => opts.pending.has(id)));
+      },
+      log,
+    });
+    return { task, extracted, asked };
+  }
+
+  it("leaves a document awaiting its transcript unread and reads the rest", async () => {
+    const { task, extracted, asked } = build({ pending: new Set(["voice-day"]) });
+    const outcome = await task.run(undefined);
+    expect(extracted).toEqual(["email"]);
+    expect(asked).toEqual([DATE_ENRICHMENT_DEFAULTS.pendingContentWaitMs]);
+    expect(outcome).toMatchObject({ kind: "done", value: { idle: false } });
+  });
+
+  it("idles when every fetched document is awaiting its transcript", async () => {
+    const { task, extracted } = build({ pending: new Set(["voice-day", "email"]) });
+    const outcome = await task.run(undefined);
+    expect(extracted).toEqual([]);
+    expect(outcome).toMatchObject({ kind: "done", value: { idle: true } });
+  });
+
+  it("a zero wait reads everything without asking", async () => {
+    const { task, extracted, asked } = build({ pending: new Set(["voice-day"]), waitMs: 0 });
+    await task.run(undefined);
+    expect(extracted).toEqual(["voice-day", "email"]);
+    expect(asked).toEqual([]);
+  });
+});
