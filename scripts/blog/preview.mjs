@@ -73,7 +73,8 @@ export async function startPreview({ root = ROOT, port = 4173 } = {}) {
       }
       if (
         !path.startsWith("/") ||
-        /[\\\x00]/.test(path) ||
+        path.includes("\\") ||
+        path.includes("\0") ||
         path.split("/").some((part) => part.startsWith("."))
       ) {
         send(404, "Not found");
