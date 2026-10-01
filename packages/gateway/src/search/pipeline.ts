@@ -479,6 +479,7 @@ export class SearchPipeline {
     // eligible extracted-text identities and retain their provenance. Neither
     // hash establishes identical file bytes. The candidate core already
     // hydrated chunk text and fetched hashes, so neither path rereads index.db.
+    // See #269 — retire the disabled-v2 agent fallback after the rollout proves reliable.
     const v2 = resolveSearchV2Config(this.searchConfig);
     if (
       options?.agentContext &&
