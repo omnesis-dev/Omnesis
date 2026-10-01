@@ -594,3 +594,30 @@ final class AgentTurnBuilderTests: XCTestCase {
         XCTAssertEqual(seeds.first?.title, "Deck")
     }
 }
+
+@available(iOS 17.0, *)
+extension AgentTurnBuilderTests {
+    func testCompletedHistoryRetainsCopyEligibilityAfterReopening() throws {
+        let messages: [ChatMessage] = [
+            .user(parts: [.text("What is the reference?")]),
+            .assistant(parts: [.text("Reference: `000042`.")]),
+            .user(parts: [.text("And the address?")]),
+            .assistant(parts: [.text("```text\n42 Example Street\nExampleville\n```")]),
+        ]
+        let assistants = AgentTurnBuilder.turns(from: messages).compactMap { turn -> AgentAssistantTurn? in
+            if case .assistant(let assistant) = turn { return assistant }
+            return nil
+        }
+        XCTAssertEqual(assistants.count, 2)
+        XCTAssertTrue(assistants.allSatisfy(\.isComplete))
+        XCTAssertTrue(assistants.allSatisfy { $0.stopReason == nil }, "History must not invent provider stop reasons")
+        let busyAssistants = AgentTurnBuilder.turns(from: messages, busy: true).compactMap { turn -> AgentAssistantTurn? in
+            if case .assistant(let assistant) = turn { return assistant }
+            return nil
+        }
+        XCTAssertTrue(try XCTUnwrap(busyAssistants.first).isComplete)
+        XCTAssertFalse(try XCTUnwrap(busyAssistants.last).isComplete, "A busy resumed turn cannot expose unfinished values")
+        let live = AgentAssistantTurn(id: "live", parts: [.text("ID: `00004")], stopReason: nil, failure: nil)
+        XCTAssertFalse(live.isComplete)
+    }
+}

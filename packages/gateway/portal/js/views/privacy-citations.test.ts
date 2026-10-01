@@ -3,6 +3,16 @@
 
 import { describe, expect, test, vi } from "vitest";
 
+// These pure VNode walkers exercise privacy narrative structure, not mounted hooks.
+// Copy controls and Markdown safety are covered by mounted and browser suites.
+vi.mock("../components/agent/assistant-markdown.js", async () => {
+  const { h } = await import("preact");
+  return {
+    AssistantMarkdown: ({ text, className }: { text: string; className?: string }) =>
+      h("div", { class: className ?? "agent-part-text", dangerouslySetInnerHTML: { __html: text } }),
+  };
+});
+
 vi.mock("../lib/markdown.js", () => ({
   renderMarkdown: (value: string) => value,
 }));

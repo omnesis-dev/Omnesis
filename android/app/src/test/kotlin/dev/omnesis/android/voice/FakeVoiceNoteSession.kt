@@ -9,7 +9,11 @@ import dev.omnesis.android.ui.capture.RecognizerAudioInput
 import java.io.File
 
 /** A scripted [VoiceNoteSession] over a real temp file, recording what the screen asked of it. */
-class FakeVoiceNoteSession(private val file: File, private val captured: Boolean = true) : VoiceNoteSession {
+class FakeVoiceNoteSession(
+    private val file: File,
+    private val writtenAtMs: Long,
+    private val captured: Boolean = true,
+) : VoiceNoteSession {
     override var listener: VoiceNoteSession.Listener? = null
     var inputs = 0
     var paused = 0
@@ -40,6 +44,7 @@ class FakeVoiceNoteSession(private val file: File, private val captured: Boolean
             return null
         }
         file.writeText("RIFF-invented")
+        check(file.setLastModified(writtenAtMs)) { "Could not set recording timestamp" }
         return VoiceNoteAudio(file, WavWriter.MIME_TYPE)
     }
 

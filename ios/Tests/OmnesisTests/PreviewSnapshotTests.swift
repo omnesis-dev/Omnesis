@@ -1627,6 +1627,52 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view.environment(store), name: "30e-document-annotations-enriched")
     }
 
+    func testMarkdownCopyValues() {
+        let view = ScrollView {
+            MarkdownView(text: PreviewMocks.copyableMarkdown, copyValues: true)
+                .padding()
+        }
+        .background(Theme.bgPrimary)
+        snapshot(view, name: "32e-markdown-copy-values", size: CGSize(width: 393, height: 1000))
+        snapshot(view.preferredColorScheme(.dark), name: "32f-markdown-copy-values-dark", size: CGSize(width: 320, height: 1100))
+        snapshot(
+            view.environment(\.dynamicTypeSize, .accessibility3),
+            name: "32g-markdown-copy-values-large",
+            size: CGSize(width: 393, height: 1500)
+        )
+    }
+
+    func testMarkdownCopyValuesStreaming() {
+        let view = ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                AgentPartView(part: .text(PreviewMocks.copyableMarkdownInline), turnDone: false)
+                AgentPartView(part: .text(PreviewMocks.copyableMarkdownInline), turnDone: true)
+            }
+            .padding()
+        }
+        .background(Theme.bgPrimary)
+        snapshot(view, name: "32h-markdown-copy-streaming", size: CGSize(width: 393, height: 600))
+    }
+
+    func testMarkdownCopyValuesHistory() {
+        let view = ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                ForEach(AgentTurnBuilder.turns(from: PreviewMocks.copyableHistory)) { turn in
+                    AgentTurnBubble(turn: turn)
+                }
+                MarkdownView(text: PreviewMocks.copyableMarkdownValueAndCode, copyValues: true)
+            }
+            .padding()
+        }
+        .background(Theme.bgPrimary)
+        snapshot(view, name: "32i-markdown-copy-history", size: CGSize(width: 393, height: 700))
+        snapshot(
+            view.environment(\.dynamicTypeSize, .accessibility3),
+            name: "32j-markdown-copy-history-large",
+            size: CGSize(width: 320, height: 1200)
+        )
+    }
+
     func testMarkdownKitchenSink() {
         let view = ScrollView {
             MarkdownView(text: """

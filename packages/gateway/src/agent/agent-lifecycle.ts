@@ -364,6 +364,7 @@ export function createAgentService(
     options: {
       audience: "interactive" | "subagent";
       citationSurface: boolean;
+      copyableValues?: boolean;
       authorization?: CorpusAuthorization;
       memoryWrites?: boolean;
     },
@@ -392,6 +393,7 @@ export function createAgentService(
       temporal: !restricted,
       operatorInstructions,
       citationSurface: options.citationSurface,
+      copyableValues: options.copyableValues === true,
     });
   };
   return new AgentService({
@@ -455,6 +457,7 @@ export function createAgentService(
       buildLiveSystemPrompt(context, {
         audience: "interactive",
         citationSurface: rendersTimeline(profile),
+        copyableValues: profile === "interactive",
         memoryWrites: profile !== "answer",
       }),
     externalAnswerScope: async (authorization) => {

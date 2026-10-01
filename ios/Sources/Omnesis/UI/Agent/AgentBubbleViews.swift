@@ -64,8 +64,8 @@ struct AgentTurnBubble: View {
                     AgentPartView(
                         part: part,
                         pillRun: pillRuns[idx],
-                        thinkingActive: assistant.stopReason == nil && idx == assistant.parts.count - 1,
-                        turnDone: assistant.stopReason != nil
+                        thinkingActive: !assistant.isComplete && idx == assistant.parts.count - 1,
+                        turnDone: assistant.isComplete
                     )
                 }
                 if let failure = assistant.failure {
@@ -109,6 +109,18 @@ struct AgentTurnBubble: View {
         }
     }
 }
+
+#if DEBUG
+#Preview("Agent reply — reopened copyable values") {
+    VStack(alignment: .leading, spacing: 16) {
+        ForEach(AgentTurnBuilder.turns(from: PreviewMocks.copyableHistory)) { turn in
+            AgentTurnBubble(turn: turn)
+        }
+    }
+    .padding()
+    .background(Theme.bgPrimary)
+}
+#endif
 
 /// Result of `computeCitationPillRuns` for one part slot.
 /// `lead == true` on the first pending annotate of a contiguous run;
@@ -492,7 +504,7 @@ struct AgentPartView: View {
     /// Freezes ephemeral tool cards for static previews and historical/debug
     /// renders so they do not roll in or dismiss themselves.
     var freeze: Bool = false
-    /// True once the parent assistant turn has ended (`stopReason != nil`).
+    /// True once the parent assistant turn has ended, including stored history.
     /// Keys off the same done-signal the thinking block uses; inline researcher
     /// progress rows fold away when the turn completes.
     var turnDone: Bool = false
@@ -506,7 +518,13 @@ struct AgentPartView: View {
             // for the user's own message bubble. The fixed-axis fallback
             // chain is for older devices where the variable font name
             // resolves differently.
-            MarkdownView(text: raw, bodyFont: assistantBodyFont(size: 15))
+            MarkdownView(
+                text: raw,
+                bodyFont: assistantBodyFont(size: 15),
+                copyValues: turnDone,
+                plainValueFences: true,
+                copyFont: UIFont(name: "InterVariable", size: 15) ?? .systemFont(ofSize: 15)
+            )
         case .thinking(let raw):
             AgentThinkingBlock(text: raw, active: thinkingActive)
         case .tool(let call):
