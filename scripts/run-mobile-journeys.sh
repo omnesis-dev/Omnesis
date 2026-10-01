@@ -35,6 +35,7 @@
 #   OMNESIS_JOURNEY_RETRIES          extra attempts for a failed journey (default: 1)
 #   OMNESIS_JOURNEY_READY_TIMEOUT    seconds to wait for the corpus to be searchable (default: 900)
 #   OMNESIS_JOURNEY_IOS_SIMULATOR    simulator device name (default: iPhone 17)
+#   OMNESIS_JOURNEY_IOS_UDID         exact prepared simulator (overrides the name)
 #   OMNESIS_JOURNEY_ONLY             run one journey: an XCTest identifier (iOS) or
 #                                    Class#method (Android)
 
@@ -120,7 +121,11 @@ IOS_PACKAGE_FLAGS=()
 prepare_ios() {
   local simulator_name="${OMNESIS_JOURNEY_IOS_SIMULATOR:-iPhone 17}"
   local udid
-  udid="$(xcrun simctl list devices available --json | SIMULATOR_NAME="$simulator_name" python3 -c '
+  if [[ -n "${OMNESIS_JOURNEY_IOS_UDID:-}" ]]; then
+    udid="$OMNESIS_JOURNEY_IOS_UDID"
+    simulator_name="prepared iPhone"
+  else
+    udid="$(xcrun simctl list devices available --json | SIMULATOR_NAME="$simulator_name" python3 -c '
 import json, os, sys
 wanted = os.environ["SIMULATOR_NAME"]
 runtimes = json.load(sys.stdin)["devices"]
@@ -133,6 +138,7 @@ if not matches:
     sys.exit(f"no available iOS simulator named {wanted!r}")
 print(max(matches)[1])
 ')"
+  fi
   echo "→ Simulator: $simulator_name ($udid)"
   xcrun simctl boot "$udid" 2>/dev/null || true
   xcrun simctl bootstatus "$udid" -b >/dev/null

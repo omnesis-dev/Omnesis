@@ -85,8 +85,8 @@ jobs:
   ios:
     needs: changes
     if: ${{ !cancelled() && (github.event_name == 'push' || (github.event_name == 'pull_request' && needs.changes.outputs.ios == 'true') || (github.event_name == 'workflow_dispatch' && inputs.platforms != 'android')) }}
-    # The project requires Xcode 26, the macOS 26 image's default, which
-    # carries the iPhone 17 simulator the journeys run on.
+    # The project requires Xcode 26; provision an available iPhone simulator
+    # for that Xcode rather than assuming the image has a particular name.
     runs-on: macos-26
     timeout-minutes: 90
     steps:
@@ -101,6 +101,11 @@ jobs:
 
       - name: Install dependencies
         run: scripts/ci/npm-ci.sh
+
+      - name: Prepare iPhone simulator
+        run: |
+          udid="$(node scripts/ci/prepare-ios-simulator.mjs)"
+          echo "OMNESIS_JOURNEY_IOS_UDID=$udid" >> "$GITHUB_ENV"
 
       - name: Cache the embedding model
         # The gateway embeds the corpus so the apps' searches find it; the
