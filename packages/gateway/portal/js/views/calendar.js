@@ -28,7 +28,6 @@ import {
   CalendarEntryRow,
   DaySection,
   MonthGrid,
-  CalendarGuide,
   CalendarFilters,
   MentionSection,
 } from "./calendar-agenda.js";
@@ -369,7 +368,6 @@ export function CalendarTab({ selectedId = null, developer = false } = {}) {
       separately; they may not describe an event.
       ${mentionsHidden && " Dates in mail judged not worth recording are hidden."}
     </p>
-    <${CalendarGuide} />
     <div class="calendar-toolbar">
       <div class="calendar-zoom" role="group" aria-label="Calendar view">
         ${ZOOMS.map(

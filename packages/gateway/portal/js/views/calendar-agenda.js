@@ -6,7 +6,6 @@ import { html } from "htm/preact";
 import { sourceIconUrl } from "../lib/format.js";
 import {
   ORIGIN_LABELS,
-  CALENDAR_KINDS,
   MOMENT_KINDS,
   kindMeta,
   formatTime,
@@ -117,42 +116,6 @@ export function CalendarEntryRow({
     </button>
     <${OriginBadge} origin=${entry.origin} id=${entry.id} />
   </div>`;
-}
-
-export function CalendarGuide() {
-  return html`<details class="calendar-guide">
-    <summary>How to read this calendar</summary>
-    <div class="calendar-guide-content">
-      <p>
-        Kind describes the entry; origin tells you how it entered the time index. Neither alone
-        confirms that something happened.
-      </p>
-      ${Object.entries(ORIGIN_LABELS).map(
-        ([origin, meta]) =>
-          html`<div class=${`calendar-guide-origin calendar-guide-origin--${origin}`}>
-            <strong>${meta.icon} ${meta.row}</strong>
-            <p>${meta.description}</p>
-          </div>`,
-      )}
-      <dl class="calendar-kind-guide">
-        ${Object.values(CALENDAR_KINDS)
-          .filter(
-            (meta, index, all) =>
-              all.findIndex((other) => other.label === meta.label) === index &&
-              meta.label !== "Calendar",
-          )
-          .map(
-            (meta) =>
-              html`<dt>${meta.label}</dt>
-                <dd>${meta.description}</dd>`,
-          )}
-      </dl>
-      <p class="debug-sub">
-        Active is a stored status, not confirmation or an indication that an entry is happening now.
-        Supporting document counts are not counts of independent confirmations.
-      </p>
-    </div>
-  </details>`;
 }
 
 export function CalendarFilters({ preferences, onChange }) {
