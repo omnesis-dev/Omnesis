@@ -8,7 +8,7 @@
 
 import { html } from "htm/preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
-import { getCalendarAnnotation, getCalendarWindow, getDocumentSummariesBulk } from "../api.js";
+import { getCalendarItem, getCalendarWindow, getDocumentSummariesBulk } from "../api.js";
 import { Modal } from "../components/modal.js";
 import { DevAnnotateButton } from "../components/dev-annotate-button.js";
 import { sourceIconUrl } from "../lib/format.js";
@@ -541,12 +541,12 @@ export function CalendarTab({ selectedId = null, developer = false } = {}) {
     let cancelled = false;
     setDetailError(null);
     if (!selectedId) {
-      setDetail((current) => current?.origin === "annotation" ? null : current);
+      setDetail((current) => current?.origin === "annotation" || current?.origin === "mention" ? null : current);
       setDetailLoading(false);
       return () => { cancelled = true; };
     }
     const selected = result.items.find(
-      (entry) => entry.origin === "annotation" && entry.id === selectedId,
+      (entry) => entry.id === selectedId,
     );
     if (selected) {
       setDetail(selected);
@@ -555,7 +555,7 @@ export function CalendarTab({ selectedId = null, developer = false } = {}) {
     }
     setDetail(null);
     setDetailLoading(true);
-    getCalendarAnnotation(selectedId, result.timeZone)
+    getCalendarItem(selectedId, result.timeZone)
       .then(async ({ item }) => {
         if (cancelled) return;
         setDetail(item);
@@ -594,13 +594,13 @@ export function CalendarTab({ selectedId = null, developer = false } = {}) {
 
   function openEntry(entry) {
     setDetail(entry);
-    if (entry.origin === "annotation") {
+    if (entry.origin === "annotation" || entry.origin === "mention") {
       navigate(`/portal/debug/calendar/${encodeURIComponent(entry.id)}`);
     }
   }
 
   function closeDetail() {
-    const wasAddressable = detail?.origin === "annotation";
+    const wasAddressable = detail?.origin === "annotation" || detail?.origin === "mention";
     setDetail(null);
     if (wasAddressable || selectedId) replaceRoute("/portal/debug/calendar");
   }

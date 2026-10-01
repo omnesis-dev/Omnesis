@@ -16,6 +16,7 @@ import { useVisiblePoll } from "../lib/use-visible-poll.js";
 import { LoadMore, cursorPageBoundaryState } from "../components/load-more.js";
 import { ConfirmModal } from "../components/confirm-modal.js";
 import { RowActionMenu } from "../components/row-action-menu.js";
+import { NoteDayReferences } from "../components/note-day-references.js";
 
 /** The gateway's own ceiling on a note; an over-long one is refused before the round trip. */
 export const MAX_NOTE_LENGTH = 8192;
@@ -63,7 +64,7 @@ export function captureErrorMessage(err) {
 const modKey =
   typeof navigator !== "undefined" && navigator.platform?.includes("Mac") ? "⌘" : "Ctrl";
 
-export function CaptureView({ day } = {}) {
+export function CaptureView({ day, experimental = false } = {}) {
   // A Manage-notes link seeds the history at that day; anything else
   // (including a malformed value) opens the latest notes.
   const seedDay = typeof day === "string" && NOTE_DAY_RE.test(day) ? day : null;
@@ -167,7 +168,7 @@ export function CaptureView({ day } = {}) {
             </button>
           </div>
         </form>
-        <${NoteHistory} seedDay=${seedDay} lastCapture=${lastCapture} />
+        <${NoteHistory} seedDay=${seedDay} lastCapture=${lastCapture} experimental=${experimental} />
       </div>
     </div>
   `;
@@ -368,7 +369,7 @@ function pinWinsOver(pin, current) {
 /** How often notes awaiting their gateway transcript are re-read. */
 const PENDING_REFRESH_MS = 15_000;
 
-function NoteHistory({ seedDay, lastCapture }) {
+function NoteHistory({ seedDay, lastCapture, experimental }) {
   const page = useCursorPage({
     resetKey: seedDay ?? "latest",
     pageSize: NOTES_HISTORY_PAGE_SIZE,
@@ -498,6 +499,11 @@ function NoteHistory({ seedDay, lastCapture }) {
       ${groups.map((group) => html`
         <div key=${group.day}>
           <h3 class="capture-day">${group.day}</h3>
+          <${NoteDayReferences}
+            day=${group.day}
+            revision=${group.entries.map((entry) => `${entry.id}:${entry.updatedAt ?? entry.capturedAt}:${entry.transcription ?? ""}`).join("|")}
+            experimental=${experimental}
+          />
           <div class="portal-table-wrap">
             <table class="portal-table notes-table">
               <tbody>

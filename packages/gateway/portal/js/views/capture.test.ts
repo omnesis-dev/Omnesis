@@ -6,16 +6,18 @@ import { act } from "preact/test-utils";
 import { parseHTML } from "linkedom";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-const { createNote, deleteNoteEntry, getNotesHistory, patchNoteEntry } = vi.hoisted(() => ({
+const { createNote, deleteNoteEntry, getNotesHistory, getNotesProvenance, patchNoteEntry } = vi.hoisted(() => ({
   createNote: vi.fn(),
   deleteNoteEntry: vi.fn(),
   getNotesHistory: vi.fn(),
+  getNotesProvenance: vi.fn(),
   patchNoteEntry: vi.fn(),
 }));
 vi.mock("../api.js", () => ({
   createNote,
   deleteNoteEntry,
   getNotesHistory,
+  getNotesProvenance,
   patchNoteEntry,
 }));
 
@@ -75,6 +77,8 @@ beforeEach(async () => {
   deleteNoteEntry.mockReset();
   patchNoteEntry.mockReset();
   getNotesHistory.mockReset();
+  getNotesProvenance.mockReset();
+  getNotesProvenance.mockResolvedValue({ mentions: [], annotations: [], loops: [] });
   getNotesHistory.mockResolvedValue({ entries: [], pageInfo: { hasMore: false } });
   await act(async () => {
     render(h(CaptureView, {}), host);
@@ -162,7 +166,8 @@ describe("capture page", () => {
     createNote.mockResolvedValueOnce({ id: "stored", day: "2026-09-11", text: "Renew the domain before the end of the month", capturedAt: "2026-09-11T10:00:00.000Z", updatedAt: "2026-09-11T10:00:00.000Z" });
     await type("Order printer paper");
     await submit();
-    expect(vi.getTimerCount()).toBe(1);
+    expect(host.querySelector(".capture-told")).not.toBeNull();
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
     render(null, host);
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -444,6 +449,24 @@ describe("note history", () => {
     await act(async () => {});
     const edited = noteItems().map((row) => row.textContent?.includes("edited"));
     expect(edited).toEqual([false, true]);
+  });
+
+  test("references are requested once per day even when it contains several notes", async () => {
+    getNotesHistory.mockResolvedValue({
+      entries: [
+        noteEntry({ id: "same-day-a" }),
+        noteEntry({ id: "same-day-b" }),
+        noteEntry({ id: "older", day: "2026-09-10" }),
+      ],
+      pageInfo: { hasMore: false },
+    });
+    await act(async () => {
+      render(null, host);
+      render(h(CaptureView, {}), host);
+    });
+    await act(async () => {});
+    expect(host.querySelectorAll(".note-day-references")).toHaveLength(2);
+    expect(getNotesProvenance.mock.calls.map(([day]) => day)).toEqual(["2026-09-11", "2026-09-10"]);
   });
 
   test("a fresh capture appears on top without a refetch", async () => {

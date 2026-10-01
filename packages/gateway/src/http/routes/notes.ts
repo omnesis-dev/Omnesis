@@ -6,10 +6,10 @@
  * brain"). The runtime is always available: capture is a standard gateway
  * capability and does not depend on an agent model or experimental mode.
  *
- * Five routes: capture POST, per-day listing GET, newest-first history
- * GET, per-entry edit PATCH, and per-entry hard-delete DELETE. Writes are
+ * Capture, per-day listing and derived references, newest-first history,
+ * per-entry edits, and per-entry hard deletion. Writes are
  * `scope.writeAny()` + a per-source refinement (`write:omnesis-notes`,
- * satisfied by admin / `write:*`); the listing and history are
+ * satisfied by admin / `write:*`); the read routes are
  * `scope.read()`.
  */
 
@@ -17,13 +17,15 @@ import { DAY_KEY_RE, dayKeyFor } from "../../sources/omnesis-notes/index.js";
 import { notesRateLimiter } from "../../rate-limit.js";
 import { BadRequestError, NotFoundError } from "../errors.js";
 import { enforceWriteScopeForSource, scope } from "../scope.js";
-import { validateJson } from "../validate.js";
-import { createNoteBody, patchNoteBody } from "../schemas/index.js";
+import { validateJson, validateQuery } from "../validate.js";
+import { createNoteBody, patchNoteBody, notesProvenanceQuery } from "../schemas/index.js";
 import { clientIp, isLoopbackRequest } from "./admin/internals.js";
 import type { NoteEntry, OmnesisNotesRuntime } from "../../sources/omnesis-notes/index.js";
 import type { RouteApp } from "./types.js";
+import type { NotesProvenanceService } from "../../sources/omnesis-notes/provenance.js";
 
 export interface NotesRoutesDeps {
+  provenance: NotesProvenanceService;
   /** Resolve the notes runtime. The server defers boot until first use when no lifecycle owner exists. */
   runtime: OmnesisNotesRuntime | (() => OmnesisNotesRuntime);
   /**
@@ -139,6 +141,11 @@ export function mountNotesRoutes(app: RouteApp, deps: NotesRoutesDeps): void {
     }
     const entries = markPending(runtime().listDay(day));
     return c.json({ day: day ?? dayKeyFor(new Date().toISOString()), entries });
+  });
+
+  app.get("/notes/provenance", scope.read(), validateQuery(notesProvenanceQuery), async (c) => {
+    const { day, timeZone } = c.req.valid("query");
+    return c.json(await deps.provenance.forDay(day, timeZone));
   });
 
   // Newest-first cross-day history for the Tell Omnesis manager.

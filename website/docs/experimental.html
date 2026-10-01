@@ -313,6 +313,12 @@
           </table>
         </div>
         <p>
+          With <code>OMNESIS_EXPERIMENTAL=1</code>, the portal's <strong>Tell Omnesis</strong> page
+          also links each capture day to live temporal annotations and open loops that cite that
+          day's notes document. These links cover the whole day rather than individual notes; stored
+          records remain visible when the Brain is stopped.
+        </p>
+        <p>
           It also keeps a short agent-notes file, which is injected into every run's prompt as
           working memory (8 KiB by default, <code>brain.notesMaxBytes</code>), and it can decide
           pending person-merge proposals that the deterministic matcher left open: merge (a

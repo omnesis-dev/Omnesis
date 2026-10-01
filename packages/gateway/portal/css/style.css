@@ -18730,6 +18730,61 @@ a.agent-loop-row.agent-ephemeral-result-link:hover .agent-loop-state {
   color: var(--text-muted);
 }
 
+.note-day-references {
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  border-left: 2px solid var(--border);
+  font-size: 12px;
+}
+
+.note-reference-intro {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.note-reference-group {
+  margin-top: 6px;
+}
+
+.note-reference-heading {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.note-reference-group ul {
+  margin: 4px 0 0;
+  padding-left: 16px;
+}
+
+.note-reference-group li + li {
+  margin-top: 4px;
+}
+
+.note-reference-link {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.note-reference-detail {
+  color: var(--text-muted);
+}
+
+.note-reference-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--text-muted);
+}
+
+.note-reference-error .btn-secondary {
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
 .notes-table td {
   vertical-align: top;
 }
