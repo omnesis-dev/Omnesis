@@ -111,11 +111,12 @@ function metadata(post) {
   return `<div class="post-meta"><span>${escapeHtml(post.author)}</span><time datetime="${post.date}">${date}</time><span>${minutes} min read</span></div>${post.tags.length ? `<div class="post-tags">${post.tags.map((tag) => `<span class="post-tag">${escapeHtml(tag)}</span>`).join("")}</div>` : ""}`;
 }
 
-function layout({ title, description, path, content, post }) {
+function layout({ title, description, path, content, post, preview = false }) {
   const canonical = ORIGIN + path;
-  const structured = post
-    ? `<script type="application/ld+json">${JSON.stringify({ "@context": "https://schema.org", "@type": "BlogPosting", headline: post.title, description: post.description, datePublished: post.date, author: { "@type": "Person", name: post.author }, mainEntityOfPage: canonical, image: ORIGIN + "/og-image.png" }).replaceAll("<", "\\u003c")}</script>`
-    : "";
+  const structured =
+    post && !preview
+      ? `<script type="application/ld+json">${JSON.stringify({ "@context": "https://schema.org", "@type": "BlogPosting", headline: post.title, description: post.description, datePublished: post.date, author: { "@type": "Person", name: post.author }, mainEntityOfPage: canonical, image: ORIGIN + "/og-image.png" }).replaceAll("<", "\\u003c")}</script>`
+      : "";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>${escapeHtml(title)} — Omnesis</title><meta name="description" content="${escapeHtml(description)}" />
@@ -126,19 +127,20 @@ function layout({ title, description, path, content, post }) {
 <link rel="icon" type="image/svg+xml" href="/favicon.svg" /><link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 <meta name="theme-color" content="#06090f" /><link rel="stylesheet" href="/docs/docs.css" /><link rel="stylesheet" href="/footer-social.css" /><link rel="stylesheet" href="/blog/blog.css" />
 <script>(function(){try{document.documentElement.dataset.theme=localStorage.getItem("omnesis-theme")||(matchMedia("(prefers-color-scheme: light)").matches?"light":"dark");}catch(e){document.documentElement.dataset.theme="dark";}})();</script>
-${structured}<script src="/blog/blog.js" defer></script></head><body class="blog-page">${GENERATED}
+${preview ? '<meta name="robots" content="noindex, nofollow" />' : ""}${structured}<script src="/blog/blog.js" defer></script></head><body class="blog-page">${GENERATED}
 <a class="skip-link" href="#main">Skip to content</a>
 ${nav}
-<main id="main" class="blog-shell">${content}</main>
+<main id="main" class="blog-shell">${preview ? '<p class="post-tag" role="status">Local preview · Includes unpublished posts. Save changes and refresh to update.</p>' : ""}${content}</main>
 ${footer}
 </body></html>`;
 }
 
-export function renderIndex(posts) {
+export function renderIndex(posts, { preview = false } = {}) {
   const list = posts.length
     ? `<div class="post-list">${posts.map((post) => `<article class="post-card">${metadata(post)}<h2><a href="/blog/${post.slug}">${escapeHtml(post.title)}</a></h2><p class="post-description">${escapeHtml(post.description)}</p><a class="read-post" href="/blog/${post.slug}" aria-label="Read ${escapeHtml(post.title)}">Read post <span aria-hidden="true">→</span></a></article>`).join("")}</div>`
     : `<div class="empty-state"><span class="empty-mark" aria-hidden="true">01 /</span><h2>Posts coming soon.</h2></div>`;
   return layout({
+    preview,
     title: "Blog",
     description:
       "Engineering notes on building Omnesis: problems, solutions, and the tradeoffs behind them.",
@@ -147,13 +149,18 @@ export function renderIndex(posts) {
   });
 }
 
-export function renderPost(post, giscus) {
+export function renderPost(post, giscus, { preview = false } = {}) {
   const content = `<a class="back-link" href="/blog/">← All posts</a><article><header class="post-header"><p class="eyebrow">BUILDING OMNESIS</p><h1>${escapeHtml(post.title)}</h1><p class="post-deck">${escapeHtml(post.description)}</p>${metadata(post)}</header><div class="post-body">${renderMarkdown(post.body)}</div></article>
-<section id="comments" class="comments" aria-labelledby="comments-title" data-giscus-repo="${escapeHtml(giscus.repo)}" data-giscus-repo-id="${escapeHtml(giscus.repoId)}" data-giscus-category="${escapeHtml(giscus.category)}" data-giscus-category-id="${escapeHtml(giscus.categoryId)}" data-giscus-term="blog/${post.slug}">
+${
+  preview
+    ? '<p class="post-tag">Comments are disabled in local preview.</p>'
+    : `<section id="comments" class="comments" aria-labelledby="comments-title" data-giscus-repo="${escapeHtml(giscus.repo)}" data-giscus-repo-id="${escapeHtml(giscus.repoId)}" data-giscus-category="${escapeHtml(giscus.category)}" data-giscus-category-id="${escapeHtml(giscus.categoryId)}" data-giscus-term="blog/${post.slug}">
 <h2 id="comments-title">Join the discussion</h2><p>Comments and reactions are public and stored on GitHub. Sign in with GitHub to participate.</p><p>The comments widget connects to Giscus and GitHub when you load it. <a href="/privacy">Privacy details</a>.</p>
 <button id="load-comments" type="button">Show comments &amp; reactions</button><p id="comments-status" role="status" aria-live="polite"></p><div id="giscus-container" class="giscus"></div>
-<p class="discussion-link">You can also visit <a href="https://github.com/${escapeHtml(giscus.repo)}/discussions/categories/${escapeHtml(giscus.category.toLowerCase().replaceAll(" ", "-"))}">Blog comments on GitHub</a>.</p><noscript><p>Enable JavaScript to load comments, or visit <a href="https://github.com/${escapeHtml(giscus.repo)}/discussions/categories/${escapeHtml(giscus.category.toLowerCase().replaceAll(" ", "-"))}">GitHub Discussions</a>.</p></noscript></section>`;
+<p class="discussion-link">You can also visit <a href="https://github.com/${escapeHtml(giscus.repo)}/discussions/categories/${escapeHtml(giscus.category.toLowerCase().replaceAll(" ", "-"))}">Blog comments on GitHub</a>.</p><noscript><p>Enable JavaScript to load comments, or visit <a href="https://github.com/${escapeHtml(giscus.repo)}/discussions/categories/${escapeHtml(giscus.category.toLowerCase().replaceAll(" ", "-"))}">GitHub Discussions</a>.</p></noscript></section>`
+}`;
   return layout({
+    preview,
     title: post.title,
     description: post.description,
     path: `/blog/${post.slug}`,

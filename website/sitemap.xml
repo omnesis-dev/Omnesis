@@ -22,5 +22,6 @@
   <url><loc>https://omnesis.dev/browser-extension-privacy-policy</loc></url>
   <!-- blog:start -->
   <url><loc>https://omnesis.dev/blog/</loc></url>
+  <url><loc>https://omnesis.dev/blog/brain-prompt-caching</loc></url>
   <!-- blog:end -->
 </urlset>

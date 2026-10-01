@@ -9,9 +9,9 @@
 }
 
 .blog-shell {
-  width: min(100% - 48px, 820px);
+  width: min(100%, 1020px);
   margin: 0 auto;
-  padding: 150px 0 100px;
+  padding: 150px 24px 100px;
   flex: 1;
 }
 
@@ -45,6 +45,10 @@
   color: var(--text-secondary);
   font-size: clamp(1.08rem, 2vw, 1.25rem);
   line-height: 1.7;
+}
+
+.post-deck {
+  max-width: none;
 }
 
 .post-list {
@@ -167,7 +171,6 @@
 }
 
 .post-body {
-  max-width: 720px;
   color: var(--text-primary);
   font-size: 1.0625rem;
   line-height: 1.85;
@@ -360,8 +363,7 @@ html:not(.js) .blog-page #load-comments {
 
 @media (max-width: 640px) {
   .blog-shell {
-    width: calc(100% - 40px);
-    padding: 116px 0 64px;
+    padding: 116px 24px 64px;
   }
 
   .blog-intro {
