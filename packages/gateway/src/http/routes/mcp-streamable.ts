@@ -366,6 +366,7 @@ function createUnifiedHandler(deps: McpStreamableRoutesDeps): McpHttpHandler {
                     "/mcp",
                     options?.signal,
                     {
+                      ...(options?.waitSeconds ? { waitSeconds: options.waitSeconds } : {}),
                       ...(egressAudit ? { mcpInvocationAudit: egressAudit } : {}),
                       ...(includeCitations(options?.citationsDeclared)
                         ? { includeCitations: true }

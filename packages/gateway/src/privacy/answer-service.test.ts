@@ -1734,4 +1734,83 @@ describe("AnswerService", () => {
       ).toThrow(AnswerStoreError);
     });
   });
+  describe("bounded approval waits", () => {
+    it.each(["approve", "deny"] as const)(
+      "returns as soon as the owner chooses %s, with one final expiry write",
+      async (action) => {
+        const writeGate = directWriteGate(db);
+        const expire = vi.spyOn(writeGate, "expirePrivacyApprovals");
+        const egress = vi.spyOn(writeGate, "recordAnswerEgress");
+        const { service, candidates, reviewer } = makeService([{ decision: "ask" }], { writeGate });
+        const held = await service.answer(request);
+        if (held.status !== "approval_required") throw new Error("Expected an approval hold");
+        expire.mockClear();
+        const pending = service.getResponse(held.taskId, request.ownerId, { waitSeconds: 1 });
+        resolvePrivacyApproval(db, {
+          approvalId: held.approvalId,
+          action,
+          requestContext: { requestId: "decision-example", tokenId: null, deviceId: null },
+          releaseId: "release-example",
+          now: 1_000,
+        });
+        expect(await pending).toMatchObject(
+          action === "approve"
+            ? { status: "released", answer: "Private candidate" }
+            : { status: "denied", reason: "user_denied" },
+        );
+        expect(expire).toHaveBeenCalledTimes(1);
+        expect(egress).not.toHaveBeenCalled();
+        expect(candidates).toHaveBeenCalledTimes(1);
+        expect(reviewer).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it("returns the hold at its deadline without repeated writer jobs", async () => {
+      const writeGate = directWriteGate(db);
+      const expire = vi.spyOn(writeGate, "expirePrivacyApprovals");
+      const { service } = makeService([{ decision: "ask" }], { writeGate });
+      const held = await service.answer(request);
+      expire.mockClear();
+      expect(
+        await service.getResponse(held.taskId, request.ownerId, { waitSeconds: 0.02 }),
+      ).toEqual(held);
+      expect(expire).toHaveBeenCalledTimes(1);
+    });
+
+    it("stops at approval expiry instead of waiting for the tool deadline", async () => {
+      let now = 1_000;
+      const { service } = makeService([{ decision: "ask" }], { now: () => now });
+      const held = await service.answer(request);
+      if (held.status !== "approval_required") throw new Error("Expected an approval hold");
+      now = held.approvalExpiresAt;
+      expect(
+        await service.getResponse(held.taskId, request.ownerId, { waitSeconds: 30 }),
+      ).toMatchObject({ status: "denied", reason: "expired" });
+    });
+
+    it("cancels a pending read without writing or releasing an answer", async () => {
+      const writeGate = directWriteGate(db);
+      const expire = vi.spyOn(writeGate, "expirePrivacyApprovals");
+      const { service } = makeService([{ decision: "ask" }], { writeGate });
+      const held = await service.answer(request);
+      expire.mockClear();
+      const controller = new AbortController();
+      const pending = service.getResponse(held.taskId, request.ownerId, {
+        waitSeconds: 30,
+        signal: controller.signal,
+      });
+      const assertion = expect(pending).rejects.toMatchObject({ name: "AbortError" });
+      controller.abort();
+      await assertion;
+      expect(expire).not.toHaveBeenCalled();
+    });
+
+    it("keeps the durable task owner boundary during a wait", async () => {
+      const { service } = makeService([{ decision: "ask" }]);
+      const held = await service.answer(request);
+      await expect(
+        service.getResponse(held.taskId, "token:other-example", { waitSeconds: 30 }),
+      ).rejects.toBeInstanceOf(AnswerStoreError);
+    });
+  });
 });
