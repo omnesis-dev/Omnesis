@@ -17,7 +17,7 @@ export const ORIGIN_LABELS = {
     heading: "Date written in a document",
     icon: "❝",
     description:
-      "A date expression found in document text. It may refer to an event, a reporting period, or a date mentioned in passing.",
+      "Date mention detected in the document by Omnesis’ parser",
   },
   annotation: {
     row: "Agent interpretation",
