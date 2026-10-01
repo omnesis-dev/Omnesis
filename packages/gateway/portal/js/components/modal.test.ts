@@ -122,6 +122,22 @@ describe("Modal", () => {
     expect(document.activeElement).toBe(inside);
   });
 
+  test("lets a nested widget consume Escape before closing the dialog", async () => {
+    const onClose = vi.fn();
+    await act(async () => {
+      render(h(Modal, { open: true, title: "Entry", onClose }, body()), host);
+    });
+    const consumed = new window.Event("keydown", { bubbles: true, cancelable: true });
+    Object.assign(consumed, { key: "Escape" });
+    consumed.preventDefault();
+    await act(async () => { window.dispatchEvent(consumed); });
+    expect(onClose).not.toHaveBeenCalled();
+    const escape = new window.Event("keydown", { bubbles: true });
+    Object.assign(escape, { key: "Escape" });
+    await act(async () => { window.dispatchEvent(escape); });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
   test("closes on Escape and keeps Tab inside the panel", async () => {
     const onClose = vi.fn();
     await act(async () => {
