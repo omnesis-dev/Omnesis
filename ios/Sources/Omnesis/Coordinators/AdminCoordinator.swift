@@ -1134,6 +1134,7 @@ extension AdminCoordinator {
         indexStats: IndexStats?,
         wsState: DeviceSocket.ConnectionState?,
         sourceIconByType: [String: String],
+        sourceIconById: [String: String] = [:],
         sourceUnitNameByType: [String: String] = [:],
         sourceBgColorByType: [String: String] = [:],
         sourceAccentColorByType: [String: String] = [:],
@@ -1161,6 +1162,7 @@ extension AdminCoordinator {
             wsConnected = true
         }
         self.sourceIconByType = sourceIconByType
+        self.sourceIconById = sourceIconById
         self.sourceUnitNameByType = sourceUnitNameByType
         self.sourceBgColorByType = sourceBgColorByType
         self.sourceAccentColorByType = sourceAccentColorByType
