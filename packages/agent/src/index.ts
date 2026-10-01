@@ -30,6 +30,8 @@ export {
   type AgentTurnOutcome,
 } from "./turn-outcome.js";
 
+export { serializeToolResultForModel } from "./tool-result-text.js";
+
 export {
   DEFAULT_MAX_TOOL_ITERATIONS,
   type ChatBackend,

@@ -22,6 +22,15 @@ const RELEASED_ANSWER =
   "The Halden Press order is booked for delivery on Thursday 14 May.\n" +
   "The courier is Ridgeway Logistics.\n" +
   "Someone at Halden Press is expecting the pallet at the loading bay.";
+function expectReleasedAnswer(response: unknown): void {
+  expect(response).toMatchObject({ answer: RELEASED_ANSWER });
+  expect(response).toHaveProperty("citations", [
+    expect.objectContaining({ documentId: expect.any(String), sourceType: "gmail" }),
+  ]);
+  // The replay reviewer releases the citation while withholding its private message link.
+  expect(response).not.toHaveProperty("citations.0.sourceUrl");
+}
+
 const repositoryRoot = resolve(import.meta.dirname, "../../../..");
 
 describe("managed agent integration enrollment — spawned gateway", () => {
@@ -31,10 +40,22 @@ describe("managed agent integration enrollment — spawned gateway", () => {
     harness = new SyntheticE2EHarness({
       gatewayMode: "experimental",
       universe: "default",
-      agentBackend: "replay",
-      extraInference: { assignments: { "privacy-reviewer": "replay" } },
+      // Keep the draft cassette shared, but pin this reviewer to a fixture
+      // that explicitly withholds its citation link. No model inference runs.
+      agentBackend: "off",
+      extraGatewayConfig: {
+        agent: { replay: { fixture: join(repositoryRoot, "evals/universes/default/agent-demos") } },
+      },
+      extraInference: {
+        assignments: {
+          agent: "replay",
+          "privacy-reviewer": `replay/${join(repositoryRoot, "packages/collector/src/e2e/fixtures/citation-link-review")}`,
+        },
+      },
     });
     await harness.start();
+    // Seed the document annotated by the replay before its citation is privacy-reviewed.
+    await harness.triggerSyncAndWait("gmail:john.smith@example.com");
     const health = await harness.gatewayJson<{
       experimental: boolean;
       capabilities: { subscriptions: boolean };
@@ -261,13 +282,13 @@ describe("managed agent integration enrollment — spawned gateway", () => {
       }
 
       const firstResult = await invokeColdPlugin(harnessName, home);
-      expect(firstResult).toMatchObject({ answer: RELEASED_ANSWER });
+      expectReleasedAnswer(firstResult);
       const oldAccessToken = String(credentials.oauth.tokens.access_token);
       const countsBefore = lifecycleCounts();
 
       await harness.restartGateway(() => expireAccessWhileGatewayStopped(identity.credentialId));
       const secondResult = await invokeColdPlugin(harnessName, home);
-      expect(secondResult).toMatchObject({ answer: RELEASED_ANSWER });
+      expectReleasedAnswer(secondResult);
       expect(loadIntegrationCredentials(credentialsPath).oauth.tokens.access_token).not.toBe(
         oldAccessToken,
       );
