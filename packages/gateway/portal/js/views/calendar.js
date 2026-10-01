@@ -127,7 +127,6 @@ function queryFor(zoom, anchor, preferences) {
     to: addDays(days.at(-1), 2).getTime() - 1,
     timeZone,
     statuses: "active,completed",
-    ...(preferences.dueOnly ? { kinds: UPCOMING_KINDS.join(",") } : {}),
     origins: preferences.origin === "all" ? ORIGINS : preferences.origin,
   };
 }
@@ -249,7 +248,7 @@ export function CalendarTab({ selectedId = null, developer = false } = {}) {
     () => filterCalendarEntries(result.items, preferences),
     [result.items, preferences],
   );
-  const filtered = preferences.origin !== "all" || preferences.dueOnly;
+  const filtered = preferences.origin !== "all";
   const days = useMemo(
     () => visibleCalendarDays(zoom === "upcoming" ? "week" : zoom, anchor),
     [zoom, anchor],

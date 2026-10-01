@@ -240,11 +240,8 @@ export function calendarDateLabel(entry, timeZone) {
   return entry.precision === "range" && start !== end ? `${start} – ${end}` : start;
 }
 
-export function filterCalendarEntries(entries, { origin = "all", dueOnly = false } = {}) {
-  return entries.filter(
-    (entry) =>
-      (origin === "all" || entry.origin === origin) && (!dueOnly || MOMENT_KINDS.has(entry.kind)),
-  );
+export function filterCalendarEntries(entries, { origin = "all" } = {}) {
+  return entries.filter((entry) => origin === "all" || entry.origin === origin);
 }
 
 export function groupDayEntries(entries) {
@@ -294,16 +291,15 @@ export function readCalendarPreferences(storage) {
       origin: ["all", "projection", "annotation", "mention"].includes(saved?.origin)
         ? saved.origin
         : "all",
-      dueOnly: saved?.dueOnly === true,
     };
   } catch {
-    return { origin: "all", dueOnly: false };
+    return { origin: "all" };
   }
 }
 export function saveCalendarPreferences(preferences, storage) {
   try {
     storage ??= globalThis.localStorage;
-    storage?.setItem(PREFERENCES_KEY, JSON.stringify(preferences));
+    storage?.setItem(PREFERENCES_KEY, JSON.stringify({ origin: preferences.origin }));
   } catch {
     /* Storage can be disabled or full. */
   }

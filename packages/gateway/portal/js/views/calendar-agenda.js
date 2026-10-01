@@ -138,15 +138,6 @@ export function CalendarFilters({ preferences, onChange }) {
           </button>`,
       )}
     </div>
-    <label class="calendar-due-filter"
-      ><input
-        type="checkbox"
-        checked=${preferences.dueOnly}
-        onChange=${(event) => onChange({ ...preferences, dueOnly: event.currentTarget.checked })}
-      />
-      Due items only</label
-    >
-    <span class="debug-sub">Deadlines, expiries and reminders</span>
   </div>`;
 }
 
@@ -233,7 +224,6 @@ export function DaySection({
 }) {
   const key = localDayKey(day);
   const groups = groupDayEntries(entries);
-  const count = (origin) => entries.filter((entry) => entry.origin === origin).length;
   return html`<section class=${`calendar-day${key === today ? " today" : ""}`}>
     <header>
       <span class="calendar-day-number">${day.getDate()}</span>
@@ -242,14 +232,8 @@ export function DaySection({
     </header>
     <div class="calendar-day-entries">
       ${entries.length === 0
-        ? html`<span class="calendar-day-empty"
-            >${filtered ? "No entries match these filters." : "Nothing filed for this day."}</span
-          >`
+        ? filtered ? null : html`<span class="calendar-day-empty">Nothing filed for this day.</span>`
         : html`
-            <p class="calendar-day-counts">
-              ${count("projection")} source records · ${count("annotation")} agent interpretations ·
-              ${count("mention")} date mentions${filtered ? " · filtered" : ""}
-            </p>
             <${EntryGroup}
               label="Timed"
               entries=${groups.timed}

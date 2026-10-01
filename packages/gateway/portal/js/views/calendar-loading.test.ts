@@ -348,7 +348,7 @@ describe("Calendar loading and addressability", () => {
     expect(section.querySelector("summary").textContent).toContain("1 possible deadline");
     expect(section.querySelectorAll(".calendar-mention-document")).toHaveLength(1);
     expect(section.querySelectorAll(".calendar-entry")).toHaveLength(2);
-    expect(host.textContent).toContain("2 date mentions");
+    expect(host.querySelector(".calendar-day-counts")).toBeNull();
     await act(async () => {
       host.querySelectorAll(".calendar-origin-filters button")[3].click();
     });
@@ -359,7 +359,7 @@ describe("Calendar loading and addressability", () => {
     expect(host.querySelector(".calendar-mentions").hasAttribute("open")).toBe(true);
   });
 
-  it("fetches due filters at the server and does not paint a stale filter response", async () => {
+  it("fetches origin filters without painting stale results or filtered empty-state text", async () => {
     const pending = deferred();
     mocks.getWindow
       .mockResolvedValueOnce({ items: [entry("all-entry", "All origin entry")], nowMs: Date.now() })
@@ -368,14 +368,16 @@ describe("Calendar loading and addressability", () => {
       render(h(CalendarTab), host);
     });
     await flushEffects();
-    const checkbox = host.querySelector(".calendar-due-filter input");
+    expect(host.querySelector(".calendar-due-filter")).toBeNull();
+    const mentionFilter = [...host.querySelectorAll(".calendar-origin-filters button")].find(
+      (button) => button.textContent.trim() === "Mentions",
+    );
     await act(async () => {
-      checkbox.checked = true;
-      checkbox.dispatchEvent(new window.Event("change", { bubbles: true }));
+      mentionFilter.click();
     });
     await flushEffects();
     expect(mocks.getWindow).toHaveBeenLastCalledWith(
-      expect.objectContaining({ kinds: "deadline,reminder,expiry" }),
+      expect.objectContaining({ origins: "mention" }),
     );
     expect(host.textContent).not.toContain("All origin entry");
     await act(async () => {
@@ -383,7 +385,8 @@ describe("Calendar loading and addressability", () => {
       await pending.promise;
     });
     await flushEffects();
-    expect(host.textContent).toContain("No entries match these filters.");
+    expect(host.textContent).not.toContain("No entries match these filters.");
+    expect(host.querySelector(".calendar-day-empty")).toBeNull();
   });
 
   it("keeps origin help separate, uniquely labelled, and dismissible without opening an entry", async () => {

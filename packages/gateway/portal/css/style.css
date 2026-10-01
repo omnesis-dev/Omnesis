@@ -11349,9 +11349,6 @@ div.source-activity-popover-link:hover {
 .calendar-origin-filters { display: inline-flex; flex-wrap: wrap; gap: 3px; }
 .calendar-origin-filters button { padding: 5px 10px; border: 1px solid var(--border-light); border-radius: 6px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 12px; cursor: pointer; }
 .calendar-origin-filters button.active { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--accent); }
-.calendar-due-filter { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; }
-.calendar-due-filter input { accent-color: var(--accent); }
-.calendar-day-counts { margin: 0 0 4px; color: var(--text-muted); font-size: 11px; line-height: 1.5; }
 .calendar-entry-group { display: grid; gap: 6px; }
 .calendar-entry-group h3 { margin: 8px 0 2px; color: var(--text-secondary); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
 .calendar-item { position: relative; border: 1px solid var(--border-light); border-radius: 8px; background: var(--bg-secondary); }

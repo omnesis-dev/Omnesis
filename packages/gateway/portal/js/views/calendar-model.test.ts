@@ -51,7 +51,7 @@ describe("Calendar organization", () => {
     ).toEqual([["a", "b"], ["c"]]);
   });
 
-  it("combines origin and due filters without dropping mention deadlines", () => {
+  it("filters by origin and ignores the retired due-only preference", () => {
     const entries = [
       record("a", "deadline"),
       record("b", "expiry", true, "annotation"),
@@ -61,11 +61,12 @@ describe("Calendar organization", () => {
     expect(filterCalendarEntries(entries, { dueOnly: true }).map((entry) => entry.id)).toEqual([
       "a",
       "b",
+      "c",
       "d",
     ]);
     expect(
       filterCalendarEntries(entries, { origin: "mention", dueOnly: true }).map((entry) => entry.id),
-    ).toEqual(["d"]);
+    ).toEqual(["c", "d"]);
   });
 
   it("relates only explicit projection links, never matching titles or shared evidence", () => {
@@ -97,13 +98,15 @@ describe("Calendar organization", () => {
         value = next;
       },
     };
-    expect(readCalendarPreferences(storage)).toEqual({ origin: "all", dueOnly: false });
+    expect(readCalendarPreferences(storage)).toEqual({ origin: "all" });
     saveCalendarPreferences({ origin: "mention", dueOnly: true }, storage);
-    expect(readCalendarPreferences(storage)).toEqual({ origin: "mention", dueOnly: true });
+    expect(readCalendarPreferences(storage)).toEqual({ origin: "mention" });
+    value = '{"origin":"all","dueOnly":true}';
+    expect(readCalendarPreferences(storage)).toEqual({ origin: "all" });
     value = '{"origin":"unknown","dueOnly":"yes"}';
-    expect(readCalendarPreferences(storage)).toEqual({ origin: "all", dueOnly: false });
+    expect(readCalendarPreferences(storage)).toEqual({ origin: "all" });
     value = "invalid JSON";
-    expect(readCalendarPreferences(storage)).toEqual({ origin: "all", dueOnly: false });
+    expect(readCalendarPreferences(storage)).toEqual({ origin: "all" });
     const denied = {
       getItem: () => {
         throw new Error("denied");
@@ -112,7 +115,7 @@ describe("Calendar organization", () => {
         throw new Error("denied");
       },
     };
-    expect(readCalendarPreferences(denied)).toEqual({ origin: "all", dueOnly: false });
-    expect(() => saveCalendarPreferences({ origin: "all", dueOnly: false }, denied)).not.toThrow();
+    expect(readCalendarPreferences(denied)).toEqual({ origin: "all" });
+    expect(() => saveCalendarPreferences({ origin: "all" }, denied)).not.toThrow();
   });
 });
