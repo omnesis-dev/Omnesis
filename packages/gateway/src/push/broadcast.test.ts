@@ -14,6 +14,13 @@ import { sendAgentAnswerPush } from "../agent/answer-push.js";
 import { ConversationNotifier } from "../agent/conversation-notifier.js";
 import { sendDigestPush } from "../brain/digest-push.js";
 import { PrivacyApprovalNotifier } from "../privacy/approval-notifier.js";
+import { createAccessTables } from "../access/store.js";
+import {
+  beginAnswerTask,
+  completeAnswerTask,
+  createAnswerPrivacyTables,
+  digestCandidate,
+} from "../privacy/store.js";
 import { NotifyRunner } from "../watch/notify-runner.js";
 import { PushBroadcaster } from "./broadcast.js";
 import { NeedsAuthNotifier } from "./producers/needs-auth.js";
@@ -45,6 +52,8 @@ function makeDb(deviceIds: readonly DeviceId[]): Database.Database {
   const insert = db.prepare("INSERT INTO devices (id) VALUES (?)");
   for (const deviceId of deviceIds) insert.run(deviceId);
   createNotificationQueueTables(db);
+  createAnswerPrivacyTables(db);
+  createAccessTables(db);
   return db;
 }
 
@@ -407,6 +416,42 @@ describe("PushBroadcaster", () => {
       }).notify({
         sourceId: "source-fictional",
         deviceId: id(9),
+      });
+      const task = beginAnswerTask(db, {
+        ownerId: "token:fictional",
+        clientRequestId: "request-fictional",
+        question: "What is my availability?",
+        ids: {
+          workflowId: "workflow-fictional",
+          conversationId: "conversation-fictional",
+          taskId: "task-fictional",
+        },
+        now: clock,
+        workflowExpiresAt: clock + 10_000,
+      });
+      completeAnswerTask(db, {
+        taskId: task.taskId,
+        ownerId: "token:fictional",
+        review: {
+          recipeVersion: "test",
+          provider: "test",
+          model: "test",
+          confidence: 1,
+          policyRevision: "policy-fictional",
+          findings: [],
+          rationale: "Explicit review required.",
+        },
+        now: clock,
+        outcome: {
+          kind: "approval",
+          approvalId: "approval-fictional",
+          candidateAnswer: "Friday afternoon.",
+          candidateCitations: [],
+          candidateDigest: digestCandidate("Friday afternoon."),
+          releaseStatus: "released",
+          reductions: [],
+          expiresAt: clock + 10_000,
+        },
       });
       await new PrivacyApprovalNotifier(broadcaster).notify("approval-fictional");
 
