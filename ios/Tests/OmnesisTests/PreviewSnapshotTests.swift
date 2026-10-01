@@ -747,6 +747,75 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(body.environment(store), name: "11-search-results", size: CGSize(width: 393, height: 1400))
     }
 
+    func testSearchBreadcrumbs() {
+        let store = AppStore.preview()
+        let view = NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    SearchResultRow(item: PreviewMocks.searchResultWithBreadcrumbs, store: store)
+                        .padding(.horizontal, Theme.Spacing.md)
+                        .padding(.vertical, 10)
+                    SearchBreadcrumbsView(
+                        provenance: PreviewMocks.searchProvenance,
+                        documentId: "sample-root",
+                        store: store
+                    )
+                    .padding(.leading, Theme.Spacing.md + 32)
+                    .padding(.trailing, Theme.Spacing.md)
+                    .padding(.bottom, 10)
+                }
+                .padding(.horizontal, Theme.Spacing.lg)
+                .padding(.vertical, Theme.Spacing.sm)
+            }.background(Theme.bgPrimary)
+        }
+        snapshot(view, name: "11-search-breadcrumbs")
+        searchBreadcrumbsLargeText()
+        searchBreadcrumbsManyCopies()
+        searchBreadcrumbsHubOnly()
+    }
+
+    private func searchBreadcrumbsLargeText() {
+        let store = AppStore.preview()
+        let view = NavigationStack {
+            ScrollView {
+                SearchBreadcrumbsView(
+                    provenance: PreviewMocks.searchProvenance,
+                    documentId: "sample-root",
+                    store: store
+                ).padding()
+            }.background(Theme.bgPrimary)
+        }.environment(\.dynamicTypeSize, .accessibility3)
+        snapshot(view, name: "11-search-breadcrumbs-large-text", size: CGSize(width: 393, height: 1800))
+    }
+
+    private func searchBreadcrumbsManyCopies() {
+        let view = NavigationStack {
+            SearchBreadcrumbsView(
+                provenance: PreviewMocks.searchProvenanceManyCopies,
+                documentId: "sample-root",
+                store: AppStore.preview()
+            ).padding()
+        }
+        snapshot(view, name: "11-search-breadcrumbs-many-copies")
+    }
+
+    private func searchBreadcrumbsHubOnly() {
+        let evidence = SearchProvenance(
+            copies: [PreviewMocks.searchProvenance.copies[0]],
+            paths: [],
+            stopReasons: ["hub"],
+            modelContext: nil
+        )
+        let view = NavigationStack {
+            SearchBreadcrumbsView(
+                provenance: evidence,
+                documentId: "sample-root",
+                store: AppStore.preview()
+            ).padding()
+        }
+        snapshot(view, name: "11-search-breadcrumbs-hub-only")
+    }
+
     func testSearchPipelineFooter() {
         let view = ScrollView {
             SearchPipelineFooter(response: PreviewMocks.searchResponseVerbose)

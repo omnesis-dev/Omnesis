@@ -8,6 +8,10 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalInspectionMode
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
 import dev.omnesis.android.sources.SourceCatalog
+import dev.omnesis.android.transport.dto.SearchGraphDocument
+import dev.omnesis.android.transport.dto.SearchGraphPath
+import dev.omnesis.android.transport.dto.SearchGraphModelContext
+import dev.omnesis.android.transport.dto.SearchProvenance
 import dev.omnesis.android.transport.dto.SearchDebugInfo
 import dev.omnesis.android.transport.dto.SearchModels
 import dev.omnesis.android.transport.dto.SearchQueryReport
@@ -126,6 +130,44 @@ class SearchParityScreenshotTest {
             catalog = catalog, onClear = {},
         )
     }
+
+    private fun graphState(): SearchViewModel.State {
+        val copies = (1..7).map { index -> SearchGraphDocument("copy-$index", "files:example", "Equipment schedule copy $index.pdf") }
+        val conversation = SearchGraphDocument("conversation", "notes:example", "Equipment delivery arrangements and assembly instructions")
+        val catalogue = SearchGraphDocument("catalogue", "files:example", "Equipment catalogue.pdf")
+        val provenance = SearchProvenance(
+            copies = listOf(SearchGraphDocument("graph-root", "files:example", "Equipment schedule.pdf", "Example laptop", "~/Documents/Equipment schedule.pdf")) + copies,
+            paths = listOf(
+                SearchGraphPath(listOf("graph-root", "catalogue", "conversation"), listOf("outbound:url", "inbound:url"), listOf("links to", "is linked from")),
+            ),
+            truncated = true, stopReasons = listOf("hub"),
+            modelContext = SearchGraphModelContext(listOf(catalogue, conversation)),
+        )
+        val items = listOf(
+            SearchResultItem("graph-root", "files:example", "file", "Equipment schedule.pdf", sourceCreatedAt = "2026-01-02T00:00:00Z", chunkText = "The delivery includes three equipment cases and a printed assembly checklist.", score = 0.9, provenance = provenance),
+            SearchResultItem("copy-1", "files:example", "file", "Equipment schedule copy 1.pdf", sourceCreatedAt = "2026-01-02T00:00:00Z", chunkText = "The delivery includes three equipment cases and a printed assembly checklist.", score = 0.8, provenance = provenance),
+            SearchResultItem("solo", "notes:example", "note", "Delivery checklist", sourceCreatedAt = "2026-01-02T00:00:00Z", chunkText = "Check the packing list before delivery.", score = 0.7, provenance = SearchProvenance(copies = listOf(SearchGraphDocument("solo", "notes:example", "Delivery checklist")))),
+        )
+        return SearchViewModel.State(query = "equipment schedule", lastQuery = "equipment schedule", hasSearched = true, status = SearchViewModel.Status.Results(items, 187.0, response(items)))
+    }
+
+    @Test
+    fun search_graph_light() = capture("search_graph_light", dark = false) { searchContent(graphState())() }
+
+    @Test
+    fun search_graph_hub_only_light() = capture("search_graph_hub_only_light", dark = false) {
+        val item = results()[0].copy(provenance = SearchProvenance(stopReasons = listOf("hub")))
+        searchContent(SearchViewModel.State(query = "budget", lastQuery = "budget", hasSearched = true, status = SearchViewModel.Status.Results(listOf(item), 10.0)))()
+    }
+
+    @Test
+    fun search_graph_hub_only_dark() = capture("search_graph_hub_only_dark", dark = true) {
+        val item = results()[0].copy(provenance = SearchProvenance(stopReasons = listOf("hub")))
+        searchContent(SearchViewModel.State(query = "budget", lastQuery = "budget", hasSearched = true, status = SearchViewModel.Status.Results(listOf(item), 10.0)))()
+    }
+
+    @Test
+    fun search_graph_dark() = capture("search_graph_dark", dark = true) { searchContent(graphState())() }
 
     @Test
     fun search_tips_dark() = capture("search_parity_tips_dark", dark = true) {

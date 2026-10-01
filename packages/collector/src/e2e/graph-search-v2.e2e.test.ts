@@ -11,10 +11,10 @@ import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { ProviderId, SourceId } from "@omnesis/types";
 import { normalizeFile } from "@omnesis/provider-local-files/src/normalizer.js";
+import { serializeToolResultForModel } from "@omnesis/agent";
 import { authorizeMcpClient, type AuthorizedMcpClient } from "./mcp-oauth-helper.js";
 import { SyntheticE2EHarness } from "./synth-harness.js";
 import type { DocRef, SearchProvenance, ToolResult } from "@omnesis/core";
-import { serializeToolResultForModel } from "@omnesis/agent";
 
 const execFileAsync = promisify(execFile);
 const REPO_ROOT = join(import.meta.dirname, "../../../..");
@@ -36,7 +36,7 @@ interface WireEvent {
 interface PublicHit {
   documentId: string;
   chunkText: string;
-  provenance?: unknown;
+  provenance?: SearchProvenance;
   sourceUrl?: string;
 }
 interface StoredDoc {
@@ -560,6 +560,107 @@ describe("Agent search v2 — synthetic file journey", () => {
     }
   }, 120_000);
 
+  test("read-only mobile search opts into bounded graph facts without changing ordinary hits", async () => {
+    const readOnly = await harness.gatewayJson<{ id: string; token: string }>("/admin/tokens", {
+      method: "POST",
+      body: JSON.stringify({
+        deviceId: harness.deviceForSource("google-drive:maya@example.com").deviceId,
+        scopes: ["read"],
+        name: "Mobile graph search probe",
+      }),
+    });
+    const headers = {
+      Authorization: `Bearer ${readOnly.token}`,
+      "Content-Type": "application/json",
+    };
+    try {
+      const readiness = await fetch(`${harness.gatewayUrl}/search/readiness`, { headers });
+      expect(readiness.status).toBe(200);
+      expect(await readiness.json()).toMatchObject({ graphContextAvailable: true });
+      const search = async (includeGraphContext: boolean) => {
+        const response = await fetch(`${harness.gatewayUrl}/search`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ text: QUERY, limit: 20, verbose: true, includeGraphContext }),
+        });
+        expect(response.status).toBe(200);
+        return (await response.json()) as {
+          results: PublicHit[];
+          timing: unknown;
+          stages: unknown;
+        };
+      };
+      const ordinary = await search(false);
+      const enriched = await search(true);
+      // Existing apps retain the same hit IDs, snippets, source links and ranks.
+      expect(enriched.results.map(({ provenance: _provenance, ...hit }) => hit)).toEqual(
+        ordinary.results,
+      );
+      expect(enriched.timing).toBeDefined();
+      expect(enriched.stages).toBeDefined();
+      expect(ordinary.results.every((hit) => hit.provenance === undefined)).toBe(true);
+      const graphHits = enriched.results.filter((hit) => hit.provenance);
+      expect(graphHits.length).toBeGreaterThan(0);
+      expect(graphHits.length).toBeLessThanOrEqual(3);
+      expect(enriched.results.slice(3).every((hit) => !hit.provenance)).toBe(true);
+      const hit = graphHits.find((item) => copies.some((copy) => copy.id === item.documentId));
+      expect(hit).toBeDefined();
+      const graph = hit!.provenance!;
+      expect(graph.copies.map((copy) => copy.documentId).sort()).toEqual(
+        copies.map((copy) => copy.id).sort(),
+      );
+      expect(
+        graph.copies.some(
+          (copy) =>
+            copy.path === "~/Contracts/northstar.pdf" &&
+            copy.deviceName === "Example-Laptop-collector",
+        ),
+      ).toBe(true);
+      expect(graph.paths.length).toBeGreaterThan(0);
+      expect(
+        graph.modelContext?.documents.some((document) => document.documentId === hit!.documentId),
+      ).toBe(true);
+      expect(graph.paths.length).toBeLessThanOrEqual(24);
+      const journeyResponse = await fetch(`${harness.gatewayUrl}/search`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          text: "equipment agreement source:whatsapp-messages",
+          includeGraphContext: true,
+        }),
+      });
+      expect(journeyResponse.status).toBe(200);
+      const journey = (await journeyResponse.json()) as { results: PublicHit[] };
+      const chat = db
+        .prepare("SELECT id FROM documents WHERE external_id = 'graph-chat'")
+        .get() as { id: string };
+      const drive = copies.find((copy) => copy.external_id === "graph-contract-1")!;
+      const hub = db.prepare("SELECT id FROM documents WHERE external_id = 'graph-hub'").get() as {
+        id: string;
+      };
+      const chatGraph = journey.results.find((item) => item.documentId === chat.id)!.provenance!;
+      expect(
+        chatGraph.paths.some(
+          (path) =>
+            JSON.stringify(path.documentIds) === JSON.stringify([chat.id, drive.id, hub.id]),
+        ),
+      ).toBe(true);
+      expect(chatGraph.stopReasons).toContain("hub");
+      // Source-restricted Direct credentials are audience-bound to MCP, so
+      // the mobile read surface rejects them before graph access.
+      const token = restricted.provider.tokens()!.access_token;
+      const denied = await fetch(`${harness.gatewayUrl}/search`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ text: QUERY, includeGraphContext: true }),
+      });
+      expect(denied.status).toBe(401);
+      expect(await denied.text()).not.toContain(LOCAL_SOURCE);
+    } finally {
+      await harness.gatewayJson(`/admin/tokens/${readOnly.id}`, { method: "DELETE" });
+    }
+  }, 60_000);
+
   test("public search stays legacy and disabling v2 restores separate agent copy entries after restart", async () => {
     expect(beforePublic.every((hit) => hit.provenance === undefined)).toBe(true);
     const injection = await fetch(`${harness.gatewayUrl}/search`, {
@@ -585,6 +686,15 @@ describe("Agent search v2 — synthetic file journey", () => {
       readFileSync(join(harness.getConfigDir(), "omnesis.json"), "utf8"),
     ) as { search?: { v2?: { enabled?: boolean } } };
     expect(fallbackConfig.search?.v2?.enabled).toBe(false);
+    const readiness = await harness.gatewayJson<{ graphContextAvailable?: boolean }>(
+      "/search/readiness",
+    );
+    expect(readiness.graphContextAvailable).not.toBe(true);
+    const mobileFallback = await harness.gatewayJson<{ results: PublicHit[] }>("/search", {
+      method: "POST",
+      body: JSON.stringify({ text: QUERY, limit: 20, includeGraphContext: true }),
+    });
+    expect(mobileFallback.results.every((hit) => !hit.provenance)).toBe(true);
     const unavailable = await fetch(`${harness.gatewayUrl}/admin/search/agent-context`, {
       method: "POST",
       headers: { Authorization: `Bearer ${harness.apiKey}`, "Content-Type": "application/json" },

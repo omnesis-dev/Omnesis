@@ -33,6 +33,49 @@ class SearchClientTest {
     private fun client() = SearchClient(GatewayHttp(OkHttpClient(), server.url("/").toString(), "tok"))
 
     @Test
+    fun graph_context_is_opted_in_only_when_readiness_advertises_it() = runTest {
+        server.enqueue(MockResponse().setBody("""{"graphContextAvailable":true,"futureField":1}"""))
+        server.enqueue(MockResponse().setBody("""{"results":[]}"""))
+        client().search("sample", graphContext = true)
+        assertEquals("/search/readiness", server.takeRequest().path)
+        val request = server.takeRequest()
+        assertEquals("/search", request.path)
+        assertTrue(request.body.readUtf8().contains("\"includeGraphContext\":true"))
+    }
+
+    @Test
+    fun missing_capability_and_older_readiness_route_keep_legacy_body() = runTest {
+        for (readiness in listOf(MockResponse().setBody("{}"), MockResponse().setResponseCode(404), MockResponse().setResponseCode(403))) {
+            server.enqueue(readiness)
+            server.enqueue(MockResponse().setBody("""{"results":[]}"""))
+            client().search("sample", graphContext = true)
+            server.takeRequest()
+            assertTrue(!server.takeRequest().body.readUtf8().contains("includeGraphContext"))
+        }
+    }
+
+    @Test
+    fun graph_capability_is_rechecked_when_the_gateway_disables_it() = runTest {
+        val sameClient = client()
+        for (enabled in listOf(true, false)) {
+            server.enqueue(MockResponse().setBody("""{"graphContextAvailable":$enabled}"""))
+            server.enqueue(MockResponse().setBody("""{"results":[]}"""))
+            sameClient.search("sample", graphContext = true)
+            server.takeRequest()
+            assertEquals(enabled, server.takeRequest().body.readUtf8().contains("includeGraphContext"))
+        }
+    }
+
+    @Test
+    fun ordinary_search_never_requests_graph_capability() = runTest {
+        server.enqueue(MockResponse().setBody("""{"results":[],"futureField":1}"""))
+        client().search("sample")
+        val request = server.takeRequest()
+        assertEquals("/search", request.path)
+        assertTrue(!request.body.readUtf8().contains("includeGraphContext"))
+    }
+
+    @Test
     fun merge_rules_unwraps_rules_envelope_and_sends_query_flags() = runTest {
         server.enqueue(
             MockResponse().setBody(
