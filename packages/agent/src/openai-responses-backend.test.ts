@@ -1514,12 +1514,18 @@ describe("OpenAIResponsesBackend.runTurn", () => {
   });
 
   it("distinguishes the model request deadline from a connection failure", async () => {
+    const deadline = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    let responseRequests = 0;
     globalThis.fetch = vi.fn((input, init) => {
       if (String(input).endsWith("/input_tokens")) {
         return Promise.resolve(jsonResponse({ error: "unsupported" }, 404));
       }
+      responseRequests += 1;
       return new Promise<Response>((_resolve, reject) => {
         init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+        // The deadline expires with fetch pending, after the mock is listening.
+        deadline.abort(new DOMException("Request deadline expired", "TimeoutError"));
       });
     });
     const backend = new OpenAIResponsesBackend({
@@ -1529,6 +1535,8 @@ describe("OpenAIResponsesBackend.runTurn", () => {
     });
 
     const events = await collect(backend.runTurn(baseInput()));
+    expect(timeout).toHaveBeenCalled();
+    expect(responseRequests).toBe(1);
     expect(events.at(-1)).toMatchObject({
       type: "agent.message.end",
       payload: {
@@ -1575,17 +1583,30 @@ describe("OpenAIResponsesBackend.runTurn", () => {
   });
 
   it("types a deadline that expires after streaming headers arrive", async () => {
+    const deadline = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    let responseRequests = 0;
+    let bodyRead = false;
     globalThis.fetch = vi.fn((input: string | URL | Request, init?: RequestInit) => {
       if (String(input).endsWith("/input_tokens")) {
         return Promise.resolve(jsonResponse({ error: "unsupported" }, 404));
       }
-      const body = new ReadableStream<Uint8Array>({
-        start(stream) {
-          init?.signal?.addEventListener("abort", () => stream.error(init.signal?.reason), {
-            once: true,
-          });
+      responseRequests += 1;
+      const body = new ReadableStream<Uint8Array>(
+        {
+          start(stream) {
+            init?.signal?.addEventListener("abort", () => stream.error(init.signal?.reason), {
+              once: true,
+            });
+          },
+          pull() {
+            bodyRead = true;
+            deadline.abort(new DOMException("Request deadline expired", "TimeoutError"));
+          },
         },
-      });
+        // No eager prefetch: only the backend's reader can trigger the deadline.
+        { highWaterMark: 0 },
+      );
       return Promise.resolve(
         new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }),
       );
@@ -1596,6 +1617,9 @@ describe("OpenAIResponsesBackend.runTurn", () => {
       timeoutMs: 5,
     });
     const events = await collect(backend.runTurn(baseInput()));
+    expect(timeout).toHaveBeenCalled();
+    expect(responseRequests).toBe(1);
+    expect(bodyRead).toBe(true);
     expect(events.at(-1)).toMatchObject({
       type: "agent.message.end",
       payload: { failure: { code: "http_request_timeout" } },
@@ -1603,17 +1627,29 @@ describe("OpenAIResponsesBackend.runTurn", () => {
   });
 
   it("types a deadline while reading a rejected response body", async () => {
+    const deadline = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    let responseRequests = 0;
+    let bodyRead = false;
     globalThis.fetch = vi.fn((input: string | URL | Request, init?: RequestInit) => {
       if (String(input).endsWith("/input_tokens")) {
         return Promise.resolve(jsonResponse({ error: "unsupported" }, 404));
       }
-      const body = new ReadableStream<Uint8Array>({
-        start(stream) {
-          init?.signal?.addEventListener("abort", () => stream.error(init.signal?.reason), {
-            once: true,
-          });
+      responseRequests += 1;
+      const body = new ReadableStream<Uint8Array>(
+        {
+          start(stream) {
+            init?.signal?.addEventListener("abort", () => stream.error(init.signal?.reason), {
+              once: true,
+            });
+          },
+          pull() {
+            bodyRead = true;
+            deadline.abort(new DOMException("Request deadline expired", "TimeoutError"));
+          },
         },
-      });
+        { highWaterMark: 0 },
+      );
       return Promise.resolve(
         new Response(body, { status: 503, headers: { "Content-Type": "application/json" } }),
       );
@@ -1624,6 +1660,9 @@ describe("OpenAIResponsesBackend.runTurn", () => {
       timeoutMs: 5,
     });
     const events = await collect(backend.runTurn(baseInput()));
+    expect(timeout).toHaveBeenCalled();
+    expect(responseRequests).toBe(1);
+    expect(bodyRead).toBe(true);
     expect(events.at(-1)).toMatchObject({
       type: "agent.message.end",
       payload: { failure: { code: "http_request_timeout" } },
