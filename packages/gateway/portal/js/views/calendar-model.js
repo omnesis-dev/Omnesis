@@ -24,7 +24,7 @@ export const ORIGIN_LABELS = {
     heading: "Agent interpretation",
     icon: "✦",
     description:
-      "A dated fact recorded by the agent from supporting information. Open it to inspect the evidence.",
+      "A dated fact recorded by the Omnesis Brain",
   },
 };
 
