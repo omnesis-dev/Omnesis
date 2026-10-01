@@ -18745,9 +18745,9 @@ a.agent-loop-row.agent-ephemeral-result-link:hover .agent-loop-state {
 
 .capture-day {
   margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
+  font-size: 17px;
+  font-weight: 700;
+  color: color-mix(in srgb, var(--accent) 65%, var(--text-primary));
 }
 
 .capture-day-date,
@@ -18829,7 +18829,7 @@ a.agent-loop-row.agent-ephemeral-result-link:hover .agent-loop-state {
 .notes-table { table-layout: fixed; width: 100%; }
 .notes-table td {
   vertical-align: top;
-  padding: 14px 0;
+  padding: 8px 0;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
 }
 .notes-table tbody tr:hover { background: transparent; }
