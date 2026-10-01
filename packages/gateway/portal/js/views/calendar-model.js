@@ -95,9 +95,6 @@ export const CALENDAR_KINDS = {
 export const MOMENT_KINDS = new Set(
   Object.keys(CALENDAR_KINDS).filter((kind) => CALENDAR_KINDS[kind].moment),
 );
-const ACTIVITY_KINDS = new Set(
-  Object.keys(CALENDAR_KINDS).filter((kind) => CALENDAR_KINDS[kind].activity),
-);
 const DATE_FORMATTERS = new Map();
 
 function pad(value) {
@@ -255,7 +252,8 @@ export function groupDayEntries(entries) {
   for (const entry of entries) {
     if (entry.origin === "mention") groups.mentions.push(entry);
     else if (MOMENT_KINDS.has(entry.kind)) groups.allDay.push(entry);
-    else if (ACTIVITY_KINDS.has(entry.kind)) groups.activity.push(entry);
+    else if (CALENDAR_KINDS[entry.kind]?.activity)
+      groups.activity.push(entry);
     else if (!entry.allDay) groups.timed.push(entry);
     else groups.allDay.push(entry);
   }
