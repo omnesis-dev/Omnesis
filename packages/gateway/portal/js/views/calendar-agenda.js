@@ -47,12 +47,13 @@ export function OriginBadge({ origin }) {
       }}
       onKeyDown=${(event) => {
         if (event.key === "Escape") {
+          if (open || !dismissed) event.stopPropagation();
           setOpen(false);
           setDismissed(true);
         }
       }}
     >
-      <span aria-hidden="true">${meta.icon}</span> ${meta.row} <span aria-hidden="true">ⓘ</span>
+      <span aria-hidden="true">${meta.icon}</span> ${meta.row}
     </button>
     <span id=${tooltipId} role="tooltip" class="calendar-origin-tooltip">${meta.description}</span>
   </span>`;
@@ -107,14 +108,16 @@ export function CalendarEntryRow({
         <span class="calendar-entry-meta">
           ${showDate && html`<span>${date}</span>`}
           ${formatTime(entry, timeZone) && html`<span>${formatTime(entry, timeZone)}</span>`}
-          <${KindPill} kind=${entry.kind} />
           ${!mention && icon && html`<img class="source-icon" src=${icon} alt="" />`}
           ${ids.length > 0 &&
           html`<span title="Linked supporting documents">▤ ${ids.length}</span>`}
         </span>
       </span>
     </button>
-    <${OriginBadge} origin=${entry.origin} id=${entry.id} />
+    <div class="calendar-entry-pills">
+      <${OriginBadge} origin=${entry.origin} />
+      <${KindPill} kind=${entry.kind} />
+    </div>
   </div>`;
 }
 

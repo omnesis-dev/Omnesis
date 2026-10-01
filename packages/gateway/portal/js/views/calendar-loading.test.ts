@@ -429,6 +429,9 @@ describe("Calendar loading and addressability", () => {
     await flushEffects();
     const badges = [...host.querySelectorAll(".calendar-origin-help button")];
     expect(badges.length).toBeGreaterThan(0);
+    const pair = host.querySelector(".calendar-entry-pills");
+    expect(pair.children[0].className).toContain("calendar-origin-help");
+    expect(pair.children[1].className).toBe("calendar-kind");
     const ids = badges.map((button) => button.getAttribute("aria-describedby"));
     expect(new Set(ids).size).toBe(ids.length);
     expect(badges.every((button) => !button.closest(".calendar-entry"))).toBe(true);

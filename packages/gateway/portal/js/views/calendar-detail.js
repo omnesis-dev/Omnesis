@@ -3,11 +3,11 @@
 
 import { html } from "htm/preact";
 import { Modal } from "../components/modal.js";
+import { OriginBadge, KindPill } from "./calendar-agenda.js";
 import { DevAnnotateButton } from "../components/dev-annotate-button.js";
 import { sourceIconUrl } from "../lib/format.js";
 import {
   CALENDAR_KINDS,
-  kindMeta,
   ORIGIN_LABELS,
   calendarDateLabel,
   evidenceDocumentIds,
@@ -67,9 +67,8 @@ export function CalendarEntryDetail({
   const annotation = entry.annotation;
   const mention = entry.mention;
   const origin = ORIGIN_LABELS[entry.origin] ?? { row: entry.origin, heading: entry.origin };
-  const kind = kindMeta(entry.kind);
-  const title = entry.origin === "annotation" ? origin.heading : entry.label;
-  return html`<${Modal} open=${true} onClose=${onClose} title=${title} size="lg">
+  const title = origin.row;
+  return html`<${Modal} open=${true} onClose=${onClose} title=${title} titleContent=${html`<div class="calendar-detail-pills"><${OriginBadge} origin=${entry.origin} /><${KindPill} kind=${entry.kind} /></div>`} size="lg">
     <div class=${`calendar-detail calendar-detail--${entry.origin}`}>
       <section class="calendar-provenance">
         ${entry.origin === "annotation"
@@ -77,16 +76,13 @@ export function CalendarEntryDetail({
               <span class="calendar-agent-quote-icon" aria-hidden="true">${origin.icon}</span>
               <span>${entry.label}</span>
             </blockquote>`
-          : html`<strong>${origin.heading}</strong>`}
+          : entry.origin === "projection" ? html`<p class="calendar-record-label">${entry.label}</p>` : null}
         ${entry.origin !== "projection" && html`<p>${whyHere(entry, timeZone)}</p>`}
         ${mention && html`<blockquote class="calendar-mentioned-quote">${mention.text}</blockquote>`}
         ${mention?.relative && html`<p class="debug-sub">This relative expression was resolved using the document's own date, rather than today's date.</p>`}
         ${annotation?.rationale && annotation.rationale !== entry.label && html`<p>${annotation.rationale}</p>`}
       </section>
       <div class="calendar-detail-summary">
-        <span class="calendar-kind" style=${`--calendar-kind:${kind.color}`}>
-          <span aria-hidden="true">${kind.icon}</span>${kind.label}
-        </span>
         <span>${
           entry.allDay || entry.origin === "mention"
             ? calendarDateLabel(entry, timeZone)

@@ -33,11 +33,12 @@ const FOCUSABLE =
  * @param {boolean} props.open
  * @param {() => void} props.onClose      fired on Esc / backdrop click / ✕.
  * @param {string} [props.title]          rendered in the header when set.
+ * @param {import("preact").ComponentChildren} [props.titleContent] optional visual title; title remains its accessible label.
  * @param {string} [props.subtitle]       muted line under the title.
  * @param {string} [props.size="md"]      "sm" | "md" | "lg" → panel width.
  * @param {*} props.children              the modal body.
  */
-export function Modal({ open, onClose, title, subtitle, size = "md", children }) {
+export function Modal({ open, onClose, title, titleContent, subtitle, size = "md", children }) {
   const panelRef = useRef(null);
   const bodyRef = useRef(null);
 
@@ -94,8 +95,19 @@ export function Modal({ open, onClose, title, subtitle, size = "md", children })
         firstEl.focus();
       }
     };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
+    // A nested widget may use Escape to dismiss its own tooltip or menu first.
+    const onEscape = (event) => {
+      if (event.key === "Escape" && !event.defaultPrevented) onKey(event);
+    };
+    const onTab = (event) => {
+      if (event.key === "Tab") onKey(event);
+    };
+    window.addEventListener("keydown", onEscape);
+    window.addEventListener("keydown", onTab, true);
+    return () => {
+      window.removeEventListener("keydown", onEscape);
+      window.removeEventListener("keydown", onTab, true);
+    };
   }, [open, onClose]);
 
   if (!open) return null;
@@ -114,7 +126,7 @@ export function Modal({ open, onClose, title, subtitle, size = "md", children })
         ${title
           ? html`<div class="modal-head">
               <div>
-                <div class="modal-title">${title}</div>
+                <div class="modal-title">${titleContent ?? title}</div>
                 ${subtitle ? html`<div class="modal-subtitle">${subtitle}</div>` : null}
               </div>
               <button class="modal-close" aria-label="Close" onClick=${onClose}>✕</button>
