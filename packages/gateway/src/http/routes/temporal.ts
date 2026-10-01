@@ -132,15 +132,22 @@ export function mountTemporalRoutes(app: RouteApp, deps: TemporalRoutesDeps): vo
   // stored anchor was written in another zone.
   app.get("/temporal/annotations/:id", scope.admin(), async (c) => {
     const timeZone = requireTimeZone(c.req.query("timeZone"));
-    const item = await service().annotationById(c.req.param("id"), timeZone).catch(toBadRequest);
+    const query = service();
+    const id = c.req.param("id");
+    const item = await query.annotationById(id, timeZone).catch(toBadRequest);
     if (!item) throw new NotFoundError("Temporal annotation not found");
-    return c.json({ item });
+    return c.json({ item, evidence: query.annotationEvidenceById(id) });
   });
 
   app.get("/temporal/items/:id", scope.admin(), async (c) => {
     const timeZone = requireTimeZone(c.req.query("timeZone"));
-    const item = await service().itemById(c.req.param("id"), timeZone).catch(toBadRequest);
+    const query = service();
+    const id = c.req.param("id");
+    const item = await query.itemById(id, timeZone).catch(toBadRequest);
     if (!item) throw new NotFoundError("Temporal item not found");
-    return c.json({ item });
+    return c.json({
+      item,
+      ...(item.origin === "annotation" ? { evidence: query.annotationEvidenceById(id) } : {}),
+    });
   });
 }

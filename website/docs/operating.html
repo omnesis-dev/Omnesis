@@ -330,6 +330,27 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           owner-only file modes under its configuration directory.
         </p>
 
+        <h3 id="calendar">Reading the calendar</h3>
+        <p>
+          <strong>Debug → Calendar</strong> combines structured dates supplied by sources (<strong
+            >Source record</strong
+          >), interpretations recorded by the agent (<strong>Agent interpretation</strong>), and
+          date expressions found in document text (<strong>Date mention</strong>). Source records
+          and agent interpretations form the agenda; date mentions are grouped by document in a
+          collapsed section, with possible deadline mentions counted separately. A date mention does
+          not establish that an event happened or that an obligation belongs to you.
+        </p>
+        <p>
+          Filter by origin or choose <strong>Due items only</strong> for deadlines, expiries and
+          reminders. These choices are remembered in your browser. <strong>Upcoming</strong> shows
+          those same kinds. Open an entry to see why it appears on that date, its supporting
+          documents and available grounding passages. The origin labels explain themselves on hover,
+          keyboard focus or tap; <strong>How to read this calendar</strong> explains the kinds,
+          including <strong>Activity</strong> for a dated episode. Dates and times use your
+          browser's timezone. An <strong>active</strong> status does not confirm that an entry is
+          happening now.
+        </p>
+
         <h3 id="logs">Logs</h3>
         <p>
           <code>omnesis service logs gateway -f</code> follows the gateway's log: the journal on
