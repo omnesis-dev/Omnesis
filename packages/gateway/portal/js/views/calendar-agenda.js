@@ -91,6 +91,8 @@ export function CalendarEntryRow({
     ? entryDayKeys(entry, null, timeZone)[0]
     : dayKeyInTimeZone(entryStartMs(entry), timeZone);
   const mention = entry.origin === "mention";
+  const time = formatTime(entry, timeZone);
+  const showMetadata = showDate || time || (!mention && (icon || ids.length > 0));
   return html`<div
     class=${`calendar-item calendar-item--${entry.origin}`}
     style=${`--calendar-kind:${meta.color}`}
@@ -105,13 +107,13 @@ export function CalendarEntryRow({
         <span class="calendar-entry-title"
           >${mention ? html`<q>${entry.mention?.text ?? entry.label}</q>` : entry.label}</span
         >
-        <span class="calendar-entry-meta">
+        ${showMetadata && html`<span class="calendar-entry-meta">
           ${showDate && html`<span>${date}</span>`}
-          ${formatTime(entry, timeZone) && html`<span>${formatTime(entry, timeZone)}</span>`}
+          ${time && html`<span>${time}</span>`}
           ${!mention && icon && html`<img class="source-icon" src=${icon} alt="" />`}
-          ${ids.length > 0 &&
+          ${!mention && ids.length > 0 &&
           html`<span title="Linked supporting documents">▤ ${ids.length}</span>`}
-        </span>
+        </span>`}
       </span>
     </button>
     <div class="calendar-entry-pills">

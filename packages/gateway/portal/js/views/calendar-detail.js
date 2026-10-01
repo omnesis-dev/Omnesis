@@ -67,22 +67,11 @@ export function CalendarEntryDetail({
   const annotation = entry.annotation;
   const mention = entry.mention;
   const origin = ORIGIN_LABELS[entry.origin] ?? { row: entry.origin, heading: entry.origin };
-  const title = origin.row;
-  return html`<${Modal} open=${true} onClose=${onClose} title=${title} titleContent=${html`<div class="calendar-detail-pills"><${OriginBadge} origin=${entry.origin} /><${KindPill} kind=${entry.kind} /></div>`} size="lg">
+  return html`<${Modal} open=${true} onClose=${onClose} ariaLabel=${origin.row} size="lg">
     <div class=${`calendar-detail calendar-detail--${entry.origin}`}>
-      <section class="calendar-provenance">
-        ${entry.origin === "annotation"
-          ? html`<blockquote class="calendar-agent-quote">
-              <span class="calendar-agent-quote-icon" aria-hidden="true">${origin.icon}</span>
-              <span>${entry.label}</span>
-            </blockquote>`
-          : entry.origin === "projection" ? html`<p class="calendar-record-label">${entry.label}</p>` : null}
-        ${entry.origin !== "projection" && html`<p>${whyHere(entry, timeZone)}</p>`}
-        ${mention && html`<blockquote class="calendar-mentioned-quote">${mention.text}</blockquote>`}
-        ${mention?.relative && html`<p class="debug-sub">This relative expression was resolved using the document's own date, rather than today's date.</p>`}
-        ${annotation?.rationale && annotation.rationale !== entry.label && html`<p>${annotation.rationale}</p>`}
-      </section>
       <div class="calendar-detail-summary">
+        <${OriginBadge} origin=${entry.origin} />
+        <${KindPill} kind=${entry.kind} />
         <span>${
           entry.allDay || entry.origin === "mention"
             ? calendarDateLabel(entry, timeZone)
@@ -99,7 +88,20 @@ export function CalendarEntryDetail({
             developer=${true}
           />`
         }
+        <button type="button" class="modal-close calendar-detail-close" aria-label="Close" onClick=${onClose}>✕</button>
       </div>
+      <section class="calendar-provenance">
+        ${entry.origin === "annotation"
+          ? html`<blockquote class="calendar-agent-quote">
+              <span class="calendar-agent-quote-icon" aria-hidden="true">${origin.icon}</span>
+              <span>${entry.label}</span>
+            </blockquote>`
+          : entry.origin === "projection" ? html`<p class="calendar-record-label">${entry.label}</p>` : null}
+        ${entry.origin !== "projection" && html`<p>${whyHere(entry, timeZone)}</p>`}
+        ${mention && html`<blockquote class="calendar-mentioned-quote">${mention.text}</blockquote>`}
+        ${mention?.relative && html`<p class="debug-sub">This relative expression was resolved using the document's own date, rather than today's date.</p>`}
+        ${annotation?.rationale && annotation.rationale !== entry.label && html`<p>${annotation.rationale}</p>`}
+      </section>
       ${annotation?.confidence != null && html`<p class="debug-sub">Agent confidence: ${Math.round(annotation.confidence * 100)}%</p>`}
       ${
         evidence.length > 0

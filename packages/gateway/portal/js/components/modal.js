@@ -33,12 +33,12 @@ const FOCUSABLE =
  * @param {boolean} props.open
  * @param {() => void} props.onClose      fired on Esc / backdrop click / ✕.
  * @param {string} [props.title]          rendered in the header when set.
- * @param {import("preact").ComponentChildren} [props.titleContent] optional visual title; title remains its accessible label.
+ * @param {string} [props.ariaLabel]      accessible name for a dialog without a header.
  * @param {string} [props.subtitle]       muted line under the title.
  * @param {string} [props.size="md"]      "sm" | "md" | "lg" → panel width.
  * @param {*} props.children              the modal body.
  */
-export function Modal({ open, onClose, title, titleContent, subtitle, size = "md", children }) {
+export function Modal({ open, onClose, title, ariaLabel, subtitle, size = "md", children }) {
   const panelRef = useRef(null);
   const bodyRef = useRef(null);
 
@@ -118,7 +118,7 @@ export function Modal({ open, onClose, title, titleContent, subtitle, size = "md
         class="modal-panel modal-panel--${size}"
         role="dialog"
         aria-modal="true"
-        aria-label=${title ?? "Dialog"}
+        aria-label=${ariaLabel ?? title ?? "Dialog"}
         tabindex="-1"
         ref=${panelRef}
         onClick=${(e) => e.stopPropagation()}
@@ -126,7 +126,7 @@ export function Modal({ open, onClose, title, titleContent, subtitle, size = "md
         ${title
           ? html`<div class="modal-head">
               <div>
-                <div class="modal-title">${titleContent ?? title}</div>
+                <div class="modal-title">${title}</div>
                 ${subtitle ? html`<div class="modal-subtitle">${subtitle}</div>` : null}
               </div>
               <button class="modal-close" aria-label="Close" onClick=${onClose}>✕</button>

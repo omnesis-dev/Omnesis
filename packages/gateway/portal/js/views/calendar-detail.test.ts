@@ -4,6 +4,7 @@
 // @ts-nocheck — the portal ships plain browser JavaScript.
 
 import { describe, expect, it } from "vitest";
+import { OriginBadge } from "./calendar-agenda.js";
 import { CalendarEntryDetail } from "./calendar-detail.js";
 
 const entry = {
@@ -23,6 +24,7 @@ function text(node) {
   if (node == null || typeof node === "boolean") return "";
   if (Array.isArray(node)) return node.map(text).join(" ");
   if (typeof node !== "object") return String(node);
+  if (node.type === OriginBadge) return node.props.origin;
   if (typeof node.type === "function") return text(node.type(node.props));
   return text(node.props?.children);
 }
@@ -30,6 +32,7 @@ function text(node) {
 function nodes(node, tag) {
   if (node == null || typeof node !== "object") return [];
   if (Array.isArray(node)) return node.flatMap((item) => nodes(item, tag));
+  if (node.type === OriginBadge) return [];
   if (typeof node.type === "function") return nodes(node.type(node.props), tag);
   return [...(node.type === tag ? [node] : []), ...nodes(node.props?.children, tag)];
 }
@@ -91,7 +94,8 @@ describe("Calendar entry explanations", () => {
     const value = { ...entry, origin: "annotation", projection: undefined,
       annotation: { documentIds: [], rationale: entry.label } };
     const modal = CalendarEntryDetail({ entry: value });
-    expect(modal.props.title).toBe("Agent interpretation");
+    expect(modal.props.title).toBeUndefined();
+    expect(modal.props.ariaLabel).toBe("Agent interpretation");
     const quote = nodes(modal.props.children, "blockquote")[0];
     expect(quote.props.class).toBe("calendar-agent-quote");
     expect(text(quote)).toBe(`✦ ${entry.label}`);
@@ -128,7 +132,7 @@ describe("Calendar entry explanations", () => {
     expect(text(content)).toContain("Submit the form by 15 October.");
     expect(text(content)).not.toContain("An unrelated passage.");
     expect(text(content)).toContain("Entries stay separate.");
-    const button = nodes(content, "button")[0];
+    const button = nodes(content, "button").find((node) => node.props.class === "calendar-related-entry");
     button.props.onClick();
     expect(opened).toEqual([related]);
   });

@@ -371,6 +371,9 @@ describe("Calendar loading and addressability", () => {
     expect(title.firstElementChild.getAttribute("src")).toBe("/icons/fictional-mail%3Aaccount.svg");
     expect(title.lastElementChild.textContent).toBe("Registration dates");
     expect(section.querySelectorAll(".calendar-entry")).toHaveLength(2);
+    expect(section.querySelectorAll(".calendar-entry img")).toHaveLength(0);
+    expect(section.querySelectorAll('[title="Linked supporting documents"]')).toHaveLength(0);
+    expect(section.querySelectorAll(".calendar-entry-meta")).toHaveLength(0);
     expect(host.querySelector(".calendar-day-counts")).toBeNull();
     await act(async () => {
       host.querySelectorAll(".calendar-origin-filters button")[3].click();

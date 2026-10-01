@@ -11336,7 +11336,8 @@ div.source-activity-popover-link:hover {
 .calendar-agent-quote { display: flex; align-items: flex-start; gap: 8px; margin: 0; color: var(--text-primary); line-height: 1.5; }
 .calendar-agent-quote-icon { flex: 0 0 auto; color: #a78bfa; }
 .calendar-detail { display: grid; gap: 18px; }
-.calendar-detail-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: var(--text-secondary); font-size: 12px; }
+.calendar-detail-close { margin-left: auto; }
+.calendar-detail-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 12px; }
 .calendar-provenance { display: grid; gap: 7px; padding: 12px; border-radius: 8px; background: var(--bg-secondary); }
 .calendar-provenance p { width: 100%; margin: 4px 0 0; color: var(--text-secondary); }
 .calendar-detail h3 { margin: 0 0 8px; font-size: 13px; }
@@ -11361,12 +11362,10 @@ div.source-activity-popover-link:hover {
 .calendar-item--mention .calendar-entry-title { color: var(--text-muted); }
 .calendar-item--mention .calendar-entry-spine { width: 2px; flex-basis: 2px; background: var(--border); }
 .calendar-item--projection .calendar-entry-spine { background: var(--calendar-kind); }
-.calendar-detail-pills { display: flex; align-items: center; gap: 6px; font-size: 11px; }
 .calendar-entry-pills { display: flex; align-items: center; gap: 4px; padding: 0 9px 8px 22px; font-size: 10px; }
 .calendar-entry-pills > .calendar-kind { white-space: nowrap; }
 .calendar-origin-help { position: relative; display: inline-flex; width: fit-content; font-size: 11px; color: var(--text-muted); }
 .calendar-entry-pills .calendar-origin-help { font-size: inherit; }
-.modal-title .calendar-origin-help { vertical-align: middle; }
 .calendar-origin-help > button { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; cursor: help; border: 0; padding: 1px 6px; background: color-mix(in srgb, currentColor 12%, transparent); color: inherit; font: inherit; font-weight: 650; border-radius: 999px; }
 
 .calendar-origin-help--projection { color: #60a5fa; }

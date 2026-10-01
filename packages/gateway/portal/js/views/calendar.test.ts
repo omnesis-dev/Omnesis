@@ -157,7 +157,7 @@ describe("Calendar", () => {
     expect(text).toContain("Calendar");
     expect(text).toContain("Source");
     expect(text).toContain("Project review");
-    expect(text).toContain("▤ 1");
+    expect(text).not.toContain("▤ 1");
     expect(text).not.toMatch(/\b(ask|talk|fix)\b/i);
 
     const annotationText = renderedText(
@@ -232,7 +232,7 @@ describe("Calendar", () => {
     const text = renderedText(CalendarEntryRow({ entry: mention, onOpen: () => {} }));
     expect(text).toContain("Date mention");
     expect(text).not.toContain("Agent");
-    expect(text).toContain("▤ 1");
+    expect(text).not.toContain("▤ 1");
   });
 
   it("banners a long mention span while keeping short source spans on their days", () => {
