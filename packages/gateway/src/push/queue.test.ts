@@ -732,7 +732,7 @@ describe("notification claim query plans", () => {
       BASE_TIME + 200,
     ]);
     expect(plan).toContain("sqlite_autoindex_answer_approvals_1");
-    expect(plan).toContain("idx_oauth_authorization_requests_expiry");
+    expect(plan).toContain("idx_oauth_authorization_requests_code_expiry (status=?)");
     expect(plan).not.toMatch(/SCAN a\b/);
   });
 
