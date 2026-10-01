@@ -398,6 +398,67 @@ describe("native Answer MCP client", () => {
     expect(seen).toEqual(["/.well-known/oauth-authorization-server", "/oauth/token"]);
   });
 
+  test("renews a refused bearer through an authorization server on another origin", async () => {
+    const tokenRequests: string[] = [];
+    const authorizationServer = createServer((request, response) => {
+      tokenRequests.push(request.url ?? "");
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end('{"access_token":"access-renewed","token_type":"Bearer"}');
+    });
+    servers.push(authorizationServer);
+    await new Promise<void>((resolve) => authorizationServer.listen(0, "127.0.0.1", resolve));
+    const authorizationAddress = authorizationServer.address();
+    if (!authorizationAddress || typeof authorizationAddress === "string") {
+      throw new Error("fictional authorization server did not listen");
+    }
+    const calls: Array<{ name: string; args: unknown; meta: unknown }> = [];
+    const upstream = await gateway(calls);
+    const front = createServer(async (request, response) => {
+      if (request.headers.authorization === "Bearer access-expired") {
+        response.writeHead(401, {
+          "www-authenticate": 'Bearer error="invalid_token"',
+          "content-type": "application/json",
+        });
+        response.end('{"error":"invalid_token"}');
+        return;
+      }
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const result = await fetch(`${upstream}${request.url}`, {
+        method: request.method,
+        headers: request.headers as Record<string, string>,
+        body: chunks.length > 0 ? Buffer.concat(chunks) : undefined,
+      });
+      response.writeHead(result.status, Object.fromEntries(result.headers.entries()));
+      response.end(Buffer.from(await result.arrayBuffer()));
+    });
+    servers.push(front);
+    await new Promise<void>((resolve) => front.listen(0, "127.0.0.1", resolve));
+    const frontAddress = front.address();
+    if (!frontAddress || typeof frontAddress === "string") {
+      throw new Error("fictional gateway did not listen");
+    }
+    let bearer = "access-expired";
+    const client = new NativeAnswerMcpClient(`http://127.0.0.1:${frontAddress.port}`, {
+      token: async () => bearer,
+      onUnauthorized: async ({ fetchFn }) => {
+        const renewal = await fetchFn(`http://127.0.0.1:${authorizationAddress.port}/oauth/token`, {
+          method: "POST",
+          body: new URLSearchParams({ grant_type: "refresh_token" }),
+        });
+        bearer = ((await renewal.json()) as { access_token: string }).access_token;
+      },
+    });
+    try {
+      await expect(client.getTask("task_fictional")).resolves.toMatchObject({
+        taskId: "task_fictional",
+      });
+    } finally {
+      await client.close();
+    }
+    expect(tokenRequests).toEqual(["/oauth/token"]);
+  });
+
   test("retrieves with a completion-only credential", async () => {
     const calls: Array<{ name: string; args: unknown; meta: unknown }> = [];
     const client = new NativeAnswerMcpClient(
