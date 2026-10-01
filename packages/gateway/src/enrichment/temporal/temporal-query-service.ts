@@ -385,6 +385,20 @@ export class TemporalQueryService {
     return item;
   }
 
+  /** Live grounding quotes for the detail view; never included in window pages. */
+  annotationEvidenceById(id: string): Array<{ documentId: string; quote: string }> {
+    return this.db
+      .prepare<[string], { documentId: string; quote: string }>(
+        `SELECT v.document_id AS documentId, v.quote
+           FROM temporal_annotation_evidence v
+           JOIN temporal_annotations a ON a.id = v.annotation_id
+          WHERE v.annotation_id = ? AND v.broken_at IS NULL
+            AND a.invalidated_at IS NULL
+          ORDER BY v.position`,
+      )
+      .all(id);
+  }
+
   /**
    * Resolve one live annotation through the same timezone-aware normalization
    * as a window query. The stored interval supplies only a narrow lookup range;
