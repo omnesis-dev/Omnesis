@@ -18,6 +18,11 @@ import dev.omnesis.android.transport.dto.ConversationSummary
 import dev.omnesis.android.transport.dto.CreateSessionResponse
 import dev.omnesis.android.transport.dto.UserPart
 import dev.omnesis.android.transport.http.GatewayHttp
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.resetMain
@@ -61,6 +66,7 @@ import java.util.concurrent.atomic.AtomicInteger
 class AgentCoordinatorNavTest {
 
     private lateinit var server: MockWebServer
+    private val coordinators = mutableListOf<AgentCoordinator>()
 
     @Before fun setUp() {
         Dispatchers.setMain(Dispatchers.Unconfined)
@@ -69,9 +75,31 @@ class AgentCoordinatorNavTest {
     }
 
     @After fun tearDown() {
-        server.shutdown()
-        Dispatchers.resetMain()
+        // Network completion can outlive the last assertion. Join every owned scope
+        // before resetting Main, including jobs outside the coordinator's tracked slots.
+        val scopeField = AgentCoordinator::class.java.getDeclaredField("scope").apply {
+            isAccessible = true
+        }
+        try {
+            coordinators.forEach { it.teardown() }
+            runBlocking {
+                withTimeout(5_000) {
+                    coordinators.forEach { coordinator ->
+                        val scope = scopeField.get(coordinator) as CoroutineScope
+                        checkNotNull(scope.coroutineContext[Job]).cancelAndJoin()
+                    }
+                }
+            }
+        } finally {
+            try {
+                server.shutdown()
+            } finally {
+                Dispatchers.resetMain()
+            }
+        }
     }
+
+    private fun coordinator() = AgentCoordinator().also { coordinators += it }
 
     private fun client(okHttp: OkHttpClient = OkHttpClient()) =
         AgentClient(GatewayHttp(okHttp, server.url("/").toString(), "tok"))
@@ -118,7 +146,7 @@ class AgentCoordinatorNavTest {
 
     @Test
     fun ephemeral_gate_auto_flushes_when_no_card_is_composed() {
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.ephemeralGateMaxHoldMs = 25L
         coord.attachForTesting(
             client(), eventSource(),
@@ -147,7 +175,7 @@ class AgentCoordinatorNavTest {
 
     @Test
     fun ephemeral_gate_timeout_cannot_flush_a_replaced_session() {
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.ephemeralGateMaxHoldMs = 40L
         coord.attachForTesting(
             client(), eventSource(),
@@ -178,7 +206,7 @@ class AgentCoordinatorNavTest {
 
     @Test
     fun ephemeral_gate_timeout_rearms_for_a_queued_successor_gate() {
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.ephemeralGateMaxHoldMs = 25L
         coord.attachForTesting(
             client(), eventSource(),
@@ -204,7 +232,7 @@ class AgentCoordinatorNavTest {
 
     @Test
     fun newConversation_clears_instantly_without_network() {
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(), eventSource(),
             AgentCoordinator.UiState(
@@ -241,7 +269,7 @@ class AgentCoordinatorNavTest {
                 .setResponseCode(500)
                 .setBody("""{"error":"pin refused"}"""),
         )
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(), eventSource(),
             AgentCoordinator.UiState(
@@ -274,7 +302,7 @@ class AgentCoordinatorNavTest {
                 else -> MockResponse().setResponseCode(404)
             }
         }
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(), eventSource(),
             AgentCoordinator.UiState(
@@ -300,7 +328,7 @@ class AgentCoordinatorNavTest {
                 .setBody("""{"ok":true}""")
                 .setBodyDelay(300, TimeUnit.MILLISECONDS),
         )
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(), eventSource(),
             AgentCoordinator.UiState(
@@ -329,7 +357,7 @@ class AgentCoordinatorNavTest {
                 .setResponseCode(503)
                 .setBody("""{"error":"temporarily unavailable"}"""),
         )
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(), eventSource(),
             AgentCoordinator.UiState(
@@ -353,7 +381,7 @@ class AgentCoordinatorNavTest {
     @Test
     fun pin_updates_active_state_even_when_summary_is_not_loaded() {
         server.enqueue(MockResponse().setBody("""{"ok":true}"""))
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(), eventSource(),
             AgentCoordinator.UiState(hasClient = true, sessionId = "s_active"),
@@ -382,7 +410,7 @@ class AgentCoordinatorNavTest {
                 else -> MockResponse().setResponseCode(404)
             }
         }
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(), eventSource(),
             AgentCoordinator.UiState(
@@ -409,7 +437,7 @@ class AgentCoordinatorNavTest {
                 .setBody("""{"sessionId":"s_minted","model":"m","backend":"b","messages":[]}""")
                 .setBodyDelay(400, TimeUnit.MILLISECONDS),
         )
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(client(), eventSource(), AgentCoordinator.UiState(hasClient = true))
 
         coord.send("hello")
@@ -443,7 +471,7 @@ class AgentCoordinatorNavTest {
                 // Hold the body so the loading state is observable before the reconcile.
                 .setBodyDelay(300, TimeUnit.MILLISECONDS),
         )
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(), eventSource(),
             AgentCoordinator.UiState(
@@ -470,7 +498,7 @@ class AgentCoordinatorNavTest {
 
     @Test
     fun resume_ignores_retap_on_active_conversation() {
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(client(), eventSource(), AgentCoordinator.UiState(hasClient = true, sessionId = "s_active"))
 
         coord.resumeConversation("s_active")
@@ -481,7 +509,7 @@ class AgentCoordinatorNavTest {
 
     @Test
     fun snapshot_handoff_applies_only_events_newer_than_cursor() {
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.applySnapshotForTesting(
             session = CreateSessionResponse(
                 sessionId = "s1",
@@ -524,7 +552,7 @@ class AgentCoordinatorNavTest {
 
     @Test
     fun overlapping_snapshot_failure_drains_carried_same_session_buffer() {
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.applySnapshotForTesting(
             CreateSessionResponse(
                 sessionId = "s1",
@@ -563,7 +591,7 @@ class AgentCoordinatorNavTest {
     // snapshot in flight.
     @Test
     fun snapshot_handoff_flood_latches_overflow_without_restarting_the_snapshot() {
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         val original = coord.beginSnapshotHandoffForTesting("s1")
         repeat(300) { index ->
             coord.bufferSnapshotEventForTesting(
@@ -601,7 +629,7 @@ class AgentCoordinatorNavTest {
     // lets the gateway replay.
     @Test
     fun overflowed_handoff_rewinds_the_stream_cursor_to_the_snapshot() {
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         val handoff = coord.beginSnapshotHandoffForTesting("s1")
         repeat(300) { index ->
             coord.bufferSnapshotEventForTesting(
@@ -632,7 +660,7 @@ class AgentCoordinatorNavTest {
     @Test
     fun overflowed_handoff_reconnects_the_stream_asking_the_gateway_to_replay() {
         server.dispatcher = routing()
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(client(), eventSource(), AgentCoordinator.UiState(hasClient = true, sessionId = "s1"))
         val handoff = coord.beginSnapshotHandoffForTesting("s1")
         repeat(300) { index ->
@@ -666,7 +694,7 @@ class AgentCoordinatorNavTest {
     @Test
     fun foreground_restores_the_stream_even_when_the_reconcile_fails() {
         server.dispatcher = routing(session = MockResponse().setResponseCode(500).setBody("boom"))
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(client(), eventSource(), AgentCoordinator.UiState(hasClient = true, sessionId = "s_local"))
 
         coord.onForeground()
@@ -691,7 +719,7 @@ class AgentCoordinatorNavTest {
     // and the cursor must stay at the newest event seen.
     @Test
     fun unoverflowed_handoff_keeps_the_stream_cursor_ahead_of_the_snapshot() {
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         val handoff = coord.beginSnapshotHandoffForTesting("s1")
         coord.bufferSnapshotEventForTesting(
             AgentStreamItem("130", AgentEvent.TextDelta("s1", "m1", "tail")),
@@ -724,7 +752,7 @@ class AgentCoordinatorNavTest {
     @Test
     fun a_failed_snapshot_keeps_ownership_when_the_handoff_overflowed() {
         server.dispatcher = routing(session = MockResponse().setResponseCode(500).setBody("boom"))
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(client(), eventSource(), AgentCoordinator.UiState(hasClient = true, sessionId = "s1"))
         val handoff = coord.beginSnapshotHandoffForTesting("s1")
         repeat(300) { index ->
@@ -748,7 +776,7 @@ class AgentCoordinatorNavTest {
     @Test
     fun a_cursorless_snapshot_cannot_finish_an_overflowed_handoff() {
         server.dispatcher = routing(session = MockResponse().setResponseCode(500).setBody("boom"))
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(client(), eventSource(), AgentCoordinator.UiState(hasClient = true, sessionId = "s1"))
         val handoff = coord.beginSnapshotHandoffForTesting("s1")
         repeat(300) { index ->
@@ -782,7 +810,7 @@ class AgentCoordinatorNavTest {
     // it would leave the gap unreplayed even though the new snapshot lands cleanly.
     @Test
     fun a_superseding_handoff_inherits_the_overflow() {
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.beginSnapshotHandoffForTesting("s1")
         repeat(300) { index ->
             coord.bufferSnapshotEventForTesting(
@@ -801,7 +829,7 @@ class AgentCoordinatorNavTest {
     @Test
     fun failed_resume_surfaces_fatal_and_keeps_composer_disabled() {
         server.dispatcher = routing(session = MockResponse().setResponseCode(500).setBody("boom"))
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(client(), eventSource(), AgentCoordinator.UiState(hasClient = true, sessionId = "s_other"))
 
         coord.resumeConversation("s_target")
@@ -827,7 +855,7 @@ class AgentCoordinatorNavTest {
                 .setBody("""{"error":"Backend \"x\" is unreachable","code":"SERVICE_UNAVAILABLE"}"""),
             message = storedTranscript("stored answer"),
         )
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(client(), eventSource(), AgentCoordinator.UiState(hasClient = true))
 
         coord.resumeConversation("s_target")
@@ -852,7 +880,7 @@ class AgentCoordinatorNavTest {
             session = MockResponse().setResponseCode(503).setBody("""{"error":"down"}"""),
             message = storedTranscript("stored answer"),
         )
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(client(), eventSource(), AgentCoordinator.UiState(hasClient = true))
         coord.resumeConversation("s_target")
         assertTrue(await { coord.state.value.liveSessionMissingReason != null })
@@ -883,7 +911,7 @@ class AgentCoordinatorNavTest {
             session = MockResponse().setResponseCode(503).setBody("""{"error":"down"}"""),
             message = MockResponse().setResponseCode(500).setBody("boom"),
         )
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(client(), eventSource(), AgentCoordinator.UiState(hasClient = true))
 
         coord.resumeConversation("s_target")
@@ -898,7 +926,7 @@ class AgentCoordinatorNavTest {
         server.dispatcher = routing(
             session = MockResponse().setResponseCode(500).setBody("boom").setBodyDelay(300, TimeUnit.MILLISECONDS),
         )
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(client(), eventSource(), AgentCoordinator.UiState(hasClient = true))
 
         coord.send("hello")
@@ -919,7 +947,7 @@ class AgentCoordinatorNavTest {
                 .setBody("""{"sessionId":"s_minted","model":"m","backend":"b","messages":[]}""")
                 .setBodyDelay(400, TimeUnit.MILLISECONDS),
         )
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             clientWithFinishedCalls(finished),
             eventSource(),
@@ -943,7 +971,7 @@ class AgentCoordinatorNavTest {
     @Test
     fun busy_send_is_rejected_locally_and_offers_draft_back() {
         server.dispatcher = routing()
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(),
             eventSource(),
@@ -964,7 +992,7 @@ class AgentCoordinatorNavTest {
     fun failed_cancel_surfaces_error_and_preserves_live_turn_and_plan() {
         server.dispatcher = routing(cancel = MockResponse().setResponseCode(500).setBody("boom"))
         val plan = AgentPlanItem("p1", "Inspect the records", "in_progress")
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(),
             eventSource(),
@@ -985,7 +1013,7 @@ class AgentCoordinatorNavTest {
     @Test
     fun cancel_ok_false_is_a_visible_failure() {
         server.dispatcher = routing(cancel = MockResponse().setBody("""{"ok":false}"""))
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(),
             eventSource(),
@@ -1012,7 +1040,7 @@ class AgentCoordinatorNavTest {
                 return MockResponse().setResponseCode(500).setBody("boom")
             }
         }
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             clientWithFinishedCalls(finished),
             eventSource(),
@@ -1046,7 +1074,7 @@ class AgentCoordinatorNavTest {
                     MockResponse().setBody("""{"messageId":"a2","userMessageId":"u2"}""")
                 }
         }
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             clientWithFinishedCalls(finished),
             eventSource(),
@@ -1087,7 +1115,7 @@ class AgentCoordinatorNavTest {
                 }
             }
         }
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             clientWithFinishedCalls(finished),
             eventSource(),
@@ -1116,7 +1144,7 @@ class AgentCoordinatorNavTest {
                 return MockResponse().setResponseCode(500).setBody("old failure")
             }
         }
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             clientWithFinishedCalls(finished),
             eventSource(),
@@ -1151,7 +1179,7 @@ class AgentCoordinatorNavTest {
                 return MockResponse().setResponseCode(500).setBody("boom")
             }
         }
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             clientWithFinishedCalls(finished),
             eventSource(),
@@ -1180,7 +1208,7 @@ class AgentCoordinatorNavTest {
                 return MockResponse().setBody("""{"messageId":"a-old","userMessageId":"u-old"}""")
             }
         }
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             clientWithFinishedCalls(finished),
             eventSource(),
@@ -1207,7 +1235,7 @@ class AgentCoordinatorNavTest {
                 return MockResponse().setBody("""{"messageId":"a1","userMessageId":"u1"}""")
             }
         }
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             clientWithFinishedCalls(finished),
             eventSource(),
@@ -1245,7 +1273,7 @@ class AgentCoordinatorNavTest {
                     MockResponse().setBody("""{"messageId":"a-new","userMessageId":"u-new"}""")
                 }
         }
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             clientWithFinishedCalls(finished),
             eventSource(),
@@ -1278,7 +1306,7 @@ class AgentCoordinatorNavTest {
                 return MockResponse().setResponseCode(500).setBody("old failure")
             }
         }
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             clientWithFinishedCalls(finished),
             eventSource(),
@@ -1315,7 +1343,7 @@ class AgentCoordinatorNavTest {
     @Test
     fun successful_cancel_terminal_event_allows_follow_up_in_same_conversation() {
         server.dispatcher = routing(cancel = MockResponse().setBody("""{"ok":true}"""))
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(),
             eventSource(),
@@ -1372,7 +1400,7 @@ class AgentCoordinatorNavTest {
 
     @Test
     fun message_end_is_authoritative_for_context_freeze() {
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(),
             eventSource(),
@@ -1436,7 +1464,7 @@ class AgentCoordinatorNavTest {
 
     @Test
     fun message_end_is_authoritative_for_output_truncation_marker() {
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(),
             eventSource(),
@@ -1499,7 +1527,7 @@ class AgentCoordinatorNavTest {
                 """{"sessionId":"s-truncated","model":"fictional-model","backend":"openai-compatible","messages":[{"role":"user","parts":[{"kind":"text","text":"Explain the constraints."}]},{"role":"assistant","parts":[{"kind":"text","text":"The first constraint is"}]}],"lastTurnFailure":{"code":"output_truncated","message":"$message","retryable":false,"backend":"openai-compatible","model":"fictional-model"}}""",
             ),
         )
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(),
             eventSource(),
@@ -1531,7 +1559,7 @@ class AgentCoordinatorNavTest {
                 """{"sessionId":"s-exhausted","model":"fictional-model","backend":"openai-compatible","messages":[],$terminalJson}""",
             ),
         )
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(),
             eventSource(),
@@ -1567,7 +1595,7 @@ class AgentCoordinatorNavTest {
                 """{"conversations":[{"id":"s_remote","title":"Created elsewhere","messageCount":1}],"nextCursor":null}""",
             ),
         )
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(client(), eventSource(), AgentCoordinator.UiState(hasClient = true, sessionId = "s_local"))
         assertTrue("the list starts empty before any refresh", coord.state.value.conversations.isEmpty())
 
@@ -1599,7 +1627,7 @@ class AgentCoordinatorNavTest {
                 }
             }
         }
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(),
             eventSource(),
@@ -1650,7 +1678,7 @@ class AgentCoordinatorNavTest {
                 )
                 .setBodyDelay(400, TimeUnit.MILLISECONDS),
         )
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(),
             eventSource(),
@@ -1680,7 +1708,7 @@ class AgentCoordinatorNavTest {
         server.dispatcher = routing(
             conversations = MockResponse().setResponseCode(500).setBody("fictional failure"),
         )
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(),
             eventSource(),
@@ -1741,7 +1769,7 @@ class AgentCoordinatorNavTest {
                 }
             }
         }
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(), eventSource(),
             AgentCoordinator.UiState(
@@ -1776,7 +1804,7 @@ class AgentCoordinatorNavTest {
                     .setBodyDelay(400, TimeUnit.MILLISECONDS)
             }
         }
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             client(), eventSource(),
             AgentCoordinator.UiState(hasClient = true, sessionId = "s_previous"),
@@ -1802,7 +1830,7 @@ class AgentCoordinatorNavTest {
                 .setBody("""{"sessionId":"s_minted","model":"m","backend":"b","messages":[]}""")
                 .setBodyDelay(400, TimeUnit.MILLISECONDS),
         )
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             clientWithFinishedCalls(finished),
             eventSource(),
@@ -1838,7 +1866,7 @@ class AgentCoordinatorNavTest {
                 }
             }
         }
-        val coord = AgentCoordinator()
+        val coord = coordinator()
         coord.attachForTesting(
             clientWithFinishedCalls(finished),
             eventSource(),
