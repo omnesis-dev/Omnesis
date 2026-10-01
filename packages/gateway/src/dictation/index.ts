@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Gateway dictation (experimental): the gate that decides whether the mobile
+ * Gateway dictation: the gate that decides whether the mobile
  * apps send Tell Omnesis voice notes' audio to this gateway. The notes
  * themselves are handled by `voice-notes/`.
  */

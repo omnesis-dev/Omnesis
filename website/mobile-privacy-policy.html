@@ -200,14 +200,14 @@
             Android, Omnesis requests offline recognition, but the installed recognition service
             decides whether processing is local or remote. Siri, Google Assistant, or Gemini may
             also process the invocation and supplied phrase under Apple or Google's terms. The
-            resulting text is sent to your gateway when you submit the action. If the operator of
-            your gateway turns on gateway dictation, an experimental setting that is off by default,
-            the app also records the audio of Tell Omnesis voice notes, including ones dictated on
-            Apple Watch, whose recording passes through your iPhone, and sends it with the note to
-            your gateway, which transcribes it and replaces the note's text. The recording goes only
-            to your gateway. The app deletes its copy once the gateway has it; the gateway keeps it
-            in its database, alongside the rest of your data, only until it has transcribed it, for
-            at most a week, and deleting the note deletes it.
+            resulting text is sent to your gateway when you submit the action. When gateway
+            dictation is enabled (the default) and a runnable transcriber is assigned, the app also
+            records the audio of Tell Omnesis voice notes, including ones dictated on Apple Watch,
+            whose recording passes through your iPhone, and sends it with the note to your gateway,
+            which transcribes it and replaces the note's text. The recording goes only to your
+            gateway. The app deletes its copy once the gateway has it; the gateway keeps it in its
+            database, alongside the rest of your data, only until it has transcribed it, for at most
+            a week, and deleting the note deletes it.
           </li>
           <li>
             <strong>Location</strong> — on iOS, a location can be attached to a note captured in the

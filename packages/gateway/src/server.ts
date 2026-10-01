@@ -389,7 +389,7 @@ export function createServer(
      */
     getBriefsStatus?: () => import("./brain/index.js").BriefsFeatureStatus;
     /**
-     * Gateway dictation gate (experimental) — advertised as `dictation` on
+     * Gateway dictation gate — advertised as `dictation` on
      * `GET /status` and enforced by `POST /notes/voice`. Omitted ⇒ the route
      * is not mounted and `/status` advertises it inactive.
      */
