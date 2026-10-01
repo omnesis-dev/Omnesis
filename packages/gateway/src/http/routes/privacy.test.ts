@@ -475,8 +475,9 @@ describe("privacy admin routes", () => {
       label: "Health",
       existence: "approve",
       summary: "approve",
-      exact: "deny",
+      exact: "approve",
     });
+    expect(initial.schema?.credentialApprovalEnabled).toBe(true);
 
     const edited = await patch({
       row: "Health",
