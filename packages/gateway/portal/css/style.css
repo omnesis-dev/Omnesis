@@ -11371,11 +11371,10 @@ div.source-activity-popover-link:hover {
 .calendar-origin-help.is-open .calendar-origin-tooltip,
 .calendar-origin-help:not(.is-dismissed):focus-within .calendar-origin-tooltip { display: block; }
 @media (hover: hover) { .calendar-origin-help:not(.is-dismissed):hover .calendar-origin-tooltip { display: block; } }
-.calendar-activity-group, .calendar-mentions { margin-top: 6px; border-top: 1px solid var(--border-light); padding-top: 9px; }
-.calendar-activity-group > summary, .calendar-mentions > summary { cursor: pointer; font-size: 12px; color: var(--text-secondary); }
-.calendar-activity-group > summary > span, .calendar-mentions > summary > span { margin-left: 6px; color: var(--text-muted); font-size: 11px; }
+.calendar-mentions { margin-top: 6px; border-top: 1px solid var(--border-light); padding-top: 9px; }
+.calendar-mentions > summary { cursor: pointer; font-size: 12px; color: var(--text-secondary); }
+.calendar-mentions > summary > span { margin-left: 6px; color: var(--text-muted); font-size: 11px; }
 .calendar-mentions > summary .calendar-possible-deadlines { color: var(--text-secondary); }
-.calendar-activity-group > .calendar-entry-group { margin-top: 10px; }
 .calendar-mentions > p { margin: 10px 0; }
 .calendar-mention-documents { display: grid; gap: 14px; }
 .calendar-mention-document { display: grid; gap: 6px; }
@@ -11399,7 +11398,7 @@ div.source-activity-popover-link:hover {
 .calendar-related-entry span { color: var(--text-muted); font-size: 11px; }
 .calendar-item button:focus-visible, .calendar-origin-help button:focus-visible,
 .calendar-mentions summary:focus-visible,
-.calendar-activity-group summary:focus-visible, .calendar-origin-filters button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.calendar-origin-filters button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (max-width: 640px) {
   .calendar-day > header { flex-wrap: wrap; }
 }

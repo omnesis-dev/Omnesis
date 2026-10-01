@@ -141,7 +141,7 @@ export function CalendarFilters({ preferences, onChange }) {
   </div>`;
 }
 
-function EntryGroup({ label, entries, documents, timeZone, onOpen, folded = false }) {
+function EntryGroup({ label, entries, documents, timeZone, onOpen }) {
   if (!entries.length) return null;
   const rows = entries.map(
     (entry) =>
@@ -153,11 +153,6 @@ function EntryGroup({ label, entries, documents, timeZone, onOpen, folded = fals
         onOpen=${onOpen}
       />`,
   );
-  if (folded)
-    return html`<details class="calendar-activity-group">
-      <summary>${label} <span>${entries.length}</span></summary>
-      <div class="calendar-entry-group">${rows}</div>
-    </details>`;
   return html`<section class="calendar-entry-group">
     <h3>${label}</h3>
     ${rows}
@@ -248,12 +243,11 @@ export function DaySection({
               onOpen=${onOpen}
             />
             <${EntryGroup}
-              label="Other dated activity"
+              label="Activities & visits"
               entries=${groups.activity}
               documents=${documents}
               timeZone=${timeZone}
               onOpen=${onOpen}
-              folded=${true}
             />
             <${MentionSection}
               id=${key}

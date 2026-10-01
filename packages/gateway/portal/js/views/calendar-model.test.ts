@@ -15,7 +15,7 @@ import {
 const record = (id, kind, allDay = true, origin = "projection") => ({ id, kind, allDay, origin });
 
 describe("Calendar organization", () => {
-  it("separates date mentions, timed engagements, due dates and folded activities", () => {
+  it("separates date mentions, timed engagements, due dates and activities", () => {
     const entries = [
       record("booking", "appointment", false),
       record("block", "event"),

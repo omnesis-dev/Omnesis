@@ -29,6 +29,7 @@ vi.mock("../lib/format.js", () => ({
 }));
 
 import { CalendarTab } from "./calendar.js";
+import { DaySection } from "./calendar-agenda.js";
 
 function deferred() {
   let resolve;
@@ -84,6 +85,24 @@ describe("Calendar loading and addressability", () => {
     else globalThis.document = originalDocument;
     if (originalWindow === undefined) delete globalThis.window;
     else globalThis.window = originalWindow;
+  });
+
+  it("shows activities and visits in an always-visible category", async () => {
+    const day = new Date(2026, 9, 15);
+    await act(async () => {
+      render(h(DaySection, {
+        day, today: "2026-10-15", timeZone: "UTC", documents: {},
+        entries: [
+          { ...entry("activity", "Practice session", "annotation"), kind: "episode" },
+          { ...entry("visit", "Studio visit"), kind: "visit" },
+        ],
+      }), host);
+    });
+    const group = host.querySelector(".calendar-entry-group");
+    expect(group.querySelector("h3").textContent).toBe("Activities & visits");
+    expect(group.querySelectorAll(".calendar-entry")).toHaveLength(2);
+    expect(group.closest("details")).toBeNull();
+    expect(host.querySelector(".calendar-activity-group")).toBeNull();
   });
 
   it("ignores a stale period response after a newer request wins", async () => {
