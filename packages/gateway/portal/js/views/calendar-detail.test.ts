@@ -42,7 +42,8 @@ function body(value, documents = {}, options = {}) {
 describe("Calendar entry explanations", () => {
   it("shows source evidence without technical identifiers or explanatory footer", () => {
     const content = body(entry, { "doc-1": { title: "Workshop registration" } });
-    expect(text(content)).toContain("A structured date supplied by the source");
+    expect(text(content)).not.toContain("A structured date supplied by the source");
+    expect(text(content)).not.toContain("Recorded by");
     expect(text(content)).not.toContain("Dates and times shown");
     expect(nodes(content, "details")).toHaveLength(0);
     expect(text(content)).not.toContain("Projection slot");
@@ -84,6 +85,15 @@ describe("Calendar entry explanations", () => {
     expect(nodes(content, "a")).toHaveLength(1);
     expect(nodes(content, "details")).toHaveLength(0);
     expect(text(content)).not.toContain("Revision");
+  });
+
+  it("marks the agent title with its icon without repeating its annotation", () => {
+    const value = { ...entry, origin: "annotation", projection: undefined,
+      annotation: { documentIds: [], rationale: entry.label } };
+    const modal = CalendarEntryDetail({ entry: value });
+    expect(modal.props.title).toBe(entry.label);
+    expect(text(modal.props.titleIcon)).toBe("✦");
+    expect(text(modal.props.children)).not.toContain(entry.label);
   });
 
   it("explains missing evidence and handles absent details", () => {

@@ -44,7 +44,7 @@ function whyHere(entry, timeZone) {
   if (entry.origin === "annotation") {
     return `The agent recorded this interpretation for ${date}. Check the supporting information to understand its basis.`;
   }
-  return `A structured date supplied by the source places this record on ${date}.`;
+  return null;
 }
 
 export function CalendarEntryDetail({
@@ -64,29 +64,21 @@ export function CalendarEntryDetail({
     id,
     document: documents[id] ?? null,
   }));
-  const projection = entry.projection;
   const annotation = entry.annotation;
   const mention = entry.mention;
   const origin = ORIGIN_LABELS[entry.origin] ?? { row: entry.origin, heading: entry.origin };
   const kind = kindMeta(entry.kind);
-  const sourceIcon = projection ? sourceIconUrl(projection.sourceId) : null;
-  const sourceDocument = evidence.find((item) => item.document)?.document;
-  const sourceName = sourceDocument?.sourceName ?? sourceDocument?.sourceType;
-  return html`<${Modal} open=${true} onClose=${onClose} title=${entry.label} size="lg">
+  const titleIcon = entry.origin === "annotation"
+    ? html`<span class="calendar-agent-title-icon" aria-hidden="true">${origin.icon}</span>`
+    : null;
+  return html`<${Modal} open=${true} onClose=${onClose} title=${entry.label} titleIcon=${titleIcon} size="lg">
     <div class=${`calendar-detail calendar-detail--${entry.origin}`}>
       <section class="calendar-provenance">
         <strong>${origin.heading}</strong>
-        <p>${whyHere(entry, timeZone)}</p>
+        ${entry.origin !== "projection" && html`<p>${whyHere(entry, timeZone)}</p>`}
         ${mention && html`<blockquote class="calendar-mentioned-quote">${mention.text}</blockquote>`}
         ${mention?.relative && html`<p class="debug-sub">This relative expression was resolved using the document's own date, rather than today's date.</p>`}
-        ${
-          projection &&
-          html`<div>
-            ${sourceIcon && html`<img class="source-icon" src=${sourceIcon} alt="" />`}
-            <span>${sourceName ? `Recorded by ${sourceName}` : "Recorded by the source"}</span>
-          </div>`
-        }
-        ${annotation && html`<p>${annotation.rationale ?? entry.label}</p>`}
+        ${annotation?.rationale && annotation.rationale !== entry.label && html`<p>${annotation.rationale}</p>`}
       </section>
       <div class="calendar-detail-summary">
         <span class="calendar-kind" style=${`--calendar-kind:${kind.color}`}>

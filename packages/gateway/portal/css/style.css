@@ -11333,10 +11333,10 @@ div.source-activity-popover-link:hover {
 .calendar-upcoming-empty > span { font-size: 30px; color: var(--success); }
 .calendar-upcoming-empty strong { color: var(--text-primary); font-size: 16px; }
 .calendar-upcoming-empty p { margin: 0; }
+.calendar-agent-title-icon { display: inline-block; margin-right: 8px; color: #a78bfa; }
 .calendar-detail { display: grid; gap: 18px; }
 .calendar-detail-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: var(--text-secondary); font-size: 12px; }
 .calendar-provenance { display: grid; gap: 7px; padding: 12px; border-radius: 8px; background: var(--bg-secondary); }
-.calendar-provenance > div { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
 .calendar-provenance p { width: 100%; margin: 4px 0 0; color: var(--text-secondary); }
 .calendar-detail h3 { margin: 0 0 8px; font-size: 13px; }
 .calendar-evidence-list { display: grid; gap: 6px; }
