@@ -30,6 +30,7 @@ export const ORIGIN_LABELS = {
 
 export const CALENDAR_KINDS = {
   visit: {
+    activity: true,
     label: "Visit",
     icon: "●",
     color: "#38bdf8",
@@ -77,12 +78,14 @@ export const CALENDAR_KINDS = {
     description: "A timed booking or scheduled engagement.",
   },
   episode: {
+    activity: true,
     label: "Activity",
     icon: "↺",
     color: "#a78bfa",
     description: "A dated episode or activity, not the time this entry was processed.",
   },
   episodic: {
+    activity: true,
     label: "Activity",
     icon: "↺",
     color: "#a78bfa",
@@ -249,7 +252,7 @@ export function groupDayEntries(entries) {
   for (const entry of entries) {
     if (entry.origin === "mention") groups.mentions.push(entry);
     else if (MOMENT_KINDS.has(entry.kind)) groups.allDay.push(entry);
-    else if (entry.kind === "episode" || entry.kind === "episodic" || entry.kind === "visit")
+    else if (CALENDAR_KINDS[entry.kind]?.activity)
       groups.activity.push(entry);
     else if (!entry.allDay) groups.timed.push(entry);
     else groups.allDay.push(entry);
