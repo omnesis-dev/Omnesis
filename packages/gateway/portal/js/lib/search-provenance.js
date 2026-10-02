@@ -38,7 +38,7 @@ export function provenancePanels(results, byDocument) {
     if (!provenance) continue;
     const hasOtherCopy = (provenance.copies || []).some((copy) => copy.documentId !== result.documentId);
     const hasPhysicalLocation = (provenance.copies || []).some((copy) => copy.documentId === result.documentId && (copy.deviceName || copy.path));
-    if (!hasOtherCopy && !hasPhysicalLocation && !provenanceSentences(provenance).length) continue;
+    if (!hasOtherCopy && !hasPhysicalLocation && !provenanceLines(provenance).length) continue;
     const copyIds = (provenance.copies || []).map((copy) => copy.documentId).sort();
     const family = JSON.stringify(copyIds.length ? copyIds : [result.documentId]);
     const first = firstByFamily.get(family);
@@ -67,12 +67,13 @@ export function graphRelation(edge) {
   }
 }
 
-/** Merge clauses only within the exact paths supplied by the graph snapshot. */
-export function provenanceSentences(provenance) {
+/** The exact paths supplied by the graph snapshot as one tree per root; repeated steps merge. */
+function provenanceTrees(provenance) {
   const roots = new Map();
   for (const path of provenance.paths || []) {
     const ids = path.documentIds || [];
-    if (ids.length < 2) continue;
+    // A malformed or looping path would read as a connection that is not there.
+    if (ids.length < 2 || ids.length !== (path.edges || []).length + 1 || new Set(ids).size !== ids.length) continue;
     let node = roots.get(ids[0]);
     if (!node) {
       node = { documentId: ids[0], children: new Map() };
@@ -86,26 +87,112 @@ export function provenanceSentences(provenance) {
       const key = JSON.stringify([ids[index + 1], edge, relation]);
       let child = node.children.get(key);
       if (!child) {
-        child = { documentId: ids[index + 1], relation, children: new Map() };
+        child = { documentId: ids[index + 1], relation, children: new Map(), more: 0 };
         node.children.set(key, child);
       }
       node = child;
     }
   }
-  const sentences = [];
-  function collect(node, root, steps) {
-    const children = [...node.children.values()];
-    if (!children.length) return;
-    if (children.every((child) => !child.children.size)) {
-      sentences.push({ root, steps, clauses: children.map(({ documentId, relation }) => ({ documentId, relation })) });
+  return [...roots.values()];
+}
+
+/**
+ * Leaves that share a relation and a title under different documents of one
+ * root's tree (an inline image repeated in every message of a thread) fold
+ * into the first one, which counts the rest. Siblings under one document stay
+ * listed: they already share a clause, and each is separate evidence. A
+ * document `titleOf` does not name never folds.
+ */
+function foldRepeatedLeaves(roots, titleOf) {
+  let first;
+  const visit = (node) => {
+    for (const [key, child] of node.children) {
+      if (child.children.size) {
+        visit(child);
+        continue;
+      }
+      const title = (titleOf(child.documentId) || "").trim().toLowerCase();
+      if (!title) continue;
+      const fold = JSON.stringify([child.relation, title]);
+      const kept = first.get(fold);
+      if (!kept) first.set(fold, { leaf: child, parent: node });
+      else if (kept.parent !== node && kept.leaf.documentId !== child.documentId) {
+        kept.leaf.more++;
+        node.children.delete(key);
+      }
+    }
+  };
+  for (const root of roots) {
+    first = new Map();
+    visit(root);
+  }
+}
+
+/**
+ * Graph facts as an outline. A route is said once: a single branch continues
+ * inline ("…, which includes A"), siblings sharing a relation read as one
+ * clause ("includes A, B and C"), and where a document branches, its line
+ * ends with a colon and each branch follows one level deeper. A part is a
+ * `{ text }` or a `{ documentId, more }` reference.
+ */
+export function provenanceLines(provenance, titleOf = () => undefined) {
+  const roots = provenanceTrees(provenance);
+  foldRepeatedLeaves(roots, titleOf);
+  const lines = [];
+  const ref = (node) => ({ documentId: node.documentId, more: node.more || 0 });
+  const list = (nodes) => nodes.flatMap((node, index) => [
+    ...(index ? [{ text: index === nodes.length - 1 ? " and " : ", " }] : []), ref(node),
+  ]);
+  const groupsOf = (node) => {
+    const groups = new Map();
+    for (const child of node.children.values()) {
+      if (!groups.has(child.relation)) groups.set(child.relation, []);
+      groups.get(child.relation).push(child);
+    }
+    return [...groups];
+  };
+  const render = (node, prefix, depth) => {
+    const groups = groupsOf(node);
+    if (!groups.length) return;
+    if (groups.every(([, targets]) => targets.every((target) => !target.children.size))) {
+      lines.push({ depth, parts: [...prefix, ...groups.flatMap(([relation, targets], index) => [
+        { text: `${index ? " and" : ""} ${relation} ` }, ...list(targets),
+      ]), { text: "." }] });
       return;
     }
-    for (const child of children) {
-      const step = { documentId: child.documentId, relation: child.relation };
-      if (!child.children.size) sentences.push({ root, steps, clauses: [step] });
-      else collect(child, root, [...steps, step]);
+    if (groups.length === 1) {
+      const [relation, targets] = groups[0];
+      if (targets.length === 1) {
+        render(targets[0], [...prefix, { text: ` ${relation} ` }, ref(targets[0]), { text: ", which" }], depth);
+        return;
+      }
     }
+    lines.push({ depth, parts: [...prefix, { text: ":" }] });
+    const leafGroups = groups
+      .map(([relation, targets]) => [relation, targets.filter((target) => !target.children.size)])
+      .filter(([, leaves]) => leaves.length);
+    if (leafGroups.length)
+      lines.push({ depth: depth + 1, parts: [...leafGroups.flatMap(([relation, leaves], index) => [
+        { text: `${index ? " and " : ""}${relation} ` }, ...list(leaves),
+      ]), { text: "." }] });
+    for (const [relation, targets] of groups) {
+      for (const branch of targets.filter((target) => target.children.size))
+        render(branch, [{ text: `${relation} ` }, ref(branch), { text: ", which" }], depth + 1);
+    }
+  };
+  for (const root of roots) render(root, [ref(root)], 0);
+  return lines;
+}
+
+/** Flat outline lines as a tree, so a branch's lines nest under the line ending with its colon. */
+export function nestProvenanceLines(lines) {
+  const top = [];
+  const open = [];
+  for (const line of lines) {
+    const item = { ...line, children: [] };
+    while (open.length && open[open.length - 1].depth >= line.depth) open.pop();
+    (open.length ? open[open.length - 1].children : top).push(item);
+    open.push(item);
   }
-  for (const root of roots.values()) collect(root, root.documentId, []);
-  return sentences;
+  return top;
 }
