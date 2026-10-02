@@ -61,6 +61,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.semantics
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.omnesis.android.designsystem.components.MiddleEllipsisText
@@ -239,7 +240,7 @@ fun ModelsContent(
     }
 
     val overview = (state as? Loadable.Content)?.value
-    val cap = overview?.capabilities?.firstOrNull { it.role == pickerRole }
+    val cap = overview?.capabilities?.firstOrNull { it.role == pickerRole && it.configurableOnDevice }
     if (overview != null && cap != null) {
         ModelPickerSheet(
             cap = cap,
@@ -302,7 +303,7 @@ private fun CapabilityList(
                         .takeIf { canEditBehavior },
                     state = ModelManagement.state(overview.inference.assignments[cap.role]),
                     reason = overview.inference.assignments[cap.role]?.reason,
-                    onTap = { onOpenPicker(cap.role) },
+                    onTap = { onOpenPicker(cap.role) }.takeIf { cap.configurableOnDevice },
                     disabled = busy,
                 )
             }
@@ -318,7 +319,8 @@ private fun CapabilityCard(
     controls: ModelControlInfo?,
     state: ModelManagement.CapabilityState,
     reason: String?,
-    onTap: () -> Unit,
+    /** Null for a role this app cannot configure: the card is then read-only. */
+    onTap: (() -> Unit)?,
     disabled: Boolean,
 ) {
     val c = OmTheme.colors
@@ -326,7 +328,13 @@ private fun CapabilityCard(
         Modifier
             .fillMaxWidth()
             .background(c.bgSecondary, RoundedCornerShape(12.dp))
-            .clickable(enabled = !disabled, onClick = onTap)
+            .then(
+                if (onTap != null) {
+                    Modifier.clickable(enabled = !disabled, onClick = onTap)
+                } else {
+                    Modifier.semantics(mergeDescendants = true) {}
+                },
+            )
             .padding(OmSpacing.md),
         horizontalArrangement = Arrangement.spacedBy(OmSpacing.sm),
     ) {
@@ -370,13 +378,22 @@ private fun CapabilityCard(
             if (behaviorText != null) {
                 Text(behaviorText, style = MaterialTheme.typography.labelSmall, color = c.textSecondary)
             }
+            if (onTap == null) {
+                Text(
+                    "Configure this model from the portal.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = c.textMuted,
+                )
+            }
         }
-        Icon(
-            Icons.AutoMirrored.Filled.KeyboardArrowRight,
-            contentDescription = null,
-            tint = c.textMuted,
-            modifier = Modifier.size(16.dp),
-        )
+        if (onTap != null) {
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = c.textMuted,
+                modifier = Modifier.size(16.dp),
+            )
+        }
     }
 }
 
@@ -1228,6 +1245,14 @@ private fun sampleCapabilities() = listOf(
         experimental = true,
         section = "cognition",
     ),
+    CapabilityMeta(
+        "decision",
+        "Decision model",
+        "Answers typed questions about a document, such as whether an email is worth recording.",
+        "scale",
+        section = "cognition",
+        backendFamily = "typed-decision",
+    ),
 )
 
 internal fun sampleModelsOverview() = ModelsOverview(
@@ -1237,6 +1262,7 @@ internal fun sampleModelsOverview() = ModelsOverview(
         "privacy-reviewer" to ModelDisplay("codex", "Codex", "GPT Example Mini", available = true, configured = true),
         "ocr" to ModelDisplay("http", "Studio Northstar", "dots-ocr", available = false, configured = true),
         "background-agent" to ModelDisplay("codex", "Codex", "GPT Example Frontier", available = true, configured = true),
+        "decision" to ModelDisplay("typesafe", "TypeSafe", "jev-example", available = true, configured = true),
     ),
     capabilities = sampleCapabilities(),
     inference = InferenceOverview(

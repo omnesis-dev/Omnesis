@@ -374,7 +374,7 @@ struct ModelsContent: View {
             guard !appliedInitialPickerRole else { return }
             appliedInitialPickerRole = true
             guard let initialPickerRole else { return }
-            pickerRole = overview.capabilities.first { $0.role == initialPickerRole }
+            pickerRole = overview.capabilities.first { $0.role == initialPickerRole && $0.configurableOnDevice }
         }
     }
 
@@ -395,7 +395,7 @@ struct ModelsContent: View {
             state: ModelManagement.state(overview.inference.assignments[cap.role]),
             reason: overview.inference.assignments[cap.role]?.reason,
             behaviorSummary: ModelManagement.behaviorSummary(role: cap.role, overview: overview),
-            onTap: { pickerRole = cap },
+            onTap: cap.configurableOnDevice ? { pickerRole = cap } : nil,
             disabled: busy
         )
     }
@@ -468,57 +468,72 @@ private struct CapabilityCard: View {
     let state: ModelManagement.CapabilityState
     let reason: String?
     let behaviorSummary: String?
-    var onTap: () -> Void = {}
+    /// Nil for a role this app cannot configure: the card is then read-only.
+    var onTap: (() -> Void)?
     var disabled = false
 
     var body: some View {
-        Button(action: onTap) {
-            HStack(alignment: .top, spacing: Theme.Spacing.sm) {
-                Image(systemName: ModelCapabilityIcon.symbol(cap.icon))
-                    .font(.system(size: 16))
-                    .foregroundStyle(Theme.textSecondary)
-                    .frame(width: 24)
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(cap.title)
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Theme.textPrimary)
-                        if cap.experimental {
-                            ExperimentalTag()
-                        }
-                        stateBadge
+        if let onTap {
+            Button(action: onTap) { content }
+                .buttonStyle(.plain)
+                .disabled(disabled)
+        } else {
+            content
+                .accessibilityElement(children: .combine)
+        }
+    }
+
+    private var content: some View {
+        HStack(alignment: .top, spacing: Theme.Spacing.sm) {
+            Image(systemName: ModelCapabilityIcon.symbol(cap.icon))
+                .font(.system(size: 16))
+                .foregroundStyle(Theme.textSecondary)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(cap.title)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    if cap.experimental {
+                        ExperimentalTag()
                     }
-                    assignmentLine
-                    if let behaviorSummary {
-                        Text(behaviorSummary)
-                            .font(.system(size: 11))
-                            .foregroundStyle(Theme.textMuted)
-                            .lineLimit(2)
-                    }
-                    if state == .warn, let reason, !reason.isEmpty {
-                        Text(reason)
-                            .font(.system(size: 11))
-                            .foregroundStyle(Theme.warning)
-                            .lineLimit(2)
-                    }
+                    stateBadge
                 }
-                Spacer(minLength: 0)
+                assignmentLine
+                if let behaviorSummary {
+                    Text(behaviorSummary)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textMuted)
+                        .lineLimit(2)
+                }
+                if state == .warn, let reason, !reason.isEmpty {
+                    Text(reason)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.warning)
+                        .lineLimit(2)
+                }
+                if onTap == nil {
+                    Text("Configure this model from the portal.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textMuted)
+                }
+            }
+            Spacer(minLength: 0)
+            if onTap != nil {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(Theme.textMuted)
             }
-            .padding(Theme.Spacing.md)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.bgSecondary)
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.Radius.large)
-                    .stroke(Theme.border, lineWidth: 1)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.large))
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .disabled(disabled)
+        .padding(Theme.Spacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.bgSecondary)
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.large)
+                .stroke(Theme.border, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.large))
+        .contentShape(Rectangle())
     }
 
     @ViewBuilder
@@ -1211,6 +1226,15 @@ enum ModelCapabilityIcon {
             previewSystem: ModelsPreviewData.systemInfo()
         )
         .environment(AppStore.preview())
+    }
+    .preferredColorScheme(.dark)
+}
+
+@available(iOS 17.0, *)
+#Preview("ModelsView — read-only role") {
+    NavigationStack {
+        ModelsView(previewOverview: ModelsPreviewData.overviewWithReadOnlyRole())
+            .environment(AppStore.preview())
     }
     .preferredColorScheme(.dark)
 }

@@ -118,17 +118,30 @@ final class AgentCoordinatorResumeTests: XCTestCase {
         coord.attachForTesting(client: makeClient(), sessionId: "s1")
         defer { coord.stopForTesting() }
 
-        let landed = await waitFor {
-            coord.turns.contains { turn in
+        // Wait for the whole turn, not just its text: the deltas land before
+        // `message.end`, so the text alone does not mean the turn has ended.
+        let ended = await waitFor(timeout: 5) {
+            !coord.busy && coord.turns.contains { turn in
                 guard case .assistant(let assistant) = turn else { return false }
-                return assistant.parts.contains { part in
+                return assistant.stopReason != nil && assistant.parts.contains { part in
                     if case .text(let text) = part { return text == "Hello world" }
                     return false
                 }
             }
         }
-        XCTAssertTrue(landed, "streamed deltas should aggregate into the assistant turn")
-        XCTAssertFalse(coord.busy, "message.end clears busy")
+        XCTAssertTrue(ended, "streamed deltas aggregate into the assistant turn and message.end clears busy")
+
+        // The stream closes after `message.end`, and the reconnect resumes from
+        // the last event id, so the finished turn is neither replayed nor
+        // reopened.
+        let reconnected = await waitFor(timeout: 5) { RoutingStubProtocol.seenEventRequests() >= 2 }
+        XCTAssertTrue(reconnected, "the supervisor reconnects after the stream closes")
+        XCTAssertFalse(coord.busy, "a resumed stream does not reopen the finished turn")
+        let assistantTurns = coord.turns.filter { turn in
+            guard case .assistant = turn else { return false }
+            return true
+        }
+        XCTAssertEqual(assistantTurns.count, 1)
     }
 
     func testSnapshotHandoffAppliesOnlyEventsNewerThanCursor() async {

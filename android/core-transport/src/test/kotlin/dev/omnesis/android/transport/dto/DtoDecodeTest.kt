@@ -59,6 +59,33 @@ class DtoDecodeTest {
     }
 
     @Test
+    fun malformed_provenance_drops_only_that_hits_evidence() {
+        fun hit(id: String, provenance: String) = """
+            {"documentId":"$id","sourceId":"files:example","documentType":"file","title":"Permit.pdf",
+             "sourceCreatedAt":"2026-01-01","chunkText":"Permit","score":0.9,"provenance":$provenance}
+        """
+        val badCopy = """{"copies":[{"title":"No id"}]}"""
+        val sparseCopy = """{"copies":[{"documentId":"copy","title":"Copy"}]}"""
+        val hits = listOf(
+            hit("bad-type", "\"not an object\""),
+            hit("bad-copy", badCopy),
+            hit("null", "null"),
+            hit("sparse", sparseCopy),
+        )
+        val json = "{\"results\":[" + hits.joinToString(",") + "]}"
+        val resp = OmnesisJson.decodeFromString<SearchResponse>(json)
+        assertEquals(listOf("bad-type", "bad-copy", "null", "sparse"), resp.results.map { it.documentId })
+        assertNull(resp.results[0].provenance)
+        assertNull(resp.results[1].provenance)
+        assertNull(resp.results[2].provenance)
+        val sparse = resp.results[3].provenance!!
+        assertEquals(listOf("copy"), sparse.copies.map { it.documentId })
+        assertEquals("", sparse.copies.single().sourceId)
+        assertTrue(sparse.paths.isEmpty())
+        assertTrue(sparse.stopReasons.isEmpty())
+    }
+
+    @Test
     fun document_detail_uses_snake_case_keys() {
         val json = """
             {
@@ -355,6 +382,22 @@ class DtoDecodeTest {
             """{"role":"agent","title":"Agent","description":"d","icon":"bot"}""",
         )
         assertNull(legacy.section)
+    }
+
+    @Test
+    fun capability_meta_reads_backend_family_as_device_configurability() {
+        // A role only a named backend family serves is read-only on the phone; an
+        // ordinary role, or any role from a gateway that omits the field, stays editable.
+        val decision = OmnesisJson.decodeFromString<CapabilityMeta>(
+            """{"role":"decision","title":"Decision model","description":"d","icon":"scale","backendFamily":"typed-decision"}""",
+        )
+        assertEquals("typed-decision", decision.backendFamily)
+        assertFalse(decision.configurableOnDevice)
+        val legacy = OmnesisJson.decodeFromString<CapabilityMeta>(
+            """{"role":"agent","title":"Agent","description":"d","icon":"bot"}""",
+        )
+        assertNull(legacy.backendFamily)
+        assertTrue(legacy.configurableOnDevice)
     }
 
     @Test
