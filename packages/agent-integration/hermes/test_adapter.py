@@ -9,6 +9,7 @@ import json
 import os
 import pathlib
 import signal
+import socket
 import sqlite3
 import stat
 import subprocess
@@ -3500,6 +3501,99 @@ class OAuthRefreshTests(unittest.TestCase):
                 pass
 
         return Connection
+
+    def _http_connection_answering(self, outcomes, bodies):
+        """A plaintext token endpoint giving one outcome per request, in order.
+
+        An outcome is an exception to raise or a ``(status, body)`` answer;
+        each request body sent is appended to ``bodies``.
+        """
+        remaining = list(outcomes)
+
+        class Connection:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            @staticmethod
+            def request(_method, _path, body, _headers):
+                bodies.append(body)
+
+            @staticmethod
+            def getresponse():
+                outcome = remaining.pop(0)
+                if isinstance(outcome, BaseException):
+                    raise outcome
+                status, body = outcome
+                return type(
+                    "Response",
+                    (),
+                    {"status": status, "read": staticmethod(lambda _limit: body)},
+                )()
+
+            @staticmethod
+            def close():
+                pass
+
+        return Connection
+
+    def test_a_refresh_whose_answer_was_lost_is_repeated_once(self):
+        # The gateway rotates as it answers, so a lost answer may have spent
+        # the token held here; it answers an identical repeat with that pair.
+        rotated = json.dumps(
+            {
+                "access_token": "access_new_fictional",
+                "refresh_token": "refresh_new_fictional",
+                "token_type": "Bearer",
+            }
+        ).encode("utf-8")
+        for lost in (
+            socket.timeout("timed out"),
+            ConnectionResetError("reset by peer"),
+            (503, json.dumps({"error": "server_error"}).encode("utf-8")),
+        ):
+            with self.subTest(lost=lost):
+                self.path.write_text(json.dumps(self.raw), encoding="utf-8")
+                self.instance._credentials = adapter_module._load_credentials(self.path)
+                bodies = []
+                connection = self._http_connection_answering([lost, (200, rotated)], bodies)
+                with (
+                    patch.object(adapter_module.http.client, "HTTPConnection", connection),
+                    patch.object(self.instance, "_request_json") as request_json,
+                ):
+                    bearer = self.instance._refresh_oauth_token_locked()
+                self.assertEqual(bearer, "access_new_fictional")
+                self.assertEqual(len(bodies), 2)
+                self.assertEqual(bodies[0], bodies[1])
+                self.assertIn(b"refresh_token=refresh_old_fictional", bodies[1])
+                request_json.assert_not_called()
+                persisted = json.loads(self.path.read_text(encoding="utf-8"))
+                self.assertEqual(
+                    persisted["oauth"]["tokens"]["refresh_token"], "refresh_new_fictional"
+                )
+
+    def test_a_lost_refresh_is_repeated_only_once(self):
+        bodies = []
+        connection = self._http_connection_answering(
+            [socket.timeout("timed out"), socket.timeout("timed out again")], bodies
+        )
+        with (
+            patch.object(adapter_module.http.client, "HTTPConnection", connection),
+            patch.object(self.instance, "_request_json") as request_json,
+        ):
+            with self.assertRaises(OSError):
+                self.instance._refresh_oauth_token_locked()
+        self.assertEqual(len(bodies), 2)
+        request_json.assert_not_called()
+
+    def test_an_oauth_verdict_on_a_refresh_is_never_repeated(self):
+        bodies = []
+        connection = self._http_connection_answering(
+            [(400, json.dumps({"error": "invalid_client"}).encode("utf-8"))], bodies
+        )
+        with patch.object(adapter_module.http.client, "HTTPConnection", connection):
+            with self.assertRaises(adapter_module.GatewayHttpError):
+                self.instance._refresh_oauth_token_locked()
+        self.assertEqual(len(bodies), 1)
 
     def test_a_spent_refresh_token_is_re_issued_against_the_management_token(self):
         # The cliff: nobody asked this installation anything for a month, so

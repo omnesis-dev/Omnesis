@@ -493,6 +493,94 @@ describe("access authorization store", () => {
     expect(refreshed).toMatchObject({ ok: true, value: { refreshToken: expect.any(String) } });
   });
 
+  test("replays a rotated refresh only to the client it was issued to", () => {
+    const client = publicClient();
+    const other = publicClient();
+    const tokens = authorize(client.clientId, {
+      kind: "new-principal",
+      principalName: "Fictional assistant",
+      grantName: "Session access",
+      rules: ANSWER_RULES,
+      credentialLabel: "Fictional client",
+      expiresAt: null,
+    });
+    if (!tokens.refreshToken) throw new Error("refresh token missing");
+    const rotated = refreshPrincipalAccessToken(
+      db,
+      { refreshToken: tokens.refreshToken, clientId: client.clientId, resource: RESOURCE },
+      NOW + 20,
+    );
+    if (!rotated.ok) throw new Error("rotation failed");
+
+    expect(
+      refreshPrincipalAccessToken(
+        db,
+        { refreshToken: tokens.refreshToken, clientId: other.clientId, resource: RESOURCE },
+        NOW + 21,
+      ),
+    ).toEqual({ ok: false, error: "invalid-client" });
+    // Another client's attempt neither reveals the pair nor closes the window
+    // for the client that owns it.
+    expect(
+      refreshPrincipalAccessToken(
+        db,
+        { refreshToken: tokens.refreshToken, clientId: client.clientId, resource: RESOURCE },
+        NOW + 22,
+      ),
+    ).toMatchObject({ ok: true, value: { accessToken: rotated.value.accessToken } });
+  });
+
+  test("treats a repeat as a replay once the pair it was rotated into has been used", () => {
+    const client = publicClient();
+    const tokens = authorize(client.clientId, {
+      kind: "new-principal",
+      principalName: "Fictional assistant",
+      grantName: "Session access",
+      rules: ANSWER_RULES,
+      credentialLabel: "Fictional client",
+      expiresAt: null,
+    });
+    if (!tokens.refreshToken) throw new Error("refresh token missing");
+    const first = refreshPrincipalAccessToken(
+      db,
+      { refreshToken: tokens.refreshToken, clientId: client.clientId, resource: RESOURCE },
+      NOW + 20,
+    );
+    if (!first.ok || !first.value.refreshToken) throw new Error("rotation failed");
+    const second = refreshPrincipalAccessToken(
+      db,
+      { refreshToken: first.value.refreshToken, clientId: client.clientId, resource: RESOURCE },
+      NOW + 21,
+    );
+    if (!second.ok || !second.value.refreshToken) throw new Error("second rotation failed");
+
+    // Still inside the first token's window, but its successor has been
+    // spent: the client demonstrably received that pair, so presenting the
+    // original again is a stolen-token replay and fences the family.
+    expect(
+      refreshPrincipalAccessToken(
+        db,
+        { refreshToken: tokens.refreshToken, clientId: client.clientId, resource: RESOURCE },
+        NOW + 22,
+      ),
+    ).toEqual({ ok: false, error: "invalid-grant" });
+    expect(
+      refreshPrincipalAccessToken(
+        db,
+        { refreshToken: second.value.refreshToken, clientId: client.clientId, resource: RESOURCE },
+        NOW + 23,
+      ),
+    ).toEqual({ ok: false, error: "invalid-grant" });
+    expect(
+      db
+        .prepare<[], { count: number }>(
+          `SELECT COUNT(*) AS count FROM access_audit_events
+           WHERE event_type = 'refresh-token-replay-detected'`,
+        )
+        .get()?.count,
+    ).toBe(1);
+  });
+
   test("does not issue refresh authority to a client that omitted the refresh grant", () => {
     const client = registerOAuthClient(
       db,

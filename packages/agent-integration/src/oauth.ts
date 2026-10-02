@@ -24,7 +24,9 @@ import { silentIntegrationLogger, type IntegrationLogger } from "./logger.js";
 import { mcpEndpointUrl } from "./tls.js";
 
 const REFRESH_LOCK_WAIT_MS = 25;
-const REFRESH_LOCK_TIMEOUT_MS = 30_000;
+// Outlasts the holder's worst case — a refresh, its one repeat and a re-issue,
+// each on a 20 s socket budget — and stays below the stale-lease threshold.
+const REFRESH_LOCK_TIMEOUT_MS = 75_000;
 const REFRESH_LOCK_STALE_MS = 2 * 60_000;
 
 /**
@@ -234,11 +236,45 @@ export async function authorizeIntegrationOAuth(
 ): Promise<"AUTHORIZED" | "REDIRECT"> {
   return auth(provider, {
     serverUrl: mcpEndpointUrl(gatewayUrl),
-    fetchFn,
+    fetchFn: retryRefreshOnce(fetchFn),
     scope: "omnesis:access offline_access",
     ...(authorizationCode ? { authorizationCode } : {}),
     ...(iss ? { iss } : {}),
   });
+}
+
+/**
+ * Send a refresh-token request a second time when the first got no answer.
+ *
+ * The gateway rotates a refresh token as it answers the request, so a refresh
+ * whose response is lost — a client timeout while the gateway's write queue is
+ * busy, a dropped connection, a proxy's 5xx — may already have spent the token
+ * the client still holds. `auth()` swallows that failure and goes on to ask
+ * for a browser, so without a second attempt one slow response costs the
+ * operator an interactive approval.
+ *
+ * Repeating the identical request is safe: for a short window after rotation
+ * the gateway answers a repeat of a spent token, from the same client, with
+ * the token pair it already issued, and a token it never rotated is simply
+ * rotated now. Only one repeat is made, and only for a failure that carries
+ * no verdict about the token; an OAuth error such as `invalid_grant` is the
+ * gateway's answer and is passed through untouched. A request the caller
+ * aborted is not repeated.
+ */
+function retryRefreshOnce(fetchFn: FetchLike): FetchLike {
+  return async (input, init) => {
+    const body = init?.body;
+    if (!(body instanceof URLSearchParams) || body.get("grant_type") !== "refresh_token") {
+      return fetchFn(input, init);
+    }
+    try {
+      const response = await fetchFn(input, init);
+      if (response.status < 500) return response;
+    } catch (error) {
+      if (init?.signal?.aborted) throw error;
+    }
+    return fetchFn(input, init);
+  };
 }
 
 /**
