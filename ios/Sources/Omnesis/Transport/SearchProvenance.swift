@@ -108,6 +108,25 @@ enum SearchBreadcrumbFormatter {
         let roots = pathTrees(provenance.paths)
         // The visible result is "This document", never a same-named copy to fold away.
         foldRepeatedLeaves(roots) { $0 == documentId ? nil : documents[$0]?.title }
+        facts += outline(roots, reference: reference)
+        if provenance.stopReasons.contains("hub") {
+            facts.append(.init(fragments: [.text("This trail stops at highly connected documents.")]))
+        } else if provenance.stopReasons.contains("depth") || provenance.stopReasons.contains("nodes") {
+            facts.append(.init(fragments: [.text("This trail may be incomplete.")]))
+        }
+        return facts
+    }
+
+    /// Facts for each root's tree as an outline. A route is said once: a single
+    /// branch continues inline, siblings that share a relation read as one
+    /// clause, and where a document branches its fact ends with a colon and each
+    /// branch follows one level deeper.
+    private static func outline(
+        _ roots: [Node],
+        reference: (String) -> SearchBreadcrumbFact.Fragment
+    )
+        -> [SearchBreadcrumbFact] {
+        var facts: [SearchBreadcrumbFact] = []
         func ref(_ node: Node) -> [SearchBreadcrumbFact.Fragment] {
             [reference(node.step.documentId)]
                 + (node.more > 0 ? [.text(" (and \(node.more) more with this name)")] : [])
@@ -128,9 +147,7 @@ enum SearchBreadcrumbFormatter {
             }
             return result
         }
-        // A route is said once: a single branch continues inline, siblings that
-        // share a relation read as one clause, and where a document branches its
-        // fact ends with a colon and each branch follows one level deeper.
+        /// Appends `node`'s facts, continuing `prefix` at outline level `depth`.
         func render(_ node: Node, prefix: [SearchBreadcrumbFact.Fragment], depth: Int) {
             let grouped = groups(node)
             guard !grouped.isEmpty else { return }
@@ -169,11 +186,6 @@ enum SearchBreadcrumbFormatter {
         }
         for root in roots {
             render(root, prefix: ref(root), depth: 0)
-        }
-        if provenance.stopReasons.contains("hub") {
-            facts.append(.init(fragments: [.text("This trail stops at highly connected documents.")]))
-        } else if provenance.stopReasons.contains("depth") || provenance.stopReasons.contains("nodes") {
-            facts.append(.init(fragments: [.text("This trail may be incomplete.")]))
         }
         return facts
     }
