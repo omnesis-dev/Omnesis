@@ -126,11 +126,25 @@ _HELLO_HANDSHAKE_TIMEOUT_SECONDS = 15.0
 # settles in one transaction. Calls that run an agent turn behind the request
 # are far slower than this and state their own budget instead.
 GATEWAY_TIMEOUT_SECONDS = 20.0
+# Socket budget for a token-endpoint request and for the management-token
+# re-issue that stands in for a refresh. Each is a write on the gateway's single
+# writer thread, so it waits behind whatever that thread is doing — tens of
+# seconds while a restarted gateway rebuilds an index — and a refresh that gives
+# up first loses the answer to a rotation the gateway goes on to make. It bounds
+# each socket operation (connect, then waiting for the answer), which a
+# writer stall turns into one wait. Restated from `@omnesis/types`
+# (`OAUTH_TOKEN_REQUEST_TIMEOUT_MS`); `oauth-token-budget.test.ts` holds the
+# restatement to it.
+OAUTH_TOKEN_TIMEOUT_SECONDS = 55.0
 _OAUTH_REFRESH_LOCK_WAIT_SECONDS = 0.025
-# Outlasts the holder's worst case — a refresh, its one repeat and a re-issue,
-# each on the gateway socket budget — and stays below the stale-lease threshold.
-_OAUTH_REFRESH_LOCK_TIMEOUT_SECONDS = 75.0
-_OAUTH_REFRESH_LOCK_STALE_SECONDS = 120.0
+# Outlasts the worst case of a holder in either runtime — a refresh, its one
+# repeat and a re-issue, each on the token-request budget, plus the two metadata
+# discoveries the TypeScript SDK may make on the ordinary budget — so a waiter
+# behind a stalled gateway adopts the holder's result instead of failing.
+OAUTH_REFRESH_LOCK_TIMEOUT_SECONDS = 215.0
+# Above the longest a live holder keeps the lease, so a holder whose process id
+# is not visible from here, as across a container boundary, is never cut short.
+OAUTH_REFRESH_LOCK_STALE_SECONDS = 240.0
 _OAUTH_REFRESH_TOKEN_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000
 _OAUTH_REFRESH_MARGIN_MS = 7 * 24 * 60 * 60 * 1000
 _OAUTH_KEEPALIVE_INTERVAL_SECONDS = 6 * 60 * 60.0
@@ -188,7 +202,7 @@ def _remove_stale_refresh_lock(path: Path) -> None:
         return
     try:
         inspected = os.fstat(descriptor)
-        if time.time() - inspected.st_mtime <= _OAUTH_REFRESH_LOCK_STALE_SECONDS:
+        if time.time() - inspected.st_mtime <= OAUTH_REFRESH_LOCK_STALE_SECONDS:
             return
         try:
             body = os.read(descriptor, 64).decode("ascii").strip()
@@ -223,7 +237,7 @@ def _release_owned_refresh_lock(path: Path, descriptor: int) -> None:
 
 def _acquire_refresh_lock(path: Path) -> int:
     """Acquire the existence-based lease shared with the TypeScript plugin."""
-    deadline = time.monotonic() + _OAUTH_REFRESH_LOCK_TIMEOUT_SECONDS
+    deadline = time.monotonic() + OAUTH_REFRESH_LOCK_TIMEOUT_SECONDS
     while True:
         try:
             descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
@@ -4694,11 +4708,11 @@ class OmnesisAdapter(BasePlatformAdapter):
                     if same_gateway_origin
                     else ssl.create_default_context()
                 ),
-                timeout=GATEWAY_TIMEOUT_SECONDS,
+                timeout=OAUTH_TOKEN_TIMEOUT_SECONDS,
             )
         else:
             connection = http.client.HTTPConnection(
-                parsed.hostname, parsed.port or 80, timeout=GATEWAY_TIMEOUT_SECONDS
+                parsed.hostname, parsed.port or 80, timeout=OAUTH_TOKEN_TIMEOUT_SECONDS
             )
         try:
             if parsed.scheme == "https":
@@ -4730,6 +4744,8 @@ class OmnesisAdapter(BasePlatformAdapter):
                 "/agent-integration/oauth-reissue",
                 self._credentials.management_token,
                 {"clientId": self._credentials.oauth_client_id},
+                # A write on the gateway's writer, like the refresh it replaces.
+                OAUTH_TOKEN_TIMEOUT_SECONDS,
             )
         except GatewayHttpError as error:
             # The gateway's own code, not the bare 404: a gateway too old to

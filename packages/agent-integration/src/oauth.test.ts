@@ -4,12 +4,15 @@
 import { existsSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { createServer, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import { loadIntegrationCredentials } from "./credentials.js";
+import { integrationOAuthFetch } from "./native-answer-mcp.js";
 import {
+  authorizeIntegrationOAuthWithCredentialLock,
   IntegrationOAuthProvider,
   removeStaleRefreshLock,
   SerializedIntegrationAuthProvider,
@@ -17,12 +20,15 @@ import {
 } from "./oauth.js";
 
 /** A credential file holding a refresh token and a cached token endpoint, so `auth()` refreshes. */
-function writeRefreshableCredentials(directory: string): string {
+function writeRefreshableCredentials(
+  directory: string,
+  gatewayUrl = "https://gateway.example.org:7600",
+): string {
   const credentialsPath = join(directory, "integration.json");
   writeFileSync(
     credentialsPath,
     JSON.stringify({
-      gatewayUrl: "https://gateway.example.org:7600",
+      gatewayUrl,
       deliveryToken: "omn_fictional_delivery",
       ingestionToken: "omn_fictional_ingestion",
       managementToken: "omn_fictional_management",
@@ -30,19 +36,19 @@ function writeRefreshableCredentials(directory: string): string {
         redirectUri: "http://127.0.0.1:48123/callback",
         clientInformation: {
           client_id: "client_fictional",
-          issuer: "https://gateway.example.org:7600",
+          issuer: gatewayUrl,
         },
         tokens: {
           access_token: "access-fictional",
           refresh_token: "refresh-fictional",
-          issuer: "https://gateway.example.org:7600",
+          issuer: gatewayUrl,
         },
         discoveryState: {
-          authorizationServerUrl: "https://gateway.example.org:7600",
+          authorizationServerUrl: gatewayUrl,
           authorizationServerMetadata: {
-            issuer: "https://gateway.example.org:7600",
-            authorization_endpoint: "https://gateway.example.org:7600/oauth/authorize",
-            token_endpoint: "https://gateway.example.org:7600/oauth/token",
+            issuer: gatewayUrl,
+            authorization_endpoint: `${gatewayUrl}/oauth/authorize`,
+            token_endpoint: `${gatewayUrl}/oauth/token`,
             response_types_supported: ["code"],
           },
         },
@@ -441,6 +447,82 @@ describe("integration OAuth provider", () => {
           refresh_token: "refresh-rotated",
         });
       } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    }
+  });
+
+  test("rides out a 40-second writer stall instead of asking for a browser", async () => {
+    // A restarted gateway can hold its single writer for about 40 seconds, so
+    // the token endpoint answers that late. The connect flow's refresh must
+    // wait for it — and, when even that budget runs out, repeat into the
+    // gateway's replay window — rather than fall through to an interactive
+    // approval.
+    for (const stall of [
+      { answeredAttempt: 1, beforeAnswerMs: 40_000 },
+      { answeredAttempt: 2, beforeAnswerMs: 70_000 },
+    ]) {
+      const held: ServerResponse[] = [];
+      let arrived: () => void = () => {};
+      const server = createServer((request, response) => {
+        if (request.url !== "/oauth/token") {
+          response.writeHead(404).end();
+          return;
+        }
+        held.push(response);
+        arrived();
+      });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const address = server.address();
+      if (!address || typeof address === "string")
+        throw new Error("fictional server did not listen");
+      const gatewayUrl = `http://127.0.0.1:${address.port}`;
+      const directory = mkdtempSync(join(tmpdir(), "omnesis-integration-oauth-stall-"));
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const credentialsPath = writeRefreshableCredentials(directory, gatewayUrl);
+        const browsers: URL[] = [];
+        const provider = new IntegrationOAuthProvider(credentialsPath, "Hermes", (url) => {
+          browsers.push(url);
+        });
+        const nextArrival = () => new Promise<void>((resolve) => (arrived = resolve));
+        let arrival = nextArrival();
+        const result = authorizeIntegrationOAuthWithCredentialLock(
+          provider,
+          gatewayUrl,
+          integrationOAuthFetch(gatewayUrl),
+        );
+        await arrival;
+        if (stall.answeredAttempt === 2) {
+          // The first attempt outlives its budget; the repeat goes out at once.
+          arrival = nextArrival();
+          await vi.advanceTimersByTimeAsync(55_000);
+          await arrival;
+          await vi.advanceTimersByTimeAsync(stall.beforeAnswerMs - 55_000);
+        } else {
+          await vi.advanceTimersByTimeAsync(stall.beforeAnswerMs);
+        }
+        held[stall.answeredAttempt - 1]!.writeHead(200, { "content-type": "application/json" });
+        held[stall.answeredAttempt - 1]!.end(
+          JSON.stringify({
+            access_token: "access-rotated",
+            refresh_token: "refresh-rotated",
+            token_type: "Bearer",
+            expires_in: 3600,
+          }),
+        );
+
+        await expect(result).resolves.toBe("AUTHORIZED");
+        expect(held).toHaveLength(stall.answeredAttempt);
+        expect(browsers).toEqual([]);
+        expect(loadIntegrationCredentials(credentialsPath).oauth.tokens).toMatchObject({
+          access_token: "access-rotated",
+          refresh_token: "refresh-rotated",
+        });
+      } finally {
+        vi.useRealTimers();
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
         rmSync(directory, { recursive: true, force: true });
       }
     }

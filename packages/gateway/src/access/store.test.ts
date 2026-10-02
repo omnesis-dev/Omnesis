@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 import Database from "better-sqlite3";
-import { DeviceId } from "@omnesis/types";
+import { DeviceId, OAUTH_TOKEN_REQUEST_TIMEOUT_MS } from "@omnesis/types";
 import { DEFAULT_PRIVACY_POLICY_FAMILY_ID } from "@omnesis/types/privacy";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
@@ -410,7 +410,26 @@ describe("access authorization store", () => {
     expect(db.prepare("SELECT * FROM oauth_refresh_tokens ORDER BY id").all()).toEqual(
       refreshTokenRowsBeforeReplay,
     );
-    expect(cleanupExpiredAccessStateBatch(db, "refreshTokens", NOW + 60_006)).toMatchObject({
+    // A client's repeat can reach the writer up to two token-request budgets
+    // after the rotation it repeats, and is still answered with the same pair.
+    expect(
+      refreshPrincipalAccessToken(
+        db,
+        {
+          refreshToken: exchanged.value.refreshToken,
+          clientId: client.clientId,
+          resource: RESOURCE,
+        },
+        NOW + 5 + 2 * OAUTH_TOKEN_REQUEST_TIMEOUT_MS,
+      ),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        accessToken: refreshed.value.accessToken,
+        refreshToken: refreshed.value.refreshToken,
+      },
+    });
+    expect(cleanupExpiredAccessStateBatch(db, "refreshTokens", NOW + 120_006)).toMatchObject({
       phase: "refreshTokens",
       hasMore: false,
     });
@@ -429,7 +448,7 @@ describe("access authorization store", () => {
           clientId: client.clientId,
           resource: RESOURCE,
         },
-        NOW + 60_006,
+        NOW + 120_006,
       ),
     ).toEqual({ ok: false, error: "invalid-grant" });
     const exchangeOAuthToken = vi.fn();
@@ -455,7 +474,7 @@ describe("access authorization store", () => {
         .get()?.count,
     ).toBe(1);
     expect(
-      lookupPrincipalAccessToken(db, refreshed.value.accessToken, RESOURCE, NOW + 60_007),
+      lookupPrincipalAccessToken(db, refreshed.value.accessToken, RESOURCE, NOW + 120_007),
     ).not.toBeNull();
   });
 

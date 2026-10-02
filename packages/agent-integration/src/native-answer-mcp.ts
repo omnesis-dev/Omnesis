@@ -18,8 +18,10 @@ import {
 import { z } from "zod";
 
 import {
+  DEFAULT_GATEWAY_TIMEOUT_MS,
   GatewayRequestTimeoutError,
   IntegrationHttpError,
+  OAUTH_TOKEN_TIMEOUT_MS,
   type GatewayRequestOptions,
 } from "./http.js";
 import { mcpEndpointUrl, pinnedTlsOptions, type TlsTrust, validateGatewayUrl } from "./tls.js";
@@ -126,7 +128,7 @@ export class NativeAnswerMcpClient {
     // refused, so it renews through it: it must reach the authorization server
     // the gateway advertises, which may sit on another origin than the MCP
     // endpoint, under the same OAuth-path rules as `integrationOAuthFetch`.
-    const fetch = pinnedFetch(base, trust, true, OAUTH_HTTP_TIMEOUT_MS);
+    const fetch = pinnedFetch(base, trust, true, OAUTH_HTTP_BUDGETS);
     this.fetch = hasTrackedFetch(this.authProvider) ? this.authProvider.trackFetch(fetch) : fetch;
   }
 
@@ -410,21 +412,32 @@ function toolError(meta: unknown): IntegrationHttpError {
   );
 }
 
-const OAUTH_HTTP_TIMEOUT_MS = 20_000;
+/** Socket budgets for the OAuth protocol requests an integration makes. */
+export interface OAuthHttpBudgets {
+  /** Discovery, registration and the authorization pages: ordinary requests. */
+  requestMs: number;
+  /** The token endpoint, whose answer waits on the gateway's writer. */
+  tokenMs: number;
+}
+
+const OAUTH_HTTP_BUDGETS: OAuthHttpBudgets = {
+  requestMs: DEFAULT_GATEWAY_TIMEOUT_MS,
+  tokenMs: OAUTH_TOKEN_TIMEOUT_MS,
+};
 
 export function integrationOAuthFetch(
   gatewayUrl: string,
   trust?: TlsTrust,
-  oauthTimeoutMs = OAUTH_HTTP_TIMEOUT_MS,
+  budgets: OAuthHttpBudgets = OAUTH_HTTP_BUDGETS,
 ): FetchLike {
-  return pinnedFetch(validateGatewayUrl(gatewayUrl), trust, true, oauthTimeoutMs);
+  return pinnedFetch(validateGatewayUrl(gatewayUrl), trust, true, budgets);
 }
 
 function pinnedFetch(
   base: URL,
   trust?: TlsTrust,
   allowDiscoveredAuthorizationServer = false,
-  oauthTimeoutMs?: number,
+  oauthBudgets?: OAuthHttpBudgets,
 ): FetchLike {
   if (base.protocol === "https:" && !trust) {
     throw new Error("HTTPS integration requires pinned TLS trust material");
@@ -487,14 +500,21 @@ function pinnedFetch(
         if (timeout) clearTimeout(timeout);
         reject(error);
       });
-      if (oauthPath && oauthTimeoutMs !== undefined) {
+      if (oauthPath && oauthBudgets !== undefined) {
+        const budgetMs = isTokenEndpointPath(url.pathname)
+          ? oauthBudgets.tokenMs
+          : oauthBudgets.requestMs;
         timeout = setTimeout(() => {
           outgoing.destroy(new Error("Omnesis OAuth request timed out"));
-        }, oauthTimeoutMs);
+        }, budgetMs);
       }
       outgoing.end(body ?? undefined);
     });
   };
+}
+
+function isTokenEndpointPath(pathname: string): boolean {
+  return /(?:^|\/)oauth\/token$/u.test(pathname);
 }
 
 function isOAuthProtocolPath(pathname: string): boolean {
