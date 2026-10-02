@@ -6,9 +6,9 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.128",
+    "@anthropic-ai/sdk": "^0.129",
     "@omnesis/core": "*",
-    "@openai/codex": "0.151.0",
+    "@openai/codex": "0.159.1",
     "zod": "^4.6.5"
   },
   "files": [
