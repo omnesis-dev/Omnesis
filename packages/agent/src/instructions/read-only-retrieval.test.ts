@@ -182,3 +182,20 @@ describe("Direct schema discovery guidance", () => {
     expect(playbook).not.toContain("list_tables");
   });
 });
+
+describe("graph adjacency guidance", () => {
+  it("describes the legacy breadcrumb cues by default", () => {
+    const instructions = renderReadOnlyRetrievalPlaybook();
+    expect(instructions).toContain("`breadcrumb`");
+    expect(instructions).not.toContain("`facts`");
+  });
+
+  it("describes graph context facts, labels and limits instead under graph context", () => {
+    const instructions = renderReadOnlyRetrievalPlaybook({ graphContext: true });
+    expect(instructions).not.toContain("breadcrumb");
+    expect(instructions).toContain("`facts`");
+    expect(instructions).toContain("`limits`");
+    expect(instructions).toContain("never an id");
+    expect(instructions).toContain("`note`");
+  });
+});

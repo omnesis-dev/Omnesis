@@ -46,7 +46,12 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { assertNever, formatCognitionRunEnvelope, type TemporalItem } from "@omnesis/core";
+import {
+  GRAPH_CONTEXT_LINK_TYPES,
+  assertNever,
+  formatCognitionRunEnvelope,
+  type TemporalItem,
+} from "@omnesis/core";
 import { SUBJECT_ATTRIBUTION_REQUIRES_EVIDENCE } from "@omnesis/agent";
 import {
   parseCognitionMayDayRunPayload,
@@ -209,6 +214,12 @@ You carry knowledge across runs in a set of COMPLEMENTARY stores. Each fact live
 export interface CognitionRunPromptDeps {
   /** Read-side handle (doc existence, brief state at claim time). */
   db: Db;
+  /**
+   * Whether `trace_connections` follows only the graph context links unless a
+   * call names more (search v2). The datum neighbourhood then says how to
+   * walk a group of any other link type.
+   */
+  graphContext?: boolean;
   clock: Clock;
   /**
    * Resolved briefs settings, read live per run. Supplies the delta-prime
@@ -553,7 +564,7 @@ function buildDatumNeighbourhoodSection(docId: string, deps: CognitionRunPromptD
     parts.push("</datum-neighbourhood>");
     if (neighbourhood.total > shown) {
       parts.push(
-        `${neighbourhood.total - shown} further edge(s) were withheld for length. Call trace_connections on this document to walk them when a group's size or its unshown remainder actually bears on the decision.`,
+        `${neighbourhood.total - shown} further edge(s) were withheld for length. Call trace_connections on this document to walk them when a group's size or its unshown remainder actually bears on the decision.${deps.graphContext ? ` It follows ${GRAPH_CONTEXT_LINK_TYPES.join(", ")} links; name any other group's link type in includeLinkTypes.` : ""}`,
       );
     }
     parts.push(

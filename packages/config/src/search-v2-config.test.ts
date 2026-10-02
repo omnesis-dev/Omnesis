@@ -18,6 +18,7 @@ describe("search v2 configuration", () => {
       expect(result.config.search?.v2).toEqual({
         enabled: true,
         topN: 3,
+        minRefCount: 3,
         maxDepth: 4,
         fanout: 6,
         maxNodes: 24,
@@ -30,6 +31,7 @@ describe("search v2 configuration", () => {
     const v2 = {
       enabled: true,
       topN: 10,
+      minRefCount: 50,
       maxDepth: 5,
       fanout: 12,
       maxNodes: 48,
@@ -52,6 +54,8 @@ describe("search v2 configuration", () => {
     { topN: 0 },
     { topN: 11 },
     { topN: 1.5 },
+    { minRefCount: -1 },
+    { minRefCount: 51 },
     { maxDepth: 0 },
     { maxDepth: 6 },
     { fanout: 0 },

@@ -429,6 +429,7 @@ const searchBm25 = z
 export const DEFAULT_SEARCH_V2_SETTINGS = Object.freeze({
   enabled: true,
   topN: 3,
+  minRefCount: 3,
   maxDepth: 4,
   fanout: 6,
   maxNodes: 24,
@@ -451,6 +452,15 @@ const searchV2 = z
       .max(10)
       .default(DEFAULT_SEARCH_V2_SETTINGS.topN)
       .describe("Number of leading agent search results enriched with graph provenance."),
+    minRefCount: z
+      .number()
+      .int()
+      .min(0)
+      .max(50)
+      .default(DEFAULT_SEARCH_V2_SETTINGS.minRefCount)
+      .describe(
+        "Also enrich a later agent search result when at least this many distinct documents link to it over the links graph provenance follows. 0 enriches only the leading results.",
+      ),
     maxDepth: z
       .number()
       .int()

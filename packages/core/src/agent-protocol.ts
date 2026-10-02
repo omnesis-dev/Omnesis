@@ -136,6 +136,10 @@ export const searchProvenanceSchema = z.object({
             appUrl: z.string().max(2048).optional(),
             deviceName: z.string().max(240).optional(),
             path: z.string().max(240).optional(),
+            /** When the document was created at its source, to the minute (ISO 8601, UTC). */
+            date: z.string().max(40).optional(),
+            /** The document's type (`email`, `attachment`, `event`, …), so a trail reads without fetching. */
+            type: z.string().max(64).optional(),
           }),
         )
         .max(64),
@@ -716,6 +720,8 @@ const eventTrailBuiltResult = z.object({
     elapsedMs: z.number().nonnegative(),
     maxDepthReached: z.number().nonnegative(),
   }),
+  /** Plain-words reading of `truncated` for the model; absent on a complete walk. */
+  note: z.string().max(400).optional(),
 });
 
 const toolErrorResult = z.object({

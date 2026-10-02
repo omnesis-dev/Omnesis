@@ -12,6 +12,7 @@ describe("resolveSearchV2Config", () => {
       expect(resolveSearchV2Config(config)).toEqual({
         enabled: true,
         topN: 3,
+        minRefCount: 3,
         maxDepth: 4,
         fanout: 6,
         maxNodes: 24,

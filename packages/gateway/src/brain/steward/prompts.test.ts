@@ -469,6 +469,22 @@ describe("Cognition Steward run prompts", () => {
     expect(prompt).toContain("trace_connections");
   });
 
+  test("under graph context the neighbourhood says how to walk a non-structural group", () => {
+    const docId = insertDoc("msg_hub");
+    for (let i = 0; i < 12; i++) {
+      const other = insertDoc(`msg_copy_${i}`);
+      db.prepare(
+        `INSERT INTO document_links (source_doc_id, link_type, raw_target, normalized_target, target_doc_id, resolved_at, created_at)
+         VALUES (?, 'duplicate-content', ?, ?, ?, ?, ?)`,
+      ).run(docId, "hash", other, other, "2026-07-01T09:00:00.000Z", "2026-07-01T09:00:00.000Z");
+    }
+    const run = claimed({ kind: "data", payload: { docId, event: "created", datumAt: NOW } });
+    expect(buildCognitionRunPrompt(run, deps())).not.toContain("includeLinkTypes");
+    expect(buildCognitionRunPrompt(run, { ...deps(), graphContext: true })).toContain(
+      "name any other group's link type in includeLinkTypes",
+    );
+  });
+
   test("a datum with no edges and complete derivation costs no neighbourhood prompt", () => {
     const docId = insertDoc("msg_lonely");
     db.prepare(
