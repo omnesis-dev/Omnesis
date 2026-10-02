@@ -1063,7 +1063,7 @@ export const MIGRATIONS: readonly Migration[] = [
     },
   },
   {
-    // Omnesis-derived date-enrichment signal (experimental): a
+    // Omnesis-derived date-enrichment signal: a
     // `dates_extracted_at` dirty-flag column on documents (mirrors
     // links_extracted_at) plus the `document_extracted_dates` sidecar table.
     // The ALTER adds the column on existing installs; createExtractedDatesTables

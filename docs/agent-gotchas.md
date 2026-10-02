@@ -81,8 +81,11 @@ pass green against stale source.
 symlink **farm**, not a single symlink: every third-party top-level entry is
 shared from the primary (so nothing re-downloads), while `@omnesis`, the
 unscoped `omnesis` entry package, and its `.bin/omnesis` executable resolve into
-**this** worktree's `packages/*`. Re-run the script if the primary runs `npm
-install` mid-session (the shared third-party links can shift underneath you).
+**this** worktree's `packages/*`. The `@omnesis` links are read from this
+worktree's own workspace manifests, so a workspace package the primary has not
+installed yet still resolves. A new third-party dependency does not: it exists
+only once the primary runs `npm install`. Re-run the script after the primary
+installs (the shared third-party links can shift underneath you).
 
 ## `actions/setup-node`'s `cache: npm` and the persistent-runner trap
 
