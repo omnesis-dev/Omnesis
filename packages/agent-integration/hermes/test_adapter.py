@@ -3571,6 +3571,54 @@ class OAuthRefreshTests(unittest.TestCase):
                     persisted["oauth"]["tokens"]["refresh_token"], "refresh_new_fictional"
                 )
 
+    def test_a_refresh_rides_out_a_40_second_writer_stall(self):
+        # A restarted gateway can hold its single writer for about 40 seconds,
+        # and the token endpoint answers behind it. The socket budget has to
+        # outlast that, or the answer to a rotation the gateway goes on to make
+        # is lost and the refresh token with it.
+        stall_seconds = 40.0
+        rotated = json.dumps(
+            {
+                "access_token": "access_new_fictional",
+                "refresh_token": "refresh_new_fictional",
+                "token_type": "Bearer",
+            }
+        ).encode("utf-8")
+        budgets = []
+        bodies = []
+
+        class StalledConnection:
+            def __init__(self, *_args, timeout, **_kwargs):
+                budgets.append(timeout)
+                self.timeout = timeout
+
+            @staticmethod
+            def request(_method, _path, body, _headers):
+                bodies.append(body)
+
+            def getresponse(self):
+                if self.timeout < stall_seconds:
+                    raise socket.timeout("timed out")
+                return type(
+                    "Response",
+                    (),
+                    {"status": 200, "read": staticmethod(lambda _limit: rotated)},
+                )()
+
+            @staticmethod
+            def close():
+                pass
+
+        with (
+            patch.object(adapter_module.http.client, "HTTPConnection", StalledConnection),
+            patch.object(self.instance, "_request_json") as request_json,
+        ):
+            bearer = self.instance._refresh_oauth_token_locked()
+        self.assertEqual(bearer, "access_new_fictional")
+        self.assertEqual(budgets, [adapter_module.OAUTH_TOKEN_TIMEOUT_SECONDS])
+        self.assertEqual(len(bodies), 1)
+        request_json.assert_not_called()
+
     def test_a_lost_refresh_is_repeated_only_once(self):
         bodies = []
         connection = self._http_connection_answering(
@@ -3615,8 +3663,10 @@ class OAuthRefreshTests(unittest.TestCase):
             bearer = self.instance._refresh_oauth_token_locked()
 
         self.assertEqual(bearer, "access_reissued_fictional")
-        method, endpoint, token, payload = request_json.call_args.args
+        method, endpoint, token, payload, timeout = request_json.call_args.args
         self.assertEqual((method, endpoint), ("POST", "/agent-integration/oauth-reissue"))
+        # A write on the gateway's writer, given the same budget as a refresh.
+        self.assertEqual(timeout, adapter_module.OAUTH_TOKEN_TIMEOUT_SECONDS)
         # Presented with the operational management token — the one authority
         # an unattended plugin still holds, and one that cannot read the corpus.
         self.assertEqual(token, "omn_management_example")
