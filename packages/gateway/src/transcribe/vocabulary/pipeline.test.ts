@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SourceId, SCOPE_READ, SCOPE_WRITE_ALL } from "@omnesis/types";
 import type { ResolvedAssignment, TranscriptionContext } from "@omnesis/core";
+import { omnesisConfigSchema } from "@omnesis/config";
 import { createDatabase } from "../../db.js";
 import { createServer } from "../../server.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
@@ -91,7 +92,9 @@ beforeEach(() => {
     '2026-01-01T10:00:00.000Z','2026-01-01T10:00:00.000Z','2026-01-01T10:00:00.000Z','2026-01-01T10:00:00.000Z','2026-01-01T10:00:00.000Z')`,
   ).run(JSON.stringify({ extra: { conversationId: "fictional-thread" } }));
   const getSettings = () =>
-    resolveVocabularySettings({ inference: { transcriptionVocabulary: { enabled } } });
+    resolveVocabularySettings(
+      omnesisConfigSchema.parse({ inference: { transcriptionVocabulary: { enabled } } }),
+    );
   applyTranscriptionVocabularyBatch(
     db,
     extractTranscriptionVocabulary(

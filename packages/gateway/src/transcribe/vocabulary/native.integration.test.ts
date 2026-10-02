@@ -15,6 +15,7 @@ import { randomUUID } from "node:crypto";
 import { expect, test } from "vitest";
 import { SourceId, SCOPE_READ, SCOPE_WRITE_ALL } from "@omnesis/types";
 import type { ResolvedAssignment, TranscriptionContext } from "@omnesis/core";
+import { omnesisConfigSchema } from "@omnesis/config";
 import { createDatabase } from "../../db.js";
 import { createServer } from "../../server.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
@@ -52,7 +53,9 @@ test.skipIf(!model || !audioPath)(
     const contexts: TranscriptionContext[] = [];
     const requests: WhisperRequestHeader[] = [];
     const getSettings = () =>
-      resolveVocabularySettings({ inference: { transcriptionVocabulary: { enabled } } });
+      resolveVocabularySettings(
+        omnesisConfigSchema.parse({ inference: { transcriptionVocabulary: { enabled } } }),
+      );
     const context: TranscriptionContext = {
       purpose: "source-audio",
       conversation: { sourceId: SourceId("whatsapp:fictional"), threadId: "fictional-thread" },
