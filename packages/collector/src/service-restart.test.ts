@@ -1,22 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { spawn as spawnProcess, spawnSync } from "node:child_process";
+import { spawn as spawnProcess, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   handOverToServiceManager,
-  relaunchRequestFor,
+  relaunchGuardFor,
   resolveCollectorUnit,
-  resolveRelaunchRequest,
   restartInvocation,
+  startRelaunchGuard,
   type ServiceHost,
 } from "./service-restart.js";
-import type { spawn } from "node:child_process";
 
 interface SpawnCall {
   command: string;
@@ -96,6 +94,7 @@ describe("resolveCollectorUnit", () => {
         manager: "launchd",
         label: "dev.omnesis.collector",
         target: "gui/501/dev.omnesis.collector",
+        pid: 4241,
       },
     });
     expect(host.query).toHaveBeenCalledWith("launchctl", [
@@ -202,6 +201,7 @@ describe("restartInvocation", () => {
         manager: "launchd",
         label: "dev.omnesis.collector",
         target: "gui/501/dev.omnesis.collector",
+        pid: 4241,
       }),
     ).toEqual({
       command: "launchctl",
@@ -323,112 +323,120 @@ describe("handOverToServiceManager", () => {
   });
 });
 
-describe("relaunch requests", () => {
+describe("the relaunch guard", () => {
   let dir: string | null = null;
+  const children: ChildProcess[] = [];
   afterEach(() => {
+    for (const child of children.splice(0)) child.kill("SIGKILL");
     if (dir) rmSync(dir, { recursive: true, force: true });
     dir = null;
   });
-  const tempDir = (): string => (dir = mkdtempSync(join(tmpdir(), "omnesis-relaunch-test-")));
 
-  /** Poll for a file a detached process writes. */
-  async function waitForFile(path: string, timeoutMs = 10_000): Promise<string> {
-    const deadline = Date.now() + timeoutMs;
-    while (!existsSync(path)) {
-      if (Date.now() > deadline) throw new Error(`${path} never appeared`);
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    return readFileSync(path, "utf8");
-  }
+  const UNIT = {
+    manager: "launchd" as const,
+    label: "dev.omnesis.collector",
+    target: "gui/501/dev.omnesis.collector",
+    pid: 4241,
+  };
 
-  test("under launchd the request kickstarts the job's own target, without -k, after the delay", () => {
-    const request = relaunchRequestFor({
-      manager: "launchd",
-      label: "dev.omnesis.collector",
-      target: "gui/501/dev.omnesis.collector",
-    });
-    expect(request?.args).toContain("10");
-
-    // Run the real request against a stand-in `launchctl` that records its arguments.
-    const bin = tempDir();
-    const record = join(bin, "launchctl.args");
-    writeFileSync(join(bin, "launchctl"), `#!/bin/sh\necho "$@" > ${JSON.stringify(record)}\n`);
-    chmodSync(join(bin, "launchctl"), 0o755);
-    const quick = relaunchRequestFor(
-      {
-        manager: "launchd",
-        label: "dev.omnesis.collector",
-        target: "gui/501/dev.omnesis.collector",
-      },
-      0,
-    );
-    if (!quick) throw new Error("expected a launchd relaunch request");
-    const run = spawnSync(quick.command, quick.args, {
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` },
-    });
-    expect(run.status).toBe(0);
-    expect(readFileSync(record, "utf8").trim()).toBe("kickstart gui/501/dev.omnesis.collector");
-  });
-
-  test("systemd restarts a failed unit itself, so it gets no request", () => {
-    expect(
-      relaunchRequestFor({ manager: "systemd", unit: "omnesis-collector.service" }),
-    ).toBeNull();
-  });
-
-  test("the request is resolved from the unit this process demonstrably runs as", async () => {
-    const request = await resolveRelaunchRequest(launchdHost());
-    expect(request?.args.at(-1)).toBe("gui/501/dev.omnesis.collector");
-    expect(
-      await resolveRelaunchRequest(
-        launchdHost({ query: vi.fn(() => Promise.resolve({ code: 0, stdout: LAUNCHD_PRINT(9) })) }),
-      ),
-    ).toBeNull();
-    expect(
-      await resolveRelaunchRequest(launchdHost({ env: { XPC_SERVICE_NAME: "0" } })),
-    ).toBeNull();
-    expect(
-      await resolveRelaunchRequest(
-        launchdHost({ query: vi.fn(() => Promise.reject(new Error("launchctl vanished"))) }),
-      ),
-    ).toBeNull();
-  });
+  /** `launchctl print` output for a job that is not running, as launchd writes it. */
+  const ENDED = (lastExit: string): string =>
+    `gui/501/dev.omnesis.collector = {\n\tactive count = 0\n\tstate = not running\n\truns = 1\n\t${lastExit}\n\tendpoints = {\n\t\t"x" = {\n\t\t\tstate = running\n\t\t}\n\t}\n}\n`;
 
   /**
-   * Run a real process that arms `relaunchOnFailedExit` with a request that
-   * writes a marker after the process is gone, then exits with `code`.
+   * Run the real guard against a process that is then killed, with a
+   * stand-in `launchctl` whose `print` answers `print` (or fails when null)
+   * and that records every call. Resolves with the recorded calls and the
+   * guard's stderr once the guard has exited.
    */
-  async function exitWith(code: number): Promise<{ marker: string; exitedBefore: boolean }> {
-    const work = tempDir();
-    const marker = join(work, "relaunched");
-    const module = fileURLToPath(new URL("./service-restart.ts", import.meta.url));
-    const script = join(work, "child.ts");
+  async function guard(print: string | null): Promise<{ calls: string[]; stderr: string }> {
+    dir = mkdtempSync(join(tmpdir(), "omnesis-relaunch-guard-test-"));
+    const record = join(dir, "launchctl.calls");
+    writeFileSync(join(dir, "print"), print ?? "");
     writeFileSync(
-      script,
-      `import { relaunchOnFailedExit } from ${JSON.stringify(module)};\n` +
-        `relaunchOnFailedExit({ command: "/bin/sh", args: ["-c", 'sleep 0.5; echo relaunched > "$1"', "relaunch-test", ${JSON.stringify(marker)}], description: "test relaunch" });\n` +
-        `setTimeout(() => process.exit(${code}), 100);\n`,
+      join(dir, "launchctl"),
+      `#!/bin/sh\necho "$@" >> ${JSON.stringify(record)}\n` +
+        `if [ "$1" = print ]; then ${print === null ? "exit 113" : `cat ${JSON.stringify(join(dir, "print"))}`}; fi\n`,
     );
-    await new Promise<void>((resolve, reject) => {
-      const child = spawnProcess(process.execPath, ["--import", "tsx", script], {
-        stdio: "ignore",
-        env: { ...process.env, OMNESIS_LOG_FILE: "" },
-      });
-      child.once("error", reject);
-      child.once("exit", () => resolve());
+    chmodSync(join(dir, "launchctl"), 0o755);
+
+    const job = spawnProcess("sleep", ["30"], { stdio: "ignore" });
+    children.push(job);
+    const spec = relaunchGuardFor({ ...UNIT, pid: job.pid ?? 0 }, 0);
+    const run = spawnProcess(spec.command, spec.args, {
+      env: { ...process.env, PATH: `${dir}:${process.env.PATH ?? ""}` },
+      stdio: ["ignore", "ignore", "pipe"],
     });
-    return { marker, exitedBefore: !existsSync(marker) };
+    children.push(run);
+    let stderr = "";
+    run.stderr?.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+    const exited = new Promise<void>((resolve) => run.once("exit", () => resolve()));
+
+    // The guard waits for as long as the job's process lives.
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    expect(run.exitCode).toBeNull();
+    expect(existsSync(record)).toBe(false);
+
+    job.kill("SIGKILL");
+    await exited;
+    const calls = existsSync(record) ? readFileSync(record, "utf8").trim().split("\n") : [];
+    return { calls, stderr };
   }
 
-  test("a failed exit leaves the request behind, and it outlives the process", async () => {
-    const { marker, exitedBefore } = await exitWith(1);
-    expect(exitedBefore).toBe(true);
-    expect((await waitForFile(marker)).trim()).toBe("relaunched");
+  test("a job killed outright is started again, without -k, and the guard says why", async () => {
+    const { calls, stderr } = await guard(ENDED("last terminating signal = Killed: 9"));
+    expect(calls).toEqual([
+      "print gui/501/dev.omnesis.collector",
+      "kickstart gui/501/dev.omnesis.collector",
+    ]);
+    expect(stderr).toMatch(
+      /INFO {2}\[collector:relaunch-guard\] gui\/501\/dev\.omnesis\.collector ended without a clean exit/,
+    );
   }, 30_000);
 
-  test("a clean exit is a deliberate stop and leaves nothing", async () => {
-    const { marker } = await exitWith(0);
-    await new Promise((resolve) => setTimeout(resolve, 1_500));
-    expect(existsSync(marker)).toBe(false);
+  test("a job that exited non-zero is started again", async () => {
+    const { calls } = await guard(ENDED("last exit code = 1"));
+    expect(calls.at(-1)).toBe("kickstart gui/501/dev.omnesis.collector");
   }, 30_000);
+
+  test("a clean exit is a deliberate stop and stays stopped", async () => {
+    const { calls } = await guard(ENDED("last exit code = 0"));
+    expect(calls).toEqual(["print gui/501/dev.omnesis.collector"]);
+  }, 30_000);
+
+  test("a job that was booted out stays unloaded", async () => {
+    const { calls } = await guard(null);
+    expect(calls).toEqual(["print gui/501/dev.omnesis.collector"]);
+  }, 30_000);
+
+  test("a job launchd or a restart already started again is left alone", async () => {
+    const { calls } = await guard(LAUNCHD_PRINT(9999));
+    expect(calls).toEqual(["print gui/501/dev.omnesis.collector"]);
+  }, 30_000);
+
+  test("waits out the throttle interval and watches the job's own process", () => {
+    const spec = relaunchGuardFor(UNIT);
+    expect(spec.command).toBe("/bin/sh");
+    expect(spec.args.slice(3)).toEqual(["4241", "gui/501/dev.omnesis.collector", "10"]);
+  });
+
+  test("is started detached beside a launchd unit this process demonstrably runs as; systemd needs none", async () => {
+    const spawned = fakeSpawn("hang");
+    await startRelaunchGuard(launchdHost({ spawn: spawned.spawn }));
+    expect(spawned.calls).toHaveLength(1);
+    expect(spawned.calls[0].args.slice(3)).toEqual(["4241", "gui/501/dev.omnesis.collector", "10"]);
+    expect(spawned.calls[0].options).toMatchObject({ detached: true });
+    expect(spawned.unrefs).toBe(1);
+
+    for (const host of [
+      launchdHost({ query: vi.fn(() => Promise.resolve({ code: 0, stdout: LAUNCHD_PRINT(9) })) }),
+      launchdHost({ env: { XPC_SERVICE_NAME: "0" } }),
+      launchdHost({ query: vi.fn(() => Promise.reject(new Error("launchctl vanished"))) }),
+      systemdHost(),
+    ]) {
+      const none = fakeSpawn("hang");
+      await startRelaunchGuard({ ...host, spawn: none.spawn });
+      expect(none.calls).toEqual([]);
+    }
+  });
 });

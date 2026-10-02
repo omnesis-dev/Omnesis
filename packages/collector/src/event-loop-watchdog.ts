@@ -15,20 +15,15 @@
  * Once the counter has not moved for the stall limit, the worker pauses the
  * main thread through the inspector to record the JavaScript stack it is
  * stuck in, writes that to stderr and the log file, and kills the process.
- * Under launchd it first leaves a relaunch request (`relaunch-request.ts`),
- * because launchd does not always respawn a job that died; systemd's
- * `Restart=on-failure` restarts a unit killed by a signal on its own.
+ * The service manager restarts the killed collector: systemd's
+ * `Restart=on-failure` on its own, launchd through the collector's relaunch
+ * guard (`startRelaunchGuard` in `service-restart.ts`).
  */
 
 import { url as inspectorUrl } from "node:inspector";
 import { Worker } from "node:worker_threads";
 import { createLogger, resolveWorkerEntry } from "@omnesis/core";
-import {
-  WATCHDOG_ARMED,
-  type WatchdogMessage,
-  type WatchdogWorkerData,
-} from "./event-loop-watchdog-shared.js";
-import type { RelaunchRequest } from "./relaunch-request.js";
+import { WATCHDOG_ARMED, type WatchdogWorkerData } from "./event-loop-watchdog-shared.js";
 
 const log = createLogger("collector").child("watchdog");
 
@@ -46,12 +41,6 @@ const HEARTBEAT_INTERVAL_MS = 1_000;
 export interface EventLoopWatchdogOptions {
   stallLimitMs?: number;
   heartbeatIntervalMs?: number;
-  /**
-   * What the worker leaves behind before it kills the process, so the service
-   * manager starts the collector again. Settles after the watchdog is armed; a
-   * stall before it settles is killed without one.
-   */
-  relaunch?: Promise<RelaunchRequest | null>;
 }
 
 /**
@@ -85,12 +74,6 @@ export function startEventLoopWatchdog(options: EventLoopWatchdogOptions = {}): 
   };
   const worker = new Worker(entry.url, { workerData, execArgv: entry.execArgv });
   worker.unref();
-  void options.relaunch?.then(
-    (request) => {
-      if (request) worker.postMessage({ relaunch: request } satisfies WatchdogMessage);
-    },
-    () => {},
-  );
   worker.once("message", (message) => {
     if (message !== WATCHDOG_ARMED) return;
     log.info(

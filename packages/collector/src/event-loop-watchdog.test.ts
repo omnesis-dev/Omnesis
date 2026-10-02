@@ -8,7 +8,7 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,14 +38,13 @@ function runChild(
   body: string,
   onArmed: (child: ChildProcess) => void,
   timeoutMs = 30_000,
-  extraOptions = "",
 ): Promise<ChildRun> {
   dir ??= mkdtempSync(join(tmpdir(), "omnesis-watchdog-test-"));
   const script = join(dir, "child.ts");
   writeFileSync(
     script,
     `import { startEventLoopWatchdog } from ${JSON.stringify(WATCHDOG)};\n` +
-      `startEventLoopWatchdog({ stallLimitMs: 1_000, heartbeatIntervalMs: 100${extraOptions} });\n` +
+      `startEventLoopWatchdog({ stallLimitMs: 1_000, heartbeatIntervalMs: 100 });\n` +
       body,
   );
   return new Promise((resolve, reject) => {
@@ -87,32 +86,6 @@ describe("the event-loop watchdog", () => {
     expect(result.stderr).toMatch(/Event loop stalled for \d+s; restarting the collector/);
     expect(result.stderr).toContain("Main thread stack:");
     expect(result.stderr).toMatch(/at walkPages \(.*child\.ts:\d+:\d+\)/);
-  }, 40_000);
-
-  test("leaves the relaunch request behind before it kills a stalled process", async () => {
-    // launchd may never perform the respawn of a job that died, so the process
-    // leaves a request that outlives it for the service manager to start it again.
-    dir = mkdtempSync(join(tmpdir(), "omnesis-watchdog-test-"));
-    const marker = join(dir, "relaunched");
-    const request = {
-      command: "/bin/sh",
-      args: ["-c", 'sleep 1; echo relaunched > "$1"', "relaunch-test", marker],
-      description: "test relaunch",
-    };
-    const result = await runChild(
-      `setTimeout(() => { for (;;); }, 1_000);\n`,
-      () => {},
-      30_000,
-      `, relaunch: Promise.resolve(${JSON.stringify(request)})`,
-    );
-    expect(result.signal).toBe("SIGKILL");
-    expect(result.stderr).toContain("Killing the collector; test relaunch");
-    expect(existsSync(marker)).toBe(false);
-    const deadline = Date.now() + 10_000;
-    while (!existsSync(marker) && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    expect(readFileSync(marker, "utf8").trim()).toBe("relaunched");
   }, 40_000);
 
   test("leaves a process whose loop keeps turning alone", async () => {

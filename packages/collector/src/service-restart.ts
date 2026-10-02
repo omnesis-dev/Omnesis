@@ -44,14 +44,22 @@ import {
   launchdLabelInstance,
   systemdUnitInstance,
 } from "@omnesis/core";
-import { leaveRelaunchRequest, type RelaunchRequest } from "./relaunch-request.js";
 
 const log = createLogger("collector").child("service-restart");
 
+/** How often the relaunch guard checks whether the job's process is still alive. */
+const RELAUNCH_GUARD_POLL_SECONDS = 2;
+
 /** A service unit this process was proven to run as. */
-export type CollectorServiceUnit =
-  | { manager: "launchd"; label: string; target: string }
-  | { manager: "systemd"; unit: string };
+export type CollectorServiceUnit = LaunchdCollectorUnit | { manager: "systemd"; unit: string };
+
+export interface LaunchdCollectorUnit {
+  manager: "launchd";
+  label: string;
+  target: string;
+  /** The job's process: this one, or the runner that started it. */
+  pid: number;
+}
 
 /** The host facts the decision reads, injectable for tests. */
 export interface ServiceHost {
@@ -111,8 +119,8 @@ export async function resolveCollectorUnit(
     if (printed.code !== 0) return { reason: `launchd does not list ${target}` };
     const pidLine = /^\s*pid = (\d+)$/m.exec(printed.stdout);
     const pid = pidLine ? Number.parseInt(pidLine[1], 10) : null;
-    if (!ours(pid)) return { reason: `${target} is not running this process` };
-    return { unit: { manager: "launchd", label, target } };
+    if (pid === null || !ours(pid)) return { reason: `${target} is not running this process` };
+    return { unit: { manager: "launchd", label, target, pid } };
   }
 
   if (host.platform === "linux") {
@@ -172,57 +180,94 @@ export function restartInvocation(unit: CollectorServiceUnit): {
 }
 
 /**
- * The request that starts `unit` again after this process has died, or null
- * when its manager restarts a failed unit on its own. See `relaunch-request.ts`.
+ * The shell program of the relaunch guard: wait for `$1` (the job's process)
+ * to end, give launchd the job's throttle interval `$3` to restart it, then
+ * ask launchd for the job `$2` and start it unless it is gone (booted out: a
+ * deliberate stop), running again, or ended with a clean exit. The checks read
+ * `launchctl print`'s top-level fields, indented by one tab.
  */
-export function relaunchRequestFor(
-  unit: CollectorServiceUnit,
+const RELAUNCH_GUARD_SCRIPT = `pid=$1; target=$2; delay=$3
+while kill -0 "$pid" 2>/dev/null; do sleep ${RELAUNCH_GUARD_POLL_SECONDS}; done
+sleep "$delay"
+job=$(launchctl print "$target" 2>/dev/null) || exit 0
+printf '%s\\n' "$job" | grep -Eq '^[[:space:]](state = running|last exit code = 0)$' && exit 0
+printf '%s INFO  [collector:relaunch-guard] %s ended without a clean exit and launchd has not started it again; starting it\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$target" >&2
+exec launchctl kickstart "$target"`;
+
+/**
+ * The relaunch guard that starts the launchd job `unit` again once its
+ * process dies.
+ *
+ * A LaunchAgent's `KeepAlive { SuccessfulExit: false }` is not a promise that
+ * launchd respawns the job. While the user's GUI domain is in launchd's
+ * on-demand-only mode, launchd records the respawn of a job that died and
+ * performs it only when something demands the job — which nothing does — and
+ * no `KeepAlive` setting changes that, unconditional `true` included. An
+ * explicit `launchctl kickstart` is such a demand and is honoured in every
+ * mode.
+ *
+ * Nothing in the dying process can make that demand when it is killed
+ * outright — by the kernel when memory runs out, by its own event-loop
+ * watchdog, by anyone's `kill -9` — so the demand comes from a guard started
+ * beside it: a small detached shell, in its own session so launchd's clean-up
+ * of the job's process group leaves it alone, that waits for the job's
+ * process to end and then judges by what launchd reports. A job that was
+ * booted out (`omnesis service stop`, uninstall, reinstall), restarted
+ * (`kickstart -k` by `omnesis service restart` or the self-update), or ended
+ * with exit code 0 (a collector parked for re-pairing) is left alone; any
+ * other end is kickstarted, without `-k`, once the throttle interval has
+ * passed. Each started collector starts its own guard, so a collector that
+ * cannot start retries no faster than launchd itself would.
+ *
+ * systemd needs no guard: `Restart=on-failure` restarts the unit on any
+ * non-zero exit or fatal signal.
+ */
+export function relaunchGuardFor(
+  unit: LaunchdCollectorUnit,
   delaySeconds = LAUNCHD_THROTTLE_INTERVAL_SECONDS,
-): RelaunchRequest | null {
-  if (unit.manager !== "launchd") return null;
+): { command: string; args: string[] } {
   return {
     command: "/bin/sh",
     args: [
       "-c",
-      'sleep "$1"; exec launchctl kickstart "$2"',
-      "omnesis-relaunch",
-      String(delaySeconds),
+      RELAUNCH_GUARD_SCRIPT,
+      "omnesis-relaunch-guard",
+      String(unit.pid),
       unit.target,
+      String(delaySeconds),
     ],
-    description: `launchd is asked to start ${unit.target} in ${delaySeconds}s unless it already runs`,
   };
 }
 
 /**
- * The relaunch request for the collector unit this process runs as, or null
- * when it runs as none or its manager needs none.
+ * Start the relaunch guard for the collector unit this process runs as. Does
+ * nothing for a collector that runs as no unit, or under a manager that needs
+ * no guard. Never throws: the guard is a safety net.
  */
-export async function resolveRelaunchRequest(
-  host: ServiceHost = defaultServiceHost(),
-): Promise<RelaunchRequest | null> {
+export async function startRelaunchGuard(host: ServiceHost = defaultServiceHost()): Promise<void> {
+  let resolved: Awaited<ReturnType<typeof resolveCollectorUnit>>;
   try {
-    const resolved = await resolveCollectorUnit(host);
-    return "unit" in resolved ? relaunchRequestFor(resolved.unit) : null;
+    resolved = await resolveCollectorUnit(host);
   } catch {
-    return null;
+    return;
   }
-}
-
-/**
- * Leave `request` behind whenever this process exits non-zero — the exits a
- * LaunchAgent's `KeepAlive { SuccessfulExit: false }` is meant to restart. A
- * clean exit is a deliberate stop and leaves nothing.
- */
-export function relaunchOnFailedExit(
-  request: RelaunchRequest,
-  proc: Pick<NodeJS.Process, "on"> = process,
-): void {
-  proc.on("exit", (code: number) => {
-    if (code === 0) return;
-    const failure = leaveRelaunchRequest(request);
-    if (failure) log.error(`Could not leave a relaunch request: ${failure}`);
-    else log.info(`Exiting with code ${code}; ${request.description}`);
-  });
+  if (!("unit" in resolved) || resolved.unit.manager !== "launchd") return;
+  const { unit } = resolved;
+  const guard = relaunchGuardFor(unit);
+  try {
+    // stderr is the job's error log, where the guard says why it started the job.
+    const child = host.spawn(guard.command, guard.args, {
+      detached: true,
+      stdio: ["ignore", "ignore", "inherit"],
+    });
+    child.on("error", (err) => log.warn(`Relaunch guard stopped: ${err.message}`));
+    child.unref();
+    log.info(`Relaunch guard started: ${unit.target} is started again if it dies`);
+  } catch (err) {
+    log.warn(
+      `Could not start the relaunch guard: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
 
 /** Spawn the restart request and settle once the manager has accepted it. */

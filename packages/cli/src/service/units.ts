@@ -213,8 +213,8 @@ export function escapeXml(value: string): string {
  * deliberately (a collector whose device was revoked writes down why and
  * exits 0) stays stopped on both platforms instead of relooping every
  * ThrottleInterval. launchd may still hold a respawn back indefinitely, so the
- * collector also leaves its own request to be started again when it exits
- * non-zero or its watchdog kills it (`packages/collector/src/relaunch-request.ts`).
+ * collector also runs a guard that starts it again however it dies other than
+ * a clean exit (`startRelaunchGuard` in `packages/collector/src/service-restart.ts`).
  * ThrottleInterval stops a crash-looping daemon from
  * spinning the CPU. ExitTimeOut is how long launchd lets a stopping daemon
  * drain before SIGKILL; it exceeds the gateway's own shutdown budget
