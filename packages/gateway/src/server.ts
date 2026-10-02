@@ -1636,7 +1636,7 @@ export function createServer(
     pendingTranscriptions: (noteIds) => pendingVoiceNoteIds(db, noteIds),
   });
 
-  // Voice notes (experimental): Tell Omnesis captures that arrive with their
+  // Voice notes: Tell Omnesis captures that arrive with their
   // audio, saved at once and transcribed afterwards. The queue runs whenever a
   // transcriber is wired, so notes accepted before a restart, or before the
   // feature was switched off, are still transcribed.

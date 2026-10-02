@@ -151,19 +151,11 @@ stop_gateway() {
   bash "${DEV_INSTANCE}" stop >/dev/null 2>&1 || true
 }
 
-booted_this_run=0
-if [[ "${already_up}" == "1" ]]; then
-  echo "==> Reusing the synthetic gateway already serving at ${URL}"
-else
-  echo "==> Booting an isolated synthetic gateway at ${URL} (this may take a moment)…"
-  # dev-instance.sh enforces the isolation rail (refuses 7600 / live config dir)
-  # and gates on a real /health 200, failing loud (exit 5) if it never serves.
-  bash "${DEV_INSTANCE}" start "${UNIVERSE_ARGS[@]+"${UNIVERSE_ARGS[@]}"}"
-  booted_this_run=1
-fi
-
 # Stop the gateway on exit UNLESS the caller asked to keep it (or it was already
-# up before we ran — then we leave it as we found it).
+# up before we ran — then we leave it as we found it). Armed before the boot, so
+# a boot that fails part-way (a source the collector refuses, say) does not
+# leave its gateway and collector running.
+booted_this_run=0
 cleanup() {
   if [[ "${KEEP}" == "0" && "${booted_this_run}" == "1" ]]; then
     echo "==> Stopping the synthetic gateway (pass --keep to leave it up)…"
@@ -171,6 +163,16 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+
+if [[ "${already_up}" == "1" ]]; then
+  echo "==> Reusing the synthetic gateway already serving at ${URL}"
+else
+  echo "==> Booting an isolated synthetic gateway at ${URL} (this may take a moment)…"
+  # dev-instance.sh enforces the isolation rail (refuses 7600 / live config dir)
+  # and gates on a real /health 200, failing loud (exit 5) if it never serves.
+  booted_this_run=1
+  bash "${DEV_INSTANCE}" start "${UNIVERSE_ARGS[@]+"${UNIVERSE_ARGS[@]}"}"
+fi
 
 # ── Capture ───────────────────────────────────────────────────────
 TOKEN="$(cat "${TOKEN_FILE}")"
