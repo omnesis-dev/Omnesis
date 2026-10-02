@@ -608,7 +608,12 @@ class SessionManager @Inject constructor(
             }
             launch {
                 socket.state.collect { state ->
-                    if (state is dev.omnesis.android.transport.ws.DeviceSocket.ConnectionState.Connected) reconcileRemovals()
+                    if (state is dev.omnesis.android.transport.ws.DeviceSocket.ConnectionState.Connected) {
+                        // A reconnect is where a restarted or updated gateway first shows,
+                        // so search re-reads its capabilities on the next query.
+                        built.search.invalidateSearchCapabilities()
+                        reconcileRemovals()
+                    }
                 }
             }
             launch {
@@ -775,6 +780,8 @@ class SessionManager @Inject constructor(
     private suspend fun probeStatus(current: GatewaySession): Boolean =
         statusProbeSerializer.run probe@{
             if (session !== current) return@probe false
+            // A status read is also when search forgets its kept capabilities.
+            current.search.invalidateSearchCapabilities()
             val status = runCatching { current.gateway.status() }.getOrElse { return@probe false }
             if (session !== current) return@probe false
             _experimentalEnabled.value = status.experimental

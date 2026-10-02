@@ -65,6 +65,14 @@ enum ModelsPreviewData {
             experimental: true,
             section: "cognition"
         ),
+        CapabilityMeta(
+            role: "decision",
+            title: "Decision model",
+            description: "Answers typed questions about a document, such as whether an email is worth recording.",
+            icon: "scale",
+            section: "cognition",
+            backendFamily: "typed-decision"
+        ),
     ]
 
     static func overview() -> ModelsOverview {
@@ -140,6 +148,13 @@ enum ModelsPreviewData {
                 providerId: "codex",
                 providerLabel: "Codex",
                 modelName: "GPT Example Frontier",
+                available: true,
+                configured: true
+            ),
+            "decision": ModelDisplay(
+                providerId: "typesafe",
+                providerLabel: "TypeSafe",
+                modelName: "jev-example",
                 available: true,
                 configured: true
             ),

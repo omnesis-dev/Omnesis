@@ -44,6 +44,7 @@ import kotlinx.coroutines.coroutineScope
 
 /** Search + document read surface. Mirrors the iOS `SearchClient`. */
 class SearchClient(private val http: GatewayHttp) {
+    private val graphCapability = SearchGraphCapability()
 
     suspend fun search(
         text: String,
@@ -51,21 +52,33 @@ class SearchClient(private val http: GatewayHttp) {
         verbose: Boolean = false,
         graphContext: Boolean = false,
     ): SearchResponse {
-        val available = if (graphContext) {
-            try {
-                http.getJson<SearchReadiness>("search/readiness").graphContextAvailable
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Exception) {
-                // Readiness is advisory: an older or unavailable capability endpoint
-                // must not prevent ordinary search from working.
-                false
-            }
-        } else false
+        val available = graphContext && graphContextAvailable()
         return http.postJson(
             "search",
             SearchBody(text, limit, verbose, includeGraphContext = true.takeIf { available }),
         )
+    }
+
+    /**
+     * Forget the kept graph-context capability so the next search asks the gateway
+     * again. Called when the app re-reads `/status` or the device socket reconnects.
+     */
+    fun invalidateSearchCapabilities() = graphCapability.invalidate()
+
+    private suspend fun graphContextAvailable(): Boolean {
+        val (kept, generation) = graphCapability.read()
+        if (kept != null) return kept
+        return try {
+            http.getJson<SearchReadiness>("search/readiness").graphContextAvailable
+                .also { graphCapability.store(it, generation) }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            // Readiness is advisory: an older or unavailable capability endpoint
+            // must not prevent ordinary search from working.
+            if (SearchGraphCapability.isConclusive(error)) graphCapability.store(false, generation)
+            false
+        }
     }
 
     suspend fun document(id: String): DocumentDetail = http.getJson("documents/$id")

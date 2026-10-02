@@ -148,7 +148,19 @@ data class CapabilityMeta(
      * is treated as core.
      */
     val section: String? = null,
-)
+    /**
+     * The special backend family that alone serves this role (`"typed-decision"`),
+     * or null when an ordinary model serves it. Null on older gateways.
+     */
+    val backendFamily: String? = null,
+) {
+    /**
+     * Whether this app can assign the role. It configures ordinary models only, so a
+     * role served by a named backend family is shown read-only and configured from
+     * the portal. Mirrors the iOS `CapabilityMeta.configurableOnDevice`.
+     */
+    val configurableOnDevice: Boolean get() = backendFamily == null
+}
 
 /** Resolved inference state. Backends keyed by backend key (or "anthropic"). */
 @Serializable

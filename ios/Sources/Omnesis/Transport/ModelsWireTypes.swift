@@ -251,8 +251,19 @@ public struct CapabilityMeta: Decodable, Equatable, Sendable, Identifiable {
     /// cognition roles in the unified capability list. Absent on older gateways
     /// → nil (treated as core).
     public let section: String?
+    /// The special backend family that alone serves this role
+    /// (`"typed-decision"`), or nil when an ordinary model serves it. Absent on
+    /// older gateways → nil.
+    public let backendFamily: String?
     public var id: String {
         role
+    }
+
+    /// Whether this app can assign the role. It configures ordinary models
+    /// only, so a role served by a named backend family is shown read-only
+    /// and configured from the portal.
+    public var configurableOnDevice: Bool {
+        backendFamily == nil
     }
 
     public init(
@@ -261,7 +272,8 @@ public struct CapabilityMeta: Decodable, Equatable, Sendable, Identifiable {
         description: String,
         icon: String,
         experimental: Bool = false,
-        section: String? = nil
+        section: String? = nil,
+        backendFamily: String? = nil
     ) {
         self.role = role
         self.title = title
@@ -269,6 +281,7 @@ public struct CapabilityMeta: Decodable, Equatable, Sendable, Identifiable {
         self.icon = icon
         self.experimental = experimental
         self.section = section
+        self.backendFamily = backendFamily
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -278,6 +291,7 @@ public struct CapabilityMeta: Decodable, Equatable, Sendable, Identifiable {
         case icon
         case experimental
         case section
+        case backendFamily
     }
 
     public init(from decoder: Decoder) throws {
@@ -288,6 +302,7 @@ public struct CapabilityMeta: Decodable, Equatable, Sendable, Identifiable {
         icon = try values.decode(String.self, forKey: .icon)
         experimental = try values.decodeIfPresent(Bool.self, forKey: .experimental) ?? false
         section = try values.decodeIfPresent(String.self, forKey: .section)
+        backendFamily = try values.decodeIfPresent(String.self, forKey: .backendFamily)
     }
 }
 

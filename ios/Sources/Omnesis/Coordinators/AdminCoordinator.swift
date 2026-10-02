@@ -444,9 +444,12 @@ final class AdminCoordinator {
 
     /// Refresh `/status` + `/index/stats` snapshots used by the Sources
     /// header strip and per-row cells. Tolerant — failures keep the
-    /// last-known snapshot rather than blanking the header.
+    /// last-known snapshot rather than blanking the header. A status read is
+    /// also when search forgets its kept capabilities, so the next search
+    /// asks the gateway again.
     func refreshGatewayStats() async {
         guard let client = searchClient else { return }
+        client.invalidateSearchCapabilities()
         async let status = try? client.getStatus()
         async let idx = try? client.getIndexStats()
         let (s, i) = await (status, idx)
@@ -752,9 +755,11 @@ final class AdminCoordinator {
             // and the source list on every *re*connect. After a gateway
             // restart the device socket reconnects but the cached icon maps go
             // stale — without this, citation sticky tabs keep rendering the
-            // generic placeholder for the rest of the session. The first
+            // generic placeholder for the rest of the session, and search
+            // keeps the restarted gateway's old capabilities. The first
             // connect is already covered by rebuildAdmin, so it's skipped.
             if didInitialConnect {
+                searchClient?.invalidateSearchCapabilities()
                 if let admin = adminClient {
                     iconRefetchAsked.removeAll()
                     Task { await loadSourceIcons(admin: admin) }

@@ -96,6 +96,12 @@ describe("ModelManager", () => {
     expect(embedder).toBeDefined();
     expect(embedder?.title).toBeTruthy();
     expect(embedder?.icon).toBeTruthy();
+    // A role only a special backend family serves says so, so the apps can
+    // show it read-only instead of offering models that cannot serve it.
+    expect(overview.capabilities.find((c) => c.role === "decision")?.backendFamily).toBe(
+      "typed-decision",
+    );
+    expect(embedder?.backendFamily).toBeUndefined();
   });
 
   describe("getOverview — experimental capability gating", () => {
