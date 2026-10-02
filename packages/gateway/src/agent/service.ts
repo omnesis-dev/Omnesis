@@ -42,6 +42,7 @@ import {
 import {
   AgentSession,
   buildBuiltinTools,
+  CITATION_TOOL_NAMES,
   selectDocumentCitationTools,
   selectNonCitationTools,
   selectSharedTools,
@@ -534,11 +535,14 @@ const READ_ONLY_ANSWER_PROMPT = `
 
 This conversation is running through a read-only answer API. The write exceptions above do not apply here. You cannot create, update, pause or remove a watch, modify analytics records, or perform any other write. Never claim that you completed an action. If asked to act, provide a draft or explain the concrete action an external agent could take.`;
 
+/** Joins the answer text written on either side of a citation call. */
+const ANSWER_SEGMENT_SEPARATOR = "\n\n";
+
 const ANSWER_CITATIONS_PROMPT = `
 
 # Citations on the answer surface
 
-After privacy review, the documents you cite leave Omnesis beside your text as structured citations: each carries the document's title, date, source and the links the user can open. The external agent uses them to point the user at the source, so cite with \`annotate_many\`, one \`{ documentId }\` item per document your answer relies on, all in one call, before you write the answer. Write the answer itself as your final text, after your last tool call; anything you write before a tool call is not part of it. Copy each \`documentId\` from a \`search_many\`, \`fetch_many\` or \`lookup_document_by_url\` result. Cite every document a claim rests on and nothing else: a citation discloses that its document exists. Quotes and notes on a citation are not released, so leave them out.
+After privacy review, the documents you cite leave Omnesis beside your text as structured citations: each carries the document's title, date, source and the links the user can open. The external agent uses them to point the user at the source, so cite with \`annotate_many\`, one \`{ documentId }\` item per document your answer relies on, all in one call, before you write the answer. Write the answer itself as your final text, after your last tool call other than \`annotate_many\`. Anything you write before any other tool call is not part of the answer, but everything you write on either side of \`annotate_many\` is, so write nothing there that you would not send as the answer. Copy each \`documentId\` from a \`search_many\`, \`fetch_many\` or \`lookup_document_by_url\` result. Cite every document a claim rests on and nothing else: a citation discloses that its document exists. Quotes and notes on a citation are not released, so leave them out.
 
 Never write a URL or a document id in your text, even when the question asks for links. The caller receives each cited document's real links through its citation; a link you compose yourself is a guess, and a wrong one. When links are asked for, cite the documents and say in words which ones they are.`;
 
@@ -2339,6 +2343,9 @@ export class AgentService {
 
     let text = "";
     let earlierText = "";
+    // Text written after a citation call continues the answer written before
+    // it, as a new paragraph.
+    let segmentBreak = false;
     const citations = new AnswerCitationCollector();
     let candidateLimitExceeded = false;
     let terminal: (AgentEvent & { type: "agent.message.end" }) | undefined;
@@ -2352,20 +2359,40 @@ export class AgentService {
     const unsubscribe = session.subscribe((event) => {
       if (event.type === "agent.text.delta") {
         if (candidateLimitExceeded) return;
-        if (text.length + event.payload.delta.length > MAX_READ_ONLY_ANSWER_CANDIDATE_CHARS) {
+        // Whitespace between two segments carries nothing: the separator
+        // goes in at the next segment's first visible character.
+        if (segmentBreak && event.payload.delta.trim().length === 0) return;
+        const next = segmentBreak
+          ? `${text.trimEnd()}${ANSWER_SEGMENT_SEPARATOR}${event.payload.delta.trimStart()}`
+          : text + event.payload.delta;
+        if (next.length > MAX_READ_ONLY_ANSWER_CANDIDATE_CHARS) {
           candidateLimitExceeded = true;
           session.cancel();
           return;
         }
-        text += event.payload.delta;
+        text = next;
+        segmentBreak = false;
       } else if (event.type === "agent.tool.start") {
-        // The answer is what the agent writes after its last tool call. Text
-        // before a call is its narration of the research ("I'm checking…"),
-        // which is not part of the reply the caller asked for. It is kept
-        // aside rather than dropped, for a model that writes its answer
-        // first and only then calls a tool (to cite it, say).
+        // A citation call only attaches documents to the answer, so the text
+        // on either side of it is one answer: a model may write its reply,
+        // cite it, and then go on writing. A research call is different: the
+        // text before it is narration of the research ("I'm checking…"),
+        // which is not part of the reply the caller asked for, so the answer
+        // starts again after it. That narration is kept aside rather than
+        // dropped, for a model whose last research call follows its answer.
+        // Text cannot say whether it is narration or answer, so a line of
+        // narration written right before a citation call stays in the
+        // answer: releasing a stray line costs less than losing an answer
+        // the model wrote before citing it, and the reviewer judges the
+        // whole of what is released either way.
+        if (CITATION_TOOL_NAMES.has(event.payload.tool)) {
+          if (text.trim().length > 0) segmentBreak = true;
+          else text = "";
+          return;
+        }
         if (text.trim().length > 0) earlierText = text;
         text = "";
+        segmentBreak = false;
       } else if (event.type === "agent.citation") {
         citations.add(event.payload.ref);
       } else if (event.type === "agent.error") agentError = event;

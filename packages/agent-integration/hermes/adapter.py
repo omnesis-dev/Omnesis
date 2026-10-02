@@ -127,7 +127,9 @@ _HELLO_HANDSHAKE_TIMEOUT_SECONDS = 15.0
 # are far slower than this and state their own budget instead.
 GATEWAY_TIMEOUT_SECONDS = 20.0
 _OAUTH_REFRESH_LOCK_WAIT_SECONDS = 0.025
-_OAUTH_REFRESH_LOCK_TIMEOUT_SECONDS = 30.0
+# Outlasts the holder's worst case — a refresh, its one repeat and a re-issue,
+# each on the gateway socket budget — and stays below the stale-lease threshold.
+_OAUTH_REFRESH_LOCK_TIMEOUT_SECONDS = 75.0
 _OAUTH_REFRESH_LOCK_STALE_SECONDS = 120.0
 _OAUTH_REFRESH_TOKEN_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000
 _OAUTH_REFRESH_MARGIN_MS = 7 * 24 * 60 * 60 * 1000
@@ -4621,8 +4623,6 @@ class OmnesisAdapter(BasePlatformAdapter):
         raw = json.loads(self._credential_path.read_text(encoding="utf-8"))
         resource = _oauth_resource(raw, self._credentials.gateway_url)
         token_endpoint = _oauth_token_endpoint(raw, self._credentials.gateway_url)
-        parsed = urllib.parse.urlparse(token_endpoint)
-        gateway = urllib.parse.urlparse(self._credentials.gateway_url)
         body = urllib.parse.urlencode(
             {
                 "grant_type": "refresh_token",
@@ -4631,6 +4631,54 @@ class OmnesisAdapter(BasePlatformAdapter):
                 "resource": resource,
             }
         ).encode("ascii")
+        # The gateway rotates the refresh token as it answers, so a response
+        # lost to a timeout, a dropped connection or a proxy's 5xx may already
+        # have spent the token held here. For a short window the gateway
+        # answers an identical repeat from the same client with the pair it
+        # already issued, so one repeat turns a lost answer into the real one
+        # instead of a spent token. An OAuth error is the gateway's verdict and
+        # is never repeated.
+        try:
+            status, response_body = self._post_oauth_refresh(token_endpoint, body)
+        except (OSError, http.client.HTTPException) as error:
+            if isinstance(error, ssl.SSLError):
+                raise
+            status, response_body = self._post_oauth_refresh(token_endpoint, body)
+        else:
+            if status >= 500:
+                status, response_body = self._post_oauth_refresh(token_endpoint, body)
+        # A refresh token that rotated out, expired, or was revoked comes back
+        # as an OAuth error, not a transport failure. That is the cliff a quiet
+        # installation falls off, and the browser redirect that would repair it
+        # is the one thing this adapter cannot perform — so that one case falls
+        # through to the headless re-issue instead of ending the call.
+        spent_refresh_token = False
+        refreshed: Any = None
+        if not 200 <= status < 300:
+            failure = _gateway_http_error(status, response_body)
+            # Only `invalid_grant` means the refresh token itself is gone.
+            # `invalid_request`, `invalid_client`, a proxy's 401 and the
+            # rest are failures of this attempt, and folding them into
+            # recovery would hide a permanently broken refresh behind a
+            # management token that always succeeds.
+            if not _is_invalid_grant(status, response_body):
+                raise failure
+            spent_refresh_token = True
+        else:
+            refreshed = json.loads(response_body)
+        if spent_refresh_token:
+            return self._reissue_oauth_tokens_locked(raw)
+        if not isinstance(refreshed, dict) or not isinstance(
+            refreshed.get("access_token"), str
+        ):
+            raise McpProtocolError("Omnesis returned an invalid OAuth refresh response")
+        return self._persist_oauth_tokens(raw, refreshed)
+
+    def _post_oauth_refresh(self, token_endpoint: str, body: bytes) -> tuple[int, bytes]:
+        """POST one refresh-token request and return its status and body."""
+        assert self._credentials is not None
+        parsed = urllib.parse.urlparse(token_endpoint)
+        gateway = urllib.parse.urlparse(self._credentials.gateway_url)
         headers = {
             "Content-Type": "application/x-www-form-urlencoded",
             "Content-Length": str(len(body)),
@@ -4648,48 +4696,23 @@ class OmnesisAdapter(BasePlatformAdapter):
                 ),
                 timeout=GATEWAY_TIMEOUT_SECONDS,
             )
-            connection.connect()
-            # The operational gateway keeps its paired leaf pin. A distinct
-            # authorization server discovered from that pinned gateway uses
-            # ordinary CA and hostname validation, as OAuth permits.
-            if same_gateway_origin:
-                _verify_leaf(connection.sock, self._credentials.leaf_fingerprint_sha256)
         else:
             connection = http.client.HTTPConnection(
                 parsed.hostname, parsed.port or 80, timeout=GATEWAY_TIMEOUT_SECONDS
             )
-        # A refresh token that rotated out, expired, or was revoked comes back
-        # as an OAuth error, not a transport failure. That is the cliff a quiet
-        # installation falls off, and the browser redirect that would repair it
-        # is the one thing this adapter cannot perform — so that one case falls
-        # through to the headless re-issue instead of ending the call.
-        spent_refresh_token = False
-        refreshed: Any = None
         try:
+            if parsed.scheme == "https":
+                connection.connect()
+                # The operational gateway keeps its paired leaf pin. A distinct
+                # authorization server discovered from that pinned gateway uses
+                # ordinary CA and hostname validation, as OAuth permits.
+                if same_gateway_origin:
+                    _verify_leaf(connection.sock, self._credentials.leaf_fingerprint_sha256)
             connection.request("POST", parsed.path, body, headers)
             response = connection.getresponse()
-            response_body = response.read(MAX_FRAME_BYTES + 1)
-            if not 200 <= response.status < 300:
-                failure = _gateway_http_error(response.status, response_body)
-                # Only `invalid_grant` means the refresh token itself is gone.
-                # `invalid_request`, `invalid_client`, a proxy's 401 and the
-                # rest are failures of this attempt, and folding them into
-                # recovery would hide a permanently broken refresh behind a
-                # management token that always succeeds.
-                if not _is_invalid_grant(response.status, response_body):
-                    raise failure
-                spent_refresh_token = True
-            else:
-                refreshed = json.loads(response_body)
+            return response.status, response.read(MAX_FRAME_BYTES + 1)
         finally:
             connection.close()
-        if spent_refresh_token:
-            return self._reissue_oauth_tokens_locked(raw)
-        if not isinstance(refreshed, dict) or not isinstance(
-            refreshed.get("access_token"), str
-        ):
-            raise McpProtocolError("Omnesis returned an invalid OAuth refresh response")
-        return self._persist_oauth_tokens(raw, refreshed)
 
     def _reissue_oauth_tokens_locked(self, raw: Dict[str, Any]) -> str:
         """Re-key this device's approved OAuth credential without a browser.

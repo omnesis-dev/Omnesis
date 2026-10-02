@@ -5250,6 +5250,16 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view.environment(AppStore.preview()), name: "111-models-capability-list")
     }
 
+    func testModelsReadOnlyRole() {
+        // A role this app cannot configure: no chevron, a portal hint, beside
+        // a tappable card.
+        let view = NavigationStack {
+            ModelsView(previewOverview: ModelsPreviewData.overviewWithReadOnlyRole())
+                .environment(AppStore.preview())
+        }
+        snapshot(view, name: "111bb-models-read-only-role")
+    }
+
     func testModelsViewLoading() {
         let view = NavigationStack {
             ModelsView(previewOverview: nil, previewLoading: true)

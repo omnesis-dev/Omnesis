@@ -3,7 +3,10 @@
 
 import Foundation
 
-/// Optional bounded evidence. Unknown wire fields are ignored by Decodable.
+/// Optional bounded evidence. Unknown wire fields are ignored, and missing
+/// lists read as empty, so a gateway that trims a field still renders the
+/// rest. `SearchResultItem` drops a provenance block that cannot be read at
+/// all, which keeps one malformed hit from failing the whole search.
 /// Extracted-text matches do not establish identical file bytes.
 public struct SearchProvenance: Decodable, Hashable, Sendable {
     public let copies: [Document]
@@ -11,23 +14,95 @@ public struct SearchProvenance: Decodable, Hashable, Sendable {
     public let stopReasons: [String]
     public let modelContext: ModelContext?
 
+    public init(copies: [Document], paths: [Path], stopReasons: [String], modelContext: ModelContext?) {
+        self.copies = copies
+        self.paths = paths
+        self.stopReasons = stopReasons
+        self.modelContext = modelContext
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case copies, paths, stopReasons, modelContext
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        copies = try container.decodeIfPresent([Document].self, forKey: .copies) ?? []
+        paths = try container.decodeIfPresent([Path].self, forKey: .paths) ?? []
+        stopReasons = try container.decodeIfPresent([String].self, forKey: .stopReasons) ?? []
+        modelContext = try container.decodeIfPresent(ModelContext.self, forKey: .modelContext)
+    }
+
     public struct Document: Decodable, Hashable, Sendable {
         public let documentId: String
+        /// Empty when the gateway omits it; the breadcrumb then shows the
+        /// generic document icon.
         public let sourceId: String
         public let title: String?
         public let deviceName: String?
         public let path: String?
+
+        public init(documentId: String, sourceId: String, title: String?, deviceName: String?, path: String?) {
+            self.documentId = documentId
+            self.sourceId = sourceId
+            self.title = title
+            self.deviceName = deviceName
+            self.path = path
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: SearchProvenanceDocumentKeys.self)
+            documentId = try container.decode(String.self, forKey: .documentId)
+            sourceId = try container.decodeIfPresent(String.self, forKey: .sourceId) ?? ""
+            title = try container.decodeIfPresent(String.self, forKey: .title)
+            deviceName = try container.decodeIfPresent(String.self, forKey: .deviceName)
+            path = try container.decodeIfPresent(String.self, forKey: .path)
+        }
     }
 
     public struct Path: Decodable, Hashable, Sendable {
         public let documentIds: [String]
         public let edges: [String]
         public let relations: [String]?
+
+        public init(documentIds: [String], edges: [String], relations: [String]?) {
+            self.documentIds = documentIds
+            self.edges = edges
+            self.relations = relations
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: SearchProvenancePathKeys.self)
+            documentIds = try container.decodeIfPresent([String].self, forKey: .documentIds) ?? []
+            edges = try container.decodeIfPresent([String].self, forKey: .edges) ?? []
+            relations = try container.decodeIfPresent([String].self, forKey: .relations)
+        }
     }
 
     public struct ModelContext: Decodable, Hashable, Sendable {
         public let documents: [Document]
+
+        public init(documents: [Document]) {
+            self.documents = documents
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: SearchProvenanceModelContextKeys.self)
+            documents = try container.decodeIfPresent([Document].self, forKey: .documents) ?? []
+        }
     }
+}
+
+private enum SearchProvenanceDocumentKeys: String, CodingKey {
+    case documentId, sourceId, title, deviceName, path
+}
+
+private enum SearchProvenancePathKeys: String, CodingKey {
+    case documentIds, edges, relations
+}
+
+private enum SearchProvenanceModelContextKeys: String, CodingKey {
+    case documents
 }
 
 /// Text fragments keep navigation identities out of visible copy and make
@@ -47,10 +122,27 @@ struct SearchBreadcrumbFact: Equatable {
             .map {
                 switch $0 {
                 case .text(let text): text
-                case .document(let document): document.title.flatMap { $0.isEmpty ? nil : $0 } ?? "Untitled document"
+                case .document(let document): document.displayTitle
                 }
             }
             .joined()
+    }
+
+    /// The documents this fact links to, once each, in reading order. The
+    /// breadcrumb offers each as its own VoiceOver action.
+    var links: [SearchProvenance.Document] {
+        var seen = Set<String>()
+        return fragments.compactMap {
+            guard case .document(let document) = $0, seen.insert(document.documentId).inserted else { return nil }
+            return document
+        }
+    }
+}
+
+extension SearchProvenance.Document {
+    /// The title a breadcrumb shows and reads out for this document.
+    var displayTitle: String {
+        title.flatMap { $0.isEmpty ? nil : $0 } ?? "Untitled document"
     }
 }
 

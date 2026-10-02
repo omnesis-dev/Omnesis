@@ -185,7 +185,7 @@ export default defineProvider<GoogleContext>({
           attachmentConfig,
           extractAttachment: host?.extractAttachment,
         });
-        return { sync: (cursor) => source.sync(cursor) };
+        return { sync: (cursor, opts) => source.sync(cursor, opts) };
       },
     },
     {

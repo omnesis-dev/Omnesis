@@ -80,6 +80,82 @@ final class SearchGraphCompatibilityTests: XCTestCase {
         XCTAssertEqual(session.requests.count, 1)
     }
 
+    private func probes(_ session: Session) -> Int {
+        session.requests.filter { $0.url?.path == "/search/readiness" }.count
+    }
+
+    func testCapabilityIsAskedOncePerClientUntilInvalidated() async throws {
+        let session = Session()
+        session.readiness = #"{"graphContextAvailable":true}"#
+        let client = client(session)
+        _ = try await client.search(text: "permit", graphContext: true)
+        _ = try await client.search(text: "budget", graphContext: true)
+        XCTAssertEqual(probes(session), 1)
+        XCTAssertEqual(try body(session)["includeGraphContext"] as? Bool, true)
+
+        session.readiness = #"{"graphContextAvailable":false}"#
+        client.invalidateSearchCapabilities()
+        _ = try await client.search(text: "permit", graphContext: true)
+        XCTAssertEqual(probes(session), 2)
+        XCTAssertNil(try body(session)["includeGraphContext"])
+    }
+
+    func testOlderGatewayRefusalIsKeptButTransientFailureIsAskedAgain() async throws {
+        let older = Session()
+        older.readinessStatus = 404
+        let olderClient = client(older)
+        _ = try await olderClient.search(text: "permit", graphContext: true)
+        _ = try await olderClient.search(text: "permit", graphContext: true)
+        XCTAssertEqual(probes(older), 1)
+
+        let flaky = Session()
+        flaky.readinessError = URLError(.timedOut)
+        let flakyClient = client(flaky)
+        _ = try await flakyClient.search(text: "permit", graphContext: true)
+        flaky.readinessError = nil
+        flaky.readiness = #"{"graphContextAvailable":true}"#
+        _ = try await flakyClient.search(text: "permit", graphContext: true)
+        XCTAssertEqual(probes(flaky), 2)
+        XCTAssertEqual(try body(flaky)["includeGraphContext"] as? Bool, true)
+
+        let failing = Session()
+        failing.readinessStatus = 503
+        let failingClient = client(failing)
+        _ = try await failingClient.search(text: "permit", graphContext: true)
+        _ = try await failingClient.search(text: "permit", graphContext: true)
+        XCTAssertEqual(probes(failing), 2)
+    }
+
+    func testInvalidationDuringAProbeDiscardsItsAnswer() {
+        let capability = SearchGraphCapability()
+        let (_, generation) = capability.read()
+        capability.invalidate()
+        capability.store(true, generation: generation)
+        XCTAssertNil(capability.read().value)
+    }
+
+    func testMalformedProvenanceDropsOnlyThatHitsEvidence() throws {
+        let hit = { (id: String, provenance: String) in
+            #"{"documentId":""# + id + #"","sourceId":"files:example","documentType":"file","title":"Permit.pdf","#
+                + #""sourceCreatedAt":"2026-01-01","chunkText":"Permit","score":0.9,"provenance":"# + provenance + "}"
+        }
+        let json = #"{"results":["#
+            + hit("bad-type", #""not an object""#) + ","
+            + hit("bad-copy", #"{"copies":[{"title":"No id"}]}"#) + ","
+            + hit("sparse", #"{"copies":[{"documentId":"copy","title":"Copy"}]}"#)
+            + "]}"
+        let response = try JSONDecoder().decode(SearchResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(response.results.map(\.documentId), ["bad-type", "bad-copy", "sparse"])
+        XCTAssertNil(response.results[0].provenance)
+        XCTAssertNil(response.results[1].provenance)
+        let sparse = try XCTUnwrap(response.results[2].provenance)
+        XCTAssertEqual(sparse.copies.map(\.documentId), ["copy"])
+        XCTAssertEqual(sparse.copies.first?.sourceId, "")
+        XCTAssertEqual(sparse.paths, [])
+        XCTAssertEqual(sparse.stopReasons, [])
+        XCTAssertNil(sparse.modelContext)
+    }
+
     func testOldAndFutureSearchPayloadsRemainReadable() throws {
         let base = #"{"documentId":"root","sourceId":"files:example","documentType":"file","title":"Permit.pdf","#
             + #""sourceCreatedAt":"2026-01-01","chunkText":"Permit","score":0.9"#

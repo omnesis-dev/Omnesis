@@ -200,4 +200,19 @@ final class SearchBreadcrumbTests: XCTestCase {
         XCTAssertNil(try SearchBreadcrumbNavigation.documentId(XCTUnwrap(URL(string: "https://example.com/?id=wrong"))))
         XCTAssertNil(try SearchBreadcrumbNavigation.documentId(XCTUnwrap(URL(string: "omnesis-document://open?id="))))
     }
+
+    func testLinksListEachDocumentOnceInReadingOrderForVoiceOver() {
+        let untitled = SearchProvenance.Document(documentId: "blank", sourceId: "", title: "", deviceName: nil, path: nil)
+        let fact = SearchBreadcrumbFact(fragments: [
+            .document(document("email", title: "Budget thread")),
+            .text(" links to "),
+            .document(untitled),
+            .text(" and "),
+            .document(document("email", title: "Budget thread")),
+            .text("."),
+        ])
+        XCTAssertEqual(fact.links.map(\.documentId), ["email", "blank"])
+        XCTAssertEqual(fact.links.map(\.displayTitle), ["Budget thread", "Untitled document"])
+        XCTAssertEqual(fact.plainText, "Budget thread links to Untitled document and Budget thread.")
+    }
 }

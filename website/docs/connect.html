@@ -402,7 +402,10 @@
           Every template holds credentials for your approval, one request at a time. A prior
           approval never authorizes a later credential release. You can still configure an explicit
           <strong>Deny</strong> rule to block information even with approval, or disable credential
-          approval to block credentials outright.
+          approval to block credentials outright. Disabling it also sets the credentials row of the
+          decision table, when it keeps its template label, to <strong>Deny</strong> for the exact
+          value and for every decision that required approval. Enabling it again turns that row back
+          to <strong>Approval required</strong> when it is denied in every column.
         </p>
         <p>
           The reviewer judges an answer's <a href="#citations">citations</a> under the same policy

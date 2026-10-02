@@ -52,4 +52,12 @@ describe("CAPABILITY_METADATA", () => {
     ]);
     expect(bySection("core")).toEqual(["embedder", "ocr", "privacy-reviewer", "transcriber"]);
   });
+
+  it("names the backend family only for roles an ordinary model cannot serve", () => {
+    const special = CAPABILITY_ROLES.filter(
+      (r) => CAPABILITY_METADATA[r].backendFamily !== undefined,
+    );
+    expect(special).toEqual(["decision"]);
+    expect(CAPABILITY_METADATA.decision.backendFamily).toBe("typed-decision");
+  });
 });

@@ -24,9 +24,11 @@
 # entry from the primary's node_modules (so all third-party deps stay shared and
 # we never re-download), but give `@omnesis`, the unscoped `omnesis` entry
 # package, and `.bin/omnesis` LOCAL links whose relative targets resolve into
-# the CURRENT worktree. Per-package `packages/*/node_modules` (esbuild,
-# whatsapp, …) are symlinked straight to the primary's: their nested
-# `@omnesis` dirs are empty and never shadow the root farm.
+# the CURRENT worktree. The `@omnesis` links come from this worktree's own
+# workspace manifests, so they never lag behind the primary's last install.
+# Per-package `packages/*/node_modules` (esbuild, whatsapp, …) are symlinked
+# straight to the primary's: their nested `@omnesis` dirs are empty and never
+# shadow the root farm.
 #
 # Idempotent: safe to re-run. Refuses to run in the primary worktree.
 
@@ -98,11 +100,32 @@ for entry in "$primary"/node_modules/.bin/*; do
 done
 ln -sfn ../omnesis/src/index.ts node_modules/.bin/omnesis
 
-# Recreate @omnesis with the SAME relative targets the primary uses, so each
-# `../../packages/<pkg>` resolves into THIS worktree.
-for entry in "$primary"/node_modules/@omnesis/*; do
-  [ -e "$entry" ] || [ -L "$entry" ] || continue
-  ln -sfn "$(readlink "$entry")" "node_modules/@omnesis/$(basename "$entry")"
+# Link every @omnesis workspace package declared by THIS worktree's root
+# manifest, the way npm links workspaces: `node_modules/@omnesis/<name>` ->
+# `../../<workspace dir>`. Reading the worktree's own workspaces, not the
+# primary's node_modules, means a package added on this branch (or on a main
+# the primary has not reinstalled since) is linked too.
+node - <<'NODE' | while IFS=$'\t' read -r name dir; do
+const { existsSync, readdirSync, readFileSync } = require("node:fs");
+const { join } = require("node:path");
+const root = JSON.parse(readFileSync("package.json", "utf8"));
+const dirs = (root.workspaces ?? []).flatMap((pattern) => {
+  if (!pattern.endsWith("/*")) return [pattern];
+  const parent = pattern.slice(0, -2);
+  return readdirSync(parent, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => `${parent}/${entry.name}`);
+});
+for (const dir of dirs) {
+  const manifest = join(dir, "package.json");
+  if (!existsSync(manifest)) continue;
+  const { name } = JSON.parse(readFileSync(manifest, "utf8"));
+  if (typeof name === "string" && name.startsWith("@omnesis/")) {
+    process.stdout.write(`${name.slice("@omnesis/".length)}\t${dir}\n`);
+  }
+}
+NODE
+  ln -sfn "../../$dir" "node_modules/@omnesis/$name"
 done
 
 # The product entry package is deliberately unscoped. Its workspace location

@@ -160,13 +160,18 @@ export function createDatesUnprocessedIndex(db: Db): void {
  * last edit; `addressed` carries `metadata.addressedToAgent`. Newest documents first (the partial
  * pending-age index serves exactly this), so live ingest clears the agent
  * readiness barrier promptly even while a large re-extraction backlog
- * drains behind it. Runs on the io pool's read-only handle.
+ * drains behind it. `excludeIds` skips documents the caller is deliberately
+ * leaving for later, so they never fill a batch ahead of the rest. Runs on the
+ * io pool's read-only handle.
  */
 export function fetchDateExtractionBatch(
   db: Db,
   limit: number,
   maxChars: number,
+  excludeIds: readonly string[] = [],
 ): DateExtractionDocRow[] {
+  const excluded =
+    excludeIds.length > 0 ? `AND id NOT IN (${excludeIds.map(() => "?").join(", ")})` : "";
   return db
     .prepare(
       `SELECT id, title, substr(content, 1, ?) AS content,
@@ -179,11 +184,11 @@ export function fetchDateExtractionBatch(
                 json_extract(metadata, '$.extra.conversationId')
               ) AS threadKey
          FROM documents
-        WHERE dates_extracted_at IS NULL
+        WHERE dates_extracted_at IS NULL ${excluded}
         ORDER BY ingested_at DESC
         LIMIT ?`,
     )
-    .all(maxChars, limit)
+    .all(maxChars, ...excludeIds, limit)
     .map((raw) => {
       const { addressed, ...row } = raw as Omit<DateExtractionDocRow, "addressed"> & {
         addressed: number;
