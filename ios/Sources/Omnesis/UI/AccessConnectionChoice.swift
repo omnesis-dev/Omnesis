@@ -58,9 +58,11 @@ enum AccessConnectionCopy {
         return "Last used \(formatUnixMillisAgo(millis))"
     }
 
-    /// The replace-mode row's line naming the level a connection uses.
+    /// The replace-mode row's line naming the access level a connection uses.
+    /// Labelled as a level because several connections can share one, and a
+    /// level is often named after the agent it was first made for.
     static func connectionLevel(_ level: String) -> String {
-        "Uses \(level)"
+        "Access level: \(level)"
     }
 
     static func newLevelName(_ name: String) -> String {
