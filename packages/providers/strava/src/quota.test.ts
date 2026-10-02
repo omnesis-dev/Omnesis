@@ -172,4 +172,27 @@ describe("StravaRateLimitTracker across Strava's reset boundaries", () => {
     const current = heardAt("2026-03-05T00:00:45Z", "95,950");
     expect(current.canMakeNCalls(10, DEFAULT_SAFETY_PCT, at("2026-03-05T00:01:00Z"))).toBe(false);
   });
+
+  it("waits out a refusal until one call fits under Strava's own limit, not the gates' headroom", () => {
+    // The short window is spent and the day stands at 95%. Strava takes the
+    // next call at the quarter hour; the gates would hold it until midnight.
+    const tr = heardAt("2026-03-04T10:12:00Z", "100,950");
+
+    expect(tr.msUntilRetry(0, at("2026-03-04T10:12:00Z"))).toBe(3.5 * 60_000);
+    expect(tr.msUntilCanMakeNCalls(1, DEFAULT_SAFETY_PCT, at("2026-03-04T10:12:00Z"))).toBe(
+      49_710_000,
+    );
+  });
+
+  it("waits out a refusal nothing explains until a window can have reset, which a Retry-After replaces", () => {
+    const tr = new StravaRateLimitTracker();
+
+    // The next quarter hour, and the grace past it.
+    expect(tr.msUntilRetry(0, at("2026-03-04T10:07:30Z"))).toBe(480_000);
+    // Inside a grace: the window that refused has reset by its end.
+    expect(tr.msUntilRetry(0, at("2026-03-04T10:15:10Z"))).toBe(20_000);
+    expect(tr.msUntilRetry(0, at("2026-03-04T10:15:30Z"))).toBe(900_000);
+    expect(tr.msUntilRetry(0, at("2026-03-05T00:00:00Z"))).toBe(30_000);
+    expect(tr.msUntilRetry(2_000, at("2026-03-04T10:07:30Z"))).toBe(2_000);
+  });
 });

@@ -97,9 +97,19 @@ export default defineProvider<StravaContext>({
       name: "Strava Activities",
       description:
         "Runs, rides, swims, and other workouts from Strava — with description, splits, best efforts, comments, kudos, zones, streams",
-      // TODO: Declare a defaultSyncInterval. The collector's 5-minute default polls 288 times a
-      // day against a new app's 1,000 daily reads.
+      // A sync that finds nothing new still costs a read: the listing. On a day
+      // a backlog spends enrichment's share of a new app's 1,000 daily reads,
+      // listing has the 100 between that share and its own cap to itself
+      // (`ENRICHMENT_SAFETY_PCT`). This interval spends 48 of them, where the
+      // collector's 5-minute default would want 288. A first import is bound by
+      // the daily limit, not by how often a sync starts. Applied when a source
+      // is added; one added earlier keeps its interval.
+      defaultSyncInterval: "30m",
       unitName: "activities",
+      // Splits, laps, best efforts, kudos and the rest are analytics rows of
+      // their own, so a count over every table reads as several times the
+      // number of activities. The headline stays on the activity documents.
+      primaryCount: "documents",
       icon: stravaIcon,
       attribution: stravaAttribution,
       analyticsSchemas: allSchemas,

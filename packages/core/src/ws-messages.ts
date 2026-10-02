@@ -302,6 +302,11 @@ const authCancelResponse = z.object({
 const authCodeRequest = z.object({
   flowId: z.string().min(1),
   code: z.string().min(1),
+  // The `scope` the redirect carried to `/oauth/callback`, passed through
+  // untouched. Some platforms report what the operator actually granted there
+  // and nowhere else. Optional both ways: a collector one version behind
+  // strips it, and a code pasted by hand has none.
+  scope: z.string().optional(),
 });
 const authCodeResponse = z.object({
   ok: z.boolean(),

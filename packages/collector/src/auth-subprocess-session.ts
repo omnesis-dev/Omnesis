@@ -96,6 +96,7 @@ function coerceAnswer(
       return {
         code: str("code"),
         ...(typeof answer.state === "string" ? { state: answer.state } : {}),
+        ...(typeof answer.scope === "string" ? { scope: answer.scope } : {}),
       };
     case "code":
       return { code: str("code") };
@@ -282,7 +283,7 @@ export function makeSession(inputs: SessionInputs): AuthSession {
       // one would hang the flow with no error.
       const answer =
         challenge.kind === "redirect"
-          ? { code: await waitFor(() => stdinReceiver.receiveCode()) }
+          ? await waitFor(() => stdinReceiver.receiveRedirect())
           : challenge.kind === "widget"
             ? await waitFor(() => stdinReceiver.receiveWidgetResult())
             : await waitFor(() => stdinReceiver.receiveAnswer(id));

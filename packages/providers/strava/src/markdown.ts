@@ -11,6 +11,7 @@
  * different endpoints than DetailedActivity itself.
  */
 
+import { toCanonicalWallClock } from "@omnesis/core";
 import type { StravaSummaryActivity, StravaDetailedActivity, StravaComment } from "./types.js";
 
 export interface MarkdownContext {
@@ -181,12 +182,11 @@ const FOOT_SPORTS = new Set(["Run", "TrailRun", "VirtualRun", "Walk", "Hike"]);
 function formatPace(a: StravaSummaryActivity, sport: string): string | null {
   if (!a.distance || !a.moving_time) return null;
   if (FOOT_SPORTS.has(sport)) {
-    // min:sec per km
-    const secPerKm = a.moving_time / (a.distance / 1000);
+    // min:sec per km. Rounded once, before the split: rounding the seconds on
+    // their own turns 359.6 s into "5:60".
+    const secPerKm = Math.round(a.moving_time / (a.distance / 1000));
     const m = Math.floor(secPerKm / 60);
-    const s = Math.round(secPerKm % 60)
-      .toString()
-      .padStart(2, "0");
+    const s = String(secPerKm % 60).padStart(2, "0");
     return `${m}:${s} /km`;
   }
   // km/h for everything else (Ride, Swim, etc.)
@@ -196,5 +196,11 @@ function formatPace(a: StravaSummaryActivity, sport: string): string | null {
 
 function formatStartedAt(a: StravaSummaryActivity): string {
   const isoLocal = a.start_date_local ?? a.start_date;
+  // The listing holds the API's spelling (`…T10:31:00Z`) and the enrichment
+  // tiers the store's canonical one (`…T10:31:00.000`), so the line is
+  // rendered from the canonical form, or one document would read both ways.
+  // Strava starts on a whole second, so the milliseconds carry nothing.
+  const wall = toCanonicalWallClock(isoLocal);
+  if (wall) return wall.slice(0, 19).replace("T", " ");
   return isoLocal.replace("T", " ").replace(/Z$/, "");
 }

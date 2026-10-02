@@ -512,6 +512,25 @@ describe("auth.code", () => {
     ]);
   });
 
+  test("passes on the scope the gateway's callback carried", async () => {
+    const { handlers } = setup([authDescriptor()]);
+    await handlers.handle(
+      makeCommand("auth.begin", { flowId: "flow-scope", sourceType: "test-auth-source" }),
+    );
+    const child = spawnedChildren[0];
+
+    await handlers.handle(
+      makeCommand("auth.code", { flowId: "flow-scope", code: "the-code", scope: "read,profile" }),
+    );
+
+    await waitFor(() => child.stdinLines().length >= 2);
+    expect(child.stdinLines()[1]).toEqual({
+      type: "code",
+      code: "the-code",
+      scope: "read,profile",
+    });
+  });
+
   test("rejects for an unknown flowId without faking success", async () => {
     const { handlers } = setup([authDescriptor()]);
     await expect(

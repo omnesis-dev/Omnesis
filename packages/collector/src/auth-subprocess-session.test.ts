@@ -41,6 +41,7 @@ function build(overrides: Partial<SessionInputs> = {}) {
     publicBaseUrl: () => Promise.resolve(undefined),
     renders: () => Promise.resolve(undefined),
     receiveCode: () => Promise.resolve("the-code"),
+    receiveRedirect: () => Promise.resolve({ code: "the-code" }),
     receiveWidgetResult: () => Promise.resolve({ token: "the-token" }),
     // A `code` challenge is answered through this channel, so the default has
     // to satisfy the shape that kind fixes.
@@ -117,6 +118,25 @@ describe("what reaches the wire", () => {
       url: "https://example.org/a",
     });
     expect(emitted.map((e) => e.type)).toEqual(["challenge", "url"]);
+  });
+
+  test("an asked redirect is answered with the scope its callback carried", async () => {
+    // Some platforms say what the operator actually granted only on the
+    // callback, so a provider that cannot see it reports a narrowed grant as
+    // whole.
+    const receiver = {
+      receiveRedirect: () => Promise.resolve({ code: "the-code", scope: "read,profile" }),
+    } as unknown as StdinReceiver;
+    const { session } = build({ receiver });
+
+    const answer = await session.ask({
+      kind: "redirect",
+      via: "gateway",
+      title: "Sign in",
+      url: "https://example.org/a",
+    });
+
+    expect(answer).toEqual({ code: "the-code", scope: "read,profile" });
   });
 });
 
@@ -214,7 +234,7 @@ describe("a wait that ends without an answer", () => {
     ["closed", "cancelled"],
   ] as const)("%s becomes %s", async (reason, expected) => {
     const receiver = {
-      receiveCode: () => Promise.reject(new AnswerUnavailable(reason, "over")),
+      receiveRedirect: () => Promise.reject(new AnswerUnavailable(reason, "over")),
     } as unknown as StdinReceiver;
     const { session } = build({ receiver });
 

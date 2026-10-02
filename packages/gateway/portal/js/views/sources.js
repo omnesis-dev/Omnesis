@@ -704,8 +704,8 @@ export function SourcesView() {
       // Otherwise the heuristic decides:
       //   1. totalUnitCount when it differs from doc count (WhatsApp bundles
       //      many messages per daily doc; browser-history daily digests).
-      //   2. analyticsCount for pure-structured sources (screen-time, strava)
-      //      keyed by source TYPE.
+      //   2. analyticsCount for pure-structured sources (screen-time) keyed
+      //      by source TYPE.
       //   3. documentCount — everything else (gmail, calendar, etc.).
       const docCounts = status.documents?.bySource ?? {};
       const unitCounts = status.documents?.unitCountBySource ?? {};
@@ -748,7 +748,7 @@ export function SourcesView() {
         } else if (gatewayDocs === 0) {
           // Nothing to index. Two sub-cases:
           //   - source produces only structured analytics records (screen-time,
-          //     strava, apple-health) → displayCount > 0 from DuckDB rows.
+          //     apple-health) → displayCount > 0 from DuckDB rows.
           //   - source hasn't synced yet / has no data → displayCount === 0.
           row.indexed = null;
           row.indexNote = (row.displayCount ?? 0) > 0

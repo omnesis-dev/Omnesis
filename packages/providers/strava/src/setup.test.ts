@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, test, expect } from "vitest";
 import definition from "./index.js";
 
@@ -57,9 +60,18 @@ describe("Strava provider definition", () => {
     expect(typeof definition.credentialState).toBe("function");
   });
 
-  test("discover returns string array", async () => {
-    const accounts = await definition.discover!();
-    expect(Array.isArray(accounts)).toBe(true);
-    for (const a of accounts) expect(typeof a).toBe("string");
+  test("discover lists the athletes whose tokens are stored under the config directory", async () => {
+    // A directory of its own: without one, discovery reads the operator's
+    // real config directory.
+    const configDir = mkdtempSync(join(tmpdir(), "omnesis-strava-discover-"));
+    try {
+      mkdirSync(join(configDir, "strava", "4242"), { recursive: true });
+      writeFileSync(join(configDir, "strava", "4242", "tokens.json"), "{}");
+      // A directory without a grant is not an account.
+      mkdirSync(join(configDir, "strava", "5151"), { recursive: true });
+      expect(await definition.discover!({ configDir })).toEqual(["4242"]);
+    } finally {
+      rmSync(configDir, { recursive: true, force: true });
+    }
   });
 });

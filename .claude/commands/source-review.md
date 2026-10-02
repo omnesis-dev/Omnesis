@@ -360,7 +360,11 @@ local`). `link-widget` also needs `widgetOrigins` and `widgetRenderer`, or
   input it did not durably emit, and never fail the whole page for one item.
 - **Rate limits.** The platform's limits are honoured (`retryAfterMs`,
   `defaultSyncInterval`, the shared rate limiter), and the client sends an
-  identifying User-Agent where the platform asks for one.
+  identifying User-Agent where the platform asks for one. A rate-limit
+  `SyncError` names `quota: { kind }` when the platform says what it counted
+  against: `app` only when every account signs in through one application
+  credential on the collector (no `perAccount` credentials spec), otherwise
+  `account`.
 - **Writer cost.** A source that emits a burst (a full bootstrap, a resync)
   is processed by a single writer thread on the gateway. Page sizes and the
   amount of metadata, links, and people per document decide how long that
@@ -429,15 +433,24 @@ includeAudioTypes })` and the injected `extractAttachment`; no bespoke
   this source declares — its own, plus any shared with a sibling of the same
   type — and only as a single SELECT. A source that reads a table it does not
   declare is refused by the gateway, so a source relying on another's rows is
-  a design problem to raise, not a query to fix.
+  a design problem to raise, not a query to fix. The gateway checks which
+  tables a query names, not which rows it returns, so a table written by
+  several accounts answers with every account's rows: every read that picks
+  rows to fetch or write back filters on this account's value of the table's
+  `sharedDiscriminatorColumn`; a lookup by ids only this account can hold —
+  drawn from its own rows, or from its own upstream listing where the
+  platform never reuses an id across accounts — needs no second filter. A
+  sibling's row enriched and written back is refused, and the refused page
+  replays on every retry.
 - **Table writes.** A page names every table it fills, in the order the host
   should write them (`analytics`, one `TableWrite` or a list). A source whose
   upstream record fans out writes its children on the same page as their
   parent, so one cursor covers all of them — it does not paginate a phase per
   table, and there is no way to write outside the page at all. A table named
   twice is two writes in order, which is how a keyed set is replaced: the
-  clear, then the rows. A page with nothing to write omits the field rather
-  than naming a table with no rows.
+  clear, then the rows. One write carrying both deletes its own rows, because
+  the host stores a write's rows before it applies its deletions. A page with
+  nothing to write omits the field rather than naming a table with no rows.
 - **One page, or two.** Rows go on one page when a checkpoint between them
   would be a lie — a parent and the children it fans out into. Rows that are
   merely in hand at the same moment belong on separate pages: each checkpoints,
