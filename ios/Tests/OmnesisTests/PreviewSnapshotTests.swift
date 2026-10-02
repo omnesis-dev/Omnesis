@@ -771,6 +771,7 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view, name: "11-search-breadcrumbs")
         searchBreadcrumbsLargeText()
         searchBreadcrumbsManyCopies()
+        searchBreadcrumbsOutline()
         searchBreadcrumbsHubOnly()
     }
 
@@ -786,6 +787,17 @@ final class PreviewSnapshotTests: XCTestCase {
             }.background(Theme.bgPrimary)
         }.environment(\.dynamicTypeSize, .accessibility3)
         snapshot(view, name: "11-search-breadcrumbs-large-text", size: CGSize(width: 393, height: 1800))
+    }
+
+    private func searchBreadcrumbsOutline() {
+        let view = NavigationStack {
+            SearchBreadcrumbsView(
+                provenance: PreviewMocks.searchProvenanceOutline,
+                documentId: "sample-root",
+                store: AppStore.preview()
+            ).padding()
+        }
+        snapshot(view, name: "11-search-breadcrumbs-outline")
     }
 
     private func searchBreadcrumbsManyCopies() {

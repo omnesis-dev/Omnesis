@@ -6804,6 +6804,59 @@ extension PreviewMocks {
         score: 0.91, refCount: 3, scoreBreakdown: nil, provenance: searchProvenance
     )
 
+    /// A request whose thread branches: the outline says the shared route once and
+    /// folds the inline image repeated in each reply.
+    static let searchProvenanceOutline: SearchProvenance = {
+        let attached = "is attached to"
+        let includes = "includes the attachment"
+        let thread = "is in the same conversation as"
+        let contains = "inbound:contains"
+        func document(_ id: String, _ title: String) -> SearchProvenance.Document {
+            .init(documentId: id, sourceId: sourceGmail.id, title: title, deviceName: nil, path: nil)
+        }
+        return SearchProvenance(
+            copies: [],
+            paths: [
+                .init(
+                    documentIds: ["sample-root", "sample-request", "sample-sheet"],
+                    edges: [contains, contains],
+                    relations: [attached, includes]
+                ),
+                .init(
+                    documentIds: ["sample-root", "sample-request", "sample-logo-1"],
+                    edges: [contains, contains],
+                    relations: [attached, includes]
+                ),
+                .init(
+                    documentIds: ["sample-root", "sample-request", "sample-reply", "sample-signed"],
+                    edges: [contains, "outbound:part-of-thread", contains],
+                    relations: [attached, thread, includes]
+                ),
+                .init(
+                    documentIds: ["sample-root", "sample-request", "sample-reply", "sample-logo-2"],
+                    edges: [contains, "outbound:part-of-thread", contains],
+                    relations: [attached, thread, includes]
+                ),
+                .init(
+                    documentIds: ["sample-root", "sample-request", "sample-follow-up", "sample-logo-3"],
+                    edges: [contains, "outbound:part-of-thread", contains],
+                    relations: [attached, thread, includes]
+                ),
+            ],
+            stopReasons: [],
+            modelContext: .init(documents: [
+                document("sample-request", "Riverside permit request"),
+                document("sample-sheet", "Site measurements.pdf"),
+                document("sample-logo-1", "image001.png"),
+                document("sample-reply", "Re: Riverside permit request"),
+                document("sample-signed", "Signed permit form.pdf"),
+                document("sample-logo-2", "image001.png"),
+                document("sample-follow-up", "RE: Riverside permit request"),
+                document("sample-logo-3", "image001.png"),
+            ])
+        )
+    }()
+
     static let searchProvenanceManyCopies = SearchProvenance(
         copies: searchProvenance.copies + (1 ... 6).map { index in
             .init(
