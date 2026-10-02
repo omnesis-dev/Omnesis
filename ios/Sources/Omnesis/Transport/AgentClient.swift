@@ -184,6 +184,37 @@ public final class AgentClient: Sendable {
         )
     }
 
+    public func conversationControls(sessionId: String) async throws -> ConversationControls {
+        let (data, _) = try await dispatch(
+            method: "GET", path: "/agent/sessions/\(percentEncode(sessionId))/controls", body: nil
+        )
+        return try decodeOrThrow(ConversationControls.self, from: data)
+    }
+
+    public func submitMessage(
+        sessionId: String, text: String, clientMessageId: String,
+        interrupt: Bool, deepResearch: Bool = false, clarificationId: String? = nil
+    ) async throws {
+        struct Body: Encodable {
+            let text: String
+            let clientMessageId: String
+            let mode: String
+            let deepResearch: Bool
+            let clarificationId: String?
+        }
+        _ = try await dispatch(
+            method: "POST",
+            path: "/agent/sessions/\(percentEncode(sessionId))/submissions",
+            body: encoder.encode(Body(
+                text: text,
+                clientMessageId: clientMessageId,
+                mode: interrupt ? "interrupt" : "queue",
+                deepResearch: deepResearch,
+                clarificationId: clarificationId
+            ))
+        )
+    }
+
     /// POST `/agent/sessions/:id/cancel` — abort the in-flight turn.
     public func cancel(sessionId: String) async throws {
         _ = try await dispatch(

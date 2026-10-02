@@ -36,6 +36,7 @@ extension EnvironmentValues {
 struct AgentTranscriptTurns: View {
     let agent: AgentCoordinator
     let scrollSpace: String
+    var onEdit: ((String) -> Void)?
     @Environment(\.dailyBriefContext) private var injected
 
     var body: some View {
@@ -48,15 +49,43 @@ struct AgentTranscriptTurns: View {
                 origin: origin,
                 turns: agent.turns,
                 context: context,
-                scrollSpace: scrollSpace
+                scrollSpace: scrollSpace,
+                onEdit: onEdit,
+                editingDisabled: !agent.canComposeMessage || agent.submitting
             )
             // A fresh model per conversation, and once a client appears.
             .id("\(sessionId)|\(context.loader != nil)")
         } else {
             ForEach(agent.turns) { turn in
-                AgentTurnBubble(turn: turn)
+                editableBubble(turn)
                     .id(turn.id)
                     .pagingRowFrame(id: turn.id, in: scrollSpace)
+            }
+        }
+    }
+    private func editableBubble(_ turn: AgentTurn) -> some View {
+        ConversationEditableTurn(
+            turn: turn,
+            disabled: !agent.canComposeMessage || agent.submitting,
+            onEdit: onEdit
+        )
+    }
+}
+
+@available(iOS 17.0, *)
+private struct ConversationEditableTurn: View {
+    let turn: AgentTurn
+    let disabled: Bool
+    var onEdit: ((String) -> Void)?
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            AgentTurnBubble(turn: turn)
+            if case .user(_, let text) = turn, let onEdit {
+                Button("Edit and resend", systemImage: "square.and.pencil") { onEdit(text) }
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+                    .disabled(disabled)
             }
         }
     }
@@ -72,6 +101,8 @@ struct DailyBriefTranscriptView: View {
     let turns: [AgentTurn]
     let context: DailyBriefContext
     let scrollSpace: String
+    var onEdit: ((String) -> Void)?
+    var editingDisabled: Bool
     @State private var model: DailyBriefModel
     @Environment(\.calendar) private var calendar
     @Environment(\.locale) private var locale
@@ -82,12 +113,16 @@ struct DailyBriefTranscriptView: View {
         turns: [AgentTurn],
         context: DailyBriefContext,
         scrollSpace: String,
-        model preset: DailyBriefModel? = nil
+        model preset: DailyBriefModel? = nil,
+        onEdit: ((String) -> Void)? = nil,
+        editingDisabled: Bool = false
     ) {
         self.origin = origin
         self.turns = turns
         self.context = context
         self.scrollSpace = scrollSpace
+        self.onEdit = onEdit
+        self.editingDisabled = editingDisabled
         // A preview hands in a model already in the state it shows.
         let model = preset ?? DailyBriefModel(
             conversationId: conversationId,
@@ -183,7 +218,7 @@ struct DailyBriefTranscriptView: View {
     }
 
     private func bubble(_ turn: AgentTurn) -> some View {
-        AgentTurnBubble(turn: turn)
+        ConversationEditableTurn(turn: turn, disabled: editingDisabled, onEdit: onEdit)
             .id(turn.id)
             .pagingRowFrame(id: turn.id, in: scrollSpace)
     }

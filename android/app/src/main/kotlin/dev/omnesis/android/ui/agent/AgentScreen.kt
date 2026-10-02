@@ -162,6 +162,14 @@ fun AgentScreen(
                 noteCapture = { capture, onClose -> DailyBriefNoteCapture(capture, onClose) },
             )
         },
+        onDraftChanged = vm::updateDraft,
+        onDraftSubmitted = vm::finishDraftSubmission,
+        onCancelPromptEdit = vm::cancelPromptEdit,
+        onInterruptAndSend = vm::interruptAndSend,
+        onAnswerClarification = vm::answerClarification,
+        onRetrySubmission = vm::retrySubmission,
+        onEditPendingSubmission = vm::editPendingSubmission,
+        onEditPrompt = vm::editPrompt,
     )
 }
 
@@ -189,6 +197,14 @@ fun AgentContent(
     onDismissConversationActionError: () -> Unit = {},
     onOpenTask: (String) -> Unit = {},
     dailyBrief: DailyBriefContext = DailyBriefContext(),
+    onDraftChanged: (String, String?) -> Unit = { _, _ -> },
+    onDraftSubmitted: () -> Unit = {},
+    onCancelPromptEdit: () -> Unit = {},
+    onInterruptAndSend: ((String, SlashCommand?) -> Unit)? = null,
+    onAnswerClarification: (String) -> Unit = {},
+    onRetrySubmission: (String) -> Unit = {},
+    onEditPendingSubmission: (String) -> Unit = {},
+    onEditPrompt: (String) -> Unit = {},
 ) {
     var showCitations by remember { mutableStateOf(false) }
     var conversationMenuOpen by remember(state.sessionId) {
@@ -267,6 +283,14 @@ fun AgentContent(
                         // not answer.
                         ReadOnlyConversationCard(state.liveSessionMissingReason, onRetryLiveSession)
                     } else {
+                        ConversationControlsPanel(state, onAnswerClarification, onRetrySubmission, onEditPendingSubmission)
+                        if (state.composer.editingPrompt) {
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("Edited prompt · sends as a new message", style = MaterialTheme.typography.labelSmall,
+                                    color = OmTheme.colors.textSecondary, modifier = Modifier.weight(1f))
+                                androidx.compose.material3.TextButton(onClick = onCancelPromptEdit) { Text("Cancel edit") }
+                            }
+                        }
                         AgentComposer(
                             busy = busy,
                             enabled = enabled,
@@ -276,10 +300,17 @@ fun AgentContent(
                             // A send the gateway never accepted (failed mint, local Stop, refused POST)
                             // hands its text back here so the composer restores it instead of dropping it.
                             pendingRestore = state.sendRejectedText,
+                            pendingRestoreCommandId = state.sendRejectedCommandId,
                             onRestoreConsumed = onAckSendRejected,
-                            requestFocus = state.sessionId == null,
+                            requestFocus = state.sessionId == null || state.composer.editingPrompt,
                             composerGeneration = state.composerGeneration,
                             idlePlaceholder = DailyBriefCopy.composerPrompt(state.conversationOrigin),
+                            initialText = state.composer.text,
+                            initialArmedCommand = SlashCommand.byId(state.composer.commandId),
+                            onDraftChanged = onDraftChanged,
+                            onDraftSubmitted = onDraftSubmitted,
+                            onInterruptAndSend = if (state.controlsAvailable) onInterruptAndSend else null,
+                            allowFollowUps = state.controlsAvailable,
                         )
                     }
                 }
@@ -360,6 +391,7 @@ fun AgentContent(
                     val barInset = with(LocalDensity.current) { barHeightPx.toDp() }
                     Transcript(
                         state = state,
+                        onEditPrompt = onEditPrompt,
                         catalog = catalog,
                         onFlushEphemeral = onFlushEphemeral,
                         onOpenDocument = onOpenDocument,
@@ -770,6 +802,7 @@ private fun Modifier.transcriptKeyboardDismissal(): Modifier {
 @Composable
 private fun Transcript(
     state: AgentCoordinator.UiState,
+    onEditPrompt: (String) -> Unit,
     catalog: SourceCatalog,
     onFlushEphemeral: (String) -> Unit,
     onOpenDocument: (String) -> Unit,
@@ -885,7 +918,12 @@ private fun Transcript(
     @Composable
     fun Bubble(turn: AgentTurn) {
         when (turn) {
-            is AgentTurn.User -> UserBubble(turn.text)
+            is AgentTurn.User -> Column(horizontalAlignment = Alignment.End) {
+                UserBubble(turn.text)
+                androidx.compose.material3.TextButton(onClick = { onEditPrompt(turn.text) }, enabled = state.canCompose) {
+                    Text("Edit & resend", style = MaterialTheme.typography.labelSmall)
+                }
+            }
             is AgentTurn.Assistant -> AssistantTurn(
                 turn, catalog, onFlushEphemeral, onOpenDocument,
                 citations = state.chat.citations,

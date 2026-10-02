@@ -108,6 +108,8 @@ public struct AgentView: View {
     /// preserves it across SwiftUI's dialog-dismissal callback ordering.
     @State private var conversationDeletion = ConversationDeletionConfirmation()
     @Binding var menuOpen: Bool
+    @State private var loadedDraftKey: String?
+    @State private var editingDraft = false
     @FocusState private var composerFocused: Bool
     /// Monotonic HomeView request used by the one-hour foreground policy.
     /// Passing the value into a newly-mounted AgentView also covers a cold
@@ -244,6 +246,7 @@ public struct AgentView: View {
                 if target != nil { consumeRouterTarget() }
             }
             .onAppear {
+                restoreComposerDraft()
                 consumeRouterTarget()
                 // This surface is the only thing that knows the transcript is
                 // actually rendered. The coordinator's session id outlives a
@@ -254,6 +257,17 @@ public struct AgentView: View {
                 applyComposerFocusRequest()
             }
             .onDisappear { store.agent.agentSurfaceVisibilityChanged(false) }
+            .onChange(of: composerText) { _, text in
+                if let loadedDraftKey { store.agent.saveDraft(text, for: loadedDraftKey) }
+            }
+            .onChange(of: store.agent.composerDraftKey) { _, _ in restoreComposerDraft() }
+            .task(id: store.agent.sessionId) {
+                guard store.agent.sessionId != nil else { return }
+                while !Task.isCancelled {
+                    await store.agent.refreshConversationControls()
+                    try? await Task.sleep(for: .seconds(2))
+                }
+            }
             .onChange(of: composerFocusRequest) { _, _ in
                 applyComposerFocusRequest()
             }
@@ -331,7 +345,6 @@ public struct AgentView: View {
             sessionId: store.agent.sessionId,
             canCompose: store.agent.canComposeMessage
         ) else { return }
-        composerText = ""
         // Focus after the fresh AgentView/composer has joined the hierarchy;
         // a synchronous assignment during the tab switch is ignored by UIKit.
         Task { @MainActor in
@@ -535,6 +548,39 @@ public struct AgentView: View {
         }
     }
 
+    private func restoreComposerDraft() {
+        let key = store.agent.composerDraftKey
+        guard loadedDraftKey != key else { return }
+        loadedDraftKey = key
+        editingDraft = store.agent.draftHasBackup(for: key)
+        let saved = store.agent.draft(for: key)
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["DEMO_PROMPT"] != nil, saved.isEmpty, !composerText.isEmpty { return }
+        #endif
+        composerText = saved
+    }
+
+    private func replaceComposerDraft(_ text: String, deepResearch: Bool = false, answerCurrentQuestion: Bool = true) {
+        let key = store.agent.composerDraftKey
+        store.agent.saveDraft(composerText, for: key)
+        store.agent.replaceDraft(text, for: key, deepResearch: deepResearch, answerCurrentQuestion: answerCurrentQuestion)
+        editingDraft = true
+        composerText = text
+    }
+
+    private func submitComposer(_ text: String, command: SlashCommand? = nil, interrupt: Bool = false) {
+        composerFocused = false
+        Task {
+            let sent = await store.agent.submitDraft(
+                text: text, interrupt: interrupt, deepResearch: command?.deepResearch ?? false
+            )
+            if sent, composerText == text {
+                composerText = store.agent.draft(for: store.agent.composerDraftKey)
+                editingDraft = store.agent.draftHasBackup(for: store.agent.composerDraftKey)
+            }
+        }
+    }
+
     private var bottomBar: some View {
         VStack(spacing: 0) {
             // Pinned TODO panel — populated while the agent is working
@@ -546,6 +592,29 @@ public struct AgentView: View {
             AgentPlanPanel(items: store.agent.planItems)
                 .background(Theme.bgPrimary)
 
+            ConversationControlsPanel(
+                controls: store.agent.conversationControls,
+                error: store.agent.submissionError.map {
+                    GatewayErrorView.classify($0).detail(for: "send this message") + " Your draft is saved."
+                },
+                disabled: store.agent.submitting || !store.agent.canComposeMessage,
+                onEdit: { message in
+                    replaceComposerDraft(message.text, deepResearch: message.deepResearch ?? false, answerCurrentQuestion: false)
+                    composerFocused = true
+                },
+                onChoice: { choice in
+                    replaceComposerDraft(choice)
+                    submitComposer(choice)
+                }
+            )
+            if editingDraft {
+                ConversationDraftEditBanner {
+                    store.agent.cancelDraftReplacement(for: store.agent.composerDraftKey)
+                    composerText = store.agent.draft(for: store.agent.composerDraftKey)
+                    editingDraft = false
+                }
+                .disabled(store.agent.submitting)
+            }
             Group {
                 if store.agent.terminalFailure != nil {
                     ContextWindowExceededCard {
@@ -565,21 +634,13 @@ public struct AgentView: View {
                     AgentComposer(
                         text: composerTextBinding,
                         busy: store.agent.busy,
-                        disabled: !store.agent.canComposeMessage,
+                        queueEnabled: store.agent.conversationControlsSupported,
+                        disabled: !store.agent.canComposeMessage || store.agent.submitting,
                         experimentalEnabled: store.experimentalEnabled,
                         idlePrompt: DailyBriefCopy.composerPrompt(for: store.agent.conversationOrigin),
                         speech: speechRecognizer,
-                        onSend: { text, command in
-                            // Surrender keyboard focus the moment the user
-                            // hits send so the transcript reclaims its full
-                            // screen real estate.
-                            composerFocused = false
-                            let deep = command?.deepResearch ?? false
-                            // The coordinator empties the composer and, for a
-                            // turn that never reached the gateway, puts the
-                            // words back so they can be sent again.
-                            Task { await store.agent.sendComposerDraft(text, deepResearch: deep) }
-                        },
+                        onSend: { text, command in submitComposer(text, command: command) },
+                        onInterrupt: { text, command in submitComposer(text, command: command, interrupt: true) },
                         onCancel: {
                             Task {
                                 if let restored = await store.agent.cancelTurn(),
@@ -588,8 +649,14 @@ public struct AgentView: View {
                                 }
                             }
                         },
-                        focused: $composerFocused
+                        focused: $composerFocused,
+                        savedCommand: store.agent.draftResearch(for: store.agent.composerDraftKey) ? SlashCommand.all
+                            .first(where: \.deepResearch) : nil,
+                        onCommandChange: { command in
+                            store.agent.saveDraftResearch(command?.deepResearch ?? false, for: store.agent.composerDraftKey)
+                        }
                     )
+                    .id("\(store.agent.composerDraftKey):\(editingDraft)")
                 }
             }
             // Publish the composer's bounds so the transcript's bottom
@@ -764,7 +831,11 @@ public struct AgentView: View {
                     }
                     AgentTranscriptTurns(
                         agent: store.agent,
-                        scrollSpace: Self.scrollSpace
+                        scrollSpace: Self.scrollSpace,
+                        onEdit: { text in
+                            replaceComposerDraft(text)
+                            composerFocused = true
+                        }
                     )
 
                     // Turn-level "still working" dots — the single indicator
@@ -1515,6 +1586,7 @@ private struct GlassCircleButton: ViewModifier {
 struct AgentComposer: View {
     @Binding var text: String
     let busy: Bool
+    let queueEnabled: Bool
     let disabled: Bool
     /// Whether the paired gateway runs in experimental mode; gates experimental slash commands.
     let experimentalEnabled: Bool
@@ -1525,6 +1597,8 @@ struct AgentComposer: View {
     /// the caller can fold its options (e.g. `deepResearch`) into the POST.
     let onSend: (String, SlashCommand?) -> Void
     let onCancel: () -> Void
+    let onInterrupt: ((String, SlashCommand?) -> Void)?
+    let onCommandChange: (SlashCommand?) -> Void
     var focused: FocusState<Bool>.Binding
 
     /// The per-message armed slash command. Local compose-time state: it governs the NEXT send
@@ -1535,25 +1609,32 @@ struct AgentComposer: View {
     init(
         text: Binding<String>,
         busy: Bool,
+        queueEnabled: Bool = false,
         disabled: Bool,
         experimentalEnabled: Bool = false,
         idlePrompt: String = "Ask Omnesis",
         speech: SpeechRecognizer,
         onSend: @escaping (String, SlashCommand?) -> Void,
+        onInterrupt: ((String, SlashCommand?) -> Void)? = nil,
         onCancel: @escaping () -> Void,
         focused: FocusState<Bool>.Binding,
-        previewArmedCommand: SlashCommand? = nil
+        previewArmedCommand: SlashCommand? = nil,
+        savedCommand: SlashCommand? = nil,
+        onCommandChange: @escaping (SlashCommand?) -> Void = { _ in }
     ) {
         self._text = text
         self.busy = busy
+        self.queueEnabled = queueEnabled
         self.disabled = disabled
         self.experimentalEnabled = experimentalEnabled
         self.idlePrompt = idlePrompt
         self.speech = speech
         self.onSend = onSend
         self.onCancel = onCancel
+        self.onInterrupt = onInterrupt
         self.focused = focused
-        self._armedCommand = State(initialValue: previewArmedCommand)
+        self._armedCommand = State(initialValue: savedCommand ?? previewArmedCommand)
+        self.onCommandChange = onCommandChange
     }
 
     /// Whether the slash menu is open, and which commands it lists. Derived from `text` via
@@ -1572,6 +1653,15 @@ struct AgentComposer: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
             VStack(alignment: .leading, spacing: 0) {
+                if busy, canSend, let onInterrupt {
+                    Button("Interrupt and send correction") {
+                        onInterrupt(text.trimmingCharacters(in: .whitespacesAndNewlines), armedCommand)
+                        armedCommand = nil
+                    }
+                    .font(.footnote)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 12)
+                }
                 if let armedCommand {
                     armedPill(armedCommand)
                         .padding(.leading, 16)
@@ -1596,9 +1686,19 @@ struct AgentComposer: View {
                     .onSubmit { submit() }
                     .accessibilityIdentifier("agentComposer")
 
-                    trailingButton
-                        .padding(.trailing, 10)
-                        .padding(.bottom, 14)
+                    HStack(spacing: 8) {
+                        if busy, canSend {
+                            Button(action: onCancel) {
+                                Image(systemName: "stop.circle.fill")
+                                    .font(.system(size: 30))
+                                    .foregroundStyle(Theme.danger)
+                            }
+                            .accessibilityLabel("Stop the agent")
+                        }
+                        trailingButton
+                    }
+                    .padding(.trailing, 10)
+                    .padding(.bottom, 14)
                 }
             }
             // Liquid Glass pill: on iOS 26 it's real glass — the
@@ -1614,6 +1714,7 @@ struct AgentComposer: View {
         .animation(.easeInOut(duration: 0.2), value: speech.isListening)
         .animation(.easeInOut(duration: 0.2), value: armedCommand)
         .animation(.easeInOut(duration: 0.18), value: menu.isOpen)
+        .onChange(of: armedCommand) { _, command in onCommandChange(command) }
         .onChange(of: speech.transcript) { _, newValue in
             if speech.isListening {
                 text = newValue
@@ -1635,7 +1736,7 @@ struct AgentComposer: View {
 
     @ViewBuilder
     private var trailingButton: some View {
-        if busy {
+        if busy, !canSend || !queueEnabled {
             Button(action: onCancel) {
                 Image(systemName: "stop.circle.fill")
                     .font(.system(size: 30))
@@ -1667,7 +1768,7 @@ struct AgentComposer: View {
                     .foregroundStyle(Theme.accent)
             }
             .accessibilityIdentifier("agentSendButton")
-            .accessibilityLabel("Send")
+            .accessibilityLabel(busy ? "Queue follow-up" : "Send")
         } else {
             // Empty text, not busy — show mic button.
             Button {
@@ -1767,21 +1868,18 @@ struct AgentComposer: View {
 
     private var placeholder: String {
         if disabled { return "Connecting…" }
-        if busy { return "Working…" }
+        if busy { return "Add a follow-up…" }
         if speech.isListening { return "Listening…" }
         if armedCommand != nil { return "Describe what to research…" }
         return idlePrompt
     }
 
     private var canSend: Bool {
-        !busy && !disabled && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        (!busy || queueEnabled) && !disabled && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func submit() {
-        // Keep Return-key submission inert while Stop is visible. The field
-        // intentionally stays editable so a follow-up can be drafted, then
-        // submitted once the gateway's terminal event clears `busy`.
-        guard !busy, !disabled else { return }
+        guard !disabled, !busy || queueEnabled else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let command = armedCommand
@@ -1914,6 +2012,24 @@ struct AgentComposer: View {
         previewWidth: 1366
     )
     .environment(AppStore.preview(agentPreview: PreviewMocks.agentRichTranscript))
+}
+
+@available(iOS 17.0, *)
+#Preview("Composer — queued follow-up and interruption") {
+    @Previewable @State var text = PreviewMocks.conversationFollowupDraft
+    @Previewable @FocusState var focused: Bool
+    AgentComposer(
+        text: $text,
+        busy: true,
+        queueEnabled: true,
+        disabled: false,
+        speech: SpeechRecognizer.preview(state: .idle),
+        onSend: { _, _ in },
+        onInterrupt: { _, _ in },
+        onCancel: {},
+        focused: $focused
+    )
+    .background(Theme.bgPrimary)
 }
 
 @available(iOS 17.0, *)
