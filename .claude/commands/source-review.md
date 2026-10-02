@@ -433,7 +433,15 @@ includeAudioTypes })` and the injected `extractAttachment`; no bespoke
   this source declares — its own, plus any shared with a sibling of the same
   type — and only as a single SELECT. A source that reads a table it does not
   declare is refused by the gateway, so a source relying on another's rows is
-  a design problem to raise, not a query to fix.
+  a design problem to raise, not a query to fix. The gateway checks which
+  tables a query names, not which rows it returns, so a table written by
+  several accounts answers with every account's rows: every read that picks
+  rows to fetch or write back filters on this account's value of the table's
+  `sharedDiscriminatorColumn`; a lookup by ids only this account can hold —
+  drawn from its own rows, or from its own upstream listing where the
+  platform never reuses an id across accounts — needs no second filter. A
+  sibling's row enriched and written back is refused, and the refused page
+  replays on every retry.
 - **Table writes.** A page names every table it fills, in the order the host
   should write them (`analytics`, one `TableWrite` or a list). A source whose
   upstream record fans out writes its children on the same page as their

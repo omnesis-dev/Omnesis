@@ -5607,6 +5607,11 @@
       "reason": "reviewed invented model fixture"
     },
     {
+      "value": "Example Watch",
+      "paths": ["packages/providers/strava/src/enrichment.test.ts"],
+      "reason": "invented fixture"
+    },
+    {
       "value": "Expect Jane",
       "paths": ["packages/collector/src/e2e/synth-search.e2e.test.ts"],
       "reason": "reviewed existing fixture"
@@ -6430,7 +6435,8 @@
         "packages/collector/src/e2e/graph-search-v2.e2e.test.ts",
         "packages/gateway/src/search/agent-provenance.test.ts",
         "packages/gateway/src/search/provenance-model-context.test.ts",
-        "packages/gateway/src/enrichment/dates/mention-bounds.test.ts"
+        "packages/gateway/src/enrichment/dates/mention-bounds.test.ts",
+        "packages/providers/strava/src/enrichment.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -7102,7 +7108,8 @@
         "packages/providers/maildir/src/source.test.ts",
         "evals/universes/graph-search/cast.json",
         "packages/gateway/src/search/agent-provenance.test.ts",
-        "packages/gateway/src/enrichment/dates/mention-bounds.test.ts"
+        "packages/gateway/src/enrichment/dates/mention-bounds.test.ts",
+        "packages/providers/strava/src/enrichment.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },

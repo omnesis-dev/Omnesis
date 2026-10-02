@@ -390,9 +390,12 @@ export default defineSource({
           Use the injected <code>SourceHost</code> for logging, <code>now()</code>, attachment
           extraction, optional audio transcription, and scoped analytics reads. Its
           <code>analytics.query()</code> is read-only and restricted to the source's declared
-          tables; writes belong on a sync page. <code>stateDir</code> is scoped to the provider
-          account and shared by its sibling sources, so use distinct filenames;
-          <code>host.configDir</code> remains available for credential layouts that already use it.
+          tables; writes belong on a sync page. A table written by several accounts answers a query
+          with every account's rows, so a read that picks rows to act on filters on this account's
+          value of the table's <code>sharedDiscriminatorColumn</code>. <code>stateDir</code> is
+          scoped to the provider account and shared by its sibling sources, so use distinct
+          filenames; <code>host.configDir</code> remains available for credential layouts that
+          already use it.
         </p>
         <p>
           The host interface is not a sandbox for in-process provider code, nor a promise of access

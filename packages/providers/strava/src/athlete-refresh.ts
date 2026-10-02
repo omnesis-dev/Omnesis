@@ -12,9 +12,9 @@
  * - GET /athlete           → DetailedAthlete
  * - GET /athlete/zones     → HR + power zone definitions
  * - GET /athletes/{id}/stats → lifetime totals
- * - GET /gear/{id} for every distinct gear_id observed in `strava_activities`,
- *   paced per call: gear a window's reads cannot cover waits on the cursor
- *   (`pendingGearIds`) for the next window.
+ * - GET /gear/{id} for every distinct gear_id on this athlete's
+ *   `strava_activities` rows, paced per call: gear a window's reads cannot
+ *   cover waits on the cursor (`pendingGearIds`) for the next window.
  *
  * Side effect: when athlete `summit` flips false → true, the cursor logic
  * clears `zones_unavailable` so `zones-backfill` retries the activities.
@@ -34,7 +34,9 @@ import {
   athleteStatsToRecords,
   gearToRecord,
 } from "./normalizer-detail.js";
+import { gearFromCatalogue } from "./gear.js";
 import { ENRICHMENT_SAFETY_PCT } from "./quota.js";
+import { gearIdList, ownedBy } from "./sql.js";
 import type { SourceAnalyticsAccess, StructuredSyncResult, TableWrite } from "@omnesis/source-sdk";
 import type { StravaClient } from "./client.js";
 import type { StravaActivitiesCursor } from "./types.js";
@@ -155,7 +157,7 @@ export async function syncAthleteRefresh(
 
   // ── Update activities with resolved gear name/brand/model ─────────
   if (gearRows.length > 0) {
-    editActivities(await activitiesWithResolvedGear(deps.analytics, gearRows), [
+    editActivities(await activitiesWithResolvedGear(deps, gearRows), [
       "gear_brand",
       "gear_model",
       "gear_name",
@@ -214,7 +216,7 @@ async function refreshProfile(
   writes.push({ tableName: "strava_athlete", records: [athleteRow] });
 
   // Summit clears stale 403 marks so zones-backfill retries those activities.
-  editActivities(await clearedZonesUnavailable(deps.analytics, Boolean(detailed.summit)), [
+  editActivities(await clearedZonesUnavailable(deps, Boolean(detailed.summit)), [
     "zones_unavailable",
     "zones_fetched_at",
   ]);
@@ -247,7 +249,7 @@ async function refreshProfile(
   }
 
   // ── Gear catalog ──────────────────────────────────────────────────
-  const gearIds = await distinctGearIds(deps.analytics);
+  const gearIds = await distinctGearIds(deps);
   // Also pick up gear surfaced by the athlete profile that no activity
   // references yet (shoes for new Strava athletes, e.g.).
   for (const g of detailed.bikes ?? []) gearIds.add(g.id);
@@ -255,11 +257,12 @@ async function refreshProfile(
   return [...gearIds];
 }
 
-async function distinctGearIds(analytics: SourceAnalyticsAccess): Promise<Set<string>> {
+async function distinctGearIds(deps: Deps): Promise<Set<string>> {
+  // Outside the `try`, so an invalid athlete fails the page rather than
+  // reading as no gear.
+  const sql = `SELECT DISTINCT gear_id FROM strava_activities WHERE ${ownedBy(deps.athleteId)} AND gear_id IS NOT NULL`;
   try {
-    const { rows } = await analytics.query(
-      "SELECT DISTINCT gear_id FROM strava_activities WHERE gear_id IS NOT NULL",
-    );
+    const { rows } = await deps.analytics.query(sql);
     return new Set(
       rows.map((r) => String((r as { gear_id: unknown }).gear_id)).filter((s) => s && s !== "null"),
     );
@@ -289,7 +292,8 @@ async function safeGetStats(
 }
 
 /**
- * Activity rows whose Summit-only zone refusal no longer applies.
+ * This athlete's activity rows whose Summit-only zone refusal no longer
+ * applies. Another account's Summit says nothing about this one's.
  *
  * A 403 from the zones endpoint marks an activity `zones_unavailable` so
  * zones-backfill stops asking. Summit lifts that refusal, but nothing upstream
@@ -301,17 +305,18 @@ async function safeGetStats(
  * with any other edits to the same activities and emits one row per activity.
  */
 async function clearedZonesUnavailable(
-  analytics: SourceAnalyticsAccess,
+  deps: Deps,
   isSummit: boolean,
 ): Promise<Record<string, unknown>[]> {
   if (!isSummit) return [];
-  const { rows } = await analytics.query(
-    "SELECT count(*) AS n FROM strava_activities WHERE zones_unavailable = TRUE",
+  const refused = `${ownedBy(deps.athleteId)} AND zones_unavailable = TRUE`;
+  const { rows } = await deps.analytics.query(
+    `SELECT count(*) AS n FROM strava_activities WHERE ${refused}`,
   );
   const n = Number((rows[0] as { n: number | bigint } | undefined)?.n ?? 0);
   if (n === 0) return [];
-  const { rows: stale } = await analytics.query(
-    "SELECT * FROM strava_activities WHERE zones_unavailable = TRUE LIMIT 5000",
+  const { rows: stale } = await deps.analytics.query(
+    `SELECT * FROM strava_activities WHERE ${refused} LIMIT 5000`,
   );
   const cleared = (stale as Record<string, unknown>[]).map((r) => ({
     ...r,
@@ -323,7 +328,8 @@ async function clearedZonesUnavailable(
 }
 
 /**
- * Activity rows carrying the brand, model and name of gear just resolved.
+ * This athlete's activity rows carrying the brand, model and name of gear
+ * just resolved.
  *
  * An activity records only its `gear_id` until the gear catalogue is walked;
  * this fills in the readable fields for the activities still missing them.
@@ -332,15 +338,15 @@ async function clearedZonesUnavailable(
  * {@link clearedZonesUnavailable}: one activity, one row.
  */
 async function activitiesWithResolvedGear(
-  analytics: SourceAnalyticsAccess,
+  deps: Deps,
   gearRows: Record<string, unknown>[],
 ): Promise<Record<string, unknown>[]> {
-  const knownIds = gearRows.map((r) => `'${String(r.id).replace(/'/g, "''")}'`).join(",");
+  const knownIds = gearIdList(gearRows.map((r) => r.id));
   if (!knownIds) return [];
-  const sql = `SELECT * FROM strava_activities WHERE gear_id IN (${knownIds}) AND (gear_brand IS NULL OR gear_model IS NULL OR gear_name IS NULL)`;
+  const sql = `SELECT * FROM strava_activities WHERE ${ownedBy(deps.athleteId)} AND gear_id IN (${knownIds}) AND (gear_brand IS NULL OR gear_model IS NULL OR gear_name IS NULL)`;
   let rows: Record<string, unknown>[];
   try {
-    const res = await analytics.query(sql);
+    const res = await deps.analytics.query(sql);
     rows = res.rows;
   } catch {
     return [];
@@ -350,11 +356,12 @@ async function activitiesWithResolvedGear(
   const updated = rows.map((row) => {
     const g = gearById.get(String(row.gear_id));
     if (!g) return row;
+    const gear = gearFromCatalogue(g);
     return {
       ...row,
-      gear_brand: g.brand_name ?? row.gear_brand,
-      gear_model: g.model_name ?? row.gear_model,
-      gear_name: (g.nickname as string | null) ?? (g.name as string | null) ?? row.gear_name,
+      gear_brand: gear.brand ?? row.gear_brand,
+      gear_model: gear.model ?? row.gear_model,
+      gear_name: gear.name ?? row.gear_name,
     };
   });
   log.info(`Propagating resolved gear to ${updated.length} activities`);

@@ -14,14 +14,16 @@ const HDR_READ_USAGE = "X-ReadRateLimit-Usage";
 export const DEFAULT_SAFETY_PCT = 0.9;
 
 /**
- * The share of the budget enrichment may spend: the four activity tiers and the
- * athlete refresh. It sits below `DEFAULT_SAFETY_PCT`, the cap the activity
- * listing keeps, so that listing new activities, which a refused enrichment
- * page falls back on, still has reads once a backlog has spent the rest.
+ * The share of the budget the four activity tiers, the athlete refresh, the
+ * daily rewalk and the edit sweep may spend: everything but the activity
+ * listing and the backfill. A first import's backfill is bound by Strava's own
+ * limit alone, and the listing by `DEFAULT_SAFETY_PCT`, which this share sits
+ * below so that listing new activities, which a refused page of any of the
+ * others falls back on, still has reads once a backlog has spent the rest.
  * Without it a backlog spends a new app's 1,000 daily reads by early morning
  * UTC, and new activities wait for midnight. The 100 reads a day between the
- * two caps cover a listing every half hour, with the daily rewalk and the edit
- * sweep beside it.
+ * two caps are the listing's alone, enough for one every half hour; the
+ * rewalk, whose cost grows with the history, draws on the share below them.
  */
 export const ENRICHMENT_SAFETY_PCT = 0.8;
 

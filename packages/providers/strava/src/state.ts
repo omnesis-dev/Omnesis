@@ -70,8 +70,9 @@ export const stravaActivitiesStateSpec: SourceStateSpec<StravaActivitiesCursor> 
    * flat shape — there is no settled-vs-partial split to reconcile the way
    * Obsidian's cycle bookkeeping needs one. Checking each field's type once
    * covers a mid-`snapshot-rewalk` page (`snapshotIds` filling up), a
-   * mid-`edit-sweep` page, every enrichment tier's pass-through cursor, and
-   * the settled `incremental` shape alike.
+   * mid-`edit-sweep` page and the phase either walk will hand back to, every
+   * enrichment tier's pass-through cursor, and the settled `incremental` shape
+   * alike.
    */
   decode(value: unknown): StravaActivitiesCursor | null {
     if (!isRecord(value)) return null;
@@ -92,6 +93,10 @@ export const stravaActivitiesStateSpec: SourceStateSpec<StravaActivitiesCursor> 
     if (!isOptionalStringArray(value.pendingGearIds)) return null;
     if (value.enrichTier !== undefined) {
       if (typeof value.enrichTier !== "string" || !TIERS.has(value.enrichTier)) return null;
+    }
+    if (value.resumePhase !== undefined) {
+      if (typeof value.resumePhase !== "string" || !STRAVA_PHASES.has(value.resumePhase))
+        return null;
     }
     return value as unknown as StravaActivitiesCursor;
   },

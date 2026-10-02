@@ -142,6 +142,7 @@ export function activityToRecord(
     end_lat: endLat,
     end_lng: endLng,
     photo_primary_url: pickPrimaryPhotoUrl(detail),
+    photo_caption: detail?.photos?.primary?.caption ?? null,
     available_zones: detail?.available_zones ? JSON.stringify(detail.available_zones) : null,
     summary_hash: opts.summaryHash ?? null,
     detail_fetched_at: opts.detailFetchedAt ?? null,
@@ -262,8 +263,11 @@ export function activityToDocument(
     // rendered. Passing either through makes the document's own clock alternate
     // between two spellings while the activity sits still.
     sourceCreatedAt: canonicalOr(toCanonicalInstant(a.start_date), a.start_date),
-    // SummaryActivity lacks an updated_at field. `start_date` is the best proxy
-    // (the activity is effectively immutable from the athlete's POV once saved).
+    // SummaryActivity has no updated_at, so this is the start time and does not
+    // move when the athlete edits the activity. Edits still land: the edit sweep
+    // re-emits a changed summary and the gateway applies a changed title, content
+    // or metadata. Only the document's source clock stays put. That also keeps
+    // relative dates in a description counted from the activity's own day.
     sourceUpdatedAt: canonicalOr(toCanonicalInstant(a.start_date), a.start_date),
   };
 }

@@ -98,12 +98,10 @@ describe("Strava activities descriptor", () => {
 
     // A sync that finds nothing new is one listing read. On a day a backlog
     // spends enrichment's share, listing lives on what lies between that
-    // share and its own cap, beside the rewalk and the sweep.
+    // share and its own cap; the rewalk and the sweep are paced from the share.
     const listingReserve =
       Math.floor(dailyReads * DEFAULT_SAFETY_PCT) - Math.floor(dailyReads * ENRICHMENT_SAFETY_PCT);
-    // Half of it, at most: the rewalk and the sweep, which grow with the
-    // account, live on the rest.
-    expect(syncsPerDay).toBeLessThanOrEqual(listingReserve / 2);
+    expect(syncsPerDay).toBeLessThanOrEqual(listingReserve);
 
     // A first import spends at most a window of enrichment reads per sync, so
     // the daily limit, not the cadence, must be what bounds it.

@@ -60,17 +60,25 @@ export interface StravaTokens {
  *   endpoint (one call returns all keys).
  * - `incremental` — fetches new activities; in-priority queues snapshot-rewalk
  *   → edit-sweep → athlete-refresh → enrich-pending → newest.
- * - `snapshot-rewalk` — 24h cadence, deletion detection.
- * - `edit-sweep` — 6h cadence; clears `*_fetched_at` stamps when a re-ingested
- *   activity's summary_hash differs.
+ * - `snapshot-rewalk` — 24h cadence: walks the whole history for deletion
+ *   detection, and writes what it reads that the store lacks or holds
+ *   differently, which the listing's `after` never returns.
+ * - `edit-sweep` — 6h cadence, the last 30 days: re-ingests an edited activity
+ *   with its `*_fetched_at` stamps cleared, and clears only the social stamp of
+ *   one whose counters alone moved.
  * - `enrich-pending` — rotates across the four enrichment tiers picking
  *   whichever has rows lacking its stamp; one tier per tick to avoid
  *   starvation under quota pressure.
  *
- * A page of `athlete-refresh`, of the four tier phases or of `enrich-pending`
- * that the rate-limit budget refuses lists new activities instead and keeps its
- * phase, so the backlog resumes where it stopped and new activities do not
- * wait for it.
+ * The two walks are not confined to `incremental`: when one is due, it
+ * interrupts whichever phase the cursor is in, the backfill apart, and hands
+ * the cursor back to it (`resumePhase`), so a backlog that holds the cursor
+ * for days does not hold back deletions and edits.
+ *
+ * A page of `athlete-refresh`, of the four tier phases, of `enrich-pending` or
+ * of either walk that the rate-limit budget refuses lists new activities
+ * instead and keeps its phase, so the work resumes where it stopped and new
+ * activities do not wait for it.
  */
 export type StravaActivitiesPhase =
   | "backfill"
@@ -159,6 +167,12 @@ export interface StravaActivitiesCursor extends SyncCursor {
    * round-robin so a backlog in one tier doesn't starve the others.
    */
   enrichTier?: EnrichmentTier;
+  /**
+   * During `snapshot-rewalk` or `edit-sweep`, the phase the walk interrupted,
+   * which it hands the cursor back to when it ends. Set on entry; cleared on
+   * exit.
+   */
+  resumePhase?: StravaActivitiesPhase;
 }
 
 export const STRAVA_PHASES: ReadonlySet<string> = new Set<StravaActivitiesPhase>([
@@ -391,8 +405,8 @@ export interface StravaPhotosSummary {
 }
 
 export interface StravaPrimaryPhoto {
-  unique_id: string;
-  source: number;
+  unique_id?: string;
+  source?: number;
   urls?: Record<string, string>;
   caption?: string | null;
   uploaded_at?: string;

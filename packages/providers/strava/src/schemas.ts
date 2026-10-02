@@ -288,6 +288,12 @@ export const stravaActivitiesSchema: AnalyticsTableSchema = {
       nullable: true,
     },
     {
+      name: "photo_caption",
+      type: "VARCHAR",
+      description: "Caption of the primary photo, if any",
+      nullable: true,
+    },
+    {
       name: "available_zones",
       type: "JSON",
       description: "Zone types available for this activity (heartrate, power)",

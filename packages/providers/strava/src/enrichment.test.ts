@@ -18,6 +18,8 @@ import {
   syncStreamsBackfill,
   syncEnrichPending,
 } from "./enrichment.js";
+import { activityToDocument, activityToRecord } from "./normalizer.js";
+import { computeSummaryHash } from "./normalizer-detail.js";
 import type { SourceAnalyticsAccess } from "@omnesis/source-sdk";
 import type { ProviderId, SourceId } from "@omnesis/types";
 import type { QuotaPair } from "./quota.js";
@@ -464,6 +466,28 @@ describe("syncSocialBackfill", () => {
     expect(result.documents).toHaveLength(0);
     expect(result.cursor.pendingSocialStamps).toBeUndefined();
   });
+
+  test("the ids a cursor carries reach its reads as numerals only", async () => {
+    // The cursor is stored state, not SQL this file wrote, so a carried id is
+    // coerced to the integer Strava assigned rather than spliced in as given.
+    const { gateway } = makeMockGateway([baseRow]);
+    await syncSocialBackfill(
+      { phase: "social-backfill", pendingSocialStamps: ["12345", "12345') OR ('1' = '1"] },
+      {
+        analytics: gateway,
+        client: makeFetchedClient({}),
+        sourceId: SOURCE_ID,
+        providerId: PROVIDER_ID,
+        athleteId: 99,
+      },
+    );
+    const lists = vi
+      .mocked(gateway.query)
+      .mock.calls.flatMap(([sql]) => [...sql.matchAll(/\bIN \(([^)]*)\)/g)].map((m) => m[1]));
+    // The carried marks, the selection that leaves them out, and the stored
+    // best efforts of the activity it selects.
+    expect(lists).toEqual(["12345", "12345", "12345"]);
+  });
 });
 
 // ── Tier 3 — zones-backfill ──────────────────────────────────────
@@ -828,7 +852,12 @@ describe("a page the budget refuses gives way to listing new activities", () => 
     used: QuotaPair,
     listings: StravaSummaryActivity[][] = [[RIDE]],
     throttled: (path: string) => boolean = () => false,
-  ): { source: StravaActivitiesSource; urls: URL[]; paths: () => string[] } {
+  ): {
+    source: StravaActivitiesSource;
+    gateway: SourceAnalyticsAccess;
+    urls: URL[];
+    paths: () => string[];
+  } {
     const rows = Array.from({ length: pending }, (_, i) => ({ ...baseRow, id: 12345 + i }));
     const { gateway } = makeMockGateway(rows);
     const urls: URL[] = [];
@@ -873,7 +902,7 @@ describe("a page the budget refuses gives way to listing new activities", () => 
       gateway,
     );
     const paths = () => urls.map((url) => url.pathname.replace("/api/v3", ""));
-    return { source, urls, paths };
+    return { source, gateway, urls, paths };
   }
 
   /** An `incremental` cursor with nothing time-gated due. */
@@ -931,10 +960,7 @@ describe("a page the budget refuses gives way to listing new activities", () => 
       path.startsWith("/activities/"),
     );
 
-    const sync = source.syncStructured({
-      phase: "detail-backfill",
-      lastActivityTimestamp: HIGH_WATER,
-    });
+    const sync = source.syncStructured({ ...settled(), phase: "detail-backfill" });
 
     await expect(sync).rejects.toBeInstanceOf(StravaRateLimitError);
     await expect(sync).rejects.not.toBeInstanceOf(StravaQuotaDeferral);
@@ -942,6 +968,112 @@ describe("a page the budget refuses gives way to listing new activities", () => 
     await expect(sync).rejects.toMatchObject({ kind: "rate-limit", retryAfterMs: 833 * 60_000 });
     expect(paths()).toContain("/activities/12345");
     expect(paths()).not.toContain("/athlete/activities");
+  });
+
+  test("a due rewalk that enrichment's share cannot cover lists new activities instead", async () => {
+    // The walk costs one read per hundred activities, so its cost grows with
+    // the history: drawn from the listing's reads, it would spend them.
+    const { source, urls } = starvedSource(3, pastEnrichmentsShare);
+    const due = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+
+    const result = await source.syncStructured({ ...settled(), lastSnapshotAt: due });
+
+    expect(urls.map((url) => url.searchParams.has("before"))).toEqual([false]);
+    expect(rowsFor(result, "strava_activities").map((row) => row.id)).toEqual([23456]);
+    // Still due, so the next sync tries it again.
+    expect(result.cursor).toMatchObject({ phase: "incremental", lastSnapshotAt: due });
+  });
+
+  test("a refused rewalk page lists new activities and keeps the walk's place", async () => {
+    const { source, urls } = starvedSource(3, pastEnrichmentsShare);
+
+    const result = await source.syncStructured({
+      phase: "snapshot-rewalk",
+      resumePhase: "detail-backfill",
+      snapshotBefore: unix("2026-03-04T06:00:00Z"),
+      snapshotPage: 5,
+      snapshotIds: ["1", "2"],
+      lastActivityTimestamp: HIGH_WATER,
+    });
+
+    expect(urls.map((url) => url.searchParams.has("before"))).toEqual([false]);
+    expect(rowsFor(result, "strava_activities").map((row) => row.id)).toEqual([23456]);
+    expect(result.presentExternalIds).toBeUndefined();
+    // The listing's activity started after the walk's `before`, so no page of
+    // the walk names it: the walk names it here, or its snapshot would leave
+    // it out.
+    expect(result.cursor).toMatchObject({
+      phase: "snapshot-rewalk",
+      resumePhase: "detail-backfill",
+      snapshotPage: 5,
+      snapshotIds: ["1", "2", "23456"],
+      lastActivityTimestamp: unix(RIDE.start_date),
+    });
+  });
+
+  test("a refused edit sweep page lists new activities and keeps the sweep's place", async () => {
+    const { source, urls } = starvedSource(3, pastEnrichmentsShare);
+    const sweptFrom = unix("2026-02-02T10:00:00Z");
+
+    const result = await source.syncStructured({
+      phase: "edit-sweep",
+      editSweepAfter: sweptFrom,
+      editSweepPage: 2,
+      lastActivityTimestamp: HIGH_WATER,
+    });
+
+    expect(urls.map((url) => Number(url.searchParams.get("after")))).toEqual([HIGH_WATER]);
+    expect(result.cursor).toMatchObject({
+      phase: "edit-sweep",
+      editSweepAfter: sweptFrom,
+      editSweepPage: 2,
+    });
+  });
+
+  test("a due walk the budget refuses holds back neither the backlog's place nor the listing", async () => {
+    const { source, paths } = starvedSource(3, pastEnrichmentsShare);
+    const due = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+
+    const result = await source.syncStructured({
+      phase: "detail-backfill",
+      lastActivityTimestamp: HIGH_WATER,
+      lastSnapshotAt: due,
+      lastEditSweepAt: due,
+    });
+
+    expect(paths()).toEqual(["/athlete/activities"]);
+    expect(rowsFor(result, "strava_activities").map((row) => row.id)).toEqual([23456]);
+    expect(result.cursor).toMatchObject({
+      phase: "detail-backfill",
+      lastSnapshotAt: due,
+      lastEditSweepAt: due,
+    });
+    expect(result.cursor.resumePhase).toBeUndefined();
+  });
+
+  test("due walks interrupt a backlog once each, then hand it back: they cannot spin", async () => {
+    // A backlog that never drains: every page finds the same activities
+    // pending. With the budget to spare, the rewalk and the sweep each run
+    // once and stamp their cadence, and every page after them is the backlog's.
+    const { source, urls, paths } = starvedSource(3, { short: 0, daily: 0 }, [[RIDE], []]);
+
+    let cursor: StravaActivitiesCursor = {
+      phase: "detail-backfill",
+      lastActivityTimestamp: HIGH_WATER,
+    };
+    const phases: string[] = [];
+    for (let page = 0; page < 8; page++) {
+      cursor = (await source.syncStructured(cursor)).cursor;
+      phases.push(cursor.phase);
+    }
+
+    const listings = urls.filter((url) => url.pathname.endsWith("/athlete/activities"));
+    expect(listings.map((url) => url.searchParams.has("before"))).toEqual([true, false]);
+    expect(phases).toEqual(Array(8).fill("detail-backfill"));
+    expect(cursor.lastSnapshotAt).toBeDefined();
+    expect(cursor.lastEditSweepAt).toBeDefined();
+    // Three detail pages, each followed by its marks.
+    expect(paths().filter((path) => path === "/activities/12345")).toHaveLength(3);
   });
 
   test("the steady-state chain lists once when its enrichment is refused", async () => {
@@ -964,6 +1096,21 @@ describe("a page the budget refuses gives way to listing new activities", () => 
     expect(result.cursor.phase).toBe("incremental");
     // Still due, so the next sync tries it again.
     expect(result.cursor.lastAthleteRefreshAt).toBeUndefined();
+  });
+
+  test("a listing before the first refresh leaves the gear catalogue unread", async () => {
+    // The refresh creates the catalogue, so there is none to read yet, and the
+    // gateway logs a read of a table the source has not created as a refused
+    // grant. The detail tier names the gear once the refresh has run.
+    const { source, gateway } = starvedSource(0, pastEnrichmentsShare, [
+      [{ ...RIDE, gear_id: "b5001" }],
+    ]);
+
+    const result = await source.syncStructured({ ...settled(), lastAthleteRefreshAt: undefined });
+
+    expect(rowsFor(result, "strava_activities").map((row) => row.id)).toEqual([23456]);
+    const reads = vi.mocked(gateway.query).mock.calls.map(([sql]) => sql);
+    expect(reads.filter((sql) => sql.includes("strava_gear"))).toEqual([]);
   });
 
   test("when not even a listing fits, the source waits for one call, not for a page", async () => {
@@ -1051,5 +1198,388 @@ describe("StravaClient — 401 distinguishes auth-failure from missing scope", a
     await expect(client.getAthleteZones()).rejects.toBeInstanceOf(StravaScopeError);
     expect(calls).toBe(2);
     expect(StravaAuthError).toBeDefined(); // sanity
+  });
+});
+
+// ── Every tier keeps the others' part of the document ────────────
+
+describe("a tier re-rendering an activity's document", () => {
+  /**
+   * An analytics handle that answers by table: `activities` for
+   * `strava_activities`, and `children` for the child tables a tier reads to
+   * render the parts it did not fetch. A child table without rows here does
+   * not exist yet, as before any page has written to it.
+   */
+  function storedGateway(
+    activities: Record<string, unknown>[],
+    children: Record<string, Record<string, unknown>[]> = {},
+  ): SourceAnalyticsAccess {
+    return {
+      query: vi.fn((sql: string) => {
+        if (/count\(\*\)/i.test(sql)) {
+          return Promise.resolve({ columns: ["n"], rows: [{ n: activities.length }] });
+        }
+        const table = /FROM (\w+)/i.exec(sql)?.[1];
+        if (table === undefined || table === "strava_activities") {
+          return Promise.resolve({ columns: ["id"], rows: activities });
+        }
+        const rows = children[table];
+        if (rows === undefined) {
+          return Promise.reject(new Error(`Table with name ${table} does not exist!`));
+        }
+        return Promise.resolve({ columns: [], rows });
+      }),
+    };
+  }
+
+  const detailed = {
+    ...baseRow,
+    description: "Tempo along the river path.",
+    calories: 640,
+    device_name: "Example Watch 3",
+    photo_primary_url: "https://example.com/photos/finish.jpg",
+    photo_caption: "Finish line",
+    detail_fetched_at: "2026-05-04T08:00:00Z",
+  };
+
+  test("a social page keeps the description and top results a detail page stored", async () => {
+    const analytics = storedGateway([detailed], {
+      strava_activity_best_efforts: [
+        {
+          id: 51,
+          activity_id: 12345,
+          name: "1K",
+          distance_m: 1000,
+          elapsed_time_seconds: 290,
+          moving_time_seconds: 290,
+          pr_rank: 1,
+        },
+      ],
+    });
+    const client = makeFetchedClient({
+      "/activities/12345/comments": [
+        {
+          id: 1,
+          activity_id: 12345,
+          text: "Strong finish!",
+          created_at: "2026-05-03T11:00:00Z",
+          athlete: { firstname: "Maya", lastname: "Reeves" },
+        },
+      ],
+      "/activities/12345/kudos": [{ firstname: "Jamie", lastname: "Lopez" }],
+    });
+    const { result } = await syncSocialBackfill(
+      { phase: "social-backfill" },
+      { analytics, client, sourceId: SOURCE_ID, providerId: PROVIDER_ID, athleteId: 99 },
+    );
+
+    const [doc] = result.documents!;
+    expect(doc!.content).toContain("Tempo along the river path.");
+    expect(doc!.content).toContain("1K: 4m 50s (PR)");
+    expect(doc!.content).toContain("Finish line");
+    expect(doc!.content).toContain("Strong finish!");
+    expect(doc!.metadata.extra).toMatchObject({
+      description: "Tempo along the river path.",
+      calories: 640,
+      deviceName: "Example Watch 3",
+      photoUrls: ["https://example.com/photos/finish.jpg"],
+    });
+  });
+
+  test("a detail page keeps the comments and kudoers a social page stored", async () => {
+    const analytics = storedGateway([baseRow], {
+      strava_activity_comments: [
+        {
+          id: 1,
+          activity_id: 12345,
+          athlete_id: 501,
+          athlete_firstname: "Maya",
+          athlete_lastname: "Reeves",
+          text: "Strong finish!",
+          created_at: "2026-05-03T11:00:00Z",
+        },
+      ],
+      strava_activity_kudos: [
+        { activity_id: 12345, position: 1, athlete_id: 502, firstname: "Jamie", lastname: "Lopez" },
+      ],
+    });
+    const detail: StravaDetailedActivity = {
+      id: 12345,
+      athlete: { id: 99 },
+      name: "Morning Run",
+      distance: 21530,
+      moving_time: 6635,
+      elapsed_time: 6640,
+      total_elevation_gain: 131,
+      sport_type: "Run",
+      start_date: "2026-05-03T09:31:00Z",
+      start_date_local: "2026-05-03T10:31:00Z",
+      description: "Felt great today.",
+    };
+    const { result } = await syncDetailBackfill(
+      { phase: "detail-backfill" },
+      {
+        analytics,
+        client: makeFetchedClient({ "/activities/12345": detail }),
+        sourceId: SOURCE_ID,
+        providerId: PROVIDER_ID,
+        athleteId: 99,
+      },
+    );
+
+    const [doc] = result.documents!;
+    expect(doc!.content).toContain("Felt great today.");
+    expect(doc!.content).toContain("Strong finish!");
+    expect(doc!.content).toContain("Kudos from: Jamie Lopez");
+    expect(doc!.metadata.people).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: "participant", name: "Maya Reeves" }),
+        expect.objectContaining({ role: "mentioned", name: "Jamie Lopez" }),
+      ]),
+    );
+  });
+
+  test("a detail page renders before any social page has created its tables", async () => {
+    const { result } = await syncDetailBackfill(
+      { phase: "detail-backfill" },
+      {
+        analytics: storedGateway([baseRow]),
+        client: makeFetchedClient({
+          "/activities/12345": { ...baseRow, athlete: { id: 99 }, description: "Easy spin." },
+        }),
+        sourceId: SOURCE_ID,
+        providerId: PROVIDER_ID,
+        athleteId: 99,
+      },
+    );
+    expect(result.documents![0]!.content).toContain("Easy spin.");
+  });
+
+  test("a detail page keeps the marks the other tiers left, and stores the photo caption", async () => {
+    const marks = {
+      social_fetched_at: "2026-05-04T08:00:00Z",
+      zones_fetched_at: "2026-05-04T08:05:00Z",
+      zones_unavailable: true,
+      streams_fetched_at: "2026-05-04T08:10:00Z",
+    };
+    const detail: StravaDetailedActivity = {
+      id: 12345,
+      athlete: { id: 99 },
+      name: "Morning Run",
+      distance: 21530,
+      moving_time: 6635,
+      elapsed_time: 6640,
+      total_elevation_gain: 131,
+      sport_type: "Run",
+      start_date: "2026-05-03T09:31:00Z",
+      start_date_local: "2026-05-03T10:31:00Z",
+      photos: { primary: { urls: { "600": "https://example.com/p.jpg" }, caption: "Summit" } },
+    };
+    const { result } = await syncDetailBackfill(
+      { phase: "detail-backfill" },
+      {
+        analytics: storedGateway([{ ...baseRow, ...marks }]),
+        client: makeFetchedClient({ "/activities/12345": detail }),
+        sourceId: SOURCE_ID,
+        providerId: PROVIDER_ID,
+        athleteId: 99,
+      },
+    );
+    expect(rowsFor(result, "strava_activities")[0]).toMatchObject({
+      ...marks,
+      detail_fetched_at: null,
+      photo_caption: "Summit",
+    });
+  });
+
+  /** The listing's summary of the activity, and the row a listing page stores for it. */
+  const listed: StravaSummaryActivity = {
+    id: 12345,
+    athlete: { id: 99 },
+    name: "Morning Run",
+    distance: 10400,
+    moving_time: 3300,
+    elapsed_time: 3340,
+    total_elevation_gain: 40,
+    type: "Run",
+    sport_type: "Run",
+    start_date: "2026-05-03T09:31:00Z",
+    start_date_local: "2026-05-03T10:31:00Z",
+    kudos_count: 0,
+    comment_count: 0,
+    pr_count: 0,
+    achievement_count: 0,
+  };
+  const listedRow = (summary: StravaSummaryActivity = listed) =>
+    activityToRecord(summary, { summaryHash: computeSummaryHash(summary) });
+  const detailOf = (overrides: Partial<StravaDetailedActivity> = {}): StravaDetailedActivity => ({
+    ...listed,
+    ...overrides,
+  });
+  const detailPage = (analytics: SourceAnalyticsAccess, detail: StravaDetailedActivity) =>
+    syncDetailBackfill(
+      { phase: "detail-backfill" },
+      {
+        analytics,
+        client: makeFetchedClient({ "/activities/12345": detail }),
+        sourceId: SOURCE_ID,
+        providerId: PROVIDER_ID,
+        athleteId: 99,
+      },
+    );
+  const catalogued = {
+    id: "g77",
+    athlete_id: 99,
+    name: "Trail shoe",
+    nickname: null,
+    brand_name: "Northstar",
+    model_name: "T2",
+  };
+
+  test("a detail page leaves what the walks compare to the listing, its counters among it", async () => {
+    // Uploaded, listed straight away, then congratulated and cropped before
+    // the detail was fetched. The crop, like a rename, is the edit sweep's:
+    // the sweep compares the row with each listing, so a row that took the
+    // detail's distance would read as edited once the crop was undone, or
+    // never match where the two responses spell one value differently. The
+    // counters are a walk's too: one that finds them moved sends the activity
+    // back for the comments and kudoers behind them, and a row that took the
+    // detail's would leave it nothing to find.
+    const { result } = await detailPage(
+      storedGateway([listedRow()]),
+      detailOf({
+        distance: 10000,
+        moving_time: 3200,
+        elapsed_time: 3240,
+        kudos_count: 6,
+        comment_count: 2,
+        pr_count: 1,
+        achievement_count: 3,
+        // Spelled by the detail where the listing left it out.
+        workout_type: 0,
+      }),
+    );
+
+    expect(rowsFor(result, "strava_activities")[0]).toMatchObject({
+      distance_m: 10400,
+      moving_time_seconds: 3300,
+      elapsed_time_seconds: 3340,
+      kudos_count: 0,
+      comment_count: 0,
+      pr_count: 0,
+      achievement_count: 0,
+      workout_type: null,
+      summary_hash: computeSummaryHash(listed),
+    });
+    const [doc] = result.documents!;
+    expect(doc!.content).toContain("**Distance:** 10.40 km");
+    expect(doc!.content).not.toContain("kudos");
+    expect(doc!.metadata.extra).toMatchObject({ kudosCount: 0, commentCount: 0, prCount: 0 });
+    // And its start reads as the listing's document reads it.
+    const fromListing = activityToDocument(listed, PROVIDER_ID, SOURCE_ID);
+    const started = (content: string) => /\*\*Started:\*\* .*/.exec(content)?.[0];
+    expect(started(doc!.content)).toBe("**Started:** 2026-05-03 10:31:00");
+    expect(started(doc!.content)).toBe(started(fromListing.content));
+  });
+
+  test("a detail page names gear the catalogue has yet to reach by the name the detail gives it", async () => {
+    const { result } = await detailPage(
+      storedGateway([listedRow({ ...listed, gear_id: "b123" })]),
+      detailOf({ gear_id: "b123", gear: { id: "b123", name: "Gravel bike" } }),
+    );
+
+    const [doc] = result.documents!;
+    expect(doc!.content).toContain("**Gear:** Gravel bike");
+    expect(doc!.content).not.toContain("**Gear ID:**");
+    expect(doc!.metadata.extra?.gearName).toBe("Gravel bike");
+    expect(rowsFor(result, "strava_activities")[0]).toMatchObject({
+      gear_id: "b123",
+      gear_name: "Gravel bike",
+    });
+  });
+
+  test("a detail page names catalogued gear as the refresh names it", async () => {
+    const { result } = await detailPage(
+      storedGateway([listedRow({ ...listed, gear_id: "g77" })], { strava_gear: [catalogued] }),
+      detailOf({ gear_id: "g77", gear: { id: "g77", name: "Trail shoe" } }),
+    );
+
+    expect(result.documents![0]!.content).toContain("**Gear:** Northstar T2");
+    expect(rowsFor(result, "strava_activities")[0]).toMatchObject({
+      gear_brand: "Northstar",
+      gear_model: "T2",
+      gear_name: "Trail shoe",
+    });
+  });
+
+  test("a social page names catalogued gear and keeps Strava's counters", async () => {
+    const analytics = storedGateway(
+      [listedRow({ ...listed, gear_id: "g77", kudos_count: 3, comment_count: 2 })],
+      { strava_gear: [catalogued] },
+    );
+    const client = makeFetchedClient({
+      "/activities/12345/comments": [
+        {
+          id: 1,
+          activity_id: 12345,
+          text: "Strong finish!",
+          created_at: "2026-05-03T11:00:00Z",
+          athlete: { firstname: "Maya", lastname: "Reeves" },
+        },
+        {
+          id: 2,
+          activity_id: 12345,
+          text: "Nice pace",
+          created_at: "2026-05-03T11:05:00Z",
+          athlete: { firstname: "David", lastname: "Lin" },
+        },
+      ],
+      "/activities/12345/kudos": [{ firstname: "Jamie", lastname: "Lopez" }],
+    });
+    const { result } = await syncSocialBackfill(
+      { phase: "social-backfill" },
+      { analytics, client, sourceId: SOURCE_ID, providerId: PROVIDER_ID, athleteId: 99 },
+    );
+
+    const [doc] = result.documents!;
+    expect(doc!.content).toContain("**Gear:** Northstar T2");
+    expect(doc!.content).toContain("**Comments (2):**");
+    // The counters are the row's, Strava's own: the edit sweep and the rewalk
+    // compare them with each listing and send the activity back here when one
+    // moves, so a count taken from the lists would read as moved on every
+    // sweep wherever Strava counts what it does not list.
+    expect(doc!.content).toContain("_3 kudos · 2 comments_");
+    expect(doc!.metadata.extra).toMatchObject({ kudosCount: 3, commentCount: 2 });
+    // Nothing for the row on this page: its mark is the next page's.
+    expect(rowsFor(result, "strava_activities")).toEqual([]);
+    expect(result.cursor.pendingSocialStamps).toEqual(["12345"]);
+  });
+
+  test("a social page keeps Strava's counter for a list cut off at the page limit", async () => {
+    // The walk stops after five full pages, so it has not seen every kudoer,
+    // and the number it holds is not the activity's count.
+    const fullPage = Array.from({ length: 200 }, (_, i) => ({
+      firstname: "Jamie",
+      lastname: `Lopez ${i}`,
+    }));
+    const { result } = await syncSocialBackfill(
+      { phase: "social-backfill" },
+      {
+        analytics: storedGateway([listedRow({ ...listed, kudos_count: 1200 })]),
+        client: makeFetchedClient({
+          "/activities/12345/comments": [],
+          "/activities/12345/kudos": fullPage,
+        }),
+        sourceId: SOURCE_ID,
+        providerId: PROVIDER_ID,
+        athleteId: 99,
+      },
+    );
+
+    expect(rowsFor(result, "strava_activity_kudos")).toHaveLength(1000);
+    expect(rowsFor(result, "strava_activities")).toEqual([]);
+    const [doc] = result.documents!;
+    expect(doc!.content).toContain("_1200 kudos_");
+    expect(doc!.metadata.extra).toMatchObject({ kudosCount: 1200 });
   });
 });

@@ -4,11 +4,11 @@
 /**
  * Per-tier enrichment phases for Strava activities.
  *
- * Each phase pulls a small page of pending activity IDs from the analytics
- * DB (via the analytics's read primitive), calls the corresponding Strava
- * endpoint per ID, and emits records to the relevant child tables plus
- * UPDATE rows on `strava_activities` that stamp the appropriate
- * `<tier>_fetched_at` column.
+ * Each phase pulls a small page of this account's pending activities from
+ * the analytics DB (via the analytics's read primitive), calls the
+ * corresponding Strava endpoint per ID, and emits records to the relevant
+ * child tables plus UPDATE rows on `strava_activities` that stamp the
+ * appropriate `<tier>_fetched_at` column.
  *
  * "Pending" is determined per tier by `<tier>_fetched_at IS NULL` (with
  * `zones_unavailable IS NOT TRUE` excluded from zones-backfill so Summit-only
@@ -38,6 +38,7 @@ import {
   kudoToRecord,
   streamSetToRecord,
   computeSummaryHash,
+  withListedComparedFields,
 } from "./normalizer-detail.js";
 import {
   activityToRecord,
@@ -45,6 +46,8 @@ import {
   canonicalOr,
   type ResolvedGear,
 } from "./normalizer.js";
+import { gearDisplayName, storedGear } from "./gear.js";
+import { activityIdList, ownedBy } from "./sql.js";
 import type { SourceAnalyticsAccess, StructuredSyncResult } from "@omnesis/source-sdk";
 import type { DocumentInput, ProviderId, SourceId } from "@omnesis/types";
 import type { StravaClient } from "./client.js";
@@ -52,6 +55,7 @@ import type {
   StravaActivitiesCursor,
   StravaDetailedActivity,
   StravaSummaryActivity,
+  StravaBestEffort,
   StravaComment,
   StravaSummaryAthlete,
   EnrichmentTier,
@@ -95,9 +99,11 @@ interface PhaseResult {
 /**
  * Fetches DetailedActivity for up to ENRICHMENT_PAGE_SIZE activities lacking
  * `detail_fetched_at`. For each one:
- * - Updates the `strava_activities` row with description/calories/etc.,
- *   re-renders the document body, stamps `detail_fetched_at`.
- * - Emits records to `strava_activity_splits`, `_best_efforts`, `_laps`,
+ * - Rewrites the `strava_activities` row from the detail (description,
+ *   calories and the rest; the fields the walks compare stay the listing's,
+ *   see `summaryFromDetail`) and re-renders the document. The next page
+ *   stamps `detail_fetched_at` (`pendingDetailStamps`).
+ * - Replaces its rows in `strava_activity_splits`, `_best_efforts`, `_laps`,
  *   `_segment_efforts`.
  *
  * Cursor stays in `detail-backfill` until the analytics DB reports zero
@@ -110,7 +116,7 @@ export async function syncDetailBackfill(
   // Only a returned cursor proves the child rows AND document committed.
   // Flush its bounded acknowledgements before fetching any new activities.
   if (cur.pendingDetailStamps?.length) {
-    const rows = await rowsByIds(deps.analytics, cur.pendingDetailStamps);
+    const rows = await rowsByIds(deps, cur.pendingDetailStamps);
     return {
       result: {
         analytics: [
@@ -126,11 +132,7 @@ export async function syncDetailBackfill(
       },
     };
   }
-  const pending = await pendingIds(
-    deps.analytics,
-    "detail_fetched_at IS NULL",
-    ENRICHMENT_PAGE_SIZE,
-  );
+  const pending = await pendingIds(deps, tierWhere("detail"), ENRICHMENT_PAGE_SIZE);
   if (pending.length === 0) {
     log.info("Detail-backfill complete; transitioning to social-backfill");
     return {
@@ -149,6 +151,26 @@ export async function syncDetailBackfill(
   const segmentEffortRows: Record<string, unknown>[] = [];
   const documents: DocumentInput[] = [];
   const pendingDetailStamps: string[] = [];
+  // The document is replaced whole, so it carries the comments and kudoers a
+  // social page stored, or this page would remove them.
+  const ids = pending.map((row) => row.id);
+  const storedComments = await storedChildRows(
+    deps.analytics,
+    "strava_activity_comments",
+    ids,
+    "created_at",
+  );
+  const storedKudoers = await storedChildRows(
+    deps.analytics,
+    "strava_activity_kudos",
+    ids,
+    "position",
+  );
+  const catalogue = await storedGear(
+    deps.analytics,
+    deps.athleteId,
+    pending.map((row) => row.gear_id),
+  );
 
   for (const row of pending) {
     const id = Number(row.id);
@@ -169,14 +191,31 @@ export async function syncDetailBackfill(
       throw err;
     }
 
-    const summary = rowToSummary(row, detail);
-    const summaryHash = computeSummaryHash(summary);
+    const stored = rowToSummary(row);
+    const summary = summaryFromDetail(stored, detail);
+    // The hash is the one the row holds, which the listing stored, and the
+    // fields it covers stay the listing's (see `summaryFromDetail`). The edit
+    // sweep compares its listings with it, and the detail endpoint is not the
+    // listing: a hashed field the two spelled differently would read as an
+    // edit on every sweep, and each sweep would send the activity back here.
+    // Read rather than recomputed, so a replay of this page, which reads back
+    // the row it wrote, cannot move it either. Only a row stored before
+    // listings kept a hash is given one here.
+    const summaryHash =
+      (row.summary_hash as string | null | undefined) ?? computeSummaryHash(stored);
+    const gear = gearFor(summary.gear_id, catalogue, row, detail);
 
     records.push(
       activityToRecord(summary, {
         detail,
-        gear: gearFromRow(row),
+        gear,
         summaryHash,
+        // This page marks detail only. The other tiers' marks stand, or an
+        // activity they finished would be fetched by each of them again.
+        socialFetchedAt: (row.social_fetched_at as string | null | undefined) ?? null,
+        zonesFetchedAt: (row.zones_fetched_at as string | null | undefined) ?? null,
+        zonesUnavailable: (row.zones_unavailable as boolean | null | undefined) ?? null,
+        streamsFetchedAt: (row.streams_fetched_at as string | null | undefined) ?? null,
       }),
     );
     pendingDetailStamps.push(String(id));
@@ -189,8 +228,10 @@ export async function syncDetailBackfill(
     documents.push(
       activityToDocument(summary, deps.providerId, deps.sourceId, {
         detail,
+        comments: (storedComments.get(String(id)) ?? []).map(commentFromRow),
+        kudoers: (storedKudoers.get(String(id)) ?? []).map(kudoerFromRow),
         athleteName: deps.athleteName,
-        gearName: gearNameFromRow(row),
+        gearName: gearDisplayName(gear),
       }),
     );
   }
@@ -237,17 +278,18 @@ export async function syncSocialBackfill(
   // documents and cursor have committed. Re-read rather than carried, because
   // the mark rewrites the whole row and a cursor may not grow with the corpus.
   const carried = cur.pendingSocialStamps ?? [];
-  const carriedRows = carried.length > 0 ? await rowsByIds(deps.analytics, carried) : [];
+  const carriedRows = carried.length > 0 ? await rowsByIds(deps, carried) : [];
   const carriedStamps = carriedRows.map((row) =>
     stampOnlyRow(row, { social_fetched_at: new Date().toISOString() }),
   );
 
+  // Excluded because their mark is in this very page and has not landed yet.
+  // Only here, not in `tierWhere`: the rotation's count has to keep seeing
+  // them until it lands, or enrich-pending would not come back to write it.
+  const carriedIds = activityIdList(carried);
   const pending = await pendingIds(
-    deps.analytics,
-    // Excluded because their mark is in this very page and has not landed yet.
-    carried.length > 0
-      ? `social_fetched_at IS NULL AND id NOT IN (${carried.map((id) => `'${id}'`).join(", ")})`
-      : "social_fetched_at IS NULL",
+    deps,
+    carriedIds ? `${tierWhere("social")} AND id NOT IN (${carriedIds})` : tierWhere("social"),
     ENRICHMENT_PAGE_SIZE,
   );
   if (pending.length === 0) {
@@ -274,13 +316,24 @@ export async function syncSocialBackfill(
   const commentRows: Record<string, unknown>[] = [];
   const kudoRows: Record<string, unknown>[] = [];
   const documents: DocumentInput[] = [];
-  // Activities whose kudoer list we actually read. An activity we could not
-  // fetch is not on it, so its stored kudoers are left alone rather than
-  // cleared in favour of nothing.
   // The activities this pass re-read in full. Both child tables are replaced
   // for these and only these, so an activity whose fetch failed keeps the
   // rows it already had.
   const refetched: string[] = [];
+  // The document is replaced whole, so it carries the detail a detail page
+  // stored, or this page would remove the description, the top results and
+  // the rest of it.
+  const storedEfforts = await storedChildRows(
+    deps.analytics,
+    "strava_activity_best_efforts",
+    pending.map((row) => row.id),
+    "distance_m",
+  );
+  const catalogue = await storedGear(
+    deps.analytics,
+    deps.athleteId,
+    pending.map((row) => row.gear_id),
+  );
 
   for (const row of pending) {
     const id = Number(row.id);
@@ -297,19 +350,25 @@ export async function syncSocialBackfill(
       }
       throw err;
     }
-
     for (const c of comments) commentRows.push(commentToRecord({ ...c, activity_id: id }));
     kudoers.forEach((k, idx) => kudoRows.push(kudoToRecord(k, id, idx + 1)));
     refetched.push(String(id));
 
-    // Re-render the document with the freshly-fetched comments + kudoers.
-    const summary = rowToSummary(row);
+    // Re-render the document with the freshly-fetched comments + kudoers. Its
+    // counters stay Strava's own, as the row holds them, rather than the length
+    // of these lists: the edit sweep and the rewalk compare the row's counters
+    // with every listing's and send the activity back here when one moves, so
+    // a count taken from a list that Strava's counter disagrees with — one cut
+    // off at the page limit, or one leaving out what Strava counts but does not
+    // show — would read as moved on every sweep, and fetch both lists each time.
+    const detail = storedDetail(row, (storedEfforts.get(String(id)) ?? []).map(bestEffortFromRow));
     documents.push(
-      activityToDocument(summary, deps.providerId, deps.sourceId, {
+      activityToDocument(rowToSummary(row), deps.providerId, deps.sourceId, {
+        detail,
         comments,
         kudoers,
         athleteName: deps.athleteName,
-        gearName: gearNameFromRow(row),
+        gearName: gearDisplayName(gearFor(row.gear_id, catalogue, row)),
       }),
     );
   }
@@ -318,7 +377,7 @@ export async function syncSocialBackfill(
     `Social-backfill: enriched ${pending.length} activities (${commentRows.length} comments, ${kudoRows.length} kudos)`,
   );
 
-  const marks = [...carriedStamps, ...stampRows];
+  const activityRows = [...carriedStamps, ...stampRows];
 
   return {
     result: {
@@ -335,7 +394,9 @@ export async function syncSocialBackfill(
       // the crash comes, the document never stores, and the retry filter skips
       // the activity forever because it looks finished.
       analytics: [
-        ...(marks.length > 0 ? [{ tableName: "strava_activities", records: marks }] : []),
+        ...(activityRows.length > 0
+          ? [{ tableName: "strava_activities", records: activityRows }]
+          : []),
         // Comments are re-read in full on every pass, so the stored set has to
         // be replaced rather than merged into: a comment deleted upstream is
         // simply missing from the new list, and merging would keep it forever.
@@ -372,11 +433,7 @@ export async function syncZonesBackfill(
   cur: StravaActivitiesCursor,
   deps: PhaseDeps,
 ): Promise<PhaseResult> {
-  const pending = await pendingIds(
-    deps.analytics,
-    "zones_fetched_at IS NULL AND (zones_unavailable IS NULL OR zones_unavailable = FALSE)",
-    ENRICHMENT_PAGE_SIZE,
-  );
+  const pending = await pendingIds(deps, tierWhere("zones"), ENRICHMENT_PAGE_SIZE);
   if (pending.length === 0) {
     log.info("Zones-backfill complete; transitioning to streams-backfill");
     return { result: structuredEmpty({ ...cur, phase: "streams-backfill" }) };
@@ -442,11 +499,7 @@ export async function syncStreamsBackfill(
   cur: StravaActivitiesCursor,
   deps: PhaseDeps,
 ): Promise<PhaseResult> {
-  const pending = await pendingIds(
-    deps.analytics,
-    "streams_fetched_at IS NULL",
-    ENRICHMENT_PAGE_SIZE,
-  );
+  const pending = await pendingIds(deps, tierWhere("streams"), ENRICHMENT_PAGE_SIZE);
   if (pending.length === 0) {
     log.info("Streams-backfill complete; transitioning to incremental");
     return { result: structuredEmpty({ ...cur, phase: "incremental" }) };
@@ -507,7 +560,7 @@ export async function syncEnrichPending(
   const startIdx = cur.enrichTier ? TIER_ORDER.indexOf(cur.enrichTier) : 0;
   for (let offset = 0; offset < TIER_ORDER.length; offset++) {
     const tier = TIER_ORDER[(startIdx + offset) % TIER_ORDER.length]!;
-    const hasPending = await tierHasPending(deps.analytics, tier);
+    const hasPending = await tierHasPending(deps, tier);
     if (!hasPending) continue;
     const nextTier = TIER_ORDER[(TIER_ORDER.indexOf(tier) + 1) % TIER_ORDER.length]!;
     const cursorWithTier: StravaActivitiesCursor = { ...cur, enrichTier: nextTier };
@@ -546,54 +599,49 @@ export async function syncEnrichPending(
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-/**
- * String-interpolate the WHERE clause + LIMIT into the analytics query.
- *
- * **The interpolated values must be literal SQL fragments controlled by
- * this file — never user / API input.** All current callers pass either:
- *
- * - A literal `tier_fetched_at IS NULL` predicate from `tierWhere(tier)`,
- *   where `tier` is the closed `EnrichmentTier` union; or
- * - A literal numeric constant (`ENRICHMENT_PAGE_SIZE`) for the limit.
- *
- * The interpolation pattern is deliberate (the analytics's
- * `queryAnalytics` doesn't bind LIMIT or compose WHERE clauses for
- * us, and the schema shape is fixed), but new callers MUST keep the
- * same discipline. If you find yourself wanting to pass a user-supplied
- * filter through here, switch to a parameterised binding instead — the
- * read-only SQL endpoint already supports `?` placeholders.
- */
-/** The stored rows for a known set of activity ids. */
-async function rowsByIds(
-  analytics: SourceAnalyticsAccess,
-  ids: readonly string[],
-): Promise<PendingRow[]> {
-  const list = ids.map((id) => `'${id.replace(/'/g, "''")}'`).join(", ");
-  const { rows } = await analytics.query(`SELECT * FROM strava_activities WHERE id IN (${list})`);
+/** This account's stored rows for a known set of activity ids. */
+async function rowsByIds(deps: PhaseDeps, ids: readonly string[]): Promise<PendingRow[]> {
+  const list = activityIdList(ids);
+  if (!list) return [];
+  const { rows } = await deps.analytics.query(
+    `SELECT * FROM strava_activities WHERE ${ownedBy(deps.athleteId)} AND id IN (${list})`,
+  );
   return rows as unknown as PendingRow[];
 }
 
+/**
+ * Up to `limit` of this account's activities matching `whereClause`, newest
+ * first.
+ *
+ * **Both are interpolated, since the read handle binds nothing, so both must
+ * be SQL this file controls — never user or API input.** The callers pass a
+ * tier's predicate from `tierWhere(tier)`, where `tier` is the closed
+ * `EnrichmentTier` union, and `ENRICHMENT_PAGE_SIZE`. The social tier adds the
+ * ids its cursor carries, which are stored state rather than this file's SQL,
+ * so they arrive as the numerals `activityIdList` reduces them to.
+ */
 async function pendingIds(
-  analytics: SourceAnalyticsAccess,
+  deps: PhaseDeps,
   whereClause: string,
   limit: number,
 ): Promise<PendingRow[]> {
-  const sql = `SELECT * FROM strava_activities WHERE ${whereClause} ORDER BY start_time DESC LIMIT ${limit}`;
-  const { rows } = await analytics.query(sql);
+  const sql = `SELECT * FROM strava_activities WHERE ${ownedBy(deps.athleteId)} AND (${whereClause}) ORDER BY start_time DESC LIMIT ${limit}`;
+  const { rows } = await deps.analytics.query(sql);
   return rows as unknown as PendingRow[];
 }
 
-async function tierHasPending(
-  analytics: SourceAnalyticsAccess,
-  tier: EnrichmentTier,
-): Promise<boolean> {
-  const where = tierWhere(tier);
-  const sql = `SELECT count(*) AS n FROM strava_activities WHERE ${where}`;
-  const { rows } = await analytics.query(sql);
+async function tierHasPending(deps: PhaseDeps, tier: EnrichmentTier): Promise<boolean> {
+  const sql = `SELECT count(*) AS n FROM strava_activities WHERE ${ownedBy(deps.athleteId)} AND (${tierWhere(tier)})`;
+  const { rows } = await deps.analytics.query(sql);
   const n = Number((rows[0] as { n: number | bigint } | undefined)?.n ?? 0);
   return n > 0;
 }
 
+/**
+ * The rows a tier has yet to enrich. The rotation counts with it and the
+ * tier's page selects with it, so the two cannot disagree about what is
+ * pending.
+ */
 function tierWhere(tier: EnrichmentTier): string {
   switch (tier) {
     case "detail":
@@ -607,6 +655,100 @@ function tierWhere(tier: EnrichmentTier): string {
   }
 }
 
+/**
+ * Rows of one of an activity's child tables, by activity id, in `orderBy`
+ * order within each activity.
+ *
+ * For a document only: a tier renders the parts it did not fetch from what the
+ * other tiers stored. A table no page has written to yet does not exist, and
+ * reads as empty, as does any other failure, which costs the document those
+ * parts until a tier renders it again rather than costing the page.
+ *
+ * By activity id alone: the ids come from this account's own rows, and an
+ * owner predicate on top would hide the legacy rows the gateway has yet to
+ * attribute to an owner.
+ */
+async function storedChildRows(
+  analytics: SourceAnalyticsAccess,
+  tableName: "strava_activity_best_efforts" | "strava_activity_comments" | "strava_activity_kudos",
+  activityIds: readonly unknown[],
+  orderBy: string,
+): Promise<Map<string, Record<string, unknown>[]>> {
+  const byActivity = new Map<string, Record<string, unknown>[]>();
+  const ids = activityIdList(activityIds);
+  if (!ids) return byActivity;
+  let rows: Record<string, unknown>[];
+  try {
+    ({ rows } = await analytics.query(
+      `SELECT * FROM ${tableName} WHERE activity_id IN (${ids}) ORDER BY activity_id, ${orderBy}`,
+    ));
+  } catch (err) {
+    log.debug(`${tableName} unreadable for re-rendering: ${(err as Error).message}`);
+    return byActivity;
+  }
+  for (const row of rows) {
+    const key = String(row.activity_id);
+    byActivity.set(key, [...(byActivity.get(key) ?? []), row]);
+  }
+  return byActivity;
+}
+
+/**
+ * The detail a detail page stored for an activity, for a document rendered by
+ * a tier that did not fetch it: what the row's detail columns and the stored
+ * best efforts hold of what the document shows.
+ */
+function storedDetail(row: PendingRow, bestEfforts: StravaBestEffort[]): StravaDetailedActivity {
+  const photoUrl = (row.photo_primary_url as string | null | undefined) ?? undefined;
+  const caption = (row.photo_caption as string | null | undefined) ?? null;
+  return {
+    ...rowToSummary(row),
+    description: (row.description as string | null | undefined) ?? null,
+    calories: numOrUndef(row.calories) ?? null,
+    device_name: (row.device_name as string | null | undefined) ?? null,
+    perceived_exertion: numOrUndef(row.perceived_exertion) ?? null,
+    best_efforts: bestEfforts,
+    photos:
+      photoUrl !== undefined || caption !== null
+        ? { primary: { urls: photoUrl !== undefined ? { "600": photoUrl } : undefined, caption } }
+        : undefined,
+  };
+}
+
+function bestEffortFromRow(row: Record<string, unknown>): StravaBestEffort {
+  return {
+    id: Number(row.id),
+    activity: { id: Number(row.activity_id) },
+    name: String(row.name ?? ""),
+    distance: Number(row.distance_m ?? 0),
+    elapsed_time: Number(row.elapsed_time_seconds ?? 0),
+    moving_time: Number(row.moving_time_seconds ?? 0),
+    pr_rank: numOrUndef(row.pr_rank) ?? null,
+  };
+}
+
+function commentFromRow(row: Record<string, unknown>): StravaComment {
+  return {
+    id: Number(row.id),
+    activity_id: Number(row.activity_id),
+    text: String(row.text ?? ""),
+    created_at: String(row.created_at ?? ""),
+    athlete: {
+      id: numOrUndef(row.athlete_id),
+      firstname: (row.athlete_firstname as string | null | undefined) ?? undefined,
+      lastname: (row.athlete_lastname as string | null | undefined) ?? undefined,
+    },
+  };
+}
+
+function kudoerFromRow(row: Record<string, unknown>): StravaSummaryAthlete {
+  return {
+    id: numOrUndef(row.athlete_id),
+    firstname: (row.firstname as string | null | undefined) ?? undefined,
+    lastname: (row.lastname as string | null | undefined) ?? undefined,
+  };
+}
+
 /** Build a stamp-only update row for `strava_activities` (id + the stamps). */
 function stampOnlyRow(row: PendingRow, stamps: Record<string, unknown>): Record<string, unknown> {
   // Reuse the full row to avoid losing fields not under our control here.
@@ -616,7 +758,7 @@ function stampOnlyRow(row: PendingRow, stamps: Record<string, unknown>): Record<
 }
 
 /** Best-effort hydrate a SummaryActivity from the stored row. */
-function rowToSummary(row: PendingRow, detail?: StravaDetailedActivity): StravaSummaryActivity {
+function rowToSummary(row: PendingRow): StravaSummaryActivity {
   return {
     id: Number(row.id),
     athlete: { id: Number(row.athlete_id) },
@@ -676,7 +818,7 @@ function rowToSummary(row: PendingRow, detail?: StravaDetailedActivity): StravaS
     pr_count: numOrUndef(row.pr_count),
     suffer_score: numOrUndef(row.suffer_score),
     workout_type: numOrUndef(row.workout_type),
-    map: detail?.map ?? {
+    map: {
       polyline: (row.map_polyline as string | null) ?? undefined,
       summary_polyline: (row.map_summary_polyline as string | null) ?? undefined,
     },
@@ -689,6 +831,36 @@ function rowToSummary(row: PendingRow, detail?: StravaDetailedActivity): StravaS
         ? [Number(row.end_lat), Number(row.end_lng)]
         : null,
   };
+}
+
+/**
+ * The summary a detail page writes: the activity as the detail response has
+ * it, over the stored row for anything the response leaves out.
+ *
+ * The fields the walks compare with each listing are the exception and stay
+ * the stored row's, which are the listing's, so the row keeps matching what
+ * its listing gave it (see `withListedComparedFields`). An edit to one of them
+ * — a rename, a crop — is a walk's to write, and so are counters that moved
+ * since the listing: the walk that finds them moved sends the activity back to
+ * the social tier, which fetches the comments and kudoers behind them. The
+ * local start is canonicalized as `rowToSummary` canonicalizes the stored one,
+ * and the owner stays the athlete the row was selected by.
+ */
+function summaryFromDetail(
+  stored: StravaSummaryActivity,
+  detail: StravaDetailedActivity,
+): StravaSummaryActivity {
+  return withListedComparedFields(
+    {
+      ...stored,
+      ...detail,
+      athlete: stored.athlete,
+      start_date_local: detail.start_date_local
+        ? canonicalOr(toCanonicalWallClock(detail.start_date_local), detail.start_date_local)
+        : stored.start_date_local,
+    },
+    stored,
+  );
 }
 
 function numOrUndef(v: unknown): number | undefined {
@@ -705,16 +877,25 @@ function gearFromRow(row: PendingRow): ResolvedGear | undefined {
   };
 }
 
-function gearNameFromRow(row: PendingRow): string | undefined {
-  const brand = (row.gear_brand as string | null) ?? null;
-  const model = (row.gear_model as string | null) ?? null;
-  const name = (row.gear_name as string | null) ?? null;
-  if (brand && model) return `${brand} ${model}`;
-  if (name) return name;
-  return undefined;
+/**
+ * The gear `gearId` names, as an activity's record and document show it: the
+ * catalogue's; else the name a detail response gives it, for gear the refresh
+ * has yet to reach, such as new shoes; else what the row resolved for that
+ * same id before.
+ */
+function gearFor(
+  gearId: unknown,
+  catalogue: Map<string, ResolvedGear>,
+  row: PendingRow,
+  detail?: StravaDetailedActivity,
+): ResolvedGear | undefined {
+  if (typeof gearId !== "string" || !gearId) return undefined;
+  const named =
+    detail?.gear?.id === gearId && detail.gear.name ? { name: detail.gear.name } : undefined;
+  return catalogue.get(gearId) ?? named ?? (row.gear_id === gearId ? gearFromRow(row) : undefined);
 }
 
-/** Walk paginated endpoints until a short page is returned. */
+/** Walk paginated endpoints until a short page is returned, or `maxPages` have been. */
 async function fetchAllPages<T>(
   fetchPage: (page: number) => Promise<T[]>,
   perPage = 200,

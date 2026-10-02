@@ -11,6 +11,7 @@ import {
   type StateOutcome,
 } from "@omnesis/source-sdk";
 import { StravaActivitiesSource } from "./activities.js";
+import { StravaRateLimitTracker } from "./quota.js";
 import { stravaActivitiesStateSpec } from "./state.js";
 import type { StravaActivitiesCursor, StravaSummaryActivity } from "./types.js";
 import type { ListActivitiesParams } from "./client.js";
@@ -44,6 +45,8 @@ function makeActivity(id: number, startDateIso: string): StravaSummaryActivity {
 
 /** Mock client that replays one canned page from `listActivities`. */
 class MockClient {
+  /** The walk checks its budget first; one that has heard nothing allows it. */
+  public quota = new StravaRateLimitTracker();
   constructor(private pages: StravaSummaryActivity[][]) {}
   listActivities(_params: ListActivitiesParams): Promise<StravaSummaryActivity[]> {
     return Promise.resolve(this.pages.shift() ?? []);
@@ -106,6 +109,13 @@ describe("strava-activities declared state", () => {
       expect(
         stravaActivitiesStateSpec.decode({ phase: "athlete-refresh", pendingGearIds }),
       ).toBeNull();
+    }
+  });
+  test("preserves the phase a walk will hand back to and refuses one it does not know", () => {
+    const stored = { phase: "snapshot-rewalk", snapshotPage: 2, resumePhase: "detail-backfill" };
+    expect(stravaActivitiesStateSpec.decode(stored)).toEqual(stored);
+    for (const resumePhase of [null, "detail", 3]) {
+      expect(stravaActivitiesStateSpec.decode({ phase: "edit-sweep", resumePhase })).toBeNull();
     }
   });
   test("preserves a valid pending social stamp queue", () => {
