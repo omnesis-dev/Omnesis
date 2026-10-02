@@ -13,8 +13,8 @@
  * transcribed, a note transcribed that the device had no text for, and the
  * setting switched off through `PATCH /admin/config` (what the portal and the
  * apps' settings do). The gateway runs the synthetic transcriber, which decodes
- * the audio bytes as UTF-8, so no Whisper model is needed. A stable-mode
- * gateway proves the route does not exist outside experimental mode.
+ * the audio bytes as UTF-8, so no Whisper model is needed. Both stable and
+ * experimental gateways prove the same generally available contract.
  */
 
 import "./synth-env.js";
@@ -70,82 +70,62 @@ async function setOptIn(harness: SyntheticE2EHarness, on: boolean): Promise<void
   });
 }
 
-describe("voice notes in experimental mode (E2E)", () => {
-  let harness: SyntheticE2EHarness;
+describe.each(["stable", "experimental"] as const)(
+  "voice notes in %s mode (E2E)",
+  (gatewayMode) => {
+    let harness: SyntheticE2EHarness;
 
-  beforeAll(async () => {
-    harness = new SyntheticE2EHarness({
-      gatewayMode: "experimental",
-      transcriberBackend: "replay",
+    beforeAll(async () => {
+      harness = new SyntheticE2EHarness({
+        gatewayMode,
+        transcriberBackend: "replay",
+      });
+      await harness.start();
+    }, 60_000);
+
+    afterAll(async () => {
+      await harness.destroy();
     });
-    await harness.start();
-  }, 60_000);
 
-  afterAll(async () => {
-    await harness.destroy();
-  });
-
-  test("the feature is on by default once a transcriber is assigned", async () => {
-    expect(await dictationStatus(harness)).toMatchObject({
-      visible: true,
-      enabled: true,
-      modelAssigned: true,
-      active: true,
+    test("the feature is on by default once a transcriber is assigned", async () => {
+      expect(await dictationStatus(harness)).toMatchObject({
+        visible: true,
+        enabled: true,
+        modelAssigned: true,
+        active: true,
+      });
     });
-  });
 
-  test("a voice note is saved at once and transcribed by the gateway", async () => {
-    const id = randomUUID();
-    const res = await sendVoiceNote(
-      harness,
-      { id, text: "book a table for for on thursday" },
-      "Book a table for four on Thursday.",
-    );
-    expect(res.status).toBe(202);
-    expect(await res.json()).toEqual({ id, transcription: "pending" });
+    test("a voice note is saved at once and transcribed by the gateway", async () => {
+      const id = randomUUID();
+      const res = await sendVoiceNote(
+        harness,
+        { id, text: "book a table for for on thursday" },
+        "Book a table for four on Thursday.",
+      );
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({ id, transcription: "pending" });
 
-    await vi.waitFor(
-      async () => expect(await noteText(harness, id)).toBe("Book a table for four on Thursday."),
-      { timeout: 15_000, interval: 250 },
-    );
-  });
-
-  test("a note the device had no transcript for is transcribed all the same", async () => {
-    const id = randomUUID();
-    expect((await sendVoiceNote(harness, { id }, "Renew the parking permit.")).status).toBe(202);
-    await vi.waitFor(
-      async () => expect(await noteText(harness, id)).toBe("Renew the parking permit."),
-      { timeout: 15_000, interval: 250 },
-    );
-  });
-
-  test("switching it off takes effect without a restart", async () => {
-    await setOptIn(harness, false);
-    expect((await dictationStatus(harness)).active).toBe(false);
-    const res = await sendVoiceNote(harness, { id: randomUUID(), text: "too late" }, "too late");
-    expect(res.status).toBe(409);
-  });
-});
-
-describe("voice notes outside experimental mode (E2E)", () => {
-  let harness: SyntheticE2EHarness;
-
-  beforeAll(async () => {
-    harness = new SyntheticE2EHarness({ gatewayMode: "stable", transcriberBackend: "replay" });
-    await harness.start();
-  }, 60_000);
-
-  afterAll(async () => {
-    await harness.destroy();
-  });
-
-  test("the route does not exist and the status is inactive, though the setting is on", async () => {
-    expect(await dictationStatus(harness)).toMatchObject({
-      visible: false,
-      enabled: true,
-      active: false,
+      await vi.waitFor(
+        async () => expect(await noteText(harness, id)).toBe("Book a table for four on Thursday."),
+        { timeout: 15_000, interval: 250 },
+      );
     });
-    const res = await sendVoiceNote(harness, { id: randomUUID(), text: "hello" }, "hello");
-    expect(res.status).toBe(404);
-  });
-});
+
+    test("a note the device had no transcript for is transcribed all the same", async () => {
+      const id = randomUUID();
+      expect((await sendVoiceNote(harness, { id }, "Renew the parking permit.")).status).toBe(202);
+      await vi.waitFor(
+        async () => expect(await noteText(harness, id)).toBe("Renew the parking permit."),
+        { timeout: 15_000, interval: 250 },
+      );
+    });
+
+    test("switching it off takes effect without a restart", async () => {
+      await setOptIn(harness, false);
+      expect((await dictationStatus(harness)).active).toBe(false);
+      const res = await sendVoiceNote(harness, { id: randomUUID(), text: "too late" }, "too late");
+      expect(res.status).toBe(409);
+    });
+  },
+);

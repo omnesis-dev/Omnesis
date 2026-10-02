@@ -94,9 +94,14 @@ export function mountSearchRoutes(app: RouteApp, deps: SearchRoutesDeps): void {
       auth.authMethod !== "principal-oauth" &&
       scopeSatisfies(auth.scopes, SCOPE_ADMIN) &&
       scopeSatisfies(auth.scopes, SCOPE_READ);
+    // Bearer and portal read scopes cover all sources. OAuth principals use
+    // separately scoped grants and must never receive this unrestricted graph.
+    const graphContextAvailable =
+      !!searchPipeline?.agentSearchV2Enabled && auth.authMethod !== "principal-oauth";
     return c.json({
       indexer,
       ...(agentContextAvailable ? { agentContextAvailable: true } : {}),
+      ...(graphContextAvailable ? { graphContextAvailable: true } : {}),
     });
   });
 
@@ -117,7 +122,8 @@ export function mountSearchRoutes(app: RouteApp, deps: SearchRoutesDeps): void {
       throw new ServiceUnavailableError("Search pipeline not available");
     }
 
-    const body = c.req.valid("json") as SearchQuery;
+    const validated = c.req.valid("json");
+    const { includeGraphContext, ...body } = validated as typeof validated & SearchQuery;
     // `cognitiveProjection` is an AGENT-internal knob (the agent search port sets
     // it in-process under experimental mode). The body schema is passthrough, so
     // strip it here to keep the public /search route byte-identical — a client
@@ -125,7 +131,13 @@ export function mountSearchRoutes(app: RouteApp, deps: SearchRoutesDeps): void {
     delete body.cognitiveProjection;
 
     try {
-      const response = await searchPipeline.search(body);
+      const graphContext =
+        includeGraphContext === true &&
+        searchPipeline.agentSearchV2Enabled &&
+        c.get("auth").authMethod !== "principal-oauth";
+      const response = graphContext
+        ? await searchPipeline.search(body, undefined, { graphContext: true })
+        : await searchPipeline.search(body);
       return c.json(response);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

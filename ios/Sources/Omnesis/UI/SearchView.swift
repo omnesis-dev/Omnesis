@@ -203,16 +203,28 @@ struct SearchView: View {
     }
 
     private var resultsList: some View {
-        ScrollView {
+        let panels = SearchBreadcrumbFormatter.visiblePanels(results)
+        return ScrollView {
             VStack(spacing: Theme.Spacing.md) {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(results.enumerated()), id: \.element.id) { idx, item in
-                        SearchResultLink(item: item, store: store) {
-                            SearchResultRow(item: item, store: store)
-                                .padding(.horizontal, Theme.Spacing.md)
-                                .padding(.vertical, 10)
+                        VStack(alignment: .leading, spacing: 0) {
+                            SearchResultLink(item: item, store: store) {
+                                SearchResultRow(item: item, store: store)
+                                    .padding(.horizontal, Theme.Spacing.md)
+                                    .padding(.vertical, 10)
+                            }
+                            .accessibilityIdentifier("search.result")
+                            if let provenance = item.provenance,
+                               panels.contains(item.documentId) {
+                                SearchBreadcrumbsView(
+                                    provenance: provenance, documentId: item.documentId, store: store
+                                )
+                                .padding(.leading, Theme.Spacing.md + 32)
+                                .padding(.trailing, Theme.Spacing.md)
+                                .padding(.bottom, 10)
+                            }
                         }
-                        .accessibilityIdentifier("search.result")
                         if idx < results.count - 1 {
                             Divider().background(Theme.borderLight).padding(.leading, 44)
                         }
@@ -247,7 +259,7 @@ struct SearchView: View {
         hasSearched = true
         defer { loading = false }
         do {
-            let response = try await client.search(text: trimmed, limit: 30)
+            let response = try await client.search(text: trimmed, limit: 30, graphContext: true)
             results = response.results
             lastResponse = response
         } catch {

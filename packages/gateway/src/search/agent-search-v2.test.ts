@@ -100,6 +100,61 @@ function pipeline(config?: SearchConfig, wireDb = true): SearchPipeline {
 }
 
 describe("agent search v2 enrollment and compatibility", () => {
+  test("client graph facts preserve ordinary result membership, order, metadata and root identity", async () => {
+    const p = pipeline({ v2: { topN: 2 } });
+    const query = { text: "equipment", verbose: true, limit: 10 };
+    const legacy = await p.search(query);
+    const enriched = await p.search(query, undefined, { graphContext: true });
+    expect(enriched.results).toHaveLength(3);
+    expect(enriched.results.map(({ provenance: _provenance, ...hit }) => hit)).toEqual(
+      legacy.results,
+    );
+    expect(enriched.query).toEqual(legacy.query);
+    expect(enriched.facets).toEqual(legacy.facets);
+    expect(enriched.debug).toEqual(legacy.debug);
+    expect(enriched.models).toEqual(legacy.models);
+    expect(
+      enriched.results
+        .slice(0, 2)
+        .every((hit) => hit.provenance?.copies[0].documentId === hit.documentId),
+    ).toBe(true);
+    expect(enriched.results[2].provenance).toBeUndefined();
+    const family = enriched.results.find((hit) => ["a", "b"].includes(hit.documentId))!;
+    expect(family.provenance!.copies.map((copy) => copy.documentId).sort()).toEqual(["a", "b"]);
+    expect(family.provenance!.modelContext).toBeDefined();
+  });
+
+  test.each([false, true])(
+    "client graph opt-in stays legacy when disabled or missing graph db: %s",
+    async (wireDb) => {
+      const p = pipeline({ v2: { enabled: !wireDb } }, wireDb);
+      expect(
+        (await p.search({ text: "equipment" }, undefined, { graphContext: true })).results,
+      ).toEqual((await p.search({ text: "equipment" })).results);
+    },
+  );
+
+  test("source-restricted authorization suppresses client graph context", async () => {
+    const p = pipeline();
+    const authorization = { sourceIds: [SOURCE] };
+    const query = { text: "equipment" };
+    const legacy = await p.search(query, authorization);
+    expect((await p.search(query, authorization, { graphContext: true })).results).toEqual(
+      legacy.results,
+    );
+  });
+
+  test.each([0, Number.NaN, Number.POSITIVE_INFINITY])(
+    "an empty or invalid top-result budget suppresses client graph work: %s",
+    async (topN) => {
+      const p = pipeline({ v2: { topN } });
+      const query = { text: "equipment" };
+      expect((await p.search(query, undefined, { graphContext: true })).results).toEqual(
+        (await p.search(query)).results,
+      );
+    },
+  );
+
   test.each([false, true])(
     "stale generated answers never regain a legacy trail with indexed source derived=%s",
     async (indexedDerived) => {

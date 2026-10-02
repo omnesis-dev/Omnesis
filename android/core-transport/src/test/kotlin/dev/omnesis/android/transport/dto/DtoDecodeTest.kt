@@ -17,6 +17,20 @@ import org.junit.Test
 class DtoDecodeTest {
 
     @Test
+    fun graph_context_decodes_optional_fields_and_ignores_future_fields() {
+        val provenance = OmnesisJson.decodeFromString<SearchProvenance>("""{
+            "summary":"Evidence", "copies":[{"documentId":"copy","sourceId":"files:example","title":"Schedule.pdf","url":"https://example.com/file","future":1}],
+            "paths":[{"documentIds":["root","copy"],"edges":["outbound:url"],"relations":["links to"]}],
+            "modelContext":{"facts":["[D1] links to [D2]."],"documents":[{"ref":"D2","documentId":"copy","sourceId":"files:example","title":"Schedule.pdf"}],"limits":[]},
+            "truncated":true,"stopReasons":["future-limit"]
+        }""")
+        assertEquals("Schedule.pdf", provenance.modelContext?.documents?.single()?.title)
+        assertEquals(listOf("links to"), provenance.paths.single().relations)
+        assertEquals(listOf("future-limit"), provenance.stopReasons)
+        assertTrue(provenance.truncated)
+    }
+
+    @Test
     fun search_response_decodes_results_and_breakdown() {
         val json = """
             {
@@ -41,6 +55,7 @@ class DtoDecodeTest {
         assertEquals("doc-1", resp.results[0].documentId)
         assertEquals(0.87, resp.results[0].score, 1e-9)
         assertEquals(1, resp.results[0].scoreBreakdown?.bm25Rank)
+        assertNull(resp.results[0].provenance)
     }
 
     @Test

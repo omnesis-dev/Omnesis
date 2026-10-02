@@ -107,6 +107,7 @@ class SearchViewModel @Inject constructor(
                     text = trimmed,
                     limit = 30,
                     verbose = true,
+                    graphContext = true,
                 )
             }.fold(
                 onSuccess = { resp ->
