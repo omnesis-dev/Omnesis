@@ -16,6 +16,43 @@ import {
   withCredentialRefreshLock,
 } from "./oauth.js";
 
+/** A credential file holding a refresh token and a cached token endpoint, so `auth()` refreshes. */
+function writeRefreshableCredentials(directory: string): string {
+  const credentialsPath = join(directory, "integration.json");
+  writeFileSync(
+    credentialsPath,
+    JSON.stringify({
+      gatewayUrl: "https://gateway.example.org:7600",
+      deliveryToken: "omn_fictional_delivery",
+      ingestionToken: "omn_fictional_ingestion",
+      managementToken: "omn_fictional_management",
+      oauth: {
+        redirectUri: "http://127.0.0.1:48123/callback",
+        clientInformation: {
+          client_id: "client_fictional",
+          issuer: "https://gateway.example.org:7600",
+        },
+        tokens: {
+          access_token: "access-fictional",
+          refresh_token: "refresh-fictional",
+          issuer: "https://gateway.example.org:7600",
+        },
+        discoveryState: {
+          authorizationServerUrl: "https://gateway.example.org:7600",
+          authorizationServerMetadata: {
+            issuer: "https://gateway.example.org:7600",
+            authorization_endpoint: "https://gateway.example.org:7600/oauth/authorize",
+            token_endpoint: "https://gateway.example.org:7600/oauth/token",
+            response_types_supported: ["code"],
+          },
+        },
+      },
+    }),
+    { mode: 0o600 },
+  );
+  return credentialsPath;
+}
+
 describe("integration OAuth provider", () => {
   test("reclaims only a stale refresh lock whose owning process is gone", async () => {
     const directory = mkdtempSync(join(tmpdir(), "omnesis-integration-oauth-lock-"));
@@ -319,38 +356,7 @@ describe("integration OAuth provider", () => {
     // the SDK itself against a token endpoint that refuses the refresh token.
     const directory = mkdtempSync(join(tmpdir(), "omnesis-integration-oauth-refusal-"));
     try {
-      const credentialsPath = join(directory, "integration.json");
-      writeFileSync(
-        credentialsPath,
-        JSON.stringify({
-          gatewayUrl: "https://gateway.example.org:7600",
-          deliveryToken: "omn_fictional_delivery",
-          ingestionToken: "omn_fictional_ingestion",
-          managementToken: "omn_fictional_management",
-          oauth: {
-            redirectUri: "http://127.0.0.1:48123/callback",
-            clientInformation: {
-              client_id: "client_fictional",
-              issuer: "https://gateway.example.org:7600",
-            },
-            tokens: {
-              access_token: "access-fictional",
-              refresh_token: "refresh-fictional",
-              issuer: "https://gateway.example.org:7600",
-            },
-            discoveryState: {
-              authorizationServerUrl: "https://gateway.example.org:7600",
-              authorizationServerMetadata: {
-                issuer: "https://gateway.example.org:7600",
-                authorization_endpoint: "https://gateway.example.org:7600/oauth/authorize",
-                token_endpoint: "https://gateway.example.org:7600/oauth/token",
-                response_types_supported: ["code"],
-              },
-            },
-          },
-        }),
-        { mode: 0o600 },
-      );
+      const credentialsPath = writeRefreshableCredentials(directory);
       const tokenRequests: string[] = [];
       const gateway = async (input: string | URL, init?: RequestInit) => {
         if (String(input) !== "https://gateway.example.org:7600/oauth/token") {
@@ -384,6 +390,85 @@ describe("integration OAuth provider", () => {
         'Omnesis OAuth refresh failed (HTTP 400: {"error":"invalid_grant","error_description":"The refresh token is\\n no longer valid."}); re-issuing with the device\'s management token',
       ]);
       expect(warnings.join("\n")).not.toContain("refresh-fictional");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("repeats a refresh whose response never arrived instead of recovering", async () => {
+    // The gateway may already have rotated the token when the first response
+    // is lost; it answers the identical repeat with the pair it issued.
+    const lostResponses = [
+      async (): Promise<Response> => {
+        throw new Error("Omnesis OAuth request timed out");
+      },
+      async () => Response.json({ error: "server_error" }, { status: 503 }),
+    ];
+    for (const lost of lostResponses) {
+      const directory = mkdtempSync(join(tmpdir(), "omnesis-integration-oauth-retry-"));
+      try {
+        const credentialsPath = writeRefreshableCredentials(directory);
+        const tokenRequests: string[] = [];
+        const gateway = async (input: string | URL, init?: RequestInit) => {
+          if (String(input) !== "https://gateway.example.org:7600/oauth/token") {
+            return new Response(null, { status: 404 });
+          }
+          tokenRequests.push(String(init?.body));
+          if (tokenRequests.length === 1) return lost();
+          return Response.json({
+            access_token: "access-rotated",
+            refresh_token: "refresh-rotated",
+            token_type: "Bearer",
+            expires_in: 3600,
+          });
+        };
+        let recoveries = 0;
+        await new SerializedIntegrationAuthProvider(
+          new IntegrationOAuthProvider(credentialsPath, "OpenClaw"),
+          "https://gateway.example.org:7600",
+          undefined,
+          async () => {
+            recoveries += 1;
+          },
+        ).renew(gateway);
+
+        expect(tokenRequests).toHaveLength(2);
+        expect(tokenRequests[1]).toBe(tokenRequests[0]);
+        expect(tokenRequests[1]).toContain("refresh_token=refresh-fictional");
+        expect(recoveries).toBe(0);
+        expect(loadIntegrationCredentials(credentialsPath).oauth.tokens).toMatchObject({
+          access_token: "access-rotated",
+          refresh_token: "refresh-rotated",
+        });
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    }
+  });
+
+  test("repeats a lost refresh only once", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "omnesis-integration-oauth-retry-once-"));
+    try {
+      const credentialsPath = writeRefreshableCredentials(directory);
+      let tokenRequests = 0;
+      const gateway = async (input: string | URL): Promise<Response> => {
+        if (String(input) !== "https://gateway.example.org:7600/oauth/token") {
+          return new Response(null, { status: 404 });
+        }
+        tokenRequests += 1;
+        throw new Error("Omnesis OAuth request timed out");
+      };
+      let recoveries = 0;
+      await new SerializedIntegrationAuthProvider(
+        new IntegrationOAuthProvider(credentialsPath, "OpenClaw"),
+        "https://gateway.example.org:7600",
+        undefined,
+        async () => {
+          recoveries += 1;
+        },
+      ).renew(gateway);
+      expect(tokenRequests).toBe(2);
+      expect(recoveries).toBe(1);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
