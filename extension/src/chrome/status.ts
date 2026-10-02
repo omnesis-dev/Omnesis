@@ -51,6 +51,7 @@ export interface CaptureStatus {
   queueCorruption: QueueCorruption | null;
   queueOverflow: QueueOverflow | null;
   handoffFailure: CaptureHandoffFailure | null;
+  /** Recovery-copy evictions are diagnostic history, not confirmed upload loss. */
   handoffOverflow: CaptureHandoffOverflow | null;
   serverState: PushServerState | null;
   connectivity: Connectivity | null;
@@ -320,14 +321,6 @@ export function badgeFor(status: CaptureStatus): BadgeSpec {
       text: "!",
       color: AMBER,
       title: "Omnesis — local upload budget was reached; older pending data was discarded",
-    };
-  }
-  if (status.handoffOverflow) {
-    return {
-      text: "!",
-      color: AMBER,
-      title:
-        "Omnesis — the local capture handoff budget was reached; older staged pages were discarded",
     };
   }
   if (status.failure) {

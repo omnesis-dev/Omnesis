@@ -49,8 +49,11 @@ code run under Node in the spawned-gateway E2E and byte for byte in the worker.
   worker turns into one `POST /documents` (a `webpage` document keyed on the SHA-256 of the
   normalized URL) and one `POST /analytics/ingest` row (`page_visits`). Mutations re-extract after
   a debounce and re-push only when the text or title changed. The emission is staged in
-  `chrome.storage.local` until the worker acknowledges it, so a worker evicted mid-handoff loses
-  nothing.
+  `chrome.storage.local` until the worker acknowledges it. This recovery outbox holds up to
+  20 records; evicted recovery copies can still be handed off by their open tabs. Eviction counts
+  remain available in diagnostic storage but do not trigger a popup warning or toolbar badge:
+  they do not establish that an upload was lost. Current handoff failures and confirmed discarded
+  uploads still surface in the popup and badge.
 - **The worker.** MV3 workers are evicted within seconds of idling, so `background.ts` holds no
   authoritative state: every wake rebuilds the push client from the durable queue and config, and
   `chrome.alarms` drives the drain cadence. One request per pass, exponential backoff with
