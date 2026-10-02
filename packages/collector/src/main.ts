@@ -54,11 +54,7 @@ import { createAttachmentExtractor } from "./attachments/index.js";
 import { createSourceWsHandlers } from "./source-ws-handlers.js";
 import { createCommandDispatch, type CommandDispatch } from "./ws-command-dispatch.js";
 import { createCliUpdater, registerSelfUpdateCommand } from "./self-update.js";
-import {
-  handOverToServiceManager,
-  relaunchOnFailedExit,
-  resolveRelaunchRequest,
-} from "./service-restart.js";
+import { handOverToServiceManager, startRelaunchGuard } from "./service-restart.js";
 import { isBaileysAuthEnoent } from "./baileys-enoent-filter.js";
 import { collectorDeviceName } from "./device-name.js";
 import { CollectorDoctor } from "./doctor.js";
@@ -480,14 +476,11 @@ async function haltForRepair(input: {
  * module is the process entrypoint (see the guard at the bottom).
  */
 export async function main() {
-  // Under launchd, every way this process dies other than a clean exit leaves
-  // a request for launchd to start it again: launchd itself may not.
-  const relaunch = resolveRelaunchRequest();
-  void relaunch.then((request) => {
-    if (request) relaunchOnFailedExit(request);
-  });
+  // Under launchd, a guard beside this process starts it again however it
+  // dies other than a clean exit: launchd itself may not.
+  void startRelaunchGuard();
   // Before the rest of startup, so a stall anywhere in it is bounded too.
-  startEventLoopWatchdog({ relaunch });
+  startEventLoopWatchdog();
   const configDir = process.env.OMNESIS_CONFIG_DIR ?? DEFAULT_CONFIG_DIR;
   const sourceCommit = runningSourceCommit(configDir, import.meta.url, COLLECTOR_STARTED_AT);
   await primeSecretFileKeyCache({ configDir }).catch((err) => {

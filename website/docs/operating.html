@@ -224,6 +224,11 @@ collector    omnesis-collector.service                running        41283</pre
           the line to include when you report the problem.
         </p>
         <p>
+          A collector killed outright, for example by the system when memory runs out, is started
+          again within seconds on Linux and about ten seconds later on macOS. A collector that exits
+          cleanly, such as one waiting to be re-paired, stays stopped until you start it.
+        </p>
+        <p>
           The generated services create files owner-only (<code>umask 077</code>). On Linux the
           systemd units also get a private temporary directory, a read-only view of the system and
           home directories apart from Omnesis's own paths, no new privileges and restricted address
