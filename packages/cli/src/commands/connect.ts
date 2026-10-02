@@ -826,6 +826,7 @@ function retirePersistedLegacyOpenClawPlugin(environment: NodeJS.ProcessEnv): vo
   // line — from a real registry or config failure. Node's color-environment
   // warning is unrelated to the uninstall; remove only that known warning and
   // its optional trace hint.
+  // Known bug: #284 — OpenClaw 2026.9.6 words this case differently.
   const diagnostic = result.stderr?.replace(
     /^\(node:\d+\) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set\.\r?\n(?:\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\r?\n)?/gm,
     "",
