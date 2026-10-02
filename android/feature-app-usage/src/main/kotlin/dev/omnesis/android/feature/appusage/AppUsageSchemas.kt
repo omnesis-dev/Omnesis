@@ -18,6 +18,10 @@ import dev.omnesis.android.transport.dto.RecordDisplaySpec
  * ([AppUsageNormalizer.buildDayDocument]) aggregates many rows from BOTH
  * tables into one per-day document, so there is no natural 1:1 row-to-document
  * edge the way a single call maps to `call-log`'s day document.
+ *
+ * Both tables are deleted by `date`: the source rebuilds a whole UTC day at a
+ * time, and naming the day removes every row it held so the rebuild replaces
+ * it rather than adding to it.
  */
 const val ANDROID_APP_USAGE_SESSIONS_TABLE = "android_app_usage_sessions"
 const val ANDROID_APP_USAGE_DAILY_TABLE = "android_app_usage_daily"
@@ -25,7 +29,8 @@ const val ANDROID_APP_USAGE_DAILY_TABLE = "android_app_usage_daily"
 val androidAppUsageSessionsSchema = AnalyticsTableSchema(
     tableName = ANDROID_APP_USAGE_SESSIONS_TABLE,
     displayName = "Android App Usage Sessions",
-    description = "Individual per-app foreground sessions from Android's UsageStatsManager.",
+    description = "Individual per-app on-screen sessions (an app's activity resumed while the screen is on) " +
+        "from Android's UsageStatsManager.",
     columns = listOf(
         AnalyticsColumn(name = "id", type = "VARCHAR", description = "Unique session id (packageName:startTimeMillis)"),
         AnalyticsColumn(name = "package_name", type = "VARCHAR", description = "App package identifier (e.g. com.example.chat)"),
@@ -36,6 +41,7 @@ val androidAppUsageSessionsSchema = AnalyticsTableSchema(
         AnalyticsColumn(name = "date", type = "DATE", description = "Calendar date (UTC) the session started — joins the Attention Timeline day-document"),
     ),
     primaryKey = listOf("id"),
+    deleteKey = listOf("date"),
     semanticTimeColumn = "start_time",
     record = RecordDisplaySpec(
         titleColumns = listOf("app_name"),
@@ -56,10 +62,11 @@ val androidAppUsageDailySchema = AnalyticsTableSchema(
         AnalyticsColumn(name = "package_name", type = "VARCHAR", description = "App package identifier"),
         AnalyticsColumn(name = "app_name", type = "VARCHAR", description = "Human-readable app label"),
         AnalyticsColumn(name = "date", type = "DATE", description = "Calendar date (UTC)"),
-        AnalyticsColumn(name = "total_seconds", type = "DOUBLE", description = "Total foreground time in seconds"),
+        AnalyticsColumn(name = "total_seconds", type = "DOUBLE", description = "Total on-screen time in seconds"),
         AnalyticsColumn(name = "session_count", type = "INTEGER", description = "Number of sessions"),
     ),
     primaryKey = listOf("id"),
+    deleteKey = listOf("date"),
     semanticTimeColumn = "date",
     record = RecordDisplaySpec(
         titleColumns = listOf("app_name", "date"),

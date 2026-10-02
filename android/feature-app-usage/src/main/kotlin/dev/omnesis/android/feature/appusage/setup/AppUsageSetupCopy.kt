@@ -15,7 +15,7 @@ const val APP_USAGE_SETTINGS_STEPS = "In Usage access, find Omnesis and turn on 
 
 /**
  * What the App Usage setup page and the App Usage Settings disclosure say.
- * The ledger follows what the source sends: per-app foreground sessions and
+ * The ledger follows what the source sends: per-app on-screen sessions and
  * daily per-app totals as analytics rows, and one Attention Timeline document
  * per day.
  */

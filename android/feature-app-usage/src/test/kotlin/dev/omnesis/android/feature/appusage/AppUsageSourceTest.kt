@@ -52,9 +52,20 @@ class AppUsageSourceTest {
         shadow = shadowOf(usageStatsManager)
     }
 
-    private fun addEvent(pkg: String, t: Long, type: Int) = shadow.addEvent(pkg, t, type)
-    private fun fg(pkg: String, t: Long) = addEvent(pkg, t, UsageEvents.Event.MOVE_TO_FOREGROUND)
-    private fun bg(pkg: String, t: Long) = addEvent(pkg, t, UsageEvents.Event.MOVE_TO_BACKGROUND)
+    private fun addEvent(pkg: String, t: Long, type: Int, cls: String? = null) = if (cls == null) {
+        shadow.addEvent(pkg, t, type)
+    } else {
+        shadow.addEvent(
+            ShadowUsageStatsManager.EventBuilder.buildEvent()
+                .setPackage(pkg)
+                .setClass(cls)
+                .setTimeStamp(t)
+                .setEventType(type)
+                .build(),
+        )
+    }
+    private fun fg(pkg: String, t: Long, cls: String? = null) = addEvent(pkg, t, UsageEvents.Event.MOVE_TO_FOREGROUND, cls)
+    private fun bg(pkg: String, t: Long, cls: String? = null) = addEvent(pkg, t, UsageEvents.Event.MOVE_TO_BACKGROUND, cls)
     private fun screenOn(t: Long) = addEvent("android", t, UsageEvents.Event.SCREEN_INTERACTIVE)
     private fun unlock(t: Long) = addEvent("android", t, UsageEvents.Event.KEYGUARD_HIDDEN)
 
@@ -77,6 +88,7 @@ class AppUsageSourceTest {
         assertEquals(2, result.documents.size)
         assertEquals(setOf("attention-timeline:2026-03-04", "attention-timeline:2026-03-05"), result.documents.map { it.externalId }.toSet())
         assertEquals(nowMillis, result.cursor.lastQueriedThroughMillis)
+        assertEquals(listOf("2026-03-04", "2026-03-05"), result.rebuiltDates)
     }
 
     @Test
@@ -145,6 +157,20 @@ class AppUsageSourceTest {
 
         val secondDoc = second.documents.single()
         assertTrue(secondDoc.content.contains("1m"))
+    }
+
+    @Test
+    fun `each activity's class name reaches the normalizer, so one app's activities make one session`() = runTest {
+        fg("com.example.notes", day1Start + 1_000, "Home")
+        fg("com.example.notes", day1Start + 2_000, "Editor")
+        bg("com.example.notes", day1Start + 3_000, "Home")
+        bg("com.example.notes", day1Start + 61_000, "Editor")
+        nowMillis = day1Start + 90_000
+
+        val result = newSource().sync(AppUsageCursor())
+
+        assertEquals(1, result.sessionRows.size)
+        assertTrue(result.documents.single().content.contains("Example Notes — 1m (1 session)"))
     }
 
     @Test

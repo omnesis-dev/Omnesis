@@ -20,9 +20,10 @@ class AppUsageNormalizerTest {
     private val dayStart = 1_772_582_400_000L // 2026-03-04T00:00:00Z
     private val dayEnd = dayStart + 24 * 60 * 60 * 1000
 
-    private fun fg(pkg: String, t: Long) = RawUsageEvent(pkg, t, UsageEventKind.FOREGROUND)
-    private fun bg(pkg: String, t: Long) = RawUsageEvent(pkg, t, UsageEventKind.BACKGROUND)
+    private fun fg(pkg: String, t: Long, activity: String? = null) = RawUsageEvent(pkg, t, UsageEventKind.FOREGROUND, activity)
+    private fun bg(pkg: String, t: Long, activity: String? = null) = RawUsageEvent(pkg, t, UsageEventKind.BACKGROUND, activity)
     private fun screenOn(t: Long) = RawUsageEvent("android", t, UsageEventKind.SCREEN_INTERACTIVE)
+    private fun screenOff(t: Long) = RawUsageEvent("android", t, UsageEventKind.SCREEN_NON_INTERACTIVE)
     private fun unlock(t: Long) = RawUsageEvent("android", t, UsageEventKind.KEYGUARD_HIDDEN)
 
     @Test
@@ -79,6 +80,128 @@ class AppUsageNormalizerTest {
         assertEquals(2, sessions.size)
         assertEquals("com.example.notes", sessions[0].packageName)
         assertEquals("com.example.chat", sessions[1].packageName)
+    }
+
+    @Test
+    fun `an app's overlapping activities fold into one session`() {
+        val events = listOf(
+            fg("com.example.notes", dayStart + 1_000, "Home"),
+            fg("com.example.notes", dayStart + 2_000, "Editor"),
+            bg("com.example.notes", dayStart + 3_000, "Home"),
+            bg("com.example.notes", dayStart + 61_000, "Editor"),
+        )
+        val sessions = AppUsageNormalizer.mergeSessions(events, dayStart, dayEnd)
+        assertEquals(listOf(RawSession("com.example.notes", dayStart + 1_000, dayStart + 61_000)), sessions)
+    }
+
+    @Test
+    fun `only a pause that is the app's first event of the day reaches back to the day start`() {
+        val hour = 60 * 60 * 1000L
+        val events = listOf(
+            bg("com.example.notes", dayStart + hour, "Home"),
+            fg("com.example.notes", dayStart + 2 * hour, "Home"),
+            bg("com.example.notes", dayStart + 2 * hour + 1_000, "Editor"),
+            bg("com.example.notes", dayStart + 3 * hour, "Home"),
+            bg("com.example.notes", dayStart + 4 * hour, "Home"),
+            bg("com.example.notes", dayStart + 5 * hour, "Home"),
+        )
+        val sessions = AppUsageNormalizer.mergeSessions(events, dayStart, dayEnd)
+        assertEquals(
+            listOf(
+                RawSession("com.example.notes", dayStart, dayStart + hour),
+                RawSession("com.example.notes", dayStart + 2 * hour, dayStart + 3 * hour),
+            ),
+            sessions,
+        )
+    }
+
+    @Test
+    fun `turning the screen off closes a session and the app's next resume opens another`() {
+        val events = listOf(
+            fg("com.example.notes", dayStart + 1_000),
+            screenOff(dayStart + 11_000),
+            bg("com.example.notes", dayStart + 11_500),
+            screenOn(dayStart + 99_000),
+            fg("com.example.notes", dayStart + 100_000),
+            bg("com.example.notes", dayStart + 120_000),
+        )
+        val sessions = AppUsageNormalizer.mergeSessions(events, dayStart, dayEnd)
+        assertEquals(
+            listOf(
+                RawSession("com.example.notes", dayStart + 1_000, dayStart + 11_000),
+                RawSession("com.example.notes", dayStart + 100_000, dayStart + 120_000),
+            ),
+            sessions,
+        )
+    }
+
+    @Test
+    fun `an app carried over from the previous day starts when the screen first turns on`() {
+        val events = listOf(screenOn(dayStart + 50_000), bg("com.example.notes", dayStart + 80_000))
+        val sessions = AppUsageNormalizer.mergeSessions(events, dayStart, dayEnd)
+        assertEquals(listOf(RawSession("com.example.notes", dayStart + 50_000, dayStart + 80_000)), sessions)
+    }
+
+    @Test
+    fun `an app carried over from the previous day ends when the screen first turns off`() {
+        val events = listOf(screenOff(dayStart + 20_000), bg("com.example.notes", dayStart + 80_000))
+        val sessions = AppUsageNormalizer.mergeSessions(events, dayStart, dayEnd)
+        assertEquals(listOf(RawSession("com.example.notes", dayStart, dayStart + 20_000)), sessions)
+    }
+
+    @Test
+    fun `an activity whose pause never arrives costs at most one screen-on stretch`() {
+        val events = listOf(
+            fg("com.example.notes", dayStart + 1_000),
+            screenOff(dayStart + 10_000),
+            screenOn(dayStart + 50_000),
+            fg("com.example.chat", dayStart + 51_000),
+            bg("com.example.chat", dayStart + 60_000),
+        )
+        val sessions = AppUsageNormalizer.mergeSessions(events, dayStart, dayEnd)
+        assertEquals(
+            listOf(
+                RawSession("com.example.notes", dayStart + 1_000, dayStart + 10_000),
+                RawSession("com.example.chat", dayStart + 51_000, dayStart + 60_000),
+            ),
+            sessions,
+        )
+    }
+
+    @Test
+    fun `moving between an app's screens stays one session`() {
+        val events = listOf(
+            fg("com.example.notes", dayStart + 1_000, "Home"),
+            bg("com.example.notes", dayStart + 30_000, "Home"),
+            fg("com.example.notes", dayStart + 30_040, "Editor"),
+            bg("com.example.notes", dayStart + 90_000, "Editor"),
+            fg("com.example.notes", dayStart + 200_000, "Home"),
+            bg("com.example.notes", dayStart + 210_000, "Home"),
+        )
+        val sessions = AppUsageNormalizer.mergeSessions(events, dayStart, dayEnd)
+        assertEquals(
+            listOf(
+                RawSession("com.example.notes", dayStart + 1_000, dayStart + 90_000),
+                RawSession("com.example.notes", dayStart + 200_000, dayStart + 210_000),
+            ),
+            sessions,
+        )
+    }
+
+    @Test
+    fun `an app's daily total never exceeds the day, however its activities interleave`() {
+        val events = (0 until 200).flatMap { i ->
+            val t = dayStart + i * 400_000L
+            listOf(
+                fg("com.example.launcher", t, "Home${i % 3}"),
+                bg("com.example.launcher", t + 1_000, "Home${(i + 1) % 3}"),
+                bg("com.example.launcher", t + 2_000, "Widget$i"),
+            )
+        }
+        val sessions = AppUsageNormalizer.mergeSessions(events, dayStart, dayEnd)
+        assertTrue(sessions.isNotEmpty())
+        assertTrue(sessions.sumOf { it.durationSeconds } <= (dayEnd - dayStart) / 1000)
+        sessions.sortedBy { it.startMillis }.zipWithNext().forEach { (a, b) -> assertTrue(a.endMillis <= b.startMillis) }
     }
 
     @Test

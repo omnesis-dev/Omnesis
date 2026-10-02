@@ -23,10 +23,10 @@ import kotlinx.serialization.json.put
  * (no Robolectric needed for the merge/aggregation logic below).
  */
 enum class UsageEventKind {
-    /** App came to the foreground (`MOVE_TO_FOREGROUND`). */
+    /** One of the app's activities resumed (`MOVE_TO_FOREGROUND`, the same value as `ACTIVITY_RESUMED`). */
     FOREGROUND,
 
-    /** App went to the background (`MOVE_TO_BACKGROUND`). */
+    /** One of the app's activities paused (`MOVE_TO_BACKGROUND`, the same value as `ACTIVITY_PAUSED`). */
     BACKGROUND,
 
     /** Screen turned on (`SCREEN_INTERACTIVE`) — the "phone pickup" signal. */
@@ -39,18 +39,24 @@ enum class UsageEventKind {
     KEYGUARD_HIDDEN,
 }
 
-/** One `UsageEvents.Event` translated to a kind this feature understands. */
+/**
+ * One `UsageEvents.Event` translated to a kind this feature understands.
+ * [className] names the activity a `FOREGROUND`/`BACKGROUND` event belongs
+ * to; Android reports those per activity, so one app with several activities
+ * emits several overlapping resume/pause pairs.
+ */
 data class RawUsageEvent(
     val packageName: String,
     val timestampMillis: Long,
     val kind: UsageEventKind,
+    val className: String? = null,
 )
 
 /**
- * One reconstructed foreground session for a single app, closed (has both a
- * start and an end) — either by a matching `MOVE_TO_BACKGROUND` event, or by
- * truncation at a day boundary when the day's query window closed while the
- * app was still in the foreground.
+ * One reconstructed on-screen session for a single app, closed (has both a
+ * start and an end) — by the app's last open activity pausing, by the screen
+ * turning off, or by truncation at the day's query window when the app was
+ * still on screen. A package's sessions for one day never overlap.
  */
 data class RawSession(
     val packageName: String,
@@ -62,7 +68,7 @@ data class RawSession(
 
 /**
  * Pure normalization for Android's `UsageStatsManager` event stream — the
- * analogue of `CallLogNormalizer`, but for foreground-session reconstruction
+ * analogue of `CallLogNormalizer`, but for on-screen session reconstruction
  * instead of a 1:1 call-row mapping. [AppUsageSource] re-queries a whole
  * affected UTC day at a time (mirroring `CallLogSource`'s day-rebuild
  * pattern), so every function here operates on one day's worth of events —
@@ -76,38 +82,110 @@ object AppUsageNormalizer {
         Instant.ofEpochMilli(epochMillis).atZone(ZoneOffset.UTC).toLocalDate()
 
     /**
-     * Pairs each `FOREGROUND` event with the next `BACKGROUND` event for the
-     * same package into a closed [RawSession]. A `BACKGROUND` with no open
-     * `FOREGROUND` (the session actually started before [dayStartMillis], out
-     * of this day's query window) is clamped to start at [dayStartMillis]. A
-     * `FOREGROUND` left open when the day's window closes (the app was still
-     * foregrounded at [dayEndMillis]) is closed there instead of dropped —
-     * the next day's rebuild will independently re-derive whatever session
-     * continues past midnight as its own, day-local session.
+     * Two sessions of one app separated by no more than this are one stretch
+     * of use. Moving between an app's screens pauses the old activity a few
+     * milliseconds before resuming the new one, which would otherwise split
+     * every screen change into its own session.
+     */
+    private const val SAME_APP_GAP_MILLIS = 2_000L
+
+    /**
+     * Reconstructs each app's on-screen sessions for one day. An app is on
+     * screen while at least one of its activities is resumed and the screen
+     * is interactive, so:
+     *
+     * - activities are tracked individually by [RawUsageEvent.className]: an
+     *   app whose second activity resumes before its first one pauses stays
+     *   one continuous session rather than two overlapping ones. Two
+     *   instances of one activity class (or events with no class name) share
+     *   one slot, so the first of their pauses ends the session;
+     * - when an app's first event of the day is a pause, that activity was
+     *   resumed before [dayStartMillis], out of this day's query window, and
+     *   is treated as open from the day start. Any other pause with no
+     *   matching resume is ignored: once the app has been seen today, a stray
+     *   pause says nothing about how long it was on screen;
+     * - the screen turning off closes every session and forgets every
+     *   resumed activity, since Android pauses the visible activity when the
+     *   device sleeps and resumes it afresh when the user returns. A pause
+     *   that never arrives therefore costs at most one screen-on stretch. The
+     *   screen counts as on at the day start unless the day's first screen
+     *   event turns it on, in which case an app carried over from the
+     *   previous day opens when it does;
+     * - a session still open when the window closes ends at [dayEndMillis].
+     *   The next day's rebuild independently re-derives whatever continues
+     *   past midnight as its own, day-local session;
+     * - sessions of one app no more than [SAME_APP_GAP_MILLIS] apart merge.
+     *
+     * Every session therefore lies inside the window and a package's
+     * sessions never overlap, so an app's daily total cannot exceed the
+     * window's length. The result is ordered by start time.
      */
     fun mergeSessions(events: List<RawUsageEvent>, dayStartMillis: Long, dayEndMillis: Long): List<RawSession> {
-        val sorted = events
-            .filter { it.kind == UsageEventKind.FOREGROUND || it.kind == UsageEventKind.BACKGROUND }
-            .sortedBy { it.timestampMillis }
-        val open = mutableMapOf<String, Long>()
+        val sorted = events.sortedBy { it.timestampMillis }
+        val activityEvents = sorted.filter { it.kind == UsageEventKind.FOREGROUND || it.kind == UsageEventKind.BACKGROUND }
+
+        val resumed = mutableMapOf<String, MutableSet<String>>()
+        for (first in activityEvents.distinctBy { it.packageName }) {
+            if (first.kind == UsageEventKind.BACKGROUND) resumed[first.packageName] = mutableSetOf(first.className.orEmpty())
+        }
+        var screenOn = sorted.firstOrNull {
+            it.kind == UsageEventKind.SCREEN_INTERACTIVE || it.kind == UsageEventKind.SCREEN_NON_INTERACTIVE
+        }?.kind != UsageEventKind.SCREEN_INTERACTIVE
+
+        val openSince = mutableMapOf<String, Long>()
         val sessions = mutableListOf<RawSession>()
-        for (event in sorted) {
-            when (event.kind) {
-                UsageEventKind.FOREGROUND -> open[event.packageName] = event.timestampMillis
-                UsageEventKind.BACKGROUND -> {
-                    val start = open.remove(event.packageName) ?: dayStartMillis
-                    if (event.timestampMillis > start) {
-                        sessions += RawSession(event.packageName, start, event.timestampMillis)
-                    }
-                }
-                else -> Unit
+        fun settle(packageName: String, at: Long) {
+            val onScreen = screenOn && resumed[packageName].orEmpty().isNotEmpty()
+            val start = openSince[packageName]
+            if (onScreen && start == null) {
+                openSince[packageName] = at
+            } else if (!onScreen && start != null) {
+                openSince.remove(packageName)
+                if (at > start) sessions += RawSession(packageName, start, at)
             }
         }
-        for ((packageName, start) in open) {
-            if (dayEndMillis > start) sessions += RawSession(packageName, start, dayEndMillis)
+
+        resumed.keys.forEach { settle(it, dayStartMillis) }
+        for (event in sorted) {
+            val at = event.timestampMillis.coerceIn(dayStartMillis, dayEndMillis)
+            when (event.kind) {
+                UsageEventKind.FOREGROUND -> {
+                    resumed.getOrPut(event.packageName) { mutableSetOf() } += event.className.orEmpty()
+                    settle(event.packageName, at)
+                }
+                UsageEventKind.BACKGROUND -> {
+                    resumed[event.packageName]?.remove(event.className.orEmpty())
+                    settle(event.packageName, at)
+                }
+                UsageEventKind.SCREEN_INTERACTIVE -> {
+                    screenOn = true
+                    resumed.keys.forEach { settle(it, at) }
+                }
+                UsageEventKind.SCREEN_NON_INTERACTIVE -> {
+                    screenOn = false
+                    resumed.keys.forEach { settle(it, at) }
+                    resumed.clear()
+                }
+                UsageEventKind.KEYGUARD_HIDDEN -> Unit
+            }
         }
-        return sessions
+        screenOn = false
+        resumed.keys.forEach { settle(it, dayEndMillis) }
+        return joinShortGaps(sessions)
     }
+
+    private fun joinShortGaps(sessions: List<RawSession>): List<RawSession> =
+        sessions.groupBy { it.packageName }.values.flatMap { appSessions ->
+            appSessions.sortedBy { it.startMillis }.fold(mutableListOf<RawSession>()) { joined, next ->
+                val last = joined.lastOrNull()
+                if (last != null && next.startMillis - last.endMillis <= SAME_APP_GAP_MILLIS) {
+                    joined[joined.lastIndex] = last.copy(endMillis = next.endMillis)
+                } else {
+                    joined += next
+                }
+                joined
+            }
+        }.sortedBy { it.startMillis }
 
     /** "Phone pickups" for the day — every time the screen turned on. */
     fun pickupCount(events: List<RawUsageEvent>): Int =
@@ -163,7 +241,7 @@ object AppUsageNormalizer {
 
     /**
      * Build the day-aggregate "Attention Timeline" document for [date]: total
-     * screen time, the top apps by foreground time, pickup count, and
+     * screen time, the top apps by on-screen time, pickup count, and
      * first-unlock / last-use times. Many analytics rows (across both
      * `android_app_usage_sessions` and `android_app_usage_daily`) roll up
      * into this one document — there is no natural 1:1 row-to-document
