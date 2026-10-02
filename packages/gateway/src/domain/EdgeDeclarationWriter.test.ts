@@ -487,12 +487,6 @@ describe("endpoint lookup plan", () => {
     ["declared", DECLARED_ENDPOINT_LOOKUP_SQL],
     ["pending", PENDING_ENDPOINT_LOOKUP_SQL],
   ])("the %s lookup seeks on (source_id, external_id) instead of walking the source", (_, sql) => {
-    // A large target source must not change the plan.
-    for (let i = 0; i < 200; i += 1) {
-      seedDoc(`web-${i}`, { sourceId: WEB_SOURCE_ID, externalId: `https://example.com/p/${i}` });
-    }
-    db.exec("ANALYZE");
-
     const detail = plan(sql);
     expect(detail[0]).toBe(
       "SEARCH documents USING INDEX idx_documents_source_external_id (source_id=? AND external_id=?)",

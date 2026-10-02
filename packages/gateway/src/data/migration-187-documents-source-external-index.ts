@@ -12,7 +12,8 @@ export const DOCUMENTS_SOURCE_EXTERNAL_ID_INDEX = "idx_documents_source_external
  * A declared edge names its endpoints by source and external id, and every
  * endpoint is resolved inside the writer transaction that ingests the
  * declaring page. The unique key leads with `provider_id` and the other
- * `source_id` indexes stop at the source, so without this index each lookup
+ * `source_id` indexes continue with a timestamp or a stream, not the external
+ * id, so without this index each lookup
  * walks every document of the target source: a browser-history page that
  * declares a thousand visits toward the `web` source reads that whole source
  * a thousand times while holding the writer. With it, a lookup reads a few
