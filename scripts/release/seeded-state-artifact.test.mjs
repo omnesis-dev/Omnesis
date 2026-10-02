@@ -16,6 +16,7 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { runSchemaSetup } from "../../packages/gateway/src/data/schema.js";
+import { createTranscriptionVocabularyTables } from "../../packages/gateway/src/transcribe/vocabulary/storage.js";
 import { createIndexDatabase } from "../../packages/gateway/src/indexer/db.js";
 import {
   SEEDED_STATE_MANIFEST,
@@ -108,6 +109,40 @@ function installOptions(paths, overrides = {}) {
 }
 
 describe("seeded-state artifacts", () => {
+  it("preserves transcription vocabulary and its contribution ledger together", () => {
+    const paths = fixture();
+    const source = new Database(paths.sourcePath);
+    createTranscriptionVocabularyTables(source);
+    source.exec(`
+      INSERT INTO transcription_vocabulary_terms (
+        scope_kind, scope_key, term, text, document_count, benefit, base_score, last_seen
+      ) VALUES ('global', '', 'quorvex', 'Quorvex', 1, 3, 2.079,
+        '2026-01-01T00:00:00.000Z');
+      INSERT INTO transcription_vocabulary_document_terms (
+        document_id, scope_kind, scope_key, term
+      ) VALUES ('doc-1', 'global', '', 'quorvex');
+    `);
+    source.close();
+    const tables = ["transcription_vocabulary_terms", "transcription_vocabulary_document_terms"];
+    createSeededStateArtifact(
+      {
+        ...spec(paths, tables),
+        expected: {
+          rowCounts: { "omnesis.db": Object.fromEntries(tables.map((table) => [table, 1])) },
+        },
+      },
+      paths.artifact,
+    );
+    const output = new Database(join(paths.artifact, "omnesis.db"), { readonly: true });
+    expect(
+      output.prepare("SELECT text, document_count FROM transcription_vocabulary_terms").get(),
+    ).toEqual({ text: "Quorvex", document_count: 1 });
+    expect(
+      output.prepare("SELECT document_id, term FROM transcription_vocabulary_document_terms").get(),
+    ).toEqual({ document_id: "doc-1", term: "quorvex" });
+    output.close();
+  });
+
   it("classifies every table in the current gateway and index schemas", () => {
     const root = mkdtempSync(join(tmpdir(), "omnesis-seeded-schema-"));
     temporaryDirectories.push(root);
