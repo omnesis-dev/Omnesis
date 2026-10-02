@@ -3,7 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { deletionsFor, rowsFor, tablesWritten } from "@omnesis/source-sdk/testing";
-import { tableWrites } from "@omnesis/source-sdk";
+import { tableWrites, type PageTableWrites } from "@omnesis/source-sdk";
 import { StravaActivitiesSource } from "./activities.js";
 import { StravaClient, StravaForbiddenError, StravaRateLimitError } from "./client.js";
 import {
@@ -66,6 +66,29 @@ function makeFetchedClient(scenarios: Record<string, unknown>): StravaClient {
     credentials: { client_id: "x", client_secret: "y" },
     fetchFn,
   });
+}
+
+/**
+ * What one child table holds once the host has applied a page, starting from
+ * `stored`: the page's writes in the order given, and within each write the
+ * rows first and the deletions after them, as the gateway's table manager
+ * applies them. Rows are matched on `activity_id`, the delete key of every
+ * child table, and appended rather than upserted — each write here replaces
+ * whole activities, so nothing is left for a key to collide with.
+ */
+function storedAfter(
+  page: { analytics?: PageTableWrites },
+  tableName: string,
+  stored: Record<string, unknown>[] = [],
+): Record<string, unknown>[] {
+  let rows = [...stored];
+  for (const write of tableWrites(page.analytics)) {
+    if (write.tableName !== tableName) continue;
+    rows.push(...(write.records ?? []));
+    const deleted = new Set((write.deletedKeys ?? []).map((key) => String(key.activity_id)));
+    rows = rows.filter((row) => !deleted.has(String(row.activity_id)));
+  }
+  return rows;
 }
 
 const baseRow = {
@@ -160,12 +183,9 @@ describe("syncDetailBackfill", () => {
       "strava_activity_laps",
       "strava_activity_segment_efforts",
     ]) {
+      // A complete response replaces the activity's group even when it holds
+      // no rows for this table, so the clear is there either way.
       expect(deletionsFor(result, table), table).toEqual(["12345"]);
-      // Replacement and clear belong to one atomic table write, even when
-      // the complete response contains no rows for that child table.
-      expect(
-        tableWrites(result.analytics).filter((write) => write.tableName === table),
-      ).toHaveLength(1);
     }
     expect(rowsFor(result, "strava_activity_laps")).toEqual([]);
     expect(result.documents).toHaveLength(1);
@@ -179,6 +199,113 @@ describe("syncDetailBackfill", () => {
     });
     expect(rowsFor(stamped, "strava_activities")[0].detail_fetched_at).toBeTruthy();
     expect(stamped.cursor.pendingDetailStamps).toBeUndefined();
+  });
+
+  test("the child rows a detail page writes are what the host holds once it applies the page", async () => {
+    const { gateway } = makeMockGateway([baseRow]);
+    const detail: StravaDetailedActivity = {
+      id: 12345,
+      athlete: { id: 99 },
+      name: "Morning Run",
+      distance: 2000,
+      moving_time: 620,
+      elapsed_time: 640,
+      total_elevation_gain: 12,
+      sport_type: "Run",
+      start_date: "2026-05-03T09:31:00Z",
+      start_date_local: "2026-05-03T10:31:00Z",
+      splits_metric: [
+        { split: 1, distance: 1000, elapsed_time: 310, moving_time: 305 },
+        { split: 2, distance: 1000, elapsed_time: 330, moving_time: 315 },
+      ],
+      best_efforts: [
+        {
+          id: 51,
+          activity: { id: 12345 },
+          name: "1K",
+          distance: 1000,
+          elapsed_time: 300,
+          moving_time: 300,
+        },
+      ],
+      laps: [
+        {
+          id: 61,
+          activity: { id: 12345 },
+          name: "Lap 1",
+          distance: 2000,
+          elapsed_time: 640,
+          moving_time: 620,
+          start_date: "2026-05-03T09:31:00Z",
+          start_date_local: "2026-05-03T10:31:00Z",
+          start_index: 0,
+          end_index: 640,
+        },
+      ],
+      segment_efforts: [
+        {
+          id: 71,
+          activity: { id: 12345 },
+          name: "Segment 7",
+          distance: 1200,
+          elapsed_time: 380,
+          moving_time: 375,
+          start_date: "2026-05-03T09:35:00Z",
+          start_date_local: "2026-05-03T10:35:00Z",
+          start_index: 120,
+          end_index: 500,
+          segment: { id: 81, name: "Segment 7", activity_type: "Run", distance: 1200 },
+        },
+      ],
+    };
+    const { result } = await syncDetailBackfill(
+      { phase: "detail-backfill" },
+      {
+        analytics: gateway,
+        client: makeFetchedClient({ "/activities/12345": detail }),
+        sourceId: SOURCE_ID,
+        providerId: PROVIDER_ID,
+        athleteId: 99,
+      },
+    );
+
+    // Rows from an earlier read of this activity are replaced, and another
+    // activity's rows are left alone.
+    const earlier = { activity_id: 12345, unit: "metric", split_index: 3 };
+    const otherActivity = { activity_id: 777, unit: "metric", split_index: 1 };
+    expect(storedAfter(result, "strava_activity_splits", [earlier, otherActivity])).toEqual([
+      otherActivity,
+      ...rowsFor(result, "strava_activity_splits"),
+    ]);
+    for (const table of [
+      "strava_activity_splits",
+      "strava_activity_best_efforts",
+      "strava_activity_laps",
+      "strava_activity_segment_efforts",
+    ]) {
+      expect(rowsFor(result, table), table).not.toEqual([]);
+      expect(storedAfter(result, table), table).toEqual(rowsFor(result, table));
+    }
+  });
+
+  test("an activity Strava would not show keeps the child rows it already has", async () => {
+    const { gateway } = makeMockGateway([baseRow]);
+    const { result } = await syncDetailBackfill(
+      { phase: "detail-backfill" },
+      {
+        analytics: gateway,
+        client: makeFetchedClient({}),
+        sourceId: SOURCE_ID,
+        providerId: PROVIDER_ID,
+        athleteId: 99,
+      },
+    );
+
+    // Marked done so it is not asked for again, but nothing was read that
+    // could replace its rows.
+    expect(rowsFor(result, "strava_activities")[0]?.detail_fetched_at).toBeTruthy();
+    const stored = [{ activity_id: 12345, unit: "metric", split_index: 1 }];
+    expect(storedAfter(result, "strava_activity_splits", stored)).toEqual(stored);
   });
 
   test("pending detail stamps flush before tier selection and never recreate removed activities", async () => {
@@ -450,7 +577,17 @@ describe("syncZonesBackfill", () => {
     );
     expect(rowsFor(result, "strava_activity_zones")).toHaveLength(2);
     expect(deletionsFor(result, "strava_activity_zones")).toEqual(["12345"]);
-    expect(tablesWritten(result)).toEqual(["strava_activity_zones", "strava_activities"]);
+    // The buckets just written are what the host holds once the page lands;
+    // the activity's earlier buckets are gone.
+    const earlier = { activity_id: 12345, zone_type: "heartrate", bucket_index: 4 };
+    expect(storedAfter(result, "strava_activity_zones", [earlier])).toEqual(
+      rowsFor(result, "strava_activity_zones"),
+    );
+    expect(tablesWritten(result)).toEqual([
+      "strava_activity_zones",
+      "strava_activity_zones",
+      "strava_activities",
+    ]);
   });
 
   test("a complete empty zones response replaces the old activity group", async () => {
@@ -468,6 +605,8 @@ describe("syncZonesBackfill", () => {
     expect(rowsFor(result, "strava_activity_zones")).toEqual([]);
     expect(deletionsFor(result, "strava_activity_zones")).toEqual(["12345"]);
     expect(tablesWritten(result)).toEqual(["strava_activity_zones", "strava_activities"]);
+    const earlier = { activity_id: 12345, zone_type: "heartrate", bucket_index: 0 };
+    expect(storedAfter(result, "strava_activity_zones", [earlier])).toEqual([]);
   });
 });
 

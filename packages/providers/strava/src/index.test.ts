@@ -75,6 +75,17 @@ describe("Strava provider context", () => {
   });
 });
 
+describe("Strava activities descriptor", () => {
+  test("counts activities by their documents, not by every analytics row", () => {
+    // One document per activity; the activity's splits, laps, kudos and the
+    // rest add rows to tables of their own, which a count over every table
+    // would add to the headline.
+    const [activities] = definition.sources;
+    expect(activities?.unitName).toBe("activities");
+    expect(activities?.primaryCount).toBe("documents");
+  });
+});
+
 describe("Strava isAuthenticated", () => {
   async function contextFor(configDir: string) {
     await saveTokens(

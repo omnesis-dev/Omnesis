@@ -436,8 +436,9 @@ includeAudioTypes })` and the injected `extractAttachment`; no bespoke
   parent, so one cursor covers all of them — it does not paginate a phase per
   table, and there is no way to write outside the page at all. A table named
   twice is two writes in order, which is how a keyed set is replaced: the
-  clear, then the rows. A page with nothing to write omits the field rather
-  than naming a table with no rows.
+  clear, then the rows. One write carrying both deletes its own rows, because
+  the host stores a write's rows before it applies its deletions. A page with
+  nothing to write omits the field rather than naming a table with no rows.
 - **One page, or two.** Rows go on one page when a checkpoint between them
   would be a lie — a parent and the children it fans out into. Rows that are
   merely in hand at the same moment belong on separate pages: each checkpoints,

@@ -199,20 +199,21 @@ export async function syncDetailBackfill(
 
   // Child rows precede the activity update. Successful detail stamps wait for
   // the following page, after the document and cursor have committed too.
+  const replaced = pendingDetailStamps.map((activity_id) => ({ activity_id }));
   return {
     result: {
       analytics: [
         // A complete detail response replaces each child's group, including
         // an empty one. Upserts alone leave removed splits and efforts behind.
+        // The clear is a write of its own, ahead of the rows: within one write
+        // the host stores the rows before it applies the deletions, so a write
+        // carrying both would delete the rows it had just written.
         ...[
           { tableName: "strava_activity_splits", records: splitsRows },
           { tableName: "strava_activity_best_efforts", records: bestEffortRows },
           { tableName: "strava_activity_laps", records: lapRows },
           { tableName: "strava_activity_segment_efforts", records: segmentEffortRows },
-        ].map((write) => ({
-          ...write,
-          deletedKeys: pendingDetailStamps.map((activity_id) => ({ activity_id })),
-        })),
+        ].flatMap((write) => [{ tableName: write.tableName, deletedKeys: replaced }, write]),
         { tableName: "strava_activities", records },
       ],
       documents,
@@ -423,11 +424,13 @@ export async function syncZonesBackfill(
   return {
     result: {
       analytics: [
+        // Clear, then write, as two writes in that order — the same shape as
+        // the detail tier's child tables, and for the same reason.
         {
           tableName: "strava_activity_zones",
-          records: zoneRows,
           deletedKeys: refetched.map((activity_id) => ({ activity_id })),
         },
+        { tableName: "strava_activity_zones", records: zoneRows },
         { tableName: "strava_activities", records: stampRows },
       ],
       cursor: { ...cur },

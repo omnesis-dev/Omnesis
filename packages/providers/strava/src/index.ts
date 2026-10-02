@@ -100,6 +100,10 @@ export default defineProvider<StravaContext>({
       // TODO: Declare a defaultSyncInterval. The collector's 5-minute default polls 288 times a
       // day against a new app's 1,000 daily reads.
       unitName: "activities",
+      // Splits, laps, best efforts, kudos and the rest are analytics rows of
+      // their own, so a count over every table reads as several times the
+      // number of activities. The headline stays on the activity documents.
+      primaryCount: "documents",
       icon: stravaIcon,
       attribution: stravaAttribution,
       analyticsSchemas: allSchemas,

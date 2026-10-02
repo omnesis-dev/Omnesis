@@ -109,7 +109,8 @@ describe("Strava account ownership", () => {
       const page = await source.syncStructured(cursor);
       expect(cursor).toEqual({ phase });
       for (const write of tableWrites(page.analytics)) {
-        if (write.tableName === "strava_activities") continue;
+        // A clear names activities, not rows, so it carries no owner.
+        if (write.tableName === "strava_activities" || write.records === undefined) continue;
         expect(write.records).toHaveLength(1);
         expect(write.records![0]).toMatchObject({ source_athlete_id: 201, activity_id: 7001 });
         seen.add(write.tableName);

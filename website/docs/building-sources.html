@@ -831,8 +831,10 @@ export default defineSource({
           <code>records</code> to insert or update by primary key, <code>deletedKeys</code> to
           remove, and <code>presentKeys</code> as that table's snapshot; both kinds of key are
           records over the table's <code>deleteKey</code> columns. The host writes the list in
-          order, and a table may appear twice. One page fills as many tables as the upstream record
-          spans, so a workout that is also its splits, laps, and best efforts writes all four
+          order, and a table may appear twice. Within one write the records land first and the
+          deletions after them, so a page that replaces a group of rows sends the deletion and the
+          new rows as two writes, in that order. One page fills as many tables as the upstream
+          record spans, so a workout that is also its splits, laps, and best efforts writes all four
           together under the checkpoint that covers them.
         </p>
         <p>

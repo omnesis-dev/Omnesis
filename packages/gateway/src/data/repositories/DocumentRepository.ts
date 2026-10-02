@@ -1261,7 +1261,7 @@ export function getDocumentCount(db: Db, sourceId: string): number {
  * ~1ms even at /status's 2s portal-poll cadence.
  *
  * Returns one entry per source that has at least one document. Sources
- * with zero docs (yet-to-sync, or pure-structured like Strava/Screen Time)
+ * with zero docs (yet-to-sync, or pure-structured like Screen Time)
  * are absent from the map — callers fall back to "no activity" UX.
  */
 export function getLatestActivityBySource(db: Db): Record<string, LatestActivity> {
