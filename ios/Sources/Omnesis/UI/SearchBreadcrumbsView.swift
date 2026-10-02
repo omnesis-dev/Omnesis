@@ -53,6 +53,7 @@ private struct BreadcrumbRichText: UIViewRepresentable {
         view.textContainer.lineFragmentPadding = 0
         view.adjustsFontForContentSizeCategory = true
         view.delegate = context.coordinator
+        view.isAccessibilityElement = true
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         return view
     }
@@ -87,7 +88,6 @@ private struct BreadcrumbRichText: UIViewRepresentable {
         view.attributedText = text
         // VoiceOver reads the fact as one sentence, without the icons, and
         // offers each linked document as its own action.
-        view.isAccessibilityElement = true
         view.accessibilityLabel = fact.plainText
         let coordinator = context.coordinator
         view.accessibilityCustomActions = fact.links.map { document in

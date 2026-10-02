@@ -780,7 +780,7 @@ class SessionManager @Inject constructor(
     private suspend fun probeStatus(current: GatewaySession): Boolean =
         statusProbeSerializer.run probe@{
             if (session !== current) return@probe false
-            // A status read is also when search forgets its kept capabilities.
+            // Re-reading status may reveal an updated gateway, so search re-asks its capabilities.
             current.search.invalidateSearchCapabilities()
             val status = runCatching { current.gateway.status() }.getOrElse { return@probe false }
             if (session !== current) return@probe false

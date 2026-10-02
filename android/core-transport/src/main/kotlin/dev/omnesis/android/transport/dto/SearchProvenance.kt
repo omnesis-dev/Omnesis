@@ -4,7 +4,6 @@
 package dev.omnesis.android.transport.dto
 
 import kotlinx.serialization.KSerializer
-import kotlinx.serialization.SerializationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.nullable
 import kotlinx.serialization.descriptors.SerialDescriptor
@@ -58,9 +57,8 @@ object LenientSearchProvenanceSerializer : KSerializer<SearchProvenance?> {
         val element = input.decodeJsonElement()
         return try {
             input.json.decodeFromJsonElement(delegate, element)
-        } catch (_: SerializationException) {
-            null
         } catch (_: IllegalArgumentException) {
+            // SerializationException is an IllegalArgumentException.
             null
         }
     }

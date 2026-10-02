@@ -444,9 +444,9 @@ final class AdminCoordinator {
 
     /// Refresh `/status` + `/index/stats` snapshots used by the Sources
     /// header strip and per-row cells. Tolerant — failures keep the
-    /// last-known snapshot rather than blanking the header. A status read is
-    /// also when search forgets its kept capabilities, so the next search
-    /// asks the gateway again.
+    /// last-known snapshot rather than blanking the header. Also clears
+    /// search's kept capabilities, so the next search re-reads them from the
+    /// gateway.
     func refreshGatewayStats() async {
         guard let client = searchClient else { return }
         client.invalidateSearchCapabilities()

@@ -13,6 +13,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -73,20 +74,22 @@ class SearchClientTest {
         server.enqueue(MockResponse().setBody("""{"results":[]}"""))
         sameClient.search("sample", graphContext = true)
         assertEquals("/search/readiness", server.takeRequest().path)
-        assertTrue(!server.takeRequest().body.readUtf8().contains("includeGraphContext"))
+        assertFalse(server.takeRequest().body.readUtf8().contains("includeGraphContext"))
     }
 
     @Test
     fun older_gateway_refusal_is_kept_but_a_server_error_is_asked_again() = runTest {
-        val older = client()
-        server.enqueue(MockResponse().setResponseCode(404))
-        repeat(2) { server.enqueue(MockResponse().setBody("""{"results":[]}""")) }
-        older.search("sample", graphContext = true)
-        older.search("sample", graphContext = true)
-        assertEquals(
-            listOf("/search/readiness", "/search", "/search"),
-            List(3) { server.takeRequest().path },
-        )
+        for (refusal in listOf(404, 403)) {
+            val older = client()
+            server.enqueue(MockResponse().setResponseCode(refusal))
+            repeat(2) { server.enqueue(MockResponse().setBody("""{"results":[]}""")) }
+            older.search("sample", graphContext = true)
+            older.search("sample", graphContext = true)
+            assertEquals(
+                listOf("/search/readiness", "/search", "/search"),
+                List(3) { server.takeRequest().path },
+            )
+        }
 
         val failing = client()
         server.enqueue(MockResponse().setResponseCode(503))

@@ -263,9 +263,8 @@ export interface CapabilityMetadata {
    * Set when only a special family of backend can serve the role, so a
    * client's ordinary model picker (local models, chat backends) offers
    * nothing that works for it. `typed-decision` roles take only
-   * typed-decision backends such as TypeSafe. A client that cannot configure
-   * the family it names shows the role read-only and points to the portal.
-   * Absent for every role an ordinary model serves.
+   * typed-decision backends such as TypeSafe. Absent for every role an
+   * ordinary model serves.
    */
   readonly backendFamily?: "typed-decision";
 }

@@ -94,6 +94,23 @@ enum ModelsPreviewData {
         )
     }
 
+    /// An ordinary role beside one only a special backend family serves, so
+    /// the read-only card sits in view next to a tappable one.
+    static func overviewWithReadOnlyRole() -> ModelsOverview {
+        let base = overview()
+        return ModelsOverview(
+            assignmentDisplays: base.assignmentDisplays,
+            capabilities: base.capabilities.filter { ["agent", "decision"].contains($0.role) },
+            inference: base.inference,
+            catalog: base.catalog,
+            installed: base.installed,
+            activeDownloads: base.activeDownloads,
+            presets: base.presets,
+            modelControls: base.modelControls,
+            modelSettings: base.modelSettings
+        )
+    }
+
     static func overviewWithoutControls() -> ModelsOverview {
         let base = overview()
         return ModelsOverview(

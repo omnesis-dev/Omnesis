@@ -1231,6 +1231,15 @@ enum ModelCapabilityIcon {
 }
 
 @available(iOS 17.0, *)
+#Preview("ModelsView — read-only role") {
+    NavigationStack {
+        ModelsView(previewOverview: ModelsPreviewData.overviewWithReadOnlyRole())
+            .environment(AppStore.preview())
+    }
+    .preferredColorScheme(.dark)
+}
+
+@available(iOS 17.0, *)
 #Preview("ModelsView — loading") {
     NavigationStack {
         ModelsView(previewOverview: nil, previewLoading: true)
