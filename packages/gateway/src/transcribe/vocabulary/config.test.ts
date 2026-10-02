@@ -23,6 +23,6 @@ describe("transcription vocabulary settings", () => {
           inference: { transcriptionVocabulary: { enabled: true, maxTerms: 8 } },
         }),
       ),
-    ).toMatchObject({ enabled: true, maxTerms: 8, batchSize: 4, maxPromptTokens: 224 });
+    ).toMatchObject({ enabled: true, maxTerms: 8, batchSize: 4, maxPromptTokens: 96 });
   });
 });

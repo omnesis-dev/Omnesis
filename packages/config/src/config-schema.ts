@@ -3005,7 +3005,7 @@ const transcriptionVocabularySettings = z
       .min(1)
       .max(224)
       .describe(
-        "Whisper hint token budget. The local adapter conservatively counts UTF-8 bytes. Default 224.",
+        "Whisper hint token budget. The local adapter conservatively counts UTF-8 bytes. Default 96.",
       )
       .optional(),
     batchSize: z

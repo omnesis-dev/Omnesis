@@ -10,7 +10,7 @@ export function resolveVocabularySettings(config: OmnesisConfig): VocabularySett
   return {
     enabled: settings?.enabled === true,
     maxTerms: settings?.maxTerms ?? 64,
-    maxPromptTokens: settings?.maxPromptTokens ?? 224,
+    maxPromptTokens: settings?.maxPromptTokens ?? 96,
     batchSize: settings?.batchSize ?? 4,
     maxDocumentChars: settings?.maxDocumentChars ?? 32768,
     maxTermsPerDocument: settings?.maxTermsPerDocument ?? 64,

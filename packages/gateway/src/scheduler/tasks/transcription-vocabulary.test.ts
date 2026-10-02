@@ -105,9 +105,9 @@ describe("bounded vocabulary scheduler", () => {
     const d = deps();
     let enabled = true;
     d.getSettings = () => ({ ...settings, enabled });
-    d.cpuGate.extractTranscriptionVocabulary.mockImplementation(async () => {
+    d.cpuGate.extractTranscriptionVocabulary.mockImplementation(() => {
       enabled = false;
-      return [];
+      return Promise.resolve([]);
     });
     expect(await run(createTranscriptionVocabularyTask(d))).toEqual({
       kind: "done",

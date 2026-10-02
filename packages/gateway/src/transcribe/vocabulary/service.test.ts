@@ -11,7 +11,7 @@ const vocabulary: TranscriptionVocabulary = { entries: [{ text: "Umbriolet", sco
 
 function fixture(initialConfig: unknown) {
   let config = omnesisConfigSchema.parse(initialConfig);
-  const read = vi.fn(async () => vocabulary);
+  const read = vi.fn(() => Promise.resolve(vocabulary));
   const service = new TranscriptionVocabularyService({
     getSettings: () => resolveVocabularySettings(config),
     ioGate: { getTranscriptionVocabulary: read },
@@ -52,9 +52,9 @@ describe("transcription vocabulary service opt-in", () => {
     const { service, read, setConfig } = fixture({
       inference: { transcriptionVocabulary: { enabled: true } },
     });
-    read.mockImplementation(async () => {
+    read.mockImplementation(() => {
       setConfig({ inference: { transcriptionVocabulary: { enabled: false } } });
-      return vocabulary;
+      return Promise.resolve(vocabulary);
     });
     expect(await service.getDictionary({ purpose: "dictation" })).toEqual({ entries: [] });
     expect(read).toHaveBeenCalledTimes(1);

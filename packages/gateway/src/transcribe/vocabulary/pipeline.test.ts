@@ -222,9 +222,10 @@ describe("gateway vocabulary to Whisper pipeline", () => {
     });
     expect(worker.requests[0].vocabularyHint?.initial_prompt).toContain("Quorvex");
     expect(worker.requests[0].vocabularyHint?.no_context).toBe(true);
+    expect(worker.requests[0].vocabularyHint?.n_max_text_ctx).toBe(96);
     expect(
       Buffer.byteLength(worker.requests[0].vocabularyHint!.initial_prompt),
-    ).toBeLessThanOrEqual(224);
+    ).toBeLessThanOrEqual(96);
   });
 
   test("Tell Omnesis uses the same selection and adapter, retaining the transcript", async () => {
