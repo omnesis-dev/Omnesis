@@ -67,7 +67,7 @@ export interface StatusRoutesDeps {
    */
   getBriefsStatus?: () => BriefsFeatureStatus;
   /**
-   * Gateway dictation gate (experimental). When omitted, `/status` advertises
+   * Gateway dictation gate. When omitted, `/status` advertises
    * the feature inactive, so clients keep on-device dictation.
    */
   getDictationStatus?: () => DictationFeatureStatus;
@@ -477,7 +477,7 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       // once iOS and Android read `brain`.
       brain: brainGate,
       briefs: brainGate,
-      // Tell Omnesis voice notes (experimental): whether the setting may show,
+      // Tell Omnesis voice notes: whether the setting may show,
       // whether the operator switched it on, whether a runnable transcriber is
       // assigned, and whether the mobile apps should send a voice note's audio
       // to `POST /notes/voice`. A client that finds no field, or finds it

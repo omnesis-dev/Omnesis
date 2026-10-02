@@ -5,9 +5,8 @@
  * The gateway dictation gate — the single answer to "may a mobile app send a
  * Tell Omnesis voice note's audio to this gateway for transcription?".
  *
- * Three levers, all required:
+ * Two levers, both required:
  *
- *   - **experimental mode** (`OMNESIS_EXPERIMENTAL`);
  *   - **the operator's setting**, `inference.dictation.transcribeOnGateway`,
  *     on unless set to false;
  *   - **a runnable `transcriber`** — the same model that transcribes source
@@ -20,18 +19,17 @@
  * same to it.
  */
 
-import { experimentalEnabled, experimentalVisible } from "@omnesis/core";
 import { MAX_AUDIO_BYTES, type TranscriberReadiness } from "../transcribe/index.js";
 import type { OmnesisConfig } from "@omnesis/config";
 
 export interface DictationFeatureStatus {
-  /** Surfaces may show the setting: the gateway is in experimental mode. */
+  /** Surfaces may show the setting: the gateway supports voice-note transcription. */
   visible: boolean;
   /** The operator switched gateway dictation on. */
   enabled: boolean;
   /** A transcriber is assigned and can run. */
   modelAssigned: boolean;
-  /** Clients should send dictation audio: experimental AND enabled AND a runnable model. */
+  /** Clients should send dictation audio: enabled AND a runnable model. */
   active: boolean;
   /**
    * Why the transcriber cannot run, when it cannot. Absent while runnable.
@@ -54,7 +52,7 @@ export function dictationOptedIn(config: OmnesisConfig): boolean {
 }
 
 /**
- * Compute the live verdict. Reads the experimental env, the config and the
+ * Compute the live verdict. Reads the config and the
  * transcriber's readiness fresh on every call, so a change takes effect on the
  * next `/status` poll or request without a restart.
  */
@@ -65,10 +63,10 @@ export function dictationFeatureStatus(deps: {
   const readiness = deps.transcriberReadiness();
   const enabled = dictationOptedIn(deps.getConfig());
   return {
-    visible: experimentalVisible(),
+    visible: true,
     enabled,
     modelAssigned: readiness.runnable,
-    active: experimentalEnabled() && enabled && readiness.runnable,
+    active: enabled && readiness.runnable,
     ...(readiness.reason !== undefined ? { reason: readiness.reason } : {}),
     maxAudioBytes: MAX_AUDIO_BYTES,
   };

@@ -404,11 +404,8 @@ function EntailmentPromptStyle() {
   `;
 }
 
-// Tell Omnesis voice-note opt-in (experimental). The gateway's `dictation`
-// verdict on /status decides whether the setting shows at all (`visible` =
-// experimental mode) and carries the live state, so this control never reasons
-// about experimental mode or the assignment itself. With it on, the mobile apps
-// send voice notes' audio for this transcriber to transcribe.
+// The gateway's dictation verdict carries feature support and live readiness.
+// With the setting on, mobile apps send voice-note audio to the transcriber.
 export function GatewayDictationSetting() {
   const [dictation, setDictation] = useState(null); // null = loading or hidden
   const [busy, setBusy] = useState(false);
@@ -446,20 +443,17 @@ export function GatewayDictationSetting() {
   return html`
     <div class="detail-section cap-dictation">
       <div class="models-cloud-control">
-        <h2>Tell Omnesis voice notes <span class="experimental-tag" title="Experimental feature">Experimental</span></h2>
+        <h2>Transcribe voice notes in the Gateway</h2>
         <button type="button" class="models-cloud-switch" role="switch"
           aria-checked=${dictation.enabled}
-          aria-label="Transcribe Tell Omnesis voice notes on the gateway" disabled=${busy}
+          aria-label="Transcribe voice notes in the Gateway" disabled=${busy}
           onClick=${toggle}>
           <span class="models-cloud-switch-thumb" aria-hidden="true"></span>
         </button>
         <span role="status">${busy ? "Saving…" : dictation.enabled ? "On" : "Off"}</span>
       </div>
       <p class="cap-detail-desc">
-        The iOS and Android apps send the audio of what you dictate in Tell Omnesis, on the
-        phone or the Apple Watch, with the note. The note is saved right away with the phone's
-        own transcript and updated once this transcriber has transcribed it. Agent
-        conversations, Siri, and assistant requests that already carry their words are unaffected.
+        When enabled, the raw audio will be sent to your gateway to be transcribed. The watch/phone’s local audio transcription will still be sent as fallback.
       </p>
       ${dictation.enabled && !dictation.modelAssigned
         ? html`<div class="cap-detail-hint">
