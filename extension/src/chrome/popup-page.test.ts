@@ -191,6 +191,31 @@ describe("popup — summary states", () => {
     expect(popup.text("queue")).toBe("1");
   });
 
+  it("shows Ready without a warning or acknowledgement for recovery-copy evictions", async () => {
+    const popup = openPopup(
+      pairedStorage({
+        "omnesis.capture.handoffOverflow.v1": JSON.stringify({ at: T0 - 5000, discarded: 3 }),
+      }),
+    );
+    await waitForState(popup, "ready");
+    expect(popup.document.body.dataset.warn).toBe("false");
+    expect(popup.document.body.dataset.notice).toBe("false");
+    expect(popup.text("warn")).toBe("");
+    expect(popup.$("ack-warning").hidden).toBe(true);
+  });
+
+  it("keeps a current handoff failure visible alongside recovery-copy evictions", async () => {
+    const popup = openPopup(
+      pairedStorage({
+        "omnesis.capture.handoffOverflow.v1": JSON.stringify({ at: T0 - 5000, discarded: 3 }),
+        "omnesis.capture.handoffFailure.v1": JSON.stringify({ at: T0, attempts: 4 }),
+      }),
+    );
+    await waitForState(popup, "not-syncing");
+    expect(popup.text("warn")).toMatch(/Capture handoff is delayed/);
+    expect(popup.$("ack-warning").hidden).toBe(true);
+  });
+
   it("shows a dismissible past-loss notice without claiming sync is broken", async () => {
     const popup = openPopup(
       pairedStorage({
