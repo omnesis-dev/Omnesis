@@ -64,7 +64,7 @@ describe("privacy policy schema", () => {
       summary: "allow",
       exact: "approve",
     });
-    expect(guarded.rows.at(-1)!.summary).toBe("deny");
+    expect(guarded.rows.at(-1)!.summary).toBe("approve");
 
     // Unfiltered is not nine rows — the schema must follow the policy rather
     // than impose a fixed category list.
@@ -90,7 +90,7 @@ describe("privacy policy schema", () => {
       label: "Health",
       existence: "approve",
       summary: "deny",
-      exact: "deny",
+      exact: "approve",
     });
 
     // Everything outside the table survives verbatim.
@@ -130,9 +130,10 @@ describe("privacy policy schema", () => {
   });
 
   it("adds and removes the credential clause as an exact line", () => {
-    expect(GUARDED).not.toContain(PRIVACY_POLICY_CREDENTIAL_APPROVAL_CLAUSE);
+    const blocked = applyPrivacyPolicySchemaEdit(GUARDED, { credentialApprovalEnabled: false })!;
+    expect(blocked).not.toContain(PRIVACY_POLICY_CREDENTIAL_APPROVAL_CLAUSE);
 
-    const enabled = applyPrivacyPolicySchemaEdit(GUARDED, { credentialApprovalEnabled: true })!;
+    const enabled = applyPrivacyPolicySchemaEdit(blocked, { credentialApprovalEnabled: true })!;
     expect(enabled).toContain(PRIVACY_POLICY_CREDENTIAL_APPROVAL_CLAUSE);
     expect(parsePrivacyPolicySchema(enabled)!.credentialApprovalEnabled).toBe(true);
 
@@ -142,9 +143,10 @@ describe("privacy policy schema", () => {
   });
 
   it("never leaves the policy claiming credentials are both approvable and not", () => {
-    expect(GUARDED).toContain(PRIVACY_POLICY_CREDENTIAL_DENY_SENTENCE);
+    const blocked = applyPrivacyPolicySchemaEdit(GUARDED, { credentialApprovalEnabled: false })!;
+    expect(blocked).toContain(PRIVACY_POLICY_CREDENTIAL_DENY_SENTENCE);
 
-    const enabled = applyPrivacyPolicySchemaEdit(GUARDED, { credentialApprovalEnabled: true })!;
+    const enabled = applyPrivacyPolicySchemaEdit(blocked, { credentialApprovalEnabled: true })!;
     // The floor's own sentence is the one the reviewer reads right before the
     // opt-in. Leaving it would state the opposite in the adjacent paragraph.
     expect(enabled).not.toContain(PRIVACY_POLICY_CREDENTIAL_DENY_SENTENCE);
@@ -157,7 +159,8 @@ describe("privacy policy schema", () => {
     expect(lines.indexOf(PRIVACY_POLICY_CREDENTIAL_APPROVAL_CLAUSE)).toBeGreaterThan(heading);
 
     const disabled = applyPrivacyPolicySchemaEdit(enabled, { credentialApprovalEnabled: false })!;
-    expect(disabled).toBe(GUARDED);
+    expect(disabled).toBe(blocked);
+    expect(enabled).toBe(GUARDED);
   });
 
   it("files the clause under an approval section the policy already has", () => {

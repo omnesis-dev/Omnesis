@@ -177,6 +177,31 @@ describe("TemporalQueryService", () => {
     );
   });
 
+  it("reads only live detail evidence in recorded order without growing window items", async () => {
+    const insert = db.prepare(
+      `INSERT INTO temporal_annotation_evidence
+         (annotation_id, position, document_id, quote, broken_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    );
+    insert.run("ta_interpretation", 2, calendarDocumentId, "An invented calendar event.", null);
+    insert.run("ta_interpretation", 0, emailDocumentId, "An invented structured deadline.", null);
+    insert.run("ta_interpretation", 1, emailDocumentId, "Outdated supporting text.", 1);
+
+    expect(service.annotationEvidenceById("ta_interpretation")).toEqual([
+      { documentId: emailDocumentId, quote: "An invented structured deadline." },
+      { documentId: calendarDocumentId, quote: "An invented calendar event." },
+    ]);
+    const page = await service.query({ from: "2026-07-23", timeZone: "UTC" });
+    expect(page.items.find((item) => item.id === "ta_interpretation")).not.toHaveProperty(
+      "evidence",
+    );
+    expect(service.annotationEvidenceById("missing")).toEqual([]);
+    db.prepare("UPDATE temporal_annotations SET invalidated_at = 1 WHERE id = ?").run(
+      "ta_interpretation",
+    );
+    expect(service.annotationEvidenceById("ta_interpretation")).toEqual([]);
+  });
+
   it("marks items anchored vs spanning, and summarises both across the window", async () => {
     // A range far wider than the window: it merely spans the queried days.
     insertTemporalAnnotation(
@@ -632,6 +657,18 @@ describe("TemporalQueryService", () => {
         allDay: true,
       }),
     ]);
+    const direct = await service.itemById("ta_local_day", "America/Los_Angeles");
+    expect(direct).toMatchObject({
+      id: "ta_local_day",
+      start: "2026-07-23T07:00:00.000Z",
+      endExclusive: "2026-07-24T07:00:00.000Z",
+    });
+    expect(direct).not.toHaveProperty("anchored");
+    db.prepare("UPDATE temporal_annotations SET invalidated_at = ? WHERE id = ?").run(
+      Date.now(),
+      "ta_local_day",
+    );
+    expect(await service.itemById("ta_local_day", "UTC")).toBeNull();
   });
 
   it("uses the serialized event fallback when filtering kindless annotations", async () => {

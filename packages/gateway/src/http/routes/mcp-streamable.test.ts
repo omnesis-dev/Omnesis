@@ -8,6 +8,7 @@ import { z } from "zod";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildBuiltinTools, UnsupportedSearchFilterError } from "@omnesis/agent";
+import { docRefSchema, type ToolResult } from "@omnesis/core";
 import { DirectMcpService, DIRECT_MCP_TOOL_NAMES } from "../../agent/direct-mcp.js";
 import { recordMcpToolInvocationAudit } from "../../access/store.js";
 import { runSchemaSetup } from "../../data/schema.js";
@@ -238,10 +239,17 @@ function appFixture(
         ? (options.answerProfile ?? null)
         : null,
   }));
+  const getResponse = vi.fn(
+    async (
+      _taskId: string,
+      _ownerId: string,
+      _options?: { waitSeconds?: number; signal?: AbortSignal },
+    ) => answerResponse,
+  );
   const answerService = {
     answer,
     answerWithProfile,
-    getResponse: vi.fn(async () => answerResponse),
+    getResponse,
     getCompletion,
     recordEgress,
   } as unknown as AnswerService;
@@ -276,6 +284,7 @@ function appFixture(
     answer,
     answerWithProfile,
     getCompletion,
+    getResponse,
     recordEgress,
     recordMcpToolInvocation,
     recordDirectAuditEvent,
@@ -317,6 +326,97 @@ async function connect(
 }
 
 describe("gateway-hosted Streamable HTTP MCP", () => {
+  it.each(["2025-11-25", "2026-07-28"] as const)(
+    "preserves old Direct search fields over MCP %s while exposing additive graph context",
+    async (protocolVersion) => {
+      const legacyDocument = {
+        documentId: "agreement_example",
+        sourceType: "files",
+        sourceId: "files:example",
+        title: "Equipment agreement",
+        snippet: "Fictional equipment terms.",
+        url: "https://example.org/agreement",
+        appUrl: "https://example.org/app/agreement",
+      };
+      const provenance = {
+        summary: "Matching extracted text also appears in an archived copy.",
+        copies: [
+          { documentId: legacyDocument.documentId, sourceId: legacyDocument.sourceId },
+          {
+            documentId: "archive_example",
+            sourceId: "files:example",
+            url: "https://example.org/archive",
+          },
+        ],
+        paths: [],
+        truncated: false,
+        stopReasons: [],
+        modelContext: {
+          facts: ["Matching extracted text also appears in [D2]. File bytes may differ."],
+          documents: [
+            { ref: "D1", documentId: legacyDocument.documentId, sourceId: legacyDocument.sourceId },
+            {
+              ref: "D2",
+              documentId: "archive_example",
+              sourceId: "files:example",
+              url: "https://example.org/archive",
+            },
+          ],
+          limits: [],
+        },
+      };
+      const canonical: ToolResult = {
+        kind: "search.batch",
+        items: [
+          {
+            kind: "search.results",
+            query: "equipment",
+            durationMs: 2,
+            candidates: 4,
+            results: [{ ...legacyDocument, provenance }],
+          },
+        ],
+      };
+      const direct = new DirectMcpService(
+        DIRECT_MCP_TOOL_NAMES.map((name) => ({
+          name,
+          description: `Canonical ${name}`,
+          schema:
+            name === "fetch_many"
+              ? z.object({ documents: z.array(z.object({ documentId: z.string() })) }).strict()
+              : z.object({ value: z.string().optional() }).strict(),
+          invoke: async () => canonical,
+        })),
+        () => Promise.resolve({}),
+      );
+      const { app, runtime } = appFixture(direct);
+      closeables.push(runtime);
+      const { client, transport } = await connect(app, directToken, protocolVersion);
+      closeables.push(client, transport);
+      expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(
+        DIRECT_MCP_TOOL_NAMES,
+      );
+      const result = await client.callTool({
+        name: "search_many",
+        arguments: { value: "equipment" },
+      });
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toEqual(canonical);
+      // A pre-provenance reader strips the unknown optional field, while
+      // preserving the canonical fields it uses for fetches and citations.
+      const oldSearch = z.object({
+        kind: z.literal("search.results"),
+        query: z.string(),
+        durationMs: z.number(),
+        candidates: z.number().optional(),
+        results: z.array(docRefSchema.omit({ provenance: true })),
+      });
+      const oldBatch = z.object({ kind: z.literal("search.batch"), items: z.array(oldSearch) });
+      const decoded = oldBatch.parse(result.structuredContent);
+      expect(decoded.items[0].results).toEqual([legacyDocument]);
+      expect(decoded.items[0].candidates).toBe(4);
+    },
+  );
   const closeables: Array<{ close(): Promise<void> }> = [];
   let previousExperimental: string | undefined;
 
@@ -330,6 +430,71 @@ describe("gateway-hosted Streamable HTTP MCP", () => {
     await Promise.allSettled(closeables.splice(0).map((value) => value.close()));
     if (previousExperimental === undefined) delete process.env.OMNESIS_EXPERIMENTAL;
     else process.env.OMNESIS_EXPERIMENTAL = previousExperimental;
+  });
+
+  it("delegates bounded waiting and records one audited egress per status tool call", async () => {
+    const { app, runtime, getResponse, recordEgress, recordMcpToolInvocation } = appFixture();
+    closeables.push(runtime);
+    const { client, transport } = await connect(app, answerToken);
+    closeables.push(client, transport);
+    const result = await client.callTool({
+      name: "get_answer_status",
+      arguments: { taskId: "task-test", waitSeconds: 30 },
+    });
+    expect(result.structuredContent).toMatchObject({ status: "released" });
+    expect(getResponse).toHaveBeenCalledTimes(1);
+    expect(getResponse).toHaveBeenCalledWith("task-test", expect.any(String), {
+      waitSeconds: 30,
+      signal: expect.any(AbortSignal),
+    });
+    expect(recordEgress).toHaveBeenCalledTimes(1);
+    expect(recordMcpToolInvocation).toHaveBeenCalledTimes(1);
+    expect(recordMcpToolInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({ tool: "get_answer_status", requireActiveAuthority: true }),
+    );
+  });
+
+  it("rechecks authority after a waiting status read before releasing the answer", async () => {
+    let active = true;
+    let finishRead: (() => void) | undefined;
+    let markReadStarted: (() => void) | undefined;
+    const readGate = new Promise<void>((resolve) => {
+      finishRead = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      markReadStarted = resolve;
+    });
+    const { app, runtime, getResponse, recordMcpToolInvocation } = appFixture(service(), {
+      recordMcpToolInvocation: async (input) => {
+        if (input.requireActiveAuthority && !active)
+          throw new Error("Fictional revoked authority.");
+      },
+    });
+    const originalRead = getResponse.getMockImplementation()!;
+    getResponse.mockImplementation(async (...args) => {
+      markReadStarted?.();
+      await readGate;
+      return originalRead(...args);
+    });
+    closeables.push(runtime);
+    const { client, transport } = await connect(app, answerToken);
+    closeables.push(client, transport);
+    const pending = client.callTool({
+      name: "get_answer_status",
+      arguments: { taskId: "task-test", waitSeconds: 30 },
+    });
+    await started;
+    active = false;
+    finishRead?.();
+    const result = await pending;
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).not.toContain("Fictional released answer.");
+    expect(recordMcpToolInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({ requireActiveAuthority: true }),
+    );
+    expect(recordMcpToolInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({ requireActiveAuthority: false }),
+    );
   });
 
   it("serves Answer with experimental mode disabled and preserves the released result", async () => {

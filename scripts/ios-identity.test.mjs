@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import { prepareIOSSimulator } from "./ci/prepare-ios-simulator.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const read = (path) => readFileSync(join(root, path), "utf8");
@@ -151,5 +152,219 @@ describe("iOS build identities", () => {
       /<key>CFBundleURLSchemes<\/key>\s*<array>\s*<string>([^<]+)<\/string>/,
     )?.[1];
     expect(schemes).toBe(scheme);
+  });
+});
+
+// Exercise the production xcrun/xcodebuild command seam without owning a real
+// simulator. Inventory mutations model the effects of installation and boot.
+describe("hosted iOS simulator preparation", () => {
+  const ios = "com.apple.CoreSimulator.SimRuntime.iOS-26-6";
+  const watch = "com.apple.CoreSimulator.SimRuntime.watchOS-26-6";
+  const phone = "com.apple.CoreSimulator.SimDeviceType.iPhone-17";
+  const udid = "00000000-0000-0000-0000-000000000017";
+  const device = (state = "Shutdown") => ({ name: "iPhone 17", udid, isAvailable: true, state });
+  const inventory = () => ({
+    runtimes: [
+      { identifier: ios, version: "26.6", isAvailable: true },
+      { identifier: watch, version: "26.6", isAvailable: true },
+    ],
+    devicetypes: [{ name: "iPhone 17", identifier: phone }],
+    devices: { [ios]: [device()] },
+  });
+
+  function prepare(data, override) {
+    const calls = [];
+    const run = (command, args, timeout) => {
+      calls.push({ command, args, timeout });
+      const custom = override?.(command, args, data);
+      if (custom !== undefined) return custom;
+      if (command === "xcodebuild") {
+        const platform = args[1];
+        data.runtimes.push({
+          identifier: platform === "iOS" ? ios : watch,
+          version: "26.6",
+          isAvailable: true,
+        });
+        return "Downloaded";
+      }
+      switch (args[1]) {
+        case "list":
+          return JSON.stringify(data);
+        case "create":
+          data.devices[ios] = [{ ...device(), name: "iPhone — Omnesis CI" }];
+          return udid;
+        case "boot":
+          data.devices[ios][0].state = "Booted";
+          return "";
+        case "bootstatus":
+          return "";
+        default:
+          throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
+      }
+    };
+    return { result: prepareIOSSimulator({ run, log: () => {} }), calls };
+  }
+
+  it("keeps minimum runtime versions aligned with the app and Watch deployment targets", () => {
+    const helper = read("scripts/ci/prepare-ios-simulator.mjs");
+    expect(Number(helper.match(/MIN_IOS_MAJOR = (\d+)/)[1])).toBe(
+      Number(spec.options.deploymentTarget.iOS.split(".")[0]),
+    );
+    expect(Number(helper.match(/MIN_WATCH_MAJOR = (\d+)/)[1])).toBe(
+      Number(spec.targetTemplates.WatchApp.deploymentTarget.split(".")[0]),
+    );
+  });
+
+  it("boots and verifies an existing phone without downloading or creating anything", () => {
+    const { result, calls } = prepare(inventory());
+    expect(result).toBe(udid);
+    expect(calls.map(({ args }) => args[1])).toEqual(["list", "boot", "bootstatus", "list"]);
+    expect(calls.find(({ args }) => args[1] === "bootstatus").timeout).toBe(300_000);
+  });
+
+  it("allows cold CoreSimulator inventory and boot commands up to five bounded minutes", () => {
+    const { calls } = prepare(inventory());
+    expect(
+      calls.filter(({ command }) => command === "xcrun").map(({ timeout }) => timeout),
+    ).toEqual([300_000, 300_000, 300_000, 300_000]);
+  });
+
+  it("identifies the command and deadline when initial inventory times out", () => {
+    const messages = [];
+    const run = () => {
+      throw new Error("spawnSync xcrun ETIMEDOUT");
+    };
+    expect(() => prepareIOSSimulator({ run, log: (message) => messages.push(message) })).toThrow(
+      "xcrun simctl list --json failed (timeout limit 300s): spawnSync xcrun ETIMEDOUT",
+    );
+    expect(messages).toEqual(["Running xcrun simctl list --json (timeout 300s)."]);
+  });
+
+  it("waits for an already booted phone without attempting to boot it again", () => {
+    const data = inventory();
+    data.devices[ios] = [device("Booted")];
+    expect(prepare(data).calls.map(({ args }) => args[1])).toEqual(["list", "bootstatus", "list"]);
+  });
+
+  it("creates a phone when the installed runtime has no registered devices", () => {
+    const data = inventory();
+    data.devices = {};
+    const { calls } = prepare(data);
+    expect(calls.find(({ args }) => args[1] === "create").args).toEqual([
+      "simctl",
+      "create",
+      "iPhone — Omnesis CI",
+      phone,
+      ios,
+    ]);
+    expect(calls.some(({ command }) => command === "xcodebuild")).toBe(false);
+  });
+
+  it("reuses its own created phone on a later preparation call", () => {
+    const data = inventory();
+    data.devices = {};
+    prepare(data);
+    expect(prepare(data).calls.map(({ args }) => args[1])).toEqual(["list", "bootstatus", "list"]);
+  });
+
+  it.each(["iOS", "watchOS"])(
+    "installs only the missing %s runtime then verifies it",
+    (platform) => {
+      const data = inventory();
+      data.runtimes = data.runtimes.filter((item) => !item.identifier.includes(`.${platform}-`));
+      const { calls } = prepare(data);
+      expect(calls.filter(({ command }) => command === "xcodebuild")).toEqual([
+        { command: "xcodebuild", args: ["-downloadPlatform", platform], timeout: 900_000 },
+      ]);
+    },
+  );
+
+  it("does not select unavailable or pre-deployment runtimes", () => {
+    const data = inventory();
+    data.runtimes[0].version = "16.4";
+    data.runtimes[0].identifier = "com.apple.CoreSimulator.SimRuntime.iOS-16-4";
+    data.runtimes.push({
+      identifier: "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+      version: "27.0",
+      isAvailable: false,
+    });
+    expect(prepare(data).calls.some(({ command }) => command === "xcodebuild")).toBe(true);
+  });
+
+  it("propagates installation failures without exporting a destination", () => {
+    const data = inventory();
+    data.runtimes = [];
+    expect(() =>
+      prepare(data, (command) => {
+        if (command === "xcodebuild") throw new Error("Runtime download failed");
+      }),
+    ).toThrow("Runtime download failed");
+  });
+
+  it("fails loudly when runtime installation does not register an available runtime", () => {
+    const data = inventory();
+    data.runtimes = [];
+    expect(() =>
+      prepare(data, (command) =>
+        command === "xcodebuild" ? "Downloaded but unusable" : undefined,
+      ),
+    ).toThrow("No available iOS simulator runtime after download");
+  });
+
+  it("fails rather than exporting an unavailable or unbooted destination", () => {
+    const data = inventory();
+    expect(() => prepare(data, (_, args) => (args[1] === "boot" ? "" : undefined))).toThrow(
+      "Simulator did not become available and booted",
+    );
+  });
+
+  it("propagates boot failures without running tests on another simulator", () => {
+    expect(() =>
+      prepare(inventory(), (_, args) => {
+        if (args[1] === "boot") throw new Error("Boot failed");
+      }),
+    ).toThrow("Boot failed");
+  });
+
+  it("validates the created identity and chooses a runtime-compatible iPhone type", () => {
+    const data = inventory();
+    data.devices = {};
+    const supportedPhone = "com.apple.CoreSimulator.SimDeviceType.iPhone-16";
+    data.runtimes[0].supportedDeviceTypes = [{ identifier: supportedPhone }];
+    data.devicetypes.push({ name: "iPhone 16", identifier: supportedPhone });
+    expect(prepare(data).calls.find(({ args }) => args[1] === "create").args[3]).toBe(
+      supportedPhone,
+    );
+    expect(() =>
+      prepare(inventory(), (_, args) =>
+        args[1] === "list"
+          ? JSON.stringify({ ...inventory(), devices: {} })
+          : args[1] === "create"
+            ? "not-a-uuid"
+            : undefined,
+      ),
+    ).toThrow("Simulator creation returned no valid UDID");
+  });
+
+  it("wires every hosted iOS lane to preparation and an exact destination", () => {
+    const workflow = parse(read(".github/workflows/ios.yml"));
+    for (const [job, variable] of [
+      ["build-and-test", "IOS_DESTINATION"],
+      ["live-gateway-e2e", "OMNESIS_E2E_DEST"],
+    ]) {
+      const steps = workflow.jobs[job].steps;
+      const setup = steps.findIndex((step) =>
+        step.run?.includes("node scripts/ci/prepare-ios-simulator.mjs"),
+      );
+      expect(setup).toBeGreaterThan(0);
+      expect(steps[setup].run).toContain(`${variable}=platform=iOS Simulator,id=$udid`);
+      expect(setup).toBeLessThan(steps.findIndex((step) => step.name?.startsWith("lane [")));
+      expect(workflow.jobs[job].env?.[variable]).toBeUndefined();
+    }
+    const journeys = parse(read(".github/workflows/mobile-journeys.yml")).jobs.ios.steps;
+    expect(journeys.find((step) => step.name === "Prepare iPhone simulator").run).toContain(
+      "OMNESIS_JOURNEY_IOS_UDID=$udid",
+    );
+    expect(read("scripts/run-mobile-journeys.sh")).toContain('udid="$OMNESIS_JOURNEY_IOS_UDID"');
   });
 });

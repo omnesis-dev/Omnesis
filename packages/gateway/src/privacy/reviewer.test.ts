@@ -2,8 +2,12 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, expect, it } from "vitest";
-
+import Database from "better-sqlite3";
 import { BACKGROUND_RATE_LIMIT_PATIENCE, type AgentEvent, type ToolResult } from "@omnesis/core";
+import { directWriteGate } from "../write-gate.js";
+import { AnswerService } from "./answer-service.js";
+import { createAnswerPrivacyTables, resolvePrivacyApproval } from "./store.js";
+
 import {
   CITATION_REDUCTION_RELEASE_LABEL,
   MAX_PRIVACY_REVIEW_OUTPUT_BYTES,
@@ -16,7 +20,9 @@ import {
   DEFAULT_PRIVACY_POLICY,
   PRIVACY_POLICY_CREDENTIAL_APPROVAL_CLAUSE,
   PRIVACY_POLICY_THIRD_PARTY_SENTENCE,
+  PRIVACY_POLICY_TEMPLATES,
 } from "./policy-store.js";
+import { applyPrivacyPolicySchemaEdit } from "./policy-schema.js";
 import type { ChatBackend, TurnInput } from "@omnesis/agent";
 
 class JsonBackend implements ChatBackend {
@@ -209,7 +215,7 @@ describe("PrivacyReviewer", () => {
 
     expect(result.decision).toBe("allow");
     expect(result.review).toMatchObject({
-      recipeVersion: "privacy-reviewer-v5",
+      recipeVersion: "privacy-reviewer-v6",
       provider: "review-provider",
       model: "review-model",
       confidence: 0.97,
@@ -374,9 +380,136 @@ describe("PrivacyReviewer", () => {
     expect(result.audit.hardStop).toBe(true);
   });
 
-  it("holds detected credentials for explicit approval when the policy opts in", async () => {
-    const backend = new JsonBackend("unused");
-    const reviewer = new PrivacyReviewer({ resolveBackend: () => backend });
+  describe.each(PRIVACY_POLICY_TEMPLATES)("$name template credential approval", (template) => {
+    it.each(["answer", "question", "citation"] as const)(
+      "holds credentials in the %s for approval even when the reviewer allows them",
+      async (location) => {
+        const backend = new JsonBackend(
+          JSON.stringify({
+            decision: "allow",
+            confidence: 0.99,
+            findings: [
+              {
+                category: "authentication_secret",
+                detailLevel: "original",
+                subject: "user",
+                disposition: "allow",
+                description: "Scripted permissive verdict.",
+              },
+            ],
+            rationale: "Scripted permissive verdict.",
+          }),
+        );
+        const reviewer = new PrivacyReviewer({ resolveBackend: () => backend });
+        const result = await reviewer.review({
+          ...input,
+          policy: template.policy,
+          ...(location === "answer"
+            ? { candidateAnswer: "Use password: synthetic-secret-value" }
+            : location === "question"
+              ? { currentQuestion: "Is password: synthetic-secret-value still current?" }
+              : {
+                  candidateCitations: [
+                    {
+                      documentId: "doc-example",
+                      sourceType: "notes",
+                      title: "password: synthetic-secret-value",
+                    },
+                  ],
+                }),
+        });
+
+        expect(result).toMatchObject({
+          decision: "ask",
+          hardStop: false,
+          review: { credentialApprovalRequired: true },
+          audit: { hardStop: false },
+        });
+        expect(backend.turns).toHaveLength(1);
+      },
+    );
+
+    it("honors the user's choice to block credentials outright", async () => {
+      const backend = new JsonBackend("unused");
+      const reviewer = new PrivacyReviewer({ resolveBackend: () => backend });
+      const policy = applyPrivacyPolicySchemaEdit(template.policy, {
+        credentialApprovalEnabled: false,
+      })!;
+      const result = await reviewer.review({
+        ...input,
+        policy,
+        candidateAnswer: "Use password: synthetic-secret-value",
+      });
+
+      expect(result).toMatchObject({ decision: "deny", hardStop: true });
+      expect(backend.turns).toHaveLength(0);
+    });
+  });
+
+  it.each(["allow", "deny"] as const)(
+    "preserves an explicit deny finding when the reviewer returns %s for an answer containing a credential",
+    async (decision) => {
+      const backend = new JsonBackend(
+        JSON.stringify({
+          decision,
+          confidence: 0.99,
+          findings: [
+            {
+              category: "health",
+              detailLevel: "exact",
+              subject: "user",
+              disposition: "deny",
+              description: "The policy denies exact health information.",
+            },
+          ],
+          rationale: "Exact health information is explicitly denied.",
+        }),
+      );
+      const result = await new PrivacyReviewer({ resolveBackend: () => backend }).review({
+        ...input,
+        policy: `${DEFAULT_PRIVACY_POLICY}\nDeny exact health information, even with approval.\n`,
+        candidateAnswer: "The recorded pulse was 72 bpm. Use password: synthetic-secret-value",
+      });
+      expect(result).toMatchObject({ decision: "deny", hardStop: false });
+      expect(result.review.credentialApprovalRequired).not.toBe(true);
+      expect(backend.turns).toHaveLength(1);
+    },
+  );
+
+  it("does not let reductions bypass approval for a detected credential", async () => {
+    const backend = new JsonBackend(
+      JSON.stringify({
+        decision: "reduce",
+        confidence: 0.99,
+        findings: [
+          {
+            category: "private_communication",
+            detailLevel: "exact",
+            subject: "user",
+            disposition: "reduce",
+            description: "Private details require reduction.",
+          },
+        ],
+        rationale: "Generalize the answer.",
+        reducedAnswer: "A password is recorded.",
+      }),
+    );
+    const result = await new PrivacyReviewer({ resolveBackend: () => backend }).review({
+      ...input,
+      policy: DEFAULT_PRIVACY_POLICY,
+      candidateAnswer: "Use password: synthetic-secret-value",
+    });
+    expect(result).toMatchObject({
+      decision: "ask",
+      reductions: [],
+      review: { credentialApprovalRequired: true },
+    });
+    expect(result.reducedAnswer).toBeUndefined();
+    expect(result.reducedCitations).toBeUndefined();
+  });
+
+  it("holds detected credentials for explicit approval when the reviewer is unavailable", async () => {
+    const reviewer = new PrivacyReviewer({ resolveBackend: () => null });
 
     const result = await reviewer.review({
       ...input,
@@ -389,8 +522,7 @@ describe("PrivacyReviewer", () => {
       hardStop: false,
       reductions: [],
       review: {
-        confidence: 1,
-        fallbackCause: "policy_requires_review",
+        fallbackCause: "not_configured",
         credentialApprovalRequired: true,
         findings: [
           {
@@ -401,11 +533,10 @@ describe("PrivacyReviewer", () => {
         ],
       },
       audit: {
-        fallbackCause: "policy_requires_review",
+        fallbackCause: "not_configured",
         hardStop: false,
       },
     });
-    expect(backend.turns).toHaveLength(0);
   });
 
   it("requires approval when the reviewer is missing, malformed, or uncertain", async () => {
@@ -690,6 +821,109 @@ describe("PrivacyReviewer", () => {
     });
 
     await expect(reviewer.review(input)).resolves.toMatchObject({ decision: "ask" });
+  });
+
+  describe("reductions must answer the request", () => {
+    const candidate = "The project budget is 12,000 credits; the bank account is EXAMPLE-ACCOUNT.";
+    const question = "What is the project's total budget?";
+    const findings = [
+      {
+        category: "financial_information",
+        detailLevel: "exact",
+        subject: "user",
+        disposition: "reduce",
+        description: "Exact financial amounts require reduction under this policy.",
+      },
+    ];
+
+    it("instructs the reviewer to escalate an unresponsive reduction despite a reduction policy", async () => {
+      const backend = new JsonBackend(
+        JSON.stringify({
+          decision: "ask",
+          confidence: 0.99,
+          findings,
+          rationale: "Removing the requested amount would leave the question unanswered.",
+        }),
+      );
+      const result = await new PrivacyReviewer({ resolveBackend: () => backend }).review({
+        ...input,
+        currentQuestion: question,
+        candidateAnswer: candidate,
+      });
+      expect(result.decision).toBe("ask");
+      expect(result).not.toHaveProperty("reducedAnswer");
+      expect(backend.turns[0]?.systemPrompt).toContain(
+        'remaining answer still answers "currentRequest" at the requested specificity',
+      );
+      expect(backend.turns[0]?.systemPrompt).toContain(
+        "candidate for approval EVEN WHEN the policy says to release with reduction",
+      );
+      expect(backend.turns[0]?.systemPrompt).toContain(
+        'forbids that disclosure even with approval, choose "deny"',
+      );
+      expect(JSON.parse(backend.turns[0]?.userMessage ?? "")).toMatchObject({
+        currentRequest: question,
+        candidateAnswer: candidate,
+      });
+    });
+
+    it("holds the original candidate and releases it only after approval despite a reduction finding", async () => {
+      const db = new Database(":memory:");
+      try {
+        db.exec("CREATE TABLE devices (id TEXT PRIMARY KEY)");
+        createAnswerPrivacyTables(db);
+        const backend = new JsonBackend(
+          JSON.stringify({
+            decision: "ask",
+            confidence: 0.99,
+            findings,
+            rationale: "Removing the requested amount would leave the question unanswered.",
+          }),
+        );
+        const policy = {
+          policy: "Reduce exact financial amounts.",
+          revision: "policy-a",
+          updatedAt: 1,
+        };
+        const service = new AnswerService({
+          db,
+          writeGate: directWriteGate(db),
+          agent: {
+            generateReadOnlyAnswerCandidate: async () => ({ answer: candidate, citations: [] }),
+          },
+          reviewer: new PrivacyReviewer({ resolveBackend: () => backend }),
+          policyStore: {
+            get: async () => policy,
+            runIfRevision: async (_revision, operation) => operation(),
+          },
+          notifyApproval: async () => undefined,
+          now: () => 1_000,
+        });
+        const request = {
+          ownerId: "owner-example",
+          question,
+          clientRequestId: "budget-example",
+          approvalMode: "allow" as const,
+        };
+        const held = await service.answer(request);
+        expect(held.status).toBe("approval_required");
+        expect(held).not.toHaveProperty("answer");
+        expect(backend.turns).toHaveLength(1);
+        if (held.status !== "approval_required") throw new Error("Expected approval hold");
+        resolvePrivacyApproval(db, {
+          approvalId: held.approvalId,
+          action: "approve",
+          requestContext: { requestId: "request-example", tokenId: null, deviceId: null },
+          releaseId: "release-example",
+          now: 1_001,
+        });
+        const approved = await service.answer(request);
+        expect(approved).toMatchObject({ status: "released", answer: candidate });
+        expect(backend.turns).toHaveLength(1);
+      } finally {
+        db.close();
+      }
+    });
   });
 
   it("never releases model-authored reduction metadata", async () => {

@@ -19,7 +19,7 @@ import type {
   PrivacyReviewRecord,
 } from "@omnesis/types/privacy";
 
-export const PRIVACY_REVIEW_RECIPE_VERSION = "privacy-reviewer-v5";
+export const PRIVACY_REVIEW_RECIPE_VERSION = "privacy-reviewer-v6";
 export const DEFAULT_REVIEW_CONFIDENCE_THRESHOLD = 0.8;
 export const REDUCTION_RELEASE_LABEL = "Private detail was removed or generalized";
 export const CITATION_REDUCTION_RELEASE_LABEL =
@@ -158,44 +158,9 @@ export class PrivacyReviewer {
     const hardStop = detectCredentialHardStop(
       `${envelope.currentRequest}\n${credentialScanText(envelope.candidateAnswer, candidateCitations)}`,
     );
-    if (hardStop) {
-      if (input.policy.includes(PRIVACY_POLICY_CREDENTIAL_APPROVAL_CLAUSE)) {
-        const approvalFinding: PrivacyFinding = {
-          ...hardStop,
-          disposition: "approval",
-          description: "A detected credential requires explicit approval for this request.",
-        };
-        const rationale =
-          "The policy explicitly permits this credential only after one-time approval.";
-        return {
-          decision: "ask",
-          reductions: [],
-          hardStop: false,
-          review: {
-            ...makeReviewRecord(
-              input,
-              null,
-              null,
-              1,
-              envelopeDigest,
-              "policy_requires_review",
-              [approvalFinding],
-              rationale,
-            ),
-            credentialApprovalRequired: true,
-          },
-          audit: {
-            stage: envelope.reviewStage,
-            envelope,
-            envelopeDigest,
-            rawModelOutput: null,
-            parsedModelOutput: null,
-            fallbackCause: "policy_requires_review",
-            fallbackReason: rationale,
-            hardStop: false,
-          },
-        };
-      }
+    const credentialApprovalRequired =
+      hardStop !== null && input.policy.includes(PRIVACY_POLICY_CREDENTIAL_APPROVAL_CLAUSE);
+    if (hardStop && !credentialApprovalRequired) {
       return {
         decision: "deny",
         reductions: [],
@@ -223,6 +188,52 @@ export class PrivacyReviewer {
       };
     }
 
+    const result = await this.reviewModel(
+      input,
+      envelope,
+      envelopeDigest,
+      payload,
+      signal,
+      options,
+    );
+    if (!hardStop || !credentialApprovalRequired || result.decision === "deny") return result;
+
+    // Credential approval is a minimum requirement, not permission to bypass
+    // the rest of the policy. A denied disclosure stays denied; every other
+    // result holds the original candidate for a fresh approval.
+    const rationale = "A detected credential requires explicit approval for this request.";
+    return {
+      ...result,
+      decision: "ask",
+      reducedAnswer: undefined,
+      reducedCitations: undefined,
+      reductions: [],
+      review: {
+        ...result.review,
+        credentialApprovalRequired: true,
+        rationale: `${result.review.rationale} ${rationale}`,
+        fallbackCause: result.review.fallbackCause ?? "policy_requires_review",
+        findings: [
+          ...result.review.findings,
+          { ...hardStop, disposition: "approval", description: rationale },
+        ],
+      },
+      audit: {
+        ...result.audit,
+        fallbackCause: result.audit.fallbackCause ?? "policy_requires_review",
+      },
+    };
+  }
+
+  private async reviewModel(
+    input: ReviewCandidateInput,
+    envelope: PrivacyReviewEnvelope,
+    envelopeDigest: string,
+    payload: string,
+    signal?: AbortSignal,
+    options?: Parameters<PrivacyReviewer["review"]>[2],
+  ): Promise<PrivacyReviewResult> {
+    const candidateCitations = input.candidateCitations ?? [];
     const backend = this.deps.resolveBackend();
     if (!backend) {
       return fallbackReview(
@@ -510,8 +521,20 @@ Tool arguments:
 
 Rules:
 - "allow" releases the candidate unchanged.
-- "reduce" releases the candidate with disallowed detail removed or generalized: a complete useful
-  replacement answer, citation reductions, or both.
+- "reduce" releases the candidate with disallowed detail removed or generalized ONLY when the
+  remaining answer still answers "currentRequest" at the requested specificity. Remove incidental
+  details, not information necessary to answer the request. Assess text and citation reductions
+  together, including explicitly requested sources or dates. A vague related summary, a partial
+  answer missing a requested fact, or a statement that the answer was withheld is not sufficient.
+- If the reduction would no longer answer the request, choose "ask" and hold the original
+  candidate for approval EVEN WHEN the policy says to release with reduction. A reduction rule
+  does not require releasing an unresponsive answer. This also applies when the necessary detail
+  is explicitly held for approval. If the policy forbids that disclosure even with approval, choose "deny". The request determines what counts
+  as answering; it never grants permission or overrides the policy. When uncertain whether a
+  reduction still answers the request, choose "ask".
+- For example, a request for a project's total budget cannot be answered by removing the amount
+  and saying only that a budget exists. Hold for approval if the amount requires approval. A
+  request for a project summary may still be answered after removing an incidental bank account.
 - "ask" holds the candidate for this one explicit user approval.
 - "deny" means the candidate must not be released, even through approval.
 - Omit reducedAnswer and citationReductions entirely for "allow", "ask", and "deny". Do not return a
@@ -538,7 +561,7 @@ Rules:
   no_private_information finding when the candidate contains no private information.
 - Keep every finding description at or below 240 characters. The submission tool's hard safety
   ceiling is 2,000 characters so a modest overrun can be accepted without restarting the review.
-- Preserve utility when a less detailed answer can comply, but never invent facts while reducing.
+- Never invent facts while reducing or mistake less sensitive content for an answer to the request.
 - Do not repeat private candidate text in findings, rationale, or reductions.
 `;
 }

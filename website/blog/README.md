@@ -20,7 +20,28 @@ section headings; the title supplies the page's `h1`. Code fences, lists,
 tables, links, and images are supported. Raw HTML is displayed as text; links
 must use HTTPS/HTTP, a site-relative `/path`, or a `#fragment`.
 
-Keep `draft: true` while writing. To publish, set `draft: false` and choose a
+Keep `draft: true` while writing. Start the local preview from the repository root:
+
+```sh
+node scripts/blog/preview.mjs
+```
+
+Open `http://127.0.0.1:4173/blog/` and select your post. The preview includes
+drafts and future-dated posts using the website's Markdown renderer and styling.
+Save your Markdown or images, then refresh the browser to see your edits. Invalid
+Markdown or metadata displays an error; fix the source and refresh to recover.
+Press Ctrl+C to stop. If the port is busy, choose another:
+
+```sh
+node scripts/blog/preview.mjs --port 4174
+```
+
+The server listens only on this computer's loopback address. It renders in memory
+without changing generated HTML, the public blog index, or the sitemap. Comments
+and reactions are disabled during preview. Previewing a draft does not publish
+it; committed Markdown is still visible in the public Git repository.
+
+To publish, set `draft: false` and choose a
 date no later than today (UTC), then generate the pages:
 
 ```sh

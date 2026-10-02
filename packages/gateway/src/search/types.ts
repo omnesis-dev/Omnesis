@@ -128,6 +128,8 @@ export interface BoundRowRef {
 }
 
 export interface SearchResultItem {
+  /** Present on unrestricted agent or opted-in client searches when v2 is enabled. */
+  provenance?: import("@omnesis/core").SearchProvenance;
   documentId: string;
   /** Internal chunk rowid for post-fusion content hydration. */
   chunkRowid?: number;

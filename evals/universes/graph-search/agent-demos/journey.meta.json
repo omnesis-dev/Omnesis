@@ -1,0 +1,7 @@
+{
+  "triggers": ["Inspect graph journey"],
+  "placeholders": {
+    "docExternalIds": [],
+    "personNames": []
+  }
+}

@@ -35,10 +35,10 @@ For privacy-reviewed access, use only `ask_omnesis` for a new question and `get_
 
 - `released`: use the answer Omnesis released.
 - `released_with_reductions`: use the reduced answer and do not try to reconstruct omitted detail.
-- `approval_required`: no candidate or private answer was released. Reveal none. Tell the user to approve the task in the Omnesis portal, then stop and wait for the user to explicitly confirm that they approved it. Do not busy-poll. Only after that confirmation, call `get_answer_status` once with the returned `taskId`.
+- `approval_required`: no candidate or private answer was released. Reveal none. Tell the user to approve the task in the Omnesis portal, then call `get_answer_status` with the returned `taskId` and `waitSeconds: 30` without waiting for a confirmation message. If still pending, repeat for at most four waiting calls for that approval (two minutes total). Stop immediately on a released or denied result. If still pending after that bounded wait, ask the user to tell you when they approved; on their confirmation, check status once without waiting. If the live tool schema does not support `waitSeconds`, ask for confirmation and check once after they confirm instead of busy-polling.
 - `denied`: no answer was released. Do not route around the denial.
 
-If a status check still returns `approval_required`, do not poll again. Explain that the task is still held and wait for a new explicit confirmation from the user. Never use Direct tools, another integration, a reformulated question, inference, or outside data to reconstruct or route around a held, reduced, or denied Answer result.
+Do not busy-poll or restart the waiting budget for the same pending approval. If an immediate check after the user confirms still returns `approval_required`, explain that the task is still held and wait for a new confirmation. Never use Direct tools, another integration, a reformulated question, inference, or outside data to reconstruct or route around a held, reduced, or denied Answer result.
 
 For a retry of the same turn, reuse the same `requestId` and identical arguments. Use the returned `workflowId` and `conversationId` for genuine follow-up questions in the same workflow. Task, workflow, and conversation IDs are opaque handles, not evidence and not authorization.
 

@@ -293,7 +293,7 @@ id `string[]`, while the loop _detail_ route and `/loops` both enrich them into 
 admin brief _list_ returns `citations: string[]`; the _detail_ route resolves them to
 `{id, title, sourceType}`; the product feed uses `{docId, title}`.
 `/admin/brain/time-index` serves the storage row (`precision`, unix-ms) while
-`/briefs/time-index/window` serves the display serializer (`granularity`, ISO). Check the
+`/temporal/window` serves display items (ISO `start`/`endExclusive`, an `origin`). Check the
 route before trusting a type.
 
 Ordering and limits that shape how a test must read:

@@ -28,13 +28,13 @@
     </script>
     <meta
       name="description"
-      content="Unstable Omnesis features behind OMNESIS_EXPERIMENTAL=1: how Omnesis Brain, Omnesis Watch and gateway dictation work, what they spend, and how to observe and stop them."
+      content="Unstable Omnesis features behind OMNESIS_EXPERIMENTAL=1: how Omnesis Brain and Omnesis Watch work, what they spend, and how to observe and stop them."
     />
     <link rel="canonical" href="https://omnesis.dev/docs/experimental" />
     <meta property="og:title" content="Experimental — Omnesis Docs" />
     <meta
       property="og:description"
-      content="Unstable Omnesis features behind OMNESIS_EXPERIMENTAL=1: how Omnesis Brain, Omnesis Watch and gateway dictation work, what they spend, and how to observe and stop them."
+      content="Unstable Omnesis features behind OMNESIS_EXPERIMENTAL=1: how Omnesis Brain and Omnesis Watch work, what they spend, and how to observe and stop them."
     />
     <meta property="og:image" content="https://omnesis.dev/og-image.png" />
     <meta property="og:type" content="website" />
@@ -139,7 +139,6 @@
               <ul class="side-sub">
                 <li><a href="#brain">Omnesis Brain</a></li>
                 <li><a href="#watch">Omnesis Watch</a></li>
-                <li><a href="#gateway-dictation">Gateway dictation</a></li>
               </ul>
             </li>
           </ul>
@@ -150,13 +149,11 @@
         <p class="docs-kicker">Experimental</p>
         <h1>Experimental</h1>
         <p class="docs-lead">
-          Omnesis ships three features switched off because they are not yet stable:
+          Omnesis ships two features switched off because they are not yet stable:
           <strong>Omnesis Brain</strong>, which reads your data in the background and keeps cited
           notes, loops and briefs about it, <strong>Omnesis Watch</strong>, which tells you or an
-          agent when a condition you describe becomes true, and <strong>gateway dictation</strong>,
-          which transcribes Tell Omnesis voice notes from the mobile apps with the gateway's
-          transcriber. This page is for operators who want to run them: how each works, what it
-          spends, how to observe it and how to stop it.
+          agent when a condition you describe becomes true. This page is for operators who want to
+          run them: how each works, what it spends, how to observe it and how to stop it.
         </p>
         <div class="callout warn">
           <strong>These features are experimental</strong> as they are unstable and
@@ -164,10 +161,9 @@
         </div>
         <p>
           Nothing here is visible unless the process was started with
-          <code>OMNESIS_EXPERIMENTAL=1</code>. Set it on the gateway to reveal Brain, Watch, gateway
-          dictation and their controls; with it unset the gateway serves none of their routes,
-          schedules none of their work and creates none of their files. For a gateway you run in the
-          foreground:
+          <code>OMNESIS_EXPERIMENTAL=1</code>. Set it on the gateway to reveal Brain, Watch and
+          their controls; with it unset the gateway serves none of their routes, schedules none of
+          their work and creates none of their files. For a gateway you run in the foreground:
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -312,6 +308,13 @@
             </tbody>
           </table>
         </div>
+        <p>
+          With <code>OMNESIS_EXPERIMENTAL=1</code>, the portal's <strong>Tell Omnesis</strong> page
+          also shows <strong>Related events</strong> and <strong>Open loops</strong> under each
+          day's collapsible <strong>Related to this day</strong> section. These are live temporal
+          annotations and loops that cite that day's notes document. These links cover the whole day
+          rather than individual notes; stored records remain visible when the Brain is stopped.
+        </p>
         <p>
           It also keeps a short agent-notes file, which is injected into every run's prompt as
           working memory (8 KiB by default, <code>brain.notesMaxBytes</code>), and it can decide
@@ -1969,84 +1972,6 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/admin/watch/compile" \
             </tbody>
           </table>
         </div>
-
-        <h2 id="gateway-dictation">Gateway dictation</h2>
-        <p>
-          The iOS and Android apps turn what you say to Tell Omnesis into text with the phone's own
-          recognizer. With gateway dictation on, they also send the recording with the note, and
-          your gateway's <strong>Transcriber</strong> model — the same local Whisper model that
-          transcribes voice notes from your sources — transcribes it again and replaces the phone's
-          text with its own. It applies to Tell Omnesis only:
-        </p>
-        <ul>
-          <li>
-            Tell Omnesis in the app, including its Control Center control, Quick Settings tile and
-            app shortcut;
-          </li>
-          <li>a Tell Omnesis request from Google Assistant that opens the app to listen;</li>
-          <li>the Apple Watch's Note complication and the watch app's Dictate.</li>
-        </ul>
-        <p>
-          Agent conversations, replies to briefs, Ask Omnesis, Siri, Shortcuts and assistant
-          requests that already carry their words keep the phone's or the system's recognition.
-        </p>
-
-        <h3 id="gateway-dictation-turning-on">Turning it on and off</h3>
-        <p>
-          It is on whenever the gateway is in experimental mode and a Transcriber model is assigned
-          under <strong>Settings → Models → Transcriber</strong>. The
-          <strong>Tell Omnesis voice notes</strong> switch on that same page turns it off, and the
-          apps show the same switch under <strong>Settings → Voice</strong>. It is a gateway
-          setting, so it applies to every phone paired with the gateway. In
-          <code>omnesis.json</code>, switching it off is:
-        </p>
-        <div class="term">
-          <div class="term-bar"><span></span><span></span><span></span></div>
-          <div class="term-body">
-            <pre>
-"inference": {
-  "dictation": { "transcribeOnGateway": false }
-}</pre
-            >
-          </div>
-        </div>
-        <p>
-          <code>GET /status</code> reports the combined verdict as <code>dictation</code>, and the
-          apps send recordings only while its <code>active</code> field is true. Without a runnable
-          transcriber, the setting says what is missing, and notes keep the phone's own text.
-        </p>
-
-        <h3 id="gateway-dictation-behaviour">What happens to a voice note</h3>
-        <p>
-          While you dictate, Tell Omnesis shows that it is recording rather than what the phone
-          heard: the gateway's transcript is the one that counts. The phone still transcribes in the
-          background, and that text is saved with the note at once so it is never empty. The gateway
-          then works on the recording and replaces the text when its transcriber finishes. How long
-          that takes depends on the gateway's hardware and on the voice notes it is already
-          transcribing for your sources; nothing waits on it. The portal's Tell Omnesis page marks
-          such a note as transcribing until the gateway's text arrives. If you edit the note first,
-          your edit stays. Date extraction waits for the gateway's text too, for up to an hour
-          (<code>enrichment.dates.pendingContentWaitMs</code>), so the dates the note mentions are
-          read from its final words.
-        </p>
-        <p>
-          A note from the Apple Watch travels through your iPhone, which transcribes it on the phone
-          first. The watch keeps each note, recorded or dictated, until the iPhone confirms it has
-          it, retrying for up to a week when the phone is out of reach. When the phone has no
-          transcript to offer, the note reads "Voice note — transcribing…" until the gateway's
-          arrives.
-        </p>
-        <p>
-          The gateway keeps the recording in its database, alongside the rest of your data and under
-          the same encryption at rest, only until it has transcribed it, and retries a failed
-          transcription for up to a week. A note it cannot transcribe keeps the phone's text.
-          Deleting the note deletes its recording.
-        </p>
-        <p>
-          To stop, switch the setting off. The apps return to saving the phone's text once they next
-          read the gateway's status, which they do at the latest when they come back to the
-          foreground. Recordings already sent are still transcribed.
-        </p>
 
         <nav class="docs-pager" aria-label="Pages">
           <a href="/docs/building-sources"

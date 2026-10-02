@@ -14,9 +14,10 @@
  * Consequence: any new knob added to the schema appears in the portal
  * automatically, with zero UI code change — unless it is explicitly
  * declared as owned by another portal page (see
- * `CONFIG_PATHS_OWNED_ELSEWHERE`). The drift test in
+ * `CONFIG_PATHS_OWNED_ELSEWHERE`) or omitted as a backend-only setting (see
+ * `CONFIG_PATHS_BACKEND_ONLY`). The drift test in
  * `config-describe.test.ts` is the safety net that forces every new leaf
- * to be consciously categorised (rendered vs. owned-elsewhere).
+ * to be consciously categorised (rendered, owned elsewhere or backend only).
  */
 
 import { z } from "zod";
@@ -138,6 +139,23 @@ export const CONFIG_PATHS_OWNED_ELSEWHERE: readonly OwnershipEntry[] = [
       "FCM push credentials are set via the Raw JSON editor / config file, not the structured form.",
   },
 ];
+
+/** Backend-only settings excluded entirely from the generated portal form. */
+export const CONFIG_PATHS_BACKEND_ONLY: readonly {
+  path: readonly string[];
+  reason: string;
+}[] = [
+  {
+    path: ["search", "v2"],
+    reason: "Agent search provenance is configured through the CLI or config file.",
+  },
+];
+
+function isBackendOnly(path: string[]): boolean {
+  return CONFIG_PATHS_BACKEND_ONLY.some(
+    (entry) => entry.path.length === path.length && entry.path.every((seg, i) => seg === path[i]),
+  );
+}
 
 function matchOwnership(path: string[]): ConfigOwnership | undefined {
   for (const entry of CONFIG_PATHS_OWNED_ELSEWHERE) {
@@ -321,7 +339,9 @@ function walk(schema: ZodAny, path: string[], key?: string): ConfigNode {
 
   if (inner instanceof z.ZodObject) {
     const shape = (inner as unknown as { shape: ZodObjectShape }).shape;
-    const children = Object.entries(shape).map(([k, v]) => walk(v as ZodAny, [...path, k], k));
+    const children = Object.entries(shape)
+      .filter(([k]) => !isBackendOnly([...path, k]))
+      .map(([k, v]) => walk(v as ZodAny, [...path, k], k));
     return { ...base, kind: "object", children };
   }
 

@@ -1118,12 +1118,12 @@ enum PreviewMocks {
         experimental: true
     )
 
-    // MARK: - Gateway dictation (experimental)
+    // MARK: - Gateway dictation
 
     /// 25 MB, the gateway's audio body limit.
     static let dictationMaxAudioBytes = 25 * 1024 * 1024
 
-    /// Experimental gateway; the operator has not switched dictation on.
+    /// The operator has switched gateway dictation off.
     static let dictationStatusOff = DictationStatus(
         visible: true,
         enabled: false,
@@ -1151,14 +1151,14 @@ enum PreviewMocks {
         maxAudioBytes: dictationMaxAudioBytes
     )
 
-    /// An experimental gateway advertising the dictation setting, switched
+    /// A stable gateway advertising the dictation setting, switched
     /// on with its transcriber unable to run — Settings shows the Voice
     /// section with the gateway's reason.
     static let statusSnapshotDictationBlocked = StatusSnapshot(
         documents: statusSnapshot.documents,
         dbSizeBytes: statusSnapshot.dbSizeBytes,
         latestActivityBySource: nil,
-        experimental: true,
+        experimental: false,
         dictation: dictationStatusBlocked
     )
 
@@ -6734,4 +6734,87 @@ extension PreviewMocks {
     )
 }
 
+#endif
+
+#if DEBUG && canImport(SwiftUI) && canImport(UIKit)
+@available(iOS 17.0, *)
+extension PreviewMocks {
+    /// Invented search graph: matching extracted text, a physical location,
+    /// and two real branches of a two-hop path.
+    static let searchProvenance = SearchProvenance(
+        copies: [
+            .init(
+                documentId: "sample-root",
+                sourceId: sourceGmail.id,
+                title: "Riverside permit.pdf",
+                deviceName: nil,
+                path: nil
+            ),
+            .init(
+                documentId: "sample-copy",
+                sourceId: "local-files:sample-device",
+                title: "Riverside permit — desktop copy.pdf",
+                deviceName: "Sample laptop",
+                path: "~/Documents/Riverside/permit.pdf"
+            ),
+        ],
+        paths: [
+            .init(
+                documentIds: ["sample-root", "sample-message", "sample-checklist"],
+                edges: ["inbound:contains", "outbound:url"],
+                relations: ["is attached to", "links to"]
+            ),
+            .init(
+                documentIds: ["sample-root", "sample-message", "sample-map"],
+                edges: ["inbound:contains", "outbound:contains"],
+                relations: ["is attached to", "has attachment"]
+            ),
+        ],
+        stopReasons: ["hub"],
+        modelContext: .init(documents: [
+            .init(
+                documentId: "sample-message",
+                sourceId: sourceGmail.id,
+                title: "Riverside planning documents",
+                deviceName: nil,
+                path: nil
+            ),
+            .init(
+                documentId: "sample-checklist",
+                sourceId: "google-drive:sample",
+                title: "Planning checklist with a deliberately long title to demonstrate wrapping.pdf",
+                deviceName: nil,
+                path: nil
+            ),
+            .init(
+                documentId: "sample-map",
+                sourceId: sourceGmail.id,
+                title: "Site map.pdf",
+                deviceName: nil,
+                path: nil
+            ),
+        ])
+    )
+
+    static let searchResultWithBreadcrumbs = SearchResultItem(
+        documentId: "sample-root", sourceId: sourceGmail.id, documentType: "attachment",
+        title: "Riverside permit.pdf", sourceUrl: nil, appUrl: nil,
+        sourceCreatedAt: "2026-01-01T12:00:00Z", author: nil,
+        chunkText: "Planning permission for the fictional Riverside site. See the attached site plan for the approved boundaries.",
+        score: 0.91, refCount: 3, scoreBreakdown: nil, provenance: searchProvenance
+    )
+
+    static let searchProvenanceManyCopies = SearchProvenance(
+        copies: searchProvenance.copies + (1 ... 6).map { index in
+            .init(
+                documentId: "sample-extra-\(index)",
+                sourceId: "google-drive:sample",
+                title: "Riverside permit copy \(index).pdf",
+                deviceName: nil,
+                path: nil
+            )
+        },
+        paths: [], stopReasons: ["copies"], modelContext: nil
+    )
+}
 #endif

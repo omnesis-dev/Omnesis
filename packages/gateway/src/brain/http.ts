@@ -8,14 +8,14 @@
  * whenever experimental mode is enabled, even while the background agent is
  * parked. Agent-driven routes still 404 when the feature is not active.
  *
- * Routes are `scope.admin()` like the rest of the agent surface. Three
+ * Routes are `scope.admin()` like the rest of the agent surface. Two
  * groups: Briefs (the ranked feed GET, the cheap
  * unread-count GET for the drawer badge, the per-brief mark-read POST,
- * the dismiss POST, and the talk-back thread-open POST); the legacy
- * annotation-only time-index reads; and `/loops*` list + detail reads. The
- * whole time index — projections, mentions and annotations — is read through
- * the ungated `/temporal/*` routes (`http/routes/temporal.ts`). The other
- * operator/debug surfaces over the same tables live in admin-http.ts.
+ * the dismiss POST, and the talk-back thread-open POST); and `/loops*` list +
+ * detail reads. The time index — projections, mentions and annotations — is
+ * read through the ungated `/temporal/*` routes (`http/routes/temporal.ts`).
+ * The other operator/debug surfaces over the same tables live in
+ * admin-http.ts.
  */
 
 import { randomUUID } from "node:crypto";
@@ -29,8 +29,6 @@ import {
   NotFoundError,
   StalePageCursorError,
 } from "../http/errors.js";
-import { TEMPORAL_ANNOTATION_READ_MAX_LIMIT } from "../enrichment/temporal-annotations/storage.js";
-import { FACET_FILTER_MAX, parseTemporalWindowMs } from "../http/temporal-query-params.js";
 import { BRIEF_DISMISS_REASONS } from "./feedback.js";
 import { buildBriefsFeed } from "./feed.js";
 import {
@@ -41,11 +39,6 @@ import {
   parseProductLoopPageCursor,
   productLoopStates,
 } from "./product-pagination.js";
-import {
-  buildTemporalAnnotationEntry,
-  buildTemporalAnnotationWindow,
-  type TemporalAnnotationWindowEntry,
-} from "./temporal-annotation-window.js";
 import {
   BriefNotFoundError,
   TalkbackUnavailableError,
@@ -244,73 +237,6 @@ export function mountBriefsRoutes(app: RouteApp, opts: MountBriefsRoutesOpts): v
       case "invalid":
         throw new BadRequestError(result.message);
     }
-  });
-
-  const serializeWindowEntry = (e: TemporalAnnotationWindowEntry) => ({
-    id: e.id,
-    intervalStartMs: e.intervalStartMs,
-    intervalEndMs: e.intervalEndMs,
-    // `granularity` is the shipped wire spelling of the interval's precision,
-    // retained as the historical API contract. Do not align it with the
-    // internal name.
-    granularity: e.precision,
-    canonical: e.canonical,
-    sentence: e.sentence,
-    kind: e.kind,
-    createdAt: new Date(e.createdAt).toISOString(),
-    updatedAt: new Date(e.updatedAt).toISOString(),
-    documents: e.documents,
-  });
-
-  // Legacy annotation-only read retained alongside the unified
-  // `/temporal/window`: live temporal
-  // entries overlapping [from, to] (unix ms, inclusive), chronological,
-  // grounding documents resolved for display. `kinds` (CSV) narrows to a
-  // kind subset — the Upcoming rail passes deadline,expiry,reminder — and
-  // `limit` (1..500, default 300) caps the page, with `truncated: true`
-  // signalling the window held more (the client narrows or raises the
-  // limit; an invisibly clipped calendar would render later days as
-  // falsely empty). The client computes the window from its own timezone;
-  // the gateway stays timezone-ignorant.
-  app.get("/briefs/time-index/window", scope.admin(), (c) => {
-    requireActive();
-    const { fromMs, toMs } = parseTemporalWindowMs(c);
-    const limitRaw = c.req.query("limit");
-    let limit: number | undefined;
-    if (limitRaw !== undefined) {
-      const n = Number(limitRaw);
-      if (!Number.isSafeInteger(n) || n < 1 || n > TEMPORAL_ANNOTATION_READ_MAX_LIMIT) {
-        throw new BadRequestError(
-          `"limit" must be an integer 1..${TEMPORAL_ANNOTATION_READ_MAX_LIMIT}`,
-        );
-      }
-      limit = n;
-    }
-    const kindsRaw = c.req.query("kinds");
-    const kinds = kindsRaw
-      ?.split(",")
-      .map((k) => k.trim())
-      .filter((k) => k.length > 0);
-    if (kinds && kinds.length > FACET_FILTER_MAX) throw new BadRequestError(`too many "kinds"`);
-    const page = buildTemporalAnnotationWindow(opts.db, {
-      fromMs,
-      toMs,
-      ...(kinds && kinds.length > 0 ? { kinds } : {}),
-      ...(limit !== undefined ? { limit } : {}),
-    });
-    return c.json({
-      nowMs: now(),
-      truncated: page.truncated,
-      entries: page.entries.map(serializeWindowEntry),
-    });
-  });
-
-  // One live annotation in the same display-ready shape as the legacy window.
-  app.get("/briefs/time-index/:id", scope.admin(), (c) => {
-    requireActive();
-    const entry = buildTemporalAnnotationEntry(opts.db, c.req.param("id"));
-    if (!entry) throw new NotFoundError("Temporal annotation not found");
-    return c.json({ entry: serializeWindowEntry(entry) });
   });
 
   // The brief thread-open flow: resolve the port, open, and map typed errors —

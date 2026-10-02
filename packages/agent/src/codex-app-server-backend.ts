@@ -32,6 +32,7 @@ import {
 } from "@omnesis/core";
 
 import { zodToJsonSchema } from "./zod-to-json-schema.js";
+import { serializeToolResultForModel } from "./tool-result-text.js";
 import {
   childEventHooks,
   DEFAULT_MAX_TOOL_ITERATIONS,
@@ -729,7 +730,7 @@ export class CodexAppServerRuntime {
 
     return {
       success: !toolResultHasErrors(result),
-      contentItems: [{ type: "inputText", text: JSON.stringify(result) }],
+      contentItems: [{ type: "inputText", text: serializeToolResultForModel(result) }],
     };
   }
 
@@ -1048,7 +1049,7 @@ export function renderCodexUserInput(
       for (const part of msg.parts) {
         if (part.kind === "text") lines.push(`User: ${part.text}`);
         if (part.kind === "tool_result") {
-          lines.push(`Tool result ${part.toolCallId}: ${safeJsonStringify(part.result)}`);
+          lines.push(`Tool result ${part.toolCallId}: ${serializeToolResultForModel(part.result)}`);
         }
       }
     } else {

@@ -4,13 +4,14 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { SCOPE_ADMIN } from "@omnesis/types";
+import { SCOPE_ADMIN, SCOPE_READ } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
 import { createServer } from "../../server.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { upsertDocuments } from "../../data/repositories/DocumentRepository.js";
 import { applyExtractedDates } from "../../enrichment/dates/storage.js";
+import { insertTemporalAnnotation } from "../../enrichment/temporal-annotations/storage.js";
 import type { StatusCache } from "../services/StatusCache.js";
 import type { DocumentInput } from "@omnesis/types";
 import type Database from "better-sqlite3";
@@ -121,4 +122,96 @@ describe("GET /temporal/window", () => {
     // Mentions come only when named.
     expect((await read("projection,annotation")).items).toEqual([]);
   });
+
+  test("opens a recognized date directly in the requested zone, even outside the current window", async () => {
+    const documentId = seedMention("direct-date", "drop");
+    const row = db
+      .prepare("SELECT id FROM document_extracted_dates WHERE document_id = ?")
+      .get(documentId) as { id: number };
+    const id = `dm_${String(row.id).padStart(16, "0")}`;
+    gateActive = true;
+    const url = `/temporal/items/${id}?timeZone=America%2FLos_Angeles`;
+    const response = await app.request(url, { headers: { authorization: `Bearer ${token}` } });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      item: {
+        id,
+        origin: "mention",
+        start: "2026-10-12T07:00:00.000Z",
+        endExclusive: "2026-10-13T07:00:00.000Z",
+        mention: { documentId },
+      },
+    });
+    expect((await app.request(url)).status).toBe(401);
+    expect(
+      (
+        await app.request(`/temporal/items/${id}?timeZone=invalid`, {
+          headers: { authorization: `Bearer ${token}` },
+        })
+      ).status,
+    ).toBe(400);
+
+    // Editing a document retires its old recognized dates until extraction completes.
+    db.prepare("UPDATE documents SET dates_extracted_at = NULL WHERE id = ?").run(documentId);
+    expect((await app.request(url, { headers: { authorization: `Bearer ${token}` } })).status).toBe(
+      404,
+    );
+  });
+
+  test.each(["annotations", "items"])(
+    "%s detail returns live annotation quotes and rejects missing or invalidated notes",
+    async (endpoint) => {
+      const documentId = seedMention("annotation-support");
+      insertTemporalAnnotation(
+        db,
+        {
+          id: "ta_calendar_detail",
+          intervalStartMs: Date.UTC(2026, 9, 12),
+          intervalEndMs: Date.UTC(2026, 9, 12, 23, 59, 59, 999),
+          precision: "day",
+          canonical: "2026-10-12",
+          sentence: "A design review is planned for 12 October.",
+          kind: "appointment",
+          documentIds: [documentId],
+          evidence: [
+            { docId: documentId, quote: "12 October 2026" },
+            { docId: documentId, quote: "An older supporting phrase." },
+          ],
+          createdByRun: "run_synthetic_calendar",
+        },
+        Date.UTC(2026, 9, 1),
+      );
+      db.prepare(
+        "UPDATE temporal_annotation_evidence SET broken_at = 1 WHERE annotation_id = ? AND position = 1",
+      ).run("ta_calendar_detail");
+      const request = (id: string) =>
+        app.request(`/temporal/${endpoint}/${id}?timeZone=UTC`, {
+          headers: { authorization: `Bearer ${token}` },
+        });
+
+      const detail = await request("ta_calendar_detail");
+      expect(detail.status).toBe(200);
+      expect(await detail.json()).toMatchObject({
+        item: { id: "ta_calendar_detail", origin: "annotation" },
+        evidence: [{ documentId, quote: "12 October 2026" }],
+      });
+      expect((await request("missing")).status).toBe(404);
+      db.prepare("UPDATE temporal_annotations SET invalidated_at = 1 WHERE id = ?").run(
+        "ta_calendar_detail",
+      );
+      expect((await request("ta_calendar_detail")).status).toBe(404);
+    },
+  );
+
+  test.each(["annotations", "items"])(
+    "%s supporting quotes remain admin scoped",
+    async (endpoint) => {
+      const device = createDevice(db, { name: "fictional-reader", kind: "cli" });
+      const readToken = createToken(db, device.id, [SCOPE_READ]).token;
+      const response = await app.request(`/temporal/${endpoint}/missing?timeZone=UTC`, {
+        headers: { authorization: `Bearer ${readToken}` },
+      });
+      expect(response.status).toBe(403);
+    },
+  );
 });

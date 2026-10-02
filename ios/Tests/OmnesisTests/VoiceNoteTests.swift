@@ -4,7 +4,7 @@
 @testable import Omnesis
 import XCTest
 
-/// Voice notes (experimental gateway dictation): a note saved at once with
+/// Voice notes (gateway dictation): a note saved at once with
 /// the phone's transcript and its recording attached for the gateway. Covers
 /// the multipart request, when a capture attaches its recording, delivery
 /// with its text fallback, and the offline queue carrying the recording.

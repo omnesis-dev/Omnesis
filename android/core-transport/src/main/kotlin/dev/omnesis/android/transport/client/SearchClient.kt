@@ -31,6 +31,8 @@ import dev.omnesis.android.transport.dto.PersonSummary
 import dev.omnesis.android.transport.dto.RecentItemsResponse
 import dev.omnesis.android.transport.dto.SearchBody
 import dev.omnesis.android.transport.dto.SearchResponse
+import dev.omnesis.android.transport.dto.SearchReadiness
+import kotlinx.coroutines.CancellationException
 import dev.omnesis.android.transport.http.GatewayHttp
 import dev.omnesis.android.transport.http.delete
 import dev.omnesis.android.transport.http.getJson
@@ -47,10 +49,24 @@ class SearchClient(private val http: GatewayHttp) {
         text: String,
         limit: Int? = null,
         verbose: Boolean = false,
-    ): SearchResponse = http.postJson(
-        "search",
-        SearchBody(text = text, limit = limit, verbose = verbose),
-    )
+        graphContext: Boolean = false,
+    ): SearchResponse {
+        val available = if (graphContext) {
+            try {
+                http.getJson<SearchReadiness>("search/readiness").graphContextAvailable
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                // Readiness is advisory: an older or unavailable capability endpoint
+                // must not prevent ordinary search from working.
+                false
+            }
+        } else false
+        return http.postJson(
+            "search",
+            SearchBody(text, limit, verbose, includeGraphContext = true.takeIf { available }),
+        )
+    }
 
     suspend fun document(id: String): DocumentDetail = http.getJson("documents/$id")
 

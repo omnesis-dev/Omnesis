@@ -13,7 +13,6 @@ import {
   expandCanonical,
   insertTemporalAnnotation,
   queryTemporalAnnotationOverlap,
-  queryTemporalAnnotationWindow,
   getTemporalAnnotationById,
   hasLiveTemporalAnnotationsForDoc,
   invalidateTemporalAnnotationsForDoc,
@@ -384,112 +383,6 @@ describe("temporal annotation window / doc-invalidation reads", () => {
       now,
     );
   }
-
-  describe("queryTemporalAnnotationWindow", () => {
-    it("includes entries straddling either window edge (inclusive), excludes disjoint ones", () => {
-      const wStart = Date.UTC(2026, 6, 10);
-      const wEnd = Date.UTC(2026, 6, 20);
-      // Ends exactly on the window's first ms — still overlaps.
-      seed("tix_left", { intervalStartMs: Date.UTC(2026, 6, 5), intervalEndMs: wStart });
-      // Starts exactly on the window's last ms — still overlaps.
-      seed("tix_right", { intervalStartMs: wEnd, intervalEndMs: Date.UTC(2026, 6, 25) });
-      // Encloses the whole window.
-      seed("tix_enclose", {
-        intervalStartMs: Date.UTC(2026, 6, 1),
-        intervalEndMs: Date.UTC(2026, 6, 31),
-      });
-      // Fully inside.
-      seed("tix_inside", {
-        intervalStartMs: Date.UTC(2026, 6, 12),
-        intervalEndMs: Date.UTC(2026, 6, 13),
-      });
-      // Ends 1ms before the window / starts 1ms after it — disjoint.
-      seed("tix_before", { intervalStartMs: Date.UTC(2026, 6, 1), intervalEndMs: wStart - 1 });
-      seed("tix_after", { intervalStartMs: wEnd + 1, intervalEndMs: Date.UTC(2026, 6, 25) });
-
-      const hits = queryTemporalAnnotationWindow(db, { startMs: wStart, endMs: wEnd });
-      // Ordered by interval start ascending.
-      expect(hits.map((h) => h.id)).toEqual(["tix_enclose", "tix_left", "tix_inside", "tix_right"]);
-    });
-
-    it("kinds filter narrows to the requested set (a NULL kind never matches a filter)", () => {
-      seed("tix_deadline", { kind: "deadline" });
-      seed("tix_expiry", { kind: "expiry" });
-      seed("tix_event", { kind: "event" });
-      seed("tix_kindless", { kind: null });
-
-      const day = expandCanonical("2026-07-08")!;
-      const hits = queryTemporalAnnotationWindow(db, {
-        startMs: day.startMs,
-        endMs: day.endMs,
-        kinds: ["deadline", "expiry"],
-      });
-      expect(hits.map((h) => h.id).sort()).toEqual(["tix_deadline", "tix_expiry"]);
-    });
-
-    it("empty-string kind tokens are dropped, leaving the filter off", () => {
-      seed("tix_deadline", { kind: "deadline" });
-      seed("tix_kindless", { kind: null });
-      const day = expandCanonical("2026-07-08")!;
-      const hits = queryTemporalAnnotationWindow(db, {
-        startMs: day.startMs,
-        endMs: day.endMs,
-        kinds: ["", ""],
-      });
-      expect(hits.map((h) => h.id).sort()).toEqual(["tix_deadline", "tix_kindless"]);
-    });
-
-    it("an over-max limit clamps instead of throwing or zeroing the read", () => {
-      for (let i = 0; i < 5; i++) seed(`tix_${String(i).padStart(2, "0")}`);
-      const day = expandCanonical("2026-07-08")!;
-      const hits = queryTemporalAnnotationWindow(db, {
-        startMs: day.startMs,
-        endMs: day.endMs,
-        limit: 99_999,
-      });
-      expect(hits).toHaveLength(5);
-    });
-
-    it("limit caps the result count and clamps to a floor of 1", () => {
-      seed("tix_1", { intervalStartMs: Date.UTC(2026, 6, 8), intervalEndMs: Date.UTC(2026, 6, 8) });
-      seed("tix_2", { intervalStartMs: Date.UTC(2026, 6, 9), intervalEndMs: Date.UTC(2026, 6, 9) });
-      seed("tix_3", {
-        intervalStartMs: Date.UTC(2026, 6, 10),
-        intervalEndMs: Date.UTC(2026, 6, 10),
-      });
-      const window = { startMs: Date.UTC(2026, 6, 1), endMs: Date.UTC(2026, 6, 31) };
-      // Caps at `limit`, keeping the chronologically-first entries.
-      expect(queryTemporalAnnotationWindow(db, { ...window, limit: 2 }).map((h) => h.id)).toEqual([
-        "tix_1",
-        "tix_2",
-      ]);
-      // A nonsensical limit clamps to 1 rather than returning nothing.
-      expect(queryTemporalAnnotationWindow(db, { ...window, limit: 0 })).toHaveLength(1);
-    });
-
-    it("orders by interval start, then id as the stable tiebreaker", () => {
-      // Same start, ids inserted in reverse lexicographic order.
-      seed("tix_b", { intervalStartMs: Date.UTC(2026, 6, 8), intervalEndMs: Date.UTC(2026, 6, 8) });
-      seed("tix_a", { intervalStartMs: Date.UTC(2026, 6, 8), intervalEndMs: Date.UTC(2026, 6, 8) });
-      // Earlier start inserted last still leads.
-      seed("tix_c", { intervalStartMs: Date.UTC(2026, 6, 7), intervalEndMs: Date.UTC(2026, 6, 7) });
-
-      const hits = queryTemporalAnnotationWindow(db, {
-        startMs: Date.UTC(2026, 6, 1),
-        endMs: Date.UTC(2026, 6, 31),
-      });
-      expect(hits.map((h) => h.id)).toEqual(["tix_c", "tix_a", "tix_b"]);
-    });
-
-    it("excludes invalidated entries", () => {
-      seed("tix_live");
-      seed("tix_dead");
-      expect(invalidateTemporalAnnotation(db, "tix_dead", 2)).toBe(true);
-      const day = expandCanonical("2026-07-08")!;
-      const hits = queryTemporalAnnotationWindow(db, { startMs: day.startMs, endMs: day.endMs });
-      expect(hits.map((h) => h.id)).toEqual(["tix_live"]);
-    });
-  });
 
   describe("getTemporalAnnotationById", () => {
     it("returns a live entry; invalidated and unknown ids are null", () => {

@@ -18,6 +18,13 @@ Everything below describes the universes under `evals/universes/`, which is the 
 | `whatsapp-backfill`    | `whatsapp-messages`                            | Single-source WhatsApp universe for the gateway-level wraps-real E2E. Ships a `sources/whatsapp-messages/fake-corpus.json` that drives the synth twin's **wraps-real** path (the real `WhatsAppProvider` behind a `FakeWhatsAppServer`). Seals `complete` on a shallow recent-window slice, then a later backfill deepens the day-docs in place.                                                                                                                                               |
 | `whatsapp-interrupted` | `whatsapp-messages`                            | Same wraps-real path as `whatsapp-backfill`, but the initial history push stalls so the real provider seals `interrupted` — the test asserts the interrupted sync surfaces partial coverage while the messages that did arrive stay indexed and searchable.                                                                                                                                                                                                                                    |
 
+The `graph-search` universe covers opt-in agent search provenance with Drive,
+Gmail and WhatsApp fixtures: matching extracted files, a revised file, sharing
+messages, a reference hub, empty scans and unrelated activity by the same person.
+Its replay conversations execute live tools. The graph-search E2E suite adds a
+local-file document through the real normalizer and ingestion boundary so device
+and display-path provenance is exercised without reading a real filesystem.
+
 A partial universe (like the WhatsApp ones) only ships the source it cares about — the harness skips any other synth source whose fixture the universe doesn't carry.
 
 The mechanism is universe-agnostic; pick a use case, write a new universe directory, and point the demo gateway or E2E harness at it.

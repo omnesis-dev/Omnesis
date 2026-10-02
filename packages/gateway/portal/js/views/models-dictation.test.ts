@@ -38,7 +38,7 @@ describe("Gateway dictation setting", () => {
     if (originalWindow === undefined) delete globalThis.window; else globalThis.window = originalWindow;
   });
 
-  it("renders nothing outside experimental mode or against a gateway without the field", async () => {
+  it("renders nothing when the gateway does not support the feature", async () => {
     api.getStatus.mockResolvedValue({ dictation: dictation({ visible: false }) });
     await mount();
     expect(host.textContent).toBe("");
@@ -48,12 +48,21 @@ describe("Gateway dictation setting", () => {
     expect(host.textContent).toBe("");
   });
 
+  it("shows the default-on setting on a stable gateway", async () => {
+    api.getStatus.mockResolvedValue({ experimental: false, dictation: dictation({ enabled: true, active: true }) });
+    await mount();
+    expect(toggle().getAttribute("aria-checked")).toBe("true");
+    expect(host.querySelector(".experimental-tag")).toBeNull();
+  });
+
   it("switches the opt-in on through the config and shows the gateway's new state", async () => {
     api.getStatus.mockResolvedValueOnce({ dictation: dictation() })
       .mockResolvedValueOnce({ dictation: dictation({ enabled: true, active: true }) });
     await mount();
     expect(toggle().getAttribute("aria-checked")).toBe("false");
-    expect(host.textContent).toContain("Experimental");
+    expect(host.textContent).not.toContain("Experimental");
+    expect(host.querySelector("h2").textContent).toBe("Transcribe voice notes in the Gateway");
+    expect(host.textContent).toContain("When enabled, the raw audio will be sent to your gateway to be transcribed. The watch/phone’s local audio transcription will still be sent as fallback.");
 
     await act(async () => { toggle().dispatchEvent(new window.Event("click")); });
     await settle();

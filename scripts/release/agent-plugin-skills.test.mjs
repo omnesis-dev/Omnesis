@@ -39,9 +39,14 @@ describe("answer skill", () => {
     );
   });
 
-  it("declares the interactive approval input", () => {
+  it("waits for interactive approval within a bounded budget", () => {
     expect(claudeAnswer).toContain('`approval: "allow"`');
-    expect(claudeAnswer).toMatch(/wait for the user to explicitly confirm/i);
+    expect(claudeAnswer).toContain("`waitSeconds: 30`");
+    expect(claudeAnswer).toMatch(/without waiting for a confirmation message/i);
+    expect(claudeAnswer).toMatch(/at most four waiting calls/i);
+    expect(claudeAnswer).toMatch(/two minutes total/i);
+    expect(claudeAnswer).toMatch(/do not busy-poll or restart the waiting budget/i);
+    expect(claudeAnswer).toMatch(/live tool schema does not support `waitSeconds`/i);
     expect(claudeAnswer).toMatch(/Do not busy-poll/i);
   });
 

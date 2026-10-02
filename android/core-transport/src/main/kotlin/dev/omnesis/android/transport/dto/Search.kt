@@ -11,6 +11,7 @@ data class SearchBody(
     val text: String,
     val limit: Int? = null,
     val verbose: Boolean? = null,
+    val includeGraphContext: Boolean? = null,
 )
 
 /** `POST /search` response. Mirrors the iOS `SearchResponse`. */
@@ -102,6 +103,7 @@ data class SearchResultItem(
     val score: Double,
     val refCount: Int? = null,
     val scoreBreakdown: SearchScoreBreakdown? = null,
+    val provenance: SearchProvenance? = null,
 )
 
 @Serializable

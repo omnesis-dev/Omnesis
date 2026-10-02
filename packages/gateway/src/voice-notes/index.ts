@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Voice notes (experimental): Tell Omnesis captures that arrive with their
+ * Voice notes: Tell Omnesis captures that arrive with their
  * audio, saved at once and transcribed afterwards by the gateway's
  * transcriber. The route is `http/routes/voice-notes.ts`; the gate that
  * decides whether devices send audio at all is `dictation/`.

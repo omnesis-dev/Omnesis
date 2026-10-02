@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { searchModelContextResult } from "./test-fixtures/search-model-context.js";
 
 import {
   CodexAppServerBackend,
@@ -781,6 +782,52 @@ describe("CodexAppServerBackend", () => {
         "error",
       );
       expect(existsSync(logPath)).toBe(false);
+    } finally {
+      await backend.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("model context serialization", () => {
+  it("projects historical tool evidence without mutating canonical history", () => {
+    const result = searchModelContextResult();
+    const canonical = JSON.stringify(result);
+    const text = renderCodexUserInput(
+      [{ role: "user", parts: [{ kind: "tool_result", toolCallId: "call-model", result }] }],
+      "next",
+    );
+    const line = text.split("\n").find((entry) => entry.startsWith("Tool result call-model: "))!;
+    expect(JSON.parse(line.slice("Tool result call-model: ".length)).results[0].provenance).toEqual(
+      result.results[0]!.provenance!.modelContext,
+    );
+    expect(JSON.stringify(result)).toBe(canonical);
+  });
+  it("projects the live Codex tool response while emitting the original canonical evidence", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-model-context-")));
+    const logPath = join(dir, "fake-codex.jsonl");
+    const backend = makeBackend({
+      codexHome: join(dir, "home"),
+      workspaceDir: join(dir, "workspace"),
+      logPath,
+    });
+    const result = searchModelContextResult();
+    const canonical = JSON.stringify(result);
+    try {
+      const events = await collect(
+        backend.runTurn(baseInput({ tools: [fakeToolHandle("search_documents", () => result)] })),
+      );
+      const response = firstPayload<{ result: { contentItems: Array<{ text: string }> } }>(
+        readLog(logPath),
+        "tool_call_response",
+      );
+      expect(JSON.parse(response.result.contentItems[0]!.text).results[0].provenance).toEqual(
+        result.results[0]!.provenance!.modelContext,
+      );
+      expect(events.find((event) => event.type === "agent.tool.result")?.payload.result).toEqual(
+        result,
+      );
+      expect(JSON.stringify(result)).toBe(canonical);
     } finally {
       await backend.dispose();
       rmSync(dir, { recursive: true, force: true });

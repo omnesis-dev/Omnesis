@@ -291,6 +291,13 @@
           live connection to the gateway, the wake travels over it instead of the push service.
         </p>
         <p>
+          Privacy-review alerts are delivered only while the review is pending. If it is approved,
+          denied, expired or deleted before the phone fetches it, the gateway skips the queued
+          alert. Access-request alerts are delivered only while at least one access request remains
+          pending and unexpired. A banner already shown on the phone may remain in its notification
+          history.
+        </p>
+        <p>
           Failed wakes are retried with growing delays — from 5 seconds, doubling up to 5 minutes —
           for about an hour. Undelivered notifications expire after a week, and the phone fetches
           any still waiting the next time the app opens or reconnects, wake or no wake.

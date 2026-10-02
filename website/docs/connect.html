@@ -286,6 +286,21 @@
           excluded one.
         </p>
         <p>
+          A reviewed answer can be shared with details removed only when it still answers the
+          request. If reducing a requested detail would leave the question unanswered, Omnesis holds
+          the original answer for your approval, even when the policy calls for reduction. A policy
+          that forbids release even with approval still blocks it.
+        </p>
+        <p>
+          When an MCP Answer needs approval, the external agent is instructed to tell you to approve
+          in Omnesis and wait for your decision. <code>get_answer_status</code> accepts
+          <code>waitSeconds</code> from 0 to 30, returning as soon as you approve or deny; omitting
+          it checks immediately. The agent is instructed to make at most four waiting calls for that
+          approval, about two minutes in total. If you have not decided by then, it asks you to tell
+          it when you have approved. This continuation depends on the external agent following the
+          tool instructions.
+        </p>
+        <p>
           Neither Answer nor Direct browses or searches the live internet: both answer only from
           data Omnesis has already captured. An agent that needs current outside facts, such as
           weather or transport delays, should combine the Omnesis result with its own search tools.
@@ -380,12 +395,14 @@
         </p>
         <p>
           Identity-document contents are never released automatically, and Guarded, Balanced and
-          Open also never release exact health or financial details automatically.
+          Open also hold exact health or financial details for your approval. The built-in templates
+          ask you to approve sensitive answers instead of refusing them outright.
         </p>
         <p>
-          Credentials depend on the template. Guarded, Balanced and Open block credentials outright:
-          they cannot be released even with your approval. Unfiltered holds them for your approval,
-          one request at a time.
+          Every template holds credentials for your approval, one request at a time. A prior
+          approval never authorizes a later credential release. You can still configure an explicit
+          <strong>Deny</strong> rule to block information even with approval, or disable credential
+          approval to block credentials outright.
         </p>
         <p>
           The reviewer judges an answer's <a href="#citations">citations</a> under the same policy

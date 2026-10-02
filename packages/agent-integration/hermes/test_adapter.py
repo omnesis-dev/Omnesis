@@ -19,7 +19,7 @@ import time
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, call, patch
 
 
 class Platform(str):
@@ -3757,6 +3757,72 @@ class OAuthRefreshTests(unittest.TestCase):
         self.assertEqual(calls[0][1], calls[1][1])
         self.instance._refresh_oauth_token.assert_called_once_with("access_old_fictional")
 
+    def test_an_adopted_token_that_has_expired_is_renewed_from_the_gateway(self):
+        # The keepalive in the Hermes gateway rotated the file after this tool
+        # instance loaded it, and the access token it left there has expired
+        # by the time the tool runs.
+        updated = json.loads(self.path.read_text(encoding="utf-8"))
+        updated["oauth"]["tokens"] = {
+            "access_token": "access_expired_elsewhere",
+            "refresh_token": "refresh_rotated_elsewhere",
+            "token_type": "Bearer",
+        }
+        self.path.write_text(json.dumps(updated), encoding="utf-8")
+        os.chmod(self.path, 0o600)
+        calls = []
+
+        def request(_method, _endpoint, token, body, _timeout, _headers):
+            calls.append((token, body["id"]))
+            if token != "access_new_fictional":
+                raise adapter_module.GatewayHttpError(401)
+            return {"jsonrpc": "2.0", "id": body["id"], "result": {}}
+
+        def refresh_locked():
+            self.assertEqual(
+                self.instance._credentials.oauth_refresh_token,
+                "refresh_rotated_elsewhere",
+            )
+            return "access_new_fictional"
+
+        self.instance._request_json = request
+        self.instance._refresh_oauth_token_locked = Mock(side_effect=refresh_locked)
+        result = self.instance._mcp_request(
+            "access_old_fictional", "tools/list", {}, 10.0
+        )
+        self.assertEqual(result, {})
+        self.assertEqual(
+            [call[0] for call in calls],
+            ["access_old_fictional", "access_expired_elsewhere", "access_new_fictional"],
+        )
+        self.assertEqual(len({call[1] for call in calls}), 1)
+        self.instance._refresh_oauth_token_locked.assert_called_once_with()
+
+    def test_a_renewed_token_refused_twice_reports_the_401(self):
+        calls = []
+
+        def request(_method, _endpoint, token, body, _timeout, _headers):
+            calls.append(token)
+            raise adapter_module.GatewayHttpError(401)
+
+        self.instance._request_json = request
+        self.instance._refresh_oauth_token = Mock(
+            side_effect=["access_adopted_fictional", "access_new_fictional"]
+        )
+        with self.assertRaises(adapter_module.GatewayHttpError) as raised:
+            self.instance._mcp_request("access_old_fictional", "tools/list", {}, 10.0)
+        self.assertEqual(raised.exception.status, 401)
+        self.assertEqual(
+            calls,
+            ["access_old_fictional", "access_adopted_fictional", "access_new_fictional"],
+        )
+        self.assertEqual(
+            self.instance._refresh_oauth_token.call_args_list,
+            [
+                call("access_old_fictional"),
+                call("access_adopted_fictional", adopt_persisted=False),
+            ],
+        )
+
     def test_a_one_use_authority_401_never_escalates_to_the_principal_token(self):
         calls = []
 
@@ -4642,6 +4708,44 @@ def _fictional_tool(name, description=None):
 
 class ForwardedToolTests(unittest.TestCase):
     """Direct and Notes, hosted as native tools the gateway lists and serves."""
+
+    def test_legacy_and_enriched_search_batches_keep_actionable_fields(self):
+        legacy_document = {
+            "documentId": "agreement_example",
+            "sourceType": "files",
+            "snippet": "Fictional equipment terms.",
+            "url": "https://example.org/agreement",
+        }
+        enriched_document = {
+            **legacy_document,
+            "provenance": {
+                "summary": "Matching text also appears in an archive.",
+                "copies": [], "paths": [], "truncated": False, "stopReasons": [],
+                "modelContext": {
+                    "facts": ["Matching extracted text also appears in [D2]."],
+                    "documents": [{
+                        "ref": "D2", "documentId": "archive_example",
+                        "sourceId": "files:example", "url": "https://example.org/archive",
+                    }],
+                    "limits": [],
+                },
+            },
+        }
+        for document in (legacy_document, enriched_document):
+            with self.subTest(enriched="provenance" in document):
+                batch = {"kind": "search.batch", "items": [{
+                    "kind": "search.results", "query": "equipment",
+                    "durationMs": 2, "results": [document],
+                }]}
+                before = json.dumps(batch, sort_keys=True)
+                result = adapter_module._forwarded_tool_result({
+                    "content": [{"type": "text", "text": "Untrusted corpus data."}],
+                    "structuredContent": batch,
+                })
+                self.assertEqual(json.loads(result), {
+                    "content": "Untrusted corpus data.", "structuredContent": batch,
+                })
+                self.assertEqual(json.dumps(batch, sort_keys=True), before)
 
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()

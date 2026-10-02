@@ -353,15 +353,17 @@ private fun ResultsList(
     catalog: SourceCatalog,
     onOpenDocument: (String) -> Unit,
 ) {
+    val visibleContext = searchGraphPanelIds(items)
     LazyColumn(
         Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = OmSpacing.lg, vertical = OmSpacing.sm),
     ) {
         itemsIndexed(items, key = { _, item -> item.documentId }) { idx, item ->
             SearchResultRow(
-                item = item,
+                item = if (item.documentId in visibleContext) item else item.copy(provenance = null),
                 catalog = catalog,
                 onClick = { onOpenDocument(item.documentId) },
+                onOpenDocument = onOpenDocument,
                 modifier = Modifier.testTag("search.result").padding(horizontal = OmSpacing.md, vertical = 10.dp),
             )
             if (idx < items.lastIndex) {
@@ -386,6 +388,7 @@ private fun SearchResultRow(
     item: SearchResultItem,
     catalog: SourceCatalog,
     onClick: () -> Unit,
+    onOpenDocument: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = OmTheme.colors
@@ -420,6 +423,7 @@ private fun SearchResultRow(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            SearchGraphContext(item.provenance, item.documentId, catalog, onOpenDocument)
             item.scoreBreakdown?.let {
                 ScoreBreakdownStrip(it, Modifier.padding(top = 2.dp))
             }

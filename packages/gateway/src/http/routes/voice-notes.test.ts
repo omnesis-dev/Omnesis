@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * HTTP-level coverage for POST /notes/voice: the experimental 404, the
+ * HTTP-level coverage for POST /notes/voice: stable-mode availability, the
  * operator's setting (on unless switched off), the transcriber requirement, the scope guard, multipart
  * validation, the size limit, and the save-now-transcribe-later contract. The
  * synthetic (replay) transcriber echoes the audio bytes back as text.
@@ -69,7 +69,7 @@ function noteText(id: string): string | undefined {
 
 beforeEach(() => {
   priorExperimental = process.env.OMNESIS_EXPERIMENTAL;
-  process.env.OMNESIS_EXPERIMENTAL = "1";
+  delete process.env.OMNESIS_EXPERIMENTAL;
   dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
   db = createDatabase(dbPath);
   ADMIN_TOKEN = mintToken([SCOPE_ADMIN, SCOPE_READ]);
@@ -171,12 +171,19 @@ describe("POST /notes/voice", () => {
     expect(notesRuntime!.listDay().filter((entry) => entry.id === id)).toHaveLength(1);
   });
 
-  test("does not exist outside experimental mode, even before auth", async () => {
-    delete process.env.OMNESIS_EXPERIMENTAL;
-    expect((await post(voiceNoteForm({ id: randomUUID() }))).status).toBe(404);
-    const unauthenticated = await app.request("/notes/voice", { method: "POST" });
-    expect(unauthenticated.status).toBe(404);
-  });
+  test.each([undefined, "0", "1"])(
+    "accepts voice notes with experimental mode %s",
+    async (mode) => {
+      if (mode === undefined) delete process.env.OMNESIS_EXPERIMENTAL;
+      else process.env.OMNESIS_EXPERIMENTAL = mode;
+      const id = randomUUID();
+      expect((await post(voiceNoteForm({ id, text: "water the ferns" }))).status).toBe(202);
+      await voiceNotes!.idle();
+      expect(noteText(id)).toBe("water the ferns on sunday");
+      const unauthenticated = await app.request("/notes/voice", { method: "POST" });
+      expect(unauthenticated.status).toBe(401);
+    },
+  );
 
   test("refuses with DICTATION_DISABLED once the operator switches it off", async () => {
     optedIn = false;
@@ -229,7 +236,7 @@ describe("GET /status dictation", () => {
     return ((await res.json()) as { dictation: Record<string, unknown> }).dictation;
   }
 
-  test("is on by default, and active only when every lever allows it", async () => {
+  test("is on by default in stable mode, and requires opt-in and a runnable model", async () => {
     expect(await statusDictation()).toEqual({
       visible: true,
       enabled: true,
@@ -251,8 +258,8 @@ describe("GET /status dictation", () => {
     });
 
     resolved = { role: "transcriber", kind: "replay" };
-    delete process.env.OMNESIS_EXPERIMENTAL;
-    expect(await statusDictation()).toMatchObject({ visible: false, active: false });
+    process.env.OMNESIS_EXPERIMENTAL = "1";
+    expect(await statusDictation()).toMatchObject({ visible: true, active: true });
   });
 
   test("a gateway without the gate wired advertises nothing to show", async () => {

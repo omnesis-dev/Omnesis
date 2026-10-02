@@ -34,17 +34,39 @@ public final class SearchClient: Sendable {
     public func search(
         text: String,
         limit: Int? = nil,
-        verbose: Bool = true
+        verbose: Bool = true,
+        graphContext: Bool = false
     ) async throws
         -> SearchResponse {
         struct Body: Encodable {
             let text: String
             let limit: Int?
             let verbose: Bool?
+            let includeGraphContext: Bool?
         }
-        let body = try encoder.encode(Body(text: text, limit: limit, verbose: verbose))
+        let available = graphContext ? try await graphContextAvailable() : false
+        let body = try encoder.encode(Body(
+            text: text,
+            limit: limit,
+            verbose: verbose,
+            includeGraphContext: available ? true : nil
+        ))
         let (data, _) = try await dispatch(method: "POST", path: "/search", body: body)
         return try decodeOrThrow(SearchResponse.self, from: data)
+    }
+
+    /// A missing capability (including an older gateway's 404) keeps the
+    /// original request shape. Optional graph diagnostics cannot block search.
+    private func graphContextAvailable() async throws -> Bool {
+        struct Readiness: Decodable { let graphContextAvailable: Bool? }
+        do {
+            let (data, _) = try await dispatch(method: "GET", path: "/search/readiness", body: nil)
+            return try decoder.decode(Readiness.self, from: data).graphContextAvailable == true
+        } catch {
+            try Task.checkCancellation()
+            if error is CancellationError || (error as? URLError)?.code == .cancelled { throw error }
+            return false
+        }
     }
 
     // MARK: - Per-source recent items
@@ -590,6 +612,7 @@ public struct SearchResultItem: Decodable, Identifiable, Hashable, Sendable {
     public let score: Double
     public let refCount: Int?
     public let scoreBreakdown: SearchScoreBreakdown?
+    public var provenance: SearchProvenance?
 }
 
 /// Per-result score components emitted when `verbose: true` is set on
@@ -1288,7 +1311,7 @@ public struct StatusSnapshot: Decodable, Sendable {
     /// gateway that predates the feature — reads as inactive, so the
     /// Briefs entry stays hidden.
     public let briefs: BriefsStatus?
-    /// The gateway dictation gate (experimental). `nil` from a gateway that
+    /// The gateway dictation gate. `nil` from a gateway that
     /// predates it, which keeps every mic on the on-device recognizer.
     public let dictation: DictationStatus?
 

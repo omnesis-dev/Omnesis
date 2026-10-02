@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 
 import {
   assertNever,
@@ -478,8 +479,29 @@ export class AnswerService {
     }
   }
 
-  async getResponse(taskId: string, ownerId: string): Promise<AnswerResponse | null> {
+  async getResponse(
+    taskId: string,
+    ownerId: string,
+    options: { waitSeconds?: number; signal?: AbortSignal } = {},
+  ): Promise<AnswerResponse | null> {
+    const deadline = performance.now() + (options.waitSeconds ?? 0) * 1_000;
+    // Pending observations are local reads, not extra caller invocations or egresses.
+    // The caller's authority is revalidated by the single final recordEgress commit.
+    for (;;) {
+      options.signal?.throwIfAborted();
+      const response = getAnswerTaskResponse(this.deps.db, taskId, ownerId);
+      const remaining = deadline - performance.now();
+      if (
+        response?.status !== "approval_required" ||
+        response.approvalExpiresAt <= this.now() ||
+        remaining <= 0
+      )
+        break;
+      await delay(Math.min(1_000, remaining), undefined, { signal: options.signal });
+    }
+    options.signal?.throwIfAborted();
     await this.deps.writeGate.expirePrivacyApprovals(this.now());
+    options.signal?.throwIfAborted();
     return getAnswerTaskResponse(this.deps.db, taskId, ownerId);
   }
 
