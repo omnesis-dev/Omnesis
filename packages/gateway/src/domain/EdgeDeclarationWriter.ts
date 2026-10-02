@@ -31,11 +31,30 @@
 
 import { createLogger, type DocumentRef, type EdgeDeclaration } from "@omnesis/core";
 import { markLinkStatsDirty } from "../data/DirtyMarks.js";
+import { DOCUMENTS_SOURCE_EXTERNAL_ID_INDEX } from "../data/migration-187-documents-source-external-index.js";
 import type Database from "better-sqlite3";
 
 type Db = Database.Database;
 
 const log = createLogger("gateway:edges");
+
+/**
+ * Resolve an endpoint `(sourceId, externalId)` to a document id, preferring
+ * the row in the declaring page's stream. Pinned to the `(source_id,
+ * external_id)` index: these lookups run once per declared edge inside the
+ * writer transaction, and any other plan reads the whole target source per
+ * edge.
+ */
+export const DECLARED_ENDPOINT_LOOKUP_SQL = `SELECT id FROM documents INDEXED BY ${DOCUMENTS_SOURCE_EXTERNAL_ID_INDEX}
+  WHERE source_id = ? AND external_id = ? ORDER BY stream_id = ? DESC LIMIT 1`;
+
+/**
+ * The pending-edge retry's endpoint lookup: as above, with the preferred
+ * stream read from the declaring document.
+ */
+export const PENDING_ENDPOINT_LOOKUP_SQL = `SELECT id FROM documents INDEXED BY ${DOCUMENTS_SOURCE_EXTERNAL_ID_INDEX}
+  WHERE source_id = ? AND external_id = ?
+  ORDER BY stream_id = (SELECT stream_id FROM documents WHERE id = ?) DESC LIMIT 1`;
 
 /**
  * How long a forward-reference edge waits in `pending_edges` for its target to
@@ -107,7 +126,7 @@ export function applyDeclaredEdges(
   if (edges.length === 0) return result;
 
   const lookupStmt = db.prepare<[string, string, string], { id: string }>(
-    "SELECT id FROM documents WHERE source_id = ? AND external_id = ? ORDER BY stream_id = ? DESC LIMIT 1",
+    DECLARED_ENDPOINT_LOOKUP_SQL,
   );
   const resolveCache = new Map<string, string | null>();
   function resolveDocId(ident: { sourceId: string; externalId: string }): string | null {
@@ -305,8 +324,7 @@ export function drainPendingEdges(
   // An endpoint in the declaring document's stream wins over a namesake in
   // another stream.
   const lookupStmt = db.prepare<[string, string, string], { id: string }>(
-    `SELECT id FROM documents WHERE source_id = ? AND external_id = ?
-      ORDER BY stream_id = (SELECT stream_id FROM documents WHERE id = ?) DESC LIMIT 1`,
+    PENDING_ENDPOINT_LOOKUP_SQL,
   );
   const promoteStmt = db.prepare(
     `INSERT INTO document_links

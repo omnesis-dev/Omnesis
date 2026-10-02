@@ -57,7 +57,7 @@ const TAIL_VERSIONS = Array.from(
  * `windBack` to undo; its input is planted by the test that replays it, and
  * it is named here on the same terms as the rest.
  */
-const WOUND_BACK = [172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186];
+const WOUND_BACK = [172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187];
 
 let dir: string;
 let dbPath: string;
@@ -180,6 +180,7 @@ function windBack(db: Db): void {
   db.exec("DROP INDEX IF EXISTS idx_document_extracted_dates_mention_range");
   db.exec("DROP INDEX IF EXISTS idx_document_extracted_dates_mention_thread");
   db.exec("DROP TABLE IF EXISTS date_mention_judgements");
+  db.exec("DROP INDEX IF EXISTS idx_documents_source_external_id");
   const dateColumns = db
     .prepare<[], { name: string }>(
       "SELECT name FROM pragma_table_xinfo('document_extracted_dates')",
@@ -328,6 +329,14 @@ describe("an install several versions behind, upgrading", () => {
             [],
             { name: string }
           >("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'date_mention_judgements'")
+          .get(),
+      ).toBeDefined();
+      expect(
+        db
+          .prepare<
+            [],
+            { name: string }
+          >("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_documents_source_external_id'")
           .get(),
       ).toBeDefined();
     } finally {
