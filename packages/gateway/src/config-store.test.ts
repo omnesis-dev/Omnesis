@@ -15,6 +15,17 @@ async function wait(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+async function writeExternalCycleInterval(cycleInterval: string) {
+  const deadline = Date.now() + 3000;
+  // FSEvents can miss writes before its subscription is active. Retry beyond
+  // the 40ms debounce until an external reload proves the watcher is ready.
+  while (Date.now() < deadline && store.get().indexer?.cycleInterval !== cycleInterval) {
+    writeFileSync(path, JSON.stringify({ indexer: { cycleInterval } }));
+    await wait(100);
+  }
+  expect(store.get().indexer?.cycleInterval).toBe(cycleInterval);
+}
+
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "omnesis-config-"));
   path = join(dir, "omnesis.json");
@@ -234,19 +245,7 @@ describe("ConfigStore — listeners + file watcher", () => {
     store.onChange((_b, _a, paths) => {
       changed = paths;
     });
-    // fs.watch registers with the kernel asynchronously (FSEvents on darwin);
-    // writes in the first few ms after watcher start can miss the
-    // subscription. Give it a moment.
-    await wait(100);
-    writeFileSync(path, JSON.stringify({ indexer: { cycleInterval: "30m" } }));
-    // Poll instead of a fixed wait — the watcher+debounce combined with
-    // parallel fs activity in other tests can push the callback past a
-    // tight margin on macOS.
-    const deadline = Date.now() + 3000;
-    while (Date.now() < deadline && store.get().indexer?.cycleInterval !== "30m") {
-      await wait(20);
-    }
-    expect(store.get().indexer?.cycleInterval).toBe("30m");
+    await writeExternalCycleInterval("30m");
     expect(changed).toContain("/indexer/cycleInterval");
   });
 
@@ -262,7 +261,8 @@ describe("ConfigStore — listeners + file watcher", () => {
   });
 
   test("invalid external edit leaves config + sets lastError", async () => {
-    await store.patch({ indexer: { cycleInterval: "45m" } });
+    await store.patch({ indexer: { cycleInterval: "30m" } });
+    await writeExternalCycleInterval("45m");
     writeFileSync(path, "{ bogus");
     {
       const deadline = Date.now() + 2000;
