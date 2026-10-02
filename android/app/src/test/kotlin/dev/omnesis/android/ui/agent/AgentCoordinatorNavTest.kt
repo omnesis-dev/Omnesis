@@ -982,9 +982,10 @@ class AgentCoordinatorNavTest {
             ),
         )
 
-        coord.send("Follow up after stopping")
+        coord.send("Follow up after stopping", deepResearch = true)
 
         assertEquals("Follow up after stopping", coord.state.value.sendRejectedText)
+        assertEquals("deep-research", coord.state.value.sendRejectedCommandId)
         assertEquals("busy guard must not touch the gateway", 0, server.requestCount)
     }
 
@@ -1810,8 +1811,8 @@ class AgentCoordinatorNavTest {
             AgentCoordinator.UiState(hasClient = true, sessionId = "s_previous"),
         )
 
-        val composerGeneration = coord.state.value.composerGeneration
         coord.resumeConversation("s_recent")
+        val composerGeneration = coord.state.value.composerGeneration
         coord.newConversation()
 
         assertNull("the hour-old foreground policy owns the surface", coord.state.value.sessionId)

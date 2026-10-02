@@ -56,11 +56,13 @@ import {
 } from "./conversation-retention.js";
 import type { Dir } from "node:fs";
 
+import type { ConversationControlState } from "./conversation-controls.js";
 import type { ChatMessage } from "@omnesis/agent";
 
 const log = createLogger("gateway:agent").child("store");
 
 export interface ConversationRecord {
+  controls?: ConversationControlState;
   id: string;
   callerId: string;
   model: string;

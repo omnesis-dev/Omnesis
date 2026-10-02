@@ -4932,6 +4932,20 @@ enum PreviewMocks {
         )
     }()
 
+    static let conversationFollowupDraft = "Use this year instead, and include a short summary."
+
+    static let conversationControls = ConversationControls(
+        busy: true,
+        pendingClarification: ConversationClarification(
+            id: "clarification-example", question: "Which period should I compare?",
+            choices: [
+                .init(label: "This month", description: "Compare with the previous month"),
+                .init(label: "This year", description: "Compare with the previous year"),
+            ]
+        ),
+        queuedMessages: [.init(id: "queued-example", text: "Include a short summary.", status: "queued", error: nil)]
+    )
+
     static let agentBusyStreaming = AppStore.AgentPreviewSeed(
         sessionId: "s_busy",
         model: "claude-sonnet-4-6",

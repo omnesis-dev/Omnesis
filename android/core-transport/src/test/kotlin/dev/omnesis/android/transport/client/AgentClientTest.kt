@@ -28,6 +28,31 @@ class AgentClientTest {
 
     private fun client() = AgentClient(GatewayHttp(OkHttpClient(), server.url("/").toString(), "tok"))
 
+    @Test
+    fun controls_accept_future_fields_and_statuses() = runTest {
+        server.enqueue(MockResponse().setBody("""{"busy":true,"future":{},"pendingClarification":{"id":"q_one","question":"Which period?","choices":[{"label":"This year","extra":true}]},"queuedMessages":[{"id":"m_one","text":"Compare totals","status":"paused","future":123}]}"""))
+        val result = client().controls("s_one")
+        assertEquals("/agent/sessions/s_one/controls", server.takeRequest().path)
+        assertEquals("This year", result.pendingClarification?.choices?.single()?.label)
+        assertEquals("paused", result.queuedMessages.single().status)
+    }
+
+    @Test
+    fun retry_reuses_submission_id_and_preserves_interrupt_and_clarification() = runTest {
+        repeat(2) { server.enqueue(MockResponse().setBody("""{"submission":{"id":"request-one","text":"Annual totals","status":"queued"},"future":true}""")) }
+        val body = ConversationSubmissionBody("request-one", "Annual totals", "interrupt", true, "question-one")
+        repeat(2) { client().submit("s_one", body) }
+        val first = server.takeRequest()
+        val second = server.takeRequest()
+        assertEquals("/agent/sessions/s_one/submissions", first.path)
+        val payload = first.body.readUtf8()
+        assertEquals(payload, second.body.readUtf8())
+        val json = OmnesisJson.parseToJsonElement(payload).jsonObject
+        assertEquals("request-one", json["clientMessageId"]?.jsonPrimitive?.content)
+        assertEquals("interrupt", json["mode"]?.jsonPrimitive?.content)
+        assertEquals("question-one", json["clarificationId"]?.jsonPrimitive?.content)
+    }
+
     /**
      * The device's zone rides the session-create body so the agent renders
      * wall-clock times in the clock the phone is showing — the gateway sits on

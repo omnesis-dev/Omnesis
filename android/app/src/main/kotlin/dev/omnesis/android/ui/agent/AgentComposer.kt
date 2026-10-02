@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -63,9 +64,9 @@ import dev.omnesis.android.ui.common.landingPalette
 /**
  * The floating glass composer pill — a chrome-less rounded-24 pill that floats over the
  * full-bleed transcript with margins on the sides + bottom, NOT a Material `Surface` +
- * `OutlinedTextField` + `FilledIconButton`. The trailing button is a two-state machine:
- * busy → stop-circle (danger); otherwise → send arrow-up-circle (accent when there's text,
- * dimmed + disabled when empty). Mirrors iOS `AgentComposer` in `AgentView.swift`.
+ * `OutlinedTextField` + `FilledIconButton`. While busy, an empty draft shows Stop; a
+ * nonempty draft can queue a follow-up or explicitly interrupt with a correction when the
+ * gateway supports submissions. Older gateways retain their stop-only busy state.
  *
  * Slash-command affordance (parity with portal + iOS): typing `/` at the start of the
  * (otherwise empty) composer opens a typeahead menu of [SlashCommand]s. Selecting one arms
@@ -90,6 +91,7 @@ fun AgentComposer(
     // its text back here; the composer restores it (if the user hasn't started a new message)
     // then acks via [onRestoreConsumed], so a fast send-then-navigate can't silently drop it.
     pendingRestore: String? = null,
+    pendingRestoreCommandId: String? = null,
     onRestoreConsumed: () -> Unit = {},
     // DEBUG/snapshot seam: lets a Roborazzi capture render the armed-pill state.
     initialArmedCommand: SlashCommand? = null,
@@ -97,11 +99,14 @@ fun AgentComposer(
     requestFocus: Boolean = false,
     /** Changes when the coordinator explicitly replaces the local draft with a fresh composer. */
     composerGeneration: Long = 0,
+    onDraftChanged: (String, String?) -> Unit = { _, _ -> },
+    onDraftSubmitted: () -> Unit = { onDraftChanged("", null) },
+    onInterruptAndSend: ((String, SlashCommand?) -> Unit)? = null,
+    allowFollowUps: Boolean = true,
 ) {
     var text by rememberSaveable(composerGeneration) { mutableStateOf(initialText) }
-    // Per-message local state — NOT view-model/coordinator state: an ephemeral
-    // compose-time affordance that clears on submit (or on `×`). Saved by id so
-    // it survives a config change.
+    // Per-message command state is saved alongside the draft through onDraftChanged.
+    // Saveable state also preserves the live editor during configuration changes.
     var armedId by rememberSaveable(composerGeneration) { mutableStateOf(initialArmedCommand?.id) }
     val armedCommand = SlashCommand.byId(armedId)
     val colors = OmTheme.colors
@@ -115,39 +120,41 @@ fun AgentComposer(
 
     val placeholder = when {
         !enabled -> "Connecting…"
-        busy -> "Working…"
+        busy -> if (allowFollowUps) "Add a follow-up…" else "Working…"
         armedCommand != null -> "Describe what to research…"
         else -> "Ask Omnesis"
     }
 
-    val canSend = enabled && !busy && text.trim().isNotEmpty()
+    val canSend = enabled && (!busy || allowFollowUps) && text.trim().isNotEmpty()
 
     fun arm(cmd: SlashCommand) {
         armedId = cmd.id
         // Strip the `/`-query so the field is clear for the actual prompt.
         text = ""
+        onDraftChanged(text, armedId)
     }
 
-    fun submit() {
-        // The field intentionally stays editable while a turn runs so the user can draft a
-        // follow-up. The IME action must still obey the same busy gate as the trailing Stop
-        // button: otherwise pressing Send during cancellation clears the draft and races the
-        // gateway's one-active-turn guard.
-        if (!enabled || busy) return
+    fun submit(interrupt: Boolean = false) {
+        if (!enabled || (busy && !allowFollowUps)) return
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
         val command = armedCommand
         // Per-message: the pill governs THIS send only, then clears.
         armedId = null
-        onSend(trimmed, command)
+        if (interrupt) onInterruptAndSend?.invoke(trimmed, command) else onSend(trimmed, command)
         text = ""
+        onDraftSubmitted()
     }
 
     // A rejected send offers its text back — restore it (unless the user already started a new
     // message), then ack so it isn't re-applied on the next recomposition.
     LaunchedEffect(pendingRestore) {
         if (pendingRestore != null) {
-            if (text.isEmpty()) text = pendingRestore
+            if (text.isEmpty()) {
+                text = pendingRestore
+                armedId = pendingRestoreCommandId
+                onDraftChanged(text, armedId)
+            }
             onRestoreConsumed()
         }
     }
@@ -165,6 +172,16 @@ fun AgentComposer(
         if (menu.isOpen && menu.matches.isNotEmpty()) {
             SlashCommandMenu(matches = menu.matches, onSelect = ::arm)
             Spacer(Modifier.size(8.dp))
+        }
+
+        if (busy && canSend) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Send queues after this answer", color = colors.textSecondary,
+                    style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f).padding(8.dp))
+                if (onInterruptAndSend != null) TextButton(onClick = { submit(interrupt = true) }) {
+                    Text("Interrupt & send")
+                }
+            }
         }
 
         // The pill: a translucent navy fill rather than a light card, a fine blue-gray rim,
@@ -198,7 +215,7 @@ fun AgentComposer(
                 armedCommand?.let { cmd ->
                     ArmedCommandPill(
                         cmd = cmd,
-                        onDismiss = { armedId = null },
+                        onDismiss = { armedId = null; onDraftChanged(text, armedId) },
                         modifier = Modifier.padding(start = 16.dp, top = 10.dp, bottom = 2.dp),
                     )
                 }
@@ -217,7 +234,7 @@ fun AgentComposer(
                 ) {
                     BasicTextField(
                         value = text,
-                        onValueChange = { text = it },
+                        onValueChange = { text = it; onDraftChanged(text, armedId) },
                         enabled = enabled,
                         textStyle = LocalTextStyle.current.merge(
                             MaterialTheme.typography.bodyLarge.copy(fontSize = 19.sp, color = colors.textPrimary),
@@ -240,12 +257,15 @@ fun AgentComposer(
                     }
                 }
 
-                Box(Modifier.padding(end = 10.dp, bottom = 14.dp), contentAlignment = Alignment.Center) {
+                Row(Modifier.padding(end = 10.dp, bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (busy && canSend) {
+                        ComposerTrailingButton(busy = true, canSend = false, onStop = onStop, onSend = {})
+                    }
                     ComposerTrailingButton(
-                        busy = busy,
+                        busy = busy && !canSend,
                         canSend = canSend,
                         onStop = onStop,
-                        onSend = ::submit,
+                        onSend = { submit() },
                     )
                 }
             }

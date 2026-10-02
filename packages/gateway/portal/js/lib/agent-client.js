@@ -351,6 +351,15 @@ export function createAgentClient() {
         body: JSON.stringify(body),
       });
     },
+    async getControls(sessionId) {
+      return api(`/agent/sessions/${encodeURIComponent(sessionId)}/controls`, { method: "GET" });
+    },
+    async submitMessage(sessionId, submission) {
+      return api(`/agent/sessions/${encodeURIComponent(sessionId)}/submissions`, {
+        method: "POST",
+        body: JSON.stringify(submission),
+      });
+    },
     async cancel(sessionId) {
       return api(`/agent/sessions/${encodeURIComponent(sessionId)}/cancel`, {
         method: "POST",

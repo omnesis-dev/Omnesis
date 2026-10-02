@@ -30,7 +30,7 @@ describe("AgentActionError", () => {
       });
 
       expect(host.querySelector('[role="alert"]')?.textContent).toContain("Stop failed");
-      const button = host.querySelector('button[aria-label="Dismiss stop error"]');
+      const button = host.querySelector('button[aria-label="Dismiss action error"]');
       expect(button).not.toBeNull();
       await act(async () =>
         button?.dispatchEvent(new parsed.window.Event("click", { bubbles: true })),
@@ -98,5 +98,30 @@ describe("requestAgentCancel", () => {
     await expect(requestAgentCancel({ cancel }, "session-1")).rejects.toThrow(
       "Connection interrupted",
     );
+  });
+});
+
+
+describe("conversation submission compatibility", () => {
+  it("falls back to ordinary messaging only on an idle legacy gateway", async () => {
+    const { requestConversationSubmission } = await import("./agent.js");
+    const client = {
+      submitMessage: vi.fn().mockRejectedValue(Object.assign(new Error("Not found"), { status: 404 })),
+      sendMessage: vi.fn().mockResolvedValue({ userMessageId: "message-one" }),
+    };
+    await expect(requestConversationSubmission(client, "session", { text: "Project summary", mode: "queue", deepResearch: true })).resolves.toEqual({ userMessageId: "message-one" });
+    expect(client.sendMessage).toHaveBeenCalledWith("session", "Project summary", { deepResearch: true });
+    client.sendMessage.mockClear();
+    await expect(requestConversationSubmission(client, "session", { text: "Correction", mode: "interrupt" }, true)).rejects.toThrow("needs an update");
+    expect(client.sendMessage).not.toHaveBeenCalled();
+  });
+  it("never retries a potentially accepted submission through the legacy endpoint", async () => {
+    const { requestConversationSubmission } = await import("./agent.js");
+    const client = {
+      submitMessage: vi.fn().mockRejectedValue(Object.assign(new Error("Connection lost"), { status: 503 })),
+      sendMessage: vi.fn(),
+    };
+    await expect(requestConversationSubmission(client, "session", { text: "Project summary", mode: "queue" })).rejects.toThrow("Connection lost");
+    expect(client.sendMessage).not.toHaveBeenCalled();
   });
 });

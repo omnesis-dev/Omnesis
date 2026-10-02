@@ -632,7 +632,7 @@ class SessionManager @Inject constructor(
             activitySegmentsIntegration.launchInitialSync(activitySegments, this)
             photosIntegration.launchInitialSync(photos, this)
         }
-        agentCoordinator.rebuild(agent, built.newAgentEventSource())
+        agentCoordinator.rebuild(agent, built.newAgentEventSource(), "${pairing.url}:${pairing.accountId}:${pairing.deviceId}")
         _state.value = AppState.Paired(pairing)
     }
 

@@ -58,6 +58,12 @@ class AgentClient(private val http: GatewayHttp) {
             SendMessageBody.of(text, deepResearch, notifyAfterMs, viewingForMs),
         )
 
+    suspend fun controls(sessionId: String): ConversationControls =
+        http.getJson("agent/sessions/$sessionId/controls")
+
+    suspend fun submit(sessionId: String, body: ConversationSubmissionBody): ConversationSubmissionResponse =
+        http.postJson("agent/sessions/$sessionId/submissions", body)
+
     suspend fun cancel(sessionId: String): Boolean =
         http.postJson<Map<String, String>, OkResponse>("agent/sessions/$sessionId/cancel", emptyMap()).ok
 
@@ -180,3 +186,41 @@ data class OkResponse(val ok: Boolean = false)
 /** Body of `POST /agent/conversations/:id/seen`. */
 @Serializable
 data class ConversationSeenBody(val viewing: Boolean)
+
+@Serializable
+data class ConversationChoice(val label: String, val description: String? = null)
+
+@Serializable
+data class ConversationClarification(
+    val id: String,
+    val question: String,
+    val choices: List<ConversationChoice> = emptyList(),
+)
+
+@Serializable
+data class ConversationSubmission(
+    val id: String,
+    val text: String,
+    val status: String,
+    val error: String? = null,
+    val deepResearch: Boolean? = null,
+)
+
+@Serializable
+data class ConversationControls(
+    val busy: Boolean = false,
+    val pendingClarification: ConversationClarification? = null,
+    val queuedMessages: List<ConversationSubmission> = emptyList(),
+)
+
+@Serializable
+data class ConversationSubmissionBody(
+    val clientMessageId: String,
+    val text: String,
+    val mode: String = "queue",
+    val deepResearch: Boolean? = null,
+    val clarificationId: String? = null,
+)
+
+@Serializable
+data class ConversationSubmissionResponse(val submission: ConversationSubmission)

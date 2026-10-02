@@ -121,13 +121,14 @@ class AgentComposerInteractionTest {
     }
 
     @Test
-    fun imeSendWhileBusyKeepsDraftUntilTurnSettles() {
+    fun oldGatewayImeSendWhileBusyKeepsDraftUntilTurnSettles() {
         val busy = mutableStateOf(true)
         val sent = mutableListOf<String>()
         compose.setContent {
             OmnesisTheme(darkTheme = false) {
                 AgentComposer(
                     busy = busy.value,
+                    allowFollowUps = false,
                     enabled = true,
                     onSend = { text, _ -> sent += text },
                     onStop = {},

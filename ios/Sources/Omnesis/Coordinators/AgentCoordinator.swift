@@ -161,6 +161,126 @@ public final class AgentCoordinator {
             && liveSessionMissingReason == nil
     }
 
+    private(set) var conversationControls: ConversationControls?
+    private(set) var conversationControlsSupported = false
+    private(set) var submitting = false
+    private(set) var submissionError: Error?
+    private let draftStore = ConversationDraftStore()
+
+    var composerDraftKey: String {
+        guard let client else { return "unpaired" }
+        return ConversationDraftStore.scope(url: client.baseURL, token: client.token)
+            + ":" + (sessionId ?? "new")
+    }
+
+    func draft(for key: String) -> String {
+        draftStore.read(key)?.text ?? ""
+    }
+
+    func draftResearch(for key: String) -> Bool {
+        draftStore.research(key)
+    }
+
+    func saveDraftResearch(_ enabled: Bool, for key: String) {
+        draftStore.setResearch(enabled, key: key)
+    }
+
+    func saveDraft(_ text: String, for key: String) {
+        draftStore.write(text, key: key)
+    }
+
+    func draftHasBackup(for key: String) -> Bool {
+        draftStore.hasBackup(key)
+    }
+
+    func replaceDraft(_ text: String, for key: String, deepResearch: Bool = false, answerCurrentQuestion: Bool = true) {
+        draftStore.beginReplacement(text, key: key, deepResearch: deepResearch, answerCurrentQuestion: answerCurrentQuestion)
+    }
+
+    func cancelDraftReplacement(for key: String) {
+        draftStore.restoreBackup(key)
+    }
+
+    func refreshConversationControls() async {
+        guard let client, let id = sessionId else { return }
+        do {
+            let controls = try await client.conversationControls(sessionId: id)
+            guard sessionId == id, self.client === client else { return }
+            conversationControls = controls
+            conversationControlsSupported = true
+        } catch {
+            if case GatewayClient.Error.notFound = error, sessionId == id, self.client === client {
+                conversationControlsSupported = false
+                conversationControls = nil
+            }
+            // Keep the last confirmed state while the event stream reconnects.
+        }
+    }
+
+    /// Keep the unsent draft until the gateway acknowledges its durable submission.
+    func submitDraft(text: String, interrupt: Bool = false, deepResearch: Bool = false) async -> Bool {
+        guard let client, canComposeMessage, !submitting else { return false }
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return false }
+        submitting = true
+        submissionError = nil
+        defer { submitting = false }
+        let originalKey = composerDraftKey
+        draftStore.write(text, key: originalKey)
+        guard let draft = draftStore.prepare(
+            key: originalKey,
+            submission: ConversationDraftSubmission(
+                interrupt: interrupt,
+                deepResearch: deepResearch,
+                clarificationId: draftStore.read(originalKey)?.answerCurrentQuestion == false ? nil : conversationControls?
+                    .pendingClarification?.id
+            )
+        ), let request = draft.submission else { return false }
+        if !conversationControlsSupported {
+            guard !interrupt, !busy else { return false }
+            let sent = await send(text: text, deepResearch: request.deepResearch)
+            let key = composerDraftKey
+            guard sent, self.client === client, draftStore.read(key) == draft else { return false }
+            draftStore.write("", key: key)
+            draftStore.restoreBackup(key)
+            return true
+        }
+        switch await mintSessionIfNeeded(client: client) {
+        case .ready: break
+        case .superseded: return false
+        case .failed(let error):
+            submissionError = error
+            return false
+        }
+        guard let id = sessionId else { return false }
+        let acceptedDraftKey = composerDraftKey
+        do {
+            try await client.submitMessage(
+                sessionId: id,
+                text: cleaned,
+                clientMessageId: draft.clientMessageId,
+                interrupt: request.interrupt,
+                deepResearch: request.deepResearch,
+                clarificationId: request.clarificationId
+            )
+            if draftStore.read(acceptedDraftKey) == draft {
+                draftStore.write("", key: acceptedDraftKey)
+                draftStore.restoreBackup(acceptedDraftKey)
+            }
+            guard sessionId == id, self.client === client else { return false }
+            await refreshConversationControls()
+            return sessionId == id && self.client === client
+        } catch {
+            if case GatewayClient.Error.serverError(let status, _) = error, status == 409,
+               draftStore.read(acceptedDraftKey) == draft {
+                draftStore.renewRequest(acceptedDraftKey)
+                await refreshConversationControls()
+            }
+            if sessionId == id, self.client === client { submissionError = error }
+            return false
+        }
+    }
+
     // MARK: - Private internals
 
     @ObservationIgnored
@@ -316,6 +436,9 @@ public final class AgentCoordinator {
         client = nil
         pairing = nil
         sessionId = nil
+        conversationControls = nil
+        conversationControlsSupported = false
+        submissionError = nil
         model = nil
         backend = nil
         title = ""
@@ -591,6 +714,9 @@ public final class AgentCoordinator {
         snapshotHandoff = nil
         clearTranscriptState()
         sessionId = nil
+        conversationControls = nil
+        conversationControlsSupported = false
+        submissionError = nil
         model = nil
         backend = nil
         title = ""
@@ -656,7 +782,14 @@ public final class AgentCoordinator {
         turnGeneration &+= 1
         cancelOperationGeneration &+= 1
         cancelError = nil
+        if sessionId != session.sessionId {
+            conversationControls = nil
+            conversationControlsSupported = false
+        }
+        let previousDraftKey = composerDraftKey
+        let wasNewConversation = sessionId == nil
         sessionId = session.sessionId
+        if wasNewConversation, submitting { draftStore.move(from: previousDraftKey, to: composerDraftKey) }
         activeConversationPinned = conversations
             .first(where: { $0.sessionId == session.sessionId })?.pinned ?? activeConversationPinned
         // The surface now shows this conversation — covers an explicit open,
