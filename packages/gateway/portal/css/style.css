@@ -2135,6 +2135,9 @@ a:hover { text-decoration: underline; }
 .search-provenance { scroll-margin-top: 20px; }
 .search-provenance-facts { margin: 0; padding-left: 18px; }
 .search-provenance-facts > li { margin: 5px 0; line-height: 1.6; }
+/* An outline: a branch's lines nest under the line that ends with its colon. */
+.search-provenance-branches { margin: 2px 0 0; padding-left: 18px; list-style-type: circle; }
+.search-provenance-branches > li { margin: 2px 0; }
 .search-graph-document { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; vertical-align: middle; }
 .search-graph-document-icon { display: inline-flex; align-items: center; flex-shrink: 0; }
 .search-graph-document-title { min-width: 0; overflow-wrap: anywhere; }

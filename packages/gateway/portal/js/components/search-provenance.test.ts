@@ -137,3 +137,52 @@ it("links the exact other-copy root instead of assigning its connection to this 
   expect(fact.textContent).not.toContain("This document");
   expect(fact.querySelector("a").getAttribute("href")).toBe("/portal/doc/copy");
 });
+it("says a shared route once and indents the branches beneath it", () => {
+  const known = {
+    ...documents,
+    sheet: { title: "Measurements.pdf", source_id: "example-mail:account" },
+    logo1: { title: "image001.png", source_id: "example-mail:account" },
+    later: { title: "Re: Equipment discussion", source_id: "example-mail:account" },
+    signed: { title: "Signed agreement.pdf", source_id: "example-mail:account" },
+    logo2: { title: "image001.png", source_id: "example-mail:account" },
+  };
+  const attached = "is attached to";
+  const includes = "includes the attachment";
+  const thread = "is in the same conversation as";
+  mount({ copies: [root], paths: [
+    { documentIds: ["root", "message", "sheet"], edges: ["inbound:contains", "inbound:contains"], relations: [attached, includes] },
+    { documentIds: ["root", "message", "logo1"], edges: ["inbound:contains", "inbound:contains"], relations: [attached, includes] },
+    { documentIds: ["root", "message", "later", "signed"], edges: ["inbound:contains", "outbound:part-of-thread", "inbound:contains"], relations: [attached, thread, includes] },
+    { documentIds: ["root", "message", "later", "logo2"], edges: ["inbound:contains", "outbound:part-of-thread", "inbound:contains"], relations: [attached, thread, includes] },
+  ] }, "root", known);
+  const lines = [...host.querySelectorAll(".search-provenance-connection")];
+  expect(lines.map((line) => line.getAttribute("data-depth"))).toEqual(["0", "1", "1"]);
+  // Branches are a nested list inside the line ending with their colon.
+  expect(lines[0].querySelectorAll(":scope > ul.search-provenance-branches > li")).toHaveLength(2);
+  const ownText = (line) => {
+    const clone = line.cloneNode(true);
+    for (const nested of clone.querySelectorAll("ul")) nested.remove();
+    return proseText(clone);
+  };
+  expect(lines.map(ownText)).toEqual([
+    "This document is attached to Sharing note, which:",
+    "includes the attachment Measurements.pdf and image001.png (and 1 more with this name).",
+    "is in the same conversation as Re: Equipment discussion, which includes the attachment Signed agreement.pdf.",
+  ]);
+  expect(host.textContent.match(/This document/g)).toHaveLength(1);
+});
+it("never folds the visible result into a same-named document", () => {
+  const known = {
+    message: { title: "Sharing note", source_id: "example-messages:account" },
+    thread: { title: "Equipment discussion", source_id: "example-messages:account" },
+    image: { title: "image001.png", source_id: "example-mail:account" },
+  };
+  // The visible result is reached from another copy's tree, beside a same-named image.
+  mount({ copies: [{ ...root, title: "image001.png" }, copy], paths: [
+    { documentIds: ["copy", "message", "root"], edges: ["outbound:url", "outbound:url"], relations: ["links to", "links to"] },
+    { documentIds: ["copy", "thread", "image"], edges: ["outbound:url", "outbound:url"], relations: ["links to", "links to"] },
+  ] }, "root", known);
+  expect(proseText(host)).not.toContain("more with this name");
+  expect(proseText(host)).toContain("This document");
+  expect(proseText(host)).toContain("image001.png");
+});
