@@ -308,8 +308,12 @@ export const ioHandlers = {
     ),
 
   // ── date-enrichment three-phase pipeline (IO-only fetch) ───────────
-  "io.fetchDateExtractionBatch": (db: Db, limit: number, maxChars: number) =>
-    fetchDateExtractionBatch(db, limit, maxChars),
+  "io.fetchDateExtractionBatch": (
+    db: Db,
+    limit: number,
+    maxChars: number,
+    excludeIds: readonly string[],
+  ) => fetchDateExtractionBatch(db, limit, maxChars, excludeIds),
   "io.fetchPendingMentionJudgements": (
     db: Db,
     limit: number,

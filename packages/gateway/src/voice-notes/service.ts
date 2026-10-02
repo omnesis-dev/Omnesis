@@ -76,7 +76,8 @@ export interface VoiceNoteServiceDeps {
     mimeType: string,
     opts?: { language?: string; minTimeoutMs?: number },
   ) => Promise<TranscriptionResult | null>;
-  readiness: () => TranscriberReadiness;
+  /** The transcriber's readiness, once anything it is still checking has settled. */
+  readiness: () => Promise<TranscriberReadiness>;
   now?: () => Date;
 }
 
@@ -195,7 +196,7 @@ export class VoiceNoteService {
 
   private async process(note: PendingVoiceNote): Promise<void> {
     const age = this.now().getTime() - Date.parse(note.createdAt);
-    const readiness = this.deps.readiness();
+    const readiness = await this.deps.readiness();
     if (!readiness.runnable) {
       if (age >= MAX_AGE_MS) return this.giveUp(note, "no transcriber could run");
       return this.deps.writeGate.rescheduleVoiceNote(

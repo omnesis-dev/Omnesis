@@ -385,9 +385,14 @@ export interface IoGate {
   ): Promise<import("../domain/LinkExtraction.js").ExtractedLinkResolution[]>;
   /**
    * Fetch up to `limit` documents still needing date extraction, with content
-   * truncated to `maxChars`. The read half of the date-enrichment split.
+   * truncated to `maxChars`, skipping `excludeIds`. The read half of the
+   * date-enrichment split.
    */
-  fetchDateExtractionBatch(limit: number, maxChars: number): Promise<DateExtractionDocRow[]>;
+  fetchDateExtractionBatch(
+    limit: number,
+    maxChars: number,
+    excludeIds?: readonly string[],
+  ): Promise<DateExtractionDocRow[]>;
   /**
    * Fetch up to `limit` documents waiting for the mention worth gate and due
    * by `now`, each resolved to an exemption, an answer to reuse, or the state
@@ -636,8 +641,8 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
         knownUrlPatternSources,
         knownUrlPatternDeclarationReady,
       ]),
-    fetchDateExtractionBatch: (limit, maxChars) =>
-      call("io.fetchDateExtractionBatch", [limit, maxChars]),
+    fetchDateExtractionBatch: (limit, maxChars, excludeIds = []) =>
+      call("io.fetchDateExtractionBatch", [limit, maxChars, excludeIds]),
     fetchPendingMentionJudgements: (limit, rubricVersion, modelId, now) =>
       call("io.fetchPendingMentionJudgements", [limit, rubricVersion, modelId, now]),
     captureDfOccVersion: () => call("io.captureDfOccVersion", []),

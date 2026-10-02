@@ -1648,11 +1648,20 @@ export function createServer(
       readDb: db,
       transcribe: (audio, mimeType, transcribeOpts) =>
         transcribeService.transcribe(audio, mimeType, transcribeOpts),
-      readiness: () => transcribeService.readiness(),
+      readiness: () => transcribeService.settledReadiness(),
     });
     voiceNotes.start();
     opts.onVoiceNoteService?.(voiceNotes);
-    mountVoiceNoteRoutes(app, { service: voiceNotes, getStatus: opts.getDictationStatus });
+    const getDictationStatus = opts.getDictationStatus;
+    mountVoiceNoteRoutes(app, {
+      service: voiceNotes,
+      // A recording that arrives while the Whisper runtime probe is still
+      // running waits for its answer rather than being refused on a "not yet".
+      getStatus: async () => {
+        await transcribeService.settledReadiness();
+        return getDictationStatus();
+      },
+    });
   }
 
   // agent-conversations: the pushed-transcript ingest surface for the managed
