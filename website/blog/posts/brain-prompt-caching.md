@@ -1,6 +1,6 @@
 ---
-title: "I made Omnesis Brain more efficient with better prompt caching today"
-description: "How prompt caching and a filtering gate made Omnesis Brain bootstrap runs more efficient."
+title: "How I cut 640 personal-AI agent runs from $20 to $6"
+description: "Omnesis has a background agent that processes years of emails, messages, calendar events and other personal data. Bootstrapping 3.5 weeks of my own history required 640 agent runs and cost about $20.  Today I got that down to $6—mostly by realizing I'd structured my prompts badly for provider caching."
 date: "2026-10-01"
 author: "Adrien Conrath"
 tags: [Brain, Engineering]
