@@ -61,6 +61,24 @@ function isOptionalStringArray(value: unknown): boolean {
   );
 }
 
+/** `enrichStrikes`: each key a tier and an activity id, each value a count and a time. */
+function isOptionalStrikes(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!isRecord(value)) return false;
+  return Object.entries(value).every(([key, strike]) => {
+    const [tier, id, ...rest] = key.split(":");
+    return (
+      rest.length === 0 &&
+      TIERS.has(tier ?? "") &&
+      /^\d+$/.test(id ?? "") &&
+      isRecord(strike) &&
+      Number.isSafeInteger(strike.count) &&
+      (strike.count as number) > 0 &&
+      typeof strike.at === "string"
+    );
+  });
+}
+
 export const stravaActivitiesStateSpec: SourceStateSpec<StravaActivitiesCursor> = {
   version: STRAVA_ACTIVITIES_STATE_VERSION,
 
@@ -91,6 +109,7 @@ export const stravaActivitiesStateSpec: SourceStateSpec<StravaActivitiesCursor> 
     if (!isOptionalNumber(value.editSweepPage)) return null;
     if (!isOptionalString(value.lastAthleteRefreshAt)) return null;
     if (!isOptionalStringArray(value.pendingGearIds)) return null;
+    if (!isOptionalStrikes(value.enrichStrikes)) return null;
     if (value.enrichTier !== undefined) {
       if (typeof value.enrichTier !== "string" || !TIERS.has(value.enrichTier)) return null;
     }

@@ -2,17 +2,22 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, test, expect, afterEach, beforeEach, vi } from "vitest";
+import { syncRemediationSchema } from "@omnesis/core";
+import { formatSyncRemediation, type SyncError } from "@omnesis/types";
 import {
+  StravaApiError,
+  StravaApplicationInactiveError,
   StravaAuthError,
   StravaClient,
+  StravaForbiddenError,
   StravaQuotaDeferral,
   StravaRateLimitError,
+  StravaScopeError,
   classifyRefreshFailure,
   quotaDeferral,
   resolveApiBase,
 } from "./client.js";
 import { ENRICHMENT_SAFETY_PCT, StravaRateLimitTracker } from "./quota.js";
-import type { SyncError } from "@omnesis/types";
 import type { FetchFn } from "./client.js";
 import type { StravaTokens, StravaCredentials } from "./types.js";
 
@@ -140,6 +145,181 @@ describe("StravaClient token refresh", () => {
   });
 });
 
+/** Strava's answer to a token that lacks the scope an endpoint needs. */
+function scopeRefusal(): Response {
+  return jsonResponse(
+    {
+      message: "authorization error",
+      errors: [{ resource: "AccessToken", field: "activity:read_permission", code: "missing" }],
+    },
+    401,
+  );
+}
+
+function refreshedGrant(): Response {
+  return jsonResponse({
+    access_token: "new_access",
+    refresh_token: "new_refresh",
+    expires_at: Math.floor(Date.now() / 1000) + 7200,
+    expires_in: 7200,
+    token_type: "Bearer",
+  });
+}
+
+// A 401 that survives a refresh means the grant is good but too narrow. Most
+// endpoints are optional and their callers skip it; the activity listing is
+// what every phase of the sync starts from.
+describe("a grant too narrow for an endpoint", () => {
+  test("refused on the activity listing, it is an auth failure only a new authorization fixes", async () => {
+    const { fetchFn, calls } = makeMockFetch([scopeRefusal, refreshedGrant, scopeRefusal]);
+    const client = new StravaClient({ tokens: makeTokens(), credentials: CREDS, fetchFn });
+
+    const err = await client.listActivities({ page: 1 }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(StravaAuthError);
+    expect(err).toMatchObject({ kind: "auth", scope: "connection" });
+    // One refresh to rule out a stale token, then no more.
+    expect(calls.filter((c) => c.url.includes("/oauth/token"))).toHaveLength(1);
+  });
+
+  test("refused on an optional endpoint, it stays a scope error its caller skips", async () => {
+    const { fetchFn } = makeMockFetch([scopeRefusal, refreshedGrant, scopeRefusal]);
+    const client = new StravaClient({ tokens: makeTokens(), credentials: CREDS, fetchFn });
+
+    await expect(client.getAthleteZones()).rejects.toBeInstanceOf(StravaScopeError);
+  });
+});
+
+// Strava refuses every data request of an application it has deactivated, its
+// owner having no subscription, with a 403 whose body names the application.
+// Read as one endpoint refused, each tier would mark its activities done with
+// nothing fetched.
+describe("a refusal of the API application itself", () => {
+  const inactive = {
+    message: "Forbidden",
+    errors: [{ resource: "Application", field: "Status", code: "Inactive" }],
+  };
+
+  async function refusedWith(body: unknown, status = 403): Promise<unknown> {
+    const { fetchFn } = makeMockFetch([
+      () =>
+        typeof body === "string" ? new Response(body, { status }) : jsonResponse(body, status),
+    ]);
+    const client = new StravaClient({ tokens: makeTokens(), credentials: CREDS, fetchFn });
+    return client.getActivityZones(7).catch((e: unknown) => e);
+  }
+
+  test("is the application refused, with a remedy, not the endpoint refused", async () => {
+    const err = await refusedWith(inactive);
+
+    expect(err).toBeInstanceOf(StravaApplicationInactiveError);
+    expect(err).not.toBeInstanceOf(StravaForbiddenError);
+    expect(err).not.toBeInstanceOf(StravaApiError);
+    expect(err).toMatchObject({
+      // Authorizing again would change nothing, so not `auth`.
+      kind: "permission",
+      scope: "connection",
+      path: "/activities/7/zones",
+      status: 403,
+      code: "Inactive",
+      remediation: {
+        summary: "Strava has deactivated this install's API application",
+        restartRequired: false,
+      },
+    });
+    const remedy = formatSyncRemediation((err as SyncError).remediation!);
+    expect(remedy).toMatch(/account that registered this install's API application/);
+    expect(remedy).toMatch(/active Strava subscription/);
+    expect(remedy).toMatch(
+      /Reactivate the application on https:\/\/www\.strava\.com\/settings\/api/,
+    );
+    // A client without the remedy's affordance shows the message alone.
+    expect((err as Error).message).toMatch(
+      /^Strava has deactivated this install's API application \(Strava answered 403 for \/activities\/7\/zones\): .*subscription.*https:\/\/www\.strava\.com\/settings\/api$/,
+    );
+  });
+
+  test("on the activity listing it stays the application refused, not a sign-in", async () => {
+    const { fetchFn } = makeMockFetch([() => jsonResponse(inactive, 403)]);
+    const client = new StravaClient({ tokens: makeTokens(), credentials: CREDS, fetchFn });
+
+    const err = await client.listActivities({ page: 1 }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(StravaApplicationInactiveError);
+    expect(err).toMatchObject({ kind: "permission", path: "/athlete/activities" });
+  });
+
+  test.each<[string, unknown]>([
+    ["spelled in another case", { errors: [{ resource: "application", code: "inactive" }] }],
+    [
+      "after an error about something else",
+      {
+        message: "Forbidden",
+        errors: [
+          { resource: "Athlete", field: "id", code: "invalid" },
+          { resource: " Application ", field: "Status", code: "Inactive" },
+        ],
+      },
+    ],
+  ])("is read from a body %s", async (_, body) => {
+    await expect(refusedWith(body)).resolves.toMatchObject({
+      code: expect.stringMatching(/^inactive$/i),
+      remediation: { summary: "Strava has deactivated this install's API application" },
+    });
+  });
+
+  test("with a code Strava does not document, it is still the application refused", async () => {
+    const err = await refusedWith({
+      message: "Forbidden",
+      errors: [{ resource: "Application", field: "Status", code: "Suspended" }],
+    });
+
+    expect(err).toBeInstanceOf(StravaApplicationInactiveError);
+    // Without claiming a deactivation Strava did not report.
+    expect(err).toMatchObject({
+      remediation: { summary: "Strava refuses this install's API application (Suspended)" },
+    });
+  });
+
+  test("however long its code, the remedy still fits what reaches the operator", async () => {
+    const err = await refusedWith({
+      message: "Forbidden",
+      errors: [{ resource: "Application", field: "Status", code: "Withheld".repeat(40) }],
+    });
+
+    expect(err).toBeInstanceOf(StravaApplicationInactiveError);
+    // A remedy past the wire schema's bounds is dropped whole on its way.
+    const remediation = (err as SyncError).remediation;
+    expect(syncRemediationSchema.safeParse(remediation).success).toBe(true);
+    expect(remediation?.summary).toMatch(
+      /^Strava refuses this install's API application \(Withheld/,
+    );
+  });
+
+  test.each<[string, unknown, 402 | 403]>([
+    ["an empty body", "", 403],
+    ["a body that is not JSON", "forbidden", 403],
+    ["a body without errors", { message: "Forbidden" }, 403],
+    [
+      "errors that are not a list",
+      { message: "Forbidden", errors: { resource: "Application" } },
+      403,
+    ],
+    ["an empty list of errors", { message: "Forbidden", errors: [] }, 403],
+    [
+      "errors about the activity",
+      { message: "Forbidden", errors: [{ resource: "Activity", field: "id", code: "forbidden" }] },
+      403,
+    ],
+    ["a payment refusal of the athlete's", { message: "Payment required", errors: [] }, 402],
+  ])("%s is the endpoint refused, which its caller steps over", async (_, body, status) => {
+    const err = await refusedWith(body, status);
+
+    expect(err).toBeInstanceOf(StravaForbiddenError);
+    expect(err).toMatchObject({ status, path: "/activities/7/zones" });
+  });
+});
+
 // A refresh failure is the only place the client can learn that the stored
 // grant is dead — and the only place it can mistake Strava being unwell for
 // the athlete having disconnected. The `kind` is what the collector reads to
@@ -206,6 +386,100 @@ describe("token-refresh failure classification", () => {
       fetchFn,
     });
     await expect(client.getAthleteDetail()).rejects.toMatchObject({ kind: "auth" });
+  });
+
+  // Strava does not document whether it refuses a deactivated application's
+  // refreshes. Once the six-hour access token lapses the refresh is the first
+  // request of every tick, so if it does, the refresh is all the source meets.
+  describe("a refresh refused because Strava refused the application", () => {
+    const inactive = JSON.stringify({
+      message: "Forbidden",
+      errors: [{ resource: "Application", field: "Status", code: "Inactive" }],
+    });
+
+    test("is the application refused, with its remedy", () => {
+      const err = classifyRefreshFailure(403, inactive);
+
+      expect(err).toBeInstanceOf(StravaApplicationInactiveError);
+      expect(err).toMatchObject({
+        kind: "permission",
+        scope: "connection",
+        path: "/oauth/token",
+        status: 403,
+        code: "Inactive",
+        remediation: { summary: "Strava has deactivated this install's API application" },
+      });
+    });
+
+    test("is never a sign-in, whatever status carries it", () => {
+      // Authorizing again would leave the application as deactivated as it was.
+      for (const status of [400, 401, 429, 503]) {
+        const err = classifyRefreshFailure(status, inactive);
+        expect(err, String(status)).toBeInstanceOf(StravaApplicationInactiveError);
+        expect(err, String(status)).not.toBeInstanceOf(StravaAuthError);
+        expect(err.kind, String(status)).toBe("permission");
+      }
+    });
+
+    test("a 403 naming the application is it, whatever the code", () => {
+      const err = classifyRefreshFailure(
+        403,
+        JSON.stringify({
+          errors: [{ resource: "Application", field: "Status", code: "Suspended" }],
+        }),
+      );
+
+      expect(err).toBeInstanceOf(StravaApplicationInactiveError);
+      expect(err).toMatchObject({ code: "Suspended" });
+    });
+
+    test("a client id Strava does not know is still the credentials, not the application", () => {
+      // The answer to a wrong client id names the application too.
+      const err = classifyRefreshFailure(
+        400,
+        JSON.stringify({
+          errors: [{ resource: "Application", field: "client_id", code: "invalid" }],
+        }),
+      );
+
+      expect(err).toBeInstanceOf(StravaAuthError);
+      expect(err).not.toBeInstanceOf(StravaApplicationInactiveError);
+    });
+
+    test("a lapsed token's refresh ends the listing with it, before any data request", async () => {
+      const { fetchFn, calls } = makeMockFetch([() => new Response(inactive, { status: 403 })]);
+      const client = new StravaClient({
+        tokens: makeTokens({ expires_at: Math.floor(Date.now() / 1000) - 10 }),
+        credentials: CREDS,
+        fetchFn,
+      });
+
+      const err = await client.listActivities({ page: 1 }).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(StravaApplicationInactiveError);
+      expect(err).not.toBeInstanceOf(StravaApiError);
+      expect(err).toMatchObject({ kind: "permission", path: "/oauth/token" });
+      expect(formatSyncRemediation((err as SyncError).remediation!)).toMatch(
+        /active Strava subscription.*https:\/\/www\.strava\.com\/settings\/api/s,
+      );
+      expect(calls.map(({ url }) => url)).toEqual(["https://www.strava.com/oauth/token"]);
+    });
+
+    test("a 401 whose forced refresh is refused ends the request with it too", async () => {
+      // An access token Strava stops honouring before its stated expiry.
+      const { fetchFn, calls } = makeMockFetch([
+        () =>
+          jsonResponse(
+            { errors: [{ resource: "Athlete", field: "access_token", code: "invalid" }] },
+            401,
+          ),
+        () => new Response(inactive, { status: 403 }),
+      ]);
+      const client = new StravaClient({ tokens: makeTokens(), credentials: CREDS, fetchFn });
+
+      await expect(client.getActivity(7)).rejects.toBeInstanceOf(StravaApplicationInactiveError);
+      expect(calls).toHaveLength(2);
+    });
   });
 });
 
@@ -373,6 +647,52 @@ describe("StravaClient rate limit handling", () => {
 
       expect(err).toBeInstanceOf(StravaRateLimitError);
       expect(err).not.toBeInstanceOf(StravaQuotaDeferral);
+    });
+
+    // A 429's wait takes an attempt too, so the attempt index cannot say
+    // whether this request has refreshed the token yet.
+    test("a 401 after a 429's wait refreshes, and a revoked grant is an auth failure", async () => {
+      vi.setSystemTime(new Date("2026-03-04T10:13:00Z"));
+      const { client, sleeps, calls } = clientFor([
+        () => refusal({ overall: "101,500", read: "101,500" }),
+        () => new Response("unauthorized", { status: 401 }),
+        () => jsonResponse({ message: "bad request" }, 400),
+      ]);
+
+      await expect(client.getActivity(1)).rejects.toBeInstanceOf(StravaAuthError);
+      expect(sleeps).toEqual([150_000]);
+      expect(calls.filter((c) => c.url.includes("/oauth/token"))).toHaveLength(1);
+    });
+
+    test("a 401 after a 429's wait and a refresh is a missing scope", async () => {
+      vi.setSystemTime(new Date("2026-03-04T10:13:00Z"));
+      const { client, calls } = clientFor([
+        () => refusal({ overall: "101,500", read: "101,500" }),
+        () => new Response("unauthorized", { status: 401 }),
+        refreshedGrant,
+        () => new Response("unauthorized", { status: 401 }),
+      ]);
+
+      await expect(client.getActivity(1)).rejects.toBeInstanceOf(StravaScopeError);
+      expect(calls.filter((c) => c.url.includes("/oauth/token"))).toHaveLength(1);
+    });
+
+    test("a 401 after every 429 wait still retries once the token is refreshed", async () => {
+      // The refresh's retry is not a 429 retry: spending the last attempt on
+      // it would end the request on an untyped error instead of the page.
+      vi.setSystemTime(new Date("2026-03-04T10:13:00Z"));
+      const spent = () => refusal({ overall: "101,500", read: "101,500" });
+      const { client, sleeps } = clientFor([
+        spent,
+        spent,
+        spent,
+        () => new Response("unauthorized", { status: 401 }),
+        refreshedGrant,
+        () => jsonResponse({ id: 1 }),
+      ]);
+
+      await expect(client.getActivity(1)).resolves.toMatchObject({ id: 1 });
+      expect(sleeps).toHaveLength(3);
     });
 
     test("a throttled token refresh defers as long as the tracker says", async () => {

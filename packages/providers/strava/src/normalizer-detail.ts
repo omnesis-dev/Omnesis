@@ -155,19 +155,44 @@ export function segmentEffortsFromActivity(
 
 // ── Activity zones ─────────────────────────────────────────────────
 
+/**
+ * A zone's upper bound as stored. Strava marks the open-ended top zone with
+ * `max: -1`, which a query comparing against the bound would read as a bound
+ * below every other zone's; it is stored as no bound at all.
+ */
+function zoneUpperBound(max: number): number | null {
+  return max < 0 ? null : max;
+}
+
+/**
+ * An activity's zones, one row per bucket of each zone.
+ *
+ * Taken as Strava sends it rather than as it documents it, because a throw
+ * here, or a row the table refuses, fails the zones page on every tick and the
+ * tier never finishes. A zone without its distribution, or with it null, has
+ * no buckets to store; a zone without a type, or a bucket without a finite
+ * time, would be a row without a `zone_type` or a `time_seconds`, both NOT
+ * NULL. Each is left out and the rest stored. A bucket left out keeps its
+ * neighbours' indexes, which number the zones.
+ */
 export function activityZonesToRecords(
   activityId: number,
-  zones: StravaActivityZone[],
+  zones: (StravaActivityZone | null)[],
 ): Record<string, unknown>[] {
   const rows: Record<string, unknown>[] = [];
+  // A body that is not a list of zones at all stores none, for the same reason.
+  if (!Array.isArray(zones)) return rows;
   for (const z of zones) {
+    if (!z || typeof z.type !== "string" || !Array.isArray(z.distribution_buckets)) continue;
+    const type = z.type;
     z.distribution_buckets.forEach((bucket, idx) => {
+      if (typeof bucket?.time !== "number" || !Number.isFinite(bucket.time)) return;
       rows.push({
         activity_id: activityId,
-        zone_type: z.type,
+        zone_type: type,
         bucket_index: idx,
         min_value: bucket.min,
-        max_value: bucket.max,
+        max_value: zoneUpperBound(bucket.max),
         time_seconds: bucket.time,
         sensor_based: Boolean(z.sensor_based),
         custom_zones: Boolean(z.custom_zones),
@@ -275,7 +300,7 @@ export function athleteZonesToRecords(
         zone_type: "heartrate",
         bucket_index: idx,
         min_value: bucket.min,
-        max_value: bucket.max,
+        max_value: zoneUpperBound(bucket.max),
         custom_zones: z.heart_rate?.custom_zones ?? null,
       });
     });
@@ -287,7 +312,7 @@ export function athleteZonesToRecords(
         zone_type: "power",
         bucket_index: idx,
         min_value: bucket.min,
-        max_value: bucket.max,
+        max_value: zoneUpperBound(bucket.max),
         custom_zones: null,
       });
     });

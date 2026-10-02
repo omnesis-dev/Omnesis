@@ -244,7 +244,8 @@ export type AuthSubprocessInbound =
   // something at a third party — a live, billed item it holds the only handle
   // to — has to be able to undo it, and a killed process undoes nothing.
   | { type: "abort"; reason: "cancelled" | "denied"; detail?: string }
-  | { type: "code"; code: string }
+  // `scope` is what the redirect reported granting, when it carried one.
+  | { type: "code"; code: string; scope?: string }
   | { type: "widget-result"; token: string; metadata?: Record<string, unknown> }
   // The operator's answer to one typed challenge, addressed by the id the
   // `challenge` event carried.
@@ -275,6 +276,7 @@ const initMessage = z.object({
 const codeMessage = z.object({
   type: z.literal("code"),
   code: z.string().min(1),
+  scope: z.string().optional(),
 });
 
 const widgetResultMessage = z.object({

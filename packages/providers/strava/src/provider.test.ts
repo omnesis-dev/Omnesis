@@ -114,7 +114,11 @@ describe("Strava OAuth flow", () => {
     // screen once the athlete has approved, so a second add silently
     // re-authorizes whoever is already signed in.
     expect(url.searchParams.get("approval_prompt")).toBe("force");
-    expect(url.searchParams.get("scope")).toContain("activity:read_all");
+    // Both activity scopes: an athlete who unticks private activities still
+    // grants one the activity listing accepts.
+    expect(url.searchParams.get("scope")!.split(",")).toEqual(
+      expect.arrayContaining(["activity:read", "activity:read_all"]),
+    );
     expect(url.searchParams.get("state")).toBe("flow-1");
   });
 
@@ -217,7 +221,9 @@ describe("connecting an athlete through the typed session", () => {
    */
   function scriptedSession(options: {
     configDir: string;
-    answer?: (challenge: AskableChallenge) => Promise<{ code: string; state?: string }>;
+    answer?: (
+      challenge: AskableChallenge,
+    ) => Promise<{ code: string; state?: string; scope?: string }>;
     accountId?: string;
     publicBaseUrl?: string;
     flowId?: string;
@@ -333,9 +339,46 @@ describe("connecting an athlete through the typed session", () => {
 
     const result = await connected;
     expect(result.accounts).toEqual([{ accountId: "4242", state: { status: "connected" } }]);
+    expect(result.notices).toBeUndefined();
   });
 
-  test("reports the scopes the athlete unticked, which nothing else ever sees", async () => {
+  test("tells the operator what the boxes they unticked cost", async () => {
+    const configDir = await makeConfigDir();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => tokenResponse(grant)),
+    );
+    const { session, asked } = scriptedSession({ configDir });
+
+    const connected = authenticate(session);
+    const challenge = await waitForChallenge(asked);
+    await visitCallback(
+      `/oauth2callback?code=browser-code&state=${stateOf(challenge)}&scope=read,activity:read`,
+    );
+
+    const result = await connected;
+    expect(result.accounts[0]?.state).toEqual({
+      status: "scope-insufficient",
+      missing: ["activity:read_all", "profile:read_all"],
+    });
+    // No client draws that state; the notice is what the operator reads.
+    expect(result.notices).toHaveLength(1);
+    expect(result.notices?.[0]?.detail).toMatch(/activity:read_all, profile:read_all/);
+    expect(result.notices?.[0]?.detail).toMatch(
+      /your private activities and your profile details \(weight, FTP, heart-rate and power zones\) will not sync/,
+    );
+    // Public activities still list, so the daily rewalk misses the private
+    // ones already synced and they go; ticking the box again lets the next
+    // rewalk write them back, with no resync.
+    expect(result.notices?.[0]?.detail).toMatch(
+      /private activities already synced are removed over the following days/,
+    );
+    expect(result.notices?.[0]?.detail).toMatch(
+      /every box ticked; the next daily check of your activities brings back any already removed/,
+    );
+  });
+
+  test("says nothing will sync when no activity scope was granted", async () => {
     const configDir = await makeConfigDir();
     vi.stubGlobal(
       "fetch",
@@ -350,8 +393,63 @@ describe("connecting an athlete through the typed session", () => {
     const result = await connected;
     expect(result.accounts[0]?.state).toEqual({
       status: "scope-insufficient",
-      missing: ["activity:read_all", "profile:read_all"],
+      missing: ["activity:read", "activity:read_all", "profile:read_all"],
     });
+    expect(result.notices?.[0]?.detail).toMatch(/nothing will sync/);
+    // The listing refuses the token outright, so no rewalk misses anything.
+    expect(result.notices?.[0]?.detail).not.toMatch(/removed/);
+  });
+
+  test("private activities alone still cover the activity listing", async () => {
+    const configDir = await makeConfigDir();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => tokenResponse(grant)),
+    );
+    const { session } = scriptedSession({
+      configDir,
+      publicBaseUrl: "https://gateway.example.com",
+      flowId: "flow-7",
+      answer: async () => ({ code: "delivered-code", scope: "read,activity:read_all" }),
+    });
+
+    const result = await authenticate(session);
+    expect(result.accounts[0]?.state).toEqual({
+      status: "scope-insufficient",
+      missing: ["profile:read_all"],
+    });
+  });
+
+  test("reads a narrowed grant off a redirect the gateway caught", async () => {
+    const configDir = await makeConfigDir();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => tokenResponse(grant)),
+    );
+    const { session } = scriptedSession({
+      configDir,
+      publicBaseUrl: "https://gateway.example.com",
+      flowId: "flow-7",
+      answer: async () => ({
+        code: "delivered-code",
+        scope: "read,activity:read,activity:read_all",
+      }),
+    });
+
+    const result = await authenticate(session);
+    expect(result.accounts[0]?.state).toEqual({
+      status: "scope-insufficient",
+      missing: ["profile:read_all"],
+    });
+    expect(result.notices).toEqual([
+      {
+        title: "Some of the access Omnesis asked Strava for was not granted.",
+        detail:
+          "The authorization does not cover profile:read_all, so your profile details " +
+          "(weight, FTP, heart-rate and power zones) will not sync. " +
+          "Connect again and leave every box ticked.",
+      },
+    ]);
   });
 
   test("reports a port it cannot bind as a local conflict, before showing anything", async () => {

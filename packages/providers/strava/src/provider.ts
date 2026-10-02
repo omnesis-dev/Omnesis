@@ -23,6 +23,7 @@ import { AccountId } from "@omnesis/types";
 import { AuthFailure } from "@omnesis/source-sdk";
 import type {
   AuthFlowCallbacks,
+  AuthNotice,
   AuthResult,
   AuthSession,
   ConnectionState,
@@ -39,15 +40,23 @@ const AUTHORIZE_URL = "https://www.strava.com/oauth/authorize";
 const TOKEN_URL = "https://www.strava.com/oauth/token";
 
 /**
- * Scopes:
+ * Scopes. Strava's authorization screen lets the athlete untick each one, and
+ * the grant covers only what stayed ticked:
  * - `read` — public profile + segments
- * - `activity:read_all` — private + public activities
- * - `profile:read_all` — `/athlete/zones` and richer profile fields.
- *   Without it those endpoints 401 even though the token is otherwise
- *   valid; the client surfaces a `StravaScopeError` and athlete-refresh
- *   skips the endpoint, so missing this scope just means no zone data.
+ * - `activity:read` — the activities the athlete shows to everyone or to
+ *   followers. Asked for alongside `activity:read_all` so that unticking
+ *   private activities still leaves an activity scope: without one,
+ *   `/athlete/activities` refuses the token, and every phase of the sync
+ *   starts from that listing.
+ * - `activity:read_all` — private activities as well
+ * - `profile:read_all` — `/athlete/zones` and the detailed athlete. Without
+ *   it `/athlete` answers with the summary profile, which has no weight, FTP,
+ *   bikes or shoes, and `/athlete/zones` 401s even though the token is
+ *   otherwise valid; the client surfaces a `StravaScopeError` and
+ *   athlete-refresh skips the endpoint, so missing this scope means a thinner
+ *   profile and no zone data.
  */
-const OAUTH_SCOPE = "read,activity:read_all,profile:read_all";
+const OAUTH_SCOPE = "read,activity:read,activity:read_all,profile:read_all";
 
 export type OAuthCallbackResult =
   | { kind: "code"; code: string; scope: string }
@@ -56,9 +65,9 @@ export type OAuthCallbackResult =
 
 /**
  * Load OAuth client credentials. Throws `MissingCredentialsError` when the
- * file is absent — Strava's shared-app limit is one connected athlete, so
- * every install must register its own API app. Run `cli creds set strava`
- * (or use the portal wizard) to set them up.
+ * file is absent — a Strava API app connects one athlete, or up to ten once
+ * raised, so every install must register its own (see `credentials-spec.ts`).
+ * Run `cli creds set strava` (or use the portal wizard) to set them up.
  */
 export function loadClientCredentials(configDir?: string): StravaCredentials {
   const path = providerCredentialsPath("strava", configDir);
@@ -395,19 +404,68 @@ async function exchangeAuthorizationCode(
 }
 
 /**
+ * Scopes that carry another with them. Private activities are read through
+ * the same listing as public ones, so a grant of `activity:read_all` alone
+ * still lists every activity and is not missing `activity:read`.
+ */
+const IMPLIED_BY: Readonly<Record<string, string>> = { "activity:read": "activity:read_all" };
+
+/**
  * What the athlete actually granted, as a connection state.
  *
  * Strava reports the granted scopes on the callback and nowhere else — not on
  * the token response, and not on any later request — so this is the only
  * moment a narrowed grant can be recorded at all. `scope-insufficient` does
- * not stop the source: what the grant does cover still syncs, and only a new
- * authorization can widen it.
+ * not stop the source by itself, and only a new authorization can widen it.
+ * No client draws this state, so {@link narrowedGrantNotice} is what tells the
+ * operator.
  */
 function grantState(scope: string | undefined): ConnectionState {
   if (scope === undefined) return { status: "connected" };
   const granted = new Set(scope.split(",").filter(Boolean));
-  const missing = REQUESTED_SCOPES.filter((requested) => !granted.has(requested));
+  const missing = REQUESTED_SCOPES.filter((requested) => {
+    const broader = IMPLIED_BY[requested];
+    return !granted.has(requested) && !(broader !== undefined && granted.has(broader));
+  });
   return missing.length > 0 ? { status: "scope-insufficient", missing } : { status: "connected" };
+}
+
+/** What the source goes without when the athlete unticks a scope. */
+const SCOPE_COST: Readonly<Record<string, string>> = {
+  read: "your public profile",
+  "activity:read_all": "your private activities",
+  "profile:read_all": "your profile details (weight, FTP, heart-rate and power zones)",
+};
+
+/**
+ * A narrowed grant, said beside the success.
+ *
+ * Without an activity scope nothing syncs at all — the first sync stops and
+ * asks for a new authorization — so that case says so rather than listing
+ * what else is lost.
+ *
+ * A grant of public activities alone also costs the private ones already
+ * synced: the daily rewalk lists only what the grant covers, so each of them
+ * reads as deleted on Strava and is removed with its details. Ticking
+ * the box again undoes that at the next daily rewalk, which writes back every
+ * activity the store lacks, so the notice names that rather than a resync.
+ */
+function narrowedGrantNotice(missing: readonly string[]): AuthNotice {
+  const costs = missing.map((scope) => SCOPE_COST[scope] ?? scope);
+  const listed =
+    costs.length > 1 ? `${costs.slice(0, -1).join(", ")} and ${costs.at(-1)}` : costs[0];
+  const lost = missing.includes("activity:read") ? "nothing will sync" : `${listed} will not sync`;
+  const removesPrivate =
+    missing.includes("activity:read_all") && !missing.includes("activity:read");
+  const remedy = removesPrivate
+    ? "Any private activities already synced are removed over the following days. " +
+      "Connect again and leave every box ticked; the next daily check of your activities " +
+      "brings back any already removed."
+    : "Connect again and leave every box ticked.";
+  return {
+    title: "Some of the access Omnesis asked Strava for was not granted.",
+    detail: `The authorization does not cover ${missing.join(", ")}, so ${lost}. ${remedy}`,
+  };
 }
 
 /**
@@ -449,6 +507,9 @@ export async function authenticate(session: AuthSession): Promise<AuthResult> {
     });
     assertMatchingState(answer.state, state);
     code = answer.code;
+    // Absent when the code was pasted by hand rather than caught by the
+    // gateway, or caught by a gateway too old to pass the scope on.
+    scope = answer.scope;
   } else {
     const state = randomUUID();
     const listener = await bindCallbackListener(state);
@@ -517,7 +578,13 @@ export async function authenticate(session: AuthSession): Promise<AuthResult> {
   // Deliberately no `expiresAt`: the six-hour access token is not the grant.
   // The grant renews itself from the refresh token, so reporting the access
   // token's expiry would warn about a lapse every six hours forever.
-  return { accounts: [{ accountId, state: grantState(scope) }] };
+  const state = grantState(scope);
+  return {
+    accounts: [{ accountId, state }],
+    ...(state.status === "scope-insufficient"
+      ? { notices: [narrowedGrantNotice(state.missing)] }
+      : {}),
+  };
 }
 
 /** An unknown thrown value, as one line for an operator-facing message. */
@@ -654,12 +721,12 @@ async function waitForAuthCode(expectedState: string): Promise<string> {
   try {
     const granted = await Promise.race([listener.result, expiry]);
     // Strava grants whatever scopes the athlete left ticked. Without
-    // `activity:read_all` the source still works and private activities are
-    // simply absent.
-    const grantedScopes = new Set(granted.scope.split(",").filter(Boolean));
-    if (!grantedScopes.has("activity:read_all")) {
+    // `activity:read_all` private activities are absent; without any activity
+    // scope nothing syncs at all.
+    const state = grantState(granted.scope);
+    if (state.status === "scope-insufficient") {
       log.warn(
-        `User did not grant 'activity:read_all' scope (got: ${granted.scope}). Private activities will not sync.`,
+        `Strava authorization does not cover ${state.missing.join(", ")} (granted: ${granted.scope})`,
       );
     }
     return granted.code;

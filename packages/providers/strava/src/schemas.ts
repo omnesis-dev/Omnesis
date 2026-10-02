@@ -65,7 +65,8 @@ export const stravaActivitiesSchema: AnalyticsTableSchema = {
     {
       name: "average_cadence",
       type: "DOUBLE",
-      description: "Average cadence (rpm or spm)",
+      description:
+        "Average cadence as Strava reports it: rpm for rides; for runs and walks, one foot's steps per minute (double it for steps per minute)",
       nullable: true,
     },
     {
@@ -228,7 +229,7 @@ export const stravaActivitiesSchema: AnalyticsTableSchema = {
       name: "workout_type",
       type: "INTEGER",
       description:
-        "Strava workout type (0 default, 1 race, 2 long run, 3 workout, 10 ride race, 11 ride workout)",
+        "Strava workout type — Run: 0 default, 1 race, 2 long run, 3 workout; Ride: 10 default, 11 race, 12 workout",
       nullable: true,
     },
     {
@@ -563,7 +564,12 @@ export const stravaActivityLapsSchema: AnalyticsTableSchema = {
       nullable: true,
     },
     { name: "max_heartrate_bpm", type: "DOUBLE", description: "Lap max HR (bpm)", nullable: true },
-    { name: "average_cadence", type: "DOUBLE", description: "Lap average cadence", nullable: true },
+    {
+      name: "average_cadence",
+      type: "DOUBLE",
+      description: "Lap average cadence (rpm for rides; one foot's steps per minute for runs)",
+      nullable: true,
+    },
     { name: "average_watts", type: "DOUBLE", description: "Lap average power (W)", nullable: true },
     {
       name: "device_watts",
@@ -689,7 +695,7 @@ export const stravaActivitySegmentEffortsSchema: AnalyticsTableSchema = {
     {
       name: "average_cadence",
       type: "DOUBLE",
-      description: "Effort average cadence",
+      description: "Effort average cadence (rpm for rides; one foot's steps per minute for runs)",
       nullable: true,
     },
     {
@@ -773,7 +779,7 @@ export const stravaActivityZonesSchema: AnalyticsTableSchema = {
     {
       name: "max_value",
       type: "DOUBLE",
-      description: "Upper bound of the zone (bpm or W)",
+      description: "Upper bound of the zone (bpm or W); null for the open-ended top zone",
       nullable: true,
     },
     { name: "time_seconds", type: "INTEGER", description: "Seconds spent in this zone" },
@@ -786,7 +792,8 @@ export const stravaActivityZonesSchema: AnalyticsTableSchema = {
     {
       name: "points",
       type: "INTEGER",
-      description: "Suffer-score-style points earned in this zone",
+      description:
+        "Points Strava gives the activity's whole heartrate or power distribution, repeated on every bucket row of that zone type; do not sum it across buckets",
       nullable: true,
     },
   ],
@@ -1073,7 +1080,12 @@ export const stravaAthleteZonesSchema: AnalyticsTableSchema = {
     { name: "zone_type", type: "VARCHAR", description: "Zone type — 'heartrate' or 'power'" },
     { name: "bucket_index", type: "INTEGER", description: "0-indexed zone" },
     { name: "min_value", type: "DOUBLE", description: "Lower bound (bpm or W)", nullable: true },
-    { name: "max_value", type: "DOUBLE", description: "Upper bound (bpm or W)", nullable: true },
+    {
+      name: "max_value",
+      type: "DOUBLE",
+      description: "Upper bound (bpm or W); null for the open-ended top zone",
+      nullable: true,
+    },
     {
       name: "custom_zones",
       type: "BOOLEAN",

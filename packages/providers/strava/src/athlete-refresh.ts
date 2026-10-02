@@ -13,11 +13,13 @@
  * - GET /athlete/zones     → HR + power zone definitions
  * - GET /athletes/{id}/stats → lifetime totals
  * - GET /gear/{id} for every distinct gear_id on this athlete's
- *   `strava_activities` rows, paced per call: gear a window's reads cannot
- *   cover waits on the cursor (`pendingGearIds`) for the next window.
+ *   `strava_activities` rows, its profile and its catalogue, paced per call:
+ *   gear a window's reads cannot cover waits on the cursor (`pendingGearIds`)
+ *   for the next window. Gear Strava answers with a 404 leaves the catalogue.
  *
- * Side effect: when athlete `summit` flips false → true, the cursor logic
- * clears `zones_unavailable` so `zones-backfill` retries the activities.
+ * Side effect: while the athlete has Summit, the refresh's first page clears
+ * `zones_unavailable` so `zones-backfill` retries those activities (see
+ * `clearedZonesUnavailable`).
  */
 
 import { createLogger } from "@omnesis/core";
@@ -117,10 +119,16 @@ export async function syncAthleteRefresh(
     }
   };
 
-  const gearIds = resumed ?? (await refreshProfile(deps, writes, editActivities));
+  const gearIds =
+    resumed ??
+    (await refreshProfile(deps, cur.lastAthleteRefreshAt !== undefined, writes, editActivities));
 
   log.info(`Athlete-refresh: resolving ${gearIds.length} gear IDs`);
   const gearRows: Record<string, unknown>[] = [];
+  // Gear Strava no longer has. Deleted by the write that stores `gearRows`,
+  // which the host applies after its rows; the ids are distinct, so neither
+  // undoes the other.
+  const goneGearIds: string[] = [];
   let reached = 0;
   // Rechecked per call, at the gate's share: the gate covered only what this
   // page could not start without. Sharing it is also what lets a resumed page
@@ -130,9 +138,16 @@ export async function syncAthleteRefresh(
     try {
       gearRows.push(gearToRecord(await deps.client.getGear(id), deps.athleteId));
     } catch (err) {
+      // Deleted on Strava, so the catalogue lets it go too.
+      if (err instanceof StravaNotFoundError) {
+        log.info(`Gear ${id} is gone from Strava; removing it from the catalogue`);
+        goneGearIds.push(id);
+        continue;
+      }
       // Skipped rather than retried: left on the cursor, gear that always
-      // fails would hold the refresh in place, and the listing behind it.
-      if (err instanceof StravaNotFoundError || err instanceof StravaForbiddenError) {
+      // fails would hold the refresh in place, and the listing behind it. A
+      // refusal is no sign the gear is gone, so its row stays.
+      if (err instanceof StravaForbiddenError) {
         log.warn(`Gear ${id} unavailable: ${err.message}`);
         continue;
       }
@@ -153,7 +168,11 @@ export async function syncAthleteRefresh(
     throw quotaDeferral("Athlete-refresh", 1, deps.client.quota, ENRICHMENT_SAFETY_PCT);
   }
   const pendingGearIds = gearIds.slice(reached);
-  writes.push({ tableName: "strava_gear", records: gearRows });
+  writes.push({
+    tableName: "strava_gear",
+    records: gearRows,
+    ...(goneGearIds.length > 0 && { deletedKeys: goneGearIds.map((id) => ({ id })) }),
+  });
 
   // ── Update activities with resolved gear name/brand/model ─────────
   if (gearRows.length > 0) {
@@ -197,10 +216,12 @@ export async function syncAthleteRefresh(
 /**
  * The profile half of a refresh: the athlete, its zones and its lifetime
  * stats, written to `writes`, and the Summit clear, handed to `editActivities`.
- * Returns the gear the catalogue walk should resolve.
+ * Returns the gear the catalogue walk should resolve. `catalogued` says an
+ * earlier refresh has finished, and so has stored a catalogue to recheck.
  */
 async function refreshProfile(
   deps: Deps,
+  catalogued: boolean,
   writes: TableWrite[],
   editActivities: (rows: Record<string, unknown>[], fields: readonly string[]) => void,
 ): Promise<string[]> {
@@ -222,8 +243,9 @@ async function refreshProfile(
   ]);
 
   // ── Athlete zones ─────────────────────────────────────────────────
-  // Requires `profile:read_all` (which the default scope doesn't request)
-  // and Summit on top. Skip on either a scope (401) or Summit (403) refusal.
+  // Requires `profile:read_all`, which the athlete can untick on Strava's
+  // consent screen, and Summit on top. Skip on either a scope (401) or Summit
+  // (403) refusal.
   try {
     const zones = await deps.client.getAthleteZones();
     writes.push({
@@ -254,7 +276,30 @@ async function refreshProfile(
   // references yet (shoes for new Strava athletes, e.g.).
   for (const g of detailed.bikes ?? []) gearIds.add(g.id);
   for (const g of detailed.shoes ?? []) gearIds.add(g.id);
+  // And the catalogue's own: gear that has left both the profile and every
+  // activity is otherwise never asked about again, and only Strava's 404 says
+  // it is gone. Absence from the profile does not: a grant without
+  // `profile:read_all` lists no gear there at all.
+  if (catalogued) for (const id of await storedGearIds(deps)) gearIds.add(id);
   return [...gearIds];
+}
+
+/**
+ * This athlete's catalogued gear ids. By owner, since every account the
+ * gateway hosts shares `strava_gear`, and a sibling's gear written back as this
+ * athlete's is refused (see `ownedBy`).
+ */
+async function storedGearIds(deps: Deps): Promise<string[]> {
+  // Outside the `try`, so an invalid athlete fails the page rather than
+  // reading as no gear.
+  const sql = `SELECT id FROM strava_gear WHERE ${ownedBy(deps.athleteId)}`;
+  try {
+    const { rows } = await deps.analytics.query(sql);
+    return rows.map((r) => String((r as { id: unknown }).id));
+  } catch (err) {
+    log.warn(`storedGearIds: ${(err as Error).message}`);
+    return [];
+  }
 }
 
 async function distinctGearIds(deps: Deps): Promise<Set<string>> {

@@ -265,6 +265,21 @@ describe("activityZonesToRecords", () => {
     });
     expect(rows[3]).toMatchObject({ zone_type: "power", custom_zones: true });
   });
+
+  test("the open-ended top zone is stored without an upper bound", () => {
+    // Strava marks it `max: -1`; stored as is, `WHERE max_value < 150` would
+    // count the top zone among the lowest.
+    const rows = activityZonesToRecords(12345, [
+      {
+        type: "heartrate",
+        distribution_buckets: [
+          { min: 140, max: 160, time: 900 },
+          { min: 160, max: -1, time: 300 },
+        ],
+      },
+    ]);
+    expect(rows.map((row) => row.max_value)).toEqual([160, null]);
+  });
 });
 
 describe("commentToRecord / kudoToRecord", () => {
@@ -354,6 +369,19 @@ describe("athleteToRecord / athleteZonesToRecords / athleteStatsToRecords", () =
       biggest_climb_elevation_gain_m: 1200,
     });
     expect(typeof row.fetched_at).toBe("string");
+  });
+
+  test("the athlete's open-ended top zones are stored without an upper bound", () => {
+    const rows = athleteZonesToRecords(99, {
+      heart_rate: {
+        zones: [
+          { min: 150, max: 170 },
+          { min: 170, max: -1 },
+        ],
+      },
+      power: { zones: [{ min: 300, max: -1 }] },
+    });
+    expect(rows.map((row) => row.max_value)).toEqual([170, null, null]);
   });
 
   test("athlete zones produce one row per bucket per type", () => {

@@ -12,7 +12,9 @@
  *
  * "Pending" is determined per tier by `<tier>_fetched_at IS NULL` (with
  * `zones_unavailable IS NOT TRUE` excluded from zones-backfill so Summit-only
- * 403s don't make us spin forever).
+ * 403s don't make us spin forever). A stored profile without Summit skips the
+ * zones tier altogether, and an activity Strava fails alone sits out its tier
+ * for a while (see `strikeActivity`).
  *
  * Rate-limit safety is enforced at page entry, against enrichment's share of
  * the budget (`ENRICHMENT_SAFETY_PCT`): a page that share cannot cover throws
@@ -24,6 +26,7 @@
 import { createLogger, toCanonicalInstant, toCanonicalWallClock } from "@omnesis/core";
 import {
   requireEnrichmentBudget,
+  StravaApiError,
   StravaForbiddenError,
   StravaNotFoundError,
   StravaScopeError,
@@ -59,12 +62,38 @@ import type {
   StravaComment,
   StravaSummaryAthlete,
   EnrichmentTier,
+  EnrichStrike,
 } from "./types.js";
 
 const log = createLogger("source:strava-activities:enrichment");
 
 /** Max activities to enrich per page. Conservative — keeps a single sync tick under ~20s. */
 const ENRICHMENT_PAGE_SIZE = 10;
+
+/**
+ * Serialized bytes of streams one page may carry. The page's streams reach the
+ * gateway as one `/analytics/ingest` request, which it refuses above 16 MiB,
+ * and a refused page is journaled and sent again on every tick, so the source
+ * would stop for good. A 1 Hz ride with power, heart rate and cadence is about
+ * 250 KB of streams an hour, so ten long rides are past the limit where one is
+ * not. The mebibyte left over is for the request around the rows, whose table
+ * name, schema and ids come to a few kilobytes.
+ */
+const STREAMS_PAGE_BYTES = 15 * 1024 * 1024;
+
+/**
+ * An activity Strava fails alone is asked for again `STRIKE_REST_MS` after its
+ * last failure, and given up on at its `STRIKE_LIMIT`th: a day after the first
+ * at the earliest, so a failure that only looked like the activity's own gives
+ * up on nothing unless it lasts a day. An endpoint failing for every activity
+ * for longer than that, while /athlete answers, gives up on about one activity
+ * a tick until it recovers; a resync fetches them again. A strike older than
+ * `STRIKE_MEMORY_MS` is forgotten, which bounds what the cursor keeps of them,
+ * and Strava serving the activity in that tier clears it at once.
+ */
+const STRIKE_LIMIT = 3;
+const STRIKE_REST_MS = 12 * 60 * 60 * 1000;
+const STRIKE_MEMORY_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** SQL row shape from `SELECT * FROM strava_activities WHERE …` — only the columns we use. */
 interface PendingRow {
@@ -132,7 +161,7 @@ export async function syncDetailBackfill(
       },
     };
   }
-  const pending = await pendingIds(deps, tierWhere("detail"), ENRICHMENT_PAGE_SIZE);
+  const pending = await pendingIds(deps, pendingWhere(cur, "detail"), ENRICHMENT_PAGE_SIZE);
   if (pending.length === 0) {
     log.info("Detail-backfill complete; transitioning to social-backfill");
     return {
@@ -172,24 +201,39 @@ export async function syncDetailBackfill(
     pending.map((row) => row.gear_id),
   );
 
+  let enrichStrikes = rememberedStrikes(cur);
+  let struck = false;
+
   for (const row of pending) {
     const id = Number(row.id);
     let detail: StravaDetailedActivity;
     try {
       detail = await deps.client.getActivity(id);
     } catch (err) {
-      if (err instanceof StravaNotFoundError || err instanceof StravaScopeError) {
+      if (
+        err instanceof StravaNotFoundError ||
+        err instanceof StravaScopeError ||
+        err instanceof StravaForbiddenError
+      ) {
         // 404: activity deleted between snapshot rewalks (snapshot phase will
         //       prune it).
         // Scope: token doesn't carry the right OAuth scope (e.g. private
         //        activity without `activity:read_all`). Stamping prevents
         //        infinite retry; user can re-auth later.
+        // 402/403: a refusal asking again would only repeat.
         log.warn(`Activity ${id} unavailable for detail fetch (${(err as Error).name}); stamping`);
         records.push(stampOnlyRow(row, { detail_fetched_at: new Date().toISOString() }));
         continue;
       }
-      throw err;
+      const strike = await strikeActivity(err, enrichStrikes, "detail", id, deps.client);
+      enrichStrikes = strike.enrichStrikes;
+      if (strike.giveUp) {
+        records.push(stampOnlyRow(row, { detail_fetched_at: new Date().toISOString() }));
+      }
+      struck = true;
+      break;
     }
+    enrichStrikes = cleared(enrichStrikes, "detail", id);
 
     const stored = rowToSummary(row);
     const summary = summaryFromDetail(stored, detail);
@@ -236,7 +280,7 @@ export async function syncDetailBackfill(
     );
   }
 
-  log.info(`Detail-backfill: enriched ${pending.length} activities`);
+  log.info(`Detail-backfill: enriched ${records.length} activities`);
 
   // Child rows precede the activity update. Successful detail stamps wait for
   // the following page, after the document and cursor have committed too.
@@ -260,10 +304,11 @@ export async function syncDetailBackfill(
       documents,
       cursor: {
         ...cur,
+        enrichStrikes,
         pendingDetailStamps: pendingDetailStamps.length ? pendingDetailStamps : undefined,
       },
-      hasMore: true,
-      progress: { phase: "incremental", processed: pending.length },
+      hasMore: !struck,
+      progress: { phase: "incremental", processed: records.length },
     },
   };
 }
@@ -284,12 +329,14 @@ export async function syncSocialBackfill(
   );
 
   // Excluded because their mark is in this very page and has not landed yet.
-  // Only here, not in `tierWhere`: the rotation's count has to keep seeing
+  // Only here, not in `pendingWhere`: the rotation's count has to keep seeing
   // them until it lands, or enrich-pending would not come back to write it.
   const carriedIds = activityIdList(carried);
   const pending = await pendingIds(
     deps,
-    carriedIds ? `${tierWhere("social")} AND id NOT IN (${carriedIds})` : tierWhere("social"),
+    carriedIds
+      ? `${pendingWhere(cur, "social")} AND id NOT IN (${carriedIds})`
+      : pendingWhere(cur, "social"),
     ENRICHMENT_PAGE_SIZE,
   );
   if (pending.length === 0) {
@@ -335,6 +382,9 @@ export async function syncSocialBackfill(
     pending.map((row) => row.gear_id),
   );
 
+  let enrichStrikes = rememberedStrikes(cur);
+  let struck = false;
+
   for (const row of pending) {
     const id = Number(row.id);
     let comments: StravaComment[];
@@ -343,13 +393,24 @@ export async function syncSocialBackfill(
       comments = await fetchAllPages((page) => deps.client.listActivityComments(id, { page }));
       kudoers = await fetchAllPages((page) => deps.client.listActivityKudos(id, { page }));
     } catch (err) {
-      if (err instanceof StravaNotFoundError || err instanceof StravaScopeError) {
+      if (
+        err instanceof StravaNotFoundError ||
+        err instanceof StravaScopeError ||
+        err instanceof StravaForbiddenError
+      ) {
         log.warn(`Activity ${id} unavailable for social fetch (${(err as Error).name}); stamping`);
         stampRows.push(stampOnlyRow(row, { social_fetched_at: new Date().toISOString() }));
         continue;
       }
-      throw err;
+      const strike = await strikeActivity(err, enrichStrikes, "social", id, deps.client);
+      enrichStrikes = strike.enrichStrikes;
+      if (strike.giveUp) {
+        stampRows.push(stampOnlyRow(row, { social_fetched_at: new Date().toISOString() }));
+      }
+      struck = true;
+      break;
     }
+    enrichStrikes = cleared(enrichStrikes, "social", id);
     for (const c of comments) commentRows.push(commentToRecord({ ...c, activity_id: id }));
     kudoers.forEach((k, idx) => kudoRows.push(kudoToRecord(k, id, idx + 1)));
     refetched.push(String(id));
@@ -373,8 +434,9 @@ export async function syncSocialBackfill(
     );
   }
 
+  const processed = refetched.length + stampRows.length;
   log.info(
-    `Social-backfill: enriched ${pending.length} activities (${commentRows.length} comments, ${kudoRows.length} kudos)`,
+    `Social-backfill: enriched ${processed} activities (${commentRows.length} comments, ${kudoRows.length} kudos)`,
   );
 
   const activityRows = [...carriedStamps, ...stampRows];
@@ -420,9 +482,13 @@ export async function syncSocialBackfill(
         { tableName: "strava_activity_kudos", records: kudoRows },
       ],
       documents,
-      cursor: { ...cur, pendingSocialStamps: refetched.length > 0 ? refetched : undefined },
-      hasMore: true,
-      progress: { phase: "incremental", processed: pending.length },
+      cursor: {
+        ...cur,
+        enrichStrikes,
+        pendingSocialStamps: refetched.length > 0 ? refetched : undefined,
+      },
+      hasMore: !struck,
+      progress: { phase: "incremental", processed },
     },
   };
 }
@@ -433,7 +499,13 @@ export async function syncZonesBackfill(
   cur: StravaActivitiesCursor,
   deps: PhaseDeps,
 ): Promise<PhaseResult> {
-  const pending = await pendingIds(deps, tierWhere("zones"), ENRICHMENT_PAGE_SIZE);
+  if (!(await zonesWorthAsking(deps))) {
+    log.info(
+      "Zones-backfill skipped: the athlete has no Summit; transitioning to streams-backfill",
+    );
+    return { result: structuredEmpty({ ...cur, phase: "streams-backfill" }) };
+  }
+  const pending = await pendingIds(deps, pendingWhere(cur, "zones"), ENRICHMENT_PAGE_SIZE);
   if (pending.length === 0) {
     log.info("Zones-backfill complete; transitioning to streams-backfill");
     return { result: structuredEmpty({ ...cur, phase: "streams-backfill" }) };
@@ -443,17 +515,21 @@ export async function syncZonesBackfill(
   const stampRows: Record<string, unknown>[] = [];
   const zoneRows: Record<string, unknown>[] = [];
   const refetched: number[] = [];
+  let enrichStrikes = rememberedStrikes(cur);
+  let struck = false;
 
   for (const row of pending) {
     const id = Number(row.id);
     try {
       const zones = await deps.client.getActivityZones(id);
+      enrichStrikes = cleared(enrichStrikes, "zones", id);
       refetched.push(id);
       zoneRows.push(...activityZonesToRecords(id, zones));
       stampRows.push(stampOnlyRow(row, { zones_fetched_at: new Date().toISOString() }));
     } catch (err) {
       if (err instanceof StravaForbiddenError) {
-        // Summit-only — mark permanently and never retry.
+        // Summit-only: marked unavailable so the tier stops asking, until an
+        // athlete refresh finds Summit and clears the mark.
         stampRows.push(
           stampOnlyRow(row, {
             zones_unavailable: true,
@@ -466,12 +542,18 @@ export async function syncZonesBackfill(
         stampRows.push(stampOnlyRow(row, { zones_fetched_at: new Date().toISOString() }));
         continue;
       }
-      throw err;
+      const strike = await strikeActivity(err, enrichStrikes, "zones", id, deps.client);
+      enrichStrikes = strike.enrichStrikes;
+      if (strike.giveUp) {
+        stampRows.push(stampOnlyRow(row, { zones_fetched_at: new Date().toISOString() }));
+      }
+      struck = true;
+      break;
     }
   }
 
   log.info(
-    `Zones-backfill: enriched ${pending.length} activities (${zoneRows.length} zone buckets)`,
+    `Zones-backfill: enriched ${stampRows.length} activities (${zoneRows.length} zone buckets)`,
   );
 
   return {
@@ -486,9 +568,9 @@ export async function syncZonesBackfill(
         { tableName: "strava_activity_zones", records: zoneRows },
         { tableName: "strava_activities", records: stampRows },
       ],
-      cursor: { ...cur },
-      hasMore: true,
-      progress: { phase: "incremental", processed: pending.length },
+      cursor: { ...cur, enrichStrikes },
+      hasMore: !struck,
+      progress: { phase: "incremental", processed: stampRows.length },
     },
   };
 }
@@ -499,7 +581,7 @@ export async function syncStreamsBackfill(
   cur: StravaActivitiesCursor,
   deps: PhaseDeps,
 ): Promise<PhaseResult> {
-  const pending = await pendingIds(deps, tierWhere("streams"), ENRICHMENT_PAGE_SIZE);
+  const pending = await pendingIds(deps, pendingWhere(cur, "streams"), ENRICHMENT_PAGE_SIZE);
   if (pending.length === 0) {
     log.info("Streams-backfill complete; transitioning to incremental");
     return { result: structuredEmpty({ ...cur, phase: "incremental" }) };
@@ -508,13 +590,15 @@ export async function syncStreamsBackfill(
 
   const stampRows: Record<string, unknown>[] = [];
   const streamRows: Record<string, unknown>[] = [];
+  let enrichStrikes = rememberedStrikes(cur);
+  let struck = false;
+  let pageBytes = 0;
 
   for (const row of pending) {
     const id = Number(row.id);
+    let record: Record<string, unknown>;
     try {
-      const set = await deps.client.getActivityStreams(id);
-      streamRows.push(streamSetToRecord(id, set));
-      stampRows.push(stampOnlyRow(row, { streams_fetched_at: new Date().toISOString() }));
+      record = streamSetToRecord(id, await deps.client.getActivityStreams(id));
     } catch (err) {
       if (
         err instanceof StravaNotFoundError ||
@@ -526,11 +610,38 @@ export async function syncStreamsBackfill(
         stampRows.push(stampOnlyRow(row, { streams_fetched_at: new Date().toISOString() }));
         continue;
       }
-      throw err;
+      const strike = await strikeActivity(err, enrichStrikes, "streams", id, deps.client);
+      enrichStrikes = strike.enrichStrikes;
+      if (strike.giveUp) {
+        stampRows.push(stampOnlyRow(row, { streams_fetched_at: new Date().toISOString() }));
+      }
+      struck = true;
+      break;
     }
+    // Served, whether or not this page has room for them.
+    enrichStrikes = cleared(enrichStrikes, "streams", id);
+    // Measured as the request will carry it, the JSON of the row.
+    const bytes = Buffer.byteLength(JSON.stringify(record), "utf8");
+    if (bytes > STREAMS_PAGE_BYTES) {
+      // More than a page may carry, even alone, and left pending the activity
+      // would lead every page and stop the tier, so it is marked done without
+      // them.
+      log.warn(
+        `Streams-backfill: activity ${id} has ${bytes} bytes of streams, more than a page carries; marking it done without them`,
+      );
+      stampRows.push(stampOnlyRow(row, { streams_fetched_at: new Date().toISOString() }));
+      continue;
+    }
+    // The page is full. The activity stays pending and leads the next page,
+    // which asks for its streams again: one read, where carrying them would
+    // cost the page.
+    if (pageBytes + bytes > STREAMS_PAGE_BYTES) break;
+    pageBytes += bytes;
+    streamRows.push(record);
+    stampRows.push(stampOnlyRow(row, { streams_fetched_at: new Date().toISOString() }));
   }
 
-  log.info(`Streams-backfill: enriched ${pending.length} activities`);
+  log.info(`Streams-backfill: enriched ${stampRows.length} activities (${pageBytes} bytes)`);
 
   return {
     result: {
@@ -538,9 +649,9 @@ export async function syncStreamsBackfill(
         { tableName: "strava_activity_streams", records: streamRows },
         { tableName: "strava_activities", records: stampRows },
       ],
-      cursor: { ...cur },
-      hasMore: true,
-      progress: { phase: "incremental", processed: pending.length },
+      cursor: { ...cur, enrichStrikes },
+      hasMore: !struck,
+      progress: { phase: "incremental", processed: stampRows.length },
     },
   };
 }
@@ -560,8 +671,11 @@ export async function syncEnrichPending(
   const startIdx = cur.enrichTier ? TIER_ORDER.indexOf(cur.enrichTier) : 0;
   for (let offset = 0; offset < TIER_ORDER.length; offset++) {
     const tier = TIER_ORDER[(startIdx + offset) % TIER_ORDER.length]!;
-    const hasPending = await tierHasPending(deps, tier);
+    const hasPending = await tierHasPending(deps, cur, tier);
     if (!hasPending) continue;
+    // Passed over like a tier with nothing pending, so zones that Strava would
+    // refuse one activity at a time cannot hold the rotation.
+    if (tier === "zones" && !(await zonesWorthAsking(deps))) continue;
     const nextTier = TIER_ORDER[(TIER_ORDER.indexOf(tier) + 1) % TIER_ORDER.length]!;
     const cursorWithTier: StravaActivitiesCursor = { ...cur, enrichTier: nextTier };
     switch (tier) {
@@ -615,10 +729,11 @@ async function rowsByIds(deps: PhaseDeps, ids: readonly string[]): Promise<Pendi
  *
  * **Both are interpolated, since the read handle binds nothing, so both must
  * be SQL this file controls — never user or API input.** The callers pass a
- * tier's predicate from `tierWhere(tier)`, where `tier` is the closed
- * `EnrichmentTier` union, and `ENRICHMENT_PAGE_SIZE`. The social tier adds the
- * ids its cursor carries, which are stored state rather than this file's SQL,
- * so they arrive as the numerals `activityIdList` reduces them to.
+ * tier's predicate from `pendingWhere(cur, tier)`, where `tier` is the closed
+ * `EnrichmentTier` union, and `ENRICHMENT_PAGE_SIZE`. The ids of resting
+ * activities that predicate leaves out, and those the social tier's cursor
+ * carries, are stored state rather than this file's SQL, so they arrive as the
+ * numerals `activityIdList` reduces them to.
  */
 async function pendingIds(
   deps: PhaseDeps,
@@ -630,18 +745,149 @@ async function pendingIds(
   return rows as unknown as PendingRow[];
 }
 
-async function tierHasPending(deps: PhaseDeps, tier: EnrichmentTier): Promise<boolean> {
-  const sql = `SELECT count(*) AS n FROM strava_activities WHERE ${ownedBy(deps.athleteId)} AND (${tierWhere(tier)})`;
+async function tierHasPending(
+  deps: PhaseDeps,
+  cur: StravaActivitiesCursor,
+  tier: EnrichmentTier,
+): Promise<boolean> {
+  const sql = `SELECT count(*) AS n FROM strava_activities WHERE ${ownedBy(deps.athleteId)} AND (${pendingWhere(cur, tier)})`;
   const { rows } = await deps.analytics.query(sql);
   const n = Number((rows[0] as { n: number | bigint } | undefined)?.n ?? 0);
   return n > 0;
 }
 
 /**
- * The rows a tier has yet to enrich. The rotation counts with it and the
- * tier's page selects with it, so the two cannot disagree about what is
- * pending.
+ * The rows a tier has yet to enrich, less the activities sitting out after a
+ * strike. The rotation counts with it and the tier's page selects with it, so
+ * the two cannot disagree about what is pending, and a tier whose only pending
+ * activities are resting reads as done: it neither runs empty pages nor holds
+ * the rotation, or the phase after it, until they are asked for again.
  */
+function pendingWhere(cur: StravaActivitiesCursor, tier: EnrichmentTier): string {
+  const now = Date.now();
+  const resting = activityIdList(
+    Object.entries(cur.enrichStrikes ?? {})
+      .filter(
+        ([key, strike]) =>
+          key.startsWith(`${tier}:`) && now - Date.parse(strike.at) < STRIKE_REST_MS,
+      )
+      .map(([key]) => key.slice(tier.length + 1)),
+  );
+  return resting ? `${tierWhere(tier)} AND id NOT IN (${resting})` : tierWhere(tier);
+}
+
+/**
+ * What an activity is to a page when its call to Strava failed with `err` and
+ * no typed refusal covered it.
+ *
+ * Strava failing as a whole ends the tick, as it always has: `err` is thrown
+ * again unless it is an HTTP error and Strava still answers for the athlete, a
+ * read spent only on such a failure. Otherwise the failure is the activity's
+ * own (Strava can fail every request for one activity's resource, such as a
+ * long activity's streams), and thrown, it would end every tick on the same
+ * activity, so neither its tier nor the rotation nor, behind them, the listing
+ * would ever get past it. The activity takes a strike instead and sits out its
+ * tier for `STRIKE_REST_MS`. The caller's page stops there and reports no more to
+ * fetch, so an endpoint failing for every activity costs one strike a tick
+ * rather than the backlog. At `STRIKE_LIMIT` strikes `giveUp` is set: the tier
+ * marks the activity done without what it fetches, as it does an activity
+ * Strava no longer has, and its strike is cleared.
+ *
+ * `strikes` are the page's, from `rememberedStrikes`; the result's
+ * `enrichStrikes` replace them on the page's cursor.
+ */
+async function strikeActivity(
+  err: unknown,
+  strikes: Record<string, EnrichStrike> | undefined,
+  tier: EnrichmentTier,
+  id: number,
+  client: StravaClient,
+): Promise<{ giveUp: boolean; enrichStrikes: Record<string, EnrichStrike> | undefined }> {
+  if (!(err instanceof StravaApiError)) throw err;
+  try {
+    await client.getAthleteDetail();
+  } catch (outage) {
+    // The check's error is the one thrown, so an expired token or a spent
+    // budget still reads as what it is; the activity's own is only logged.
+    log.warn(
+      `Activity ${id}: Strava failed its ${tier} (${err.message}) and fails /athlete too; ending the tick`,
+    );
+    throw outage;
+  }
+  const key = `${tier}:${id}`;
+  const count = (strikes?.[key]?.count ?? 0) + 1;
+  if (count >= STRIKE_LIMIT) {
+    log.warn(
+      `Activity ${id}: Strava failed its ${tier} ${count} times, last with ${err.message}; marking it done without them`,
+    );
+    return { giveUp: true, enrichStrikes: cleared(strikes, tier, id) };
+  }
+  log.warn(
+    `Activity ${id}: Strava failed its ${tier} (${err.message}); asking again in ${STRIKE_REST_MS / 3_600_000}h`,
+  );
+  return {
+    giveUp: false,
+    enrichStrikes: { ...strikes, [key]: { count, at: new Date().toISOString() } },
+  };
+}
+
+/**
+ * `strikes` less the activity's in `tier`, once it is given up on or Strava has
+ * served it there. Served, its failures did not last; kept, the strike would
+ * count towards the limit when kudos or an edit send the activity back to the
+ * tier within the week it is remembered.
+ */
+function cleared(
+  strikes: Record<string, EnrichStrike> | undefined,
+  tier: EnrichmentTier,
+  id: number,
+): Record<string, EnrichStrike> | undefined {
+  const kept = Object.entries(strikes ?? {}).filter(([key]) => key !== `${tier}:${id}`);
+  return kept.length > 0 ? Object.fromEntries(kept) : undefined;
+}
+
+/**
+ * The cursor's strikes less those older than `STRIKE_MEMORY_MS`, which every
+ * tier page hands on: a strike no page has cleared, such as one for an
+ * activity since deleted, drops out, and the record stays bounded.
+ */
+function rememberedStrikes(cur: StravaActivitiesCursor): Record<string, EnrichStrike> | undefined {
+  const now = Date.now();
+  const kept = Object.entries(cur.enrichStrikes ?? {}).filter(
+    ([, strike]) => now - Date.parse(strike.at) < STRIKE_MEMORY_MS,
+  );
+  return kept.length > 0 ? Object.fromEntries(kept) : undefined;
+}
+
+/**
+ * Whether this athlete's stored profile leaves activity zones worth asking
+ * for. Strava serves them to Summit alone and refuses everyone else one
+ * activity at a time, a read apiece. A profile without Summit skips the tier,
+ * and its activities stay pending for the refresh that finds Summit; an
+ * unknown profile, or none stored yet, asks as before.
+ *
+ * A profile that leaves `summit` out answers with `premium`, the flag Strava
+ * kept from before it named the subscription Summit, so one that says
+ * `premium: false` alone is a profile without Summit too.
+ */
+async function zonesWorthAsking(deps: PhaseDeps): Promise<boolean> {
+  // Interpolated, as `ownedBy` interpolates it for every other read here.
+  if (!Number.isSafeInteger(deps.athleteId)) {
+    throw new Error(`Invalid Strava athlete id ${deps.athleteId}`);
+  }
+  try {
+    const { rows } = await deps.analytics.query(
+      `SELECT summit, premium FROM strava_athlete WHERE id = ${deps.athleteId}`,
+    );
+    const profile = rows[0] as { summit?: boolean | null; premium?: boolean | null } | undefined;
+    return (profile?.summit ?? profile?.premium) !== false;
+  } catch (err) {
+    log.debug(`strava_athlete unreadable for Summit: ${(err as Error).message}`);
+    return true;
+  }
+}
+
+/** The rows a tier has yet to enrich, whatever its strikes. */
 function tierWhere(tier: EnrichmentTier): string {
   switch (tier) {
     case "detail":

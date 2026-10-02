@@ -6,6 +6,7 @@ import { deletionsFor, rowsFor, tablesWritten } from "@omnesis/source-sdk/testin
 import { tableWrites, type PageTableWrites } from "@omnesis/source-sdk";
 import { StravaActivitiesSource } from "./activities.js";
 import {
+  StravaApplicationInactiveError,
   StravaClient,
   StravaForbiddenError,
   StravaQuotaDeferral,
@@ -24,6 +25,7 @@ import type { SourceAnalyticsAccess } from "@omnesis/source-sdk";
 import type { ProviderId, SourceId } from "@omnesis/types";
 import type { QuotaPair } from "./quota.js";
 import type {
+  EnrichmentTier,
   StravaActivitiesCursor,
   StravaDetailedActivity,
   StravaActivityZone,
@@ -75,6 +77,36 @@ function makeFetchedClient(scenarios: Record<string, unknown>, seen: string[] = 
     },
     credentials: { client_id: "x", client_secret: "y" },
     fetchFn,
+  });
+}
+
+/**
+ * A client to which Strava answers every request with `answer(path)`, the
+ * path without the API prefix. Every path it asks for lands in `seen`.
+ */
+function clientAnswering(answer: (path: string) => Response, seen: string[] = []): StravaClient {
+  return new StravaClient({
+    // A token that outlives any clock a test sets, so none asks for a refresh.
+    tokens: {
+      access_token: "tok",
+      refresh_token: "rtok",
+      expires_at: 4_000_000_000,
+      athlete_id: 99,
+    },
+    credentials: { client_id: "x", client_secret: "y" },
+    fetchFn: vi.fn((url: string) => {
+      const path = new URL(url).pathname.replace("/api/v3", "");
+      seen.push(path);
+      return Promise.resolve(answer(path));
+    }),
+  });
+}
+
+/** A JSON answer, 200 unless `status` says otherwise. */
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
   });
 }
 
@@ -318,6 +350,24 @@ describe("syncDetailBackfill", () => {
     expect(storedAfter(result, "strava_activity_splits", stored)).toEqual(stored);
   });
 
+  test("an activity whose detail Strava refuses is marked done rather than ending the tick", async () => {
+    const { gateway } = makeMockGateway([baseRow]);
+    const { result } = await syncDetailBackfill(
+      { phase: "detail-backfill" },
+      {
+        analytics: gateway,
+        client: clientAnswering(() => json({ message: "Forbidden" }, 403)),
+        sourceId: SOURCE_ID,
+        providerId: PROVIDER_ID,
+        athleteId: 99,
+      },
+    );
+
+    expect(rowsFor(result, "strava_activities")[0]?.detail_fetched_at).toBeTruthy();
+    expect(result.documents).toEqual([]);
+    expect(result.hasMore).toBe(true);
+  });
+
   test("pending detail stamps flush before tier selection and never recreate removed activities", async () => {
     const { gateway } = makeMockGateway([]);
     const { result } = await syncEnrichPending(
@@ -465,6 +515,25 @@ describe("syncSocialBackfill", () => {
     expect(marked[0]!.social_fetched_at).toBeTruthy();
     expect(result.documents).toHaveLength(0);
     expect(result.cursor.pendingSocialStamps).toBeUndefined();
+  });
+
+  test("an activity whose comments Strava refuses is marked done rather than ending the tick", async () => {
+    const { gateway } = makeMockGateway([baseRow]);
+    const { result } = await syncSocialBackfill(
+      { phase: "social-backfill" },
+      {
+        analytics: gateway,
+        client: clientAnswering(() => json({ message: "Forbidden" }, 403)),
+        sourceId: SOURCE_ID,
+        providerId: PROVIDER_ID,
+        athleteId: 99,
+      },
+    );
+
+    const marked = rowsFor(result, "strava_activities");
+    expect(marked.map((r) => String(r.id))).toEqual(["12345"]);
+    expect(marked[0]!.social_fetched_at).toBeTruthy();
+    expect(result.documents).toHaveLength(0);
   });
 
   test("the ids a cursor carries reach its reads as numerals only", async () => {
@@ -640,6 +709,205 @@ describe("syncZonesBackfill", () => {
     const earlier = { activity_id: 12345, zone_type: "heartrate", bucket_index: 0 };
     expect(storedAfter(result, "strava_activity_zones", [earlier])).toEqual([]);
   });
+
+  // Served, but with nothing a row can be made of. Thrown, or written as a row
+  // the table refuses, any of these would fail the page on every tick, and the
+  // tier would never finish.
+  test.each<[string, unknown]>([
+    ["a zone without its distribution", [{ type: "heartrate", score: 0, sensor_based: true }]],
+    ["a zone whose distribution is null", [{ type: "heartrate", distribution_buckets: null }]],
+    ["a zone whose distribution is not a list", [{ type: "power", distribution_buckets: {} }]],
+    ["a zone without a type", [{ distribution_buckets: [{ min: 0, max: 120, time: 600 }] }]],
+    [
+      "a zone whose type is not a string",
+      [{ type: 1, distribution_buckets: [{ min: 0, max: 120, time: 600 }] }],
+    ],
+    [
+      "buckets without a finite time",
+      [
+        {
+          type: "heartrate",
+          distribution_buckets: [
+            { min: 0, max: 120 },
+            { min: 120, max: 140, time: null },
+            { min: 140, max: -1, time: "600" },
+            null,
+          ],
+        },
+      ],
+    ],
+    ["a zone that is null", [null]],
+    ["an answer that is not a list", { type: "heartrate" }],
+  ])("%s is stored as no zones, and the activity marked done once", async (_, zones) => {
+    const { gateway } = makeMockGateway([baseRow]);
+    const { result } = await syncZonesBackfill(
+      { phase: "zones-backfill" },
+      {
+        analytics: gateway,
+        client: makeFetchedClient({ "/activities/12345/zones": zones }),
+        sourceId: SOURCE_ID,
+        providerId: PROVIDER_ID,
+        athleteId: 99,
+      },
+    );
+
+    expect(result.hasMore).toBe(true);
+    expect(result.cursor.enrichStrikes).toBeUndefined();
+    expect(rowsFor(result, "strava_activity_zones")).toEqual([]);
+    expect(deletionsFor(result, "strava_activity_zones")).toEqual(["12345"]);
+    const marked = rowsFor(result, "strava_activities");
+    expect(marked).toHaveLength(1);
+    // Fetched, not refused, so not marked unavailable.
+    expect(marked[0]).toMatchObject({ id: 12345, zones_fetched_at: expect.any(String) });
+    expect(marked[0]?.zones_unavailable ?? null).toBeNull();
+  });
+
+  test("the zones and buckets a row can be made of are stored beside those it cannot", async () => {
+    const { gateway } = makeMockGateway([baseRow]);
+    const zones = [
+      { type: "power" },
+      {
+        type: "heartrate",
+        points: 31,
+        distribution_buckets: [
+          { min: 0, max: 120, time: 600 },
+          { min: 120, max: 140 },
+          { min: 140, max: -1, time: 0 },
+        ],
+      },
+    ];
+    const { result } = await syncZonesBackfill(
+      { phase: "zones-backfill" },
+      {
+        analytics: gateway,
+        client: makeFetchedClient({ "/activities/12345/zones": zones }),
+        sourceId: SOURCE_ID,
+        providerId: PROVIDER_ID,
+        athleteId: 99,
+      },
+    );
+
+    // Each bucket keeps its index, which is its zone's number.
+    expect(rowsFor(result, "strava_activity_zones")).toEqual([
+      expect.objectContaining({ zone_type: "heartrate", bucket_index: 0, time_seconds: 600 }),
+      expect.objectContaining({ zone_type: "heartrate", bucket_index: 2, time_seconds: 0 }),
+    ]);
+    expect(rowsFor(result, "strava_activities")).toHaveLength(1);
+  });
+
+  /**
+   * A store with one activity whose zones alone are pending, whose
+   * `strava_athlete` holds `athlete`, or whose read of it fails with it. Every
+   * query it is asked lands in `sql`.
+   */
+  function zonesPending(
+    athlete: Record<string, unknown>[] | Error,
+    sql: string[] = [],
+  ): SourceAnalyticsAccess {
+    return {
+      query: vi.fn((query: string) => {
+        sql.push(query);
+        if (/\bFROM strava_athlete\b/.test(query)) {
+          return athlete instanceof Error
+            ? Promise.reject(athlete)
+            : Promise.resolve({ columns: ["summit"], rows: athlete });
+        }
+        const zones = query.includes("zones_fetched_at IS NULL");
+        return Promise.resolve(
+          /count\(\*\)/i.test(query)
+            ? { columns: ["n"], rows: [{ n: zones ? 1 : 0 }] }
+            : { columns: [], rows: zones ? [baseRow] : [] },
+        );
+      }),
+    };
+  }
+
+  test.each<[string, Record<string, unknown>]>([
+    ["that says so", { summit: false }],
+    ["that says so in `premium` alone", { summit: null, premium: false }],
+  ])(
+    "a profile without Summit %s asks for no zones and hands over to streams",
+    async (_, athlete) => {
+      // Strava refuses each one, a read apiece, from a budget of 1,000 a day.
+      const seen: string[] = [];
+      const { result } = await syncZonesBackfill(
+        { phase: "zones-backfill" },
+        {
+          analytics: zonesPending([athlete]),
+          client: makeFetchedClient({}, seen),
+          sourceId: SOURCE_ID,
+          providerId: PROVIDER_ID,
+          athleteId: 99,
+        },
+      );
+
+      expect(seen).toEqual([]);
+      expect(result.cursor.phase).toBe("streams-backfill");
+      // Left pending, for the refresh that finds Summit.
+      expect(rowsFor(result, "strava_activities")).toEqual([]);
+    },
+  );
+
+  test.each<[string, Record<string, unknown>[] | Error]>([
+    ["with Summit", [{ summit: true }]],
+    ["with Summit, whatever `premium` says", [{ summit: true, premium: false }]],
+    ["with Summit in `premium` alone", [{ summit: null, premium: true }]],
+    ["whose Summit is unknown", [{ summit: null }]],
+    ["whose Summit and premium are unknown", [{ summit: null, premium: null }]],
+    ["not stored yet", []],
+    ["that cannot be read", new Error("no such table: strava_athlete")],
+  ])("a profile %s asks for the zones", async (_, athlete) => {
+    const seen: string[] = [];
+    await syncZonesBackfill(
+      { phase: "zones-backfill" },
+      {
+        analytics: zonesPending(athlete),
+        client: makeFetchedClient({ "/zones": [] }, seen),
+        sourceId: SOURCE_ID,
+        providerId: PROVIDER_ID,
+        athleteId: 99,
+      },
+    );
+
+    expect(seen.filter((url) => url.includes("/activities/12345/zones"))).toHaveLength(1);
+  });
+
+  test("an athlete id that is not an integer reaches no read", async () => {
+    const sql: string[] = [];
+    const sync = syncZonesBackfill(
+      { phase: "zones-backfill" },
+      {
+        analytics: zonesPending([{ summit: true }], sql),
+        client: makeFetchedClient({}),
+        sourceId: SOURCE_ID,
+        providerId: PROVIDER_ID,
+        athleteId: Number.NaN,
+      },
+    );
+
+    await expect(sync).rejects.toThrow(/athlete id NaN$/);
+    expect(sql).toEqual([]);
+  });
+
+  test("the rotation passes over zones a profile without Summit would be refused", async () => {
+    const seen: string[] = [];
+    const { result } = await syncEnrichPending(
+      { phase: "enrich-pending", enrichTier: "zones" },
+      {
+        analytics: zonesPending([{ summit: false }]),
+        client: makeFetchedClient({}, seen),
+        sourceId: SOURCE_ID,
+        providerId: PROVIDER_ID,
+        athleteId: 99,
+      },
+    );
+
+    // Nothing else is pending, so the rotation hands back to the listing
+    // rather than coming back to zones on every page.
+    expect(seen).toEqual([]);
+    expect(result.cursor.phase).toBe("incremental");
+    expect(result.hasMore).toBe(false);
+  });
 });
 
 // ── Tier 5 — streams-backfill ────────────────────────────────────
@@ -713,6 +981,95 @@ describe("syncStreamsBackfill", () => {
       (rowsFor(result, "strava_activities")[0] as Record<string, unknown>).streams_fetched_at,
     ).toBeTruthy();
     expect(tablesWritten(result)).not.toContain("strava_activity_streams");
+  });
+
+  /** One stream of `samples` seven-digit values: eight bytes of JSON a sample. */
+  function longStreams(samples: number): StravaStreamSet {
+    return {
+      watts: {
+        type: "watts",
+        data: new Array<number>(samples).fill(1_234_567),
+        series_type: "time",
+        resolution: "high",
+      },
+    };
+  }
+
+  test("a page of long activities stays under the ingest limit and leaves the rest pending", async () => {
+    // Ten activities of about 3.2 MB of streams each: 32 MB in all, twice what
+    // the gateway takes in one request.
+    const rows = Array.from({ length: 10 }, (_, i) => ({ ...baseRow, id: 2000 + i }));
+    const { gateway } = makeMockGateway(rows);
+    const { result } = await syncStreamsBackfill(
+      { phase: "streams-backfill" },
+      {
+        analytics: gateway,
+        client: makeFetchedClient({ "/streams": longStreams(400_000) }),
+        sourceId: SOURCE_ID,
+        providerId: PROVIDER_ID,
+        athleteId: 99,
+      },
+    );
+
+    const streams = rowsFor(result, "strava_activity_streams");
+    // The write travels as one /analytics/ingest request, refused above 16 MiB.
+    expect(Buffer.byteLength(JSON.stringify(streams), "utf8")).toBeLessThan(16 * 1024 * 1024);
+    expect(streams.length).toBeGreaterThan(0);
+    expect(streams.length).toBeLessThan(rows.length);
+    // Only the activities whose streams travel are marked done, the newest
+    // first; the rest stay pending for the pages after.
+    const stamped = rowsFor(result, "strava_activities").map((row) => Number(row.id));
+    expect(stamped).toEqual(rows.slice(0, streams.length).map((row) => row.id));
+    expect(streams.map((row) => Number(row.activity_id))).toEqual(stamped);
+    expect(result.hasMore).toBe(true);
+  });
+
+  test("an activity whose streams fill a page alone travels alone", async () => {
+    // About 13.6 MB, then 3.2 MB: either fits in a request, and the two
+    // together do not.
+    const rows = [
+      { ...baseRow, id: 2000 },
+      { ...baseRow, id: 2001 },
+    ];
+    const { gateway } = makeMockGateway(rows);
+    const { result } = await syncStreamsBackfill(
+      { phase: "streams-backfill" },
+      {
+        analytics: gateway,
+        client: makeFetchedClient({
+          "/activities/2000/streams": longStreams(1_700_000),
+          "/activities/2001/streams": longStreams(400_000),
+        }),
+        sourceId: SOURCE_ID,
+        providerId: PROVIDER_ID,
+        athleteId: 99,
+      },
+    );
+
+    const streams = rowsFor(result, "strava_activity_streams");
+    expect(streams.map((row) => Number(row.activity_id))).toEqual([2000]);
+    expect(Buffer.byteLength(JSON.stringify(streams), "utf8")).toBeLessThan(16 * 1024 * 1024);
+    expect(rowsFor(result, "strava_activities").map((row) => Number(row.id))).toEqual([2000]);
+    expect(result.hasMore).toBe(true);
+  });
+
+  test("an activity whose streams no request could carry is marked done without them", async () => {
+    // About 17.6 MB on its own. Left pending it would lead every page, and
+    // every page would be refused.
+    const { gateway } = makeMockGateway([baseRow]);
+    const { result } = await syncStreamsBackfill(
+      { phase: "streams-backfill" },
+      {
+        analytics: gateway,
+        client: makeFetchedClient({ "/streams": longStreams(2_200_000) }),
+        sourceId: SOURCE_ID,
+        providerId: PROVIDER_ID,
+        athleteId: 99,
+      },
+    );
+
+    expect(rowsFor(result, "strava_activity_streams")).toEqual([]);
+    expect(rowsFor(result, "strava_activities")[0]?.streams_fetched_at).toBeTruthy();
   });
 
   // Ensure StravaForbiddenError is exported for test consumers — used in
@@ -1581,5 +1938,349 @@ describe("a tier re-rendering an activity's document", () => {
     const [doc] = result.documents!;
     expect(doc!.content).toContain("_1200 kudos_");
     expect(doc!.metadata.extra).toMatchObject({ kudosCount: 1200 });
+  });
+});
+
+// ── An activity Strava fails alone ───────────────────────────────
+
+describe("an activity Strava fails alone", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-03-04T10:00:00Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const HIGH_WATER = Math.floor(Date.parse("2026-03-04T00:00:00Z") / 1000);
+  /** What the listing finds, and its detail. */
+  const NEW_RIDE: StravaSummaryActivity = {
+    id: 999,
+    athlete: { id: 99 },
+    name: "Ride 999",
+    distance: 30_000,
+    moving_time: 3_600,
+    elapsed_time: 3_700,
+    total_elevation_gain: 210,
+    sport_type: "Ride",
+    start_date: "2026-03-04T09:00:00Z",
+    start_date_local: "2026-03-04T10:00:00",
+  };
+  const STREAMS: StravaStreamSet = {
+    time: { type: "time", data: [0, 1, 2], series_type: "time", resolution: "high" },
+  };
+
+  /** Cadence stamps that leave neither walk due: this is about the tiers. */
+  const walked = () => ({
+    lastSnapshotAt: new Date().toISOString(),
+    lastEditSweepAt: new Date().toISOString(),
+  });
+
+  /** The rotation at `tier`, with nothing time-gated due. */
+  const rotating = (tier: EnrichmentTier = "streams"): StravaActivitiesCursor => ({
+    phase: "enrich-pending",
+    enrichTier: tier,
+    lastActivityTimestamp: HIGH_WATER,
+    lastAthleteRefreshAt: new Date().toISOString(),
+    ...walked(),
+  });
+
+  /** The call a tier makes for an activity first, the one its failure names. */
+  const ENDPOINT: Record<EnrichmentTier, (id: number) => string> = {
+    detail: (id) => `/activities/${id}`,
+    social: (id) => `/activities/${id}/comments`,
+    zones: (id) => `/activities/${id}/zones`,
+    streams: (id) => `/activities/${id}/streams`,
+  };
+
+  /**
+   * Activities 301, 302 and 303, newest first, with only `tier` left to fetch,
+   * in a store that answers the tiers' reads from what their pages wrote.
+   * Strava answers a path with `status(path)`, and with 200 and a body that
+   * fits the path otherwise; the listing finds one new ride. `page` runs one
+   * page and `tick` runs pages until one has no more, as a sync tick does;
+   * `written` holds the activity ids of the child rows they wrote, by table.
+   */
+  function failingStrava(status: (path: string) => number, tier: EnrichmentTier = "streams") {
+    const stored = new Map<string, Record<string, unknown>>();
+    for (const [i, id] of [301, 302, 303].entries()) {
+      stored.set(String(id), {
+        ...baseRow,
+        id,
+        start_time: `2026-03-0${3 - i}T08:00:00Z`,
+        detail_fetched_at: "2026-03-03T12:00:00Z",
+        social_fetched_at: "2026-03-03T12:00:00Z",
+        zones_fetched_at: "2026-03-03T12:00:00Z",
+        streams_fetched_at: "2026-03-03T12:00:00Z",
+        [`${tier}_fetched_at`]: null,
+      });
+    }
+    const analytics: SourceAnalyticsAccess = {
+      query: vi.fn((sql: string) => {
+        if (!/\bFROM strava_activities\b/.test(sql)) {
+          return Promise.resolve({ columns: [], rows: [] });
+        }
+        let rows = [...stored.values()];
+        const unset = /(\w+_fetched_at) IS NULL/.exec(sql)?.[1];
+        if (unset) rows = rows.filter((row) => row[unset] == null);
+        for (const [, ids] of sql.matchAll(/\bid NOT IN \(([^)]*)\)/g)) {
+          rows = rows.filter((row) => !(ids ?? "").split(", ").includes(String(row.id)));
+        }
+        const only = /\bid IN \(([^)]*)\)/.exec(sql)?.[1]?.split(", ");
+        if (only) rows = rows.filter((row) => only.includes(String(row.id)));
+        rows.sort((a, b) => String(b.start_time).localeCompare(String(a.start_time)));
+        return Promise.resolve(
+          /count\(\*\)/i.test(sql)
+            ? { columns: ["n"], rows: [{ n: rows.length }] }
+            : { columns: [], rows },
+        );
+      }),
+    };
+    const paths: string[] = [];
+    const client = clientAnswering((path) => {
+      const code = status(path);
+      if (code !== 200) return json({ message: "Something went wrong" }, code);
+      if (path === "/athlete") return json({ id: 99 });
+      if (path === "/athlete/activities") return json([NEW_RIDE]);
+      if (path.endsWith("/streams")) return json(STREAMS);
+      if (/\/(comments|kudos|zones)$/.test(path)) return json([]);
+      const detail = /^\/activities\/(\d+)$/.exec(path);
+      return json(detail ? { ...NEW_RIDE, id: Number(detail[1]) } : NEW_RIDE);
+    }, paths);
+    const source = new StravaActivitiesSource(
+      client,
+      SOURCE_ID,
+      PROVIDER_ID,
+      undefined,
+      undefined,
+      99,
+      analytics,
+    );
+    const written = new Map<string, number[]>();
+    const page = async (cursor: StravaActivitiesCursor) => {
+      const result = await source.syncStructured(cursor);
+      for (const row of rowsFor(result, "strava_activities")) stored.set(String(row.id), row);
+      for (const table of new Set(tablesWritten(result))) {
+        if (table === "strava_activities") continue;
+        const ids = rowsFor(result, table).map((row) => Number(row.activity_id));
+        written.set(table, [...(written.get(table) ?? []), ...ids]);
+      }
+      return result;
+    };
+    const tick = async (cursor: StravaActivitiesCursor): Promise<StravaActivitiesCursor> => {
+      for (let n = 0; n < 10; n++) {
+        const result = await page(cursor);
+        cursor = result.cursor;
+        if (!result.hasMore) break;
+      }
+      return cursor;
+    };
+    return { stored, paths, written, page, tick };
+  }
+
+  test("holds back neither its tier nor the listing, and is given up on a day after it first failed", async () => {
+    // Strava can fail one activity's streams on every request.
+    const { stored, paths, written, tick } = failingStrava((path) =>
+      path === "/activities/302/streams" ? 500 : 200,
+    );
+    const asked = () => paths.filter((path) => path === "/activities/302/streams").length;
+
+    // The tick that meets the failure keeps what came before it and stops there.
+    let cursor = await tick(rotating());
+    expect(stored.get("301")?.streams_fetched_at).toBeTruthy();
+    expect(stored.get("302")?.streams_fetched_at).toBeNull();
+    expect(cursor.enrichStrikes).toEqual({
+      "streams:302": { count: 1, at: "2026-03-04T10:00:00.000Z" },
+    });
+
+    // The ticks after it carry on past it: the activity behind it, then the
+    // listing, which the rotation would otherwise never hand back to.
+    cursor = await tick(cursor);
+    cursor = await tick(cursor);
+    expect(stored.get("303")?.streams_fetched_at).toBeTruthy();
+    expect(paths).toContain("/athlete/activities");
+    expect(stored.get("999")).toBeDefined();
+    expect(asked()).toBe(1);
+
+    // Asked again once it has sat out its rest. Failing again, it is still
+    // not given up on.
+    vi.setSystemTime(new Date("2026-03-04T22:01:00Z"));
+    cursor = await tick({ ...cursor, ...walked() });
+    expect(asked()).toBe(2);
+    expect(stored.get("302")?.streams_fetched_at).toBeNull();
+    expect(cursor.enrichStrikes?.["streams:302"]?.count).toBe(2);
+
+    // The third failure, a day after the first, marks it done without streams,
+    // as an activity Strava no longer has is marked.
+    vi.setSystemTime(new Date("2026-03-05T10:02:00Z"));
+    cursor = await tick({ ...cursor, ...walked() });
+    expect(asked()).toBe(3);
+    expect(stored.get("302")?.streams_fetched_at).toBeTruthy();
+    expect(cursor.enrichStrikes).toBeUndefined();
+    const streamed = written.get("strava_activity_streams");
+    expect(streamed).not.toContain(302);
+    expect(streamed).toEqual(expect.arrayContaining([301, 303, 999]));
+
+    for (let i = 0; i < 3; i++) cursor = await tick({ ...cursor, ...walked() });
+    expect(asked()).toBe(3);
+  });
+
+  test("an endpoint failing for every activity strikes one a tick, not the backlog", async () => {
+    // Strava still answers for the athlete, so each failure reads as the
+    // activity's own; stopping at the first keeps the cost to it.
+    const { paths, tick } = failingStrava((path) => (path.endsWith("/streams") ? 500 : 200));
+
+    const cursor = await tick(rotating());
+
+    expect(paths).toEqual(["/activities/301/streams", "/athlete"]);
+    expect(Object.keys(cursor.enrichStrikes ?? {})).toEqual(["streams:301"]);
+  });
+
+  test("forgets a strike a week old, so what the cursor keeps of them stays bounded", async () => {
+    const { tick } = failingStrava(() => 200);
+    const recent = { count: 1, at: "2026-03-04T09:00:00.000Z" };
+
+    const cursor = await tick({
+      ...rotating(),
+      enrichStrikes: {
+        "streams:7001": { count: 2, at: "2026-02-25T10:00:00.000Z" },
+        "detail:7002": recent,
+      },
+    });
+
+    expect(cursor.enrichStrikes).toEqual({ "detail:7002": recent });
+  });
+
+  test("Strava failing as a whole still ends the tick, and strikes nothing", async () => {
+    const { paths, tick } = failingStrava(() => 503);
+
+    const sync = tick(rotating());
+
+    // The message the collector reads as transient, as it always was.
+    await expect(sync).rejects.toThrow(/^Strava API 503 /);
+    await expect(sync).rejects.toMatchObject({ name: "StravaApiError", status: 503 });
+    expect(paths).toEqual(["/activities/301/streams", "/athlete"]);
+  });
+
+  /** The clock these tests set, and a strike that has sat out its 12 hours. */
+  const NOW = "2026-03-04T10:00:00.000Z";
+  const RESTED = "2026-03-03T21:00:00.000Z";
+
+  test.each([
+    { tier: "detail", carried: { pendingDetailStamps: ["301"] }, documents: ["301"], stamped: [] },
+    { tier: "social", carried: { pendingSocialStamps: ["301"] }, documents: ["301"], stamped: [] },
+    { tier: "zones", carried: {}, documents: [], stamped: ["301"] },
+  ] as const)(
+    "in the $tier tier, keeps the work before it and ends the tick there",
+    async ({ tier, carried, documents, stamped }) => {
+      const { paths, page } = failingStrava(
+        (path) => (path === ENDPOINT[tier](302) ? 500 : 200),
+        tier,
+      );
+
+      const result = await page(rotating(tier));
+
+      // 301's work is in the page as its tier keeps it: marked on the page
+      // after for detail and social, whose documents commit first, and on
+      // this one for zones.
+      expect(result.cursor).toMatchObject(carried);
+      expect((result.documents ?? []).map((doc) => doc.externalId)).toEqual(documents);
+      const marked = rowsFor(result, "strava_activities").filter(
+        (row) => row[`${tier}_fetched_at`] != null,
+      );
+      expect(marked.map((row) => String(row.id))).toEqual(stamped);
+      // 302 takes a strike, and nothing after it is asked for.
+      expect(result.cursor.enrichStrikes).toEqual({ [`${tier}:302`]: { count: 1, at: NOW } });
+      expect(result.hasMore).toBe(false);
+      expect(paths.slice(-2)).toEqual([ENDPOINT[tier](302), "/athlete"]);
+    },
+  );
+
+  test.each(["detail", "social", "zones"] as const)(
+    "in the %s tier, the third failure marks it done without what the tier fetches",
+    async (tier) => {
+      const { stored, written, page } = failingStrava(
+        (path) => (path === ENDPOINT[tier](302) ? 500 : 200),
+        tier,
+      );
+
+      const result = await page({
+        ...rotating(tier),
+        enrichStrikes: { [`${tier}:302`]: { count: 2, at: RESTED } },
+      });
+
+      expect(stored.get("302")?.[`${tier}_fetched_at`]).toBeTruthy();
+      expect([...written.values()].flat()).not.toContain(302);
+      expect((result.documents ?? []).map((doc) => doc.externalId)).not.toContain("302");
+      expect(result.cursor.enrichStrikes).toBeUndefined();
+    },
+  );
+
+  test.each(["detail", "social", "zones", "streams"] as const)(
+    "Strava serving it in the %s tier clears its strike, so a later failure is a first",
+    async (tier) => {
+      let failing = false;
+      const { stored, page, tick } = failingStrava(
+        (path) => (failing && path === ENDPOINT[tier](301) ? 500 : 200),
+        tier,
+      );
+      // Another activity's, still resting, which 301's success leaves alone.
+      const resting = { count: 1, at: "2026-03-04T09:00:00.000Z" };
+
+      // Failed twice before; this time Strava serves it.
+      const cursor = await tick({
+        ...rotating(tier),
+        enrichStrikes: { [`${tier}:301`]: { count: 2, at: RESTED }, [`${tier}:7002`]: resting },
+      });
+      expect(stored.get("301")?.[`${tier}_fetched_at`]).toBeTruthy();
+      expect(cursor.enrichStrikes).toEqual({ [`${tier}:7002`]: resting });
+
+      // Kudos or an edit send it back to the tier within the week, and Strava
+      // fails it once: a first strike, not the third that gives it up.
+      stored.set("301", { ...stored.get("301"), [`${tier}_fetched_at`]: null });
+      failing = true;
+      const result = await page({ ...rotating(tier), enrichStrikes: cursor.enrichStrikes });
+
+      expect(result.cursor.enrichStrikes?.[`${tier}:301`]).toEqual({ count: 1, at: NOW });
+      expect(stored.get("301")?.[`${tier}_fetched_at`]).toBeNull();
+    },
+  );
+});
+
+// The plain 403s above refuse one activity, which a tier marks done and steps
+// over. A 403 that names the application refuses every activity alike, so a
+// tier stepping over it would mark the whole backlog done with nothing fetched.
+describe("an application Strava has deactivated", () => {
+  const inactive = () =>
+    json(
+      {
+        message: "Forbidden",
+        errors: [{ resource: "Application", field: "Status", code: "Inactive" }],
+      },
+      403,
+    );
+
+  test.each([
+    ["detail", syncDetailBackfill, "detail-backfill"],
+    ["social", syncSocialBackfill, "social-backfill"],
+    ["zones", syncZonesBackfill, "zones-backfill"],
+    ["streams", syncStreamsBackfill, "streams-backfill"],
+  ] as const)("ends the %s page with nothing marked done", async (_, sync, phase) => {
+    const seen: string[] = [];
+    const page = sync(
+      { phase },
+      {
+        analytics: makeMockGateway([baseRow, { ...baseRow, id: 12346 }]).gateway,
+        client: clientAnswering(inactive, seen),
+        sourceId: SOURCE_ID,
+        providerId: PROVIDER_ID,
+        athleteId: 99,
+      },
+    );
+
+    await expect(page).rejects.toBeInstanceOf(StravaApplicationInactiveError);
+    // Stopped at the first refusal: neither the next activity nor /athlete,
+    // which tells an outage from one activity's failure, is asked.
+    expect(seen).toHaveLength(1);
   });
 });

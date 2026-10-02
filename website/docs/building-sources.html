@@ -699,7 +699,10 @@ export default defineSource({
           <code>canShow(kind)</code> before selecting a client interaction; unsupported questions
           fail immediately rather than waiting for timeout. Clients that declare no capabilities
           support only redirect and QR challenges. The generic answer endpoint accepts only pending
-          code or fields questions; redirects and widgets complete through their own callbacks.
+          code or fields questions; redirects and widgets complete through their own callbacks. A
+          redirect the gateway catches is answered with the callback's <code>scope</code> parameter
+          beside its code, for a platform that reports a narrowed grant there and nowhere else; a
+          code pasted by hand carries none.
         </p>
         <p>
           For API-key providers, where the pasted value is the account's own credential rather than

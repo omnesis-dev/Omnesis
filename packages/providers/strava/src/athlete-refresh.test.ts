@@ -2,9 +2,9 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, expect, test, vi } from "vitest";
-import { rowsFor, tablesWritten } from "@omnesis/source-sdk/testing";
+import { deletionsFor, rowsFor, tablesWritten } from "@omnesis/source-sdk/testing";
 import { StravaActivitiesSource } from "./activities.js";
-import { StravaClient, StravaQuotaDeferral } from "./client.js";
+import { StravaApplicationInactiveError, StravaClient, StravaQuotaDeferral } from "./client.js";
 import { syncAthleteRefresh } from "./athlete-refresh.js";
 import type { SourceAnalyticsAccess } from "@omnesis/source-sdk";
 import type { ProviderId, SourceId } from "@omnesis/types";
@@ -314,6 +314,75 @@ test("gear the token's scope cannot read is skipped, not left to hold the refres
   expect(gearPaths).toEqual(["/gear/g3000", "/gear/g3000"]);
 });
 
+test("gear Strava no longer has leaves the catalogue, gear nothing names any more included", async () => {
+  const paths: string[] = [];
+  const client = clientWith((url) => {
+    const path = new URL(url).pathname.replace("/api/v3", "");
+    paths.push(path);
+    // Deleted on Strava.
+    if (path === "/gear/g9" || path === "/gear/g7") {
+      return Promise.resolve(new Response("{}", { status: 404 }));
+    }
+    // Refused, which says nothing about whether it is still there.
+    if (path === "/gear/g5") return Promise.resolve(new Response("", { status: 403 }));
+    const body =
+      path === "/athlete"
+        ? { id: 99, summit: false, shoes: [{ id: "g1" }, { id: "g5" }] }
+        : athleteAnswer(path);
+    return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+  });
+  // Stored activities still name g9. The catalogue also holds g7, which neither
+  // the profile nor any activity names any more.
+  const analytics: SourceAnalyticsAccess = {
+    query: vi.fn((sql: string) =>
+      Promise.resolve({
+        columns: [],
+        rows: sql.includes("DISTINCT")
+          ? [{ gear_id: "g9" }]
+          : sql.includes("FROM strava_gear")
+            ? ["g1", "g5", "g7", "g9"].map((id) => ({ id }))
+            : [],
+      }),
+    ),
+  };
+  const lastWeek = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+
+  const result = await syncAthleteRefresh(
+    { phase: "athlete-refresh", lastAthleteRefreshAt: lastWeek },
+    "incremental",
+    { analytics, client, athleteId: 99 },
+  );
+
+  expect(rowsFor(result, "strava_gear").map((row) => row.id)).toEqual(["g1"]);
+  expect(deletionsFor(result, "strava_gear").sort()).toEqual(["g7", "g9"]);
+  expect(paths.filter((path) => path.startsWith("/gear/")).sort()).toEqual([
+    "/gear/g1",
+    "/gear/g5",
+    "/gear/g7",
+    "/gear/g9",
+  ]);
+  // Asked for by owner: every account the gateway hosts shares the catalogue.
+  const reads = vi.mocked(analytics.query).mock.calls.map(([sql]) => sql);
+  expect(reads.filter((sql) => sql.includes("FROM strava_gear"))).toEqual([
+    "SELECT id FROM strava_gear WHERE athlete_id = 99",
+  ]);
+});
+
+test("the first refresh reads no catalogue, which no refresh has stored yet", async () => {
+  // The gateway refuses, and logs as an error, a read of a table the source has
+  // not created.
+  const analytics = gearCatalogue(["g1"]);
+
+  await syncAthleteRefresh({ phase: "athlete-refresh" }, "detail-backfill", {
+    analytics,
+    client: meteredStrava().client,
+    athleteId: 99,
+  });
+
+  const reads = vi.mocked(analytics.query).mock.calls.map(([sql]) => sql);
+  expect(reads.filter((sql) => sql.includes("FROM strava_gear"))).toEqual([]);
+});
+
 test("a resumed refresh that reaches no gear defers rather than hand back the same cursor", async () => {
   const { client, paths } = meteredStrava();
   // The gate passes and the budget is gone by the first gear. A page that
@@ -330,6 +399,37 @@ test("a resumed refresh that reaches no gear defers rather than hand back the sa
   await expect(refresh).rejects.toBeInstanceOf(StravaQuotaDeferral);
   expect(paths).toEqual([]);
 });
+
+// The stats, the athlete's zones and each gear are reads the refresh goes
+// without when Strava refuses them. A refusal of the application is no such
+// refusal: every read after it would meet the same one.
+test.each(["/athlete", "/athletes/99/stats", "/athlete/zones", "/gear/g1"])(
+  "the application refused at %s ends the refresh rather than being stepped over",
+  async (refused) => {
+    const client = clientWith((url) => {
+      const path = new URL(url).pathname.replace("/api/v3", "");
+      return Promise.resolve(
+        path === refused
+          ? new Response(
+              JSON.stringify({
+                message: "Forbidden",
+                errors: [{ resource: "Application", field: "Status", code: "Inactive" }],
+              }),
+              { status: 403 },
+            )
+          : new Response(JSON.stringify(athleteAnswer(path)), { status: 200 }),
+      );
+    });
+
+    await expect(
+      syncAthleteRefresh({ phase: "athlete-refresh" }, "detail-backfill", {
+        analytics: gearCatalogue(["g1"]),
+        client,
+        athleteId: 99,
+      }),
+    ).rejects.toBeInstanceOf(StravaApplicationInactiveError);
+  },
+);
 
 describe("where a finished refresh hands over", () => {
   const recent = () => new Date(Date.now() - 60_000).toISOString();

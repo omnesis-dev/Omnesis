@@ -662,7 +662,11 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     if (
       proc.exitCode !== null ||
       proc.signalCode !== null ||
-      !writeInbound(proc, { type: "code", code: body.code })
+      !writeInbound(proc, {
+        type: "code",
+        code: body.code,
+        ...(body.scope !== undefined ? { scope: body.scope } : {}),
+      })
     ) {
       throw new Error(`auth.code for exited flow: ${body.flowId}`);
     }

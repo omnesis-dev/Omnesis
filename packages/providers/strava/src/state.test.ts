@@ -118,6 +118,29 @@ describe("strava-activities declared state", () => {
       expect(stravaActivitiesStateSpec.decode({ phase: "edit-sweep", resumePhase })).toBeNull();
     }
   });
+  test("preserves the strikes of activities Strava fails alone and refuses malformed ones", () => {
+    const at = "2026-03-04T10:00:00.000Z";
+    const stored = {
+      phase: "enrich-pending",
+      enrichStrikes: { "streams:302": { count: 1, at }, "detail:301": { count: 2, at } },
+    };
+    expect(stravaActivitiesStateSpec.decode(stored)).toEqual(stored);
+    for (const enrichStrikes of [
+      null,
+      [],
+      { "laps:302": { count: 1, at } },
+      { "streams:302:1": { count: 1, at } },
+      { "streams:abc": { count: 1, at } },
+      { "streams:302": { count: 0, at } },
+      { "streams:302": { count: 1.5, at } },
+      { "streams:302": { count: 1 } },
+      { "streams:302": 1 },
+    ]) {
+      expect(
+        stravaActivitiesStateSpec.decode({ phase: "enrich-pending", enrichStrikes }),
+      ).toBeNull();
+    }
+  });
   test("preserves a valid pending social stamp queue", () => {
     const stored = { phase: "incremental", pendingSocialStamps: ["101", "102"] };
     expect(stravaActivitiesStateSpec.decode(stored)).toEqual(stored);

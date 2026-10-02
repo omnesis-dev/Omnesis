@@ -47,15 +47,17 @@ export interface StravaTokens {
  * - `backfill` — newest → oldest summary import.
  * - `athlete-refresh` — once per cycle: athlete profile, zones, lifetime
  *   stats, gear catalog (resolves `gear_id` → brand/model). Cadence-gated
- *   (default 7d) by `lastAthleteRefreshAt`. Spans several pages when the gear
- *   catalogue outgrows one window's reads (`pendingGearIds`).
+ *   (7d, `ATHLETE_REFRESH_INTERVAL_MS`) by `lastAthleteRefreshAt`. Spans several
+ *   pages when the gear catalogue outgrows one window's reads (`pendingGearIds`).
  * - `detail-backfill` — drains activities WHERE `detail_fetched_at IS NULL`
  *   via `GET /activities/{id}` (DetailedActivity). Highest-value tier — adds
  *   description, splits, best efforts, laps, segment efforts.
  * - `social-backfill` — drains `social_fetched_at IS NULL` via the comments
  *   and kudos endpoints. 2 calls per activity.
  * - `zones-backfill` — drains `zones_fetched_at IS NULL AND zones_unavailable
- *   IS NOT TRUE`. Summit-only; 403 → `zones_unavailable=true`, never retry.
+ *   IS NOT TRUE`. Summit-only: a stored profile without Summit skips the tier
+ *   and leaves its activities pending; 402/403 → `zones_unavailable=true`,
+ *   asked again once an athlete refresh finds Summit.
  * - `streams-backfill` — drains `streams_fetched_at IS NULL` via the streams
  *   endpoint (one call returns all keys).
  * - `incremental` — fetches new activities; in-priority queues snapshot-rewalk
@@ -94,6 +96,12 @@ export type StravaActivitiesPhase =
 
 /** Tiers handled by the rotating `enrich-pending` phase. */
 export type EnrichmentTier = "detail" | "social" | "zones" | "streams";
+
+/** One activity's failures in one tier: how many, and the ISO 8601 time of the last. */
+export interface EnrichStrike {
+  count: number;
+  at: string;
+}
 
 export interface StravaActivitiesCursor extends SyncCursor {
   phase: StravaActivitiesPhase;
@@ -149,10 +157,11 @@ export interface StravaActivitiesCursor extends SyncCursor {
   /** 1-indexed page within the current `edit-sweep`. */
   editSweepPage?: number;
   /**
-   * ISO 8601 timestamp of the last completed athlete-refresh. 7d cadence
-   * (configurable). A flip of `summit` false→true also forces a re-sweep
-   * of `zones-backfill` by clearing `zones_unavailable` flags on the next
-   * incremental tick.
+   * ISO 8601 timestamp of the last completed athlete refresh, stamped when its
+   * last gear page lands. Drives the 7-day cadence
+   * (`ATHLETE_REFRESH_INTERVAL_MS`) and tells a first setup (unset: the
+   * refresh chains into `detail-backfill`) from the weekly refresh (set: it
+   * returns to `incremental`).
    */
   lastAthleteRefreshAt?: string;
   /**
@@ -167,6 +176,14 @@ export interface StravaActivitiesCursor extends SyncCursor {
    * round-robin so a backlog in one tier doesn't starve the others.
    */
   enrichTier?: EnrichmentTier;
+  /**
+   * Activities Strava failed alone, by `<tier>:<activity id>`: how many times
+   * that tier's call failed, and when it last did. Such an activity sits out
+   * its tier for a while, so it holds back neither the tier nor the listing,
+   * and is marked done without what the tier fetches once the failures reach
+   * the limit (see `strikeActivity`). Bounded by forgetting old entries.
+   */
+  enrichStrikes?: Record<string, EnrichStrike>;
   /**
    * During `snapshot-rewalk` or `edit-sweep`, the phase the walk interrupted,
    * which it hands the cursor back to when it ends. Set on entry; cleared on
@@ -446,21 +463,28 @@ export interface StravaSummaryAthlete {
 
 // ── Activity zones ─────────────────────────────────────────────────
 
+/**
+ * One zone of `GET /activities/{id}/zones`. The fields its rows cannot do
+ * without are typed as Strava may send them rather than as it documents them;
+ * see `activityZonesToRecords`.
+ */
 export interface StravaActivityZone {
   score?: number | null;
-  type: "heartrate" | "power";
+  type?: "heartrate" | "power" | null;
   sensor_based?: boolean;
   points?: number;
   custom_zones?: boolean;
   max?: number;
-  distribution_buckets: StravaZoneBucket[];
+  distribution_buckets?: (StravaZoneBucket | null)[] | null;
   resource_state?: number;
 }
 
 export interface StravaZoneBucket {
   min: number;
+  /** -1 for the open-ended top zone. */
   max: number;
-  time: number;
+  /** Seconds spent in the zone. */
+  time?: number | null;
 }
 
 // ── Streams ────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createLogger } from "@omnesis/core";
-import { SyncError } from "@omnesis/types";
+import { SyncError, type SyncRemediation } from "@omnesis/types";
 import { STREAM_KEYS } from "./types.js";
 import { loadClientCredentials, saveTokens } from "./provider.js";
 import { DEFAULT_SAFETY_PCT, ENRICHMENT_SAFETY_PCT, StravaRateLimitTracker } from "./quota.js";
@@ -155,12 +155,131 @@ export function requireEnrichmentBudget(
   }
 }
 
+/** Where the owner of a Strava API application manages it. */
+const STRAVA_API_SETTINGS_URL = "https://www.strava.com/settings/api";
+
+/**
+ * Strava refused this install's API application, not anything the athlete or
+ * one activity holds.
+ *
+ * Strava deactivates a Standard Tier application whose owner, the account that
+ * registered it, has no active subscription, and then answers every data
+ * request with a 403 whose body names the `Application` resource (code
+ * `Inactive`) rather than the athlete or activity a refusal of one resource
+ * concerns. The athletes connected to the application need no subscription
+ * for it; only its owner subscribing and reactivating it on the API settings
+ * page clears it. Strava does not document whether it also refuses a
+ * deactivated application's token refreshes, and a lapsed access token makes
+ * the refresh the first request of every tick, so a refused refresh that
+ * names the application is read as this too (see `classifyRefreshFailure`).
+ *
+ * Never a `StravaForbiddenError`. The tiers read that as one activity refused,
+ * mark the activity done and move on, so a deactivated application read as one
+ * would mark the whole backlog done with nothing fetched, and reactivating it
+ * would bring none of it back. Thrown, it ends the tick before the page writes
+ * anything, and the next tick resumes from the same cursor.
+ *
+ * Kind `permission`, not `auth`: authorizing again changes nothing, so
+ * `needs-auth` would send the athlete through a sign-in that leaves the source
+ * as it was. Scoped `connection`: the application is the credential every
+ * athlete on this install connects through.
+ */
+export class StravaApplicationInactiveError extends SyncError {
+  constructor(
+    public readonly path: string,
+    public readonly status: number,
+    /** The code Strava gave for the refusal; `Inactive` for a deactivated application. */
+    public readonly code: string,
+  ) {
+    const remediation = applicationRemediation(code);
+    super(
+      "permission",
+      `${remediation.summary} (Strava answered ${status} for ${path}): sign in to Strava as the account that registered it, make sure that account has an active subscription, and reactivate the application at ${STRAVA_API_SETTINGS_URL}`,
+      { scope: "connection", remediation },
+    );
+    this.name = "StravaApplicationInactiveError";
+  }
+}
+
+/** Strava's code for a deactivated application, in whichever case it is sent. */
+const isInactive = (code: string): boolean => /^inactive$/i.test(code);
+
+function applicationRemediation(code: string): SyncRemediation {
+  // Strava's code is unbounded and a remedy's summary is not: one longer than
+  // the wire schema allows is dropped whole on its way to the operator.
+  const shown = code.slice(0, 40);
+  return {
+    // Only `Inactive` is documented. Any other code still names the
+    // application, so the steps are the same, but the summary does not claim
+    // a deactivation Strava did not report.
+    summary: isInactive(code)
+      ? "Strava has deactivated this install's API application"
+      : `Strava refuses this install's API application${shown ? ` (${shown})` : ""}`,
+    steps: [
+      "Sign in to Strava as the account that registered this install's API application.",
+      "Make sure that account has an active Strava subscription: Strava deactivates a Standard Tier application whose owner has none, whether or not the athletes connected to it subscribe.",
+      `Reactivate the application on ${STRAVA_API_SETTINGS_URL}; the source then carries on from where it stopped.`,
+    ],
+    restartRequired: false,
+  };
+}
+
+/**
+ * Strava's refusal of the application, read off a failed response, or
+ * `undefined` when the response is not one.
+ *
+ * A 402 or 403 whose body names the `Application` resource is one whatever
+ * its code: a data request asks nothing of the application but that it be
+ * allowed. Any other status is one only with the code `Inactive`. Strava also
+ * names the application when the token endpoint is sent a client id it does
+ * not know (a 400, code `invalid`), and that is the install's credentials
+ * being wrong, which re-entering them fixes, not the application refused.
+ */
+function applicationRefused(
+  path: string,
+  status: number,
+  body: string,
+): StravaApplicationInactiveError | undefined {
+  const code = applicationRefusalCode(body);
+  if (code === undefined) return undefined;
+  if (status === 402 || status === 403 || isInactive(code)) {
+    return new StravaApplicationInactiveError(path, status, code);
+  }
+  return undefined;
+}
+
+/**
+ * The code of the refusal a body gives the `Application` resource, or
+ * `undefined` when the body names no such refusal — not JSON, no `errors`, or
+ * errors about anything else, which is a refusal of the resource asked for.
+ * The code is empty when the refusal gives none.
+ */
+function applicationRefusalCode(body: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  const errors = (parsed as { errors?: unknown } | null)?.errors;
+  if (!Array.isArray(errors)) return undefined;
+  for (const error of errors as unknown[]) {
+    const { resource, code } = (error ?? {}) as { resource?: unknown; code?: unknown };
+    if (typeof resource === "string" && resource.trim().toLowerCase() === "application") {
+      return typeof code === "string" ? code.trim() : "";
+    }
+  }
+  return undefined;
+}
+
 /**
  * Thrown when an endpoint returns 403 (Summit-only features like zones or
  * advanced metrics on a non-Summit account) or 402 (a premium-gated
  * sub-resource the athlete's plan doesn't include). Both mean "your account
  * tier can't access this endpoint" — callers catch and downgrade gracefully
  * (e.g. mark `zones_unavailable=true`) instead of failing the whole sync.
+ * A refusal of the API application itself is not one of these; see
+ * `StravaApplicationInactiveError`.
  */
 export class StravaForbiddenError extends Error {
   constructor(
@@ -176,9 +295,10 @@ export class StravaForbiddenError extends Error {
  * Thrown when an endpoint returns 401 *after* a successful token refresh.
  * This happens when the access token is valid but doesn't carry the OAuth
  * scope the endpoint requires (e.g. `/athlete/zones` needs `profile:read_all`,
- * which we don't request). Distinct from `StravaAuthError` — callers can
- * skip optional best-effort endpoints (athlete-refresh tier) without
- * tearing down the whole sync.
+ * which the athlete can untick on Strava's authorization screen). Distinct
+ * from `StravaAuthError` — callers can skip optional best-effort endpoints
+ * (athlete-refresh tier) without tearing down the whole sync. The activity
+ * listing is not optional, and never surfaces this; see `listActivities`.
  */
 export class StravaScopeError extends Error {
   constructor(public path: string) {
@@ -195,6 +315,23 @@ export class StravaNotFoundError extends Error {
   constructor(public path: string) {
     super(`Strava not found (404) for ${path}`);
     this.name = "StravaNotFoundError";
+  }
+}
+
+/**
+ * Any other HTTP error Strava answers with: a 5xx, or a 4xx none of the errors
+ * above covers. The message is the one these always carried, so the collector
+ * still reads a 5xx in it as transient; the status and path let a caller tell
+ * Strava failing one activity's resource from Strava failing.
+ */
+export class StravaApiError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly path: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "StravaApiError";
   }
 }
 
@@ -259,7 +396,21 @@ export class StravaClient {
     if (params.after !== undefined) qs.after = String(params.after);
     if (params.page !== undefined) qs.page = String(params.page);
     if (params.per_page !== undefined) qs.per_page = String(params.per_page);
-    return this.get<StravaSummaryActivity[]>("/athlete/activities", qs);
+    try {
+      return await this.get<StravaSummaryActivity[]>("/athlete/activities", qs);
+    } catch (err) {
+      // Every other endpoint is optional and its caller skips a scope the
+      // grant lacks. This one is not: every phase of the sync starts from the
+      // listing, so a grant without an activity scope syncs nothing, and only
+      // the athlete authorizing again can widen it. Untyped, the refusal
+      // would leave the source in a generic error that every tick repeats.
+      if (err instanceof StravaScopeError) {
+        throw new StravaAuthError(
+          "Strava's authorization does not cover this athlete's activities; authorize again and leave the activity boxes ticked",
+        );
+      }
+      throw err;
+    }
   }
 
   // ── Per-activity detail / comments / kudos / zones / streams ──────
@@ -348,6 +499,11 @@ export class StravaClient {
       for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
     }
 
+    // Whether this request has already refreshed the token after a 401. Not
+    // the attempt index: a 429's in-tick wait also takes an attempt, and a 401
+    // after it has had no refresh to vouch for the token. The attempts count
+    // 429 waits only; the flag alone bounds the refreshes to one.
+    let refreshedAfter401 = false;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       await this.ensureFreshToken();
 
@@ -367,9 +523,11 @@ export class StravaClient {
       }
 
       if (res.status === 401) {
-        if (attempt === 0) {
+        if (!refreshedAfter401) {
+          refreshedAfter401 = true;
           log.warn("Got 401, forcing token refresh");
           await this.refreshTokens();
+          attempt--;
           continue;
         }
         // 401 *after* a successful refresh ≠ auth failure. The refresh
@@ -384,9 +542,11 @@ export class StravaClient {
       // 402 (premium-gated sub-resource, e.g. an activity's HR/power zones)
       // and 403 (Summit-only) both mean the athlete's plan can't access this
       // endpoint. Surface the same typed error so optional enrichments skip
-      // gracefully rather than aborting the whole sync.
+      // gracefully rather than aborting the whole sync — unless the body says
+      // Strava refused the application, which every request would meet alike.
       if (res.status === 402 || res.status === 403) {
-        throw new StravaForbiddenError(path, res.status);
+        const refused = applicationRefused(path, res.status, await res.text().catch(() => ""));
+        throw refused ?? new StravaForbiddenError(path, res.status);
       }
 
       if (res.status === 404) {
@@ -423,7 +583,11 @@ export class StravaClient {
       }
 
       const body = await res.text().catch(() => "");
-      throw new Error(`Strava API ${res.status} ${res.statusText} for ${path}: ${body}`);
+      throw new StravaApiError(
+        res.status,
+        path,
+        `Strava API ${res.status} ${res.statusText} for ${path}: ${body}`,
+      );
     }
 
     throw new Error("Strava client: max retries exhausted");
@@ -508,6 +672,12 @@ export class StravaClient {
  * reminder for credentials that were never broken and that no amount of
  * re-authorizing would change.
  *
+ * Strava refusing the application comes before all of them. A deactivated
+ * application is no grant gone, so reading its refusal as a `400` or `401`
+ * would park the source in `needs-auth` for a sign-in that changes nothing,
+ * and any other status would leave the operator with Strava's raw body and no
+ * remedy.
+ *
  * `retryAfterMs` is how long a throttled refresh waits; only a 429 reads it.
  */
 export function classifyRefreshFailure(
@@ -515,6 +685,8 @@ export function classifyRefreshFailure(
   body: string,
   retryAfterMs?: number,
 ): SyncError {
+  const refused = applicationRefused(new URL(TOKEN_URL).pathname, status, body);
+  if (refused) return refused;
   const detail = `Strava token refresh failed (${status})${body ? `: ${body}` : ""}`;
   if (status === 400 || status === 401) return new StravaAuthError(detail);
   if (status === 429) return new StravaRateLimitError(detail, retryAfterMs);
