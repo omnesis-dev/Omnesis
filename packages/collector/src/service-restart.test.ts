@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { spawn as spawnProcess, type ChildProcess } from "node:child_process";
+import { spawn as spawnProcess, type ChildProcess, type spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
