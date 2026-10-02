@@ -57,6 +57,7 @@ export interface TranscriberReadiness {
   reason?: string;
 }
 
+const LOCAL_RUNTIME_CHECKING = "Checking for the local transcription runtime.";
 const LOCAL_RUNTIME_MISSING =
   "Local transcription needs the smart-whisper and ffmpeg-static optional dependencies.";
 
@@ -128,20 +129,39 @@ export class TranscribeService {
   /**
    * Whether a transcription could run now, without loading anything. A local
    * assignment also needs the optional Whisper runtime; the first call starts a
-   * one-off probe for it and reports runnable until the probe says otherwise,
-   * so a status poll never waits on it.
+   * one-off probe for it and reports not runnable until the probe confirms the
+   * runtime, so a status poll never waits on it and never advertises a
+   * runtime nobody has seen yet.
    */
   readiness(): TranscriberReadiness {
     const resolved = this.resolveAssignment();
     const readiness = assignmentReadiness(resolved);
     if (!readiness.runnable || resolved.kind !== "local") return readiness;
     if (this.localRuntime === null) {
-      this.probing ??= whisperDepsAvailable(this.deps.loadModule).then((available) => {
-        this.localRuntime = available;
-      });
-      return readiness;
+      this.probeLocalRuntime();
+      return { runnable: false, reason: LOCAL_RUNTIME_CHECKING };
     }
     return this.localRuntime ? readiness : { runnable: false, reason: LOCAL_RUNTIME_MISSING };
+  }
+
+  /**
+   * The readiness once the Whisper runtime probe, if one is needed, has
+   * settled. For callers that are already waiting on a request or a queue
+   * pass, where a few milliseconds beat a wrong "not yet".
+   */
+  async settledReadiness(): Promise<TranscriberReadiness> {
+    const readiness = this.readiness();
+    if (this.probing && this.localRuntime === null) {
+      await this.probing;
+      return this.readiness();
+    }
+    return readiness;
+  }
+
+  private probeLocalRuntime(): void {
+    this.probing ??= whisperDepsAvailable(this.deps.loadModule).then((available) => {
+      this.localRuntime = available;
+    });
   }
 
   /**

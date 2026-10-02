@@ -1675,6 +1675,9 @@ const tlsLifecycle = new TlsLifecycleService({
 const transcribeService = new TranscribeService({
   resolveAssignment: () => inferenceRegistry.resolve("transcriber"),
 });
+// Start the Whisper runtime probe now, off the boot path, so the first
+// `/status` poll already knows whether dictation can run.
+transcribeService.readiness();
 
 // OCR service. Like the transcriber it resolves through the InferenceRegistry
 // and self-heals on assignment change. HTTP vision backends get their bearer

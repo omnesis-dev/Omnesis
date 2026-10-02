@@ -321,10 +321,35 @@ describe("TranscribeService", () => {
         },
       },
     });
-    expect(svc.readiness()).toEqual({ runnable: true });
-    await vi.waitFor(() => expect(svc.readiness().runnable).toBe(false));
-    expect(svc.readiness().reason).toMatch(/smart-whisper/);
+    expect(svc.readiness()).toEqual({
+      runnable: false,
+      reason: "Checking for the local transcription runtime.",
+    });
+    await vi.waitFor(() => expect(svc.readiness().reason).toMatch(/smart-whisper/));
+    expect(svc.readiness().runnable).toBe(false);
     svc.readiness();
+    expect(probes).toBe(1);
+  });
+
+  test("settledReadiness waits for the Whisper runtime probe", async () => {
+    let probes = 0;
+    const svc = new TranscribeService({
+      resolveAssignment: () => ({
+        role: "transcriber",
+        kind: "local",
+        catalogId: "whisper-small",
+        modelPath: "/m.bin",
+        available: true,
+      }),
+      deps: {
+        loadModule: async () => {
+          probes++;
+          return { Whisper: class {} };
+        },
+      },
+    });
+    await expect(svc.settledReadiness()).resolves.toEqual({ runnable: true });
+    await expect(svc.settledReadiness()).resolves.toEqual({ runnable: true });
     expect(probes).toBe(1);
   });
 
