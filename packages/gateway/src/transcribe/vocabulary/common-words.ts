@@ -3,13 +3,23 @@
 
 import { commonWordsData } from "./common-words-data.js";
 
-const lists = new Map<string, ReadonlySet<string>>(
-  Object.entries(commonWordsData.languages).map(([language, words]) => [
-    language,
-    new Set(words.split(" ")),
-  ]),
-);
-const allLanguages = [...lists.values()];
+let cachedLists:
+  | { languages: Map<string, ReadonlySet<string>>; allLanguages: ReadonlySet<string>[] }
+  | undefined;
+
+/** Disabled vocabulary workers import the module without allocating lexical sets. */
+function getLists(): NonNullable<typeof cachedLists> {
+  if (!cachedLists) {
+    const languages = new Map<string, ReadonlySet<string>>(
+      Object.entries(commonWordsData.languages).map(([language, words]) => [
+        language,
+        new Set(words.split(" ")),
+      ]),
+    );
+    cachedLists = { languages, allLanguages: [...languages.values()] };
+  }
+  return cachedLists;
+}
 
 /**
  * High-frequency lexical membership, not dictionary validity or an estimate of
@@ -23,9 +33,10 @@ const allLanguages = [...lists.values()];
  */
 export function isCommonVocabularyWord(text: string, languageHints?: readonly string[]): boolean {
   const word = text.normalize("NFC").toLocaleLowerCase("und");
-  if (!languageHints?.length) return allLanguages.some((list) => list.has(word));
+  const lists = getLists();
+  if (!languageHints?.length) return lists.allLanguages.some((list) => list.has(word));
   return languageHints.some((hint) => {
     const language = hint.toLowerCase().split(/[-_]/u)[0];
-    return language ? (lists.get(language)?.has(word) ?? false) : false;
+    return language ? (lists.languages.get(language)?.has(word) ?? false) : false;
   });
 }

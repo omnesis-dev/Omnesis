@@ -3,6 +3,8 @@
 
 import { describe, expect, test, vi } from "vitest";
 import { createLogger } from "@omnesis/core";
+import { omnesisConfigSchema } from "@omnesis/config";
+import { resolveVocabularySettings } from "../../transcribe/vocabulary/config.js";
 import { createTranscriptionVocabularyTask } from "./transcription-vocabulary.js";
 import type { VocabularyDocument, VocabularySettings } from "../../transcribe/vocabulary/types.js";
 
@@ -45,6 +47,23 @@ async function run(task: ReturnType<typeof createTranscriptionVocabularyTask>) {
   return task.run(undefined, undefined as never);
 }
 describe("bounded vocabulary scheduler", () => {
+  test("omitted opt-in performs no precomputation and live enable resumes the same task", async () => {
+    const d = deps();
+    let config = omnesisConfigSchema.parse({});
+    d.getSettings = () => resolveVocabularySettings(config);
+    const task = createTranscriptionVocabularyTask(d);
+    expect(await run(task)).toEqual({ kind: "done", value: { idle: true } });
+    expect(d.ioGate.fetchTranscriptionVocabularyBatch).not.toHaveBeenCalled();
+    expect(d.cpuGate.extractTranscriptionVocabulary).not.toHaveBeenCalled();
+    expect(d.writeGate.applyTranscriptionVocabularyBatch).not.toHaveBeenCalled();
+    config = omnesisConfigSchema.parse({
+      inference: { transcriptionVocabulary: { enabled: true } },
+    });
+    expect(await run(task)).toEqual({ kind: "done", value: { idle: false } });
+    expect(d.ioGate.fetchTranscriptionVocabularyBatch).toHaveBeenCalledTimes(1);
+    expect(d.cpuGate.extractTranscriptionVocabulary).toHaveBeenCalledTimes(1);
+    expect(d.writeGate.applyTranscriptionVocabularyBatch).toHaveBeenCalledTimes(1);
+  });
   test("routes exactly one page IO → CPU → writer and yields to the periodic cadence", async () => {
     const d = deps();
     const task = createTranscriptionVocabularyTask(d);
@@ -79,6 +98,22 @@ describe("bounded vocabulary scheduler", () => {
       value: { idle: true },
     });
     expect(d.cpuGate.extractTranscriptionVocabulary).not.toHaveBeenCalled();
+    expect(d.writeGate.applyTranscriptionVocabularyBatch).not.toHaveBeenCalled();
+  });
+
+  test("disable during extraction prevents writer work", async () => {
+    const d = deps();
+    let enabled = true;
+    d.getSettings = () => ({ ...settings, enabled });
+    d.cpuGate.extractTranscriptionVocabulary.mockImplementation(async () => {
+      enabled = false;
+      return [];
+    });
+    expect(await run(createTranscriptionVocabularyTask(d))).toEqual({
+      kind: "done",
+      value: { idle: true },
+    });
+    expect(d.cpuGate.extractTranscriptionVocabulary).toHaveBeenCalledTimes(1);
     expect(d.writeGate.applyTranscriptionVocabularyBatch).not.toHaveBeenCalled();
   });
 });

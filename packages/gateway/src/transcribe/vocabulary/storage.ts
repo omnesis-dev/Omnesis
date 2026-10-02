@@ -38,13 +38,14 @@ export function createTranscriptionVocabularyTables(db: Db): void {
       ON transcription_vocabulary_terms(scope_kind, scope_key, last_seen DESC, term);
     -- Intentionally retained on document deletion in V1. These keys make
     -- replay and additive updates idempotent, without subtracting vocabulary.
+    -- The composite key is the only access path; avoid a duplicate rowid tree.
     CREATE TABLE IF NOT EXISTS transcription_vocabulary_document_terms (
       document_id TEXT NOT NULL,
       scope_kind TEXT NOT NULL,
       scope_key TEXT NOT NULL,
       term TEXT NOT NULL,
       PRIMARY KEY (document_id, scope_kind, scope_key, term)
-    );
+    ) WITHOUT ROWID;
   `);
 }
 

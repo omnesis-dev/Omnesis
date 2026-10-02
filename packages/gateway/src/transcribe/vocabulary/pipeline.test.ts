@@ -7,7 +7,6 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SourceId, SCOPE_READ, SCOPE_WRITE_ALL } from "@omnesis/types";
-import type { ResolvedAssignment, TranscriptionContext } from "@omnesis/core";
 import { omnesisConfigSchema } from "@omnesis/config";
 import { createDatabase } from "../../db.js";
 import { createServer } from "../../server.js";
@@ -19,7 +18,6 @@ import {
   type WhisperRequestHeader,
   type WhisperWorkerMessage,
 } from "../whisper-worker-protocol.js";
-import type { WhisperWorkerProcess } from "../whisper-transcriber.js";
 import { TranscriptionVocabularyService } from "./service.js";
 import { resolveVocabularySettings } from "./config.js";
 import {
@@ -28,6 +26,8 @@ import {
   getTranscriptionVocabulary,
 } from "./storage.js";
 import { extractTranscriptionVocabulary } from "./extract.js";
+import type { WhisperWorkerProcess } from "../whisper-transcriber.js";
+import type { ResolvedAssignment, TranscriptionContext } from "@omnesis/core";
 import type { VoiceNoteService } from "../../voice-notes/service.js";
 import type { OmnesisNotesRuntime } from "../../sources/omnesis-notes/index.js";
 import type { Db } from "../../data/types.js";
@@ -65,11 +65,12 @@ let transcriber: TranscribeService;
 let worker: ScriptedWhisperWorker;
 let voiceNotes: VoiceNoteService | undefined;
 let notes: OmnesisNotesRuntime | undefined;
-let enabled: boolean;
+let enabled: boolean | undefined;
 let readWriteToken: string;
 let writeOnlyToken: string;
 let priorExperimental: string | undefined;
 let lookupFails: boolean;
+let vocabularyReads: number;
 
 const context: TranscriptionContext = {
   purpose: "source-audio",
@@ -83,6 +84,7 @@ beforeEach(() => {
   db = createDatabase(path);
   enabled = true;
   lookupFails = false;
+  vocabularyReads = 0;
   priorExperimental = process.env.OMNESIS_EXPERIMENTAL;
   process.env.OMNESIS_EXPERIMENTAL = "1";
   db.prepare(
@@ -93,7 +95,9 @@ beforeEach(() => {
   ).run(JSON.stringify({ extra: { conversationId: "fictional-thread" } }));
   const getSettings = () =>
     resolveVocabularySettings(
-      omnesisConfigSchema.parse({ inference: { transcriptionVocabulary: { enabled } } }),
+      omnesisConfigSchema.parse({
+        inference: { transcriptionVocabulary: enabled === undefined ? {} : { enabled } },
+      }),
     );
   applyTranscriptionVocabularyBatch(
     db,
@@ -106,6 +110,7 @@ beforeEach(() => {
     getSettings,
     ioGate: {
       getTranscriptionVocabulary: async (input, settings) => {
+        vocabularyReads++;
         if (lookupFails) throw new Error("test reader unavailable");
         return getTranscriptionVocabulary(db, input, settings);
       },
@@ -199,6 +204,15 @@ async function capture(token: string, id: string): Promise<void> {
 }
 
 describe("gateway vocabulary to Whisper pipeline", () => {
+  test("omitted opt-in keeps source audio and Tell Omnesis working without vocabulary reads", async () => {
+    // Already materialized vocabulary must not activate hints on its own.
+    enabled = undefined;
+    expect((await sourceAudio()).status).toBe(200);
+    await capture(readWriteToken, randomUUID());
+    expect(worker.requests).toHaveLength(2);
+    expect(worker.requests.every((request) => request.vocabularyHint === undefined)).toBe(true);
+    expect(vocabularyReads).toBe(0);
+  });
   test("source context selects materialized phrases and frames a bounded initial prompt", async () => {
     const response = await sourceAudio();
     expect(response.status).toBe(200);

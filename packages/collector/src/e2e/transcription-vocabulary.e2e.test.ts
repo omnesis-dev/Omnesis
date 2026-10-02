@@ -10,8 +10,8 @@ import "./synth-env.js";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { SourceId } from "@omnesis/types";
-import type { TranscriptionContext, TranscriptionVocabulary } from "@omnesis/core";
 import { SyntheticE2EHarness } from "./synth-harness.js";
+import type { TranscriptionContext, TranscriptionVocabulary } from "@omnesis/core";
 
 const SOURCE_A = "synthetic:voice-context@example.org";
 const SOURCE_B = "synthetic:mail-context@example.org";
@@ -43,6 +43,12 @@ function score(vocabulary: TranscriptionVocabulary, text: string): number {
 describe("transcription vocabulary materialization and API (E2E)", () => {
   let harness: SyntheticE2EHarness;
   let db: Database.Database;
+  let omittedSettingBoot: {
+    dictionary: TranscriptionVocabulary;
+    processedDocuments: number;
+    vocabularyRows: number;
+    jobState: string;
+  };
 
   beforeAll(async () => {
     harness = new SyntheticE2EHarness({
@@ -101,6 +107,32 @@ describe("transcription vocabulary materialization and API (E2E)", () => {
     });
     await harness.start();
     db = new Database(harness.getDbPath(), { readonly: true });
+    await tick(harness);
+    const readCount = (sql: string) => (db.prepare(sql).get() as { count: number }).count;
+    omittedSettingBoot = {
+      dictionary: await dictionary(harness, { purpose: "dictation" }),
+      processedDocuments: readCount(
+        "SELECT count(*) AS count FROM documents WHERE vocabulary_processed_at IS NOT NULL",
+      ),
+      vocabularyRows: readCount("SELECT count(*) AS count FROM transcription_vocabulary_terms"),
+      jobState: "",
+    };
+    await vi.waitFor(
+      async () => {
+        const snapshot = await harness.gatewayJson<{
+          jobs: Array<{ id: string; observation: { state: string } }>;
+        }>("/admin/background-jobs");
+        omittedSettingBoot.jobState =
+          snapshot.jobs.find((job) => job.id === "transcription.vocabularyBackfill")?.observation
+            .state ?? "";
+        expect(omittedSettingBoot.jobState).toBe("disabled");
+      },
+      { timeout: 15_000, interval: 250 },
+    );
+    await harness.gatewayJson("/admin/config", {
+      method: "PATCH",
+      body: JSON.stringify({ inference: { transcriptionVocabulary: { enabled: true } } }),
+    });
     await vi.waitFor(
       async () => {
         await tick(harness);
@@ -120,6 +152,15 @@ describe("transcription vocabulary materialization and API (E2E)", () => {
     db?.close();
     await harness?.destroy();
   }, 15_000);
+
+  test("omitted opt-in starts with no materialization, hints, or active background job", () => {
+    expect(omittedSettingBoot).toEqual({
+      dictionary: { entries: [] },
+      processedDocuments: 0,
+      vocabularyRows: 0,
+      jobState: "disabled",
+    });
+  });
 
   test("selects relationship vocabulary across sources using canonical aliases", async () => {
     const general = await dictionary(harness, { purpose: "dictation", speaker: { isSelf: true } });

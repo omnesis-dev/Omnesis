@@ -2785,6 +2785,7 @@ const transcriptionVocabularyJob = periodicJob(transcriptionVocabularyTask, {
   scheduler,
   displayName: "Transcription vocabulary",
   description: "Build personal vocabulary hints in bounded background batches.",
+  isDisabled: () => !transcriptionVocabularyService.enabled(),
   category: "search",
   tracker: new StatelessTracker(),
 });

@@ -2989,7 +2989,7 @@ const transcriptionVocabularySettings = z
     enabled: z
       .boolean()
       .describe(
-        "Use personal vocabulary hints for gateway transcription and build vocabulary in background. Enabled by default.",
+        "Use personal vocabulary hints for gateway transcription and build vocabulary in background. Disabled by default; requires enabled: true.",
       )
       .optional(),
     maxTerms: z

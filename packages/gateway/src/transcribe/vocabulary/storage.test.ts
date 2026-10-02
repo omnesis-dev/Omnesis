@@ -75,6 +75,62 @@ function count(db: Db): number {
 }
 
 describe("vocabulary materialization", () => {
+  test("the contribution ledger stores its deduplication key in a single tree", () => {
+    const db = database();
+    expect(
+      db
+        .prepare(
+          "SELECT wr FROM pragma_table_list WHERE name='transcription_vocabulary_document_terms'",
+        )
+        .get(),
+    ).toEqual({ wr: 1 });
+    insert(db, "compact-ledger");
+    const batch = [extracted("compact-ledger", ["Orvelion", "Rulthena"])];
+    applyTranscriptionVocabularyBatch(db, batch);
+    db.prepare("UPDATE documents SET vocabulary_processed_at=NULL WHERE id='compact-ledger'").run();
+    applyTranscriptionVocabularyBatch(db, batch);
+    expect(count(db)).toBe(2);
+    expect(
+      db.prepare("SELECT count(*) AS n FROM transcription_vocabulary_document_terms").get(),
+    ).toEqual({ n: 2 });
+  });
+
+  test("schema setup preserves usable contribution ledgers with the rowid layout", () => {
+    const db = database();
+    db.exec(`
+      DROP TABLE transcription_vocabulary_document_terms;
+      CREATE TABLE transcription_vocabulary_document_terms (
+        document_id TEXT NOT NULL,
+        scope_kind TEXT NOT NULL,
+        scope_key TEXT NOT NULL,
+        term TEXT NOT NULL,
+        PRIMARY KEY (document_id, scope_kind, scope_key, term)
+      );
+    `);
+    insert(db, "existing-ledger");
+    const batch = [extracted("existing-ledger", ["Orvelion"])];
+    applyTranscriptionVocabularyBatch(db, batch);
+    createTranscriptionVocabularyTables(db);
+    createTranscriptionVocabularyTables(db);
+    expect(
+      db
+        .prepare(
+          "SELECT wr FROM pragma_table_list WHERE name='transcription_vocabulary_document_terms'",
+        )
+        .get(),
+    ).toEqual({ wr: 0 });
+    db.prepare(
+      "UPDATE documents SET vocabulary_processed_at=NULL WHERE id='existing-ledger'",
+    ).run();
+    applyTranscriptionVocabularyBatch(db, batch);
+    expect(count(db)).toBe(1);
+    expect(
+      getTranscriptionVocabulary(db, { purpose: "dictation" }, settings).entries.map(
+        (entry) => entry.text,
+      ),
+    ).toEqual(["Orvelion"]);
+  });
+
   test("schema setup installs the indexed recent stream on existing vocabulary tables", () => {
     const db = database();
     db.exec("DROP INDEX idx_transcription_vocabulary_recent");

@@ -1,11 +1,36 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { isCommonVocabularyWord } from "./common-words.js";
 import { commonWordsData } from "./common-words-data.js";
 
 describe("bundled common-word evidence", () => {
+  test("loads lexical sets only on first use and reuses them", async () => {
+    let reads = 0;
+    vi.resetModules();
+    vi.doMock("./common-words-data.js", () => ({
+      commonWordsData: {
+        get languages() {
+          reads++;
+          return { en: "ordinary", fr: "travail" };
+        },
+      },
+    }));
+    try {
+      const lexical = await import("./common-words.js");
+      expect(reads).toBe(0);
+      expect(lexical.isCommonVocabularyWord("ordinary", ["en"])).toBe(true);
+      expect(reads).toBe(1);
+      expect(lexical.isCommonVocabularyWord("travail")).toBe(true);
+      expect(lexical.isCommonVocabularyWord("ordinary", ["fr"])).toBe(false);
+      expect(reads).toBe(1);
+    } finally {
+      vi.doUnmock("./common-words-data.js");
+      vi.resetModules();
+    }
+  });
+
   test("excludes ordinary lexical vocabulary beyond stopwords in seven languages", () => {
     for (const [language, word] of [
       ["en", "information"],

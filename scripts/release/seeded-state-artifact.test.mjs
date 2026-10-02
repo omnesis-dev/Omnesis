@@ -140,6 +140,13 @@ describe("seeded-state artifacts", () => {
     expect(
       output.prepare("SELECT document_id, term FROM transcription_vocabulary_document_terms").get(),
     ).toEqual({ document_id: "doc-1", term: "quorvex" });
+    expect(
+      output
+        .prepare(
+          "SELECT wr FROM pragma_table_list WHERE name='transcription_vocabulary_document_terms'",
+        )
+        .get(),
+    ).toEqual({ wr: 1 });
     output.close();
   });
 

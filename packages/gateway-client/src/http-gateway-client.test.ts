@@ -400,17 +400,39 @@ describe("HttpGatewayClient.transcribe", () => {
     expect(transcriptionContextHeaders.at(-1)).toBeNull();
   });
 
-  test("rejects oversized context before uploading audio", async () => {
+  test("omits oversized context while preserving audio and the language hint", async () => {
     const requestsBefore = transcriptionContextHeaders.length;
-    await expect(
-      client.transcribe(enc("speech"), "audio/ogg", {
-        context: {
-          purpose: "source-audio",
-          conversation: { sourceId: SourceId("fictional-source"), threadId: "x".repeat(9000) },
-        },
-      }),
-    ).rejects.toThrow("Transcription context exceeds");
-    expect(transcriptionContextHeaders.length).toBe(requestsBefore);
+    const result = await client.transcribe(enc("speech"), "audio/ogg", {
+      language: "fr",
+      context: {
+        purpose: "source-audio",
+        conversation: { sourceId: SourceId("fictional-source"), threadId: "x".repeat(9000) },
+      },
+    });
+    expect(result).toMatchObject({ text: "speech", language: "fr" });
+    expect(transcriptionContextHeaders.length).toBe(requestsBefore + 1);
+    expect(transcriptionContextHeaders.at(-1)).toBeNull();
+  });
+
+  test("large groups with valid individual identities preserve ordinary transcription", async () => {
+    const context = {
+      purpose: "source-audio" as const,
+      participants: Array.from({ length: 32 }, (_, index) => ({
+        identifiers: [
+          {
+            kind: "email" as const,
+            value: `${"x".repeat(62)}${String(index).padStart(2, "0")}@${"a".repeat(63)}.${"b".repeat(63)}.${"c".repeat(38)}.example.org`,
+          },
+        ],
+      })),
+    };
+    expect(context.participants.every((person) => person.identifiers[0].value.length <= 254)).toBe(
+      true,
+    );
+    expect(encodeURIComponent(JSON.stringify(context)).length).toBeGreaterThan(8192);
+    const result = await client.transcribe(enc("group speech"), "audio/ogg", { context });
+    expect(result?.text).toBe("group speech");
+    expect(transcriptionContextHeaders.at(-1)).toBeNull();
   });
 
   test("returns null when the gateway reports no transcriber available", async () => {

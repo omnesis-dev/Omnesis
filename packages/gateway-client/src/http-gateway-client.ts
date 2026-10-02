@@ -324,11 +324,12 @@ export class HttpGatewayClient implements GatewayClient {
     // Sends raw bytes (no base64 inflation) with the audio MIME type as
     // Content-Type; the gateway holds them only for the request.
     const qs = opts?.language ? `?language=${encodeURIComponent(opts.language)}` : "";
-    const contextHeader = opts?.context
+    let contextHeader = opts?.context
       ? encodeURIComponent(JSON.stringify(opts.context))
       : undefined;
     if (contextHeader && contextHeader.length > 8192) {
-      throw new RangeError("Transcription context exceeds 8192 encoded bytes");
+      // Optional context must not prevent an otherwise valid audio upload.
+      contextHeader = undefined;
     }
     const res = await this.inferenceFetch(
       "/inference/transcribe",

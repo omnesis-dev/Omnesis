@@ -8,7 +8,7 @@ import type { VocabularySettings } from "./types.js";
 export function resolveVocabularySettings(config: OmnesisConfig): VocabularySettings {
   const settings = config.inference?.transcriptionVocabulary;
   return {
-    enabled: settings?.enabled !== false,
+    enabled: settings?.enabled === true,
     maxTerms: settings?.maxTerms ?? 64,
     maxPromptTokens: settings?.maxPromptTokens ?? 224,
     batchSize: settings?.batchSize ?? 4,
