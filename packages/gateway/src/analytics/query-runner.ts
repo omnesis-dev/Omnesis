@@ -398,8 +398,8 @@ export class AnalyticsQueryRunner {
   /**
    * Most-recent N rows for a table, ordered by its timestamp column when
    * one can be identified. Used by the per-source "recent" endpoint so the
-   * portal can show recent rows for pure-structured sources (Strava,
-   * Screen Time) the same way it shows recent documents for Gmail etc.
+   * portal can show recent rows for pure-structured sources (Screen Time)
+   * the same way it shows recent documents for Gmail etc.
    * The cursor keys on the table's primary key as the catalog describes
    * it; a cursor minted before the table keyed its rows by stream no longer
    * fits that key and is refused as invalid, so the caller starts over.

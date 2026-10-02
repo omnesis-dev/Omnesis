@@ -18,14 +18,17 @@ struct SearchBreadcrumbsView: View {
         let facts = SearchBreadcrumbFormatter.facts(provenance, documentId: documentId)
         VStack(alignment: .leading, spacing: 6) {
             ForEach(Array(facts.enumerated()), id: \.offset) { _, fact in
+                // A branch sits one level under the fact that ends with its colon.
                 HStack(alignment: .top, spacing: 6) {
-                    Text("•")
+                    Text(fact.depth == 0 ? "•" : "◦")
                         .foregroundStyle(Theme.textMuted)
                         .fixedSize()
                         .frame(width: 12, alignment: .leading)
+                        .accessibilityHidden(true)
                     BreadcrumbRichText(fact: fact, store: store) { selectedDocument = $0 }
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .padding(.leading, CGFloat(fact.depth) * 16)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -151,6 +154,17 @@ private struct BreadcrumbRichText: UIViewRepresentable {
     NavigationStack {
         SearchBreadcrumbsView(
             provenance: PreviewMocks.searchProvenance,
+            documentId: "sample-root",
+            store: AppStore.preview()
+        ).padding().background(Theme.bgPrimary)
+    }
+}
+
+@available(iOS 17.0, *)
+#Preview("Search — graph facts, branching thread") {
+    NavigationStack {
+        SearchBreadcrumbsView(
+            provenance: PreviewMocks.searchProvenanceOutline,
             documentId: "sample-root",
             store: AppStore.preview()
         ).padding().background(Theme.bgPrimary)

@@ -87,14 +87,20 @@ export function mayContinuePage(scope: FailureScope): boolean {
  *
  * The distinction is operational, not cosmetic. An `account` limit is escaped
  * by waiting on that account while other accounts keep working. An `app` limit
- * is shared by every account this installation holds for the provider, so
+ * is shared by every account this collector holds for the provider, so
  * backing off one account and letting the others run spends the same exhausted
  * budget from a different direction and keeps it exhausted.
  */
 export type QuotaKind =
   /** Counted per authenticated account. Other accounts are unaffected. */
   | "account"
-  /** Counted per registered application. Every account shares one budget. */
+  /**
+   * Counted per registered application. Every account shares one budget.
+   *
+   * Only for a provider whose accounts share one application credential on a
+   * collector; a provider whose accounts each bring their own key declares
+   * `account`.
+   */
   | "app";
 
 /**

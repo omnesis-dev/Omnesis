@@ -359,6 +359,10 @@ export function mountAuthRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
     const flowId = c.req.query("state") || c.req.query("flowId");
     const code = c.req.query("code");
     const error = c.req.query("error");
+    // Passed on untouched: some platforms report the scopes the operator
+    // actually granted here and nowhere else, and only the provider knows
+    // what it asked for.
+    const scope = c.req.query("scope");
     if (!flowId) {
       return c.html(renderOauthCallbackPage("error", "Missing state/flowId in callback"), 400);
     }
@@ -432,7 +436,12 @@ export function mountAuthRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
     }
 
     try {
-      await wsServer.sendCommand(latch.flow.deviceId, "auth.code", { flowId, code }, 30_000);
+      await wsServer.sendCommand(
+        latch.flow.deviceId,
+        "auth.code",
+        { flowId, code, ...(scope ? { scope } : {}) },
+        30_000,
+      );
       return c.html(
         renderOauthCallbackPage(
           "success",

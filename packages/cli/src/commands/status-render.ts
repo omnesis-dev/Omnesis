@@ -216,8 +216,8 @@ export function renderStatus(data: StatusData, fx: CliFx): void {
     //      document (e.g. browser-history's daily digests sum visits via
     //      `extra.unitCount`). This is the user-meaningful number and
     //      must not be shadowed by a partial analytics table count.
-    //   2. `analyticsRecordCount` — pure-structured sources (screen-time,
-    //      strava) whose primary unit lives in DuckDB, not documents.
+    //   2. `analyticsRecordCount` — pure-structured sources (screen-time)
+    //      whose primary unit lives in DuckDB, not documents.
     //   3. `documentCount` — everything else (gmail, calendar, etc.).
     //
     // Why this order: the analytics catalog keys rows by source TYPE for

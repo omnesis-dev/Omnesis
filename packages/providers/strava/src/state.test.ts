@@ -11,6 +11,7 @@ import {
   type StateOutcome,
 } from "@omnesis/source-sdk";
 import { StravaActivitiesSource } from "./activities.js";
+import { StravaRateLimitTracker } from "./quota.js";
 import { stravaActivitiesStateSpec } from "./state.js";
 import type { StravaActivitiesCursor, StravaSummaryActivity } from "./types.js";
 import type { ListActivitiesParams } from "./client.js";
@@ -44,6 +45,8 @@ function makeActivity(id: number, startDateIso: string): StravaSummaryActivity {
 
 /** Mock client that replays one canned page from `listActivities`. */
 class MockClient {
+  /** The walk checks its budget first; one that has heard nothing allows it. */
+  public quota = new StravaRateLimitTracker();
   constructor(private pages: StravaSummaryActivity[][]) {}
   listActivities(_params: ListActivitiesParams): Promise<StravaSummaryActivity[]> {
     return Promise.resolve(this.pages.shift() ?? []);
@@ -99,6 +102,45 @@ describe("strava-activities declared state", () => {
       ).rejects.toThrow(RefusedSourceStateError);
     },
   );
+  test("preserves the gear an interrupted athlete refresh has left and refuses malformed entries", () => {
+    const stored = { phase: "athlete-refresh", pendingGearIds: ["g1001", "b2002"] };
+    expect(stravaActivitiesStateSpec.decode(stored)).toEqual(stored);
+    for (const pendingGearIds of [null, "g1001", [1001]]) {
+      expect(
+        stravaActivitiesStateSpec.decode({ phase: "athlete-refresh", pendingGearIds }),
+      ).toBeNull();
+    }
+  });
+  test("preserves the phase a walk will hand back to and refuses one it does not know", () => {
+    const stored = { phase: "snapshot-rewalk", snapshotPage: 2, resumePhase: "detail-backfill" };
+    expect(stravaActivitiesStateSpec.decode(stored)).toEqual(stored);
+    for (const resumePhase of [null, "detail", 3]) {
+      expect(stravaActivitiesStateSpec.decode({ phase: "edit-sweep", resumePhase })).toBeNull();
+    }
+  });
+  test("preserves the strikes of activities Strava fails alone and refuses malformed ones", () => {
+    const at = "2026-03-04T10:00:00.000Z";
+    const stored = {
+      phase: "enrich-pending",
+      enrichStrikes: { "streams:302": { count: 1, at }, "detail:301": { count: 2, at } },
+    };
+    expect(stravaActivitiesStateSpec.decode(stored)).toEqual(stored);
+    for (const enrichStrikes of [
+      null,
+      [],
+      { "laps:302": { count: 1, at } },
+      { "streams:302:1": { count: 1, at } },
+      { "streams:abc": { count: 1, at } },
+      { "streams:302": { count: 0, at } },
+      { "streams:302": { count: 1.5, at } },
+      { "streams:302": { count: 1 } },
+      { "streams:302": 1 },
+    ]) {
+      expect(
+        stravaActivitiesStateSpec.decode({ phase: "enrich-pending", enrichStrikes }),
+      ).toBeNull();
+    }
+  });
   test("preserves a valid pending social stamp queue", () => {
     const stored = { phase: "incremental", pendingSocialStamps: ["101", "102"] };
     expect(stravaActivitiesStateSpec.decode(stored)).toEqual(stored);

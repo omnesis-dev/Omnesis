@@ -2185,7 +2185,13 @@ describe("SourceSyncRunner — rate-limit deferral", () => {
     gateway = new RecordingGateway();
   });
 
-  /** Two sources of one provider, on different accounts, in one registry. */
+  /**
+   * Two accounts of one provider type, each registered as its own provider the
+   * way the instantiator builds them: one provider id per account, sharing only
+   * the type. Registering both under one provider id, which nothing in the
+   * collector does, would hide a host that keys an application limit by the
+   * provider id, since the two would then share it.
+   */
   function registerTwo(
     registry: ReturnType<typeof makeRegistry>["registry"],
     failing: RegisteredSource,
@@ -2197,11 +2203,8 @@ describe("SourceSyncRunner — rate-limit deferral", () => {
       cursor: {},
       hasMore: false,
     }));
-    registry.registerProvider({
-      ...makeProvider(failing),
-      id: failing.providerId,
-      sources: [failing, { ...sibling, providerId: failing.providerId }],
-    });
+    registry.registerProvider(makeProvider(failing));
+    registry.registerProvider(makeProvider(sibling));
     return sibling;
   }
 

@@ -73,6 +73,41 @@ describe("stravaCredentialsSpec", () => {
     expect(new RegExp(field!.pattern!).test("226848")).toBe(true);
     expect(new RegExp(field!.pattern!).test("not-a-number")).toBe(false);
   });
+
+  test("client_secret placeholder, pattern and hint agree on 40 hex characters", () => {
+    const field = stravaCredentialsSpec.fields.find((f) => f.name === "client_secret");
+    const pattern = new RegExp(field!.pattern!);
+    expect(pattern.test(CREDS.client_secret)).toBe(true);
+    // A paste that lost its tail is refused by the form, not by Strava after
+    // the whole browser round trip.
+    expect(pattern.test(CREDS.client_secret.slice(0, 32))).toBe(false);
+    expect(pattern.test(CREDS.client_secret.slice(0, 39))).toBe(false);
+    expect(pattern.test(`${CREDS.client_secret}0`)).toBe(false);
+    expect(field!.placeholder).toMatch(/\b40\b/);
+    expect(field!.patternHint).toMatch(/\b40\b/);
+  });
+
+  test("the wizard says the app's owner needs a subscription, and its athletes do not", () => {
+    // Strava deactivates an app on its standard tier whose owner has none, and then
+    // refuses every request made through it. The facts, not the wording, are pinned.
+    const { intro, why, steps } = stravaCredentialsSpec.wizard;
+    expect(intro).toMatch(/subscription/);
+    expect(why).toMatch(/owner\b.*\bsubscription/);
+    expect(why).toMatch(/athletes\b.*\bneed none/);
+    expect(steps[0]?.body).toMatch(/subscription/);
+    // A new app connects one athlete and can be raised to ten.
+    expect(why).toMatch(/\bone athlete\b/);
+    expect(why).toMatch(/\bten\b/);
+  });
+
+  test("the callback domain step covers a gateway with a public address", () => {
+    // A sign-in the gateway catches lands on its public host, and Strava only
+    // redirects inside the app's callback domain — `localhost` alone breaks it.
+    const step = stravaCredentialsSpec.wizard.steps.find((s) => s.body.includes("Callback"));
+    expect(step?.body).toContain("gateway.publicBaseUrl");
+    expect(step?.body).toContain("host name");
+    expect(step?.body).toContain("`localhost`");
+  });
 });
 
 describe("Strava auth helpers", () => {
@@ -89,7 +124,9 @@ describe("Strava auth helpers", () => {
     // screen once the athlete has approved, so a second add silently
     // re-authorizes whoever is already signed in.
     expect(url.searchParams.get("approval_prompt")).toBe("force");
-    expect(url.searchParams.get("scope")).toBe("read,activity:read_all,profile:read_all");
+    expect(url.searchParams.get("scope")).toBe(
+      "read,activity:read,activity:read_all,profile:read_all",
+    );
     expect(url.searchParams.get("state")).toBe("flow-state-1");
   });
 

@@ -82,6 +82,28 @@ describe("createStdinReceiver", () => {
     await expect(receiver.receiveCode()).resolves.toBe("first-code");
   });
 
+  test("a redirect's code arrives with the scope its callback carried, waiting or not", async () => {
+    const stream = new PassThrough();
+    const receiver = createStdinReceiver(stream);
+    const pending = receiver.receiveRedirect();
+    stream.write(line({ type: "code", code: "with-scope", scope: "read,profile" }));
+    await expect(pending).resolves.toEqual({ code: "with-scope", scope: "read,profile" });
+    // The latch keeps the scope for a later reader, and the bare code for the
+    // providers that ask only for that.
+    await expect(receiver.receiveRedirect()).resolves.toEqual({
+      code: "with-scope",
+      scope: "read,profile",
+    });
+    await expect(receiver.receiveCode()).resolves.toBe("with-scope");
+  });
+
+  test("a code delivered without a scope has none", async () => {
+    const stream = new PassThrough();
+    const receiver = createStdinReceiver(stream);
+    stream.write(line({ type: "code", code: "pasted" }));
+    await expect(receiver.receiveRedirect()).resolves.toEqual({ code: "pasted" });
+  });
+
   test("malformed lines are ignored; a later valid code still resolves", async () => {
     const stream = new PassThrough();
     const receiver = createStdinReceiver(stream);

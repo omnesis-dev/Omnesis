@@ -58,6 +58,12 @@
  * a page that rewrites one set of rows and then another is two writes, not one
  * merged set, and merging them would silently drop the second write's
  * intention to follow the first.
+ *
+ * Within one write the host stores `records` first and applies `deletedKeys`
+ * after them, so a row whose delete key the same write names is deleted again
+ * as soon as it is stored. A source replacing a group of rows — an activity's
+ * laps, re-read in full — therefore sends two writes to the table: the
+ * deletion, then the rows.
  */
 
 import type { AnalyticsTableSchema } from "./structured-source.js";
@@ -78,6 +84,10 @@ export interface TableWrite {
 
   /**
    * Rows to delete, each named by the table's declared delete key.
+   *
+   * Applied after this write's {@link records}, so a key that names one of
+   * them deletes it. To replace a group of rows, delete in one write and write
+   * the rows in the next.
    *
    * A key is a record over `AnalyticsTableSchema.deleteKey` (or, when the
    * table declares none, over its primary key): `{ item_id, transaction_id }`
