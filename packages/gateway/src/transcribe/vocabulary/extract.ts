@@ -11,9 +11,29 @@ import {
 
 import { isCommonVocabularyWord } from "./common-words.js";
 
-const WORD = /[\p{L}][\p{L}\p{M}\p{N}'’.-]{1,47}/gu;
+// Consume the complete lexical run before applying the length cap. A bounded
+// regex would turn oversized strings into several invented vocabulary hints.
+const WORD = /[\p{L}][\p{L}\p{M}\p{N}'’.-]+/gu;
+const withinWordLimit = (word: string): boolean =>
+  word.length <= 48 || (word.length <= 96 && [...word].length <= 48);
 const normalize = (s: string): string => s.normalize("NFC").toLocaleLowerCase("und");
 const isCommon = (s: string): boolean => isCommonVocabularyWord(s);
+
+/** Remove complete identifiers before tokenization can split them into hints. */
+function stripIdentifiers(text: string): string {
+  return (
+    text
+      // Consume whole tokens once: searching for a required @ at every offset
+      // is quadratic on long delimiter-free strings. Drop malformed addresses
+      // too, so no identifier fragment survives.
+      .replace(/[^\s<>]+/gu, (token) => (/https?:\/\/|\bwww\.|@/iu.test(token) ? " " : token))
+      // An optional dotted suffix consumes ordinary label runs once, while
+      // only complete dotted identifiers are removed.
+      .replace(/\b[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)*\b/gu, (token) =>
+        token.includes(".") ? " " : token,
+      )
+  );
+}
 
 /** Bounded pure CPU work; the scheduler's CPU pool owns this function. */
 export function extractTranscriptionVocabulary(
@@ -36,18 +56,32 @@ export function extractTranscriptionVocabulary(
     // without upper/lower case. Limit names as well as scanned text.
     for (const person of doc.people.slice(0, 16)) {
       if (person.name.length <= 80) {
-        add(person.name, 3, true);
-        for (const word of person.name.match(WORD) ?? []) add(word, 2.5);
+        // People without a display name can legitimately use an email as
+        // their canonical name. Neither it nor its fragments are vocabulary.
+        const name = stripIdentifiers(person.name)
+          .replace(/[<>()[\]{}]/gu, " ")
+          .replace(/\s+/gu, " ")
+          .trim();
+        add(name, 3, true);
+        for (const word of name.match(WORD) ?? []) {
+          if (withinWordLimit(word)) add(word, 2.5);
+        }
       }
     }
-    const text = `${doc.title.slice(0, 256)}\n${doc.content.slice(0, settings.maxDocumentChars)}`
-      // Vocabulary names are spoken phrases, not addresses or URL fragments.
-      // Remove the complete identifier before tokenization can split it.
-      .replace(/https?:\/\/[^\s<>]+|\bwww\.[^\s<>]+|[^\s<>@]+@[^\s<>@]+/giu, " ")
-      .replace(/\b[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+\b/gu, " ");
+    const text = stripIdentifiers(
+      `${doc.title.slice(0, 256)}\n${doc.content.slice(0, settings.maxDocumentChars)}`,
+    );
     const words = new Map<string, { text: string; benefit: number }>();
+    const wholeWordStarts = new Set<number>();
+    const wholeWordEnds = new Set<number>();
     for (const match of text.matchAll(WORD)) {
-      const word = match[0];
+      // Reject oversized runs before trimming: even a suffix regex can
+      // rescan a long punctuation run when it is not at the string's end.
+      if (match[0].length > 96) continue;
+      const word = match[0].replace(/[.'’ -]+$/gu, "");
+      if (!withinWordLimit(word)) continue;
+      wholeWordStarts.add(match.index);
+      wholeWordEnds.add(match.index + word.length);
       if (isCommon(word)) continue;
       const key = normalize(word);
       const acronym = /^[\p{Lu}]{2,10}$/u.test(word);
@@ -66,7 +100,14 @@ export function extractTranscriptionVocabulary(
     // instruction. Names with common components remain represented above.
     const phrase = /\b[\p{Lu}][\p{L}\p{M}]{2,30}(?: [\p{Lu}][\p{L}\p{M}]{2,30}){1,2}\b/gu;
     for (const match of text.matchAll(phrase)) {
-      if (match[0].split(" ").some((word) => !isCommon(word))) add(match[0], 2.5);
+      if (
+        // The phrase must start and end at complete words at this occurrence;
+        // another occurrence cannot legitimize an oversized token's suffix.
+        wholeWordStarts.has(match.index) &&
+        wholeWordEnds.has(match.index + match[0].length) &&
+        match[0].split(" ").some((word) => !isCommon(word))
+      )
+        add(match[0], 2.5);
     }
     const scopes: ExtractedVocabularyDocument["scopes"] = [{ kind: "global", key: "" }];
     const people = new Set(
