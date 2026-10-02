@@ -83,9 +83,6 @@ export function warningFor(status: CaptureStatus): string {
       discardedVisits === 1 ? " was" : "s were"
     } discarded; new captures continue.`;
   }
-  if (status.handoffOverflow) {
-    return `Durable tab-to-worker recovery was dropped for ${status.handoffOverflow.discarded} staged capture${status.handoffOverflow.discarded === 1 ? "" : "s"} after the local handoff budget was reached. Affected captures can still sync while their tabs remain open.`;
-  }
   if (status.failure) {
     const subject = status.failure.kind === "document" ? "page upload" : "visit-analytics upload";
     return `${status.failure.count} ${subject}${status.failure.count === 1 ? " was" : "s were"} discarded: ${status.failure.reason}.`;

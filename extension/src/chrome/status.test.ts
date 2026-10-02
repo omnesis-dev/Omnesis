@@ -63,7 +63,6 @@ describe("badgeFor — toolbar badge priority", () => {
           at: 1,
         },
       }),
-      status({ handoffOverflow: { at: 1, discarded: 2 } }),
       status({ queueCorruption: { at: 1, discarded: 2 } }),
       status({ queueOverflow: { at: 1, discardedDocuments: 1, discardedVisits: 2 } }),
       status({ pause: { paused: true, until: null } }),
@@ -154,9 +153,16 @@ describe("badgeFor — toolbar badge priority", () => {
     expect(b).toEqual(badgeFor(status({ serverState })));
   });
 
-  it("surfaces bounded handoff-outbox loss", () => {
-    const b = badgeFor(status({ handoffOverflow: { at: 1, discarded: 2 } }));
-    expect(b.text).toBe("!");
+  it("does not badge recovery-copy evictions as an error", () => {
+    const history = { handoffOverflow: { at: 1, discarded: 3 } };
+    expect(badgeFor(status(history))).toEqual(badgeFor(status()));
+    expect(badgeFor(status({ ...history, queueDepth: 5 }))).toEqual(
+      badgeFor(status({ queueDepth: 5 })),
+    );
+    const handoffFailure = { at: 2, attempts: 4 };
+    expect(badgeFor(status({ ...history, handoffFailure }))).toEqual(
+      badgeFor(status({ handoffFailure })),
+    );
   });
 
   it("surfaces a repaired-but-lossy queue corruption", () => {
