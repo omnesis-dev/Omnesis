@@ -44,6 +44,73 @@ describe("adaptTranscriptionVocabulary", () => {
     expect(result?.initial_prompt).toBe("Étoile Labs");
   });
 
+  test("packed names cover their contiguous components and leave room for other hints", () => {
+    const result = adaptTranscriptionVocabulary(
+      vocabulary(
+        ["Tessa Rowan Vale", 10],
+        ["Rowan Vale", 9],
+        ["Tessa", 8],
+        ["Vale", 7],
+        ["Umbriolet", 6],
+      ),
+      { runtime: "smart-whisper", maxPromptTokens: 27 },
+    );
+    expect(result?.initial_prompt).toBe("Tessa Rowan Vale, Umbriolet");
+  });
+
+  test("a skipped oversized name does not cover a component", () => {
+    const result = adaptTranscriptionVocabulary(
+      vocabulary(["Tessa Rowan Vale", 10], ["Rowan", 9]),
+      { runtime: "smart-whisper", maxPromptTokens: 5 },
+    );
+    expect(result?.initial_prompt).toBe("Rowan");
+  });
+
+  test("component matching normalizes Unicode whitespace, case and accents", () => {
+    const result = adaptTranscriptionVocabulary(
+      vocabulary(["E\u0301loria\u00a0\tLabs", 10], ["ÉLORIA", 9], ["labs", 8], ["Velmora", 7]),
+      { runtime: "smart-whisper" },
+    );
+    expect(result?.initial_prompt).toBe("Éloria Labs, Velmora");
+  });
+
+  test("hyphens and apostrophes retain their complete word boundaries", () => {
+    const result = adaptTranscriptionVocabulary(
+      vocabulary(
+        ["North-Rill Labs", 10],
+        ["Sylvara d’Arven", 9],
+        ["Labs", 8],
+        ["d’Arven", 7],
+        ["Rill", 6],
+        ["Arven", 5],
+      ),
+      { runtime: "smart-whisper" },
+    );
+    expect(result?.initial_prompt).toBe("North-Rill Labs, Sylvara d’Arven, Rill, Arven");
+  });
+
+  test("unsegmented CJK text does not cover substrings", () => {
+    const result = adaptTranscriptionVocabulary(
+      vocabulary(["雨庭工房", 10], ["雨庭", 9], ["工房", 8]),
+      { runtime: "smart-whisper" },
+    );
+    expect(result?.initial_prompt).toBe("雨庭工房, 雨庭, 工房");
+  });
+
+  test("coverage never joins separate packed hints or noncontiguous words", () => {
+    const result = adaptTranscriptionVocabulary(
+      vocabulary(
+        ["Tessa", 10],
+        ["Rowan", 9],
+        ["Tessa Rowan", 8],
+        ["Miro Sela Vale", 7],
+        ["Miro Vale", 6],
+      ),
+      { runtime: "smart-whisper" },
+    );
+    expect(result?.initial_prompt).toBe("Tessa, Rowan, Tessa Rowan, Miro Sela Vale, Miro Vale");
+  });
+
   test("fails closed for unknown capabilities and unusable candidates", () => {
     expect(
       adaptTranscriptionVocabulary(vocabulary(["Northstar", 1]), { runtime: "unknown" }),

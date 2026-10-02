@@ -48,13 +48,30 @@ export function adaptTranscriptionVocabulary(
     .sort((a, b) => b.score - a.score || a.text.localeCompare(b.text));
 
   const seen = new Set<string>();
+  const packedWords: string[][] = [];
   let prompt = "";
   for (const { text } of candidates) {
     const key = text.toLocaleLowerCase("und");
     if (seen.has(key)) continue;
     seen.add(key);
+    const words = key.split(" ");
+    // Whitespace words preserve hyphens, apostrophes and unsegmented scripts.
+    // Only a phrase that actually fits can supply its components to Whisper.
+    if (
+      packedWords.some((phrase) =>
+        phrase.some(
+          (_word, start) =>
+            start + words.length <= phrase.length &&
+            words.every((word, offset) => phrase[start + offset] === word),
+        ),
+      )
+    )
+      continue;
     const next = prompt ? `${prompt}, ${text}` : text;
-    if (Buffer.byteLength(next, "utf8") <= budget) prompt = next;
+    if (Buffer.byteLength(next, "utf8") <= budget) {
+      prompt = next;
+      packedWords.push(words);
+    }
   }
   if (!prompt) return undefined;
   return { initial_prompt: prompt, no_context: true, n_max_text_ctx: budget };

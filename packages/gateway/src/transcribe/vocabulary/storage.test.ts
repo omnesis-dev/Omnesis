@@ -6,6 +6,7 @@ import Database from "better-sqlite3";
 import { SourceId } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
 import {
+  createTranscriptionVocabularyTables,
   installTranscriptionVocabulary,
   fetchTranscriptionVocabularyBatch,
   applyTranscriptionVocabularyBatch,
@@ -74,6 +75,71 @@ function count(db: Db): number {
 }
 
 describe("vocabulary materialization", () => {
+  test("schema setup installs the indexed recent stream on existing vocabulary tables", () => {
+    const db = database();
+    db.exec("DROP INDEX idx_transcription_vocabulary_recent");
+    createTranscriptionVocabularyTables(db);
+    createTranscriptionVocabularyTables(db);
+    const plan = db
+      .prepare(
+        "EXPLAIN QUERY PLAN SELECT term FROM transcription_vocabulary_terms INDEXED BY idx_transcription_vocabulary_recent WHERE scope_kind='person' AND scope_key='recent-speaker' ORDER BY last_seen DESC,term LIMIT 128",
+      )
+      .all() as Array<{ detail: string }>;
+    expect(plan.map((row) => row.detail).join(" ")).toContain(
+      "idx_transcription_vocabulary_recent",
+    );
+    expect(plan.map((row) => row.detail).join(" ")).not.toContain("TEMP B-TREE");
+  });
+
+  test("recent relationship terms survive frequency crowding without losing frequent terms", () => {
+    const db = database();
+    db.prepare(
+      "INSERT INTO people(id,canonical_name,source,first_seen,last_seen,created_at,updated_at) VALUES ('recent-speaker','Orvella','fictional','2026-01-01','2026-01-01','2026-01-01','2026-01-01')",
+    ).run();
+    const seed = db.prepare(
+      "INSERT INTO transcription_vocabulary_terms(scope_kind,scope_key,term,text,document_count,benefit,base_score,last_seen) VALUES (?,?,?,?,?,3,?,?)",
+    );
+    for (const [kind, key] of [
+      ["global", ""],
+      ["person", "recent-speaker"],
+    ]) {
+      for (let i = 0; i < 200; i++) {
+        const text = `Dormant${String.fromCharCode(97 + Math.floor(i / 26), 97 + (i % 26))}`;
+        const count = i === 189 ? 10000 : 100;
+        seed.run(kind, key, text.toLowerCase(), text, count, 3 * Math.log1p(count), "2010-01-01");
+      }
+      seed.run(kind, key, "umbriolet", "Umbriolet", 2, 3 * Math.log1p(2), "2026-01-01");
+    }
+    const result = getTranscriptionVocabulary(
+      db,
+      {
+        purpose: "source-audio",
+        speaker: { personId: "recent-speaker" },
+        recordedAt: "2026-01-01",
+      },
+      settings,
+    );
+    expect(result.entries[0].text).toBe("Umbriolet");
+    expect(result.entries.map((entry) => entry.text)).toContain("Dormanthh");
+    expect(result.entries).toHaveLength(settings.maxTerms);
+    // Both profiles contribute, while each profile's two streams count once.
+    const expected = ((3 * Math.log1p(2)) / (1 + Math.log1p(2))) * (1 + 3 * 3);
+    expect(result.entries[0].score).toBeCloseTo(expected, 10);
+  });
+
+  test("overlapping frequency and recent streams do not double a profile score", () => {
+    const db = database();
+    insert(db, "single-profile");
+    applyTranscriptionVocabularyBatch(db, [extracted("single-profile", ["Orvelion"])]);
+    const result = getTranscriptionVocabulary(
+      db,
+      { purpose: "dictation", recordedAt: "2026-01-01" },
+      settings,
+    );
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0].score).toBeCloseTo((3 * Math.log1p(1)) / (1 + Math.log1p(1)), 10);
+  });
+
   test("indexed pending fetch bounds text; resolved people are required", () => {
     const db = database();
     insert(db, "ready", "Q".repeat(1000));

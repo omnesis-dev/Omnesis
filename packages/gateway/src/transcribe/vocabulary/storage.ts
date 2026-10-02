@@ -3,13 +3,7 @@
 
 import { normalizeEmail } from "@omnesis/core";
 import { createVoiceNoteTables } from "../../voice-notes/storage.js";
-import type {
-  TranscriptionContext,
-  TranscriptionPerson,
-  TranscriptionVocabulary,
-} from "@omnesis/core";
 import { findPersonByAlias } from "../../data/repositories/PersonRepository.js";
-import type { Db } from "../../data/types.js";
 import {
   vocabularyConversationKey,
   type VocabularySettings,
@@ -18,6 +12,12 @@ import {
   type VocabularyApplyResult,
   type VocabularyScope,
 } from "./types.js";
+import type {
+  TranscriptionContext,
+  TranscriptionPerson,
+  TranscriptionVocabulary,
+} from "@omnesis/core";
+import type { Db } from "../../data/types.js";
 
 export function createTranscriptionVocabularyTables(db: Db): void {
   db.exec(`
@@ -34,6 +34,8 @@ export function createTranscriptionVocabularyTables(db: Db): void {
     );
     CREATE INDEX IF NOT EXISTS idx_transcription_vocabulary_rank
       ON transcription_vocabulary_terms(scope_kind, scope_key, base_score DESC, term);
+    CREATE INDEX IF NOT EXISTS idx_transcription_vocabulary_recent
+      ON transcription_vocabulary_terms(scope_kind, scope_key, last_seen DESC, term);
     -- Intentionally retained on document deletion in V1. These keys make
     -- replay and additive updates idempotent, without subtracting vocabulary.
     CREATE TABLE IF NOT EXISTS transcription_vocabulary_document_terms (
@@ -275,6 +277,9 @@ export function getTranscriptionVocabulary(
   const top = db.prepare(`SELECT term,text,document_count,benefit,base_score,last_seen
     FROM transcription_vocabulary_terms INDEXED BY idx_transcription_vocabulary_rank
     WHERE scope_kind=? AND scope_key=? ORDER BY base_score DESC,term LIMIT ?`);
+  const recent = db.prepare(`SELECT term,text,document_count,benefit,base_score,last_seen
+    FROM transcription_vocabulary_terms INDEXED BY idx_transcription_vocabulary_recent
+    WHERE scope_kind=? AND scope_key=? ORDER BY last_seen DESC,term LIMIT ?`);
   const global = db.prepare(
     `SELECT document_count FROM transcription_vocabulary_terms WHERE scope_kind='global' AND scope_key='' AND term=?`,
   );
@@ -284,7 +289,13 @@ export function getTranscriptionVocabulary(
   const anchor = Number.isFinite(parsedTime) ? parsedTime : Date.now();
   const limit = Math.min(256, Math.max(32, settings.maxTerms * 2));
   for (const profile of profiles.slice(0, 16)) {
-    const rows = top.all(profile.kind, profile.key, limit) as Array<{
+    // Frequency-only retrieval can discard a recent relationship term before
+    // its context score is considered. Union two bounded indexed streams and
+    // count each term once per profile, retaining cross-profile contributions.
+    const rows = [
+      ...top.all(profile.kind, profile.key, limit),
+      ...recent.all(profile.kind, profile.key, Math.min(limit, 128)),
+    ] as Array<{
       term: string;
       text: string;
       document_count: number;
@@ -292,7 +303,10 @@ export function getTranscriptionVocabulary(
       base_score: number;
       last_seen: string;
     }>;
+    const seen = new Set<string>();
     for (const row of rows) {
+      if (seen.has(row.term)) continue;
+      seen.add(row.term);
       if (row.benefit <= 1 && row.document_count < 2) continue;
       let total = globalCounts.get(row.term);
       if (total === undefined) {
