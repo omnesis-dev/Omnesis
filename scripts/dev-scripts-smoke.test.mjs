@@ -2040,6 +2040,9 @@ describe("full-validation workflow topology", () => {
       const step = (job, name) => ci.jobs[job].steps.find((s) => s.name === name);
       for (const name of ["lane [production-audit]", "lane [linux-lint]", "lane [format]"])
         expect(step("node", name).if, name).toBe("${{ inputs.scope == 'full' }}");
+      expect(ci.jobs.node["runs-on"]).toBe("ubuntu-latest");
+      expect(step("node", "lane [linux-lint]").env.NODE_OPTIONS).toBe("--max-old-space-size=8192");
+      expect(step("node", "lane [linux-lint]").run).toBe("exec node scripts/run-check.mjs lint");
       for (const name of ["lane [linux-typecheck]", "lane [suite-typecheck]"])
         expect(step("node", name).if, name).toBe(
           "${{ inputs.scope == 'full' || inputs.projects == 'all' }}",
