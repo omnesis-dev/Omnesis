@@ -6,7 +6,7 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "dependencies": {
-    "yaml": "^2.9.1",
+    "yaml": "^2.9.0",
     "zod": "^4.6.5"
   },
   "files": [
