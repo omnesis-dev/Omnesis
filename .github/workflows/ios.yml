@@ -18,17 +18,10 @@ env:
 
 jobs:
   build-and-test:
-    # The project requires Xcode 26 (project.yml `xcodeVersion`), which the
-    # macOS 26 image carries as its default Xcode together with the iPhone 17
-    # simulator named below.
+    # The project requires Xcode 26. Prepare its actual installed simulator
+    # runtimes and use one booted iPhone by UDID rather than an image's name.
     runs-on: macos-26
     timeout-minutes: 60
-
-    env:
-      # The destination must name a simulator runtime installed on the macOS
-      # runner. OS=latest picks the newest installed runtime; bump the device
-      # name as the runner's Xcode / simulators are upgraded.
-      IOS_DESTINATION: "platform=iOS Simulator,name=iPhone 17,OS=latest"
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -44,6 +37,11 @@ jobs:
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
       - name: Show Xcode version
         run: xcodebuild -version
+
+      - name: Prepare iPhone simulator
+        run: |
+          udid="$(node scripts/ci/prepare-ios-simulator.mjs)"
+          echo "IOS_DESTINATION=platform=iOS Simulator,id=$udid" >> "$GITHUB_ENV"
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -124,7 +122,6 @@ jobs:
     timeout-minutes: 60
     env:
       OMNESIS_CONFIG_DIR: /tmp/omnesis-ios-ci-${{ github.run_id }}
-      OMNESIS_E2E_DEST: "platform=iOS Simulator,name=iPhone 17,OS=latest"
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -146,6 +143,11 @@ jobs:
 
       - name: Install dependencies
         run: scripts/ci/npm-ci.sh
+
+      - name: Prepare iPhone simulator
+        run: |
+          udid="$(node scripts/ci/prepare-ios-simulator.mjs)"
+          echo "OMNESIS_E2E_DEST=platform=iOS Simulator,id=$udid" >> "$GITHUB_ENV"
 
       - name: Install XcodeGen
         run: brew install xcodegen

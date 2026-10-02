@@ -74,10 +74,26 @@ describe("capture status presentation", () => {
       status({ connectivity: { reachable: true, degraded: true, at: 1 } }),
       status({ queueCorruption: { at: 1, discarded: 2 } }),
       status({ queueOverflow: { at: 1, discardedDocuments: 1, discardedVisits: 2 } }),
-      status({ handoffOverflow: { at: 1, discarded: 2 } }),
       status({ failure: { kind: "document", status: 422, reason: "invented", at: 1, count: 1 } }),
     ];
     for (const value of warningStates) expect(warningFor(value).trim()).not.toBe("");
+  });
+
+  it("does not warn about recovery-copy evictions when capture is healthy", () => {
+    const value = status({ handoffOverflow: { at: 1, discarded: 3 } });
+    expect(warningFor(value)).toBe("");
+    expect(hasActiveFailure(value)).toBe(false);
+  });
+
+  it("still reports a current handoff failure alongside recovery history", () => {
+    const value = status({
+      handoffOverflow: { at: 1, discarded: 3 },
+      handoffFailure: { at: 2, attempts: 4 },
+    });
+    expect(warningFor(value)).toBe(
+      "Capture handoff is delayed. Omnesis is retrying; keep the page open.",
+    );
+    expect(hasActiveFailure(value)).toBe(true);
   });
 
   it("gives gateway health priority over lower-priority warnings", () => {

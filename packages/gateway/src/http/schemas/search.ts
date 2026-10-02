@@ -21,6 +21,8 @@ export const searchBody = z
     // When true, hits whose source declares a `boundDocument` carry
     // their co-described DuckDB analytics row in `boundRow`.
     includeBoundRow: z.boolean().optional(),
+    // Add bounded graph facts without changing the ordinary search ranking.
+    includeGraphContext: z.boolean().optional(),
   })
   .passthrough();
 export type SearchBody = z.infer<typeof searchBody>;

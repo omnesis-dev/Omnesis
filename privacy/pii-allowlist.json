@@ -819,11 +819,6 @@
       "reason": "reviewed existing fixture"
     },
     {
-      "value": "i@izs.me",
-      "paths": ["package-lock.json"],
-      "reason": "public package maintainer contact in npm registry deprecation metadata"
-    },
-    {
       "value": "image001.png@01dccc25.ebf",
       "paths": ["packages/gateway/src/domain/MergeCandidateDetector.ts"],
       "reason": "reviewed existing fixture"

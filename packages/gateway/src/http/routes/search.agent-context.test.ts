@@ -93,7 +93,7 @@ describe("operator agent search context", () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({
         indexer: { status: "ready" },
-        ...(enabled ? { agentContextAvailable: true } : {}),
+        ...(enabled ? { agentContextAvailable: true, graphContextAvailable: true } : {}),
       });
     },
   );
@@ -104,7 +104,10 @@ describe("operator agent search context", () => {
       headers: { Authorization: `Bearer ${token([SCOPE_READ])}` },
     });
     expect(response.status).toBe(200);
-    expect(await response.json()).not.toHaveProperty("agentContextAvailable");
+    expect(await response.json()).toEqual({
+      indexer: { status: "ready" },
+      graphContextAvailable: true,
+    });
   });
 
   test.each([undefined, false])("is absent without an enabled pipeline: %s", async (enabled) => {
@@ -182,6 +185,67 @@ describe("operator agent search context", () => {
     ).toBe(200);
     expect(searchPipeline.search).toHaveBeenCalledWith({ text: "agreement" });
   });
+
+  test("read-only mobile requests opt into graph facts while retaining the search response", async () => {
+    const searchPipeline = pipeline(true);
+    const app = createServer(db, dbPath, { searchPipeline });
+    const response = await app.request(
+      "/search",
+      request({ text: "agreement", verbose: true, includeGraphContext: true }, token([SCOPE_READ])),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      results: [hit],
+      timing: { totalMs: 2, bm25Candidates: 4, vectorCandidates: 3 },
+    });
+    expect(searchPipeline.search).toHaveBeenCalledWith(
+      { text: "agreement", verbose: true },
+      undefined,
+      { graphContext: true },
+    );
+  });
+
+  test.each([false, undefined])(
+    "disabled or omitted opt-in keeps the legacy call: %s",
+    async (includeGraphContext) => {
+      const searchPipeline = pipeline(true);
+      const app = createServer(db, dbPath, { searchPipeline });
+      const response = await app.request(
+        "/search",
+        request({ text: "agreement", includeGraphContext }, token([SCOPE_READ])),
+      );
+      expect(response.status).toBe(200);
+      expect(searchPipeline.search).toHaveBeenCalledWith({ text: "agreement" });
+    },
+  );
+
+  test("a disabled gateway ignores the graph opt-in", async () => {
+    const searchPipeline = pipeline(false);
+    const app = createServer(db, dbPath, { searchPipeline });
+    const response = await app.request(
+      "/search",
+      request({ text: "agreement", includeGraphContext: true }, token([SCOPE_READ])),
+    );
+    expect(response.status).toBe(200);
+    expect(searchPipeline.search).toHaveBeenCalledWith({ text: "agreement" });
+  });
+
+  test.each(["true", 1, {}])(
+    "rejects invalid graph opt-in values: %j",
+    async (includeGraphContext) => {
+      const searchPipeline = pipeline(true);
+      const app = createServer(db, dbPath, { searchPipeline });
+      expect(
+        (
+          await app.request(
+            "/search",
+            request({ text: "agreement", includeGraphContext }, token([SCOPE_READ])),
+          )
+        ).status,
+      ).toBe(400);
+      expect(searchPipeline.search).not.toHaveBeenCalled();
+    },
+  );
 });
 
 function injectedApp(auth: AuthContext, port: SearchPort, searchPipeline?: SearchPipeline) {
@@ -219,6 +283,7 @@ describe("agent context restricted identity and cancellation", () => {
 
   test("denies OAuth principals even if an identity carries broad legacy scopes", async () => {
     const search = vi.fn();
+    const searchPipeline = pipeline(true);
     const app = injectedApp(
       {
         authMethod: "principal-oauth",
@@ -247,11 +312,20 @@ describe("agent context restricted identity and cancellation", () => {
         expiresAt: Date.now() + 60_000,
       },
       { search },
+      searchPipeline,
     );
     expect((await app.request(PATH, request({ text: "agreement" }))).status).toBe(403);
     const readiness = await app.request("/search/readiness");
     expect(readiness.status).toBe(200);
     expect(await readiness.json()).not.toHaveProperty("agentContextAvailable");
+    expect(await (await app.request("/search/readiness")).json()).not.toHaveProperty(
+      "graphContextAvailable",
+    );
+    expect(
+      (await app.request("/search", request({ text: "agreement", includeGraphContext: true })))
+        .status,
+    ).toBe(200);
+    expect(searchPipeline.search).toHaveBeenCalledWith({ text: "agreement" });
     expect(search).not.toHaveBeenCalled();
   });
 

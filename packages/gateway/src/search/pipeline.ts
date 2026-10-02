@@ -290,6 +290,8 @@ export class SearchPipeline {
     },
     options?: {
       agentContext?: boolean;
+      /** Enrich ordinary ranked hits without changing their membership or order. */
+      graphContext?: boolean;
       excludeDocumentIds?: readonly string[] | (() => readonly string[]);
     },
   ): Promise<SearchResponse> {
@@ -477,6 +479,7 @@ export class SearchPipeline {
     // eligible extracted-text identities and retain their provenance. Neither
     // hash establishes identical file bytes. The candidate core already
     // hydrated chunk text and fetched hashes, so neither path rereads index.db.
+    // See #269 — retire the disabled-v2 agent fallback after the rollout proves reliable.
     const v2 = resolveSearchV2Config(this.searchConfig);
     if (
       options?.agentContext &&
@@ -494,6 +497,30 @@ export class SearchPipeline {
     } else {
       ctx.results = dedupeByContentHashWith(cg.contentHashByDoc, ctx.results, ctx.limit);
       this.hydrateMetadataFields(ctx.results);
+      if (
+        options?.graphContext &&
+        v2.enabled &&
+        this.gatewayDb &&
+        (!authorization || authorization.graphContext === "unrestricted")
+      ) {
+        // A singleton keeps each result's own root, score and snippet intact.
+        // The same bounded provenance reader discovers its off-pool copies
+        // and trails. Only the configured top results pay for graph traversal.
+        const db = this.gatewayDb;
+        const topN = Number.isFinite(v2.topN) ? Math.max(0, Math.min(10, Math.trunc(v2.topN))) : 0;
+        ctx.results = ctx.results.map((hit, rank) => {
+          if (rank >= topN) return hit;
+          return (
+            enrichAgentSearch(db, [hit], {
+              ...v2,
+              topN: 1,
+              limit: 1,
+              excludeDocumentIds: options.excludeDocumentIds,
+              indexedContentHashes: cg.contentHashByDoc,
+            })[0] ?? hit
+          );
+        });
+      }
     }
     if (query.includeBoundRow) await this.hydrateBoundRows(ctx.results);
 
@@ -557,7 +584,7 @@ export class SearchPipeline {
     };
   }
 
-  /** Internal enrichment flag; public search never opts into the agent projection. */
+  /** Enables bounded graph enrichment for agent and opted-in client searches. */
   get agentSearchV2Enabled(): boolean {
     return resolveSearchV2Config(this.searchConfig).enabled;
   }
