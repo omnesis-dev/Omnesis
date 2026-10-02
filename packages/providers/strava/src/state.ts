@@ -20,13 +20,13 @@
  * just re-list activities, it clears the enrichment stamps on the account's
  * entire history and sends every activity back through `detail-backfill`,
  * `social-backfill`, `zones-backfill` and `streams-backfill`: 1 + 2 + 1 + 1 =
- * 5 calls per activity, not just the new ones. An account with a couple of
- * thousand activities — unremarkable after a few years on Strava — is tens of
- * thousands of calls against a read quota this source already treats as ~90
- * calls per 15-minute window (see `quota.ts`'s `DEFAULT_SAFETY_PCT`) and under
- * a thousand per day: days of quota-limited grinding to reproduce data the
- * account already had. `onUnreadable: "stop"` refuses instead of paying that
- * cost silently, and leaves the bookmark for a build that can read it.
+ * 5 calls per activity, not just the new ones. For an account with a long
+ * history that is many thousands of calls against a read quota this source
+ * already treats as ~80 calls per 15-minute window (see `quota.ts`'s
+ * `ENRICHMENT_SAFETY_PCT`) and 800 per day: days of quota-limited grinding to
+ * reproduce data the account already had. `onUnreadable: "stop"` refuses
+ * instead of paying that cost silently, and leaves the bookmark for a build
+ * that can read it.
  */
 
 import { STRAVA_PHASES } from "./types.js";
@@ -61,6 +61,24 @@ function isOptionalStringArray(value: unknown): boolean {
   );
 }
 
+/** `enrichStrikes`: each key a tier and an activity id, each value a count and a time. */
+function isOptionalStrikes(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!isRecord(value)) return false;
+  return Object.entries(value).every(([key, strike]) => {
+    const [tier, id, ...rest] = key.split(":");
+    return (
+      rest.length === 0 &&
+      TIERS.has(tier ?? "") &&
+      /^\d+$/.test(id ?? "") &&
+      isRecord(strike) &&
+      Number.isSafeInteger(strike.count) &&
+      (strike.count as number) > 0 &&
+      typeof strike.at === "string"
+    );
+  });
+}
+
 export const stravaActivitiesStateSpec: SourceStateSpec<StravaActivitiesCursor> = {
   version: STRAVA_ACTIVITIES_STATE_VERSION,
 
@@ -70,8 +88,9 @@ export const stravaActivitiesStateSpec: SourceStateSpec<StravaActivitiesCursor> 
    * flat shape — there is no settled-vs-partial split to reconcile the way
    * Obsidian's cycle bookkeeping needs one. Checking each field's type once
    * covers a mid-`snapshot-rewalk` page (`snapshotIds` filling up), a
-   * mid-`edit-sweep` page, every enrichment tier's pass-through cursor, and
-   * the settled `incremental` shape alike.
+   * mid-`edit-sweep` page and the phase either walk will hand back to, every
+   * enrichment tier's pass-through cursor, and the settled `incremental` shape
+   * alike.
    */
   decode(value: unknown): StravaActivitiesCursor | null {
     if (!isRecord(value)) return null;
@@ -89,8 +108,14 @@ export const stravaActivitiesStateSpec: SourceStateSpec<StravaActivitiesCursor> 
     if (!isOptionalNumber(value.editSweepAfter)) return null;
     if (!isOptionalNumber(value.editSweepPage)) return null;
     if (!isOptionalString(value.lastAthleteRefreshAt)) return null;
+    if (!isOptionalStringArray(value.pendingGearIds)) return null;
+    if (!isOptionalStrikes(value.enrichStrikes)) return null;
     if (value.enrichTier !== undefined) {
       if (typeof value.enrichTier !== "string" || !TIERS.has(value.enrichTier)) return null;
+    }
+    if (value.resumePhase !== undefined) {
+      if (typeof value.resumePhase !== "string" || !STRAVA_PHASES.has(value.resumePhase))
+        return null;
     }
     return value as unknown as StravaActivitiesCursor;
   },

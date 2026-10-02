@@ -206,7 +206,17 @@ export type ShowableChallenge = RedirectChallenge | QrChallenge | WaitNotice;
 
 /** What the operator's answer to a given challenge looks like. */
 export type AuthAnswer<C extends AskableChallenge> = C extends { kind: "redirect" }
-  ? { code: string; state?: string }
+  ? {
+      code: string;
+      state?: string;
+      /**
+       * The callback's own `scope` parameter, when the redirect reached the
+       * gateway carrying one. A platform that reports what was granted only
+       * there — not in its token response — has no other way to learn that
+       * the operator narrowed the grant. Absent from a code pasted by hand.
+       */
+      scope?: string;
+    }
   : C extends { kind: "code" }
     ? { code: string }
     : C extends { kind: "fields" }

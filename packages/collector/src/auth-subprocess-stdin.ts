@@ -46,6 +46,12 @@ export class AnswerUnavailable extends Error {
   }
 }
 
+/** An authorization code, and the scope its redirect reported granting. */
+export interface CodeDelivery {
+  code: string;
+  scope?: string;
+}
+
 /** A hosted-widget result token + optional metadata (see `widget-result`). */
 export interface WidgetResult {
   token: string;
@@ -97,6 +103,11 @@ export interface StdinReceiver {
    */
   receiveCode(): Promise<string>;
   /**
+   * The same first `code` message, with the `scope` the redirect carried when
+   * it carried one — the only place some platforms say what was granted.
+   */
+  receiveRedirect(): Promise<CodeDelivery>;
+  /**
    * The next unconsumed `widget-result` message (FIFO). Unlike
    * `receiveCode`, a hosted-widget session can deliver several results —
    * one per selected institution — so each call consumes one. A result
@@ -143,11 +154,14 @@ export function createStdinReceiver(
   const initTimeoutMs = options.initTimeoutMs ?? DEFAULT_INIT_TIMEOUT_MS;
   const codeTimeoutMs = options.codeTimeoutMs ?? DEFAULT_CODE_TIMEOUT_MS;
 
-  let receivedCode: string | undefined;
+  let receivedCode: CodeDelivery | undefined;
   let ended = false;
   let buffer = "";
 
-  const codeWaiters: Array<{ resolve: (code: string) => void; reject: (err: Error) => void }> = [];
+  const codeWaiters: Array<{
+    resolve: (delivery: CodeDelivery) => void;
+    reject: (err: Error) => void;
+  }> = [];
 
   // Hosted-widget results are a FIFO queue, not a first-wins latch: one
   // session can deliver N results (one per institution). A result that
@@ -237,8 +251,12 @@ export function createStdinReceiver(
     }
     // code: first wins, duplicates ignored.
     if (receivedCode !== undefined) return;
-    receivedCode = message.code;
-    for (const waiter of codeWaiters.splice(0)) waiter.resolve(message.code);
+    const delivery: CodeDelivery = {
+      code: message.code,
+      ...(message.scope !== undefined ? { scope: message.scope } : {}),
+    };
+    receivedCode = delivery;
+    for (const waiter of codeWaiters.splice(0)) waiter.resolve(delivery);
   };
 
   /**
@@ -306,6 +324,40 @@ export function createStdinReceiver(
   stream.on("end", handleEnd);
   stream.on("error", handleEnd);
 
+  const receiveRedirect = (): Promise<CodeDelivery> => {
+    if (aborted) return Promise.reject(new AnswerUnavailable(aborted.reason, aborted.message));
+    if (receivedCode !== undefined) return Promise.resolve(receivedCode);
+    if (ended) {
+      return Promise.reject(
+        new AnswerUnavailable("closed", "auth code channel closed before a code arrived"),
+      );
+    }
+    return new Promise<CodeDelivery>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const i = codeWaiters.indexOf(waiter);
+        if (i !== -1) codeWaiters.splice(i, 1);
+        reject(
+          new AnswerUnavailable(
+            "timed-out",
+            `timed out after ${Math.round(codeTimeoutMs / 60_000)}m waiting for the authorization code`,
+          ),
+        );
+      }, codeTimeoutMs);
+      timer.unref?.();
+      const waiter = {
+        resolve: (delivery: CodeDelivery) => {
+          clearTimeout(timer);
+          resolve(delivery);
+        },
+        reject: (err: Error) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+      };
+      codeWaiters.push(waiter);
+    });
+  };
+
   return {
     flowId: () => initPromise.then((init) => init.flowId),
     accountId: () => initPromise.then((init) => init.accountId),
@@ -352,39 +404,8 @@ export function createStdinReceiver(
         });
       });
     },
-    receiveCode: () => {
-      if (aborted) return Promise.reject(new AnswerUnavailable(aborted.reason, aborted.message));
-      if (receivedCode !== undefined) return Promise.resolve(receivedCode);
-      if (ended) {
-        return Promise.reject(
-          new AnswerUnavailable("closed", "auth code channel closed before a code arrived"),
-        );
-      }
-      return new Promise<string>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          const i = codeWaiters.indexOf(waiter);
-          if (i !== -1) codeWaiters.splice(i, 1);
-          reject(
-            new AnswerUnavailable(
-              "timed-out",
-              `timed out after ${Math.round(codeTimeoutMs / 60_000)}m waiting for the authorization code`,
-            ),
-          );
-        }, codeTimeoutMs);
-        timer.unref?.();
-        const waiter = {
-          resolve: (code: string) => {
-            clearTimeout(timer);
-            resolve(code);
-          },
-          reject: (err: Error) => {
-            clearTimeout(timer);
-            reject(err);
-          },
-        };
-        codeWaiters.push(waiter);
-      });
-    },
+    receiveCode: () => receiveRedirect().then((delivery) => delivery.code),
+    receiveRedirect,
     receiveWidgetResult: () => {
       if (aborted) return Promise.reject(new AnswerUnavailable(aborted.reason, aborted.message));
       const buffered = widgetResultQueue.shift();

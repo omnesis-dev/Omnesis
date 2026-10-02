@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, test, expect } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ProviderId, SourceId } from "@omnesis/types";
 import { rowsFor, tablesWritten } from "@omnesis/source-sdk/testing";
 import { StravaActivitiesSource } from "./activities.js";
+import { activityToRecord } from "./normalizer.js";
 import { computeSummaryHash } from "./normalizer-detail.js";
+import { StravaRateLimitTracker } from "./quota.js";
 import { activitySchemas } from "./schemas.js";
 import type { StravaActivitiesCursor, StravaSummaryActivity } from "./types.js";
 import type { StravaClient, ListActivitiesParams } from "./client.js";
@@ -41,6 +43,8 @@ function makeActivity(id: number, startDateIso: string): StravaSummaryActivity {
  */
 class MockClient {
   public calls: ListActivitiesParams[] = [];
+  /** The listing checks its budget first; one that has heard nothing allows it. */
+  public quota = new StravaRateLimitTracker();
   constructor(private pages: StravaSummaryActivity[][]) {}
   listActivities(params: ListActivitiesParams): Promise<StravaSummaryActivity[]> {
     this.calls.push(params);
@@ -78,33 +82,51 @@ function makeSource(
   return { source, mock };
 }
 
+/** The row a listing of `activity` stores, with `overrides` written over it since. */
+function storedRow(
+  activity: StravaSummaryActivity,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    ...activityToRecord(activity, { summaryHash: computeSummaryHash(activity) }),
+    ...overrides,
+  };
+}
+
 /**
- * Minimal gateway stub for edit-sweep tests. `storedHashes` maps activity id
- * → the `summary_hash` already persisted in the analytics DB; `queryAnalytics`
- * answers the `SELECT id, summary_hash FROM strava_activities WHERE id IN (…)`
- * issued by the edit-sweep, returning a row only for ids it knows about.
+ * Minimal gateway stub. `stored` maps activity id → the row the analytics DB
+ * holds; a read of `strava_activities … WHERE id IN (…)` answers with the rows
+ * of the ids it names, whatever the columns it asks for, and any other read of
+ * it with none. `gear` is the stored gear catalogue, answered whole to any read
+ * of it.
  */
 class MockAnalytics implements SourceAnalyticsAccess {
   public queries: string[] = [];
-  constructor(private storedHashes: Map<number, string | null>) {}
+  constructor(
+    private stored: Map<number, Record<string, unknown>>,
+    private gear: Record<string, unknown>[] = [],
+  ) {}
   query(sql: string): Promise<{ columns: string[]; rows: Record<string, unknown>[] }> {
     this.queries.push(sql);
-    const rows: Record<string, unknown>[] = [];
-    for (const [id, hash] of this.storedHashes) {
-      if (sql.includes(String(id))) rows.push({ id, summary_hash: hash });
-    }
-    return Promise.resolve({ columns: ["id", "summary_hash"], rows });
+    if (/\bFROM strava_gear\b/.test(sql)) return Promise.resolve({ columns: [], rows: this.gear });
+    const named = /\bid IN \(([^)]*)\)/.exec(sql)?.[1]?.split(",").map(Number) ?? [];
+    const rows = named.flatMap((id) => {
+      const row = this.stored.get(id);
+      return row ? [row] : [];
+    });
+    return Promise.resolve({ columns: [], rows });
   }
 }
 
 function makeSourceWithGateway(
   pages: StravaSummaryActivity[][],
-  storedHashes: Map<number, string | null>,
+  stored: Map<number, Record<string, unknown>>,
+  gear: Record<string, unknown>[] = [],
 ): { source: StravaActivitiesSource; mock: MockClient; gateway: MockAnalytics } {
   const mock = new MockClient(pages);
   // No cast: the facet is small enough to implement outright, which is the
   // point of narrowing it.
-  const gateway = new MockAnalytics(storedHashes);
+  const gateway = new MockAnalytics(stored, gear);
   const source = new StravaActivitiesSource(
     mock as unknown as StravaClient,
     sourceId,
@@ -209,7 +231,65 @@ describe("StravaActivitiesSource.syncStructured backfill", () => {
   });
 });
 
+/**
+ * A client that lists the way Strava does: `before` and `after` filter on the
+ * start time, the list comes newest first unless `after` is sent and oldest
+ * first when it is, and `page` and `per_page` slice it.
+ */
+class StravaOrderedClient {
+  public calls: ListActivitiesParams[] = [];
+  public quota = new StravaRateLimitTracker();
+  public upstream: StravaSummaryActivity[] = [];
+  listActivities(params: ListActivitiesParams): Promise<StravaSummaryActivity[]> {
+    this.calls.push(params);
+    const started = (a: StravaSummaryActivity) => Math.floor(Date.parse(a.start_date) / 1000);
+    const listed = this.upstream
+      .filter(
+        (a) =>
+          (params.before === undefined || started(a) < params.before) &&
+          (params.after === undefined || started(a) > params.after),
+      )
+      .sort((x, y) =>
+        params.after === undefined ? started(y) - started(x) : started(x) - started(y),
+      );
+    const perPage = params.per_page ?? 30;
+    const page = params.page ?? 1;
+    return Promise.resolve(listed.slice((page - 1) * perPage, page * perPage));
+  }
+}
+
 describe("StravaActivitiesSource.syncStructured incremental", () => {
+  test("an account empty at its backfill lists everything that arrives later, past one page", async () => {
+    // The backfill finds nothing, so there is no high-water mark. Strava lists
+    // newest first unless `after` is sent, and the listing pages by moving its
+    // mark to the newest activity of a page: newest first, the first page
+    // would move it past everything the next page holds.
+    const client = new StravaOrderedClient();
+    const source = new StravaActivitiesSource(
+      client as unknown as StravaClient,
+      sourceId,
+      providerId,
+    );
+    let cursor = (await source.syncStructured(null)).cursor;
+    expect(cursor.lastActivityTimestamp).toBeUndefined();
+
+    const DAY = 86_400;
+    const first = Math.floor(Date.now() / 1000) - 400 * DAY;
+    client.upstream = Array.from({ length: 150 }, (_, i) =>
+      makeActivity(1000 + i, new Date((first + i * DAY) * 1000).toISOString()),
+    );
+    const listed = new Set<number>();
+    for (let i = 0; i < 5; i++) {
+      const result = await source.syncStructured(cursor);
+      for (const row of rowsFor(result, "strava_activities")) listed.add(Number(row.id));
+      cursor = result.cursor;
+      if (!result.hasMore) break;
+    }
+
+    expect(client.calls[1]?.after).toBe(0);
+    expect(listed.size).toBe(150);
+  });
+
   test("incremental call uses `after=lastActivityTimestamp`", async () => {
     const { source, mock } = makeSource([[makeActivity(1, "2026-04-18T10:00:00Z")]]);
     const cursor: StravaActivitiesCursor = {
@@ -333,8 +413,8 @@ describe("StravaActivitiesSource snapshot reconciliation (rewalk phase)", () => 
     };
     const result = await source.syncStructured(cur);
 
-    // The snapshot phase doesn't ingest records / documents — it only
-    // computes the present-id set.
+    // Without a store to compare with, every activity would read as new on
+    // every walk, so the rewalk only computes the present-id set.
     expect(rowsFor(result, "strava_activities")).toHaveLength(0);
     expect(result.documents ?? []).toHaveLength(0);
     expect(result.presentExternalIds?.sort()).toEqual(["1", "2"]);
@@ -349,6 +429,45 @@ describe("StravaActivitiesSource snapshot reconciliation (rewalk phase)", () => 
     // Used `before=` for the rewalk pin, page 1.
     expect(mock.calls[0]!.before).toBeTypeOf("number");
     expect(mock.calls[0]!.page).toBe(1);
+  });
+
+  test("the rewalk writes an activity uploaded behind the mark and an edit older than the sweep reaches", async () => {
+    // Strava's `after` filters on the start time: a watch synced after weeks
+    // offline uploads an activity the listing's mark has long passed, and the
+    // edit sweep reaches back only 30 days. The walk reads both every day.
+    const DAY = 86_400_000;
+    const startedDaysAgo = (id: number, days: number, name = `Activity ${id}`) => ({
+      ...makeActivity(id, new Date(Date.now() - days * DAY).toISOString()),
+      name,
+    });
+    const known = startedDaysAgo(1, 1);
+    const lateUpload = startedDaysAgo(2, 60);
+    const renamed = startedDaysAgo(3, 90, "Long run by the lake");
+    const { source } = makeSourceWithGateway(
+      [[known, lateUpload, renamed]],
+      new Map([
+        [1, storedRow(known)],
+        [3, storedRow({ ...renamed, name: "Long run" })],
+      ]),
+    );
+    const mark = Math.floor((Date.now() - DAY) / 1000);
+    const recently = new Date().toISOString();
+
+    const result = await source.syncStructured({
+      phase: "incremental",
+      lastActivityTimestamp: mark,
+      lastSnapshotAt: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+      lastEditSweepAt: recently,
+      lastAthleteRefreshAt: recently,
+    });
+
+    expect(result.presentExternalIds?.sort()).toEqual(["1", "2", "3"]);
+    const rows = rowsFor(result, "strava_activities");
+    expect(rows.map((row) => Number(row.id)).sort()).toEqual([2, 3]);
+    expect(rows.every((row) => row.detail_fetched_at === null)).toBe(true);
+    expect((result.documents ?? []).map((doc) => doc.externalId).sort()).toEqual(["2", "3"]);
+    // The mark is the listing's, and the walk leaves it where it was.
+    expect(result.cursor).toMatchObject({ phase: "incremental", lastActivityTimestamp: mark });
   });
 
   test("multi-page snapshot accumulates IDs across pages, emits on the final short page", async () => {
@@ -509,7 +628,7 @@ describe("StravaActivitiesSource edit-sweep gates enrichment on summary_hash cha
     const activity = makeActivity(101, "2026-04-19T10:00:00Z");
     // The analytics DB already holds this activity with its current hash —
     // nothing about its summary changed since the last ingest.
-    const stored = new Map<number, string | null>([[101, computeSummaryHash(activity)]]);
+    const stored = new Map([[101, storedRow(activity)]]);
     const { source, gateway } = makeSourceWithGateway([[activity]], stored);
 
     const result = await source.syncStructured(enteringCursor());
@@ -532,7 +651,9 @@ describe("StravaActivitiesSource edit-sweep gates enrichment on summary_hash cha
     const activity = makeActivity(202, "2026-04-19T10:00:00Z");
     // The stored hash differs (e.g. the activity was renamed on Strava) — the
     // edit-sweep must re-ingest it and clear its enrichment stamps.
-    const stored = new Map<number, string | null>([[202, "stale-hash-from-before-the-edit"]]);
+    const stored = new Map([
+      [202, storedRow(activity, { summary_hash: "stale-hash-from-before-the-edit" })],
+    ]);
     const { source } = makeSourceWithGateway([[activity]], stored);
 
     const result = await source.syncStructured(enteringCursor());
@@ -560,9 +681,7 @@ describe("StravaActivitiesSource edit-sweep gates enrichment on summary_hash cha
     const page = Array.from({ length: 100 }, (_, i) =>
       makeActivity(500 + i, `2026-04-${String(10 + (i % 20)).padStart(2, "0")}T00:00:00Z`),
     );
-    const stored = new Map<number, string | null>(
-      page.map((a) => [a.id, computeSummaryHash(a)] as const),
-    );
+    const stored = new Map(page.map((a) => [a.id, storedRow(a)] as const));
     const { source } = makeSourceWithGateway([page], stored);
 
     // Straight to the incremental phase: the snapshot, sweep and athlete
@@ -591,9 +710,9 @@ describe("StravaActivitiesSource edit-sweep gates enrichment on summary_hash cha
   test("mixed page: only the changed activity is re-ingested", async () => {
     const unchanged = makeActivity(301, "2026-04-19T10:00:00Z");
     const changed = makeActivity(302, "2026-04-18T10:00:00Z");
-    const stored = new Map<number, string | null>([
-      [301, computeSummaryHash(unchanged)],
-      [302, "stale-hash"],
+    const stored = new Map([
+      [301, storedRow(unchanged)],
+      [302, storedRow(changed, { summary_hash: "stale-hash" })],
     ]);
     const { source } = makeSourceWithGateway([[unchanged, changed]], stored);
 
@@ -602,5 +721,322 @@ describe("StravaActivitiesSource edit-sweep gates enrichment on summary_hash cha
     // Exactly one record — for the changed activity only.
     expect(rowsFor(result, "strava_activities")).toHaveLength(1);
     expect(Number(rowsFor(result, "strava_activities")[0]!.id)).toBe(302);
+  });
+
+  test("a row as the store hands it back reads as unchanged", async () => {
+    // The store renders the start in its own spelling and zone, and returns a
+    // flag it was never given as null.
+    const activity = makeActivity(103, "2026-04-19T10:00:00Z");
+    const stored = new Map([
+      [103, storedRow(activity, { start_time: "2026-04-19 12:00:00+02", manual: null })],
+    ]);
+    const { source } = makeSourceWithGateway([[activity]], stored);
+
+    const result = await source.syncStructured(enteringCursor());
+
+    expect(rowsFor(result, "strava_activities")).toEqual([]);
+    expect(result.documents ?? []).toEqual([]);
+  });
+
+  test("a cropped activity is re-ingested with its stamps cleared", async () => {
+    // A crop or a distance correction edits the activity in place: the name
+    // and the rest of what the hash covers stay, the distance and times move,
+    // and the splits, laps and streams describe the activity as it was.
+    const done = "2026-04-19T11:00:00.000Z";
+    const uncropped = {
+      ...makeActivity(402, "2026-04-19T10:00:00Z"),
+      distance: 25_000,
+      moving_time: 7_200,
+      elapsed_time: 7_400,
+    };
+    const cropped = { ...uncropped, distance: 10_000, moving_time: 3_000, elapsed_time: 3_050 };
+    const stored = new Map([
+      [402, storedRow(uncropped, { detail_fetched_at: done, streams_fetched_at: done })],
+    ]);
+    const { source } = makeSourceWithGateway([[cropped]], stored);
+
+    const result = await source.syncStructured(enteringCursor());
+
+    expect(rowsFor(result, "strava_activities")).toEqual([
+      expect.objectContaining({
+        id: 402,
+        distance_m: 10_000,
+        moving_time_seconds: 3_000,
+        detail_fetched_at: null,
+        streams_fetched_at: null,
+      }),
+    ]);
+    expect(result.documents).toHaveLength(1);
+  });
+
+  describe("counters that moved without an edit", () => {
+    const done = "2026-04-19T11:00:00.000Z";
+    const original = makeActivity(401, "2026-04-19T10:00:00Z");
+    /** The row as the tiers left it: enriched, with the detail's description. */
+    const enriched = storedRow(original, {
+      description: "Tempo intervals",
+      detail_fetched_at: done,
+      social_fetched_at: done,
+      zones_fetched_at: done,
+      streams_fetched_at: done,
+    });
+    const congratulated = { ...original, kudos_count: 14, comment_count: 3, achievement_count: 2 };
+
+    test("send only the social tier back, keeping the detail and writing no document", async () => {
+      const { source } = makeSourceWithGateway([[congratulated]], new Map([[401, enriched]]));
+
+      const result = await source.syncStructured(enteringCursor());
+
+      expect(rowsFor(result, "strava_activities")).toEqual([
+        {
+          ...enriched,
+          kudos_count: 14,
+          comment_count: 3,
+          achievement_count: 2,
+          social_fetched_at: null,
+        },
+      ]);
+      // The social tier renders it, with the description and the comments the
+      // tiers stored; a summary's document would drop them.
+      expect(result.documents ?? []).toEqual([]);
+    });
+
+    test("settle once written: the next sweep finds nothing moved", async () => {
+      const written = { ...enriched, kudos_count: 14, comment_count: 3, achievement_count: 2 };
+      const { source } = makeSourceWithGateway([[congratulated]], new Map([[401, written]]));
+
+      const result = await source.syncStructured(enteringCursor());
+
+      expect(rowsFor(result, "strava_activities")).toEqual([]);
+      expect(result.documents ?? []).toEqual([]);
+    });
+
+    test("wait while the activity's social marks are still to be written", async () => {
+      // The marks re-read the row and stamp it as it then stands, so a recount
+      // written before them would be marked done with the social tier never
+      // run for it. The next walk finds the same counters moved.
+      const { source } = makeSourceWithGateway([[congratulated]], new Map([[401, enriched]]));
+
+      const result = await source.syncStructured({
+        ...enteringCursor(),
+        phase: "social-backfill",
+        pendingSocialStamps: ["401"],
+      });
+
+      expect(rowsFor(result, "strava_activities")).toEqual([]);
+      expect(result.cursor).toMatchObject({
+        phase: "social-backfill",
+        pendingSocialStamps: ["401"],
+        lastEditSweepAt: expect.any(String),
+      });
+    });
+  });
+});
+
+describe("a due walk interrupts whichever phase the cursor is in", () => {
+  // A backlog holds the cursor in a tier phase, `enrich-pending` or the athlete
+  // refresh for as long as it takes to drain, and deletions, edits and late
+  // uploads reach the store only through the two walks.
+  const hoursAgo = (hours: number) => new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+  const listed = makeActivity(1, "2026-04-18T10:00:00Z");
+
+  test("a tier backlog hands the rewalk its turn, then resumes where it was", async () => {
+    const { source, mock } = makeSourceWithGateway([[listed]], new Map());
+    const due = hoursAgo(25);
+
+    const result = await source.syncStructured({
+      phase: "social-backfill",
+      pendingSocialStamps: ["9"],
+      lastActivityTimestamp: 1_700_000_000,
+      lastSnapshotAt: due,
+      lastEditSweepAt: hoursAgo(1),
+      lastAthleteRefreshAt: hoursAgo(1),
+    });
+
+    expect(mock.calls).toHaveLength(1);
+    expect(mock.calls[0]!.before).toBeTypeOf("number");
+    expect(result.presentExternalIds).toEqual(["1"]);
+    expect(result.cursor).toMatchObject({ phase: "social-backfill", pendingSocialStamps: ["9"] });
+    expect(result.cursor.resumePhase).toBeUndefined();
+    expect(result.cursor.lastSnapshotAt).not.toBe(due);
+  });
+
+  test("enrich-pending hands the edit sweep its turn, then resumes where it was", async () => {
+    const { source, mock } = makeSourceWithGateway([[listed]], new Map());
+    const due = hoursAgo(7);
+
+    const result = await source.syncStructured({
+      phase: "enrich-pending",
+      enrichTier: "zones",
+      lastActivityTimestamp: 1_700_000_000,
+      lastSnapshotAt: hoursAgo(1),
+      lastEditSweepAt: due,
+      lastAthleteRefreshAt: hoursAgo(1),
+    });
+
+    // The sweep reaches back 30 days from now, not from the listing's mark.
+    expect(mock.calls).toHaveLength(1);
+    expect(mock.calls[0]!.before).toBeUndefined();
+    expect(mock.calls[0]!.after).toBeLessThan(Date.now() / 1000 - 29 * 24 * 60 * 60);
+    expect(result.cursor).toMatchObject({ phase: "enrich-pending", enrichTier: "zones" });
+    expect(result.cursor.lastEditSweepAt).not.toBe(due);
+  });
+
+  test("a detail page's completion marks are written before the walk begins", async () => {
+    // A mark re-reads the row it marks: a walk in between that wrote an edited
+    // summary over the row would have it marked done with its detail emptied.
+    const marked = makeActivity(9, "2026-04-17T10:00:00Z");
+    const { source, mock } = makeSourceWithGateway([[listed]], new Map([[9, storedRow(marked)]]));
+
+    const flushed = await source.syncStructured({
+      phase: "detail-backfill",
+      pendingDetailStamps: ["9"],
+      lastActivityTimestamp: 1_700_000_000,
+      lastSnapshotAt: hoursAgo(25),
+      lastEditSweepAt: hoursAgo(1),
+      lastAthleteRefreshAt: hoursAgo(1),
+    });
+    expect(mock.calls).toEqual([]);
+    expect(rowsFor(flushed, "strava_activities")).toEqual([
+      expect.objectContaining({ id: 9, detail_fetched_at: expect.any(String) }),
+    ]);
+    expect(flushed.cursor.pendingDetailStamps).toBeUndefined();
+
+    const walked = await source.syncStructured(flushed.cursor);
+    expect(mock.calls[0]!.before).toBeTypeOf("number");
+    expect(walked.cursor.phase).toBe("detail-backfill");
+  });
+});
+
+describe("a rewalk page the budget refuses", () => {
+  // Seven and a half minutes before the quarter hour resets the short window.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-04-20T10:07:30Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  const unix = (iso: string) => Math.floor(Date.parse(iso) / 1000);
+
+  test("names every activity the listing in its place walks, written or not", async () => {
+    // Both started after the walk's `before`, so no page of the walk names
+    // them. One the store already holds as listed, as it does when a crash
+    // kept the cursor after its write from committing, is written again by
+    // nobody, and the snapshot would count it gone.
+    const replayed = makeActivity(5, "2026-04-20T09:00:00Z");
+    const uploaded = makeActivity(6, "2026-04-20T09:30:00Z");
+    const { source, mock } = makeSourceWithGateway(
+      [[replayed, uploaded]],
+      new Map([[5, storedRow(replayed)]]),
+    );
+    // 850 of the day's 1,000 reads used: none left under enrichment's share,
+    // and 50 under the listing's.
+    mock.quota.setState(undefined, {
+      used: { short: 5, daily: 850 },
+      limit: { short: 100, daily: 1000 },
+    });
+
+    const result = await source.syncStructured({
+      phase: "snapshot-rewalk",
+      snapshotBefore: unix("2026-04-20T06:00:00Z"),
+      snapshotPage: 3,
+      snapshotIds: ["1"],
+      lastActivityTimestamp: unix("2026-04-20T08:00:00Z"),
+    });
+
+    expect(mock.calls.map((call) => call.before)).toEqual([undefined]);
+    expect(rowsFor(result, "strava_activities").map((row) => row.id)).toEqual([6]);
+    expect(result.cursor).toMatchObject({
+      phase: "snapshot-rewalk",
+      snapshotPage: 3,
+      snapshotIds: ["1", "5", "6"],
+    });
+  });
+});
+
+describe("StravaActivitiesSource names an activity's catalogued gear", () => {
+  // The refresh fills the gear columns once a week. A summary written in
+  // between replaces the whole row, so it resolves the gear itself, or it
+  // would empty columns the refresh had filled and show only the gear id.
+  const catalogue = [
+    {
+      id: "g77",
+      athlete_id: 42,
+      name: "Trail shoe",
+      nickname: null,
+      brand_name: "Northstar",
+      model_name: "T2",
+    },
+  ];
+  const shod = (id: number): StravaSummaryActivity => ({
+    ...makeActivity(id, "2026-04-19T10:00:00Z"),
+    gear_id: "g77",
+  });
+
+  test("an edit sweep that writes an activity again keeps its gear", async () => {
+    const stored = new Map([
+      [202, storedRow(shod(202), { summary_hash: "stale-hash-from-before-the-edit" })],
+    ]);
+    const { source, gateway } = makeSourceWithGateway([[shod(202)]], stored, catalogue);
+
+    const result = await source.syncStructured({
+      phase: "incremental",
+      lastActivityTimestamp: 1700000000,
+      lastSnapshotAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+      lastAthleteRefreshAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    });
+
+    expect(rowsFor(result, "strava_activities")).toEqual([
+      expect.objectContaining({
+        gear_id: "g77",
+        gear_brand: "Northstar",
+        gear_model: "T2",
+        gear_name: "Trail shoe",
+      }),
+    ]);
+    const [doc] = result.documents!;
+    expect(doc!.content).toContain("**Gear:** Northstar T2");
+    expect(doc!.content).not.toContain("**Gear ID:**");
+    expect(doc!.metadata.extra?.gearName).toBe("Northstar T2");
+    // One read for the page, of this athlete's catalogue only.
+    expect(gateway.queries.filter((sql) => sql.includes("strava_gear"))).toEqual([
+      "SELECT * FROM strava_gear WHERE athlete_id = 42 AND id IN ('g77')",
+    ]);
+  });
+
+  test("a newly listed activity is named from its first write", async () => {
+    const recently = new Date().toISOString();
+    const { source } = makeSourceWithGateway([[shod(303)]], new Map(), catalogue);
+
+    const result = await source.syncStructured({
+      phase: "incremental",
+      lastActivityTimestamp: 1,
+      lastSnapshotAt: recently,
+      lastEditSweepAt: recently,
+      lastAthleteRefreshAt: recently,
+    });
+
+    expect(rowsFor(result, "strava_activities")[0]).toMatchObject({
+      id: 303,
+      gear_name: "Trail shoe",
+    });
+    expect(result.documents![0]!.content).toContain("**Gear:** Northstar T2");
+  });
+
+  test("a backfill page leaves the catalogue to the refresh that follows it", async () => {
+    // A first import or a resync has no catalogue yet: the refresh after the
+    // backfill creates it, and the detail tier after that names the gear.
+    const { source, gateway } = makeSourceWithGateway([[shod(404)]], new Map(), catalogue);
+
+    const result = await source.syncStructured(null);
+
+    expect(result.cursor.phase).toBe("athlete-refresh");
+    expect(rowsFor(result, "strava_activities")[0]).toMatchObject({
+      id: 404,
+      gear_id: "g77",
+      gear_name: null,
+    });
+    expect(gateway.queries.filter((sql) => sql.includes("strava_gear"))).toEqual([]);
   });
 });

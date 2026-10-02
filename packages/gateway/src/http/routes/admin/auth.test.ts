@@ -434,6 +434,20 @@ describe("GET /oauth/callback", () => {
     expect(authFlows.get(flow.id)?.state).toBe("completing");
   });
 
+  test("the scope the redirect carried is passed on with its code", async () => {
+    // Some platforms report what the operator actually granted only here, so
+    // the provider can tell a narrowed grant only if it reaches the collector.
+    const flow = startFlow("awaiting-user");
+    const res = await getCallback(`state=${flow.id}&code=cb-code&scope=read,profile`);
+    expect(res.status).toBe(200);
+    expect(sendCommand).toHaveBeenCalledWith(
+      COLLECTOR_DEVICE_ID,
+      "auth.code",
+      { flowId: flow.id, code: "cb-code", scope: "read,profile" },
+      30_000,
+    );
+  });
+
   test("second redirect with a code is rejected (single-use), not forwarded again", async () => {
     const flow = startFlow("awaiting-user");
     expect((await getCallback(`state=${flow.id}&code=one`)).status).toBe(200);

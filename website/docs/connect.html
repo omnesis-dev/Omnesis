@@ -758,10 +758,11 @@
           The public address is also where the Notion, Outlook and Strava sources send their sign-in
           back once <code>gateway.publicBaseUrl</code> is set:
           <code>https://studio.tail-example.ts.net/oauth/callback</code>. Add that redirect address
-          to the app you registered with the provider before you next sign one of them in.
-          <code>tailscale funnel reset</code> takes the gateway off the Internet again, along with
-          any other Tailscale Serve configuration on the machine; hosted connectors stop working
-          until it is published again.
+          to the app you registered with the provider before you next sign one of them in. A Strava
+          app takes a callback domain rather than an address: set it to the host name alone,
+          <code>studio.tail-example.ts.net</code>. <code>tailscale funnel reset</code> takes the
+          gateway off the Internet again, along with any other Tailscale Serve configuration on the
+          machine; hosted connectors stop working until it is published again.
         </p>
 
         <h3 id="approving-a-connection">Approve the connection</h3>

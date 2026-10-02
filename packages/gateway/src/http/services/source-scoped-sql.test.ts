@@ -39,6 +39,26 @@ const schema: AnalyticsTableSchema = {
   record: { titleColumns: ["id"], keyColumns: ["id", "start_time"] },
 };
 
+/** The gear catalogue the provider resolves an activity's gear id against. */
+const gearSchema: AnalyticsTableSchema = {
+  tableName: "strava_gear",
+  displayName: "Fixture gear",
+  description: "Invented gear for the provider's gear lookup",
+  columns: [
+    ...["id", "gear_type", "name", "nickname", "brand_name", "model_name"].map((name) => ({
+      name,
+      type: "VARCHAR" as const,
+      description: name,
+      nullable: name !== "id",
+    })),
+    { name: "athlete_id", type: "BIGINT", description: "Owning athlete", nullable: true },
+    { name: "fetched_at", type: "TIMESTAMPTZ", description: "Fetched at", nullable: true },
+  ],
+  primaryKey: ["id"],
+  semanticTimeColumn: null,
+  record: { titleColumns: ["name"], keyColumns: ["id"] },
+};
+
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "omnesis-scoped-sql-"));
   db = new AnalyticsDb(join(directory, "analytics.db"));
@@ -57,6 +77,7 @@ beforeEach(async () => {
     ],
     ["id"],
   );
+  await db.ensureTable(gearSchema, sourceId);
   await db.ensureTable({ ...schema, tableName: "other_activities" }, "other:fixture");
   service = new AnalyticsService(db, undefined, false);
 });
@@ -108,8 +129,9 @@ test("quoted upper-case identifiers bind like DuckDB inside the source scope", a
 });
 
 test("Strava enrichment and athlete-refresh query forms remain executable", async () => {
-  // These are the emitted forms in enrichment.ts, activities.ts and
-  // athlete-refresh.ts, including tier predicates, row hydration and gear lookup.
+  // These are the emitted forms in enrichment.ts, activities.ts,
+  // athlete-refresh.ts and gear.ts, including tier predicates, row hydration,
+  // gear lookup and the gear catalogue read.
   for (const sql of [
     "SELECT id, summary_hash FROM strava_activities WHERE id IN ('42')",
     "SELECT * FROM strava_activities WHERE id IN ('42')",
@@ -117,6 +139,7 @@ test("Strava enrichment and athlete-refresh query forms remain executable", asyn
     "SELECT * FROM strava_activities WHERE gear_id IN ('gear-one') AND (gear_brand IS NULL OR gear_model IS NULL OR gear_name IS NULL)",
     "SELECT count(*) AS n FROM strava_activities WHERE zones_unavailable = TRUE",
     "SELECT * FROM strava_activities WHERE zones_unavailable = TRUE LIMIT 5000",
+    "SELECT * FROM strava_gear WHERE athlete_id = 42 AND id IN ('g1')",
     ...["detail", "social", "zones", "streams"].flatMap((tier) => {
       const where = `${tier}_fetched_at IS NULL${tier === "zones" ? " AND (zones_unavailable IS NULL OR zones_unavailable = FALSE)" : ""}`;
       return [
