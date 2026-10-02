@@ -45,9 +45,10 @@ export interface StravaTokens {
  * the in-`incremental` priority chain on every subsequent tick.
  *
  * - `backfill` — newest → oldest summary import.
- * - `athlete-refresh` — one-shot per cycle: athlete profile, zones, lifetime
+ * - `athlete-refresh` — once per cycle: athlete profile, zones, lifetime
  *   stats, gear catalog (resolves `gear_id` → brand/model). Cadence-gated
- *   (default 7d) by `lastAthleteRefreshAt`.
+ *   (default 7d) by `lastAthleteRefreshAt`. Spans several pages when the gear
+ *   catalogue outgrows one window's reads (`pendingGearIds`).
  * - `detail-backfill` — drains activities WHERE `detail_fetched_at IS NULL`
  *   via `GET /activities/{id}` (DetailedActivity). Highest-value tier — adds
  *   description, splits, best efforts, laps, segment efforts.
@@ -65,6 +66,11 @@ export interface StravaTokens {
  * - `enrich-pending` — rotates across the four enrichment tiers picking
  *   whichever has rows lacking its stamp; one tier per tick to avoid
  *   starvation under quota pressure.
+ *
+ * A page of `athlete-refresh`, of the four tier phases or of `enrich-pending`
+ * that the rate-limit budget refuses lists new activities instead and keeps its
+ * phase, so the backlog resumes where it stopped and new activities do not
+ * wait for it.
  */
 export type StravaActivitiesPhase =
   | "backfill"
@@ -141,6 +147,13 @@ export interface StravaActivitiesCursor extends SyncCursor {
    * incremental tick.
    */
   lastAthleteRefreshAt?: string;
+  /**
+   * Gear the current athlete refresh has yet to fetch, in fetch order. Set when
+   * a window's read budget runs out partway through the catalogue, so the next
+   * page resumes after the last gear fetched instead of starting over; cleared
+   * when the refresh completes. Bounded by the athlete's gear count.
+   */
+  pendingGearIds?: string[];
   /**
    * When in `enrich-pending`, the tier to drain on this tick. Rotates
    * round-robin so a backlog in one tier doesn't starve the others.

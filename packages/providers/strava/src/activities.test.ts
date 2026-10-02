@@ -6,6 +6,7 @@ import { ProviderId, SourceId } from "@omnesis/types";
 import { rowsFor, tablesWritten } from "@omnesis/source-sdk/testing";
 import { StravaActivitiesSource } from "./activities.js";
 import { computeSummaryHash } from "./normalizer-detail.js";
+import { StravaRateLimitTracker } from "./quota.js";
 import { activitySchemas } from "./schemas.js";
 import type { StravaActivitiesCursor, StravaSummaryActivity } from "./types.js";
 import type { StravaClient, ListActivitiesParams } from "./client.js";
@@ -41,6 +42,8 @@ function makeActivity(id: number, startDateIso: string): StravaSummaryActivity {
  */
 class MockClient {
   public calls: ListActivitiesParams[] = [];
+  /** The listing checks its budget first; one that has heard nothing allows it. */
+  public quota = new StravaRateLimitTracker();
   constructor(private pages: StravaSummaryActivity[][]) {}
   listActivities(params: ListActivitiesParams): Promise<StravaSummaryActivity[]> {
     this.calls.push(params);

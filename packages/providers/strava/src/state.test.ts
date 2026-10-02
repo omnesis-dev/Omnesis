@@ -99,6 +99,15 @@ describe("strava-activities declared state", () => {
       ).rejects.toThrow(RefusedSourceStateError);
     },
   );
+  test("preserves the gear an interrupted athlete refresh has left and refuses malformed entries", () => {
+    const stored = { phase: "athlete-refresh", pendingGearIds: ["g1001", "b2002"] };
+    expect(stravaActivitiesStateSpec.decode(stored)).toEqual(stored);
+    for (const pendingGearIds of [null, "g1001", [1001]]) {
+      expect(
+        stravaActivitiesStateSpec.decode({ phase: "athlete-refresh", pendingGearIds }),
+      ).toBeNull();
+    }
+  });
   test("preserves a valid pending social stamp queue", () => {
     const stored = { phase: "incremental", pendingSocialStamps: ["101", "102"] };
     expect(stravaActivitiesStateSpec.decode(stored)).toEqual(stored);

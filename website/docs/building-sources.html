@@ -417,7 +417,11 @@ export default defineSource({
           hint, and a <code>remediation</code> — a one-line summary, the steps, and whether the
           collector must restart — for a condition only the operator can clear, such as a missing
           operating-system permission. Clients show the remediation as a fix instead of the raw
-          message. An untyped throw counts as a failure of the whole source.
+          message. A rate limit names what the platform counted it against in
+          <code>quota.kind</code>: <code>app</code> only when every account on the collector signs
+          in through one application credential (a credentials spec without
+          <code>perAccount</code>), otherwise <code>account</code>; the collector shows every source
+          on that budget as rate limited. An untyped throw counts as a failure of the whole source.
         </p>
         <p>
           Some sources read files that another program maintains. If that program stops, the source

@@ -7,7 +7,9 @@ import { join } from "node:path";
 import { ProviderId } from "@omnesis/types";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { fakeProviderHost } from "@omnesis/source-sdk/testing";
+import { parseDuration } from "@omnesis/core";
 import { saveTokens } from "./provider.js";
+import { DEFAULT_SAFETY_PCT, ENRICHMENT_SAFETY_PCT } from "./quota.js";
 import definition from "./index.js";
 import type { StravaClient } from "./client.js";
 
@@ -83,6 +85,31 @@ describe("Strava activities descriptor", () => {
     const [activities] = definition.sources;
     expect(activities?.unitName).toBe("activities");
     expect(activities?.primaryCount).toBe("documents");
+  });
+
+  test("syncs at a cadence the listing's share of a new app's reads absorbs", () => {
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    // A new Strava app's read limits, per 15 minutes and per day.
+    const shortReads = 100;
+    const dailyReads = 1_000;
+    const [activities] = definition.sources;
+    expect(activities?.defaultSyncInterval).toBeDefined();
+    const syncsPerDay = DAY_MS / parseDuration(activities!.defaultSyncInterval!);
+
+    // A sync that finds nothing new is one listing read. On a day a backlog
+    // spends enrichment's share, listing lives on what lies between that
+    // share and its own cap, beside the rewalk and the sweep.
+    const listingReserve =
+      Math.floor(dailyReads * DEFAULT_SAFETY_PCT) - Math.floor(dailyReads * ENRICHMENT_SAFETY_PCT);
+    // Half of it, at most: the rewalk and the sweep, which grow with the
+    // account, live on the rest.
+    expect(syncsPerDay).toBeLessThanOrEqual(listingReserve / 2);
+
+    // A first import spends at most a window of enrichment reads per sync, so
+    // the daily limit, not the cadence, must be what bounds it.
+    expect(syncsPerDay * Math.floor(shortReads * ENRICHMENT_SAFETY_PCT)).toBeGreaterThanOrEqual(
+      Math.floor(dailyReads * ENRICHMENT_SAFETY_PCT),
+    );
   });
 });
 

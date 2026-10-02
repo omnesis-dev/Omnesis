@@ -27,7 +27,7 @@
  */
 
 import { createLogger, toErrorMessage } from "@omnesis/core";
-import { parseSourceId, sameQuotaBucket } from "@omnesis/types";
+import { parseProviderId, sameQuotaBucket } from "@omnesis/types";
 import { SourceLifecycle } from "./source-lifecycle.js";
 import {
   buildReauthHint,
@@ -601,11 +601,11 @@ export class SourceRegistry {
    * Park every source drawing on the budget a rate limit was counted against.
    *
    * A limit counted per application is shared by every account this
-   * installation holds for that provider, so backing off the source that
+   * collector holds for that provider, so backing off the source that
    * happened to hit it and letting its siblings run spends the same exhausted
    * budget from another direction — each of them discovering the same limit by
    * spending another request on it. A limit counted per account is narrower,
-   * and the siblings that share the account are still the ones affected.
+   * and only the siblings on that account's credential are affected.
    *
    * The source that threw is parked by its caller. This parks the rest, and
    * says how many, because a fleet of sources going quiet at once is otherwise
@@ -662,15 +662,22 @@ export class SourceRegistry {
   /**
    * The budget a source draws on, for a given kind of limit.
    *
-   * An application limit is keyed by the provider, since one registered
-   * application serves every account. An account limit is keyed by the account
-   * half of the source id, which is what the credential belongs to.
+   * An application limit is keyed by the provider type. A credentials spec
+   * without `perAccount` stores one OAuth client per collector, and every
+   * account this collector holds for the provider signs in through it, so a
+   * limit counted against that client is already spent for all of them. The
+   * provider id would not do: it carries the account, so a second account on
+   * the same application would go on showing as idle under a budget that is
+   * already spent.
+   *
+   * An account limit is keyed by the provider id, type and account together,
+   * because that is what a credential belongs to. The account half alone would
+   * join two providers that happen to share an address, and park a mailbox for
+   * a note-taker's limit.
    */
   private quotaBucketOfSource(source: RegisteredSource, kind: QuotaKind): QuotaBucket {
-    // TODO: A provider id includes the account, so this keys the app bucket per account, and
-    // two accounts on one registered application do not park each other.
-    if (kind === "app") return { kind, id: String(source.providerId) };
-    return { kind, id: parseSourceId(source.id).accountId };
+    if (kind === "app") return { kind, id: parseProviderId(source.providerId).providerType };
+    return { kind, id: source.providerId };
   }
 
   /**

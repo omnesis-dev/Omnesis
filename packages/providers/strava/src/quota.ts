@@ -13,6 +13,21 @@ const HDR_READ_USAGE = "X-ReadRateLimit-Usage";
 /** Conservative default — leave 10% headroom for liveness pings + sibling tokens. */
 export const DEFAULT_SAFETY_PCT = 0.9;
 
+/**
+ * The share of the budget enrichment may spend: the four activity tiers and the
+ * athlete refresh. It sits below `DEFAULT_SAFETY_PCT`, the cap the activity
+ * listing keeps, so that listing new activities, which a refused enrichment
+ * page falls back on, still has reads once a backlog has spent the rest.
+ * Without it a backlog spends a new app's 1,000 daily reads by early morning
+ * UTC, and new activities wait for midnight. The 100 reads a day between the
+ * two caps cover a listing every half hour, with the daily rewalk and the edit
+ * sweep beside it.
+ */
+export const ENRICHMENT_SAFETY_PCT = 0.8;
+
+/** Strava's own limit, without the gates' headroom: what a refusal is measured against. */
+const STRAVA_LIMIT_PCT = 1;
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -45,8 +60,9 @@ export interface QuotaPair {
  *
  * Implements the core `RateLimitTracker` interface for type-level uniformity,
  * but Strava's header shape is unique so the implementation is local. Callers
- * use `observe()`, `canMakeNCalls(n, safetyPct?, now?)`, and
- * `msUntilCanMakeNCalls` to learn how long a refused page waits;
+ * use `observe()`, `canMakeNCalls(n, safetyPct?, now?)`,
+ * `msUntilCanMakeNCalls` to learn how long a refused page waits, and
+ * `msUntilRetry` how long a request Strava refused waits;
  * `consumeHeaders` is an alias the core interface mandates. `recordCall` is a
  * no-op since usage is always derived from response headers, never inferred
  * client-side.
@@ -97,6 +113,29 @@ export class StravaRateLimitTracker implements RateLimitTracker {
     if (this.remainingShort(safetyPct, now) < n)
       return this.msUntilWindowReset(now) + RESET_GRACE_MS;
     return 0;
+  }
+
+  /**
+   * How long a request Strava refused with a 429 waits before it is tried
+   * again. The refusal's own headers are observed by then, so the usage on
+   * record names the window that is spent, and the wait runs until one call
+   * fits under Strava's own limits: the refusal is Strava's verdict, and the
+   * gates' headroom is theirs to apply to the next page, at no cost in calls.
+   * A `Retry-After` the response carried (`retryAfterMs`) is a floor.
+   *
+   * When neither explains the refusal (the response carried no usage, or
+   * reported it in a window's first `RESET_GRACE_MS`, which counts it for the
+   * window before), the wait runs to the soonest one of Strava's windows can
+   * have reset: the end of that grace, else the next quarter hour plus it.
+   * Never zero: a rate-limit error without a positive delay takes the
+   * collector's generic error path.
+   */
+  msUntilRetry(retryAfterMs = 0, now: Date = new Date()): number {
+    const explained = Math.max(this.msUntilCanMakeNCalls(1, STRAVA_LIMIT_PCT, now), retryAfterMs);
+    if (explained > 0) return explained;
+    const graceEnds = startOfUtcQuarterHour(now) + RESET_GRACE_MS;
+    if (now.getTime() < graceEnds) return graceEnds - now.getTime();
+    return this.msUntilWindowReset(now) + RESET_GRACE_MS;
   }
 
   remainingShort(safetyPct: number = DEFAULT_SAFETY_PCT, now: Date = new Date()): number {

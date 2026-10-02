@@ -360,7 +360,11 @@ local`). `link-widget` also needs `widgetOrigins` and `widgetRenderer`, or
   input it did not durably emit, and never fail the whole page for one item.
 - **Rate limits.** The platform's limits are honoured (`retryAfterMs`,
   `defaultSyncInterval`, the shared rate limiter), and the client sends an
-  identifying User-Agent where the platform asks for one.
+  identifying User-Agent where the platform asks for one. A rate-limit
+  `SyncError` names `quota: { kind }` when the platform says what it counted
+  against: `app` only when every account signs in through one application
+  credential on the collector (no `perAccount` credentials spec), otherwise
+  `account`.
 - **Writer cost.** A source that emits a burst (a full bootstrap, a resync)
   is processed by a single writer thread on the gateway. Page sizes and the
   amount of metadata, links, and people per document decide how long that

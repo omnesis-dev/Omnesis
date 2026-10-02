@@ -14,6 +14,7 @@ import {
   syncEnrichPending,
 } from "./enrichment.js";
 import { syncAthleteRefresh, shouldRefreshAthlete } from "./athlete-refresh.js";
+import { quotaDeferral, StravaQuotaDeferral } from "./client.js";
 import type {
   SourceAnalyticsAccess,
   StructuredSyncResult,
@@ -100,12 +101,18 @@ export class StravaActivitiesSource {
     if (cur.phase === "backfill") return this.syncBackfill(cur);
     if (cur.phase === "snapshot-rewalk") return this.syncSnapshotRewalk(cur);
     if (cur.phase === "edit-sweep") return this.syncEditSweep(cur);
-    if (cur.phase === "athlete-refresh") return this.dispatchAthleteRefresh(cur);
-    if (cur.phase === "detail-backfill") return this.dispatchDetail(cur);
-    if (cur.phase === "social-backfill") return this.dispatchSocial(cur);
-    if (cur.phase === "zones-backfill") return this.dispatchZones(cur);
-    if (cur.phase === "streams-backfill") return this.dispatchStreams(cur);
-    if (cur.phase === "enrich-pending") return this.dispatchEnrichPending(cur);
+    if (cur.phase === "athlete-refresh")
+      return this.enrichOrList(cur, () => this.dispatchAthleteRefresh(cur));
+    if (cur.phase === "detail-backfill")
+      return this.enrichOrList(cur, () => this.dispatchDetail(cur));
+    if (cur.phase === "social-backfill")
+      return this.enrichOrList(cur, () => this.dispatchSocial(cur));
+    if (cur.phase === "zones-backfill")
+      return this.enrichOrList(cur, () => this.dispatchZones(cur));
+    if (cur.phase === "streams-backfill")
+      return this.enrichOrList(cur, () => this.dispatchStreams(cur));
+    if (cur.phase === "enrich-pending")
+      return this.enrichOrList(cur, () => this.dispatchEnrichPending(cur));
 
     // `incremental` — priority chain.
     if (this.shouldStartSnapshot(cur)) {
@@ -128,19 +135,67 @@ export class StravaActivitiesSource {
       };
       return this.syncEditSweep(entered);
     }
+    // Not through `enrichOrList`: a refused page here falls through to the
+    // listing below, which would otherwise run twice.
     if (this.analytics && this.athleteId !== undefined) {
       if (shouldRefreshAthlete(cur)) {
-        return this.dispatchAthleteRefresh({ ...cur, phase: "athlete-refresh" });
+        const refreshed = await this.unlessRefused(() =>
+          this.dispatchAthleteRefresh({ ...cur, phase: "athlete-refresh" }),
+        );
+        if (refreshed) return refreshed;
+      } else {
+        // Nothing time-gated is due — opportunistically run enrich-pending.
+        // With nothing pending it hands back `incremental`, and a page the
+        // budget refused hands back nothing; either way the listing runs.
+        const enriched = await this.unlessRefused(() =>
+          this.dispatchEnrichPending({ ...cur, phase: "enrich-pending" }),
+        );
+        if (enriched && enriched.cursor.phase !== "incremental") return enriched;
       }
-      // TODO: A quota deferral here parks the source until the budget covers a whole
-      // enrichment page (up to UTC midnight), so listing new activities waits too; fall
-      // through to syncIncremental instead, and likewise for a cursor already in enrich-pending.
-      // Nothing time-gated is due — opportunistically run enrich-pending.
-      const enriched = await this.dispatchEnrichPending({ ...cur, phase: "enrich-pending" });
-      // If nothing was pending, enrich-pending returns to incremental immediately.
-      if (enriched.cursor.phase !== "incremental") return enriched;
     }
     return this.syncIncremental(cur);
+  }
+
+  /**
+   * A page of enrichment, or a listing of new activities in its place when the
+   * rate-limit budget refuses it.
+   *
+   * The listing keeps the cursor's phase. It is a detour, not a step in the
+   * phase machine, so the next page goes back to the refused work where it
+   * stopped: the same tier (a refused page never advanced `enrichTier`), the
+   * same pending marks and the same gear. Parking the source instead would hold
+   * new activities back with the backlog, until UTC midnight once a backlog had
+   * spent the day, or until the whole backlog had drained.
+   */
+  private async enrichOrList(
+    cur: StravaActivitiesCursor,
+    page: () => Promise<StructuredSyncResult<StravaActivitiesCursor>>,
+  ): Promise<StructuredSyncResult<StravaActivitiesCursor>> {
+    const enriched = await this.unlessRefused(page);
+    if (enriched) return enriched;
+    // A full listing page reports `hasMore` and has moved the high-water mark
+    // up to the newest activity on it, so the detour pages forward and cannot
+    // spin.
+    const listed = await this.syncIncremental(cur);
+    return { ...listed, cursor: { ...listed.cursor, phase: cur.phase } };
+  }
+
+  /**
+   * Runs `page`, or returns `undefined` when its budget gate refused it. The
+   * gates refuse before the page's first call, so nothing was spent and
+   * nothing is lost. Any other error, a 429 Strava sent included, still ends
+   * the tick.
+   */
+  private async unlessRefused(
+    page: () => Promise<StructuredSyncResult<StravaActivitiesCursor>>,
+  ): Promise<StructuredSyncResult<StravaActivitiesCursor> | undefined> {
+    try {
+      return await page();
+    } catch (err) {
+      if (!(err instanceof StravaQuotaDeferral)) throw err;
+      log.info(`${err.message}; listing new activities instead`);
+      return undefined;
+    }
   }
 
   private shouldStartSnapshot(cur: StravaActivitiesCursor): boolean {
@@ -213,6 +268,13 @@ export class StravaActivitiesSource {
   private async syncIncremental(
     cur: StravaActivitiesCursor,
   ): Promise<StructuredSyncResult<StravaActivitiesCursor>> {
+    // The listing keeps the source current and is what a refused enrichment
+    // page falls back on, so it draws on the whole safety cap rather than
+    // enrichment's share. When not even one call fits, it waits for one call,
+    // the earliest anything here can run, not for a page.
+    if (!this.client.quota.canMakeNCalls(1)) {
+      throw quotaDeferral("Incremental", 1, this.client.quota);
+    }
     const after = Math.max(cur.lastActivityTimestamp ?? 0, dataCutoffToUnix(this.dataCutoff) ?? 0);
 
     const activities = await this.client.listActivities({
@@ -441,10 +503,14 @@ export class StravaActivitiesSource {
     cur: StravaActivitiesCursor,
   ): Promise<StructuredSyncResult<StravaActivitiesCursor>> {
     if (!this.analytics || this.athleteId === undefined) return this.skipEnrichment(cur);
+    // Both entries arrive in `athlete-refresh`, so the phase cannot tell them
+    // apart; the stamp can. A cursor that has never finished a refresh is a
+    // first setup, such as the one a backfill just built, and chains into
+    // enrichment. One that has is the weekly refresh from `incremental`, and
+    // goes back there. The refresh stamps only on completion, so one spread
+    // over several pages still knows its way back on the last of them.
     const nextPhase: StravaActivitiesCursor["phase"] =
-      cur.phase === "athlete-refresh" && cur.lastActivityTimestamp === undefined
-        ? "incremental" // Came from incremental-tick refresh; just go back.
-        : "detail-backfill"; // Came after backfill; chain into enrichment.
+      cur.lastAthleteRefreshAt === undefined ? "detail-backfill" : "incremental";
     return syncAthleteRefresh(cur, nextPhase, {
       analytics: this.analytics,
       client: this.client,

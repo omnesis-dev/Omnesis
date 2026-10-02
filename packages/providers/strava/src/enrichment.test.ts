@@ -5,7 +5,12 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { deletionsFor, rowsFor, tablesWritten } from "@omnesis/source-sdk/testing";
 import { tableWrites, type PageTableWrites } from "@omnesis/source-sdk";
 import { StravaActivitiesSource } from "./activities.js";
-import { StravaClient, StravaForbiddenError, StravaRateLimitError } from "./client.js";
+import {
+  StravaClient,
+  StravaForbiddenError,
+  StravaQuotaDeferral,
+  StravaRateLimitError,
+} from "./client.js";
 import {
   syncDetailBackfill,
   syncSocialBackfill,
@@ -15,12 +20,14 @@ import {
 } from "./enrichment.js";
 import type { SourceAnalyticsAccess } from "@omnesis/source-sdk";
 import type { ProviderId, SourceId } from "@omnesis/types";
+import type { QuotaPair } from "./quota.js";
 import type {
   StravaActivitiesCursor,
   StravaDetailedActivity,
   StravaActivityZone,
   StravaStreamSet,
   StravaComment,
+  StravaSummaryActivity,
   StravaSummaryAthlete,
 } from "./types.js";
 
@@ -42,10 +49,11 @@ function makeMockGateway(rows: Record<string, unknown>[]): { gateway: SourceAnal
   return { gateway };
 }
 
-function makeFetchedClient(scenarios: Record<string, unknown>): StravaClient {
+function makeFetchedClient(scenarios: Record<string, unknown>, seen: string[] = []): StravaClient {
   // Minimal client built around an injected fetch that returns canned JSON
-  // keyed by URL substring.
+  // keyed by URL substring. Every URL it is asked for lands in `seen`.
   const fetchFn = vi.fn(async (url: string) => {
+    seen.push(url);
     for (const [key, body] of Object.entries(scenarios)) {
       if (url.includes(key)) {
         return new Response(JSON.stringify(body), {
@@ -696,9 +704,10 @@ describe("syncStreamsBackfill", () => {
 
 // ── Quota deferral — every tier ──────────────────────────────────
 
-// A page the window cannot cover throws `quotaDeferral` rather than returning
-// `hasMore` (see its JSDoc). These pin that for every tier, and for
-// enrich-pending in front of them.
+// A page the window cannot cover throws a `StravaQuotaDeferral` before its
+// first call rather than returning `hasMore` (see `quotaDeferral`). These pin
+// that for every tier. The activities source lists new activities in its place
+// (see the next describe), and parks only when not even the listing fits.
 describe("a page the rate-limit window cannot cover", () => {
   // Seven and a half minutes before the quarter hour resets the short window.
   beforeEach(() => {
@@ -709,15 +718,19 @@ describe("a page the rate-limit window cannot cover", () => {
     vi.useRealTimers();
   });
 
-  /** One activity pending in every tier, and a short window already spent. */
-  function spentWindow(): { gateway: SourceAnalyticsAccess; client: StravaClient } {
+  /**
+   * One activity pending in every tier, and a short window already spent.
+   * `seen` is every URL the client asked Strava for.
+   */
+  function spentWindow(): { gateway: SourceAnalyticsAccess; client: StravaClient; seen: string[] } {
     const { gateway } = makeMockGateway([baseRow]);
-    const client = makeFetchedClient({});
+    const seen: string[] = [];
+    const client = makeFetchedClient({}, seen);
     client.quota.setState(undefined, {
       used: { short: 95, daily: 100 },
       limit: { short: 100, daily: 1000 },
     });
-    return { gateway, client };
+    return { gateway, client, seen };
   }
 
   const quarterHourDeferral = {
@@ -733,19 +746,21 @@ describe("a page the rate-limit window cannot cover", () => {
     ["zones-backfill", syncZonesBackfill],
     ["streams-backfill", syncStreamsBackfill],
   ] as const)("%s defers the tick past the next quarter hour", async (phase, syncPhase) => {
-    const { gateway, client } = spentWindow();
+    const { gateway, client, seen } = spentWindow();
 
     const page = syncPhase(
       { phase },
       { analytics: gateway, client, sourceId: SOURCE_ID, providerId: PROVIDER_ID, athleteId: 99 },
     );
 
-    await expect(page).rejects.toBeInstanceOf(StravaRateLimitError);
+    await expect(page).rejects.toBeInstanceOf(StravaQuotaDeferral);
     await expect(page).rejects.toMatchObject(quarterHourDeferral);
+    // Refused before its first call, which is what lets the source list in its place.
+    expect(seen).toEqual([]);
   });
 
-  test("the source defers from enrich-pending too, rather than rotating to the next tier", async () => {
-    const { gateway, client } = spentWindow();
+  test("a source in enrich-pending parks for one listing call when not even the listing fits", async () => {
+    const { gateway, client, seen } = spentWindow();
     const source = new StravaActivitiesSource(
       client,
       SOURCE_ID,
@@ -759,6 +774,247 @@ describe("a page the rate-limit window cannot cover", () => {
     await expect(source.syncStructured({ phase: "enrich-pending" })).rejects.toMatchObject(
       quarterHourDeferral,
     );
+    expect(seen).toEqual([]);
+  });
+});
+
+// ── The listing a refused page falls back on ─────────────────────
+
+describe("a page the budget refuses gives way to listing new activities", () => {
+  // Seven and a half minutes before the quarter hour resets the short window.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-03-04T10:07:30Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** An activity the listing finds upstream. */
+  function listed(id: number, startDate: string): StravaSummaryActivity {
+    return {
+      id,
+      athlete: { id: 99 },
+      name: `Ride ${id}`,
+      distance: 30_000,
+      moving_time: 3_600,
+      elapsed_time: 3_700,
+      total_elevation_gain: 210,
+      sport_type: "Ride",
+      start_date: startDate,
+      start_date_local: startDate.replace("Z", ""),
+    };
+  }
+
+  const unix = (iso: string) => Math.floor(Date.parse(iso) / 1000);
+  /** The listing's high-water mark in the cursors below: before every listed activity. */
+  const HIGH_WATER = unix("2026-03-03T08:00:00Z");
+  const RIDE = listed(23456, "2026-03-04T09:00:00Z");
+
+  /**
+   * 850 of the day's 1,000 reads used: none left under enrichment's cap of
+   * 800, and 50 under the listing's 900.
+   */
+  const pastEnrichmentsShare: QuotaPair = { short: 5, daily: 850 };
+
+  /**
+   * A source with `pending` activities waiting in every enrichment tier, whose
+   * client has already spent `used` of a new app's reads. The listing answers
+   * with `listings`, a page per call. A path `throttled` names is refused with
+   * a 429 that reports the day's reads spent.
+   */
+  function starvedSource(
+    pending: number,
+    used: QuotaPair,
+    listings: StravaSummaryActivity[][] = [[RIDE]],
+    throttled: (path: string) => boolean = () => false,
+  ): { source: StravaActivitiesSource; urls: URL[]; paths: () => string[] } {
+    const rows = Array.from({ length: pending }, (_, i) => ({ ...baseRow, id: 12345 + i }));
+    const { gateway } = makeMockGateway(rows);
+    const urls: URL[] = [];
+    const client = new StravaClient({
+      tokens: {
+        access_token: "tok",
+        refresh_token: "rtok",
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+        athlete_id: 99,
+      },
+      credentials: { client_id: "x", client_secret: "y" },
+      fetchFn: vi.fn((url: string) => {
+        urls.push(new URL(url));
+        if (throttled(new URL(url).pathname.replace("/api/v3", ""))) {
+          return Promise.resolve(
+            new Response("", {
+              status: 429,
+              headers: {
+                "X-ReadRateLimit-Limit": "100,1000",
+                "X-ReadRateLimit-Usage": "100,1000",
+              },
+            }),
+          );
+        }
+        const body = url.includes("/athlete/activities") ? (listings.shift() ?? []) : {};
+        return Promise.resolve(
+          new Response(JSON.stringify(body), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+      }),
+    });
+    client.quota.setState(undefined, { used, limit: { short: 100, daily: 1000 } });
+    const source = new StravaActivitiesSource(
+      client,
+      SOURCE_ID,
+      PROVIDER_ID,
+      undefined,
+      undefined,
+      99,
+      gateway,
+    );
+    const paths = () => urls.map((url) => url.pathname.replace("/api/v3", ""));
+    return { source, urls, paths };
+  }
+
+  /** An `incremental` cursor with nothing time-gated due. */
+  const settled = (): StravaActivitiesCursor => ({
+    phase: "incremental",
+    lastActivityTimestamp: HIGH_WATER,
+    lastSnapshotAt: new Date().toISOString(),
+    lastEditSweepAt: new Date().toISOString(),
+    lastAthleteRefreshAt: new Date().toISOString(),
+  });
+
+  test.each([
+    "enrich-pending",
+    "detail-backfill",
+    "social-backfill",
+    "zones-backfill",
+    "streams-backfill",
+    "athlete-refresh",
+  ] as const)(
+    "%s: a refused page lists new activities instead, and keeps its place",
+    async (phase) => {
+      const { source, paths } = starvedSource(3, pastEnrichmentsShare);
+
+      const result = await source.syncStructured({
+        phase,
+        enrichTier: "social",
+        pendingSocialStamps: ["12345"],
+        pendingGearIds: ["g5001"],
+        lastActivityTimestamp: HIGH_WATER,
+      });
+
+      // Only the listing reached Strava, and only what it found was written.
+      expect(paths()).toEqual(["/athlete/activities"]);
+      expect(tablesWritten(result)).toEqual(["strava_activities"]);
+      expect(rowsFor(result, "strava_activities").map((row) => row.id)).toEqual([23456]);
+      expect(result.documents).toHaveLength(1);
+      expect(result.hasMore).toBe(false);
+      // The refused work resumes where it stopped: same phase, same tier, the
+      // same marks and gear still waiting.
+      expect(result.cursor).toMatchObject({
+        phase,
+        enrichTier: "social",
+        pendingSocialStamps: ["12345"],
+        pendingGearIds: ["g5001"],
+        lastActivityTimestamp: unix(RIDE.start_date),
+      });
+    },
+  );
+
+  test("a 429 inside an enrichment page ends the tick rather than giving way to the listing", async () => {
+    // Budget to spare on record, but Strava refuses the detail call: its
+    // verdict, which the listing would meet too, and it came after the page
+    // began, so it is not the gate's refusal the listing stands in for.
+    const { source, paths } = starvedSource(3, { short: 0, daily: 0 }, [[RIDE]], (path) =>
+      path.startsWith("/activities/"),
+    );
+
+    const sync = source.syncStructured({
+      phase: "detail-backfill",
+      lastActivityTimestamp: HIGH_WATER,
+    });
+
+    await expect(sync).rejects.toBeInstanceOf(StravaRateLimitError);
+    await expect(sync).rejects.not.toBeInstanceOf(StravaQuotaDeferral);
+    // The day is spent: until UTC midnight, and the 30 seconds after it.
+    await expect(sync).rejects.toMatchObject({ kind: "rate-limit", retryAfterMs: 833 * 60_000 });
+    expect(paths()).toContain("/activities/12345");
+    expect(paths()).not.toContain("/athlete/activities");
+  });
+
+  test("the steady-state chain lists once when its enrichment is refused", async () => {
+    const { source, paths } = starvedSource(3, pastEnrichmentsShare);
+
+    const result = await source.syncStructured(settled());
+
+    expect(paths()).toEqual(["/athlete/activities"]);
+    expect(rowsFor(result, "strava_activities").map((row) => row.id)).toEqual([23456]);
+    expect(result.cursor.phase).toBe("incremental");
+  });
+
+  test("a due athlete refresh the budget cannot cover gives way to the listing", async () => {
+    const { source, paths } = starvedSource(0, pastEnrichmentsShare);
+
+    const result = await source.syncStructured({ ...settled(), lastAthleteRefreshAt: undefined });
+
+    expect(paths()).toEqual(["/athlete/activities"]);
+    expect(rowsFor(result, "strava_activities").map((row) => row.id)).toEqual([23456]);
+    expect(result.cursor.phase).toBe("incremental");
+    // Still due, so the next sync tries it again.
+    expect(result.cursor.lastAthleteRefreshAt).toBeUndefined();
+  });
+
+  test("when not even a listing fits, the source waits for one call, not for a page", async () => {
+    // The short window is spent and two of the day's reads are left under the
+    // listing's cap: too few for a page of three, which would wait until
+    // midnight, but a listing fits once the quarter hour resets the window.
+    const { source, urls } = starvedSource(3, { short: 95, daily: 898 });
+
+    const sync = source.syncStructured({
+      phase: "enrich-pending",
+      lastActivityTimestamp: HIGH_WATER,
+    });
+
+    await expect(sync).rejects.toBeInstanceOf(StravaQuotaDeferral);
+    await expect(sync).rejects.toMatchObject({ kind: "rate-limit", retryAfterMs: 8 * 60_000 });
+    expect(urls).toEqual([]);
+  });
+
+  test("with nothing to enrich and no budget, the listing waits instead of calling", async () => {
+    const { source, urls } = starvedSource(0, { short: 95, daily: 100 });
+
+    await expect(source.syncStructured(settled())).rejects.toMatchObject({
+      kind: "rate-limit",
+      retryAfterMs: 8 * 60_000,
+    });
+    expect(urls).toEqual([]);
+  });
+
+  test("a refused page cannot spin: the detour pages forward and stops", async () => {
+    const fullPage = Array.from({ length: 100 }, (_, i) =>
+      listed(30000 + i, new Date(Date.parse("2026-03-03T09:00:00Z") + i * 60_000).toISOString()),
+    );
+    const { source, urls, paths } = starvedSource(3, pastEnrichmentsShare, [fullPage, [RIDE]]);
+
+    let cursor: StravaActivitiesCursor = {
+      phase: "enrich-pending",
+      lastActivityTimestamp: HIGH_WATER,
+    };
+    let pages = 0;
+    for (let more = true; more && pages < 5; pages++) {
+      const result = await source.syncStructured(cursor);
+      cursor = result.cursor;
+      more = result.hasMore ?? false;
+    }
+
+    expect(pages).toBe(2);
+    expect(paths()).toEqual(["/athlete/activities", "/athlete/activities"]);
+    const [first, second] = urls.map((url) => Number(url.searchParams.get("after")));
+    expect(second).toBeGreaterThan(first!);
+    expect(cursor.phase).toBe("enrich-pending");
+    expect(cursor.lastActivityTimestamp).toBe(unix(RIDE.start_date));
   });
 });
 

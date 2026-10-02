@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Tier 4 — one-shot athlete enrichment.
+ * Tier 4 — athlete enrichment, once per cycle.
  *
  * Triggered after `backfill` completes (so detail-backfill can resolve
  * `gear_id` against `strava_gear`) and on a 7-day cadence inside
@@ -12,7 +12,9 @@
  * - GET /athlete           → DetailedAthlete
  * - GET /athlete/zones     → HR + power zone definitions
  * - GET /athletes/{id}/stats → lifetime totals
- * - GET /gear/{id} for every distinct gear_id observed in `strava_activities`
+ * - GET /gear/{id} for every distinct gear_id observed in `strava_activities`,
+ *   paced per call: gear a window's reads cannot cover waits on the cursor
+ *   (`pendingGearIds`) for the next window.
  *
  * Side effect: when athlete `summit` flips false → true, the cursor logic
  * clears `zones_unavailable` so `zones-backfill` retries the activities.
@@ -21,6 +23,7 @@
 import { createLogger } from "@omnesis/core";
 import {
   quotaDeferral,
+  requireEnrichmentBudget,
   StravaForbiddenError,
   StravaNotFoundError,
   StravaScopeError,
@@ -31,11 +34,18 @@ import {
   athleteStatsToRecords,
   gearToRecord,
 } from "./normalizer-detail.js";
+import { ENRICHMENT_SAFETY_PCT } from "./quota.js";
 import type { SourceAnalyticsAccess, StructuredSyncResult, TableWrite } from "@omnesis/source-sdk";
 import type { StravaClient } from "./client.js";
 import type { StravaActivitiesCursor } from "./types.js";
 
-const log = createLogger("source:strava-athlete-refresh");
+const log = createLogger("source:strava-activities:athlete-refresh");
+
+/**
+ * Reads a refresh spends before it reaches the gear catalogue: /athlete, its
+ * stats and its zones.
+ */
+const PROFILE_CALLS = 3;
 
 /** Cadence — 7 days between athlete-refresh runs. */
 export const ATHLETE_REFRESH_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -55,33 +65,41 @@ interface Deps {
 }
 
 /**
- * Walk the four athlete-level endpoints and the per-gear lookups, and return
- * everything they produced as one page.
+ * Walk the three athlete-level endpoints and as many per-gear lookups as the
+ * budget allows, and return what they produced as one page.
  *
- * That page fills five tables: the athlete, its zones, its lifetime stats, the
- * gear catalogue, and the activity rows the resolved gear updates. They travel
- * together so the cursor that follows covers all of them.
+ * A page that starts the refresh fills five tables: the athlete, its zones, its
+ * lifetime stats, the gear catalogue, and the activity rows the resolved gear
+ * updates. They travel together so the cursor that follows covers all of them.
+ * A page that resumes one fills only the last two.
  *
  * The activity rewrites are merged into a single set of rows keyed by activity
  * id, because two of them can land on the same activity — a Summit athlete
  * whose zone marks are being cleared may also own gear being resolved — and
  * two independent full-row rewrites of one row would let the later silently
  * undo the earlier.
+ *
+ * The gear catalogue is the part that grows: an athlete can own more gear than
+ * one window's reads cover, so a gate sized to the whole catalogue would refuse
+ * every window, and listing new activities would wait behind it. The page gates
+ * only on the calls it cannot start without, at enrichment's share of the
+ * budget, and rechecks at the same share before each gear call. When the budget
+ * runs out it lands what it fetched and leaves the gear it did not reach on the
+ * cursor; the next page, once the window allows, fetches only that remainder.
+ * Throwing a deferral there instead would discard the fetched gear with the
+ * page, and every window would pay for the same gear again and run out in the
+ * same place.
  */
 export async function syncAthleteRefresh(
   cur: StravaActivitiesCursor,
   nextPhase: StravaActivitiesCursor["phase"],
   deps: Deps,
 ): Promise<StructuredSyncResult<StravaActivitiesCursor>> {
-  // FIXME: Past 87 gear ids, callBudget exceeds the 15-minute read cap (90 calls by default), so
-  // once the tracker has seen Strava's limits the gate refuses every window and incremental
-  // listing stalls behind it. Gate on the three fixed calls; the gear loop rechecks per call.
-  const callBudget = await estimateCallBudget(deps);
-  if (!deps.client.quota.canMakeNCalls(callBudget)) {
-    throw quotaDeferral("Athlete-refresh", callBudget, deps.client.quota);
-  }
+  // Set when an earlier page ran out of budget mid-catalogue: its profile half,
+  // and the Summit clear with it, has landed already.
+  const resumed = cur.pendingGearIds?.length ? cur.pendingGearIds : undefined;
+  requireEnrichmentBudget("Athlete-refresh", resumed ? 1 : PROFILE_CALLS, deps.client.quota);
 
-  const fetchedAt = new Date().toISOString();
   const writes: TableWrite[] = [];
   // Activity rewrites, keyed by id so two edits to one activity compose into
   // one row instead of racing each other.
@@ -97,6 +115,93 @@ export async function syncAthleteRefresh(
     }
   };
 
+  const gearIds = resumed ?? (await refreshProfile(deps, writes, editActivities));
+
+  log.info(`Athlete-refresh: resolving ${gearIds.length} gear IDs`);
+  const gearRows: Record<string, unknown>[] = [];
+  let reached = 0;
+  // Rechecked per call, at the gate's share: the gate covered only what this
+  // page could not start without. Sharing it is also what lets a resumed page
+  // that passed its gate always reach at least one gear.
+  while (reached < gearIds.length && deps.client.quota.canMakeNCalls(1, ENRICHMENT_SAFETY_PCT)) {
+    const id = gearIds[reached++]!;
+    try {
+      gearRows.push(gearToRecord(await deps.client.getGear(id), deps.athleteId));
+    } catch (err) {
+      // Skipped rather than retried: left on the cursor, gear that always
+      // fails would hold the refresh in place, and the listing behind it.
+      if (err instanceof StravaNotFoundError || err instanceof StravaForbiddenError) {
+        log.warn(`Gear ${id} unavailable: ${err.message}`);
+        continue;
+      }
+      // A scope the grant lacks refuses every gear alike, and each refusal
+      // costs two reads and a token refresh, so the rest are not asked for.
+      if (err instanceof StravaScopeError) {
+        log.warn(`${err.message}; skipping the remaining ${gearIds.length - reached} gear IDs`);
+        reached = gearIds.length;
+        break;
+      }
+      throw err;
+    }
+  }
+  if (resumed && reached === 0) {
+    // A page returning `hasMore` with its cursor unchanged would be asked for
+    // again at once. Nothing has been called by this point, so the deferral
+    // keeps the promise `StravaQuotaDeferral` makes.
+    throw quotaDeferral("Athlete-refresh", 1, deps.client.quota, ENRICHMENT_SAFETY_PCT);
+  }
+  const pendingGearIds = gearIds.slice(reached);
+  writes.push({ tableName: "strava_gear", records: gearRows });
+
+  // ── Update activities with resolved gear name/brand/model ─────────
+  if (gearRows.length > 0) {
+    editActivities(await activitiesWithResolvedGear(deps.analytics, gearRows), [
+      "gear_brand",
+      "gear_model",
+      "gear_name",
+    ]);
+  }
+  if (activityEdits.size > 0) {
+    writes.push({ tableName: "strava_activities", records: [...activityEdits.values()] });
+  }
+
+  if (pendingGearIds.length > 0) {
+    log.info(
+      `Athlete-refresh: read budget spent with ${pendingGearIds.length} of ${gearIds.length} gear IDs left; resuming when it allows`,
+    );
+    return {
+      analytics: writes,
+      cursor: { ...cur, phase: "athlete-refresh", pendingGearIds },
+      hasMore: true,
+    };
+  }
+
+  log.info(`Athlete-refresh complete: ${resumed ? "" : "profile + "}${gearRows.length} gear items`);
+
+  return {
+    analytics: writes,
+    cursor: {
+      ...cur,
+      phase: nextPhase,
+      // Stamped on completion: the cadence, and where the refresh hands over,
+      // both read it as a refresh that has finished.
+      lastAthleteRefreshAt: new Date().toISOString(),
+      pendingGearIds: undefined,
+    },
+    hasMore: true,
+  };
+}
+
+/**
+ * The profile half of a refresh: the athlete, its zones and its lifetime
+ * stats, written to `writes`, and the Summit clear, handed to `editActivities`.
+ * Returns the gear the catalogue walk should resolve.
+ */
+async function refreshProfile(
+  deps: Deps,
+  writes: TableWrite[],
+  editActivities: (rows: Record<string, unknown>[], fields: readonly string[]) => void,
+): Promise<string[]> {
   // ── Athlete profile + lifetime stats ──────────────────────────────
   // /athlete is covered by the basic `read` scope so it always works.
   const detailed = await deps.client.getAthleteDetail();
@@ -147,56 +252,7 @@ export async function syncAthleteRefresh(
   // references yet (shoes for new Strava athletes, e.g.).
   for (const g of detailed.bikes ?? []) gearIds.add(g.id);
   for (const g of detailed.shoes ?? []) gearIds.add(g.id);
-  log.info(`Athlete-refresh: resolving ${gearIds.size} gear IDs`);
-  const gearRows: Record<string, unknown>[] = [];
-  for (const id of gearIds) {
-    if (!deps.client.quota.canMakeNCalls(1)) {
-      log.warn("Athlete-refresh: quota exhausted mid-gear; partial gear catalogue this cycle");
-      break;
-    }
-    try {
-      const g = await deps.client.getGear(id);
-      gearRows.push(gearToRecord(g, deps.athleteId));
-    } catch (err) {
-      if (err instanceof StravaNotFoundError || err instanceof StravaForbiddenError) {
-        log.warn(`Gear ${id} unavailable: ${(err as Error).message}`);
-        continue;
-      }
-      throw err;
-    }
-  }
-  writes.push({ tableName: "strava_gear", records: gearRows });
-
-  // ── Update activities with resolved gear name/brand/model ─────────
-  if (gearRows.length > 0) {
-    editActivities(await activitiesWithResolvedGear(deps.analytics, gearRows), [
-      "gear_brand",
-      "gear_model",
-      "gear_name",
-    ]);
-  }
-  if (activityEdits.size > 0) {
-    writes.push({ tableName: "strava_activities", records: [...activityEdits.values()] });
-  }
-
-  log.info(`Athlete-refresh complete: profile + ${gearRows.length} gear items`);
-
-  return {
-    analytics: writes,
-    cursor: {
-      ...cur,
-      phase: nextPhase,
-      lastAthleteRefreshAt: fetchedAt,
-    },
-    hasMore: true,
-  };
-}
-
-async function estimateCallBudget(deps: Deps): Promise<number> {
-  // /athlete + /athlete/zones + /athletes/{id}/stats + N gear calls.
-  // Rough estimate; if there are zero activities yet, gear count is 0.
-  const ids = await distinctGearIds(deps.analytics);
-  return 3 + ids.size;
+  return [...gearIds];
 }
 
 async function distinctGearIds(analytics: SourceAnalyticsAccess): Promise<Set<string>> {

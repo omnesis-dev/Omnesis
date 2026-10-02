@@ -36,7 +36,7 @@ export interface SyncErrorOptions {
   /**
    * The budget a rate limit was counted against, when the source knows.
    *
-   * An `app` bucket is shared by every account this installation holds for the
+   * An `app` bucket is shared by every account this collector holds for the
    * provider, so backing off one account and letting the rest run spends the
    * same exhausted budget from another direction.
    */

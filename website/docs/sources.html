@@ -955,7 +955,10 @@
                   kudos, gear, and athlete profile, zones, and stats as analytics tables, plus a
                   summary document per activity. Each installation needs its own Strava API app,
                   because Strava caps a shared app at one connected athlete; the first add flow
-                  walks you through registering it.
+                  walks you through registering it. Strava allows a new app 1,000 reads a day, so
+                  the source is added with a 30-minute sync interval, and for an account with many
+                  activities a first sync or a resync can take several days to fetch every
+                  activity's details, while new activities keep being listed.
                 </td>
               </tr>
               <tr>

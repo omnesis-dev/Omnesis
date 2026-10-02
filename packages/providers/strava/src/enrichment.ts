@@ -14,14 +14,16 @@
  * `zones_unavailable IS NOT TRUE` excluded from zones-backfill so Summit-only
  * 403s don't make us spin forever).
  *
- * Rate-limit safety is enforced at page entry: if `client.quota.canMakeNCalls`
- * is false the page throws `quotaDeferral(…)` — the collector parks the source
- * until the window resets, and the next tick resumes from the same cursor.
+ * Rate-limit safety is enforced at page entry, against enrichment's share of
+ * the budget (`ENRICHMENT_SAFETY_PCT`): a page that share cannot cover throws
+ * `StravaQuotaDeferral` before its first call. The activities source then lists
+ * new activities in its place, and the next page resumes from the same cursor
+ * and tier.
  */
 
 import { createLogger, toCanonicalInstant, toCanonicalWallClock } from "@omnesis/core";
 import {
-  quotaDeferral,
+  requireEnrichmentBudget,
   StravaForbiddenError,
   StravaNotFoundError,
   StravaScopeError,
@@ -55,7 +57,7 @@ import type {
   EnrichmentTier,
 } from "./types.js";
 
-const log = createLogger("source:strava-enrichment");
+const log = createLogger("source:strava-activities:enrichment");
 
 /** Max activities to enrich per page. Conservative — keeps a single sync tick under ~20s. */
 const ENRICHMENT_PAGE_SIZE = 10;
@@ -138,9 +140,7 @@ export async function syncDetailBackfill(
       }),
     };
   }
-  if (!deps.client.quota.canMakeNCalls(pending.length)) {
-    throw quotaDeferral("Detail-backfill", pending.length, deps.client.quota);
-  }
+  requireEnrichmentBudget("Detail-backfill", pending.length, deps.client.quota);
 
   const records: Record<string, unknown>[] = [];
   const splitsRows: Record<string, unknown>[] = [];
@@ -268,9 +268,7 @@ export async function syncSocialBackfill(
     return { result: structuredEmpty({ ...cur, phase: "zones-backfill" }) };
   }
   // 2 calls per activity (comments + kudos).
-  if (!deps.client.quota.canMakeNCalls(pending.length * 2)) {
-    throw quotaDeferral("Social-backfill", pending.length * 2, deps.client.quota);
-  }
+  requireEnrichmentBudget("Social-backfill", pending.length * 2, deps.client.quota);
 
   const stampRows: Record<string, unknown>[] = [];
   const commentRows: Record<string, unknown>[] = [];
@@ -383,9 +381,7 @@ export async function syncZonesBackfill(
     log.info("Zones-backfill complete; transitioning to streams-backfill");
     return { result: structuredEmpty({ ...cur, phase: "streams-backfill" }) };
   }
-  if (!deps.client.quota.canMakeNCalls(pending.length)) {
-    throw quotaDeferral("Zones-backfill", pending.length, deps.client.quota);
-  }
+  requireEnrichmentBudget("Zones-backfill", pending.length, deps.client.quota);
 
   const stampRows: Record<string, unknown>[] = [];
   const zoneRows: Record<string, unknown>[] = [];
@@ -455,9 +451,7 @@ export async function syncStreamsBackfill(
     log.info("Streams-backfill complete; transitioning to incremental");
     return { result: structuredEmpty({ ...cur, phase: "incremental" }) };
   }
-  if (!deps.client.quota.canMakeNCalls(pending.length)) {
-    throw quotaDeferral("Streams-backfill", pending.length, deps.client.quota);
-  }
+  requireEnrichmentBudget("Streams-backfill", pending.length, deps.client.quota);
 
   const stampRows: Record<string, unknown>[] = [];
   const streamRows: Record<string, unknown>[] = [];

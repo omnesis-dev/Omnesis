@@ -5,7 +5,7 @@ import { createLogger } from "@omnesis/core";
 import { SyncError } from "@omnesis/types";
 import { STREAM_KEYS } from "./types.js";
 import { loadClientCredentials, saveTokens } from "./provider.js";
-import { StravaRateLimitTracker } from "./quota.js";
+import { DEFAULT_SAFETY_PCT, ENRICHMENT_SAFETY_PCT, StravaRateLimitTracker } from "./quota.js";
 import type {
   StravaTokens,
   StravaSummaryActivity,
@@ -51,14 +51,14 @@ const TOKEN_URL = "https://www.strava.com/oauth/token";
 const MAX_RETRIES = 3;
 
 /**
- * Maximum in-tick sleep on a 429. `computeRateLimitBackoff` can return
- * up to 16 min (short-term cap) or 1h (daily cap); 5 min is a comfortable
- * compromise — short enough that the sync tick stays responsive, long
- * enough to absorb most short-window throttling without surfacing as a
- * source-state flip. Anything longer goes through `StravaRateLimitError`
- * (which the collector classifies as `rate-limit`) so the next scheduled
- * tick re-attempts and the source UI shows a clear "rate-limited" badge
- * rather than a stuck "syncing" pill.
+ * Maximum in-tick sleep on a 429. The wait runs 30 seconds past the reset of
+ * the window Strava reports spent: up to 15½ minutes for the 15-minute window,
+ * until UTC midnight for the day. 5 min is a comfortable compromise — short
+ * enough that the sync tick stays responsive, long enough to absorb most
+ * short-window throttling without surfacing as a source-state flip. Anything
+ * longer goes through `StravaRateLimitError` (which the collector classifies
+ * as `rate-limit`) so the next scheduled tick re-attempts and the source UI
+ * shows a clear "rate-limited" badge rather than a stuck "syncing" pill.
  */
 const IN_TICK_RATE_LIMIT_THRESHOLD_MS = 5 * 60 * 1000;
 /** Refresh the access token this many seconds before its stated expiry. */
@@ -85,17 +85,36 @@ export class StravaAuthError extends SyncError {
  * defer the next tick by that long instead of failing the source outright —
  * see `extractRateLimitDeferral`.
  *
- * Quota `app`: `computeRateLimitBackoff` reads `X-RateLimit-Limit` /
- * `X-RateLimit-Usage`, which Strava counts against the registered API
- * application (`client_id`), not the individual athlete. Every install
- * registers its own app for exactly this reason — see `credentials-spec.ts`
- * — so in practice this installation's app and its one connected athlete
- * share the same budget, but the meter Strava enforces is the app's.
+ * Quota `app`: the wait comes from the `X-RateLimit-*` and `X-ReadRateLimit-*`
+ * usage, which Strava counts against the registered API application
+ * (`client_id`), not the individual athlete, so every athlete connected
+ * through this install's app (see `credentials-spec.ts`) draws on one budget.
  */
 export class StravaRateLimitError extends SyncError {
   constructor(message: string, retryAfterMs?: number) {
     super("rate-limit", message, { retryAfterMs, quota: { kind: "app" } });
     this.name = "StravaRateLimitError";
+  }
+}
+
+/**
+ * A page its rate-limit gate refused before it made a single call.
+ *
+ * Still a `StravaRateLimitError`, so the collector parks the source on it like
+ * any other. It has a type of its own because nothing was spent: the
+ * activities source can drop an enrichment page refused this way and list new
+ * activities in its place.
+ *
+ * That rests on one invariant: this is only ever thrown before a page's first
+ * call to Strava. A gate placed after a call would have the fallback silently
+ * drop what the page had fetched. A 429 is never one of these, even though it
+ * too is a rate limit: it can arrive partway through a page, after calls were
+ * spent, and Strava would refuse the listing as well.
+ */
+export class StravaQuotaDeferral extends StravaRateLimitError {
+  constructor(message: string, retryAfterMs: number) {
+    super(message, retryAfterMs);
+    this.name = "StravaQuotaDeferral";
   }
 }
 
@@ -111,14 +130,29 @@ export function quotaDeferral(
   label: string,
   calls: number,
   quota: StravaRateLimitTracker,
-): StravaRateLimitError {
-  return new StravaRateLimitError(
+  safetyPct = DEFAULT_SAFETY_PCT,
+): StravaQuotaDeferral {
+  return new StravaQuotaDeferral(
     `${label}: quota too low for ${calls} calls`,
     // At least 1ms: a rate-limit error without a positive delay takes the
     // collector's generic error path, and the budget can come back between the
     // caller's check and this one.
-    Math.max(1, quota.msUntilCanMakeNCalls(calls)),
+    Math.max(1, quota.msUntilCanMakeNCalls(calls, safetyPct)),
   );
+}
+
+/**
+ * Refuses enrichment that enrichment's share of the budget cannot cover, with
+ * a deferral that waits until it can; see `ENRICHMENT_SAFETY_PCT`.
+ */
+export function requireEnrichmentBudget(
+  label: string,
+  calls: number,
+  quota: StravaRateLimitTracker,
+): void {
+  if (!quota.canMakeNCalls(calls, ENRICHMENT_SAFETY_PCT)) {
+    throw quotaDeferral(label, calls, quota, ENRICHMENT_SAFETY_PCT);
+  }
 }
 
 /**
@@ -360,22 +394,21 @@ export class StravaClient {
       }
 
       if (res.status === 429) {
-        // TODO: Take the wait from the tracker, as the quota gates do: this ignores the read
-        // limit, and waits an hour rather than until midnight when the day is spent.
-        const waitMs = computeRateLimitBackoff(res.headers);
+        // The refusal's headers were observed above, so the tracker knows which
+        // window Strava counts as spent and when it resets.
+        const waitMs = this.quota.msUntilRetry(retryAfterHeaderMs(res.headers));
         if (attempt >= MAX_RETRIES) {
           throw new StravaRateLimitError(
             `Rate limit exceeded after ${MAX_RETRIES} retries`,
             waitMs,
           );
         }
-        // `computeRateLimitBackoff` returns up to 16 min on short-term-cap
-        // exhaustion and a full 1h on daily-cap exhaustion. Sleeping that long
-        // in-tick blocks the whole sync (the engine's wall-clock timeout from
-        // eventually fires, but only after the wait is wasted). Cap the
-        // in-tick wait at the threshold below; for longer waits, carry the
-        // backoff out on the error so the engine flips the source to
-        // `rate-limit` and defers the next tick by exactly that long.
+        // A spent 15-minute window waits up to 15½ minutes and a spent day
+        // until midnight UTC. Sleeping that long in-tick blocks the whole sync
+        // (the engine's wall-clock timeout eventually fires, but only after the
+        // wait is wasted). Cap the in-tick wait at the threshold below; for
+        // longer waits, carry the wait out on the error so the engine flips the
+        // source to `rate-limit` and defers the next tick by exactly that long.
         if (waitMs > IN_TICK_RATE_LIMIT_THRESHOLD_MS) {
           throw new StravaRateLimitError(
             `Rate limit exceeded — backoff ${Math.round(waitMs / 60_000)}m exceeds the in-tick threshold; surfacing to the engine to defer`,
@@ -427,7 +460,13 @@ export class StravaClient {
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      throw classifyRefreshFailure(res.status, body, res.headers);
+      let retryAfterMs: number | undefined;
+      if (res.status === 429) {
+        // A throttled refresh waits as a throttled request does.
+        this.quota.observe(res.headers);
+        retryAfterMs = this.quota.msUntilRetry(retryAfterHeaderMs(res.headers));
+      }
+      throw classifyRefreshFailure(res.status, body, retryAfterMs);
     }
 
     const data = (await res.json()) as {
@@ -468,13 +507,17 @@ export class StravaClient {
  * and both clear on their own. Calling those `auth` would push a re-auth
  * reminder for credentials that were never broken and that no amount of
  * re-authorizing would change.
+ *
+ * `retryAfterMs` is how long a throttled refresh waits; only a 429 reads it.
  */
-export function classifyRefreshFailure(status: number, body: string, headers?: Headers): SyncError {
+export function classifyRefreshFailure(
+  status: number,
+  body: string,
+  retryAfterMs?: number,
+): SyncError {
   const detail = `Strava token refresh failed (${status})${body ? `: ${body}` : ""}`;
   if (status === 400 || status === 401) return new StravaAuthError(detail);
-  if (status === 429) {
-    return new StravaRateLimitError(detail, headers ? computeRateLimitBackoff(headers) : undefined);
-  }
+  if (status === 429) return new StravaRateLimitError(detail, retryAfterMs);
   return new SyncError(status >= 500 ? "transient" : "unknown", detail);
 }
 
@@ -496,39 +539,11 @@ export async function buildStravaClient(opts: {
 }
 
 /**
- * Compute backoff for a 429.
- *
- * Strava's rate-limit headers look like:
- *   X-RateLimit-Limit: 100,1000
- *   X-RateLimit-Usage: 101,1234
- * (short-term 15-min limit, daily limit).
+ * A `Retry-After` in seconds, if the response carried one. Strava documents
+ * none (its 429 carries the usage headers every response does), but a proxy
+ * set through `OMNESIS_STRAVA_API_BASE` may send one.
  */
-export function computeRateLimitBackoff(headers: Headers): number {
-  const retryAfter = headers.get("Retry-After");
-  if (retryAfter) {
-    const seconds = parseInt(retryAfter, 10);
-    if (!Number.isNaN(seconds) && seconds > 0) return seconds * 1000;
-  }
-
-  const usage = parseRateLimitPair(headers.get("X-RateLimit-Usage"));
-  const limit = parseRateLimitPair(headers.get("X-RateLimit-Limit"));
-
-  if (usage && limit && usage.daily >= limit.daily) {
-    return 60 * 60 * 1000;
-  }
-
-  const now = new Date();
-  const minutes = now.getUTCMinutes();
-  const nextQuarter = Math.ceil((minutes + 1) / 15) * 15;
-  const next = new Date(now);
-  next.setUTCMinutes(nextQuarter, 0, 0);
-  const waitMs = next.getTime() - now.getTime();
-  return Math.max(30_000, Math.min(waitMs, 16 * 60 * 1000));
-}
-
-function parseRateLimitPair(value: string | null): { short: number; daily: number } | undefined {
-  if (!value) return undefined;
-  const parts = value.split(",").map((s) => parseInt(s.trim(), 10));
-  if (parts.length !== 2 || parts.some(Number.isNaN)) return undefined;
-  return { short: parts[0]!, daily: parts[1]! };
+function retryAfterHeaderMs(headers: Headers): number | undefined {
+  const seconds = parseInt(headers.get("Retry-After") ?? "", 10);
+  return seconds > 0 ? seconds * 1000 : undefined;
 }
