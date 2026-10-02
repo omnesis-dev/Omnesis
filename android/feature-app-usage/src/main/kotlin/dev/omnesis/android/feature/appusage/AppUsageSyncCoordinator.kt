@@ -14,11 +14,13 @@ import dev.omnesis.android.transport.readableMoment
 import dev.omnesis.android.transport.client.AnalyticsClient
 import dev.omnesis.android.transport.client.DocumentsClient
 import dev.omnesis.android.transport.dto.AnalyticsIngestBody
+import dev.omnesis.android.transport.dto.AnalyticsTableSchema
 import dev.omnesis.android.transport.dto.SourceFamilyBody
 import dev.omnesis.android.transport.dto.SyncStateBody
 import java.time.Instant
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.buildJsonObject
@@ -199,33 +201,13 @@ class AppUsageSyncCoordinator(
             }
 
             var processed = 0
-            if (outcome.sessionRows.isNotEmpty()) {
-                val resp = analytics.ingest(
-                    AnalyticsIngestBody(
-                        tableName = ANDROID_APP_USAGE_SESSIONS_TABLE,
-                        records = outcome.sessionRows,
-                        schema = androidAppUsageSessionsSchema,
-                        sourceId = SOURCE_ID,
-                    ),
-                )
-                resp.rejected.firstOrNull { it.sourceId == SOURCE_ID }?.let {
-                    return handleRejection(it.reason)
-                }
-                processed += outcome.sessionRows.size
-            }
-            if (outcome.dailyRows.isNotEmpty()) {
-                val resp = analytics.ingest(
-                    AnalyticsIngestBody(
-                        tableName = ANDROID_APP_USAGE_DAILY_TABLE,
-                        records = outcome.dailyRows,
-                        schema = androidAppUsageDailySchema,
-                        sourceId = SOURCE_ID,
-                    ),
-                )
-                resp.rejected.firstOrNull { it.sourceId == SOURCE_ID }?.let {
-                    return handleRejection(it.reason)
-                }
-                processed += outcome.dailyRows.size
+            val tables = listOf(
+                androidAppUsageSessionsSchema to outcome.sessionRows,
+                androidAppUsageDailySchema to outcome.dailyRows,
+            )
+            for ((schema, rows) in tables) {
+                replaceDays(schema, outcome.rebuiltDates, rows)?.let { return handleRejection(it) }
+                processed += rows.size
             }
             if (outcome.documents.isNotEmpty()) {
                 val resp = documents.ingest(outcome.documents)
@@ -313,6 +295,34 @@ class AppUsageSyncCoordinator(
         }
         val to = readableMoment(push.to.lastQueriedThroughMillis)
         return "${countOf(push.rows, "app-usage row")} between $from and $to"
+    }
+
+    /**
+     * Replaces [dates]' rows in one table with [rows]: a page that names the
+     * days by the table's `date` delete key, then the fresh rows. They are two
+     * pages because the gateway applies a page's deletions after its upserts.
+     * If the second page fails the cursor stays put, so the next pass rebuilds
+     * the same days and sends both again. Returns the reason the gateway gave
+     * for declining this source, if it did.
+     */
+    private suspend fun replaceDays(
+        schema: AnalyticsTableSchema,
+        dates: List<String>,
+        rows: List<Map<String, JsonElement>>,
+    ): String? {
+        if (dates.isEmpty()) return null
+        fun page(records: List<Map<String, JsonElement>>, deletedIds: List<String>? = null) = AnalyticsIngestBody(
+            tableName = schema.tableName,
+            records = records,
+            schema = schema,
+            sourceId = SOURCE_ID,
+            deletedIds = deletedIds,
+        )
+        val pages = listOfNotNull(page(emptyList(), deletedIds = dates), rows.takeIf { it.isNotEmpty() }?.let { page(it) })
+        for (page in pages) {
+            analytics.ingest(page).rejected.firstOrNull { it.sourceId == SOURCE_ID }?.let { return it.reason }
+        }
+        return null
     }
 
     /**

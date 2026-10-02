@@ -92,6 +92,14 @@ class AppUsageSyncCoordinatorTest {
     private fun body(request: RecordedRequest): JsonObject =
         OmnesisJson.parseToJsonElement(request.body.readUtf8()).jsonObject
 
+    /** A page that names [date] by the table's `date` delete key and upserts nothing. */
+    private fun assertClearsDay(page: JsonObject, table: String, date: String) {
+        assertEquals(table, page["tableName"]!!.jsonPrimitive.content)
+        assertEquals(0, page["records"]!!.jsonArray.size)
+        assertEquals(listOf(date), page["deletedIds"]!!.jsonArray.map { it.jsonPrimitive.content })
+        assertEquals(listOf("date"), page["schema"]!!.jsonObject["deleteKey"]!!.jsonArray.map { it.jsonPrimitive.content })
+    }
+
     private fun eventStates(): List<String> =
         synchronized(events) { events.map { it.second["state"]!!.jsonPrimitive.content } }
 
@@ -116,25 +124,25 @@ class AppUsageSyncCoordinatorTest {
 
 
     @Test
-    fun `first sync pushes each analytics table then documents and persists the cursor`() = runTest {
+    fun `first sync replaces each analytics table's rebuilt day then pushes documents and persists the cursor`() = runTest {
         addEvent("com.example.notes", day1Start + 1_000, UsageEvents.Event.MOVE_TO_FOREGROUND)
         addEvent("com.example.notes", day1Start + 61_000, UsageEvents.Event.MOVE_TO_BACKGROUND)
 
         server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":"not found"}"""))
-        enqueueOk("""{"ingested":1,"deleted":0}""")
-        enqueueOk("""{"ingested":1,"deleted":0}""")
+        repeat(4) { enqueueOk("""{"ingested":1,"deleted":0}""") }
         enqueueOk("""{"ingested":1,"rejected":[]}""")
         enqueueOk()
 
         val result = coordinator().syncNow()
 
         assertEquals(AppUsageSyncCoordinator.SyncResult.Success(3), result)
-        assertEquals(5, server.requestCount)
+        assertEquals(7, server.requestCount)
 
         val get = server.takeRequest()
         assertEquals("GET", get.method)
         assertEquals("/sync-state/android-app-usage:local", get.path)
 
+        assertClearsDay(body(server.takeRequest()), "android_app_usage_sessions", "2026-03-04")
         val sessionIngest = body(server.takeRequest())
         assertEquals("android_app_usage_sessions", sessionIngest["tableName"]!!.jsonPrimitive.content)
         assertEquals("android_app_usage_sessions", sessionIngest["schema"]!!.jsonObject["tableName"]!!.jsonPrimitive.content)
@@ -145,6 +153,7 @@ class AppUsageSyncCoordinatorTest {
             sessionRecord.keys,
         )
 
+        assertClearsDay(body(server.takeRequest()), "android_app_usage_daily", "2026-03-04")
         val dailyIngest = body(server.takeRequest())
         assertEquals("android_app_usage_daily", dailyIngest["tableName"]!!.jsonPrimitive.content)
         assertEquals("android_app_usage_daily", dailyIngest["schema"]!!.jsonObject["tableName"]!!.jsonPrimitive.content)
@@ -171,31 +180,50 @@ class AppUsageSyncCoordinatorTest {
     }
 
     @Test
+    fun `a rebuilt day with no sessions left still clears what the gateway held for it`() = runTest {
+        addEvent("android", day1Start + 1_000, UsageEvents.Event.SCREEN_INTERACTIVE)
+
+        server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":"not found"}"""))
+        repeat(2) { enqueueOk("""{"ingested":0,"deleted":2}""") }
+        enqueueOk("""{"ingested":1,"rejected":[]}""")
+        enqueueOk()
+
+        val result = coordinator().syncNow()
+
+        assertEquals(AppUsageSyncCoordinator.SyncResult.Success(1), result)
+        assertEquals(5, server.requestCount)
+        assertEquals("GET", server.takeRequest().method)
+        assertClearsDay(body(server.takeRequest()), "android_app_usage_sessions", "2026-03-04")
+        assertClearsDay(body(server.takeRequest()), "android_app_usage_daily", "2026-03-04")
+        assertEquals("/documents", server.takeRequest().path)
+    }
+
+    @Test
     fun `a daily analytics failure retries stable rows before advancing the cursor`() = runTest {
         addEvent("com.example.notes", day1Start + 1_000, UsageEvents.Event.MOVE_TO_FOREGROUND)
         addEvent("com.example.notes", day1Start + 61_000, UsageEvents.Event.MOVE_TO_BACKGROUND)
         val c = coordinator()
 
         server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":"not found"}"""))
-        enqueueOk("""{"ingested":1,"deleted":0}""")
+        repeat(2) { enqueueOk("""{"ingested":1,"deleted":0}""") }
         server.enqueue(MockResponse().setResponseCode(500).setBody("""{"error":"temporary failure"}"""))
 
         val failed = c.syncNow()
 
         assertEquals(AppUsageSyncCoordinator.SyncResult.Failed("server error 500", retryable = true), failed)
-        assertEquals(3, server.requestCount)
+        assertEquals(4, server.requestCount)
 
         val firstStateRead = server.takeRequest()
         assertEquals("GET", firstStateRead.method)
+        assertClearsDay(body(server.takeRequest()), "android_app_usage_sessions", "2026-03-04")
         val firstSessionIngest = body(server.takeRequest())
         assertEquals("android_app_usage_sessions", firstSessionIngest["tableName"]!!.jsonPrimitive.content)
         val firstSessionId = firstSessionIngest["records"]!!.jsonArray.single().jsonObject["id"]!!.jsonPrimitive.content
-        val failedDailyIngest = body(server.takeRequest())
-        assertEquals("android_app_usage_daily", failedDailyIngest["tableName"]!!.jsonPrimitive.content)
+        val failedDailyClear = body(server.takeRequest())
+        assertEquals("android_app_usage_daily", failedDailyClear["tableName"]!!.jsonPrimitive.content)
 
         server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":"not found"}"""))
-        enqueueOk("""{"ingested":1,"deleted":0}""")
-        enqueueOk("""{"ingested":1,"deleted":0}""")
+        repeat(4) { enqueueOk("""{"ingested":1,"deleted":0}""") }
         enqueueOk("""{"ingested":1,"rejected":[]}""")
         enqueueOk()
 
@@ -203,9 +231,11 @@ class AppUsageSyncCoordinatorTest {
 
         assertEquals(AppUsageSyncCoordinator.SyncResult.Success(3), recovered)
         assertEquals("GET", server.takeRequest().method)
+        assertClearsDay(body(server.takeRequest()), "android_app_usage_sessions", "2026-03-04")
         val retriedSessionIngest = body(server.takeRequest())
         val retriedSessionId = retriedSessionIngest["records"]!!.jsonArray.single().jsonObject["id"]!!.jsonPrimitive.content
         assertEquals(firstSessionId, retriedSessionId)
+        assertClearsDay(body(server.takeRequest()), "android_app_usage_daily", "2026-03-04")
         assertEquals("android_app_usage_daily", body(server.takeRequest())["tableName"]!!.jsonPrimitive.content)
         assertEquals("/documents", server.takeRequest().path)
         val cursorWrite = server.takeRequest()

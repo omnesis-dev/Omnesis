@@ -14,8 +14,14 @@ import kotlinx.serialization.json.JsonElement
 
 private const val TAG = "Omnesis:appusage"
 
-/** One sync pass' output: table-specific analytics rows, rebuilt day documents, and the advanced cursor. */
+/**
+ * One sync pass' output: the UTC days it rebuilt (ISO dates), those days'
+ * analytics rows and documents, and the advanced cursor. [sessionRows] and
+ * [dailyRows] are each rebuilt day's complete set: they replace whatever the
+ * gateway holds for those dates.
+ */
 data class AppUsageSyncResult(
+    val rebuiltDates: List<String>,
     val sessionRows: List<Map<String, JsonElement>>,
     val dailyRows: List<Map<String, JsonElement>>,
     val documents: List<DocumentInputDto>,
@@ -31,16 +37,18 @@ data class AppUsageSyncResult(
  *
  * `UsageEvents.Event` carries only a wall-clock `timeStamp`, no id — and a
  * day's picture can be revised as more events land for it later that same
- * day (an app still in the foreground when one pass' query window closes
- * gets provisionally closed there, then corrected once its real
- * `MOVE_TO_BACKGROUND` event lands). So, mirroring `CallLogSource`'s
+ * day (an app still on screen when one pass' query window closes gets
+ * provisionally closed there, then corrected once its activities pause or
+ * the screen turns off). So, mirroring `CallLogSource`'s
  * day-rebuild pattern: each pass first queries `[cursor, now)` only to find
  * which UTC days have new events, then re-derives every affected day from a
- * *fresh full-day* query. Every row/document below is keyed so that re-upsert
- * is idempotent — a rebuilt day simply overwrites the previous rows for the
- * same ids. There is no deletion-reconciliation step: unlike a call log entry,
- * a day of usage history is never deleted by the user short of clearing app
- * data or a factory reset, so there is nothing analogous to `CallLogSource`'s
+ * *fresh full-day* query. A rebuilt day replaces what the gateway holds for
+ * it: the coordinator clears that date's analytics rows before sending the
+ * new ones, so a session whose start moved between passes leaves no stale
+ * row behind, and the day document is rewritten under its stable id. There is
+ * no snapshot reconciliation across days: unlike a call log entry, a day of
+ * usage history is never deleted by the user short of clearing app data or a
+ * factory reset, so there is nothing analogous to `CallLogSource`'s
  * distinct-dates deletion snapshot to compute.
  */
 class AppUsageSource(
@@ -57,7 +65,7 @@ class AppUsageSource(
     suspend fun sync(cursor: AppUsageCursor): AppUsageSyncResult = withContext(Dispatchers.IO) {
         val now = clock()
         if (cursor.lastQueriedThroughMillis >= now) {
-            return@withContext AppUsageSyncResult(emptyList(), emptyList(), emptyList(), AppUsageCursor(now))
+            return@withContext AppUsageSyncResult(emptyList(), emptyList(), emptyList(), emptyList(), AppUsageCursor(now))
         }
 
         val newEvents = queryEvents(cursor.lastQueriedThroughMillis, now)
@@ -90,6 +98,7 @@ class AppUsageSource(
         }
 
         AppUsageSyncResult(
+            rebuiltDates = affectedDates.sorted().map { it.toString() },
             sessionRows = sessionRows,
             dailyRows = dailyRows,
             documents = documents,
@@ -105,18 +114,16 @@ class AppUsageSource(
             usageEvents.getNextEvent(event)
             val kind = kindFor(event.eventType) ?: continue
             val packageName = event.packageName ?: continue
-            events += RawUsageEvent(packageName, event.timeStamp, kind)
+            events += RawUsageEvent(packageName, event.timeStamp, kind, event.className)
         }
         return events
     }
 
-    // MOVE_TO_FOREGROUND/MOVE_TO_BACKGROUND are deprecated (API 29+) in favor of
-    // ACTIVITY_RESUMED/ACTIVITY_PAUSED, which fire per-Activity (including
-    // within the same app) rather than per-app — finer-grained than the
-    // app-level foreground session this feature reconstructs. The deprecated
-    // pair still fires on every OS version back to this module's minSdk 26 and
-    // matches the desired app-level granularity directly, so it stays the
-    // right choice here rather than adding an SDK-branch for no behavioral gain.
+    // MOVE_TO_FOREGROUND/MOVE_TO_BACKGROUND share their values with API 29's
+    // ACTIVITY_RESUMED/ACTIVITY_PAUSED, and on every OS version they fire per
+    // activity, not per app. The event's class name carries the activity, so
+    // AppUsageNormalizer.mergeSessions can fold one app's overlapping
+    // activities into a single session.
     @Suppress("DEPRECATION")
     private fun kindFor(eventType: Int): UsageEventKind? = when (eventType) {
         UsageEvents.Event.MOVE_TO_FOREGROUND -> UsageEventKind.FOREGROUND
