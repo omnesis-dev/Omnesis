@@ -9,6 +9,7 @@ import {
   readPendingSubmission,
   submissionForRetry,
   writeConversationDraft,
+  // @ts-expect-error — portal modules are plain JS without sibling declarations.
 } from "./conversation-draft.js";
 
 afterEach(() => {
