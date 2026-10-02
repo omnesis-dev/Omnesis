@@ -53,8 +53,9 @@ describe("the OAuth token budget contract", () => {
   });
 
   it("lets a lock waiter outlast the holder, and never reclaims a live holder's lease", () => {
-    // A holder may refresh, repeat and re-issue, each on the token budget.
-    const holderWorstCase = 3 * OAUTH_TOKEN_REQUEST_TIMEOUT_MS;
+    // A holder may refresh, repeat and re-issue, each on the token budget, and
+    // the SDK may discover metadata on each of its two passes.
+    const holderWorstCase = 3 * OAUTH_TOKEN_REQUEST_TIMEOUT_MS + 2 * DEFAULT_GATEWAY_TIMEOUT_MS;
     for (const [timeout, stale] of [
       [REFRESH_LOCK_TIMEOUT_MS, REFRESH_LOCK_STALE_MS],
       [

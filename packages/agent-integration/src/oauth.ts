@@ -20,7 +20,7 @@ import {
   updateIntegrationOAuthState,
   type IntegrationOAuthState,
 } from "./credentials.js";
-import { OAUTH_TOKEN_TIMEOUT_MS } from "./http.js";
+import { DEFAULT_GATEWAY_TIMEOUT_MS, OAUTH_TOKEN_TIMEOUT_MS } from "./http.js";
 import { silentIntegrationLogger, type IntegrationLogger } from "./logger.js";
 import { mcpEndpointUrl } from "./tls.js";
 
@@ -29,12 +29,15 @@ const REFRESH_LOCK_WAIT_MS = 25;
  * How long a process waits for another one's refresh to finish.
  *
  * Outlasts the holder's worst case — a refresh, its one repeat and a
- * re-issue, each on the token-request budget — so a waiter behind a stalled
- * gateway adopts the holder's result instead of failing.
+ * re-issue, each on the token-request budget, plus the two metadata
+ * discoveries the SDK may make on the ordinary budget, one per pass — so a
+ * waiter behind a stalled gateway adopts the holder's result instead of
+ * failing.
  *
  * @internal Exported for the budget-consistency test.
  */
-export const REFRESH_LOCK_TIMEOUT_MS = 3 * OAUTH_TOKEN_TIMEOUT_MS + 15_000;
+export const REFRESH_LOCK_TIMEOUT_MS =
+  3 * OAUTH_TOKEN_TIMEOUT_MS + 2 * DEFAULT_GATEWAY_TIMEOUT_MS + 10_000;
 /**
  * The age past which a lease whose owner cannot be seen alive is reclaimed.
  *

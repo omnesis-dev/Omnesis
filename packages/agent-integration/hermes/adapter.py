@@ -130,15 +130,18 @@ GATEWAY_TIMEOUT_SECONDS = 20.0
 # re-issue that stands in for a refresh. Each is a write on the gateway's single
 # writer thread, so it waits behind whatever that thread is doing — tens of
 # seconds while a restarted gateway rebuilds an index — and a refresh that gives
-# up first loses the answer to a rotation the gateway goes on to make. Restated
-# from `@omnesis/types` (`OAUTH_TOKEN_REQUEST_TIMEOUT_MS`);
-# `oauth-token-budget.test.ts` holds the restatement to it.
+# up first loses the answer to a rotation the gateway goes on to make. It bounds
+# each socket operation (connect, then waiting for the answer), which a
+# writer stall turns into one wait. Restated from `@omnesis/types`
+# (`OAUTH_TOKEN_REQUEST_TIMEOUT_MS`); `oauth-token-budget.test.ts` holds the
+# restatement to it.
 OAUTH_TOKEN_TIMEOUT_SECONDS = 55.0
 _OAUTH_REFRESH_LOCK_WAIT_SECONDS = 0.025
-# Outlasts the holder's worst case — a refresh, its one repeat and a re-issue,
-# each on the token-request budget — so a waiter behind a stalled gateway adopts
-# the holder's result instead of failing.
-OAUTH_REFRESH_LOCK_TIMEOUT_SECONDS = 180.0
+# Outlasts the worst case of a holder in either runtime — a refresh, its one
+# repeat and a re-issue, each on the token-request budget, plus the two metadata
+# discoveries the TypeScript SDK may make on the ordinary budget — so a waiter
+# behind a stalled gateway adopts the holder's result instead of failing.
+OAUTH_REFRESH_LOCK_TIMEOUT_SECONDS = 215.0
 # Above the longest a live holder keeps the lease, so a holder whose process id
 # is not visible from here, as across a container boundary, is never cut short.
 OAUTH_REFRESH_LOCK_STALE_SECONDS = 240.0
