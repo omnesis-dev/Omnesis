@@ -44,7 +44,7 @@
     "ical.js": "^2.2.1",
     "jszip": "^3.10.1",
     "linkedom": "^0.18.13",
-    "mammoth": "^1.12.3",
+    "mammoth": "^1.13.0",
     "pdf-parse": "^1.1.1",
     "postal-mime": "^2.7.4",
     "turndown": "^7.2.2",

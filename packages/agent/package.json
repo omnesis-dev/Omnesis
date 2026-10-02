@@ -8,7 +8,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128",
     "@omnesis/core": "*",
-    "@openai/codex": "0.151.0",
+    "@openai/codex": "0.157.1",
     "zod": "^4.6.5"
   },
   "files": [
