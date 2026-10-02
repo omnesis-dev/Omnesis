@@ -16,8 +16,10 @@ the gateway:
 ```
 
 Omitting the block, using an empty block, or setting `enabled` to `true` uses v2.
-An explicit `false` preserves the legacy agent search projection. Agent prompts
-and retrieval guidance remain unchanged in both modes. This switch is
+An explicit `false` preserves the legacy agent search projection. The agent
+prompts, the retrieval playbook and the `trace_connections` description follow
+the switch: with v2 they describe graph context, and with v2 off they describe
+the legacy `refCount` and `breadcrumb` cues. This switch is
 independent of experimental mode. It changes unrestricted built-in agent and
 Direct searches, including each `search_many` query. Source-restricted grants
 keep their existing projection. The ordinary public `/search` endpoint, normal
@@ -74,9 +76,18 @@ Authentication and other server failures are reported rather than downgraded.
 
 Unrestricted built-in agents receive graph context as readable `facts`, a
 `documents` reference table, and explicit `limits`. Short labels such as `[D2]`
-are local to one search result; the table resolves each label to its real document
-ID, title, source and available links. These labels are not accepted as tool
-arguments: fetching or citing uses the table's `documentId`.
+are shared across one query's results, so a document carries the same label in
+every hit that names it; they restart for each query of a `search_many` call.
+When a connected document is itself a result, the hit says so: `Also in these
+search results: [D4] (result 2).` The table resolves each label to its real
+document ID, title, source, available links, creation time (to the minute, UTC)
+and document type. These labels are not accepted as tool arguments: fetching or
+citing uses the table's `documentId`.
+
+`refCount` on an agent search hit is the number of distinct visible documents
+that link to it over the structural links the walk follows — conversation
+membership, hidden sources and Omnesis-generated documents aside — and is absent
+when that number is zero.
 
 Facts exclude the representative from the list of other text matches, attach
 physical locations and person roles to their exact documents, and combine only
@@ -117,6 +128,18 @@ never expands through a person into their other documents. High-degree document
 neighbourhoods stop expansion. Phone matches, model citations and near-duplicate
 similarity do not bridge the automatic walk.
 
+A conversation is read from the thread itself rather than through its stored
+thread links, which point each message at an arbitrary member. The thread counts
+as one neighbour against the fanout allowance and contributes its newest other
+messages, up to that allowance, so a short conversation appears whole and a
+long one by its newest messages. The first fact names the newest message and the
+conversation's size (`is in a 12-message conversation whose latest message is …`),
+or says the hit is itself the newest (`is the latest of 12 messages in a
+conversation that also has …`). Membership comes from the `threadId` (or
+`conversationId`) a source declares, so it holds for documents indexed before
+this behaviour existed. Leaves sharing a relation read as one clause
+(`includes the attachments A, B and C`).
+
 Generated agent context remains searchable but does not expand into a document's
 automatic trail. Its URLs and citations are derived references, not independent
 sharing evidence. These documents receive a labelled context summary and do not
@@ -131,12 +154,14 @@ when the question needs content beyond the supplied snippet and provenance.
 
 ## Budgets and completeness
 
-All values below are optional. The limits apply per returned result; only
-`topN` eligible source results receive the deeper graph projection.
+All values below are optional. The limits apply per returned result. The first
+`topN` eligible source results receive the deeper graph projection, and so does
+any later result whose `refCount` reaches `minRefCount` (0 turns that off).
 
 | Setting           | Default | Accepted range |
 | ----------------- | ------- | -------------- |
 | `topN`            | 3       | 1–10           |
+| `minRefCount`     | 3       | 0–50           |
 | `maxDepth`        | 4       | 1–5            |
 | `fanout`          | 6       | 1–12           |
 | `maxNodes`        | 24      | 1–48           |
@@ -157,11 +182,27 @@ limits. The result describes observed evidence within those budgets, not a
 complete digital history. Hidden system sources and the current conversation
 are omitted. Index/source revision disagreements do not produce copy claims.
 
+## Follow-up graph tools
+
+With v2 enabled, `fetch_many` neighbours (`includeNeighbors`) and
+`trace_connections` follow the same structural links as search graph context —
+attachments, calendar invitations, replies, thread membership, references and
+links — and never reach hidden sources or Omnesis-generated documents, so a
+follow-up walk never brings back what search left out. `trace_connections`
+takes an optional `includeLinkTypes` to follow others (`near-duplicate`,
+`duplicate-content`, `same-resource`, `succeeds`, `accompanies`, `bookmarks`,
+`visited`, `shares-phone`). Its default depth is 2 when every seed is an
+attachment or another part of a larger document, and 4 otherwise. A walk cut
+short by its fanout or size limit carries a plain-words `note` alongside
+`truncated`. The agent search port no longer attaches `breadcrumb` under v2.
+
 ## Compatibility and validation
 
 `provenance` is an optional additive field on the existing document-reference
-shape. Tool names, arguments, result kinds, representative IDs, snippets and
-existing URL fields retain their contracts. Legacy clients can ignore the new
+shape. Tool names, result kinds, representative IDs, snippets and existing URL
+fields retain their contracts. Under v2, `trace_connections` gains the optional
+`includeLinkTypes` argument and the optional `note` result field, and reference
+rows gain optional `date` and `type`. Legacy clients can ignore the new
 field; current clients can consume results without it. No new client handshake,
 database migration or reindex is required. Disabling the flag restores the
 existing projection. Use a fresh conversation for each A/B run: saved tool
@@ -174,13 +215,14 @@ evidence from a previous mode remains in that conversation’s history.
 | New gateway, existing iOS/Android client          | Public search remains unchanged. Agent events keep the existing result kind, IDs, snippets and URLs; mobile decoders ignore optional provenance.                  |
 | New gateway, existing Direct MCP client           | Canonical structured results keep existing fields. Optional provenance enriches unrestricted searches without adding tools, arguments or a handshake requirement. |
 | Existing gateway, new OpenClaw/Hermes integration | Legacy search payloads are forwarded unchanged; no provenance field is required or synthesized.                                                                   |
-| v2 explicitly disabled                            | New searches use the legacy projection, including separate candidate identities and legacy breadcrumbs.                                                           |
+| v2 explicitly disabled                            | New searches use the legacy projection, including separate candidate identities and legacy breadcrumbs. Graph tools follow every link type.                       |
 
 The gateway advertises MCP protocol versions `2025-11-25` and `2026-07-28`.
 Current OpenClaw/Hermes integrations already request `2026-07-28`; gateways that
 only support an older, non-overlapping protocol are outside that existing
-integration contract. This feature does not change delivery protocol versions
-or the tool manifest. Custom clients that reject every unknown JSON field do
+integration contract. This feature does not change delivery protocol versions;
+the `trace_connections` manifest gains its optional `includeLinkTypes` argument
+under v2. Custom clients that reject every unknown JSON field do
 not satisfy the additive-field compatibility contract.
 
 Native decoder regressions cover optional enriched fields and legacy public

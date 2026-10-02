@@ -9,6 +9,9 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { runSchemaSetup } from "../data/schema.js";
 import { runMigrations } from "../data/migrations.js";
 import { resetUrlGraphRoles, setUrlGraphRoles } from "../url-graph-roles.js";
+import { graphContextPolicy } from "../search/graph-context-policy.js";
+import { hiddenSourceIdsToExclude } from "../search/hidden-sources.js";
+import { OMNESIS_CHAT_SOURCE_ID } from "../sources/omnesis-chat/ids.js";
 import { buildDocumentGraph, expandOneHop } from "./DocumentGraphService.js";
 import type { Db } from "../data/types.js";
 
@@ -750,5 +753,82 @@ describe("expandOneHop", () => {
     const { neighbors, truncated } = expandOneHop(db, "seed");
     expect(neighbors).toHaveLength(1);
     expect(truncated).toBe(false);
+  });
+});
+
+describe("graph context policy", () => {
+  test("follows only the structural links and keeps people reachable", () => {
+    seedDoc("seed");
+    seedDoc("attachment");
+    seedDoc("same-number");
+    seedDoc("copy");
+    seedLink("attachment", "contains", "seed");
+    seedLink("seed", "shares-phone", "same-number");
+    seedNearDupEdge("seed", "copy");
+    seedPerson("p1", "Maya Reeves");
+    seedDocPerson("seed", "p1", "sender");
+    const graph = buildDocumentGraph(db, ["seed"], { depth: 2, policy: graphContextPolicy() });
+    const ids = graph.vertices.map((v) => v.documentId ?? v.personId);
+    expect(ids).toEqual(expect.arrayContaining(["seed", "attachment", "p1"]));
+    expect(ids).not.toContain("same-number");
+    expect(ids).not.toContain("copy");
+  });
+
+  test("applies before the per-category cap, so permitted links are never crowded out", () => {
+    seedDoc("seed");
+    seedDoc("parent", "src:parent", "parent", "2024-01-01T00:00:00Z");
+    seedLink("seed", "contains", "parent");
+    for (let n = 0; n < 5; n++) {
+      seedDoc(`phone-${n}`, `src:phone-${n}`, `phone ${n}`, `2025-06-0${n + 1}T00:00:00Z`);
+      seedLink("seed", "shares-phone", `phone-${n}`);
+    }
+    const graph = buildDocumentGraph(db, ["seed"], {
+      depth: 1,
+      fanoutCap: 1,
+      policy: graphContextPolicy(),
+    });
+    expect(graph.vertices.map((v) => v.documentId)).toEqual(["seed", "parent"]);
+    expect(graph.truncated).toBe(false);
+  });
+
+  test("a named link type widens the walk", () => {
+    seedDoc("seed");
+    seedDoc("copy");
+    seedNearDupEdge("seed", "copy");
+    const graph = buildDocumentGraph(db, ["seed"], {
+      policy: graphContextPolicy(["near-duplicate"]),
+    });
+    expect(graph.vertices.map((v) => v.documentId)).toContain("copy");
+  });
+
+  test("never reaches an Omnesis answer or a hidden source, but walks from one named as a seed", () => {
+    const hidden = hiddenSourceIdsToExclude()[0]!;
+    seedDoc("seed");
+    seedDoc("answer", OMNESIS_CHAT_SOURCE_ID);
+    seedDoc("loop", hidden);
+    seedDoc("note");
+    seedLink("answer", "references", "seed");
+    seedLink("loop", "references", "seed");
+    seedLink("answer", "references", "note");
+    const fromSeed = buildDocumentGraph(db, ["seed"], { policy: graphContextPolicy() });
+    expect(fromSeed.vertices.map((v) => v.documentId)).toEqual(["seed"]);
+    const fromAnswer = buildDocumentGraph(db, ["answer"], { policy: graphContextPolicy() });
+    expect(fromAnswer.vertices.map((v) => v.documentId).sort()).toEqual(["answer", "note", "seed"]);
+  });
+
+  test("one hop applies the same policy", () => {
+    seedDoc("seed");
+    seedDoc("attachment");
+    seedDoc("same-number");
+    seedLink("attachment", "contains", "seed");
+    seedLink("seed", "shares-phone", "same-number");
+    expect(
+      expandOneHop(db, "seed")
+        .neighbors.map((n) => n.documentId)
+        .sort(),
+    ).toEqual(["attachment", "same-number"]);
+    expect(
+      expandOneHop(db, "seed", { policy: graphContextPolicy() }).neighbors.map((n) => n.documentId),
+    ).toEqual(["attachment"]);
   });
 });

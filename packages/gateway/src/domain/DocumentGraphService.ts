@@ -86,6 +86,22 @@ type Db = Database.Database;
 
 export type { DocumentGraph, BuildDocumentGraphOptions };
 
+/**
+ * Narrows a walk to the links one consumer trusts. Applied with the walk
+ * filters, before the per-category fanout cap, so a capped category keeps the
+ * newest members of the permitted set. People stay reachable either way.
+ */
+export interface GraphTraversalPolicy {
+  /** Document-to-document link types the walk follows. Person edges are unaffected. */
+  readonly linkTypes: ReadonlySet<string>;
+  /** Whether a reached document is left out of the walk. Seeds are never excluded. */
+  excludes(sourceId: string, documentType: string | null | undefined): boolean;
+}
+
+export interface GraphWalkOptions extends BuildDocumentGraphOptions {
+  policy?: GraphTraversalPolicy;
+}
+
 // ─── Internal row shapes ──────────────────────────────────────────────────
 
 interface DocRow {
@@ -109,17 +125,23 @@ interface OutboundLinkRow {
   link_type: string;
   target_doc_id: string;
   provenance_kind: string | null;
+  other_source_id: string;
+  other_document_type: string | null;
 }
 
 interface InboundLinkRow {
   source_doc_id: string;
   link_type: string;
   provenance_kind: string | null;
+  other_source_id: string;
+  other_document_type: string | null;
 }
 
 interface NearDupRow {
   other_id: string;
   jaccard: number;
+  other_source_id: string;
+  other_document_type: string | null;
 }
 
 interface DocPersonRow {
@@ -169,7 +191,7 @@ function personKey(personId: string): string {
 export function buildDocumentGraph(
   db: Db,
   seedDocIds: string[],
-  opts: BuildDocumentGraphOptions = {},
+  opts: GraphWalkOptions = {},
 ): DocumentGraph {
   const startedAt = Date.now();
   const depth = clamp(opts.depth ?? DEFAULT_DEPTH, MIN_DEPTH, MAX_DEPTH);
@@ -210,7 +232,7 @@ export function buildDocumentGraph(
   const walk = boundedWalk<GraphVertex, GraphEdge>({
     seeds: seedVertices,
     canExpand: (v) => v.kind === "document",
-    expand: (v) => expandDocument(db, stmts, v, fanoutCap, filters),
+    expand: (v) => expandDocument(db, stmts, v, fanoutCap, filters, opts.policy),
     maxDepth: depth,
     maxVertices,
     edgeKey: edgeDedupKey,
@@ -248,6 +270,8 @@ interface NeighborRow {
    * type-level default for rows / edge sources that don't carry one.
    */
   provenance?: GraphEdgeProvenanceKind;
+  /** The neighbour document's source and type; set on every document-neighbour row. */
+  other?: { sourceId: string; documentType: string | null };
 }
 
 /**
@@ -300,6 +324,7 @@ const EDGE_EXPANDERS: EdgeExpander[] = [
         // still traverses — the union is a label, not a runtime gate.
         type: r.link_type as GraphEdgeType,
         provenance: (r.provenance_kind as GraphEdgeProvenanceKind | null) ?? undefined,
+        other: { sourceId: r.other_source_id, documentType: r.other_document_type },
       })),
   },
   {
@@ -314,6 +339,7 @@ const EDGE_EXPANDERS: EdgeExpander[] = [
         id: r.source_doc_id,
         type: r.link_type as GraphEdgeType,
         provenance: (r.provenance_kind as GraphEdgeProvenanceKind | null) ?? undefined,
+        other: { sourceId: r.other_source_id, documentType: r.other_document_type },
       })),
   },
   {
@@ -328,6 +354,7 @@ const EDGE_EXPANDERS: EdgeExpander[] = [
         id: r.other_id,
         type: NEAR_DUPLICATE_EDGE_TYPE,
         jaccard: r.jaccard,
+        other: { sourceId: r.other_source_id, documentType: r.other_document_type },
       })),
   },
   {
@@ -391,6 +418,7 @@ function expandDocument(
   vertex: GraphVertex,
   fanoutCap: number,
   filters: GraphWalkFilters,
+  policy?: GraphTraversalPolicy,
 ): Expansion<GraphVertex, GraphEdge> {
   const docId = vertex.documentId!;
   const nextDepth = vertex.depth + 1;
@@ -403,7 +431,15 @@ function expandDocument(
     // out (e.g. ["document"] skips the person expander — people never appear).
     if (filters.vertexTypes && !filters.vertexTypes.includes(expander.neighborKind)) continue;
     const fetched = expander.fetch(stmts, docId);
-    const rows = edgeFiltersActive ? fetched.filter((r) => keepEdgeRow(r, filters)) : fetched;
+    const permitted =
+      policy && expander.neighborKind === "document"
+        ? fetched.filter(
+            (r) =>
+              policy.linkTypes.has(r.type) &&
+              !(r.other && policy.excludes(r.other.sourceId, r.other.documentType)),
+          )
+        : fetched;
+    const rows = edgeFiltersActive ? permitted.filter((r) => keepEdgeRow(r, filters)) : permitted;
     if (rows.length > fanoutCap) capHits++;
     for (const row of rows.slice(0, fanoutCap)) {
       let neighbor: GraphVertex | null;
@@ -544,7 +580,9 @@ function prepare(db: Db) {
     // "what's the latest" questions: the cap must not drop the newest reply in
     // favour of the oldest. `dl.id` breaks ties deterministically.
     outboundLinks: db.prepare(
-      `SELECT dl.id, dl.link_type, dl.target_doc_id, dl.provenance_kind
+      `SELECT dl.id, dl.link_type, dl.target_doc_id, dl.provenance_kind,
+              d.source_id AS other_source_id,
+              json_extract(d.metadata, '$.documentType') AS other_document_type
        FROM document_links dl
        JOIN documents d ON d.id = dl.target_doc_id
        WHERE dl.source_doc_id = ?
@@ -552,7 +590,9 @@ function prepare(db: Db) {
        ORDER BY d.source_created_at DESC, dl.id`,
     ),
     inboundLinks: db.prepare(
-      `SELECT dl.source_doc_id, dl.link_type, dl.provenance_kind
+      `SELECT dl.source_doc_id, dl.link_type, dl.provenance_kind,
+              d.source_id AS other_source_id,
+              json_extract(d.metadata, '$.documentType') AS other_document_type
        FROM document_links dl
        JOIN documents d ON d.id = dl.source_doc_id
        WHERE dl.target_doc_id = ?${hubFilterSql}
@@ -562,10 +602,13 @@ function prepare(db: Db) {
       // Pick the "other" endpoint of every near-dup edge involving the
       // queried doc. CHECK(doc_a < doc_b) at the schema level means we
       // need an OR-clause across both columns.
-      `SELECT CASE WHEN doc_a = ? THEN doc_b ELSE doc_a END AS other_id, jaccard
-       FROM near_dup_edges
-       WHERE doc_a = ? OR doc_b = ?
-       ORDER BY jaccard DESC`,
+      `SELECT n.other_id, n.jaccard, d.source_id AS other_source_id,
+              json_extract(d.metadata, '$.documentType') AS other_document_type
+       FROM (SELECT CASE WHEN doc_a = ? THEN doc_b ELSE doc_a END AS other_id, jaccard
+             FROM near_dup_edges
+             WHERE doc_a = ? OR doc_b = ?) n
+       JOIN documents d ON d.id = n.other_id
+       ORDER BY n.jaccard DESC`,
     ),
     docPeople: db.prepare(
       // Dereference dp.person_id to its canonical via merged_into. The
@@ -616,6 +659,8 @@ export interface OneHopNeighbor {
 export interface ExpandOneHopOptions {
   /** Max neighbours returned after ranking. Default 8, clamped to [1, 24]. */
   fanout?: number;
+  /** Narrows the hop to the links and documents a policy permits. */
+  policy?: GraphTraversalPolicy;
 }
 
 /** Result of a one-hop expansion. */
@@ -704,6 +749,7 @@ export function expandOneHop(
       depth: 1,
       fanoutCap: ONE_HOP_PER_CATEGORY_CAP,
       maxVertices: ONE_HOP_MAX_VERTICES,
+      policy: opts.policy,
     });
   } catch {
     return { neighbors: [], truncated: false };
@@ -921,7 +967,7 @@ export async function buildDocumentGraphWithBoundRows(
   db: Db,
   resolver: BoundRowResolver,
   seedDocIds: string[],
-  opts: BuildDocumentGraphOptions = {},
+  opts: GraphWalkOptions = {},
 ): Promise<DocumentGraph> {
   const graph = buildDocumentGraph(db, seedDocIds, opts);
   await attachBoundRows(db, resolver, graph, { maxVertices: opts.maxVertices });
