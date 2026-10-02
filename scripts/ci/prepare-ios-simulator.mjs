@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 
 const MIN_IOS_MAJOR = 17; // ios/project.yml deployment target
 const MIN_WATCH_MAJOR = 10; // ios/project.yml Watch deployment target
+const SIMULATOR_TIMEOUT_MS = 5 * 60_000;
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 
 function availableRuntimes(inventory, platform, minimumMajor) {
@@ -23,7 +24,7 @@ function availableRuntimes(inventory, platform, minimumMajor) {
     .sort((left, right) => right.version.localeCompare(left.version, "en", { numeric: true }));
 }
 
-function execute(command, args, timeout = 60_000) {
+function execute(command, args, timeout = SIMULATOR_TIMEOUT_MS) {
   return execFileSync(command, args, {
     encoding: "utf8",
     timeout,
@@ -37,7 +38,34 @@ export function prepareIOSSimulator({
   run = execute,
   log = (text) => process.stderr.write(`${text}\n`),
 } = {}) {
-  const list = () => JSON.parse(run("xcrun", ["simctl", "list", "--json"]));
+  const command = (name, args, timeout = SIMULATOR_TIMEOUT_MS) => {
+    const description = `${name} ${args.join(" ")}`;
+    log(`Running ${description} (timeout ${timeout / 1000}s).`);
+    try {
+      return run(name, args, timeout);
+    } catch (error) {
+      throw new Error(
+        `${description} failed (timeout limit ${timeout / 1000}s): ${error.message}`,
+        {
+          cause: error,
+        },
+      );
+    }
+  };
+  const list = () => {
+    const inventory = JSON.parse(command("xcrun", ["simctl", "list", "--json"]));
+    log(
+      `Simulator runtimes: ${
+        (inventory.runtimes ?? [])
+          .map(
+            (runtime) =>
+              `${runtime.identifier} (${runtime.isAvailable ? "available" : "unavailable"})`,
+          )
+          .join(", ") || "none"
+      }.`,
+    );
+    return inventory;
+  };
   let inventory = list();
   for (const [platform, minimumMajor] of [
     ["iOS", MIN_IOS_MAJOR],
@@ -45,7 +73,7 @@ export function prepareIOSSimulator({
   ]) {
     if (availableRuntimes(inventory, platform, minimumMajor).length) continue;
     log(`No compatible ${platform} simulator runtime; downloading it for the selected Xcode.`);
-    run("xcodebuild", ["-downloadPlatform", platform], 15 * 60_000);
+    command("xcodebuild", ["-downloadPlatform", platform], 15 * 60_000);
     inventory = list();
     if (!availableRuntimes(inventory, platform, minimumMajor).length) {
       throw new Error(
@@ -76,7 +104,7 @@ export function prepareIOSSimulator({
     );
     const type = types.find((item) => item.name === "iPhone 17") ?? types.at(-1);
     if (!type) throw new Error(`No compatible iPhone simulator type for ${runtime.identifier}`);
-    const udid = run("xcrun", [
+    const udid = command("xcrun", [
       "simctl",
       "create",
       "iPhone — Omnesis CI",
@@ -87,8 +115,8 @@ export function prepareIOSSimulator({
     device = { udid, state: "Shutdown" };
   }
   log(`Preparing iPhone simulator ${device.udid} (${runtime.identifier}).`);
-  if (device.state !== "Booted") run("xcrun", ["simctl", "boot", device.udid]);
-  run("xcrun", ["simctl", "bootstatus", device.udid, "-b"], 5 * 60_000);
+  if (device.state !== "Booted") command("xcrun", ["simctl", "boot", device.udid]);
+  command("xcrun", ["simctl", "bootstatus", device.udid, "-b"]);
   const ready = list();
   const selected = ready.devices?.[runtime.identifier]?.find((item) => item.udid === device.udid);
   if (

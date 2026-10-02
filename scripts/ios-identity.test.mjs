@@ -222,6 +222,24 @@ describe("hosted iOS simulator preparation", () => {
     expect(calls.find(({ args }) => args[1] === "bootstatus").timeout).toBe(300_000);
   });
 
+  it("allows cold CoreSimulator inventory and boot commands up to five bounded minutes", () => {
+    const { calls } = prepare(inventory());
+    expect(
+      calls.filter(({ command }) => command === "xcrun").map(({ timeout }) => timeout),
+    ).toEqual([300_000, 300_000, 300_000, 300_000]);
+  });
+
+  it("identifies the command and deadline when initial inventory times out", () => {
+    const messages = [];
+    const run = () => {
+      throw new Error("spawnSync xcrun ETIMEDOUT");
+    };
+    expect(() => prepareIOSSimulator({ run, log: (message) => messages.push(message) })).toThrow(
+      "xcrun simctl list --json failed (timeout limit 300s): spawnSync xcrun ETIMEDOUT",
+    );
+    expect(messages).toEqual(["Running xcrun simctl list --json (timeout 300s)."]);
+  });
+
   it("waits for an already booted phone without attempting to boot it again", () => {
     const data = inventory();
     data.devices[ios] = [device("Booted")];
