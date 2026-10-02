@@ -12,12 +12,17 @@ import {
 } from "@omnesis/core";
 import { makeCursorValidator } from "@omnesis/source-sdk";
 import { SourceId, ProviderId, isTransientSyncError } from "@omnesis/types";
-import { normalizeDayChat, buildContactsByLidJid } from "./normalizer.js";
+import {
+  normalizeDayChat,
+  buildContactsByLidJid,
+  whatsappPersonIdentifiers,
+} from "./normalizer.js";
 import type {
   AttachmentInfo,
   AttachmentExtractionConfig,
   AttachmentExtractFn,
   AudioTranscribeFn,
+  TranscriptionPerson,
 } from "@omnesis/core";
 import type { HistoryCoverage, SyncCursor, SyncResult, Unsubscribe } from "@omnesis/source-sdk";
 import type {
@@ -26,7 +31,7 @@ import type {
   ProviderId as ProviderIdType,
 } from "@omnesis/types";
 import type { MessageStore } from "./message-store.js";
-import type { WhatsAppSyncCursor, StoredMessage, MediaOutcome } from "./types.js";
+import type { WhatsAppSyncCursor, StoredMessage, MediaOutcome, StoredContact } from "./types.js";
 
 const log = createLogger("source:whatsapp");
 
@@ -243,9 +248,30 @@ export class WhatsAppMessagesSource {
 
       // Transcribe voice notes before rendering, so the transcript lands inline
       // in the day-chat document (and thus in the indexed/searchable content).
-      await this.transcribeVoiceNotes(filtered, mediaBudget);
-
       const chat = chats.get(chatJid);
+      const participantJids = [
+        ...new Set([
+          ...(chat?.participants ?? []),
+          ...filtered
+            .filter((message) => !message.fromMe && message.type !== "system")
+            .map((message) => message.senderJid),
+          ...(!chat?.isGroup ? [chatJid] : []),
+        ]),
+      ].slice(0, 31);
+      const participants: TranscriptionPerson[] = [
+        { isSelf: true },
+        ...participantJids.map((jid) => ({
+          identifiers: whatsappPersonIdentifiers(jid, this.id, lidPhoneMap, contactsByLidJid),
+        })),
+      ];
+      await this.transcribeVoiceNotes(
+        filtered,
+        mediaBudget,
+        participants,
+        lidPhoneMap,
+        contactsByLidJid,
+      );
+
       const doc = normalizeDayChat(
         chatJid,
         date,
@@ -559,6 +585,9 @@ export class WhatsAppMessagesSource {
   private async transcribeVoiceNotes(
     messages: StoredMessage[],
     mediaBudget: MediaAttemptBudget,
+    participants: TranscriptionPerson[],
+    lidPhoneMap: Map<string, string>,
+    contactsByLidJid: Map<string, StoredContact>,
   ): Promise<void> {
     if (!this.transcribeAudio || !this.downloadMedia) return;
     const now = Math.floor(Date.now() / 1000);
@@ -583,7 +612,24 @@ export class WhatsAppMessagesSource {
           this.advanceMediaLifecycle(msg, { kind: dl.kind, error: dl.error });
           continue;
         }
-        const result = await this.transcribeAudio(dl.data, msg.media.mimetype ?? "audio/ogg");
+        const result = await this.transcribeAudio(dl.data, msg.media.mimetype ?? "audio/ogg", {
+          context: {
+            purpose: "source-audio",
+            speaker: msg.fromMe
+              ? { isSelf: true }
+              : {
+                  identifiers: whatsappPersonIdentifiers(
+                    msg.senderJid,
+                    this.id,
+                    lidPhoneMap,
+                    contactsByLidJid,
+                  ),
+                },
+            conversation: { sourceId: this.id, threadId: msg.chatJid },
+            participants,
+            recordedAt: new Date(msg.timestamp * 1000).toISOString(),
+          },
+        });
         // `null` = no transcriber assigned yet, or the gateway model was down.
         // The audio downloaded fine, so this is a processing gap, not a lost
         // blob — retry indefinitely (it'll transcribe once a model is present),

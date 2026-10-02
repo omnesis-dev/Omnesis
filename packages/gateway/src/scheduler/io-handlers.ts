@@ -101,7 +101,21 @@ import type { ConversationRetentionFile } from "../agent/conversation-retention.
 import type { ExtractedLinkBatchEntry } from "../domain/LinkExtraction.js";
 import type { UrlCanonicalizerSpec } from "@omnesis/core";
 
+import {
+  fetchTranscriptionVocabularyBatch,
+  getTranscriptionVocabulary,
+} from "../transcribe/vocabulary/storage.js";
+import type { VocabularySettings } from "../transcribe/vocabulary/types.js";
+import type { TranscriptionContext } from "@omnesis/core";
+
 export const ioHandlers = {
+  "io.fetchTranscriptionVocabularyBatch": (db: Db, settings: VocabularySettings) =>
+    fetchTranscriptionVocabularyBatch(db, settings),
+  "io.getTranscriptionVocabulary": (
+    db: Db,
+    context: TranscriptionContext,
+    settings: VocabularySettings,
+  ) => getTranscriptionVocabulary(db, context, settings),
   // Identity op for runner integration tests — verifies the call/result
   // envelope without any DB access.
   "io.echo": <T>(_db: Db, value: T): T => value,

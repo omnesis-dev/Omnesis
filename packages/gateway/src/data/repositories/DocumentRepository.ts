@@ -348,6 +348,16 @@ export function upsertDocuments(
         WHEN excluded.metadata != documents.metadata THEN NULL
         WHEN excluded.extracted_content_hash IS NOT documents.extracted_content_hash THEN NULL
         ELSE documents.links_extracted_at END,
+      vocabulary_revision = documents.vocabulary_revision + CASE
+        WHEN excluded.content_hash != documents.content_hash THEN 1
+        WHEN excluded.metadata != documents.metadata THEN 1
+        WHEN excluded.title != documents.title THEN 1
+        ELSE 0 END,
+      vocabulary_processed_at = CASE
+        WHEN excluded.content_hash != documents.content_hash THEN NULL
+        WHEN excluded.metadata != documents.metadata THEN NULL
+        WHEN excluded.title != documents.title THEN NULL
+        ELSE documents.vocabulary_processed_at END,
       people_resolved_at = CASE
         WHEN excluded.content_hash != documents.content_hash THEN NULL
         WHEN excluded.metadata != documents.metadata THEN NULL

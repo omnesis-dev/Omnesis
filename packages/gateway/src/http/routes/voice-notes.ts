@@ -31,6 +31,7 @@ import { clientIp, isLoopbackRequest } from "./admin/internals.js";
 import type { DictationFeatureStatus } from "../../dictation/index.js";
 import type { VoiceNoteService } from "../../voice-notes/index.js";
 import type { RouteApp } from "./types.js";
+import { transcriptionVocabularyAllowed } from "../transcription-access.js";
 
 /** Room for the `note` part and multipart framing beside the largest recording. */
 const METADATA_ALLOWANCE_BYTES = 64 * 1024;
@@ -117,6 +118,7 @@ export function mountVoiceNoteRoutes(app: RouteApp, deps: VoiceNoteRoutesDeps): 
       latitude: note.latitude,
       longitude: note.longitude,
       placeName: note.placeName,
+      allowVocabulary: transcriptionVocabularyAllowed(c.get("auth").scopes),
     });
     return c.json({ id, transcription: "pending" as const }, 202);
   });

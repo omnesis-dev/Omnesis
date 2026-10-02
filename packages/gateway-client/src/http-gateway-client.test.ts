@@ -50,6 +50,7 @@ function makeDoc(externalId = "msg-1"): DocumentInput {
 // instrumenting the test gateway further.
 const postDocCalls: Array<{ docCount: number }> = [];
 const ocrRequestBodies: string[] = [];
+const transcriptionContextHeaders: Array<string | null> = [];
 const withCursorBodies: Array<Record<string, unknown>> = [];
 const reconcileBodies: Array<Record<string, unknown>> = [];
 // Spy log of POST /analytics/ingest calls: asserts deletes-only pages
@@ -129,6 +130,7 @@ function createTestGateway(database: Db, apiKey: string) {
       // POST /inference/transcribe — echoes the audio bytes as the transcript,
       // with magic bodies to exercise the unavailable / disabled / error paths.
       if (path === "/inference/transcribe" && req.method === "POST") {
+        transcriptionContextHeaders.push(req.headers.get("x-omnesis-transcription-context"));
         return req.arrayBuffer().then(async (buf) => {
           const text = new TextDecoder().decode(new Uint8Array(buf));
           if (text === "TRIGGER_SLOW") {
@@ -383,6 +385,32 @@ describe("HttpGatewayClient.transcribe", () => {
       language: "fr",
     });
     expect(r).toEqual({ text: "hello from a voice note", language: "fr", durationSec: 1.5 });
+  });
+
+  test("forwards Unicode transcription context in a header without changing audio transport", async () => {
+    const context = {
+      purpose: "source-audio" as const,
+      conversation: { sourceId: SourceId("fictional-source"), threadId: "conversation-é" },
+      speaker: { isSelf: true },
+    };
+    const result = await client.transcribe(enc("spoken words"), "audio/ogg", { context });
+    expect(result?.text).toBe("spoken words");
+    expect(JSON.parse(decodeURIComponent(transcriptionContextHeaders.at(-1)!))).toEqual(context);
+    await client.transcribe(enc("plain words"), "audio/ogg");
+    expect(transcriptionContextHeaders.at(-1)).toBeNull();
+  });
+
+  test("rejects oversized context before uploading audio", async () => {
+    const requestsBefore = transcriptionContextHeaders.length;
+    await expect(
+      client.transcribe(enc("speech"), "audio/ogg", {
+        context: {
+          purpose: "source-audio",
+          conversation: { sourceId: SourceId("fictional-source"), threadId: "x".repeat(9000) },
+        },
+      }),
+    ).rejects.toThrow("Transcription context exceeds");
+    expect(transcriptionContextHeaders.length).toBe(requestsBefore);
   });
 
   test("returns null when the gateway reports no transcriber available", async () => {

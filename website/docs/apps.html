@@ -778,6 +778,12 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           transcriber, the setting says what is missing, and notes keep the phone's own text.
         </p>
 
+        <p>
+          The gateway uses the same personal vocabulary hints as source audio transcription. To
+          compare recordings with hints disabled, set
+          <code>inference.transcriptionVocabulary.enabled</code> to <code>false</code>. See
+          <a href="/docs/operating">Operating Omnesis</a> for vocabulary behavior.
+        </p>
         <h3 id="gateway-dictation-behaviour">What happens to a voice note</h3>
         <p>
           While you dictate, Tell Omnesis shows that it is recording rather than what the phone

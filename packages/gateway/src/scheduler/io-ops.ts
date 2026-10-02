@@ -75,7 +75,15 @@ import type {
   SourceUrlRecanonicalizationPlan,
 } from "../domain/SourceUrlRecanonicalization.js";
 
+import type { VocabularySettings, VocabularyDocument } from "../transcribe/vocabulary/types.js";
+import type { TranscriptionContext, TranscriptionVocabulary } from "@omnesis/core";
+
 export interface IoGate {
+  fetchTranscriptionVocabularyBatch(settings: VocabularySettings): Promise<VocabularyDocument[]>;
+  getTranscriptionVocabulary(
+    context: TranscriptionContext,
+    settings: VocabularySettings,
+  ): Promise<TranscriptionVocabulary>;
   /** Sanity ping for tests. */
   echo<T>(value: T): Promise<T>;
   /** Single-row aggregate over `documents`. */
@@ -431,6 +439,8 @@ const DEFAULT_BUDGET_MS = 200;
 const HEAVY_BUDGET_MS = 2_000;
 
 const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
+  { name: "io.fetchTranscriptionVocabularyBatch", priority: "background" },
+  { name: "io.getTranscriptionVocabulary", priority: "user" },
   { name: "io.echo", priority: "background" },
   { name: "io.collectorRosterSnapshot", priority: "background" },
   { name: "io.planSourceUrlRecanonicalization", priority: "background" },
@@ -555,6 +565,10 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
   };
   return {
     echo: (value) => call("io.echo", [value]),
+    fetchTranscriptionVocabularyBatch: (settings) =>
+      call("io.fetchTranscriptionVocabularyBatch", [settings]),
+    getTranscriptionVocabulary: (context, settings) =>
+      call("io.getTranscriptionVocabulary", [context, settings]),
     collectorRosterSnapshot: () => call("io.collectorRosterSnapshot", []),
     planSourceUrlRecanonicalization: (specs, cursor) =>
       call("io.planSourceUrlRecanonicalization", [specs, cursor]),

@@ -3787,6 +3787,16 @@
       "reason": "reviewed public product name"
     },
     {
+      "value": "Nexularis Virellune",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "reason": "Invented name and project fixtures for transcription vocabulary extraction."
+    },
+    {
+      "value": "Project Nexularis",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "reason": "Invented name and project fixtures for transcription vocabulary extraction."
+    },
+    {
       "value": "Steph Ango",
       "paths": ["extension/src/store-release.test.ts"],
       "reason": "reviewed upstream copyright holder"
@@ -7109,6 +7119,7 @@
         "evals/universes/graph-search/cast.json",
         "packages/gateway/src/search/agent-provenance.test.ts",
         "packages/gateway/src/enrichment/dates/mention-bounds.test.ts",
+        "packages/gateway/src/transcribe/vocabulary/storage.test.ts",
         "packages/providers/strava/src/enrichment.test.ts"
       ],
       "reason": "reviewed existing fixture"
@@ -9301,7 +9312,11 @@
     },
     {
       "value": "Tell Omnesis",
-      "paths": ["ios/Sources/Omnesis/UI/PreviewMocks.swift"],
+      "paths": [
+        "ios/Sources/Omnesis/UI/PreviewMocks.swift",
+        "packages/gateway/src/transcribe/vocabulary/native.integration.test.ts",
+        "packages/gateway/src/transcribe/vocabulary/pipeline.test.ts"
+      ],
       "reason": "a feature's name in a section comment, not a person"
     },
     {
@@ -10217,6 +10232,56 @@
       "value": "The Brain",
       "paths": ["packages/gateway/src/http/routes/temporal.test.ts"],
       "reason": "ordinary words, not a name"
+    },
+    {
+      "value": "Northstar Quorvex",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/native.integration.test.ts"],
+      "reason": "Invented project and team vocabulary for synthetic audio."
+    },
+    {
+      "value": "Quorvex Nimbrax",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/pipeline.test.ts"],
+      "reason": "Invented uncommon vocabulary for transcription tests."
+    },
+    {
+      "value": "Discuss Quorvex",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/storage.test.ts"],
+      "reason": "Invented vocabulary phrase in a storage test."
+    },
+    {
+      "value": "Haus Quorvex Nimbrax",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/storage.test.ts"],
+      "reason": "Invented multilingual vocabulary extraction example."
+    },
+    {
+      "value": "Tessa Rowan Vale",
+      "paths": ["packages/gateway/src/transcribe/vocabulary-adapter.test.ts"],
+      "reason": "Invented vocabulary component and phrase-boundary fixtures; no indexed corpus data."
+    },
+    {
+      "value": "Rowan Vale",
+      "paths": ["packages/gateway/src/transcribe/vocabulary-adapter.test.ts"],
+      "reason": "Invented vocabulary component and phrase-boundary fixtures; no indexed corpus data."
+    },
+    {
+      "value": "North-Rill Labs",
+      "paths": ["packages/gateway/src/transcribe/vocabulary-adapter.test.ts"],
+      "reason": "Invented vocabulary component and phrase-boundary fixtures; no indexed corpus data."
+    },
+    {
+      "value": "Tessa Rowan",
+      "paths": ["packages/gateway/src/transcribe/vocabulary-adapter.test.ts"],
+      "reason": "Invented vocabulary component and phrase-boundary fixtures; no indexed corpus data."
+    },
+    {
+      "value": "Miro Sela Vale",
+      "paths": ["packages/gateway/src/transcribe/vocabulary-adapter.test.ts"],
+      "reason": "Invented vocabulary component and phrase-boundary fixtures; no indexed corpus data."
+    },
+    {
+      "value": "Miro Vale",
+      "paths": ["packages/gateway/src/transcribe/vocabulary-adapter.test.ts"],
+      "reason": "Invented vocabulary component and phrase-boundary fixtures; no indexed corpus data."
     }
   ],
   "secretFixtures": [

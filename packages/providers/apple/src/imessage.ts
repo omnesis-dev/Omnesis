@@ -29,6 +29,7 @@ import {
   isTapback,
   isTapbackRemoval,
   normalizeDayChat,
+  imessagePersonIdentifiers,
 } from "./imessage-normalizer.js";
 import { validateAppleIMessageSyncCursor } from "./imessage-types.js";
 import { throwOnOpenFailure } from "./db-helpers/internal.js";
@@ -672,7 +673,7 @@ export class AppleIMessageSource {
 
     // Transcribe voice clips inline before rendering, so the spoken text lands
     // in the conversation document and is searchable.
-    await this.transcribeDayAudio(dayParsed);
+    await this.transcribeDayAudio(dayParsed, info);
 
     const doc = normalizeDayChat(date, dayParsed, info, this.providerId, this.id);
     const attachmentDocs = await this.extractAttachments(doc, dayParsed, attMap);
@@ -937,8 +938,22 @@ export class AppleIMessageSource {
    * re-running Whisper. A `null` from the transcriber (unavailable / failed /
    * no bytes) leaves the attachment untranscribed so a later sync retries.
    */
-  private async transcribeDayAudio(dayParsed: ParsedIMessage[]): Promise<void> {
+  private async transcribeDayAudio(
+    dayParsed: ParsedIMessage[],
+    chat: IMessageChatInfo,
+  ): Promise<void> {
     if (!this.transcribeAudio) return;
+    const handles = [
+      ...new Set([
+        ...(chat.participantHandles ?? []),
+        ...dayParsed.filter((message) => !message.isFromMe).map((message) => message.sender),
+        ...(!chat.isGroup ? [chat.chatIdentifier] : []),
+      ]),
+    ].slice(0, 31);
+    const participants = [
+      { isSelf: true },
+      ...handles.map((handle) => ({ identifiers: imessagePersonIdentifiers(handle) })),
+    ];
 
     for (const msg of dayParsed) {
       if (msg.tapback) continue;
@@ -981,7 +996,17 @@ export class AppleIMessageSource {
 
         try {
           const data = new Uint8Array(await readFile(filePath));
-          const result = await this.transcribeAudio(data, mimeType);
+          const result = await this.transcribeAudio(data, mimeType, {
+            context: {
+              purpose: "source-audio",
+              speaker: msg.isFromMe
+                ? { isSelf: true }
+                : { identifiers: imessagePersonIdentifiers(msg.sender) },
+              conversation: { sourceId: this.id, threadId: chat.chatIdentifier },
+              participants,
+              recordedAt: msg.date.toISOString(),
+            },
+          });
           // `null` = transcription unavailable/failed → leave unset to retry.
           if (result === null) continue;
           const transcript = result.text.trim();
