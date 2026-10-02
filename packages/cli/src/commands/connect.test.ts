@@ -2332,12 +2332,18 @@ describe("connect credential wiring", () => {
 
   const untrackedLegacyPlugin =
     'Plugin "omnesis-bridge" is not associated with a tracked package install. Refresh the plugin registry, then reinstall the package or run openclaw doctor before retrying.';
+  const untrackedLegacyPluginWithOwnerGuidance =
+    'Plugin "omnesis-bridge" is not associated with a tracked package install. Package maintenance requires an unambiguous install record and its discovered package owner. Refresh the plugin registry and run openclaw plugins doctor to inspect the install record before retrying.';
+  const unownedLegacyPlugin =
+    'Plugin "omnesis-bridge" has no authoritative package-owner metadata. Package maintenance requires an unambiguous install record and its discovered package owner. Refresh the plugin registry and run openclaw plugins doctor to inspect the install record before retrying.';
 
   it.each([
     { warning: "", absent: "Plugin not found: omnesis-bridge" },
     { warning: colorWarning, absent: "Plugin not found: omnesis-bridge" },
     { warning: "", absent: untrackedLegacyPlugin },
     { warning: colorWarning, absent: untrackedLegacyPlugin },
+    { warning: "", absent: untrackedLegacyPluginWithOwnerGuidance },
+    { warning: colorWarning, absent: untrackedLegacyPluginWithOwnerGuidance },
   ])(
     "accepts OpenClaw's no-legacy-record result $absent with runtime output $warning",
     async ({ warning, absent }) => {
@@ -2380,6 +2386,11 @@ describe("connect credential wiring", () => {
     },
     {
       status: 1,
+      stderr: untrackedLegacyPluginWithOwnerGuidance.replace("omnesis-bridge", "unrelated-plugin"),
+    },
+    { status: 2, stderr: untrackedLegacyPluginWithOwnerGuidance },
+    {
+      status: 1,
       stderr:
         'Plugin "omnesis-bridge" has no authoritative package-owner metadata. Refresh the plugin registry, then reinstall the package or run openclaw doctor before retrying.',
     },
@@ -2409,6 +2420,38 @@ describe("connect credential wiring", () => {
       }),
     ).rejects.toThrow(/Could not retire the legacy OpenClaw Omnesis registry entry/);
 
+    expect(spawnSync).toHaveBeenCalledTimes(2);
+    expect(existsSync(join(home, "omnesis", "connect-recovery.json"))).toBe(true);
+  });
+
+  it("tells the operator how to remove an omnesis-bridge copy OpenClaw did not install", async () => {
+    const home = mkdtempSync(join(tmpdir(), "omnesis-openclaw-unowned-legacy-"));
+    tempHomes.push(home);
+    writeFileSync(join(home, "openclaw.json"), "{}\n");
+    (spawnSync as Mock)
+      .mockReset()
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: "",
+        stderr: `${colorWarning}${unownedLegacyPlugin}\n`,
+      });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const failure = run({
+      harness: "openclaw",
+      dir: home,
+      "gateway-url": ENV.OMNESIS_GATEWAY_URL,
+      code: "PAIR-CODE",
+    });
+
+    await expect(failure).rejects.toThrow(/has no authoritative package-owner metadata/);
+    await expect(failure).rejects.toThrow(
+      /Run `openclaw plugins inspect omnesis-bridge` and delete the plugin directory/,
+    );
+    await expect(failure).rejects.toThrow(
+      /rerun the same connect command without a new pairing code/,
+    );
     expect(spawnSync).toHaveBeenCalledTimes(2);
     expect(existsSync(join(home, "omnesis", "connect-recovery.json"))).toBe(true);
   });
