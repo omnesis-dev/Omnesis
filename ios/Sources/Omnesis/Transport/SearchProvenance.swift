@@ -50,12 +50,8 @@ public struct SearchProvenance: Decodable, Hashable, Sendable {
             self.path = path
         }
 
-        private enum CodingKeys: String, CodingKey {
-            case documentId, sourceId, title, deviceName, path
-        }
-
         public init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let container = try decoder.container(keyedBy: SearchProvenanceDocumentKeys.self)
             documentId = try container.decode(String.self, forKey: .documentId)
             sourceId = try container.decodeIfPresent(String.self, forKey: .sourceId) ?? ""
             title = try container.decodeIfPresent(String.self, forKey: .title)
@@ -75,12 +71,8 @@ public struct SearchProvenance: Decodable, Hashable, Sendable {
             self.relations = relations
         }
 
-        private enum CodingKeys: String, CodingKey {
-            case documentIds, edges, relations
-        }
-
         public init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let container = try decoder.container(keyedBy: SearchProvenancePathKeys.self)
             documentIds = try container.decodeIfPresent([String].self, forKey: .documentIds) ?? []
             edges = try container.decodeIfPresent([String].self, forKey: .edges) ?? []
             relations = try container.decodeIfPresent([String].self, forKey: .relations)
@@ -94,15 +86,23 @@ public struct SearchProvenance: Decodable, Hashable, Sendable {
             self.documents = documents
         }
 
-        private enum CodingKeys: String, CodingKey {
-            case documents
-        }
-
         public init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let container = try decoder.container(keyedBy: SearchProvenanceModelContextKeys.self)
             documents = try container.decodeIfPresent([Document].self, forKey: .documents) ?? []
         }
     }
+}
+
+private enum SearchProvenanceDocumentKeys: String, CodingKey {
+    case documentId, sourceId, title, deviceName, path
+}
+
+private enum SearchProvenancePathKeys: String, CodingKey {
+    case documentIds, edges, relations
+}
+
+private enum SearchProvenanceModelContextKeys: String, CodingKey {
+    case documents
 }
 
 /// Text fragments keep navigation identities out of visible copy and make

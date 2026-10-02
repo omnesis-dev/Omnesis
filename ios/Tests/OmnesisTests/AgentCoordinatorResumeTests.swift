@@ -137,7 +137,11 @@ final class AgentCoordinatorResumeTests: XCTestCase {
         let reconnected = await waitFor(timeout: 5) { RoutingStubProtocol.seenEventRequests() >= 2 }
         XCTAssertTrue(reconnected, "the supervisor reconnects after the stream closes")
         XCTAssertFalse(coord.busy, "a resumed stream does not reopen the finished turn")
-        XCTAssertEqual(coord.turns.filter { if case .assistant = $0 { return true } else { return false } }.count, 1)
+        let assistantTurns = coord.turns.filter { turn in
+            guard case .assistant = turn else { return false }
+            return true
+        }
+        XCTAssertEqual(assistantTurns.count, 1)
     }
 
     func testSnapshotHandoffAppliesOnlyEventsNewerThanCursor() async {
