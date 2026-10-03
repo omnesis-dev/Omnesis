@@ -83,6 +83,8 @@ const expectedFiles = [
   "icons/icon-32.png",
   "icons/icon-48.png",
   "manifest.json",
+  "notes.html",
+  "notes.js",
   "options.html",
   "options.js",
   "popup.html",

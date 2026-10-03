@@ -147,6 +147,13 @@ async function startBackground(
   let failNextStorageKey: string | null = null;
   vi.stubGlobal("fetch", fetchImpl);
   vi.stubGlobal("chrome", {
+    commands: { onCommand: { addListener: vi.fn() } },
+    contextMenus: {
+      create: vi.fn(),
+      removeAll: vi.fn(async () => undefined),
+      onClicked: { addListener: vi.fn() },
+    },
+    sidePanel: { open: vi.fn(async () => undefined), setOptions: vi.fn(async () => undefined) },
     storage: {
       local: {
         get: async (key: string | string[] | null) => {
@@ -176,6 +183,7 @@ async function startBackground(
       },
     },
     runtime: {
+      onInstalled: { addListener: vi.fn() },
       id: "extension-test",
       getURL: (path: string) => `chrome-extension://extension-test/${path}`,
       // The extension's product version, which pairing sends to the gateway's

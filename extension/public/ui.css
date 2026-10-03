@@ -446,3 +446,44 @@ button.secondary:hover {
   font-weight: 500;
   color: var(--success);
 }
+
+/* The side panel remains usable in narrow windows and follows the shared extension theme. */
+.notes-panel {
+  padding: 20px;
+  min-width: 0;
+}
+.note-context {
+  display: grid;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+.note-context a {
+  font-size: 12px;
+}
+.notes-panel textarea {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 8px 0;
+  padding: 12px;
+  resize: vertical;
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.notes-panel blockquote {
+  margin: 12px 0;
+  padding-left: 12px;
+  border-left: 2px solid var(--border);
+  white-space: pre-wrap;
+  max-height: 200px;
+  overflow: auto;
+}
+.notes-panel label {
+  display: block;
+  margin-top: 20px;
+}
+.notes-panel form[hidden] {
+  display: none;
+}

@@ -101,6 +101,12 @@
             fifteen minutes, and never the code itself.
           </li>
           <li>
+            <strong>Tell Omnesis notes</strong> — the text you submit, the page title and URL, an
+            optional selected quotation, the capture time and timezone, and the paired browser
+            identity. Drafts stay in the extension until you submit them. This optional feature
+            requires gateway-owner approval and uses a separate create-only notes credential.
+          </li>
+          <li>
             <strong>Local controls and delivery state</strong> — Chrome profile label, the paired
             gateway's reported version, recent status, a bounded retry queue, and a copy of the
             capture settings the paired gateway holds (pause, excluded domains, pages you deleted
@@ -113,7 +119,9 @@
           payment pages, and pages carrying a password field are not captured. These capture
           settings are stored on your paired gateway and apply to every browser paired with it.
           Domains a dedicated Omnesis source already covers are also skipped, so a page is not
-          collected twice.
+          collected twice. These restrictions apply to automatic page capture. Tell Omnesis sends
+          only the note and quotation you explicitly submit, with their page context, even when
+          automatic capture is paused or the page is excluded.
         </p>
         <p>
           Because a signed-in page can contain identifying details, communications, financial or
@@ -125,10 +133,10 @@
 
         <h2>Where data goes</h2>
         <p>
-          Captured content and visit metadata are sent over HTTPS directly to the gateway you
-          approve during pairing. Pair only with an endpoint and operator you trust. The extension
-          developer does not receive this data merely because you installed the extension. The
-          developer does receive it if you deliberately pair with a developer-operated gateway.
+          Captured content, visit metadata and submitted notes are sent over HTTPS directly to the
+          gateway you approve during pairing. Pair only with an endpoint and operator you trust. The
+          extension developer does not receive this data merely because you installed the extension.
+          The developer does receive it if you deliberately pair with a developer-operated gateway.
         </p>
         <p>
           If the gateway operator enables a cloud model for indexing or agent features, the gateway
@@ -154,9 +162,17 @@
           <li>
             <strong>Scripting</strong> lets the extension register the capture script after page
             access is granted. The popup uses that same optional page grant to report capture
-            status; the extension does not request the <code>tabs</code> or
-            <code>activeTab</code> permission.
+            status. The extension does not request the <code>tabs</code> permission.
           </li>
+          <li>
+            <strong>Active tab</strong> gives temporary access to the page URL, title and selected
+            text when you explicitly invoke Tell Omnesis.
+          </li>
+          <li>
+            <strong>Context menus</strong> adds Tell Omnesis to the page and selection right-click
+            menus when the feature is enabled.
+          </li>
+          <li><strong>Side panel</strong> displays the note composer alongside the page.</li>
         </ul>
 
         <h2>Retention and control</h2>
@@ -167,8 +183,10 @@
           evicts old entries when those limits are reached. Credential-bearing query parameters
           (tokens, signatures, one-time codes, passwords, session ids) are removed from a page's
           address before it is recorded, so a password-reset link or a signed download link is
-          stored without its secret. The pairing credential remains until you unpair or clear the
-          extension's data.
+          stored without its secret. Pairing and notes credentials remain until you unpair or clear
+          the extension's data. Notes drafts and submitted notes waiting for delivery are stored
+          locally; delivered notes are removed from the local delivery queue. A full notes queue
+          refuses new submissions instead of evicting previously submitted notes.
         </p>
         <ul>
           <li>
@@ -181,11 +199,11 @@
             domain already contributed.
           </li>
           <li>
-            Unpair to remove the gateway credential, pending captures, recent delivery state, the
-            copy of the capture settings, and the extension's HTTPS page-access grant. The Chrome
-            profile label and random installation identifier remain so your browser identity
-            survives a later re-pair; removing the extension or clearing its data removes them.
-            Excluded domains stay on the gateway.
+            Unpair to remove gateway credentials, note drafts and queued notes, pending captures,
+            recent delivery state, the copy of the capture settings, and the extension's HTTPS
+            page-access grant. The Chrome profile label and random installation identifier remain so
+            your browser identity survives a later re-pair; removing the extension or clearing its
+            data removes them. Excluded domains stay on the gateway.
           </li>
           <li>Remove the extension or clear its data to remove its remaining local storage.</li>
           <li>Delete data already delivered using the controls provided by the paired gateway.</li>

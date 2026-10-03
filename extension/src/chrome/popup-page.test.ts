@@ -97,7 +97,7 @@ describe("popup — summary states", () => {
   it("renders a healthy paired browser as ready, with the gateway version line", async () => {
     const popup = openPopup(
       pairedStorage({
-        [PAIRING_KEY]: JSON.stringify({ ...TEST_PAIRING, gatewayVersion: "0.4.5" }),
+        [PAIRING_KEY]: JSON.stringify({ ...TEST_PAIRING, gatewayVersion: "0.5.5" }),
         "omnesis.push.checked.v1": JSON.stringify({ at: T0 - 3 * 60_000 }),
       }),
     );
@@ -105,7 +105,7 @@ describe("popup — summary states", () => {
     expect(popup.state().label).toBe("Ready");
     expect(popup.document.body.dataset.paired).toBe("true");
     expect(popup.document.body.dataset.warn).toBe("false");
-    expect(popup.text("gateway")).toBe("https://gateway.example.com · v0.4.5");
+    expect(popup.text("gateway")).toBe("https://gateway.example.com · v0.5.5");
     expect(popup.text("queue")).toBe("0");
     expect(popup.text("last-sync")).toBe("—");
     expect(popup.text("last-checked")).toBe("3m ago");
@@ -120,7 +120,7 @@ describe("popup — summary states", () => {
     expect(popup.$("ack-warning").hidden).toBe(true);
   });
 
-  it("warns when the gateway is behind the extension's minor version", async () => {
+  it("warns when the gateway predates the capture contract", async () => {
     const popup = openPopup(
       pairedStorage({
         [PAIRING_KEY]: JSON.stringify({ ...TEST_PAIRING, gatewayVersion: "0.4.5" }),
@@ -131,9 +131,24 @@ describe("popup — summary states", () => {
     );
     await waitForState(popup, "ready");
     expect(popup.text("warn")).toBe(
-      "This gateway (0.4.5) is behind this extension (0.5.0). Update the gateway.",
+      "This gateway (0.4.5) is behind this extension's capture requirements (0.5.0). Update the gateway.",
     );
     expect(popup.document.body.dataset.warn).toBe("true");
+  });
+
+  it("keeps capture ready on a supported older gateway when the extension advances a minor", async () => {
+    const popup = openPopup(
+      pairedStorage({
+        [PAIRING_KEY]: JSON.stringify({ ...TEST_PAIRING, gatewayVersion: "0.5.0" }),
+      }),
+      (chrome) => {
+        chrome.manifestVersion = "0.6.0";
+      },
+    );
+    await waitForState(popup, "ready");
+    expect(popup.text("gateway")).toBe("https://gateway.example.com · v0.5.0");
+    expect(popup.text("warn")).toBe("");
+    expect(popup.document.body.dataset.warn).toBe("false");
   });
 
   it("reads not-syncing with a re-pair warning when the gateway rejects pages", async () => {

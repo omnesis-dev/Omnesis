@@ -47,6 +47,7 @@ const DebugView = lazy(() => import("./views/debug.js").then((m) => m.DebugView)
 const PrivacyView = lazy(() => import("./views/privacy.js").then((m) => m.PrivacyView));
 const WatchesView = lazy(() => import("./views/watches.js").then((m) => m.WatchesView));
 const AgentView = lazy(() => import("./views/agent.js").then((m) => m.AgentView));
+const BrowserNotesApprovalView = lazy(() => import("./views/browser-notes.js").then((m) => m.BrowserNotesApprovalView));
 const CaptureView = lazy(() => import("./views/capture.js").then((m) => m.CaptureView));
 
 const CONVERSATION_PAGE_SIZE = 50;
@@ -714,6 +715,8 @@ function App() {
               onThemeToggle=${handleThemeToggle}
               onLogout=${handleLogout}
             />`
+          : route.view === "browser-notes"
+          ? html`<${BrowserNotesApprovalView} requestId=${route.requestId} />`
           : route.view === "capture"
           ? html`<${CaptureView} day=${route.day ?? null} experimental=${experimental} />`
           : route.view === "privacy"

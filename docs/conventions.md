@@ -1042,6 +1042,19 @@ policy outside the public repository. Child commands use
 releasing capacity. Append progress reporting without replacing a caller's
 reporter policy. See `docs/agent-gotchas.md` for the adapter and command contracts.
 
+### Explicit URL attachments survive target arrival order
+
+Documents may attach URLs in `metadata.extra.retainedLinkUrls`. Link extraction
+marks matching HTTP(S) body links for retention and adds attached URLs absent
+from the editable text. These source-declared edges survive the unresolved-URL
+prune until a content representation arrives; ordinary incidental external URLs
+still get pruned. Removing an attachment from metadata and re-extracting removes
+its retention marker. The existing bounded reader reconciliation and writer
+apply paths handle these links.
+
+- Canonical implementation: `packages/gateway/src/domain/RetainedLinkUrls.ts`
+- Arrival-order coverage: `packages/gateway/src/domain/RetainedLinkUrls.test.ts`
+
 ## Layer 2 — Canonical examples
 
 When you set out to write code that matches one of the patterns above, open the file in the right column and imitate its shape. These are head pointers — re-check before relying on them, since the codebase moves.

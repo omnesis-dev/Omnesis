@@ -55,6 +55,27 @@
       "method": "POST",
       "path": "/analytics/ingest",
       "authenticated": true
+    },
+    {
+      "method": "POST",
+      "path": "/browser/notes/authorization",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/browser/notes/authorization/:id",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/browser/notes",
+      "authenticated": true
+    },
+    {
+      "method": "POST",
+      "path": "/browser/notes",
+      "authenticated": true
     }
-  ]
+  ],
+  "optionalNotesTokenScopes": ["notes:create"]
 }

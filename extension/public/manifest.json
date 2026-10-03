@@ -5,7 +5,15 @@
   "version": "0.6.0",
   "description": "Pairs to your Omnesis gateway and captures the web pages you read into your private index.",
   "incognito": "not_allowed",
-  "permissions": ["storage", "unlimitedStorage", "alarms", "scripting"],
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "alarms",
+    "scripting",
+    "activeTab",
+    "contextMenus",
+    "sidePanel"
+  ],
   "optional_host_permissions": ["https://*/*"],
   "background": {
     "service_worker": "background.js",
@@ -30,5 +38,17 @@
     "32": "icons/icon-32.png",
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
+  },
+  "side_panel": {
+    "default_path": "notes.html"
+  },
+  "commands": {
+    "tell-omnesis": {
+      "suggested_key": {
+        "default": "Alt+Shift+N",
+        "mac": "Alt+Shift+N"
+      },
+      "description": "Tell Omnesis about the current page or selection"
+    }
   }
 }

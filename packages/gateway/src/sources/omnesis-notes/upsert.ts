@@ -186,7 +186,16 @@ export function buildNotesDayDocument(day: string, entries: readonly NoteEntry[]
         ...(entry.surface ? { surface: entry.surface } : {}),
         ...(entry.placeName ? { placeName: entry.placeName } : {}),
       })),
-      extra: { entryCount: entries.length },
+      extra: {
+        entryCount: entries.length,
+        ...(entries.some((entry) => entry.page)
+          ? {
+              retainedLinkUrls: [
+                ...new Set(entries.flatMap((entry) => (entry.page ? [entry.page.url] : []))),
+              ],
+            }
+          : {}),
+      },
     },
   };
 }

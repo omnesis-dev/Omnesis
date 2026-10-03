@@ -42,6 +42,7 @@ import { SyntheticE2EHarness } from "./synth-harness.js";
 
 /** The slice of the `chrome.*` API the assertions read from inside the worker. */
 declare const chrome: {
+  runtime: { sendMessage(message: unknown): Promise<unknown> };
   storage: { local: { get(keys: null): Promise<Record<string, unknown>> } };
   permissions: { getAll(): Promise<{ origins?: string[] }> };
 };
@@ -512,6 +513,134 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
     },
     CAPTURE_WAIT_MS * 2 + 60_000,
   );
+
+  test("Tell Omnesis preserves a selected-page draft and saves through the create-only grant", async () => {
+    const options = await openPage(optionsUrl);
+    const health = await fetch(`${harness.gatewayUrl}/health`);
+    expect(await health.json()).toMatchObject({
+      capabilities: { browserNotes: { min: 1, max: 1 } },
+    });
+    const discovered = await options.evaluate(() =>
+      chrome.runtime.sendMessage({ type: "notes-status" }),
+    );
+    expect(discovered).toMatchObject({ supported: true, enabled: false });
+    await options.locator("#enable-notes").waitFor({ state: "visible", timeout: 20_000 });
+    await options.click("#enable-notes");
+    let requestId = "";
+    await expect
+      .poll(
+        async () => {
+          const state = (await extensionStorage())["omnesis.notes.state.v1"] as
+            | { requestId?: string }
+            | undefined;
+          requestId = state?.requestId ?? "";
+          return requestId;
+        },
+        { timeout: 20_000 },
+      )
+      .toMatch(/^[0-9a-f-]{36}$/);
+
+    const login = await context.request.post(`${harness.gatewayUrl}/portal/api/login`, {
+      data: { token: harness.apiKey },
+    });
+    expect(login.status()).toBe(200);
+    const approval = await openPage(
+      `${harness.gatewayUrl}/portal/browser-notes?request=${requestId}`,
+    );
+    await approval
+      .getByRole("button", { name: "Enable Tell Omnesis", exact: true })
+      .waitFor({ state: "visible", timeout: 20_000 });
+    await approval.screenshot({
+      path: join(tmpdir(), "omnesis-browser-notes-approval.png"),
+      fullPage: true,
+    });
+    await approval.getByRole("button", { name: "Enable Tell Omnesis", exact: true }).click();
+    await approval
+      .getByRole("heading", { name: "Tell Omnesis is enabled", exact: true })
+      .waitFor({ state: "visible", timeout: 20_000 });
+    await approval.screenshot({
+      path: join(tmpdir(), "omnesis-browser-notes-approved.png"),
+      fullPage: true,
+    });
+    await approval.close();
+    await options.close();
+
+    const article = await openPage(`${FIXTURE_ORIGIN}/notes-six`);
+    const quotation = await article.locator("main p").first().textContent();
+    await article.evaluate(() => {
+      const paragraph = document.querySelector("main p");
+      if (!paragraph) throw new Error("Missing fixture passage");
+      const range = document.createRange();
+      range.selectNodeContents(paragraph);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    });
+    const popup = await openPage(popupUrl);
+    await article.bringToFront();
+    await popup.reload();
+    await expect
+      .poll(() => popup.locator("#tell-omnesis").isVisible(), { timeout: 20_000 })
+      .toBe(true);
+    // The popup caches the article before the trusted click gives this test tab focus.
+    await popup.locator("#tell-omnesis").click();
+    await expect
+      .poll(
+        async () => {
+          const hint = await popup.locator("#notes-entry-hint").textContent();
+          if (hint?.includes("sidePanel.open")) throw new Error(hint);
+          const state = (await extensionStorage())["omnesis.notes.state.v1"] as
+            | { draft?: { selection: string } }
+            | undefined;
+          return state?.draft?.selection;
+        },
+        { timeout: 20_000 },
+      )
+      .toBe(quotation);
+    await popup.close();
+
+    // Open the same extension document as a tab so Playwright can inspect the composer.
+    // Chrome's native side panel is outside Playwright's ordinary page target list.
+    const notesUrl = `chrome-extension://${TEST_EXTENSION_ID}/notes.html`;
+    const panel = await openPage(notesUrl);
+    await panel.locator("#notes-form").waitFor({ state: "visible", timeout: 20_000 });
+    expect(await panel.locator("#note-selection").textContent()).toBe(quotation);
+    expect(await panel.locator("#note-url").getAttribute("href")).toBe(article.url());
+    expect(
+      await panel.locator("#note-text").evaluate((field) => field === document.activeElement),
+    ).toBe(true);
+    const thought = "Use this invented logbook structure for the next fictional observation.";
+    await panel.fill("#note-text", thought);
+    await expect.poll(() => panel.locator("#note-draft-status").textContent()).toBe("Draft saved");
+    await panel.setViewportSize({ width: 380, height: 820 });
+    await panel.screenshot({
+      path: join(tmpdir(), "omnesis-extension-notes-composer.png"),
+      fullPage: true,
+    });
+    await panel.close();
+
+    const other = await openPage(`${FIXTURE_ORIGIN}/notes-seven`);
+    const reopened = await openPage(notesUrl);
+    await reopened.locator("#notes-form").waitFor({ state: "visible", timeout: 20_000 });
+    expect(await reopened.inputValue("#note-text")).toBe(thought);
+    expect(await reopened.locator("#note-url").getAttribute("href")).toBe(article.url());
+    await reopened.locator("#note-text").press("Control+Enter");
+    await expect
+      .poll(() => reopened.locator("#notes-status").textContent(), { timeout: 30_000 })
+      .toBe("Saved to Omnesis.");
+    const notes = await harness.gatewayJson<{
+      entries: Array<{ text: string; surface: string; page?: { url: string; selection: string } }>;
+    }>("/notes");
+    const saved = notes.entries.filter((note) => note.text.includes(thought));
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({
+      surface: "chrome-extension",
+      page: { url: article.url(), selection: quotation },
+    });
+    await reopened.close();
+    await other.close();
+    await article.close();
+  }, 120_000);
 
   test("when the gateway revokes the device the popup says to re-pair", async () => {
     const storage = await extensionStorage();
