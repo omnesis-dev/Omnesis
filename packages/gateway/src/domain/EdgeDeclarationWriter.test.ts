@@ -7,7 +7,12 @@ import { webPageEdgeTarget, type EdgeDeclaration } from "@omnesis/core";
 import { runSchemaSetup } from "../data/schema.js";
 import { runMigrations } from "../data/migrations.js";
 import { WEB_SOURCE_ID } from "../web-dataset.js";
-import { applyDeclaredEdges, drainPendingEdges } from "./EdgeDeclarationWriter.js";
+import {
+  applyDeclaredEdges,
+  DECLARED_ENDPOINT_LOOKUP_SQL,
+  drainPendingEdges,
+  PENDING_ENDPOINT_LOOKUP_SQL,
+} from "./EdgeDeclarationWriter.js";
 
 type Db = Database.Database;
 
@@ -467,5 +472,34 @@ describe("web-page declared edges — bookmarks / visited", () => {
       link_type: "visited",
       target_doc_id: webId,
     });
+  });
+});
+
+describe("endpoint lookup plan", () => {
+  function plan(sql: string): string[] {
+    return db
+      .prepare<string[], { detail: string }>(`EXPLAIN QUERY PLAN ${sql}`)
+      .all("web", "https://example.com/a", "")
+      .map((row) => row.detail);
+  }
+
+  test.each([
+    ["declared", DECLARED_ENDPOINT_LOOKUP_SQL],
+    ["pending", PENDING_ENDPOINT_LOOKUP_SQL],
+  ])("the %s lookup seeks on (source_id, external_id) instead of walking the source", (_, sql) => {
+    const detail = plan(sql);
+    expect(detail[0]).toBe(
+      "SEARCH documents USING INDEX idx_documents_source_external_id (source_id=? AND external_id=?)",
+    );
+    expect(detail.some((line) => line.startsWith("SCAN documents"))).toBe(false);
+  });
+
+  test("an endpoint in the declaring stream still wins over a namesake", () => {
+    seedDoc("other-stream", { sourceId: WEB_SOURCE_ID, externalId: "u", streamId: "s2" });
+    seedDoc("own-stream", { sourceId: WEB_SOURCE_ID, externalId: "u", streamId: "s1" });
+    const row = db
+      .prepare<[string, string, string], { id: string }>(DECLARED_ENDPOINT_LOOKUP_SQL)
+      .get(WEB_SOURCE_ID, "u", "s1");
+    expect(row?.id).toBe("own-stream");
   });
 });

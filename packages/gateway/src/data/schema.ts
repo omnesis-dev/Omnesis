@@ -23,6 +23,7 @@ import { createAccessTables } from "../access/store.js";
 import { createAnswerPrivacyTables, createDirectAuditTables } from "../privacy/store.js";
 import { createSubscriptionTables } from "../subscriptions/store-schema.js";
 import { addSourceSyncIssues } from "./migration-179-source-sync-issues.js";
+import { indexDocumentsBySourceExternalId } from "./migration-187-documents-source-external-index.js";
 import { addPendingSourcePages } from "./migration-178-pending-source-pages.js";
 import { addSourceWireContracts } from "./migration-177-source-wire-contract.js";
 import { installCollectorRosterRevision, installMutableListRevisions } from "./list-revisions.js";
@@ -155,6 +156,8 @@ function runSchemaSetupInTxn(db: Db): void {
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_documents_source_id_updated_at ON documents(source_id, updated_at)",
   );
+  // Declared-edge endpoints resolve by source and external id.
+  indexDocumentsBySourceExternalId(db);
 
   // Partial index supporting cross-source dedup — duplicate
   // -content detection between binary-extracted docs (attachments and
