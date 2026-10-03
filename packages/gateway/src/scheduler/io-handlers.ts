@@ -97,16 +97,15 @@ import {
   planSourceUrlRecanonicalization,
   type SourceUrlRecanonicalizationCursor,
 } from "../domain/SourceUrlRecanonicalization.js";
-import type { ConversationRetentionFile } from "../agent/conversation-retention.js";
-import type { ExtractedLinkBatchEntry } from "../domain/LinkExtraction.js";
-import type { UrlCanonicalizerSpec } from "@omnesis/core";
 
 import {
   fetchTranscriptionVocabularyBatch,
   getTranscriptionVocabulary,
 } from "../transcribe/vocabulary/storage.js";
+import type { UrlCanonicalizerSpec, TranscriptionContext } from "@omnesis/core";
+import type { ExtractedLinkBatchEntry } from "../domain/LinkExtraction.js";
+import type { ConversationRetentionFile } from "../agent/conversation-retention.js";
 import type { VocabularySettings } from "../transcribe/vocabulary/types.js";
-import type { TranscriptionContext } from "@omnesis/core";
 
 export const ioHandlers = {
   "io.fetchTranscriptionVocabularyBatch": (db: Db, settings: VocabularySettings) =>

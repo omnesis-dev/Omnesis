@@ -64,7 +64,12 @@ import type { LinkExtractionDocRow } from "../domain/LinkExtraction-cpu.js";
 import type { ExtractedLinkBatchEntry } from "../domain/LinkExtraction.js";
 import type { DateExtractionDocRow } from "../enrichment/dates/extractor.js";
 import type { LikeSearchArgs, LikeSearchRow } from "../search/like-search.js";
-import type { PersonSummary as LookupPersonSummary, UrlCanonicalizerSpec } from "@omnesis/core";
+import type {
+  PersonSummary as LookupPersonSummary,
+  UrlCanonicalizerSpec,
+  TranscriptionContext,
+  TranscriptionVocabulary,
+} from "@omnesis/core";
 import type {
   ConversationRetentionCandidate,
   ConversationRetentionFile,
@@ -76,7 +81,6 @@ import type {
 } from "../domain/SourceUrlRecanonicalization.js";
 
 import type { VocabularySettings, VocabularyDocument } from "../transcribe/vocabulary/types.js";
-import type { TranscriptionContext, TranscriptionVocabulary } from "@omnesis/core";
 
 export interface IoGate {
   fetchTranscriptionVocabularyBatch(settings: VocabularySettings): Promise<VocabularyDocument[]>;
