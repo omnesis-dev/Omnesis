@@ -14,7 +14,7 @@
 # explicitly.
 #
 # Usage:
-#   scripts/run-ios-e2e.sh                    # default destination
+#   scripts/run-ios-e2e.sh                    # prepare an available iPhone
 #   OMNESIS_E2E_DEST='platform=iOS Simulator,name=iPhone 17' scripts/run-ios-e2e.sh
 #
 # Layout:
@@ -31,12 +31,34 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-export PATH="/opt/homebrew/opt/node@24/bin:$PATH"
+# Preserve setup-node's selected binary (and caller tool shims).
+if ! command -v node >/dev/null 2>&1; then
+  export PATH="/opt/homebrew/opt/node@24/bin:$PATH"
+fi
 export OMNESIS_CONFIG_DIR="${OMNESIS_CONFIG_DIR:-/tmp/omnesis-ios-e2e}"
 export OMNESIS_GATEWAY_PORT="${OMNESIS_GATEWAY_PORT:-17601}"
 export OMNESIS_SYNTH_UNIVERSE="${OMNESIS_SYNTH_UNIVERSE:-e2e-minimal}"
 
-DEST="${OMNESIS_E2E_DEST:-platform=iOS Simulator,name=iPhone 17}"
+# Resolve before starting the gateway: runtime download/boot can take minutes.
+# CI may supply a destination it has already prepared on this runner.
+if [[ -n "${OMNESIS_E2E_DEST:-}" ]]; then
+  DEST="$OMNESIS_E2E_DEST"
+else
+  UDID="$(node "$ROOT/scripts/ci/prepare-ios-simulator.mjs")"
+  DEST="platform=iOS Simulator,id=$UDID"
+fi
+
+# Make sure the Xcode project is current (project.yml might have changed
+# since the last xcodegen run).
+cd "$ROOT/ios"
+xcodegen generate >/dev/null
+export OMNESIS_IOS_PACKAGES_DIR="${OMNESIS_IOS_PACKAGES_DIR:-$ROOT/ios/build/packages}"
+"$ROOT/scripts/ci/resolve-ios-packages.sh" Omnesis
+PACKAGE_FLAGS=(-clonedSourcePackagesDirPath "$OMNESIS_IOS_PACKAGES_DIR" -disableAutomaticPackageResolution)
+
+# CoreSimulator boot readiness does not guarantee Xcode has discovered the
+# device. Wait for the actual scheme's eligible destination before booting data.
+node "$ROOT/scripts/ci/wait-ios-destination.mjs" "$DEST" "${PACKAGE_FLAGS[@]}"
 
 URL="https://localhost:${OMNESIS_GATEWAY_PORT}"
 
@@ -46,26 +68,20 @@ if [[ -d "$OMNESIS_CONFIG_DIR" ]]; then
   rm -rf "$OMNESIS_CONFIG_DIR"
 fi
 
-echo "→ Booting synth gateway on $URL (universe=$OMNESIS_SYNTH_UNIVERSE)…"
-# Seed via /admin/sources/add so docs + people land in the gateway DB
-# before the iOS tests run. Without seeding, /people/search returns
-# empty and the SearchClient tests have nothing to decode against.
-"$ROOT/scripts/synth-gateway.sh" start >/dev/null
-
 cleanup() {
   echo "→ Stopping synth gateway…"
   "$ROOT/scripts/synth-gateway.sh" stop >/dev/null 2>&1 || true
 }
-trap cleanup EXIT INT TERM
+# Startup can fail after spawning either process; always tear both down.
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
-# Wait for /health to succeed before launching xcodebuild.
-for _ in $(seq 1 30); do
-  if curl -sk "${URL}/health" >/dev/null 2>&1; then break; fi
-  sleep 1
-done
-if ! curl -sk "${URL}/health" >/dev/null 2>&1; then
-  echo "Gateway did not come up on $URL after 30s" >&2
-  tail -50 "$OMNESIS_CONFIG_DIR/logs/gateway.stdout.log" 2>/dev/null || true
+echo "→ Booting synth gateway on $URL (universe=$OMNESIS_SYNTH_UNIVERSE)…"
+# start verifies the token, CA and HTTP 200 readiness, then seeds sources so
+# the Swift search clients have real gateway data to decode.
+if ! "$ROOT/scripts/synth-gateway.sh" start >/dev/null; then
+  tail -50 "$OMNESIS_CONFIG_DIR/logs/gateway.stdout.log" >&2 2>/dev/null || true
   exit 1
 fi
 
@@ -97,14 +113,6 @@ if [[ "$count" -lt 1 ]]; then
   exit 1
 fi
 
-# Make sure the Xcode project is current (project.yml might have changed
-# since the last xcodegen run).
-cd "$ROOT/ios"
-xcodegen generate >/dev/null
-export OMNESIS_IOS_PACKAGES_DIR="${OMNESIS_IOS_PACKAGES_DIR:-$ROOT/ios/build/packages}"
-"$ROOT/scripts/ci/resolve-ios-packages.sh" Omnesis
-PACKAGE_FLAGS=(-clonedSourcePackagesDirPath "$OMNESIS_IOS_PACKAGES_DIR" -disableAutomaticPackageResolution)
-
 echo "→ Running OmnesisTests/GatewayLiveE2ETests against the gateway…"
 # Hand the URL + token to the simulator's test process via a file at a
 # host-readable path. xcodebuild doesn't propagate env vars into the
@@ -121,7 +129,7 @@ import json, sys
 json.dump({'gatewayURL': '$URL', 'apiToken': '$TOKEN'}, sys.stdout)
 " > "$CONFIG_FILE")
 RESULT_DIR="$(mktemp -d)"
-trap 'cleanup; rm -f "'"$CONFIG_FILE"'"; rm -rf "'"$RESULT_DIR"'"' EXIT INT TERM
+trap 'cleanup; rm -f "$CONFIG_FILE"; rm -rf "$RESULT_DIR"' EXIT
 
 xcodebuild test \
   -project Omnesis.xcodeproj \
