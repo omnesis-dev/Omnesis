@@ -31,22 +31,25 @@ internal fun ConversationMessageActions(
     text: String,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
+    alignMenuEnd: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
     Box(Modifier.combinedClickable(onClick = {}, onLongClickLabel = "Message actions", onLongClick = { expanded = true })) {
         content()
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            DropdownMenuItem(text = { Text("Copy") }, onClick = {
-                clipboard.setText(AnnotatedString(text))
-                expanded = false
-            })
-            if (actionLabel != null && onAction != null) {
-                DropdownMenuItem(text = { Text(actionLabel) }, onClick = {
+        Box(Modifier.align(if (alignMenuEnd) Alignment.BottomEnd else Alignment.BottomStart)) {
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                DropdownMenuItem(text = { Text("Copy") }, onClick = {
+                    clipboard.setText(AnnotatedString(text))
                     expanded = false
-                    onAction()
                 })
+                if (actionLabel != null && onAction != null) {
+                    DropdownMenuItem(text = { Text(actionLabel) }, onClick = {
+                        expanded = false
+                        onAction()
+                    })
+                }
             }
         }
     }
@@ -66,6 +69,7 @@ internal fun QueuedConversationBubble(state: AgentCoordinator.UiState, onSendNow
             ConversationMessageActions(
                 text = text,
                 actionLabel = "Send now",
+                alignMenuEnd = true,
                 onAction = if (state.controlsAvailable && state.controls.capabilities.queueSendNow && state.canCompose) {
                     { onSendNow(group.map { it.id }) }
                 } else null,

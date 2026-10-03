@@ -7,7 +7,7 @@ import { act } from "preact/test-utils";
 import { parseHTML } from "linkedom";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ getBrief: vi.fn(), setReaction: vi.fn(), navigate: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getBrief: vi.fn(), setReaction: vi.fn(), navigate: vi.fn(), bubble: vi.fn() }));
 vi.mock("../../api.js", () => ({
   getConversationBrief: mocks.getBrief,
   setBriefItemReaction: mocks.setReaction,
@@ -23,8 +23,11 @@ vi.mock("../doc-chip.js", async () => {
 vi.mock("./parts.js", async () => {
   const { h: hh } = await import("preact");
   return {
-    MessageBubble: ({ turn, header, footer }) =>
-      hh("div", { class: `msg msg-${turn.role}`, "data-turn": turn.id }, header, turn.parts[0].text, footer),
+    MessageBubble: (props) => {
+      mocks.bubble(props);
+      const { turn, header, footer } = props;
+      return hh("div", { class: `msg msg-${turn.role}`, "data-turn": turn.id }, header, turn.parts[0].text, footer);
+    },
   };
 });
 import { BriefThread, withItemReaction } from "./brief-thread.js";
@@ -63,9 +66,9 @@ let host;
 let originalDocument;
 let originalWindow;
 
-async function mount() {
+async function mount(options = {}) {
   await act(async () => {
-    render(h(BriefThread, { conversationId: "conv_brief", turns, today: TODAY }), host);
+    render(h(BriefThread, { conversationId: "conv_brief", turns, today: TODAY, ...options }), host);
   });
   await act(async () => {});
 }
@@ -358,4 +361,15 @@ describe("withItemReaction", () => {
     const loading = { status: "loading" };
     expect(withItemReaction(loading, "a", { kind: "up" })).toBe(loading);
   });
+});
+
+ test("forwards edit actions and terminal guards to the thread message renderer", async () => {
+  const onEdit = vi.fn();
+  await mount({ onEdit, canEdit: true });
+  const user = mocks.bubble.mock.calls.map(([props]) => props).find(props => props.turn.id === "u-4");
+  expect(user.onEdit).toBe(onEdit);
+  expect(user.canEdit).toBe(true);
+  mocks.bubble.mockClear();
+  await mount({ onEdit, canEdit: false });
+  expect(mocks.bubble.mock.calls.map(([props]) => props).filter(props => props.turn.role === "user").every(props => props.canEdit === false)).toBe(true);
 });

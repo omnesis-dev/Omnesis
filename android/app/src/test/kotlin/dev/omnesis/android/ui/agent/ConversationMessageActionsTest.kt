@@ -31,7 +31,7 @@ class ConversationMessageActionsTest {
     @Test fun userActionsOnlyAppearOnLongPress() {
         var edited = false
         compose.setContent { OmnesisTheme {
-            ConversationMessageActions("Original question", "Edit and resend", { edited = true }) { UserBubble("Original question") }
+            ConversationMessageActions("Original question", "Edit and resend", { edited = true }, alignMenuEnd = true) { UserBubble("Original question") }
         } }
         compose.onNodeWithText("Edit and resend").assertDoesNotExist()
         compose.onNodeWithText("Original question").performTouchInput { longClick() }

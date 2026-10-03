@@ -1184,7 +1184,9 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
                       conversationId=${state.sessionId}
                       turns=${state.turns}
                       citations=${state.citations}
-                      dispatch=${dispatch} />`
+                      dispatch=${dispatch}
+                      canEdit=${!state.terminalFailure}
+                      onEdit=${(text) => { writeConversationDraft(`${composerDraftKey}:edit`, text); setEditPrompt({ text }); }} />`
                   : state.turns.map((turn) => html`
                       <${MessageBubble} key=${turn.id} turn=${turn} citations=${state.citations} dispatch=${dispatch} canEdit=${!state.terminalFailure} onEdit=${(text) => { writeConversationDraft(`${composerDraftKey}:edit`, text); setEditPrompt({ text }); }} />
                     `)}

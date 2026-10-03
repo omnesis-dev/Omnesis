@@ -8,7 +8,17 @@ import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.isPopup
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.compose.material3.Surface
+import dev.omnesis.android.designsystem.theme.OmTheme
+import com.github.takahirom.roborazzi.captureScreenRoboImage
+import com.github.takahirom.roborazzi.ExperimentalRoborazziApi
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.longClick
 import androidx.compose.material3.Text
@@ -52,21 +62,34 @@ class AgentConversationControlsScreenshotTest {
     @Test fun queueMenuLight() = menu("conversation_queue_menu_light", false, "queue")
     @Test fun queueMenuDark() = menu("conversation_queue_menu_dark", true, "queue")
 
+    @OptIn(ExperimentalRoborazziApi::class)
     private fun menu(name: String, dark: Boolean, kind: String) {
         val text = when (kind) { "queue" -> "Include a comparison table\n\nKeep the summary concise"; "user" -> "Compare the project estimates"; else -> "Here is the comparison." }
         compose.setContent {
             CompositionLocalProvider(LocalInspectionMode provides true) {
                 OmnesisTheme(darkTheme = dark) {
-                    when (kind) {
-                        "queue" -> QueuedConversationBubble(queued()) {}
-                        "user" -> ConversationMessageActions(text, "Edit and resend", {}) { UserBubble(text) }
-                        else -> ConversationMessageActions(text) { Text(text) }
+                    Surface(Modifier.fillMaxSize(), color = OmTheme.colors.bgPrimary) {
+                        Column(Modifier.padding(horizontal = 20.dp, vertical = 100.dp)) {
+                            when (kind) {
+                                "queue" -> QueuedConversationBubble(queued()) {}
+                                "user" -> ConversationMessageActions(text, "Edit and resend", {}, alignMenuEnd = true) { UserBubble(text) }
+                                else -> ConversationMessageActions(text) { Text(text, color = OmTheme.colors.textPrimary) }
+                            }
+                        }
                     }
                 }
             }
         }
         compose.onNodeWithText(text).performTouchInput { longClick() }
-        compose.onNode(isPopup()).captureRoboImage("src/test/roborazzi/$name.png")
+        try {
+            compose.mainClock.advanceTimeBy(500)
+            compose.waitForIdle()
+            compose.onNodeWithText("Copy").assertIsDisplayed()
+            captureScreenRoboImage("src/test/roborazzi/$name.png")
+        } finally {
+            compose.onNodeWithText("Copy").performClick()
+            compose.waitForIdle()
+        }
     }
 
     private fun base() = AgentCoordinator.UiState(hasClient = true, sessionId = "conversation-example", title = "Compare project estimates", controlsAvailable = true,
