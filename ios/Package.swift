@@ -70,6 +70,8 @@ let package = Package(
                 "AdminCoordinatorNoticesTests.swift",
                 // Constructs HealthSampleProbeView (SwiftUI + UIKit-gated).
                 "HealthSampleProbeViewTests.swift",
+                // Hosts the search breadcrumbs' UIKit text views in a window.
+                "SearchBreadcrumbInteractionTests.swift",
                 // Drives the transport clients against a spawned live gateway.
                 "GatewayLiveE2ETests.swift",
             ]
