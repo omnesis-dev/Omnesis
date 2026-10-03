@@ -1,5 +1,13 @@
 # @omnesis/extension
 
+## 0.6.0
+
+### Patch Changes
+
+- @omnesis/core@0.6.0
+- @omnesis/provider-web@0.6.0
+- @omnesis/types@0.6.0
+
 ## 0.5.14
 
 ### Patch Changes

@@ -1,5 +1,18 @@
 # @omnesis/gateway
 
+## 0.6.0
+
+### Patch Changes
+
+- @omnesis/agent@0.6.0
+- @omnesis/config@0.6.0
+- @omnesis/core@0.6.0
+- @omnesis/near-dupes@0.6.0
+- @omnesis/provider-web@0.6.0
+- @omnesis/source-sdk@0.6.0
+- @omnesis/types@0.6.0
+- @omnesis/watch@0.6.0
+
 ## 0.5.14
 
 ### Patch Changes
