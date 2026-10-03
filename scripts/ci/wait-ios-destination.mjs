@@ -121,14 +121,18 @@ export function waitForIOSDestination({
   while (now() < deadline) {
     const probeBudget = deadline - now();
     if (probeBudget <= 0) break;
+    let probeOutput;
     try {
-      inventory = run("xcodebuild", args, probeBudget);
+      probeOutput = run("xcodebuild", args, probeBudget);
+      inventory = probeOutput;
       if (now() <= deadline && eligible(inventory, requested)) {
         log(`Xcode destination ready: ${destination}.`);
         return;
       }
     } catch (error) {
-      inventory = [error.stdout, error.stderr, error.message].filter(Boolean).join("\n");
+      inventory = [probeOutput, error.stdout, error.stderr, error.message]
+        .filter(Boolean)
+        .join("\n");
     }
     const remaining = deadline - now();
     if (remaining > 0) wait(Math.min(2000, remaining));

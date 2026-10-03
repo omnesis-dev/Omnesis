@@ -452,6 +452,14 @@ describe("Xcode simulator destination discovery", () => {
     expect(check.logs.at(-1)).toContain(inventory);
   });
 
+  it("retains the actual inventory when an unexpected row cannot be parsed", () => {
+    const inventory = `${heading}\n{ invalid field }`;
+    const check = discovery([inventory]);
+    expect(check.invoke).toThrow("did not discover eligible destination");
+    expect(check.logs.at(-1)).toContain(inventory);
+    expect(check.logs.at(-1)).toContain("Invalid iOS destination field");
+  });
+
   it("does not accept the selected UDID from ineligible destinations", () => {
     const check = discovery([
       `${heading}\n${placeholder}\nIneligible destinations for the "Omnesis" scheme:\n${phone}`,
