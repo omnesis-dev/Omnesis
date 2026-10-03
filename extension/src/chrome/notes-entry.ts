@@ -96,15 +96,17 @@ export async function confirmNotesUnpair(
   api: Pick<EntryChrome, "runtime">,
   confirm: (message: string) => boolean,
 ): Promise<boolean> {
-  let view: Partial<NotesView> | null | undefined;
+  let view: (Partial<NotesView> & { ok?: unknown }) | null | undefined;
   try {
-    view = await api.runtime.sendMessage<Partial<NotesView> | null | undefined>({
+    view = await api.runtime.sendMessage<
+      (Partial<NotesView> & { ok?: unknown }) | null | undefined
+    >({
       type: "notes-view",
     });
   } catch {
-    // Older workers have no notes state; the existing unpair action reports worker errors itself.
-    return true;
+    throw new Error("Could not check unsent notes. Try unpairing again.");
   }
+  if (view?.ok === false) throw new Error("Could not check unsent notes. Try unpairing again.");
   const writtenDraft = typeof view?.draft?.text === "string" && view.draft.text.trim().length > 0;
   const pendingNotes =
     typeof view?.pending === "number" && Number.isInteger(view.pending) && view.pending > 0;

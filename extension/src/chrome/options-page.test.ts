@@ -325,6 +325,22 @@ describe("options — pairing form", () => {
     expect(options.$("paired").style.display).toBe("block");
   });
 
+  it("keeps pairing when the before-unpair notes read fails", async () => {
+    const options = openOptions(pairedStorage(), undefined, {
+      beforeUnpair: async () => {
+        throw new Error("Could not check unsent notes. Try unpairing again.");
+      },
+    });
+    await vi.waitFor(() => expect(options.$("paired").style.display).toBe("block"));
+    click(options, options.$("unpair"));
+    await waitForStatus(
+      options,
+      "Unpair failed: Could not check unsent notes. Try unpairing again.",
+    );
+    expect(options.chrome.sent("unpair")).toEqual([]);
+    expect(options.chrome.storage[TOKEN_KEY]).toBe("invented-token");
+  });
+
   it("unpairs through the worker and returns to the form", async () => {
     const options = openOptions(pairedStorage(), (chrome) => {
       chrome.respond = (message) => {

@@ -59,7 +59,13 @@ describe("notes discovery", () => {
     await vi.waitFor(() => expect(e.sendMessage).toHaveBeenCalled());
     e.setView({ supported: true, enabled: true });
     e.pair();
-    await vi.waitFor(() => expect(e.document.getElementById("tell-omnesis")?.hidden).toBe(false));
+    await vi.waitFor(() => {
+      expect(e.document.getElementById("notes-entry")?.hidden).toBe(false);
+      expect(e.document.getElementById("tell-omnesis")?.hidden).toBe(false);
+      expect((e.document.getElementById("tell-omnesis") as HTMLButtonElement)?.disabled).toBe(
+        false,
+      );
+    });
     e.document.getElementById("tell-omnesis")!.dispatchEvent(new e.window.Event("click"));
     expect(e.sendMessage).toHaveBeenCalledWith({
       type: "notes-open",
@@ -73,9 +79,11 @@ describe("notes discovery", () => {
     await vi.waitFor(() => expect(e.sendMessage).toHaveBeenCalled());
     e.setView({ supported: true });
     e.pair();
-    await vi.waitFor(() => expect(e.document.getElementById("enable-notes")?.hidden).toBe(false));
-    expect(e.document.getElementById("notes-entry")?.hidden).toBe(false);
-    expect(e.sendMessage).toHaveBeenLastCalledWith({ type: "notes-status" });
+    await vi.waitFor(() => {
+      expect(e.document.getElementById("notes-entry")?.hidden).toBe(false);
+      expect(e.document.getElementById("enable-notes")?.hidden).toBe(false);
+      expect(e.sendMessage).toHaveBeenLastCalledWith({ type: "notes-status" });
+    });
   });
 });
 
@@ -111,10 +119,17 @@ describe("unpairing with manual notes", () => {
   });
   it("preserves existing unpair behavior when notes are unavailable", async () => {
     const confirm = vi.fn(() => false);
-    for (const value of [undefined, null, { supported: false }, { ok: false }])
+    for (const value of [undefined, null, { supported: false }])
       expect(await confirmNotesUnpair(api(value), confirm)).toBe(true);
-    expect(
-      await confirmNotesUnpair(
+    expect(confirm).not.toHaveBeenCalled();
+  });
+  it("stops unpairing when the worker cannot read local notes", async () => {
+    const confirm = vi.fn(() => true);
+    await expect(
+      confirmNotesUnpair(api({ ok: false, reason: "Storage unavailable" }), confirm),
+    ).rejects.toThrow("Could not check unsent notes");
+    await expect(
+      confirmNotesUnpair(
         {
           runtime: {
             sendMessage: async <T>(): Promise<T> => {
@@ -124,7 +139,7 @@ describe("unpairing with manual notes", () => {
         },
         confirm,
       ),
-    ).toBe(true);
+    ).rejects.toThrow("Could not check unsent notes");
     expect(confirm).not.toHaveBeenCalled();
   });
 });
