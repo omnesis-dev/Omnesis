@@ -5887,6 +5887,29 @@ extension PreviewMocks {
         review: nil
     )
 
+    static let privacyCheckingExchange = PrivacyExchangePresentation(
+        taskId: "task_preview_checking",
+        conversationId: privacyApprovalDetail.conversationId,
+        workflowId: privacyApprovalDetail.workflowId,
+        externalAgent: privacyExternalAgent,
+        workflow: PrivacyExchangeWorkflow(
+            name: privacyApprovalDetail.workflowName,
+            purpose: "Prepare an invented venue update."
+        ),
+        question: "When does the fictional venue desk close?",
+        status: .running,
+        outcome: .checking,
+        createdAt: 1_786_000_000_000,
+        resolvedAt: nil,
+        sharedAnswer: nil,
+        draftAnswer: "The fictional venue desk closes at 17:00.",
+        pendingCandidate: nil,
+        reductions: [],
+        approval: nil,
+        userDecision: nil,
+        review: nil
+    )
+
     static let privacyReadyExchange = PrivacyExchangePresentation(
         taskId: "task_preview_ready",
         conversationId: privacyApprovalDetail.conversationId,

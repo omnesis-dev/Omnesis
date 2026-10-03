@@ -370,6 +370,14 @@ private func previewLedger(for exchange: PrivacyExchangePresentation)
     .omnesisColorScheme()
 }
 
+#Preview("Privacy exchange — checking") {
+    NavigationStack {
+        PrivacyExchangeDetailView(previewExchange: PreviewMocks.privacyCheckingExchange)
+    }
+    .environment(AppStore.preview())
+    .omnesisColorScheme()
+}
+
 #Preview("Privacy exchange — drafting") {
     NavigationStack {
         PrivacyExchangeDetailView(previewExchange: PreviewMocks.privacyRunningExchange)
