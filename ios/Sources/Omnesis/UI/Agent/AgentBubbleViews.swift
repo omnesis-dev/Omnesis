@@ -522,7 +522,8 @@ struct AgentPartView: View {
                 bodyFont: assistantBodyFont(size: 15),
                 copyValues: turnDone,
                 plainValueFences: true,
-                copyFont: UIFont(name: "InterVariable", size: 15) ?? .systemFont(ofSize: 15)
+                copyFont: UIFont(name: "InterVariable", size: 15) ?? .systemFont(ofSize: 15),
+                allowsTextSelection: false
             )
         case .thinking(let raw):
             AgentThinkingBlock(text: raw, active: thinkingActive)

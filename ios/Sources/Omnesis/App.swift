@@ -38,6 +38,9 @@ public struct OmnesisApp: App {
         // `AutomationPairing`. Runs before AppStore reads the Keychain.
         #if DEBUG
         AutomationPairing.applyLaunchEnvironment()
+        if ProcessInfo.processInfo.environment["DEMO_DISABLE_ANIMATIONS"] == "1" {
+            UIView.setAnimationsEnabled(false)
+        }
         #endif
 
         // iOS only accepts BGTaskScheduler.register calls that happen

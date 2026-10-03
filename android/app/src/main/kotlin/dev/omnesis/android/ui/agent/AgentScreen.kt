@@ -890,6 +890,7 @@ private fun Transcript(
                     is AgentTurn.User -> ConversationMessageActions(
                         text = turn.text,
                         actionLabel = "Edit and resend",
+                        alignMenuEnd = true,
                         onAction = if (state.canCompose) ({ onEditPrompt(turn.text) }) else null,
                     ) { UserBubble(turn.text) }
                     is AgentTurn.Assistant -> ConversationMessageActions(

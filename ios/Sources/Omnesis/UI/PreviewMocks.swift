@@ -4939,7 +4939,11 @@ enum PreviewMocks {
         title: "Activity comparison",
         turns: [
             .user(id: "preview-prompt", text: "Compare my activity."),
-            .assistant(AgentAssistantTurn(id: "preview-answer", parts: [.text("Which period should I compare?")], historyCompleted: true)),
+            .assistant(AgentAssistantTurn(
+                id: "preview-answer",
+                parts: [.text("I can compare your activity.\n\n```swift\nlet total = 42\n```")],
+                historyCompleted: true
+            )),
         ],
         citations: [],
         conversations: [],
