@@ -91,6 +91,8 @@ describe("replicated Apple source across real collector lifecycles", () => {
       db.close();
     }
   };
+  const sourceStatus = (collector: RealCollector) =>
+    collector.engine.getStatuses().find((status) => status.sourceId === SOURCE_ID);
   const analyticsCount = async (): Promise<number> => {
     const { rows } = await admin<{ rows: unknown[][] }>("/analytics/sql", {
       method: "POST",
@@ -252,11 +254,30 @@ describe("replicated Apple source across real collector lifecycles", () => {
       interval: 100,
     });
 
+    // Joining starts the member's own first sync; wait for it to settle so
+    // the manual trigger below is not skipped as "already syncing".
+    await vi.waitFor(
+      () => {
+        const status = sourceStatus(member);
+        expect(status?.state).toBe("idle");
+        expect(status?.lastSyncAt).toBeDefined();
+      },
+      { timeout: 30_000, interval: 100 },
+    );
+    expect(cursorSynced(member.deviceId)).toBe(true);
+    expect(documentCount()).toBe(documents);
+    expect(await analyticsCount()).toBe(analytics);
+
+    const joinSyncAt = sourceStatus(member)!.lastSyncAt!;
     expect(member.engine.triggerSync(SOURCE_ID).triggered).toEqual([SOURCE_ID]);
-    await vi.waitFor(() => expect(cursorSynced(member.deviceId)).toBe(true), {
-      timeout: 30_000,
-      interval: 100,
-    });
+    await vi.waitFor(
+      () => {
+        const status = sourceStatus(member);
+        expect(status?.state).toBe("idle");
+        expect((status?.lastSyncAt ?? "") > joinSyncAt).toBe(true);
+      },
+      { timeout: 30_000, interval: 100 },
+    );
     expect(documentCount()).toBe(documents);
     expect(await analyticsCount()).toBe(analytics);
 
