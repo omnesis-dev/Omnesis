@@ -61,7 +61,7 @@ function harness() {
 }
 const input = (id: string, text = id) => ({ clientMessageId: id, text, mode: "queue" as const });
 
-it("accepts a durable follow-up while busy, deduplicates concurrent retries, then starts FIFO", async () => {
+it("accepts a durable follow-up while busy, deduplicates concurrent retries, then starts one combined turn", async () => {
   const h = harness();
   await Promise.all([
     h.controls.submit("s", input("one")),
@@ -71,15 +71,13 @@ it("accepts a durable follow-up while busy, deduplicates concurrent retries, the
   expect(h.durable().submissions.map((s) => s.text)).toEqual(["one", "two"]);
   expect(h.starts).toEqual([]);
   h.idle();
-  await vi.waitFor(() => expect(h.starts).toEqual(["one"]));
+  await vi.waitFor(() => expect(h.starts).toEqual(["one\n\ntwo"]));
   expect(h.durable().submissions[0]?.status).toBe("running");
   h.turns[0]!.resolve();
-  await vi.waitFor(() => expect(h.starts).toEqual(["one", "two"]));
-  h.turns[1]!.resolve();
   await vi.waitFor(() => expect(h.controls.snapshot("s").queuedMessages).toEqual([]));
   await h.controls.settle();
   await h.controls.submit("s", input("one"));
-  expect(h.starts).toEqual(["one", "two"]);
+  expect(h.starts).toEqual(["one\n\ntwo"]);
 });
 
 it("interrupts only after durability, puts correction first, retains older queued work", async () => {
@@ -237,4 +235,85 @@ it("serializes completion receipts behind acceptance rollback", async () => {
   expect(h.durable().submissions.map((item) => [item.id, item.status])).toEqual([
     ["first", "completed"],
   ]);
+});
+
+it("send now cancels after persistence and never cancels again once the batch starts", async () => {
+  const h = harness();
+  await h.controls.submit("s", input("one"));
+  await h.controls.submit("s", input("two"));
+  const barrier = deferred();
+  h.persist.mockImplementationOnce(() => barrier.promise);
+  const sending = h.controls.sendNow("s", ["one", "two"]);
+  await Promise.resolve();
+  expect(h.cancel).not.toHaveBeenCalled();
+  barrier.resolve();
+  await sending;
+  expect(h.cancel).toHaveBeenCalledOnce();
+  h.idle();
+  await vi.waitFor(() => expect(h.starts).toEqual(["one\n\ntwo"]));
+  await h.controls.sendNow("s", ["one", "two"]);
+  expect(h.cancel).toHaveBeenCalledOnce();
+  h.turns[0]!.resolve();
+  await h.controls.settle();
+  await h.controls.submit("s", input("three"));
+  await h.controls.sendNow("s", ["one", "two"]);
+  expect(h.cancel).toHaveBeenCalledOnce();
+  await vi.waitFor(() => expect(h.starts).toHaveLength(2));
+  h.turns[1]!.resolve();
+  await h.controls.settle();
+});
+
+it("send now preserves the queue and question on failed persistence", async () => {
+  const h = harness();
+  await h.controls.submit("s", input("one"));
+  h.state().pendingClarification = {
+    id: "q",
+    question: "Which format?",
+    choices: [{ label: "Table" }, { label: "Prose" }],
+  };
+  h.persist.mockRejectedValueOnce(new Error("disk unavailable"));
+  await expect(h.controls.sendNow("s", ["one"])).rejects.toThrow("disk unavailable");
+  expect(h.cancel).not.toHaveBeenCalled();
+  expect(h.state().pendingClarification?.id).toBe("q");
+  expect(h.state().submissions[0]?.status).toBe("queued");
+  await expect(h.controls.sendNow("s", ["unknown"])).rejects.toThrow("changed");
+});
+
+it("keeps messages accepted during the combined turn for the next turn", async () => {
+  const h = harness();
+  await h.controls.submit("s", input("one"));
+  await h.controls.submit("s", input("two"));
+  h.idle();
+  await vi.waitFor(() => expect(h.starts).toEqual(["one\n\ntwo"]));
+  await h.controls.submit("s", input("three"));
+  await h.controls.submit("s", input("four"));
+  h.turns[0]!.resolve();
+  await vi.waitFor(() => expect(h.starts).toEqual(["one\n\ntwo", "three\n\nfour"]));
+  h.turns[1]!.resolve();
+  await h.controls.settle();
+  expect(h.durable().submissions.every((s) => s.status === "completed")).toBe(true);
+});
+
+it("bounds combined prompt length without discarding accepted work", async () => {
+  const h = harness();
+  await h.controls.submit("s", input("one", "a".repeat(9998)));
+  await expect(h.controls.submit("s", input("two", "b"))).rejects.toThrow("too long");
+  expect(h.durable().submissions).toHaveLength(1);
+  await h.controls.submit("s", input("one", "a".repeat(9998)));
+});
+
+it("drains oversized queues saved by an older gateway in bounded turns", async () => {
+  const h = harness();
+  h.state().submissions = ["one", "two"].map((id) => ({
+    ...input(id, id.repeat(2000)),
+    id,
+    status: "queued",
+  }));
+  h.idle();
+  await vi.waitFor(() => expect(h.starts).toEqual(["one".repeat(2000)]));
+  h.turns[0]!.resolve();
+  await vi.waitFor(() => expect(h.starts).toHaveLength(2));
+  expect(h.starts[1]).toBe("two".repeat(2000));
+  h.turns[1]!.resolve();
+  await h.controls.settle();
 });

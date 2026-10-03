@@ -216,6 +216,55 @@ final class ConversationControlsCompatibilityTests: XCTestCase {
         coordinator.saveDraft("", for: coordinator.composerDraftKey)
     }
 
+    func testQueueCoalescingRequiresCapabilityAndExcludesFailedReceipts() throws {
+        let payload = #"""
+        {"busy":true,"queuedMessages":[
+          {"id":"a","text":"First","status":"queued"},
+          {"id":"b","text":"Second","status":"queued"},
+          {"id":"c","text":"Failed","status":"failed"}]}
+        """#
+        var controls = try JSONDecoder().decode(ConversationControls.self, from: Data(payload.utf8))
+        XCTAssertEqual(controls.queuedBubbleTexts, ["First", "Second"])
+        XCTAssertNil(controls.capabilities?.queueSendNow)
+        controls.capabilities = .init(coalescedQueue: true, queueSendNow: true)
+        XCTAssertEqual(controls.queuedBubbleTexts, ["First\n\nSecond"])
+        XCTAssertEqual(controls.queued.map(\.id), ["a", "b"])
+    }
+
+    func testSendNowUsesReceiptIdsAndPreservesDraft() async throws {
+        let coordinator = coordinator()
+        coordinator.saveDraft("Unsent draft", for: coordinator.composerDraftKey)
+        ConversationControlsStub.responses["controls"] = (
+            200,
+            #"""
+            {"busy":true,"capabilities":{"coalescedQueue":true,"queueSendNow":true},"queuedMessages":[
+              {"id":"a","text":"First","status":"queued"},
+              {"id":"b","text":"Second","status":"queued"}]}
+            """#
+        )
+        ConversationControlsStub.responses["send-now"] = (202, #"{"busy":true,"queuedMessages":[]}"#)
+        await coordinator.refreshConversationControls()
+        await coordinator.sendQueuedMessagesNow(submissionIds: ["a", "b"])
+        let request = try XCTUnwrap(ConversationControlsStub.requests.first { $0.url?.lastPathComponent == "send-now" })
+        let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any])
+        XCTAssertEqual(body["submissionIds"] as? [String], ["a", "b"])
+        XCTAssertNil(body["text"])
+        XCTAssertEqual(coordinator.draft(for: coordinator.composerDraftKey), "Unsent draft")
+        XCTAssertTrue(coordinator.conversationControls?.queued.isEmpty == true)
+        coordinator.saveDraft("", for: coordinator.composerDraftKey)
+    }
+
+    func testSendNowDoesNotCallOlderGateway() async {
+        let coordinator = coordinator()
+        ConversationControlsStub.responses["controls"] = (
+            200,
+            #"{"busy":true,"queuedMessages":[{"id":"a","text":"First","status":"queued"}]}"#
+        )
+        await coordinator.refreshConversationControls()
+        await coordinator.sendQueuedMessagesNow(submissionIds: ["a", "b"])
+        XCTAssertFalse(ConversationControlsStub.requests.contains { $0.url?.lastPathComponent == "send-now" })
+    }
+
     func testGatewayDowngradeClearsPreviouslyAdvertisedControls() async {
         let coordinator = coordinator()
         ConversationControlsStub.responses["controls"] = (200, #"{"busy":false,"queuedMessages":[]}"#)

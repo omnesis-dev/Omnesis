@@ -838,6 +838,14 @@ public struct AgentView: View {
                         }
                     )
 
+                    if let controls = store.agent.conversationControls, !controls.queued.isEmpty {
+                        ConversationQueuedBubble(
+                            controls: controls,
+                            disabled: !store.agent.canComposeMessage || store.agent.submitting,
+                            onSendNow: { Task { await store.agent.sendQueuedMessagesNow(submissionIds: controls.queued.map(\.id)) } }
+                        )
+                    }
+
                     // Turn-level "still working" dots — the single indicator
                     // that doesn't depend on a specific transcript part
                     // existing, so it covers the beats the per-item cards

@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearConversationDraft,
+  migrateClarificationDraft,
   clearPendingSubmission,
   readConversationDraft,
   readPendingSubmission,
@@ -109,4 +110,25 @@ describe("conversation draft durability", () => {
     expect(readConversationDraft("first").text).toBe("");
     expect(writeConversationDraft("first", "Draft")).toBe(false);
   });
+});
+
+it("moves a legacy clarification draft only when the normal composer is empty", () => {
+  storage();
+  writeConversationDraft("clarification:q", "Use this month");
+  writeConversationDraft("first", "My existing draft");
+  expect(migrateClarificationDraft("first", "q")).toBe(false);
+  expect(readConversationDraft("clarification:q").text).toBe("Use this month");
+  clearConversationDraft("first", "My existing draft");
+  expect(migrateClarificationDraft("first", "q")).toBe(true);
+  expect(readConversationDraft("first").text).toBe("Use this month");
+  expect(readConversationDraft("clarification:q").text).toBe("");
+});
+it("retains the legacy answer when migration cannot persist the composer", () => {
+  storage();
+  writeConversationDraft("clarification:q", "Use this month");
+  vi.spyOn(localStorage, "setItem").mockImplementation(() => {
+    throw new Error("quota");
+  });
+  expect(migrateClarificationDraft("first", "q")).toBe(false);
+  expect(readConversationDraft("clarification:q").text).toBe("Use this month");
 });

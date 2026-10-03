@@ -191,6 +191,18 @@ public final class AgentClient: Sendable {
         return try decodeOrThrow(ConversationControls.self, from: data)
     }
 
+    public func sendQueuedMessagesNow(sessionId: String, submissionIds: [String]) async throws -> ConversationControls {
+        struct Body: Encodable {
+            let submissionIds: [String]
+        }
+        let (data, _) = try await dispatch(
+            method: "POST",
+            path: "/agent/sessions/\(percentEncode(sessionId))/queue/send-now",
+            body: encoder.encode(Body(submissionIds: submissionIds))
+        )
+        return try decodeOrThrow(ConversationControls.self, from: data)
+    }
+
     public func submitMessage(
         sessionId: String, text: String, clientMessageId: String,
         interrupt: Bool, deepResearch: Bool = false, clarificationId: String? = nil

@@ -24,6 +24,7 @@ import { useState, useRef, useEffect } from "preact/hooks";
 import { sourceIcon, sourceLabel } from "../../lib/format.js";
 import { KnowledgeIcon } from "../../lib/knowledge-link-icons.js";
 import { navigate } from "../../lib/router.js";
+import { MessageActions } from "./message-actions.js";
 import { AssistantMarkdown } from "./assistant-markdown.js";
 import { DocChip } from "../doc-chip.js";
 import { Modal } from "../modal.js";
@@ -98,6 +99,7 @@ export function MessageBubble({ turn, citations, dispatch, header = null, footer
     if (part.kind === "text" && typeof part.text === "string" && part.text.trim()) textFollows = true;
   }
   return html`
+    <${MessageActions} text=${turn.parts.filter(part => part.kind === "text").map(part => part.text).join("\n\n")} action=${turn.role === "user" && onEdit && canEdit ? { label: "Edit and resend", onSelect: () => onEdit(turn.parts.filter(part => part.kind === "text").map(part => part.text).join("\n\n")) } : null}>
     <div class=${`agent-msg agent-msg-${turn.role}`}>
       ${header}
       <div class="agent-msg-body">
@@ -121,9 +123,6 @@ export function MessageBubble({ turn, citations, dispatch, header = null, footer
             turn.role === "assistant" && followedByText.has(i),
           ))}
       </div>
-      ${turn.role === "user" && onEdit && canEdit
-        ? html`<button type="button" class="agent-prompt-edit" onClick=${() => onEdit(turn.parts.filter((part) => part.kind === "text").map((part) => part.text).join("\n"))}>Edit and resend</button>`
-        : null}
       ${turn.error
         ? html`<div class="agent-msg-error">
             <span>${turn.error}</span>
@@ -138,6 +137,7 @@ export function MessageBubble({ turn, citations, dispatch, header = null, footer
         : null}
       ${footer}
     </div>
+    </${MessageActions}>
   `;
 }
 

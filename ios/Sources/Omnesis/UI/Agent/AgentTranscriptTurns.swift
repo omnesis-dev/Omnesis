@@ -79,15 +79,25 @@ private struct ConversationEditableTurn: View {
     var onEdit: ((String) -> Void)?
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 4) {
-            AgentTurnBubble(turn: turn)
-            if case .user(_, let text) = turn, let onEdit {
-                Button("Edit and resend", systemImage: "square.and.pencil") { onEdit(text) }
-                    .font(.caption)
-                    .foregroundStyle(Theme.textSecondary)
-                    .disabled(disabled)
+        AgentTurnBubble(turn: turn)
+            .contextMenu {
+                switch turn {
+                case .user(_, let text):
+                    Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = text }
+                    if let onEdit {
+                        Button("Edit and resend", systemImage: "square.and.pencil") { onEdit(text) }
+                            .disabled(disabled)
+                    }
+                case .assistant(let assistant):
+                    Button("Copy", systemImage: "doc.on.doc") {
+                        UIPasteboard.general.string = assistant.parts.compactMap { part in
+                            if case .text(let text) = part { return text }
+                            return nil
+                        }
+                        .joined(separator: "\n\n")
+                    }
+                }
             }
-        }
     }
 }
 
@@ -193,7 +203,7 @@ struct DailyBriefTranscriptView: View {
                     calendar: calendar,
                     locale: locale
                 ))
-                AgentTurnBubble(turn: briefTurn)
+                ConversationEditableTurn(turn: briefTurn, disabled: editingDisabled, onEdit: onEdit)
             }
             .id(briefTurn.id)
             .pagingRowFrame(id: briefTurn.id, in: scrollSpace)

@@ -20,6 +20,11 @@ export const submissionInputSchema = z
   })
   .strict();
 export type SubmissionInput = z.infer<typeof submissionInputSchema>;
+export const sendQueuedInputSchema = z
+  .object({
+    submissionIds: z.array(submissionInputSchema.shape.clientMessageId).min(1).max(32),
+  })
+  .strict();
 const questionSchema = z
   .object({
     question: z.string().trim().min(1).max(1000),
@@ -61,6 +66,7 @@ export const conversationControlsSchema = z.object({
 export type ConversationControlState = z.infer<typeof conversationControlsSchema>;
 export interface ConversationControlsSnapshot {
   busy: boolean;
+  capabilities: { coalescedQueue: true; queueSendNow: true };
   pendingClarification?: PendingClarification;
   queuedMessages: ConversationSubmission[];
 }
@@ -90,6 +96,7 @@ export class ConversationControls {
     const state = this.host.state(id);
     return structuredClone({
       busy: this.host.busy(id) || this.running.has(id),
+      capabilities: { coalescedQueue: true, queueSendNow: true } as const,
       ...(state.pendingClarification ? { pendingClarification: state.pendingClarification } : {}),
       queuedMessages: state.submissions.filter(
         (s) => s.status === "queued" || s.status === "failed",
@@ -129,6 +136,12 @@ export class ConversationControls {
           "The conversation queue is full. Wait for a message to finish.",
         );
       }
+      const queued = state.submissions.filter((s) => s.status === "queued");
+      if ([...queued.map((s) => s.text), input.text].join("\n\n").length > 10_000) {
+        throw new ConversationControlError(
+          "The queued message is too long. Wait for it to send before adding more.",
+        );
+      }
       const next: ConversationSubmission = {
         ...input,
         ...(callerId ? { callerId } : {}),
@@ -154,6 +167,29 @@ export class ConversationControls {
     return { submission, ...this.snapshot(id) };
   }
 
+  async sendNow(id: string, submissionIds: string[]): Promise<ConversationControlsSnapshot> {
+    await this.lock(id, async () => {
+      const state = this.host.state(id);
+      const requested = submissionIds.map((key) => state.submissions.find((s) => s.id === key));
+      if (requested.some((s) => !s || s.status === "failed")) {
+        throw new ConversationControlError("The queued message changed. Refresh the conversation.");
+      }
+      // A retry after this batch started must not interrupt a subsequent turn.
+      if (!requested.some((s) => s?.status === "queued")) return;
+      const previous = state.pendingClarification;
+      delete state.pendingClarification;
+      try {
+        await this.host.persist(id);
+      } catch (error) {
+        if (previous) state.pendingClarification = previous;
+        throw error;
+      }
+      this.host.cancel(id);
+    });
+    this.kick(id);
+    return this.snapshot(id);
+  }
+
   kick(id: string): void {
     if (!this.host.available(id)) return;
     const current = this.host.state(id);
@@ -165,19 +201,29 @@ export class ConversationControls {
       if (state.pendingClarification) return;
       const next = state.submissions.find((s) => s.status === "queued");
       if (!next) return;
-      next.status = "running";
+      // Accumulate pending text into one turn while retaining every retry receipt.
+      const batch = [next];
+      let length = next.text.length;
+      for (const item of state.submissions.slice(state.submissions.indexOf(next) + 1)) {
+        if (item.status !== "queued") continue;
+        // Older gateways could persist a queue larger than a single prompt.
+        if (length + 2 + item.text.length > 10_000) break;
+        batch.push(item);
+        length += 2 + item.text.length;
+      }
+      for (const item of batch) item.status = "running";
       const question = state.pendingClarification;
       delete state.pendingClarification;
       try {
         await this.host.persist(id);
       } catch (error) {
-        next.status = "queued";
+        for (const item of batch) item.status = "queued";
         if (question) state.pendingClarification = question;
         throw error;
       }
       // Persist running before model work: a crash may leave an uncertain turn,
       // which is surfaced as failed on resume and never automatically replayed.
-      const operation = this.execute(id, next);
+      const operation = this.execute(id, batch);
       this.running.set(id, operation);
       void operation
         .finally(() => {
@@ -188,18 +234,24 @@ export class ConversationControls {
     }).catch(() => log.warn("could not advance a conversation queue"));
   }
 
-  private async execute(id: string, next: ConversationSubmission): Promise<void> {
+  private async execute(id: string, batch: ConversationSubmission[]): Promise<void> {
     let failed = false;
     try {
-      await this.host.start(id, next);
+      await this.host.start(id, {
+        ...batch[0]!,
+        text: batch.map((item) => item.text).join("\n\n"),
+        deepResearch: batch.some((item) => item.deepResearch),
+      });
     } catch {
       failed = true;
     }
     await this.lock(id, async () => {
-      next.status = failed ? "failed" : "completed";
-      if (failed)
-        next.error =
-          "This message could not finish. Review the conversation before sending it again.";
+      for (const item of batch) {
+        item.status = failed ? "failed" : "completed";
+        if (failed)
+          item.error =
+            "This message could not finish. Review the conversation before sending it again.";
+      }
       try {
         await this.host.persist(id);
       } catch {

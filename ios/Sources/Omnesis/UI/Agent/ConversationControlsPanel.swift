@@ -13,8 +13,14 @@ struct ConversationControlsPanel: View {
     var onEdit: (ConversationQueuedMessage) -> Void = { _ in }
     let onChoice: (String) -> Void
 
+    private var hasContent: Bool {
+        controls?.pendingClarification != nil
+            || controls?.queuedMessages.contains(where: { $0.status == "failed" }) == true
+            || error != nil
+    }
+
     var body: some View {
-        if controls?.pendingClarification != nil || !(controls?.queuedMessages.isEmpty ?? true) || error != nil {
+        if hasContent {
             ViewThatFits(in: .vertical) {
                 contents.fixedSize(horizontal: false, vertical: true)
                 ScrollView { contents }
@@ -39,32 +45,56 @@ struct ConversationControlsPanel: View {
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(8)
-                        .background(Theme.bgSecondary, in: RoundedRectangle(cornerRadius: 8))
+                        .padding(.vertical, 8)
+                        .contentShape(Rectangle())
                     }
                     .disabled(disabled)
                 }
-                Text("Or write your own answer below.").font(.caption).foregroundStyle(Theme.textSecondary)
             }
-            ForEach(controls?.queuedMessages ?? []) { message in
+            ForEach(controls?.queuedMessages.filter { $0.status == "failed" } ?? []) { message in
                 HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: message.status == "failed" ? "exclamationmark.circle" : "clock")
+                    Image(systemName: "exclamationmark.circle")
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(message.status == "failed" ? "Couldn’t send" : "Queued follow-up")
+                        Text("Couldn’t send")
                             .font(.caption.weight(.semibold))
                         Text(message.text).font(.caption).lineLimit(2)
                         if let error = message.error { Text(error).font(.caption) }
                     }
                     Spacer(minLength: 0)
-                    if message.status == "failed" {
-                        Button("Edit") { onEdit(message) }.disabled(disabled)
-                    }
+                }
+                .contextMenu {
+                    Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = message.text }
+                    Button("Edit and resend", systemImage: "square.and.pencil") { onEdit(message) }.disabled(disabled)
                 }
             }
             if let error { Text(error).font(.caption).foregroundStyle(Theme.danger) }
         }
-        .padding(.vertical, controls?.pendingClarification != nil || !(controls?.queuedMessages.isEmpty ?? true) || error != nil ? 8 : 0)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+@available(iOS 17.0, *)
+struct ConversationQueuedBubble: View {
+    let controls: ConversationControls
+    let disabled: Bool
+    let onSendNow: () -> Void
+
+    var body: some View {
+        VStack(spacing: 12) {
+            ForEach(Array(controls.queuedBubbleTexts.enumerated()), id: \.offset) { _, text in
+                VStack(alignment: .trailing, spacing: 4) {
+                    AgentTurnBubble(turn: .user(id: "queued", text: text))
+                    Text("Queued").font(.caption).foregroundStyle(Theme.textSecondary)
+                }
+                .contextMenu {
+                    Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = text }
+                    if controls.capabilities?.queueSendNow == true {
+                        Button("Send now", systemImage: "paperplane", action: onSendNow).disabled(disabled)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -91,7 +121,7 @@ struct ConversationDraftEditBanner: View {
 }
 
 @available(iOS 17.0, *)
-#Preview("Conversation choices and queue") {
+#Preview("Conversation choices") {
     ConversationControlsPanel(
         controls: PreviewMocks.conversationControls, error: nil, disabled: false, onChoice: { _ in }
     )

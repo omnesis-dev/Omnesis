@@ -354,6 +354,12 @@ export function createAgentClient() {
     async getControls(sessionId) {
       return api(`/agent/sessions/${encodeURIComponent(sessionId)}/controls`, { method: "GET" });
     },
+    async sendQueuedNow(sessionId, submissionIds) {
+      return api(`/agent/sessions/${encodeURIComponent(sessionId)}/queue/send-now`, {
+        method: "POST",
+        body: JSON.stringify({ submissionIds }),
+      });
+    },
     async submitMessage(sessionId, submission) {
       return api(`/agent/sessions/${encodeURIComponent(sessionId)}/submissions`, {
         method: "POST",

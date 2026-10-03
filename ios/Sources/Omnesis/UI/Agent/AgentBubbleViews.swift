@@ -51,7 +51,6 @@ struct AgentTurnBubble: View {
                     .padding(.vertical, 10)
                     .background(Theme.accent.opacity(0.10))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .textSelection(.enabled)
             }
         case .assistant(let assistant):
             VStack(alignment: .leading, spacing: 10) {

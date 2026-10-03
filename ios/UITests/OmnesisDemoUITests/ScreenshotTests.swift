@@ -119,6 +119,29 @@ final class ScreenshotTests: XCTestCase {
         try captureStoreScreenshot(named: "04-privacy-settings")
     }
 
+    func test_conversation_message_menus() throws {
+        app = XCUIApplication()
+        app.launchEnvironment["DEMO_AGENT_PREVIEW"] = "conversation-controls"
+        app.launchEnvironment["DEMO_APPEARANCE"] = "dark"
+        app.launch()
+        dismissSystemAlerts()
+        let prompt = app.staticTexts["Compare my activity."]
+        XCTAssertTrue(prompt.waitForExistence(timeout: 30))
+        let directory = URL(fileURLWithPath: "/tmp/omnesis-snapshots", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        for (text, action, name) in [
+            ("Compare my activity.", "Edit and resend", "73a-user-message-menu"),
+            ("Include a short summary.\n\nCompare the totals too.", "Send now", "73b-queued-message-menu"),
+            ("Which period should I compare?", "Copy", "73c-assistant-message-menu"),
+        ] {
+            app.staticTexts[text].firstMatch.press(forDuration: 1.2)
+            XCTAssertTrue(app.buttons["Copy"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons[action].exists)
+            try XCUIScreen.main.screenshot().pngRepresentation.write(to: directory.appendingPathComponent("\(name).png"))
+            app.buttons["Copy"].tap()
+        }
+    }
+
     private func launchPaired(tab: String, environment: [String: String] = [:]) {
         app = XCUIApplication()
         if let pairingJSON = ProcessInfo.processInfo.environment["DEMO_PAIRING_JSON"] {

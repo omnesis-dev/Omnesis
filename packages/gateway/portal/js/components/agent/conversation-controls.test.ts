@@ -27,10 +27,20 @@ function setup() {
     setItem: (key, value) => values.set(key, value),
     removeItem: (key) => values.delete(key),
   });
+  window.innerWidth = 1024;
+  window.innerHeight = 768;
+  vi.stubGlobal("navigator", { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } });
   host = document.querySelector("main");
 }
+async function openMenu() {
+  const target = host.querySelector(".agent-message-actions");
+  target.getBoundingClientRect = () => ({ left: 10, bottom: 40 });
+  await act(async () =>
+    target.dispatchEvent(new window.Event("contextmenu", { bubbles: true, cancelable: true })),
+  );
+}
 describe("conversation controls", () => {
-  it("answers a choice with its clarification ID and keeps free-text input available", async () => {
+  it("answers a flat choice with its clarification ID without a second composer", async () => {
     setup();
     const onAnswer = vi.fn().mockResolvedValue(true);
     await act(async () =>
@@ -51,7 +61,7 @@ describe("conversation controls", () => {
     );
     expect(host.textContent).toContain("Which period?");
     expect(host.textContent).toContain("Queued");
-    expect(host.querySelector('[aria-label="Your own answer"]')).not.toBeNull();
+    expect(host.querySelector("input")).toBeNull();
     await act(async () => host.querySelector(".agent-clarification-choices button").click());
     expect(onAnswer).toHaveBeenCalledWith("This week", { clarificationId: "question-one" });
   });
@@ -88,7 +98,13 @@ describe("conversation controls", () => {
         host,
       ),
     );
-    await act(async () => host.querySelector(".agent-prompt-edit").click());
+    expect(host.textContent).not.toContain("Edit and resend");
+    await openMenu();
+    await act(async () =>
+      [...host.querySelectorAll('[role="menuitem"]')]
+        .find((button) => button.textContent === "Edit and resend")
+        .click(),
+    );
     expect(onEdit).toHaveBeenCalledWith("Original prompt");
     expect(host.textContent).toContain("Original prompt");
   });
@@ -105,7 +121,9 @@ describe("conversation controls", () => {
         host,
       ),
     );
-    expect(host.querySelector(".agent-prompt-edit")).toBeNull();
+    await openMenu();
+    expect(host.textContent).not.toContain("Edit and resend");
+    expect(host.querySelector('[role="menuitem"]').textContent).toBe("Copy");
   });
   it("preserves research mode when explicitly retrying a failed gateway submission", async () => {
     setup();
@@ -134,6 +152,73 @@ describe("conversation controls", () => {
       mode: "queue",
       deepResearch: true,
     });
+  });
+  it("coalesces queued paragraphs and sends existing receipt IDs without resubmitting text", async () => {
+    setup();
+    const onSendNow = vi.fn().mockResolvedValue(undefined);
+    const controls = {
+      capabilities: { queueSendNow: true, coalescedQueue: true },
+      queuedMessages: [
+        { id: "one", text: "Include milestones", status: "queued" },
+        { id: "two", text: "And their owners", status: "queued" },
+      ],
+    };
+    await act(async () => render(h(ConversationControls, { controls, onSendNow }), host));
+    expect(host.querySelectorAll(".agent-queued-message")).toHaveLength(1);
+    expect(host.querySelector(".agent-msg-body").textContent).toBe(
+      "Include milestones\n\nAnd their owners",
+    );
+    await openMenu();
+    await act(async () =>
+      [...host.querySelectorAll('[role="menuitem"]')]
+        .find((button) => button.textContent === "Send now")
+        .click(),
+    );
+    expect(onSendNow).toHaveBeenCalledWith(["one", "two"]);
+    await act(async () =>
+      render(
+        h(ConversationControls, { controls: { ...controls, capabilities: undefined }, onSendNow }),
+        host,
+      ),
+    );
+    expect(host.querySelectorAll(".agent-queued-message")).toHaveLength(2);
+    await openMenu();
+    expect(host.textContent).not.toContain("Send now");
+  });
+  it("copies agent messages from the context menu and dismisses it with Escape", async () => {
+    setup();
+    await act(async () =>
+      render(
+        h(MessageBubble, {
+          turn: { role: "assistant", parts: [{ kind: "text", text: "A summary" }], done: true },
+          citations: [],
+        }),
+        host,
+      ),
+    );
+    await openMenu();
+    expect(host.querySelectorAll('[role="menuitem"]')).toHaveLength(1);
+    await act(async () => host.querySelector('[role="menuitem"]').click());
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("A summary");
+    expect(host.querySelector('[role="menu"]')).toBeNull();
+    await openMenu();
+    const event = new window.Event("keydown", { bubbles: true, cancelable: true });
+    event.key = "Escape";
+    await act(async () => host.querySelector('[role="menu"]').dispatchEvent(event));
+    expect(host.querySelector('[role="menu"]')).toBeNull();
+  });
+  it("offers Copy for unconfirmed text while retaining explicit retry", async () => {
+    setup();
+    await act(async () =>
+      render(
+        h(ConversationControls, { unconfirmed: { text: "A pending message" }, onAnswer: vi.fn() }),
+        host,
+      ),
+    );
+    await openMenu();
+    await act(async () => host.querySelector('[role="menuitem"]').click());
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("A pending message");
+    expect(host.textContent).toContain("Retry original message");
   });
   it("clears acknowledged input even when browser storage is unavailable", async () => {
     setup();
