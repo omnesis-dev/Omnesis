@@ -30,8 +30,11 @@ function execute(command, args, timeout) {
 }
 
 function fields(text, separator) {
+  // Xcode values can contain commas, e.g. Designed for [iPad,iPhone].
+  // Only a comma followed by another key starts a new inventory field.
+  const parts = separator === ":" ? text.split(/,\s*(?=[A-Za-z]+\s*:)/) : text.split(",");
   return Object.fromEntries(
-    text.split(",").map((part) => {
+    parts.map((part) => {
       const index = part.indexOf(separator);
       if (index < 1) throw new Error(`Invalid iOS destination field: ${part}`);
       return [part.slice(0, index).trim(), part.slice(index + 1).trim()];

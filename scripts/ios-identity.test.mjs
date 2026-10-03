@@ -519,7 +519,7 @@ it("reads eligible Xcode destinations emitted on stderr by a successful command"
     const udid = "00000000-0000-0000-0000-000000000017";
     writeFileSync(
       command,
-      `#!/usr/bin/env bash\ncat >&2 <<'DESTINATIONS'\nAvailable destinations for the "Omnesis" scheme:\n{ platform:iOS Simulator, id:${udid}, OS:26.5, name:iPhone 17 }\nDESTINATIONS\n`,
+      `#!/usr/bin/env bash\ncat >&2 <<'DESTINATIONS'\nAvailable destinations for the "Omnesis" scheme:\n{ platform:macOS, arch:arm64, variant:Designed for [iPad,iPhone], id:mac, name:local }\n{ platform:iOS Simulator, id:${udid}, OS:26.5, name:iPhone 17 }\nDESTINATIONS\n`,
     );
     chmodSync(command, 0o755);
     const result = spawnSync(
