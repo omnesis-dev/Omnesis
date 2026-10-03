@@ -6,8 +6,8 @@
 //
 // An access level holds permissions; a connection — one approved agent
 // install — always uses exactly one level, so the list reads top-down the way
-// the relationship does. A level's header names it; the tiles below describe
-// capabilities, source scope and Answer privacy.
+// the relationship does. A level's header names it; the permissions table below
+// lists each capability, whether it is granted and the terms it runs under.
 // Its Edit button opens the level editor; its menu renames or deletes it. Each
 // connection row under it says which app signed in and when it was last used;
 // its menu renames it, moves it to another level, or removes it. Connection
@@ -120,6 +120,15 @@ export function signInLabel(credential) {
 }
 
 /**
+ * A connection ID as the row shows it: a UUID by its first group, which is
+ * enough to tell connections apart at a glance; any other ID in full. The copy
+ * button and the tooltip always carry the whole ID.
+ */
+export function shortConnectionId(id) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(id) ? id.slice(0, 8) : id;
+}
+
+/**
  * What a connection shows, in labelled fields: its ID to copy, when its
  * current sign-in was made and when it was last used.
  */
@@ -128,7 +137,7 @@ function ConnectionFacts({ entry, signIns }) {
     <div class="access-fact-id">
       <dt>Connection ID</dt>
       <dd>
-        <code>${entry.id}</code>
+        <code title=${entry.id}>${shortConnectionId(entry.id)}</code>
         <${CopyIconButton} text=${entry.id} class="btn-icon access-copy" title="Copy connection ID" />
       </dd>
     </div>
