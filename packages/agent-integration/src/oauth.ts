@@ -84,7 +84,7 @@ function isInteractiveAuthorizationRequired(error: unknown): boolean {
  * registered keeps its client id, and the name it registered under, until
  * that information is cleared.
  *
- * Stored tokens are only ever replaced, never erased. When the SDK decides
+ * Invalidating the token set never erases it. When the SDK decides
  * the stored set is no good — the token endpoint answered `invalid_grant` —
  * it asks the provider to invalidate it and goes on to look for a
  * replacement. This provider stops offering that set to the SDK but leaves it

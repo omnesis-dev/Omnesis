@@ -32,17 +32,18 @@ import { z } from "zod";
 
 import { writeSecretFileDurably } from "./credentials.js";
 
-const pendingAuthorizationSchema = z
-  .object({
-    gatewayUrl: z.string().url(),
-    clientId: z.string().min(1),
-    handle: z.string().min(1),
-    consentUrl: z.string().url(),
-    expiresAt: z.number().int().nonnegative(),
-    codeVerifier: z.string().min(1),
-    state: z.string().min(1),
-  })
-  .strict();
+// Not strict: a record written by a newer CLI with fields this version does
+// not know must still read as the request it is, or a plugin would take its
+// verifier for an attempt of unknown age and stand its keepalive down.
+const pendingAuthorizationSchema = z.object({
+  gatewayUrl: z.string().url(),
+  clientId: z.string().min(1),
+  handle: z.string().min(1),
+  consentUrl: z.string().url(),
+  expiresAt: z.number().int().nonnegative(),
+  codeVerifier: z.string().min(1),
+  state: z.string().min(1),
+});
 
 export type PendingIntegrationAuthorization = z.infer<typeof pendingAuthorizationSchema>;
 
@@ -84,7 +85,13 @@ export function savePendingAuthorization(
   );
 }
 
-export function clearPendingAuthorization(credentialsPath: string): void {
+/**
+ * Drop the record. With `handle`, only when it still names that request: a
+ * run ending its own request must not drop one another run has since
+ * recorded in its place.
+ */
+export function clearPendingAuthorization(credentialsPath: string, handle?: string): void {
+  if (handle !== undefined && loadPendingAuthorization(credentialsPath)?.handle !== handle) return;
   try {
     unlinkSync(pendingAuthorizationPath(credentialsPath));
   } catch (error) {

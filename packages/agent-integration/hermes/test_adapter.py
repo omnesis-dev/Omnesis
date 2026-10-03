@@ -3853,13 +3853,21 @@ class OAuthRefreshTests(unittest.TestCase):
         self.assertIsNone(credentials.oauth_access_token)
         self.assertIsNone(credentials.oauth_refresh_token)
 
-    def test_a_file_without_a_client_names_the_repair(self):
+    def test_a_file_without_a_client_keeps_delivery_and_names_the_repair(self):
+        # A connect interrupted between dropping a client and registering the
+        # next leaves nothing to re-issue for. Delivery and ingestion still
+        # load; the corpus tools answer with the repair.
         raw = json.loads(self.path.read_text(encoding="utf-8"))
         raw["oauth"]["clientInformation"] = {}
         self.path.write_text(json.dumps(raw), encoding="utf-8")
-        with self.assertRaises(adapter_module.ConfigurationError) as raised:
-            adapter_module._load_credentials(self.path)
-        self.assertIn("omnesis connect hermes --refresh", str(raised.exception))
+        credentials = adapter_module._load_credentials(self.path)
+        self.assertEqual(credentials.delivery_token, "omn_delivery_example")
+        self.assertIsNone(credentials.oauth_client_id)
+        self.assertIsNone(credentials.oauth_access_token)
+        self.instance._credentials = credentials
+        with patch.object(self.instance, "_request_json") as request_json:
+            self.assertIsNone(self.instance._principal_access_token())
+        request_json.assert_not_called()
 
     def test_a_missing_token_set_is_re_issued_before_the_first_corpus_call(self):
         self._drop_tokens()
@@ -4222,6 +4230,31 @@ class OAuthRefreshTests(unittest.TestCase):
                 tool_adapter._state.close()
         self.assertEqual(answer["code"], "authorization_required")
         self.assertEqual(management["code"], "authorization_required")
+
+    def test_an_ask_without_tokens_and_nothing_approved_answers_with_the_repair(self):
+        raw = json.loads(self.path.read_text(encoding="utf-8"))
+        raw["oauth"]["tokens"] = {}
+        self.path.write_text(json.dumps(raw), encoding="utf-8")
+        tool_adapter = adapter_module.OmnesisAdapter.for_tools()
+        tool_adapter._credential_path = self.path
+        tool_adapter._credentials = adapter_module._load_credentials(self.path)
+        refusal = adapter_module.GatewayHttpError(404, None, "NO_APPROVED_CREDENTIAL")
+        try:
+            with patch.object(
+                tool_adapter, "_request_json", side_effect=refusal
+            ) as request_json:
+                answer = json.loads(
+                    tool_adapter.answer({"question": "A fictional question?"}, "session-human")
+                )
+        finally:
+            if tool_adapter._state is not None:
+                tool_adapter._state.close()
+        # The re-issue was tried first, with the device's management token.
+        self.assertEqual(
+            request_json.call_args.args[:2], ("POST", "/agent-integration/oauth-reissue")
+        )
+        self.assertEqual(answer["code"], "authorization_required")
+        self.assertIn("omnesis connect hermes --refresh", answer["repair"])
 
     def test_refresh_rotation_is_atomically_persisted_with_private_mode(self):
         captured = {}

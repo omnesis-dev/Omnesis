@@ -1595,6 +1595,14 @@ export const connectCommand = defineCommand({
     if (skillOnly && refresh) {
       throw new CliError("Use either --refresh or --skill-only, not both.", EXIT_USER_ERROR);
     }
+    if (typeof ctx.args.interactive === "boolean" && !refresh) {
+      // A first connect, or the resume of one, needs an approval by
+      // definition; only a refresh has a choice to make.
+      throw new CliError(
+        "--interactive and --no-interactive apply to --refresh only.",
+        EXIT_USER_ERROR,
+      );
+    }
     if (
       refresh &&
       (typeof ctx.args.code === "string" || typeof ctx.args["gateway-url"] === "string")

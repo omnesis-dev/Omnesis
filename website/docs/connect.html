@@ -1243,7 +1243,8 @@
           for the connection you already approved using the agent device's own credentials. A
           refresh that does have to ask keeps one request open per integration: running it again
           waits on that request instead of opening another, and an approval you give after the
-          command stopped is collected by the next refresh. Without a terminal, as when
+          command stopped is collected by the next refresh, as long as it runs within the request's
+          ten minutes. Without a terminal, as when
           <code>omnesis update</code> or a fleet update runs it, a refresh never asks: it leaves a
           working sign-in to the plugin, and when nothing approved is left it stops and names the
           command to run. <code>--interactive</code> and <code>--no-interactive</code> override that

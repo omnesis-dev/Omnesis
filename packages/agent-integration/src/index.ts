@@ -29,6 +29,7 @@ export {
   SerializedIntegrationAuthProvider,
   authorizeIntegrationOAuth,
   authorizeIntegrationOAuthWithCredentialLock,
+  withCredentialRefreshLock,
 } from "./oauth.js";
 export {
   IntegrationReauthorizationRequiredError,
@@ -37,7 +38,6 @@ export {
 export {
   clearPendingAuthorization,
   loadPendingAuthorization,
-  pendingAuthorizationPath,
   savePendingAuthorization,
   type PendingIntegrationAuthorization,
 } from "./pending-authorization.js";

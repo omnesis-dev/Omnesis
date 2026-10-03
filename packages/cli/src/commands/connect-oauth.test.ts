@@ -345,7 +345,8 @@ describe("an interactive refresh", () => {
     expect(result.oauth.tokens).toMatchObject({ access_token: "access_approved" });
     expect(exchangedWith).toEqual([pending.codeVerifier]);
     expect(authorizeRequests()).toBe(0);
-    expect(mocks.reissue).not.toHaveBeenCalled();
+    // The headless re-issue was tried, and refused, before waiting.
+    expect(mocks.reissue).toHaveBeenCalledTimes(1);
     expect(loadPendingAuthorization(credentialsPath(home))).toBeNull();
   }, 15_000);
 
@@ -395,5 +396,67 @@ describe("an interactive refresh", () => {
     await expect(authorizeHarness(home, "hermes", load(home))).rejects.toThrow(/expired/u);
 
     expect(loadPendingAuthorization(credentialsPath(home))).toBeNull();
+  });
+
+  it("does not wait on an open request when the stored refresh token still works", async () => {
+    const home = seed({ access_token: "access_old", refresh_token: "refresh_old" });
+    record(home);
+    gateway(["pending"], new URL("http://127.0.0.1:1/callback"));
+    mocks.authorize.mockImplementation(async (provider) => {
+      (provider as Provider).saveTokens({
+        access_token: "access_new",
+        refresh_token: "refresh_new",
+      });
+      return "AUTHORIZED";
+    });
+
+    const result = await authorizeHarness(home, "hermes", load(home));
+
+    expect(result.oauth.tokens).toMatchObject({ access_token: "access_new" });
+    expect(loadPendingAuthorization(credentialsPath(home))).toBeNull();
+  });
+
+  it("goes on without an earlier request the operator denied", async () => {
+    const home = seed({});
+    const pending = record(home);
+    gateway(
+      ["denied"],
+      new URL(`http://127.0.0.1:1/callback?error=access_denied&state=${pending.state}`),
+    );
+    mocks.reissue.mockImplementation(async (provider) => {
+      (provider as Provider).saveTokens({ access_token: "access_reissued", refresh_token: "r" });
+    });
+
+    const result = await authorizeHarness(home, "hermes", load(home));
+
+    expect(result.oauth.tokens).toMatchObject({ access_token: "access_reissued" });
+    expect(loadPendingAuthorization(credentialsPath(home))).toBeNull();
+    expect(authorizeRequests()).toBe(0);
+  });
+
+  it("drops a record made for another client without asking the gateway about it", async () => {
+    const home = seed({ access_token: "access_live", refresh_token: "refresh_live" });
+    record(home, { clientId: "client_other_fictional" });
+
+    await authorizeHarness(home, "hermes", load(home), { consent: false });
+
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(loadPendingAuthorization(credentialsPath(home))).toBeNull();
+  });
+});
+
+describe("an unattended refresh with an approval still open", () => {
+  it("re-issues without waiting, and keeps the request for a later run", async () => {
+    const home = seed({});
+    const pending = record(home);
+    gateway(["pending"], new URL("http://127.0.0.1:1/callback"));
+    mocks.reissue.mockImplementation(async (provider) => {
+      (provider as Provider).saveTokens({ access_token: "access_reissued", refresh_token: "r" });
+    });
+
+    const result = await authorizeHarness(home, "hermes", load(home), { consent: false });
+
+    expect(result.oauth.tokens).toMatchObject({ access_token: "access_reissued" });
+    expect(loadPendingAuthorization(credentialsPath(home))).toEqual(pending);
   });
 });

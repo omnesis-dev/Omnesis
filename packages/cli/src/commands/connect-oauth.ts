@@ -19,6 +19,7 @@ import {
   loadPendingAuthorization,
   reissueIntegrationOAuthTokens,
   savePendingAuthorization,
+  withCredentialRefreshLock,
   writeIntegrationCredentials,
   type IntegrationCredentials,
   type PendingIntegrationAuthorization,
@@ -83,7 +84,8 @@ export class HarnessApprovalRequiredError extends Error {
  * In order of preference, and stopping at the first that works:
  *
  *   1. collect a decision on the approval request an earlier run opened and
- *      recorded, so an approval given after that run stopped is not lost;
+ *      recorded, so an approval given after that run stopped — within the
+ *      request's lifetime — is not lost;
  *   2. trade the stored refresh token;
  *   3. re-issue tokens for the credential the operator already approved,
  *      with the device's management token — the headless recovery the
@@ -192,8 +194,22 @@ export async function authorizeHarness(
   };
 
   /**
+   * Let go of a request this run is done with: its record, and the verifier
+   * it left in the credential file — each only while it is still this
+   * request's, since another run may have recorded its own since.
+   */
+  const release = (pending: PendingIntegrationAuthorization): void => {
+    clearPendingAuthorization(credentialsPath, pending.handle);
+    if (loadCurrent().oauth.codeVerifier === pending.codeVerifier) {
+      provider.clearAuthorizationAttempt();
+    }
+  };
+
+  /**
    * Turn the gateway's redirect into tokens, with the verifier and state the
-   * request was opened with. The record is dropped whatever the outcome: a
+   * request was opened with. The verifier is handed to the exchange directly
+   * rather than through the credential file, which a running plugin may
+   * rewrite at any moment. The request is released whatever the outcome: a
    * decided request cannot be decided again.
    */
   const finish = async (
@@ -208,9 +224,13 @@ export async function authorizeHarness(
       }
       const code = returned.searchParams.get("code");
       if (!code) throw new Error("OAuth callback did not include an authorization code");
-      provider.saveCodeVerifier(pending.codeVerifier);
+      const exchanging = new (class extends IntegrationOAuthProvider {
+        override codeVerifier(): string {
+          return pending.codeVerifier;
+        }
+      })(credentialsPath, harnessClientName(harness), undefined, options.onCredentialsChanged);
       await authorizeIntegrationOAuth(
-        provider,
+        exchanging,
         gatewayUrl,
         fetchFn,
         code,
@@ -218,8 +238,7 @@ export async function authorizeHarness(
       );
       return loadCurrent();
     } finally {
-      clearPendingAuthorization(credentialsPath);
-      if (provider.hasPendingAuthorization()) provider.clearAuthorizationAttempt();
+      release(pending);
     }
   };
 
@@ -236,10 +255,7 @@ export async function authorizeHarness(
         ...(callback ? [callback] : []),
       ]);
     } catch (error) {
-      if (error instanceof AuthorizationExpiredError) {
-        clearPendingAuthorization(credentialsPath);
-        if (provider.hasPendingAuthorization()) provider.clearAuthorizationAttempt();
-      }
+      if (error instanceof AuthorizationExpiredError) release(pending);
       throw error;
     } finally {
       controller.abort();
@@ -247,27 +263,38 @@ export async function authorizeHarness(
     return finish(pending, returned);
   };
 
+  /** The headless re-issue, under the lease a running plugin renews under. */
+  const reissue = async (): Promise<void> => {
+    await withCredentialRefreshLock(
+      credentialsPath,
+      undefined,
+      () => undefined,
+      async () => {
+        await reissueIntegrationOAuthTokens(provider, loadCurrent(), harness);
+      },
+    );
+  };
+
   // 1. A request an earlier run opened for this same client. An approval on
-  //    it is collected whatever this run may do; one still open is kept on
-  //    record for step 4, and so is one whose state cannot be read right now.
+  //    it is collected whatever this run may do; one still open, or one whose
+  //    state cannot be read right now, is kept for step 4.
   let open: PendingIntegrationAuthorization | null = null;
   const recorded = loadPendingAuthorization(credentialsPath);
   if (recorded) {
     if (recorded.gatewayUrl !== gatewayUrl || recorded.clientId !== clientId()) {
-      clearPendingAuthorization(credentialsPath);
+      release(recorded);
     } else {
       const status = await readStatus(recorded.handle).catch(() => null);
       if (status?.status === "gone") {
-        clearPendingAuthorization(credentialsPath);
+        release(recorded);
       } else if (status?.status === "approved") {
         console.log("Collecting the approval given for the request opened earlier.");
         try {
           return await finish(recorded, await collectDecision(recorded.handle));
         } catch (error) {
-          // An approval that cannot be turned into tokens is reported, its
-          // record dropped, and the run carries on with the other ways it has
-          // of getting them.
-          clearPendingAuthorization(credentialsPath);
+          // An approval that cannot be turned into tokens is reported, and
+          // the run carries on with the other ways it has of getting them.
+          release(recorded);
           console.log(
             `${c.yellow}! The earlier approval could not be collected: ${error instanceof Error ? error.message : String(error)}${c.reset}`,
           );
@@ -276,7 +303,7 @@ export async function authorizeHarness(
         // A refusal is the operator's answer to that request, not to this
         // run: it ends the record and the run goes on as if there were none.
         console.log("The approval request opened earlier was denied.");
-        clearPendingAuthorization(credentialsPath);
+        release(recorded);
       } else {
         open = recorded;
       }
@@ -293,7 +320,7 @@ export async function authorizeHarness(
     }
     if (!clientId()) throw new HarnessApprovalRequiredError(harness);
     try {
-      await reissueIntegrationOAuthTokens(provider, loadCurrent(), harness);
+      await reissue();
     } catch (error) {
       if (error instanceof IntegrationReauthorizationRequiredError) {
         throw new HarnessApprovalRequiredError(harness);
@@ -303,12 +330,11 @@ export async function authorizeHarness(
     return loadCurrent();
   }
 
-  if (open) {
-    console.log(
-      `Waiting for the approval already requested at ${c.cyan}${open.consentUrl}${c.reset}`,
-    );
-    return waitAndFinish(open);
-  }
+  /** Tokens in hand: a request still open is nobody's business any more. */
+  const authorized = (): IntegrationCredentials => {
+    if (open) release(open);
+    return loadCurrent();
+  };
 
   // 2. The stored refresh token.
   const stored = loadCurrent().oauth.tokens;
@@ -319,12 +345,15 @@ export async function authorizeHarness(
         gatewayUrl,
         fetchFn,
       );
-      if (result === "AUTHORIZED") return loadCurrent();
+      if (result === "AUTHORIZED") return authorized();
       throw new Error("OAuth requested a redirect without an authorization URL");
     } catch (error) {
       if (!(error instanceof InteractiveAuthorizationRequired)) throw error;
-      // The authorization the SDK prepared is not the one step 4 opens.
-      provider.clearAuthorizationAttempt();
+      // The authorization the SDK prepared is not one anybody will approve.
+      const prepared = loadCurrent().oauth.codeVerifier;
+      if (prepared !== undefined && prepared !== open?.codeVerifier) {
+        provider.clearAuthorizationAttempt();
+      }
     }
   }
 
@@ -333,14 +362,22 @@ export async function authorizeHarness(
   //    gateway could not be asked, and a new approval would not get past that.
   if (clientId()) {
     try {
-      await reissueIntegrationOAuthTokens(provider, loadCurrent(), harness);
-      return loadCurrent();
+      await reissue();
+      return authorized();
     } catch (error) {
       if (!(error instanceof IntegrationReauthorizationRequiredError)) throw error;
     }
   }
 
-  // 4. A new approval request.
+  // 4a. The request already open, rather than a second one.
+  if (open) {
+    console.log(
+      `Waiting for the approval already requested at ${c.cyan}${open.consentUrl}${c.reset}`,
+    );
+    return waitAndFinish(open);
+  }
+
+  // 4b. A new approval request.
   return requestApproval();
 
   async function requestApproval(): Promise<IntegrationCredentials> {

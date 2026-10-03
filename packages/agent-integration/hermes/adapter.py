@@ -1100,17 +1100,21 @@ def _load_credentials(path: Path) -> Credentials:
             raise ConfigurationError("credential file is missing OAuth state")
         client = oauth.get("clientInformation")
         tokens = oauth.get("tokens")
-        if not isinstance(client, dict) or not isinstance(client.get("client_id"), str):
-            raise ConfigurationError(
-                "credential file is missing an OAuth client. "
-                "Run `omnesis connect hermes --refresh` on this machine."
-            )
-        client_id = client["client_id"]
         # A token set may be missing or partial: an `omnesis connect` that
         # stopped part-way leaves the approved client without one. That is
         # repaired headlessly from the client and the management token, so it
-        # loads rather than taking the whole integration down.
-        tokens = tokens if isinstance(tokens, dict) else {}
+        # loads rather than taking the whole integration down. Without a
+        # client there is nothing to repair with; delivery and ingestion keep
+        # running, and the corpus tools answer with the command that repairs
+        # it.
+        client_id = (
+            client["client_id"]
+            if isinstance(client, dict)
+            and isinstance(client.get("client_id"), str)
+            and client["client_id"]
+            else None
+        )
+        tokens = tokens if client_id is not None and isinstance(tokens, dict) else {}
         access_token = (
             tokens["access_token"] if isinstance(tokens.get("access_token"), str) else None
         )

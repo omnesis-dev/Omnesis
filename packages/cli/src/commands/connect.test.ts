@@ -1261,6 +1261,10 @@ describe("harness skill content", () => {
     await expect(
       run({ harness: "openclaw", dir: home, refresh: true, "skill-only": true }),
     ).rejects.toThrow(/either --refresh or --skill-only/);
+    // A first connect always needs an approval, so the choice is a refresh's alone.
+    await expect(
+      run({ harness: "openclaw", dir: home, code: "PAIR-CODE", interactive: false }),
+    ).rejects.toThrow(/apply to --refresh only/);
     expect(redeemAgentIntegrationPairingCode).not.toHaveBeenCalled();
   });
 });
