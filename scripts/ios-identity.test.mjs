@@ -494,15 +494,53 @@ describe("Xcode simulator destination discovery", () => {
   });
 });
 
-it("rejects OS=latest before probing instead of accepting an older phone", () => {
-  expect(() =>
+describe("latest iOS destination discovery", () => {
+  const udid = "00000000-0000-0000-0000-000000000017";
+  const heading = 'Available destinations for the "Omnesis" scheme:';
+  const row = (version) =>
+    `${heading}\n{ platform:iOS Simulator, id:${udid}, OS:${version}, name:iPhone 17 }`;
+  const runtime = (version, isAvailable = true) => ({
+    identifier: `com.apple.CoreSimulator.SimRuntime.iOS-${version.replaceAll(".", "-")}`,
+    version,
+    isAvailable,
+  });
+
+  it("waits for the latest installed runtime even when an older phone is already visible", () => {
+    let elapsed = 0;
+    let probes = 0;
+    const logs = [];
     waitForIOSDestination({
       destination: "platform=iOS Simulator,name=iPhone 17,OS=latest",
-      run: () => {
-        throw new Error("must not probe");
+      now: () => elapsed,
+      wait: (milliseconds) => {
+        elapsed += milliseconds;
       },
-    }),
-  ).toThrow("Use a concrete OS version");
+      log: (message) => logs.push(message),
+      run: (command, args) => {
+        if (command === "xcrun") {
+          expect(args).toEqual(["simctl", "list", "runtimes", "--json"]);
+          return JSON.stringify({
+            runtimes: [runtime("26.4"), runtime("26.5.0"), runtime("27.0", false)],
+          });
+        }
+        probes += 1;
+        return row(probes === 1 ? "26.4" : "26.5");
+      },
+    });
+    expect(probes).toBe(2);
+    expect(elapsed).toBe(2000);
+    expect(logs[0]).toContain("26.5.0");
+  });
+
+  it("fails when latest has no available installed iOS runtime", () => {
+    expect(() =>
+      waitForIOSDestination({
+        destination: "platform=iOS Simulator,name=iPhone 17,OS=latest",
+        run: () => JSON.stringify({ runtimes: [runtime("27.0", false)] }),
+        log: () => {},
+      }),
+    ).toThrow("No available iOS runtime");
+  });
 });
 
 // Run the actual wrapper through startup failure without Xcode or a gateway.

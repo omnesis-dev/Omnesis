@@ -43,7 +43,11 @@ function eligible(output, requested) {
     if (device.platform !== "iOS Simulator" || !UUID.test(device.id ?? "")) continue;
     if (
       Object.entries(requested).every(([key, value]) =>
-        key === "id" ? device.id.toLowerCase() === value.toLowerCase() : device[key] === value,
+        key === "id"
+          ? device.id.toLowerCase() === value.toLowerCase()
+          : key === "OS"
+            ? device.OS?.replace(/(?:\.0)+$/, "") === value.replace(/(?:\.0)+$/, "")
+            : device[key] === value,
       )
     ) {
       return true;
@@ -73,13 +77,26 @@ export function waitForIOSDestination({
       `Expected an iOS Simulator destination with an actual id or name: ${destination}`,
     );
   }
-  // Xcode's latest runtime may not yet appear in the eligible inventory.
-  // A concrete OS or UDID avoids accepting an older phone with the same name.
-  if (requested.OS === "latest") {
-    throw new Error("Use a concrete OS version or omit OS and select a simulator by id");
-  }
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("Invalid destination timeout");
   const deadline = now() + timeoutMs;
+  if (requested.OS === "latest") {
+    // Resolve from installed runtimes, not the incomplete Xcode destination
+    // list: an older phone becoming visible must not satisfy OS=latest.
+    const inventory = JSON.parse(
+      run("xcrun", ["simctl", "list", "runtimes", "--json"], Math.min(PROBE_TIMEOUT_MS, timeoutMs)),
+    );
+    const latest = (inventory.runtimes ?? [])
+      .filter(
+        (runtime) =>
+          runtime.isAvailable === true &&
+          runtime.identifier?.startsWith("com.apple.CoreSimulator.SimRuntime.iOS-") &&
+          /^\d+(?:\.\d+)*$/.test(runtime.version ?? ""),
+      )
+      .sort((left, right) => right.version.localeCompare(left.version, "en", { numeric: true }))[0];
+    if (!latest) throw new Error("No available iOS runtime for OS=latest");
+    requested.OS = latest.version;
+    log(`Resolved OS=latest to installed iOS ${requested.OS}.`);
+  }
   const args = [
     "-project",
     "Omnesis.xcodeproj",
