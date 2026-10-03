@@ -1,0 +1,5 @@
+---
+"omnesis": patch
+---
+
+An update no longer leaves an OpenClaw or Hermes integration without corpus access, and an approval you give is no longer lost. `omnesis update` and fleet updates refresh the plugin with `connect --refresh --no-interactive`: a working sign-in is left to the plugin, a missing one is re-issued with the agent device's own credentials, and when nothing approved is left the refresh stops and names `omnesis connect <harness> --refresh` instead of opening approval requests nobody waits on. A refresh run without a terminal behaves the same way. An interactive refresh asks for a new approval only after those headless steps fail, keeps a single request open per integration across runs, waits for that request's whole lifetime through a stalled gateway, and collects an approval given after the command stopped. The gateway ends an agent's older open request when the same agent opens a new one, so the phone never offers an approval the agent cannot receive. A refresh never erases the stored tokens before it has replacements, and both plugins re-issue a token set that a stopped refresh left missing, instead of refusing the credential file.

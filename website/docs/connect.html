@@ -1238,6 +1238,23 @@
           replacing the integration's existing connection, which keeps its name and access level.
         </p>
         <p>
+          A refresh asks for a new approval only as a last resort. It first collects an approval you
+          gave to a request an earlier refresh opened, then renews the sign-in, then re-issues it
+          for the connection you already approved using the agent device's own credentials. A
+          refresh that does have to ask keeps one request open per integration: running it again
+          waits on that request instead of opening another, and an approval you give after the
+          command stopped is collected by the next refresh. Without a terminal, as when
+          <code>omnesis update</code> or a fleet update runs it, a refresh never asks: it leaves a
+          working sign-in to the plugin, and when nothing approved is left it stops and names the
+          command to run. <code>--interactive</code> and <code>--no-interactive</code> override that
+          choice.
+        </p>
+        <p>
+          The OpenClaw and Hermes plugins repair their own sign-in the same way, without a browser,
+          when it lapses or a refresh stopped part-way. When the connection's approval was revoked,
+          Omnesis tools in the agent answer with the refresh command instead.
+        </p>
+        <p>
           <code>omnesis update</code> refreshes the plugin for you, and a fleet update restarts the
           agent's gateway too; <a href="/docs/updating#fleet-update">Fleet update</a> covers the
           restart order. A refresh that failed shows in <code>omnesis devices list</code> and

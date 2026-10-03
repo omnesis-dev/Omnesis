@@ -11,6 +11,7 @@ import { describe, expect, test, vi } from "vitest";
 
 import { loadIntegrationCredentials } from "./credentials.js";
 import { integrationOAuthFetch } from "./native-answer-mcp.js";
+import { savePendingAuthorization } from "./pending-authorization.js";
 import {
   authorizeIntegrationOAuthWithCredentialLock,
   IntegrationOAuthProvider,
@@ -618,6 +619,126 @@ describe("integration OAuth provider", () => {
         }),
       ).rejects.toThrow(/gateway unreachable/u);
 
+      expect(provider.hasPendingAuthorization()).toBe(false);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("withdraws an invalidated token set without erasing it until a replacement is saved", () => {
+    // The SDK invalidates the stored set on `invalid_grant` and then looks for
+    // a replacement. An attempt that finds none must not leave the file with
+    // nothing: the access token may still be good, and the client it names is
+    // what the headless recovery re-keys.
+    const directory = mkdtempSync(join(tmpdir(), "omnesis-integration-oauth-withdraw-"));
+    try {
+      const credentialsPath = join(directory, "integration.json");
+      writeFileSync(
+        credentialsPath,
+        `${JSON.stringify({
+          gatewayUrl: "https://gateway.example.org:7600",
+          deliveryToken: "omn_fictional_delivery",
+          ingestionToken: "omn_fictional_ingestion",
+          managementToken: "omn_fictional_management",
+          oauth: {
+            redirectUri: "http://127.0.0.1:48123/callback",
+            clientInformation: { client_id: "client_fictional" },
+            tokens: { access_token: "access_old", refresh_token: "refresh_old" },
+          },
+        })}\n`,
+        { mode: 0o600 },
+      );
+      const provider = new IntegrationOAuthProvider(credentialsPath, "Hermes");
+      provider.invalidateCredentials("tokens");
+
+      expect(provider.tokens()).toBeUndefined();
+      expect(loadIntegrationCredentials(credentialsPath).oauth.tokens).toEqual({
+        access_token: "access_old",
+        refresh_token: "refresh_old",
+      });
+      // Another process, or a fresh one, still reads the file as it is.
+      expect(new IntegrationOAuthProvider(credentialsPath, "Hermes").tokens()).toMatchObject({
+        access_token: "access_old",
+      });
+
+      provider.saveTokens({ access_token: "access_new", refresh_token: "refresh_new" } as never);
+      expect(provider.tokens()).toMatchObject({ access_token: "access_new" });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("offers a token set another process wrote after this one withdrew its own", () => {
+    const directory = mkdtempSync(join(tmpdir(), "omnesis-integration-oauth-withdraw-peer-"));
+    try {
+      const credentialsPath = join(directory, "integration.json");
+      const write = (accessToken: string) =>
+        writeFileSync(
+          credentialsPath,
+          `${JSON.stringify({
+            gatewayUrl: "https://gateway.example.org:7600",
+            deliveryToken: "omn_fictional_delivery",
+            ingestionToken: "omn_fictional_ingestion",
+            managementToken: "omn_fictional_management",
+            oauth: {
+              redirectUri: "http://127.0.0.1:48123/callback",
+              clientInformation: { client_id: "client_fictional" },
+              tokens: { access_token: accessToken, refresh_token: `${accessToken}-refresh` },
+            },
+          })}\n`,
+          { mode: 0o600 },
+        );
+      write("access_old");
+      const provider = new IntegrationOAuthProvider(credentialsPath, "Hermes");
+      provider.invalidateCredentials("tokens");
+      write("access_from_peer");
+      expect(provider.tokens()).toMatchObject({ access_token: "access_from_peer" });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("a verifier stops counting as a live approval once its recorded request expired", () => {
+    const directory = mkdtempSync(join(tmpdir(), "omnesis-integration-oauth-pending-"));
+    try {
+      const credentialsPath = join(directory, "integration.json");
+      writeFileSync(
+        credentialsPath,
+        `${JSON.stringify({
+          gatewayUrl: "https://gateway.example.org:7600",
+          deliveryToken: "omn_fictional_delivery",
+          ingestionToken: "omn_fictional_ingestion",
+          managementToken: "omn_fictional_management",
+          oauth: {
+            redirectUri: "http://127.0.0.1:48123/callback",
+            clientInformation: { client_id: "client_fictional" },
+            tokens: { access_token: "a", refresh_token: "r" },
+            codeVerifier: "v".repeat(64),
+          },
+        })}\n`,
+        { mode: 0o600 },
+      );
+      let now = 1_000_000;
+      const provider = new IntegrationOAuthProvider(
+        credentialsPath,
+        "OpenClaw",
+        undefined,
+        undefined,
+        () => now,
+      );
+      // A verifier with no record: an attempt this version cannot date.
+      expect(provider.hasPendingAuthorization()).toBe(true);
+      savePendingAuthorization(credentialsPath, {
+        gatewayUrl: "https://gateway.example.org:7600",
+        clientId: "client_fictional",
+        handle: "omn_oar_fictional",
+        consentUrl: "https://gateway.example.org:7600/oauth/consent?request=omn_oar_fictional",
+        expiresAt: now + 60_000,
+        codeVerifier: "v".repeat(64),
+        state: "s".repeat(40),
+      });
+      expect(provider.hasPendingAuthorization()).toBe(true);
+      now += 60_000;
       expect(provider.hasPendingAuthorization()).toBe(false);
     } finally {
       rmSync(directory, { recursive: true, force: true });

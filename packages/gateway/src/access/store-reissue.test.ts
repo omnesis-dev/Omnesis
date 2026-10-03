@@ -29,6 +29,7 @@ import {
   decideAuthorizationRequest,
   defaultAuthorizationScope,
   exchangeAuthorizationCode,
+  getAuthorizationRequestByBrowserHandle,
   issueAuthorizationCode,
   lookupPrincipalAccessToken,
   type OAuthClientCleanupCursor,
@@ -466,6 +467,95 @@ describe("which agent devices can still reach the corpus", () => {
     // A revoked agent has no corpus access to repair — unpairing is the state
     // that matters there, and the device list already shows it.
     expect([...agentDeviceAuthorizations(db, NOW + 10).keys()]).toEqual([]);
+  });
+});
+
+describe("one open approval per agent integration", () => {
+  function openRequest(deviceId: string, clientId: string, at: number) {
+    const binding = createExecutionBinding(
+      db,
+      { deviceId, oauthClientId: clientId, harness: "hermes" },
+      at,
+    );
+    if (!binding.ok) throw new Error("execution binding refused");
+    const created = createAuthorizationRequest(
+      db,
+      {
+        clientId,
+        redirectUri: REDIRECT,
+        state: `${deviceId}-${at}-state`,
+        codeChallenge: createHash("sha256").update(VERIFIER).digest("base64url"),
+        resource: RESOURCE,
+        scope: defaultAuthorizationScope(),
+        executionBinding: binding.value.binding,
+      },
+      at,
+    );
+    if (!created.ok) throw new Error(`authorization request refused: ${created.error}`);
+    return created.value;
+  }
+
+  test("a new request from the same device and client ends the one it lost track of", () => {
+    insertAgentDevice("device-hermes-a", "hermes");
+    const client = publicClient();
+    const first = openRequest("device-hermes-a", client.clientId, NOW);
+    const second = openRequest("device-hermes-a", client.clientId, NOW + 60_000);
+
+    expect(
+      getAuthorizationRequestByBrowserHandle(db, first.browserHandle, NOW + 60_001),
+    ).toMatchObject({
+      status: "expired",
+    });
+    expect(
+      getAuthorizationRequestByBrowserHandle(db, second.browserHandle, NOW + 60_001),
+    ).toMatchObject({ status: "pending" });
+    // The ended request can no longer be approved into a code nobody collects.
+    expect(
+      decideAuthorizationRequest(
+        db,
+        {
+          approvalId: first.id,
+          decision: "approve",
+          actorTokenId: "portal-token",
+          selection: {
+            kind: "new-principal",
+            principalName: "Fictional hermes assistant",
+            grantName: "Reviewed answer",
+            rules: ANSWER_RULES,
+            credentialLabel: "hermes runtime",
+            expiresAt: null,
+          },
+        },
+        NOW + 60_002,
+      ).ok,
+    ).toBe(false);
+  });
+
+  test("leaves other devices' and unbound requests alone", () => {
+    insertAgentDevice("device-hermes-a", "hermes");
+    insertAgentDevice("device-hermes-b", "hermes");
+    const client = publicClient();
+    const unbound = createAuthorizationRequest(
+      db,
+      {
+        clientId: client.clientId,
+        redirectUri: REDIRECT,
+        state: "unbound-state",
+        codeChallenge: createHash("sha256").update(VERIFIER).digest("base64url"),
+        resource: RESOURCE,
+        scope: defaultAuthorizationScope(),
+      },
+      NOW,
+    );
+    if (!unbound.ok) throw new Error("unbound request refused");
+    const other = openRequest("device-hermes-b", client.clientId, NOW);
+    openRequest("device-hermes-a", client.clientId, NOW + 1_000);
+
+    for (const handle of [unbound.value.browserHandle, other.browserHandle]) {
+      expect(getAuthorizationRequestByBrowserHandle(db, handle, NOW + 1_001)).toMatchObject({
+        status: "pending",
+      });
+    }
   });
 });
 

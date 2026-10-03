@@ -1379,7 +1379,7 @@ describe("executing a host's plan", () => {
       "git checkout --detach v0.3.0",
       "npm ci",
       "npm run build",
-      "/usr/local/bin/omnesis connect openclaw --refresh --no-restart",
+      "/usr/local/bin/omnesis connect openclaw --refresh --no-restart --no-interactive",
       "openclaw gateway restart",
     ]);
     expect(approve).toHaveBeenCalledOnce();
@@ -1406,7 +1406,7 @@ describe("executing a host's plan", () => {
     const refresh = runner.calls.find((call) => call.spec.args.includes("--refresh"));
     expect(refresh?.spec).toEqual({
       command: tsx,
-      args: [entry, "connect", "hermes", "--refresh", "--no-restart"],
+      args: [entry, "connect", "hermes", "--refresh", "--no-restart", "--no-interactive"],
       env: { PATH: "/opt/node/bin" },
     });
   });
@@ -1437,7 +1437,7 @@ describe("executing a host's plan", () => {
       }),
     );
     expect(executed(runner)).not.toContain(
-      "/usr/local/bin/omnesis connect openclaw --refresh --no-restart",
+      "/usr/local/bin/omnesis connect openclaw --refresh --no-restart --no-interactive",
     );
     expect(approve).not.toHaveBeenCalled();
     expect(output()).toContain("omnesis connect openclaw --refresh");
@@ -1533,7 +1533,7 @@ describe("executing a host's plan", () => {
       }),
     );
     expect(executed(runner)).toContain(
-      "/usr/local/bin/omnesis connect openclaw --refresh --no-restart",
+      "/usr/local/bin/omnesis connect openclaw --refresh --no-restart --no-interactive",
     );
     expect(executed(runner)).not.toContain("openclaw gateway restart");
     expect(approve).not.toHaveBeenCalled();

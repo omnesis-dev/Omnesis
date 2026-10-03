@@ -81,6 +81,17 @@ export function createAuthorizationRequest(
           const binding = consumeExecutionBinding(db, input.executionBinding, client.clientId, now);
           if (!binding.ok) return binding;
           executionDeviceId = binding.value;
+          // One open approval per integration. A paired agent opens a new
+          // request only when it has lost track of the one before — its
+          // process stopped, or the answer that named the request never
+          // arrived — so an approval given to the older one could never reach
+          // it. Ending the older request here leaves the operator a single
+          // request to approve, and the one the agent is waiting on.
+          db.prepare(
+            `UPDATE oauth_authorization_requests SET expires_at = ?
+              WHERE client_id = ? AND execution_device_id = ?
+                AND status = 'pending' AND expires_at > ?`,
+          ).run(now, client.clientId, executionDeviceId, now);
         }
         db.prepare(
           `INSERT INTO oauth_authorization_requests (

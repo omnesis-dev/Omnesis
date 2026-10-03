@@ -88,8 +88,11 @@ interface ReissuedTokenResponse {
  */
 const NO_APPROVED_CREDENTIAL = "NO_APPROVED_CREDENTIAL";
 
-/** Raised when the operator has revoked the grant, or never approved one. */
-class IntegrationReauthorizationRequiredError extends Error {
+/**
+ * Raised when the operator has revoked the grant, or never approved one: the
+ * one outcome of a headless recovery after which only a new approval helps.
+ */
+export class IntegrationReauthorizationRequiredError extends Error {
   constructor(harnessHint = "<harness>") {
     super(
       `Omnesis corpus access for this installation is no longer authorized. ` +
