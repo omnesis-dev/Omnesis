@@ -140,4 +140,22 @@ public struct ConversationControls: Decodable, Sendable, Equatable {
     public let busy: Bool
     public let pendingClarification: ConversationClarification?
     public let queuedMessages: [ConversationQueuedMessage]
+    public var capabilities: Capabilities?
+
+    public struct Capabilities: Decodable, Sendable, Equatable {
+        public var coalescedQueue: Bool?
+        public var queueSendNow: Bool?
+    }
+
+    public var queued: [ConversationQueuedMessage] {
+        queuedMessages.filter { $0.status == "queued" }
+    }
+
+    public var queuedBubbleTexts: [String] {
+        capabilities?.coalescedQueue == true ? (queued.isEmpty ? [] : [queuedText]) : queued.map(\.text)
+    }
+
+    public var queuedText: String {
+        queued.map(\.text).joined(separator: "\n\n")
+    }
 }

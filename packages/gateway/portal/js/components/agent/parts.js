@@ -15,6 +15,7 @@ import { html } from "htm/preact";
 import { useState, useRef, useEffect } from "preact/hooks";
 import { sourceIcon, sourceLabel } from "../../lib/format.js";
 import { navigate } from "../../lib/router.js";
+import { MessageActions } from "./message-actions.js";
 import { AssistantMarkdown } from "./assistant-markdown.js";
 import { DocChip } from "../doc-chip.js";
 import { Modal } from "../modal.js";
@@ -77,6 +78,7 @@ export function MessageBubble({ turn, citations, dispatch, onEdit, canEdit = tru
   // animations when the agent fires off five annotates in a row.
   const pillRuns = computeCitationPillRuns(turn.parts ?? []);
   return html`
+    <${MessageActions} text=${turn.parts.filter(part => part.kind === "text").map(part => part.text).join("\n\n")} action=${turn.role === "user" && onEdit && canEdit ? { label: "Edit and resend", onSelect: () => onEdit(turn.parts.filter(part => part.kind === "text").map(part => part.text).join("\n\n")) } : null}>
     <div class=${`agent-msg agent-msg-${turn.role}`}>
       <div class="agent-msg-body">
         ${turn.parts.map((part, i) =>
@@ -98,9 +100,6 @@ export function MessageBubble({ turn, citations, dispatch, onEdit, canEdit = tru
             turn.role === "assistant",
           ))}
       </div>
-      ${turn.role === "user" && onEdit && canEdit
-        ? html`<button type="button" class="agent-prompt-edit" onClick=${() => onEdit(turn.parts.filter((part) => part.kind === "text").map((part) => part.text).join("\n"))}>Edit and resend</button>`
-        : null}
       ${turn.error
         ? html`<div class="agent-msg-error">
             <span>${turn.error}</span>
@@ -114,6 +113,7 @@ export function MessageBubble({ turn, citations, dispatch, onEdit, canEdit = tru
         ? html`<div class="agent-msg-footer"><${CitationCountChip} count=${count} /></div>`
         : null}
     </div>
+    </${MessageActions}>
   `;
 }
 

@@ -52,6 +52,7 @@ class AgentViewModel @Inject constructor(
     fun interruptAndSend(text: String, command: SlashCommand?) =
         coordinator.submitFollowUp(text, command?.deepResearch ?: false, interrupt = true)
     fun answerClarification(text: String) = coordinator.submitFollowUp(text)
+    fun sendQueuedNow(ids: List<String>) = coordinator.sendQueuedNow(ids)
     fun retrySubmission(id: String) = coordinator.retrySubmission(id)
     fun editPendingSubmission(id: String) = coordinator.editPendingSubmission(id)
 

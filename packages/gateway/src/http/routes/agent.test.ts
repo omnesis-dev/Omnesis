@@ -2089,7 +2089,11 @@ describe("conversation submission compatibility", () => {
     const { sessionId } = await created.json();
     const controls = await app.request(`/agent/sessions/${sessionId}/controls`);
     expect(controls.status).toBe(200);
-    expect(await controls.json()).toEqual({ busy: false, queuedMessages: [] });
+    expect(await controls.json()).toEqual({
+      busy: false,
+      queuedMessages: [],
+      capabilities: { coalescedQueue: true, queueSendNow: true },
+    });
     const sent = await app.request(`/agent/sessions/${sessionId}/messages`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -2111,7 +2115,22 @@ describe("conversation submission compatibility", () => {
       body: JSON.stringify({ text: "", mode: "unexpected", clientMessageId: "key" }),
     });
     expect(invalid.status).toBe(400);
+    const invalidSendNow = await app.request(`/agent/sessions/${sessionId}/queue/send-now`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ submissionIds: [] }),
+    });
+    expect(invalidSendNow.status).toBe(400);
     const reader = buildScopedApp(service, [SCOPE_READ]);
+    expect(
+      (
+        await reader.request(`/agent/sessions/${sessionId}/queue/send-now`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ submissionIds: ["one"] }),
+        })
+      ).status,
+    ).toBe(403);
     expect((await reader.request(`/agent/sessions/${sessionId}/controls`)).status).toBe(403);
     expect(
       (
@@ -2166,6 +2185,22 @@ describe("conversation submission compatibility", () => {
       expect(retry.status).toBe(202);
       expect((await store.load(sessionId))?.controls?.submissions).toHaveLength(1);
       expect((await send("tokenB", "Changed payload")).status).toBe(409);
+      const sendNow = await client.request(`/agent/sessions/${sessionId}/queue/send-now`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-test-token": "tokenB" },
+        body: JSON.stringify({ submissionIds: ["receipt"] }),
+      });
+      expect(sendNow.status).toBe(202);
+      expect(await sendNow.json()).toMatchObject({
+        capabilities: { queueSendNow: true },
+        queuedMessages: [],
+      });
+      const stale = await client.request(`/agent/sessions/${sessionId}/queue/send-now`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ submissionIds: ["unknown"] }),
+      });
+      expect(stale.status).toBe(409);
     } finally {
       await replay.dispose();
       await rm(dir, { recursive: true, force: true });

@@ -157,6 +157,7 @@ fun AgentScreen(
         onRetrySubmission = vm::retrySubmission,
         onEditPendingSubmission = vm::editPendingSubmission,
         onEditPrompt = vm::editPrompt,
+        onSendQueuedNow = vm::sendQueuedNow,
     )
 }
 
@@ -190,6 +191,7 @@ fun AgentContent(
     onRetrySubmission: (String) -> Unit = {},
     onEditPendingSubmission: (String) -> Unit = {},
     onEditPrompt: (String) -> Unit = {},
+    onSendQueuedNow: (List<String>) -> Unit = {},
 ) {
     var showCitations by remember { mutableStateOf(false) }
     var conversationMenuOpen by remember(state.sessionId) {
@@ -373,6 +375,7 @@ fun AgentContent(
                     Transcript(
                         state = state,
                         onEditPrompt = onEditPrompt,
+                        onSendQueuedNow = onSendQueuedNow,
                         catalog = catalog,
                         onFlushEphemeral = onFlushEphemeral,
                         onOpenDocument = onOpenDocument,
@@ -768,6 +771,7 @@ private fun Modifier.transcriptKeyboardDismissal(): Modifier {
 private fun Transcript(
     state: AgentCoordinator.UiState,
     onEditPrompt: (String) -> Unit,
+    onSendQueuedNow: (List<String>) -> Unit,
     catalog: SourceCatalog,
     onFlushEphemeral: (String) -> Unit,
     onOpenDocument: (String) -> Unit,
@@ -815,7 +819,7 @@ private fun Transcript(
     // Follow streaming content only while stuck. Re-keys on turn count and the trailing
     // assistant's part count so each streamed part nudges the view down.
     val lastAssistantParts = (turns.lastOrNull() as? AgentTurn.Assistant)?.parts?.size ?: 0
-    LaunchedEffect(turns.size, lastAssistantParts) {
+    LaunchedEffect(turns.size, lastAssistantParts, queuedConversationText(state.controls.queuedMessages)) {
         if (stickToBottom && !inInspection) {
             listState.animateScrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
         }
@@ -883,18 +887,24 @@ private fun Transcript(
             }
             items(turns, key = { it.id }) { turn ->
                 when (turn) {
-                    is AgentTurn.User -> Column(horizontalAlignment = Alignment.End) {
-                        UserBubble(turn.text)
-                        androidx.compose.material3.TextButton(onClick = { onEditPrompt(turn.text) }, enabled = state.canCompose) {
-                            Text("Edit & resend", style = MaterialTheme.typography.labelSmall)
-                        }
+                    is AgentTurn.User -> ConversationMessageActions(
+                        text = turn.text,
+                        actionLabel = "Edit and resend",
+                        onAction = if (state.canCompose) ({ onEditPrompt(turn.text) }) else null,
+                    ) { UserBubble(turn.text) }
+                    is AgentTurn.Assistant -> ConversationMessageActions(
+                        text = turn.parts.filterIsInstance<AgentPart.Text>().joinToString("\n\n") { it.text },
+                    ) {
+                        AssistantTurn(
+                            turn, catalog, onFlushEphemeral, onOpenDocument,
+                            citations = state.chat.citations,
+                            isStreaming = state.chat.isTurnStreaming(turn),
+                        )
                     }
-                    is AgentTurn.Assistant -> AssistantTurn(
-                        turn, catalog, onFlushEphemeral, onOpenDocument,
-                        citations = state.chat.citations,
-                        isStreaming = state.chat.isTurnStreaming(turn),
-                    )
                 }
+            }
+            if (state.controls.queuedMessages.any { it.status == "queued" }) {
+                item(key = "queued-messages") { QueuedConversationBubble(state, onSendQueuedNow) }
             }
             // The item is added only once the dots have actually revealed (a genuine quiet gap),
             // so a hidden/debouncing indicator never leaves an empty inter-item slot.

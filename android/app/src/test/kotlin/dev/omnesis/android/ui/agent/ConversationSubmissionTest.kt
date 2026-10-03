@@ -36,6 +36,7 @@ class ConversationSubmissionTest {
     private val submissions = CopyOnWriteArrayList<String>()
     private var reject = true
     private var oldGateway = false
+    private var controlsBody = """{"busy":true,"queuedMessages":[],"future":true}"""
 
     @Before fun setup() {
         Dispatchers.setMain(Dispatchers.Unconfined)
@@ -43,7 +44,7 @@ class ConversationSubmissionTest {
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = when {
                 request.path?.endsWith("/controls") == true -> if (oldGateway) MockResponse().setResponseCode(404).setBody("""{"error":"NOT_FOUND","message":"Not found"}""")
-                    else MockResponse().setBody("""{"busy":true,"queuedMessages":[],"future":true}""")
+                    else MockResponse().setBody(controlsBody)
                 request.path?.endsWith("/submissions") == true -> {
                     submissions += request.body.readUtf8()
                     if (reject) MockResponse().setResponseCode(503).setBody("""{"error":"UNAVAILABLE","message":"Unavailable"}""")
@@ -137,6 +138,20 @@ class ConversationSubmissionTest {
         assertEquals(true, retry.deepResearch)
         assertNull(retry.clarificationId)
         assertNotEquals("failed-id", retry.clientMessageId)
+    }
+
+    @Test fun authoritativeQueueAcknowledgesUncertainReceiptWithoutDiscardingDraft() {
+        val coord = coordinator()
+        coord.updateDraft("Another unsent question", "deep-research")
+        coord.submitFollowUp("Use annual totals")
+        await { submissions.size == 1 && coord.state.value.submissionsSending.isEmpty() }
+        val id = coord.state.value.composer.pending.single().clientMessageId
+        controlsBody = """{"busy":true,"queuedMessages":[{"id":"$id","text":"Use annual totals","status":"queued"}]}"""
+        coord.conversationSurfaceVisible("session-one", true)
+        await { coord.state.value.composer.pending.isEmpty() }
+        assertEquals("Another unsent question", coord.state.value.composer.text)
+        assertEquals("deep-research", coord.state.value.composer.commandId)
+        assertEquals(id, coord.state.value.controls.queuedMessages.single().id)
     }
 
     @Test fun idleSendOnCapableGatewayKeepsDurableSubmissionUntilAcknowledged() {

@@ -88,6 +88,7 @@ const log = createLogger("gateway:http").child("routes:agent");
 
 import {
   submissionInputSchema,
+  sendQueuedInputSchema,
   ConversationControlError,
 } from "../../agent/conversation-controls.js";
 
@@ -749,6 +750,27 @@ export function mountAgentRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
       try {
         return c.json(
           await requireService().submitMessage(callerOf(c), c.req.param("id"), c.req.valid("json")),
+          202,
+        );
+      } catch (error) {
+        throw mapAgentError(error);
+      }
+    },
+  );
+
+  app.post(
+    "/agent/sessions/:id/queue/send-now",
+    scope.admin(),
+    agentBodyLimit,
+    validateJson(sendQueuedInputSchema),
+    async (c) => {
+      try {
+        return c.json(
+          await requireService().sendQueuedNow(
+            callerOf(c),
+            c.req.param("id"),
+            c.req.valid("json").submissionIds,
+          ),
           202,
         );
       } catch (error) {

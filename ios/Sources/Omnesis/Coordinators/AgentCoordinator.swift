@@ -217,6 +217,24 @@ public final class AgentCoordinator {
         }
     }
 
+    func sendQueuedMessagesNow(submissionIds: [String]) async {
+        guard let client, let id = sessionId, canComposeMessage, !submitting,
+              let controls = conversationControls, controls.capabilities?.queueSendNow == true,
+              !submissionIds.isEmpty else { return }
+        submitting = true
+        submissionError = nil
+        defer { submitting = false }
+        do {
+            let updated = try await client.sendQueuedMessagesNow(sessionId: id, submissionIds: submissionIds)
+            guard sessionId == id, self.client === client else { return }
+            conversationControls = updated
+        } catch {
+            guard sessionId == id, self.client === client else { return }
+            submissionError = error
+            await refreshConversationControls()
+        }
+    }
+
     /// Keep the unsent draft until the gateway acknowledges its durable submission.
     func submitDraft(text: String, interrupt: Bool = false, deepResearch: Bool = false) async -> Bool {
         guard let client, canComposeMessage, !submitting else { return false }
@@ -3842,6 +3860,11 @@ extension AgentCoordinator {
     /// broken gateway. Pass real `URLError` / `GatewayClient.Error`
     /// shapes so `GatewayErrorView`'s classifier sees the same
     /// inputs it would in production.
+    func installPreviewConversationControls(_ controls: ConversationControls) {
+        conversationControls = controls
+        conversationControlsSupported = true
+    }
+
     func installPreviewFatal(error: Error) {
         self.fatalError = error
     }

@@ -77,3 +77,14 @@ export function clearPendingSubmission(sessionId, clientMessageId) {
     /* Storage can be unavailable in private browsing. */
   }
 }
+
+/** Move a saved answer from the separate clarification field into an empty composer. */
+export function migrateClarificationDraft(sessionId, clarificationId) {
+  const oldKey = `clarification:${clarificationId}`;
+  const oldDraft = readConversationDraft(oldKey);
+  const current = readConversationDraft(sessionId);
+  if (!oldDraft.text || current.text || current.command) return false;
+  if (!writeConversationDraft(sessionId, oldDraft.text, oldDraft.command)) return false;
+  clearConversationDraft(oldKey, oldDraft.text, oldDraft.command);
+  return true;
+}

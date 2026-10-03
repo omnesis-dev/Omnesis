@@ -3058,6 +3058,17 @@ export class AgentService {
     return this.controls.submit(sessionId, input, callerId);
   }
 
+  async sendQueuedNow(callerId: CallerId, sessionId: string, submissionIds: string[]) {
+    const entry = this.requireSession(sessionId);
+    if (this.disposing || this.answerDeleteLocks.has(sessionId))
+      throw new AgentError("session_busy", "The conversation is closing. Try again shortly.");
+    if (entry.meta.terminalFailure)
+      throw new AgentError("context_window_exceeded", entry.meta.terminalFailure.message);
+    entry.callerId = callerId;
+    this.touch(sessionId);
+    return this.controls.sendNow(sessionId, submissionIds);
+  }
+
   cancelSession(callerId: CallerId, sessionId: string): { ok: true } {
     const entry = this.requireSession(sessionId);
     entry.callerId = callerId;

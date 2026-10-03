@@ -64,6 +64,9 @@ class AgentClient(private val http: GatewayHttp) {
     suspend fun submit(sessionId: String, body: ConversationSubmissionBody): ConversationSubmissionResponse =
         http.postJson("agent/sessions/$sessionId/submissions", body)
 
+    suspend fun sendQueuedNow(sessionId: String, submissionIds: List<String>): ConversationControls =
+        http.postJson("agent/sessions/$sessionId/queue/send-now", QueueSendNowBody(submissionIds))
+
     suspend fun cancel(sessionId: String): Boolean =
         http.postJson<Map<String, String>, OkResponse>("agent/sessions/$sessionId/cancel", emptyMap()).ok
 
@@ -207,10 +210,17 @@ data class ConversationSubmission(
 )
 
 @Serializable
+data class ConversationCapabilities(val coalescedQueue: Boolean = false, val queueSendNow: Boolean = false)
+
+@Serializable
+data class QueueSendNowBody(val submissionIds: List<String>)
+
+@Serializable
 data class ConversationControls(
     val busy: Boolean = false,
     val pendingClarification: ConversationClarification? = null,
     val queuedMessages: List<ConversationSubmission> = emptyList(),
+    val capabilities: ConversationCapabilities = ConversationCapabilities(),
 )
 
 @Serializable

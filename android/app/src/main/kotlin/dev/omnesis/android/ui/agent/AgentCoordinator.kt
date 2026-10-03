@@ -136,6 +136,27 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
             ?.let { submitFollowUp(it.text, deepResearch = it.deepResearch == true, answerCurrentQuestion = false) }
     }
 
+    fun sendQueuedNow(submissionIds: List<String>) {
+        val st = _state.value
+        val sid = st.sessionId ?: return
+        val c = client ?: return
+        if (!st.controlsAvailable || !st.controls.capabilities.queueSendNow || submissionIds.isEmpty()) return
+        scope.launch {
+            try {
+                val controls = c.sendQueuedNow(sid, submissionIds)
+                if (client === c && _state.value.sessionId == sid) {
+                    _state.update { it.copy(controls = controls) }
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                if (client === c && _state.value.sessionId == sid) {
+                    _state.update { it.copy(chat = it.chat.copy(lastTurnError = "Could not send queued messages: ${classifyGatewayError(error)}")) }
+                }
+            }
+        }
+    }
+
     private fun deliverSubmission(sid: String, body: dev.omnesis.android.transport.client.ConversationSubmissionBody) {
         val c = client ?: return
         if (!submissionsInFlight.add(body.clientMessageId)) return
@@ -174,7 +195,13 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
             }
             return
         }
-        if (client === c && _state.value.sessionId == sid) _state.update { it.copy(controls = controls, controlsAvailable = true) }
+        if (client === c && _state.value.sessionId == sid) {
+            val record = composerStore.read(composerAccount, sid)
+            val confirmedIds = controls.queuedMessages.mapTo(hashSetOf()) { it.id }
+            val reconciled = record.copy(pending = record.pending.filterNot { it.clientMessageId in confirmedIds })
+            if (reconciled != record) composerStore.write(composerAccount, sid, reconciled)
+            _state.update { it.copy(controls = controls, controlsAvailable = true, composer = reconciled) }
+        }
     }
 
     private fun startControlsPolling(id: String) {

@@ -25,7 +25,7 @@
 import { html } from "htm/preact";
 import { useEffect, useReducer, useRef, useState } from "preact/hooks";
 
-import { submissionForRetry, clearPendingSubmission, readPendingSubmission, readConversationDraft, writeConversationDraft, clearConversationDraft } from "../lib/conversation-draft.js";
+import { migrateClarificationDraft, submissionForRetry, clearPendingSubmission, readPendingSubmission, readConversationDraft, writeConversationDraft, clearConversationDraft } from "../lib/conversation-draft.js";
 import { ConversationControls } from "../components/agent/conversation-controls.js";
 import { createAgentClient } from "../lib/agent-client.js";
 import {
@@ -296,6 +296,9 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
     try {
       const result = await clientRef.current.getControls(sessionId);
       if (request === controlsRequestRef.current && activeSessionIdRef.current === sessionId) {
+        if (result.pendingClarification && migrateClarificationDraft(sessionId, result.pendingClarification.id)) {
+          window.dispatchEvent(new CustomEvent("omnesis:conversation-draft", { detail: { key: sessionId } }));
+        }
         setControls({ ...result, sessionId });
       }
     } catch (error) {
@@ -860,7 +863,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
     if (pinnedToBottomRef.current) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [state.turns]);
+  }, [state.turns, JSON.stringify([controls?.queuedMessages, controls?.pendingClarification, unconfirmed?.submission])]);
 
   // Grace-period clear for the plan panel: when a turn finishes (`busy`
   // flips true → false), wait ~700ms so the final ✓ animation reads,
@@ -1030,6 +1033,18 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
     }
   }
 
+  async function sendQueuedNow(submissionIds) {
+    const sessionId = state.sessionId;
+    if (!sessionId || !clientRef.current || state.terminalFailure) return;
+    setActionFailure(null);
+    try {
+      await clientRef.current.sendQueuedNow(sessionId, submissionIds);
+      if (activeSessionIdRef.current === sessionId) await refreshControls(sessionId);
+    } catch (error) {
+      if (activeSessionIdRef.current === sessionId) setActionFailure({ sessionId, message: `Queued messages were not confirmed. Try Send now again. ${error.message ?? String(error)}` });
+    }
+  }
+
   function cancel() {
     if (!state.sessionId || !clientRef.current) return;
     const sessionId = state.sessionId;
@@ -1123,6 +1138,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
                 controls=${controls?.sessionId === state.sessionId ? controls : null}
                 unconfirmed=${unconfirmed?.sessionId === state.sessionId ? unconfirmed.submission : null}
                 onAnswer=${send}
+                onSendNow=${sendQueuedNow}
               />
                   <${Composer}
                     disabled=${agentComposerDisabled(state.sessionId, state.agentConfig)}
@@ -1131,7 +1147,8 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
                     key=${editPrompt ? "editing" : "draft"}
                     draftKey=${editPrompt ? `${composerDraftKey}:edit` : composerDraftKey}
                     onSubmit=${async (text, options) => {
-                      const accepted = await send(text, options);
+                      const clarificationId = controls?.sessionId === state.sessionId ? controls.pendingClarification?.id : null;
+                      const accepted = await send(text, { ...options, ...(clarificationId ? { clarificationId } : {}) });
                       if (accepted && activeSessionIdRef.current === state.sessionId) setEditPrompt(null);
                       return accepted;
                     }}
@@ -1166,13 +1183,15 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
                 <${WorkingIndicator}
                   active=${workingIndicatorActive(state)}
                   rev=${workingIndicatorRev(state)} />
-              </div>
-              <${PlanPanel} items=${state.planItems} />
               <${ConversationControls}
                 controls=${controls?.sessionId === state.sessionId ? controls : null}
                 unconfirmed=${unconfirmed?.sessionId === state.sessionId ? unconfirmed.submission : null}
                 onAnswer=${send}
+                onSendNow=${sendQueuedNow}
               />
+              </div>
+              <${PlanPanel} items=${state.planItems} />
+
 
               ${editPrompt ? html`<div class="agent-edit-notice">Editing as a new message. The original exchange stays in this conversation.
                 <button type="button" onClick=${() => { writeConversationDraft(`${composerDraftKey}:edit`, ""); setEditPrompt(null); }}>Cancel edit</button>
@@ -1188,7 +1207,8 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
                     key=${editPrompt ? "editing" : "draft"}
                     draftKey=${editPrompt ? `${composerDraftKey}:edit` : composerDraftKey}
                     onSubmit=${async (text, options) => {
-                      const accepted = await send(text, options);
+                      const clarificationId = controls?.sessionId === state.sessionId ? controls.pendingClarification?.id : null;
+                      const accepted = await send(text, { ...options, ...(clarificationId ? { clarificationId } : {}) });
                       if (accepted && activeSessionIdRef.current === state.sessionId) setEditPrompt(null);
                       return accepted;
                     }}

@@ -270,12 +270,15 @@
         <h3 id="conversation-controls">Questions, follow-ups, and corrections</h3>
         <p>
           When the agent needs clarification, it can offer selectable answers. Choose one or write
-          your own reply. An unanswered question remains available when you reopen the conversation
-          on another device.
+          your own reply in the normal message composer. An unanswered question remains available
+          when you reopen the conversation on another device.
         </p>
         <p>
           You can send a follow-up while an answer is running. The gateway keeps accepted messages
-          in a queue and answers them in order. <strong>Interrupt and send</strong>
+          together in one queued message. Additional follow-ups grow that message, and the agent
+          receives them together when its current answer finishes. Right-click the queued message in
+          the portal, or long-press it on mobile, and choose <strong>Send now</strong> to interrupt
+          the current answer and send the queue immediately. <strong>Interrupt and send</strong>
           stops the current answer and puts your correction ahead of queued follow-ups. Stopping a
           run does not undo actions it has already completed.
         </p>
@@ -283,9 +286,11 @@
           The portal, iOS, and Android keep unsent drafts on the device, separately for each
           conversation. Accepted queued messages stay with the gateway when you close the app. After
           a gateway restart, opening the conversation resumes queued work; a message interrupted by
-          the restart is shown for review instead of silently repeated.
-          <strong>Edit and resend</strong> appends a corrected prompt and keeps the original
-          exchange in the history.
+          the restart is shown for review instead of silently repeated. Right-click a message in the
+          portal or long-press it on mobile to open its menu.
+          <strong>Copy</strong> copies a user or agent message to the clipboard. On your own
+          messages, <strong>Edit and resend</strong> appends a corrected prompt and keeps the
+          original exchange in the history.
         </p>
         <p>
           These controls require support from both the app and gateway. An app connected to a

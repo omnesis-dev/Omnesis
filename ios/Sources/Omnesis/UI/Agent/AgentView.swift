@@ -828,20 +828,36 @@ public struct AgentView: View {
                         }
                     }
                     ForEach(store.agent.turns) { turn in
-                        VStack(alignment: .trailing, spacing: 4) {
-                            AgentTurnBubble(turn: turn)
-                            if case .user(_, let text) = turn {
-                                Button("Edit and resend", systemImage: "square.and.pencil") {
-                                    replaceComposerDraft(text)
-                                    composerFocused = true
+                        AgentTurnBubble(turn: turn)
+                            .contextMenu {
+                                switch turn {
+                                case .user(_, let text):
+                                    Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = text }
+                                    Button("Edit and resend", systemImage: "square.and.pencil") {
+                                        replaceComposerDraft(text)
+                                        composerFocused = true
+                                    }
+                                    .disabled(!store.agent.canComposeMessage || store.agent.submitting)
+                                case .assistant(let assistant):
+                                    Button("Copy", systemImage: "doc.on.doc") {
+                                        UIPasteboard.general.string = assistant.parts.compactMap { part in
+                                            if case .text(let text) = part { return text }
+                                            return nil
+                                        }
+                                        .joined(separator: "\n\n")
+                                    }
                                 }
-                                .font(.caption)
-                                .foregroundStyle(Theme.textSecondary)
-                                .disabled(!store.agent.canComposeMessage || store.agent.submitting)
                             }
-                        }
-                        .id(turn.id)
-                        .pagingRowFrame(id: turn.id, in: Self.scrollSpace)
+                            .id(turn.id)
+                            .pagingRowFrame(id: turn.id, in: Self.scrollSpace)
+                    }
+
+                    if let controls = store.agent.conversationControls, !controls.queued.isEmpty {
+                        ConversationQueuedBubble(
+                            controls: controls,
+                            disabled: !store.agent.canComposeMessage || store.agent.submitting,
+                            onSendNow: { Task { await store.agent.sendQueuedMessagesNow(submissionIds: controls.queued.map(\.id)) } }
+                        )
                     }
 
                     // Turn-level "still working" dots — the single indicator

@@ -94,9 +94,10 @@ it("drains durable followups after a legacy turn; retries do not duplicate turns
   const { sessionId } = await h.service.createSession("device:A");
   h.service.sendMessage("device:A", sessionId, "First");
   await h.service.submitMessage("device:B", sessionId, request("followup", "Second"));
+  await h.service.submitMessage("device:B", sessionId, request("additional", "Third"));
   expect(h.turns.map((t) => t.text)).toEqual(["First"]);
   h.turns[0]!.finish();
-  await vi.waitFor(() => expect(h.turns.map((t) => t.text)).toEqual(["First", "Second"]));
+  await vi.waitFor(() => expect(h.turns.map((t) => t.text)).toEqual(["First", "Second\n\nThird"]));
   h.turns[1]!.finish();
   await vi.waitFor(async () =>
     expect((await h.store.load(sessionId))?.controls?.submissions[0]?.status).toBe("completed"),
@@ -107,7 +108,7 @@ it("drains durable followups after a legacy turn; retries do not duplicate turns
   expect(record?.messages.filter((m) => m.role === "user")).toHaveLength(2);
 });
 
-it("interrupts the current run and starts the correction before an older queued followup", async () => {
+it("interrupts the current run and combines the correction with an older queued followup", async () => {
   const h = await setup();
   const { sessionId } = await h.service.createSession("device:A");
   h.service.sendMessage("device:A", sessionId, "First");
@@ -116,12 +117,10 @@ it("interrupts the current run and starts the correction before an older queued 
     ...request("correction", "Correction"),
     mode: "interrupt",
   });
-  await vi.waitFor(() => expect(h.turns.map((t) => t.text)).toEqual(["First", "Correction"]));
-  h.turns[1]!.finish();
   await vi.waitFor(() =>
-    expect(h.turns.map((t) => t.text)).toEqual(["First", "Correction", "Later"]),
+    expect(h.turns.map((t) => t.text)).toEqual(["First", "Correction\n\nLater"]),
   );
-  h.turns[2]!.finish();
+  h.turns[1]!.finish();
 });
 
 it("retains a question across restart and accepts text from an old client", async () => {
@@ -157,12 +156,10 @@ it("pauses queued work for a question and prioritizes its answer", async () => {
     ...request("answer", "Table"),
     clarificationId: question.id,
   });
-  await vi.waitFor(() => expect(h.turns.map((t) => t.text)).toEqual(["Ask a question", "Table"]));
-  h.turns[1]!.finish();
   await vi.waitFor(() =>
-    expect(h.turns.map((t) => t.text)).toEqual(["Ask a question", "Table", "Later"]),
+    expect(h.turns.map((t) => t.text)).toEqual(["Ask a question", "Table\n\nLater"]),
   );
-  h.turns[2]!.finish();
+  h.turns[1]!.finish();
 });
 
 it("reserves the start barrier against concurrent legacy sends", async () => {
@@ -258,4 +255,31 @@ it("keeps successful acceptance when an older terminal snapshot saves after it",
     "next",
   ]);
   h.turns[1]!.finish();
+});
+
+it("interrupts once to send accumulated followups together and keeps receipts across restart", async () => {
+  const h = await setup();
+  const { sessionId } = await h.service.createSession("device:A");
+  h.service.sendMessage("device:A", sessionId, "First");
+  await h.service.submitMessage("device:A", sessionId, request("one", "Use a table."));
+  await h.service.submitMessage("device:A", sessionId, request("two", "Include sources."));
+  await h.service.sendQueuedNow("device:A", sessionId, ["one", "two"]);
+  await vi.waitFor(() =>
+    expect(h.turns.map((t) => t.text)).toEqual(["First", "Use a table.\n\nInclude sources."]),
+  );
+  h.turns[1]!.finish();
+  await vi.waitFor(async () =>
+    expect((await h.store.load(sessionId))?.controls?.submissions.map((s) => s.status)).toEqual([
+      "completed",
+      "completed",
+    ]),
+  );
+  await h.service.dispose();
+  const resumed = h.create();
+  await resumed.createSession("device:A", { resumeFromId: sessionId });
+  await resumed.sendQueuedNow("device:A", sessionId, ["one", "two"]);
+  await resumed.submitMessage("device:A", sessionId, request("two", "Include sources."));
+  expect(h.turns).toHaveLength(2);
+  const record = await h.store.load(sessionId);
+  expect(record?.messages.filter((m) => m.role === "user")).toHaveLength(2);
 });

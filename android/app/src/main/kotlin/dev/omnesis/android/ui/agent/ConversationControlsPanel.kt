@@ -12,9 +12,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -30,7 +29,7 @@ internal fun ConversationControlsPanel(
 ) {
     val question = state.controls.pendingClarification
     val pending = state.composer.pending
-    val queue = state.controls.queuedMessages.filter { queued -> pending.none { it.clientMessageId == queued.id } }
+    val queue = state.controls.queuedMessages.filter { queued -> queued.status != "queued" && pending.none { it.clientMessageId == queued.id } }
     if (question == null && pending.isEmpty() && queue.isEmpty()) return
     Column(
         Modifier.fillMaxWidth().heightIn(max = 240.dp).verticalScroll(rememberScrollState())
@@ -40,14 +39,13 @@ internal fun ConversationControlsPanel(
         question?.let { clarification ->
             Text(clarification.question, style = MaterialTheme.typography.titleSmall, color = OmTheme.colors.textPrimary)
             clarification.choices.forEach { choice ->
-                OutlinedButton(onClick = { onAnswer(choice.label) }, enabled = state.canCompose && state.submissionsSending.isEmpty(), modifier = Modifier.fillMaxWidth()) {
+                TextButton(onClick = { onAnswer(choice.label) }, enabled = state.canCompose && state.submissionsSending.isEmpty(), modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.fillMaxWidth()) {
                         Text(choice.label)
                         choice.description?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                     }
                 }
             }
-            Text("Or type your own answer below.", style = MaterialTheme.typography.bodySmall, color = OmTheme.colors.textSecondary)
         }
         pending.forEach { message ->
             val sending = message.clientMessageId in state.submissionsSending
@@ -63,14 +61,13 @@ internal fun ConversationControlsPanel(
 
 @Composable
 private fun PendingMessageRow(text: String, status: String, retry: (() -> Unit)?, edit: (() -> Unit)? = null) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Column(Modifier.weight(1f)) {
-            Text(status, style = MaterialTheme.typography.labelSmall, color = OmTheme.colors.textSecondary)
-            Text(text, style = MaterialTheme.typography.bodySmall, color = OmTheme.colors.textPrimary)
-        }
-        if (retry != null || edit != null) Column {
+    ConversationMessageActions(text = text, actionLabel = "Edit and resend", onAction = edit) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.weight(1f)) {
+                Text(status, style = MaterialTheme.typography.labelSmall, color = OmTheme.colors.textSecondary)
+                Text(text, style = MaterialTheme.typography.bodySmall, color = OmTheme.colors.textPrimary)
+            }
             if (retry != null) TextButton(onClick = retry) { Text("Retry") }
-            if (edit != null) TextButton(onClick = edit) { Text("Edit") }
         }
     }
 }

@@ -242,4 +242,16 @@ class AgentClientTest {
             server.takeRequest().path,
         )
     }
+    @Test
+    fun sendQueuedNowRetriesOriginalIdsWithoutResubmittingText() = runTest {
+        repeat(2) { server.enqueue(MockResponse().setBody("""{"busy":true,"queuedMessages":[],"capabilities":{"queueSendNow":true,"coalescedQueue":true,"future":true}}""")) }
+        repeat(2) {
+            val controls = client().sendQueuedNow("s_one", listOf("first", "second"))
+            assertTrue(controls.capabilities.queueSendNow)
+            val request = server.takeRequest()
+            assertEquals("/agent/sessions/s_one/queue/send-now", request.path)
+            assertEquals("""{"submissionIds":["first","second"]}""", request.body.readUtf8())
+        }
+    }
+
 }

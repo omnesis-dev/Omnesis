@@ -3783,13 +3783,32 @@ final class PreviewSnapshotTests: XCTestCase {
 
     func testConversationChoicesAndQueue() {
         snapshot(
-            ConversationControlsPanel(
-                controls: PreviewMocks.conversationControls,
-                error: nil,
-                disabled: false,
-                onChoice: { _ in }
-            ),
-            name: "72a-conversation-choices-queue"
+            VStack(spacing: 24) {
+                AgentTurnBubble(turn: .user(id: "original", text: "Compare this month's activity."))
+                ConversationQueuedBubble(
+                    controls: PreviewMocks.conversationControls,
+                    disabled: false,
+                    onSendNow: {}
+                )
+                ConversationControlsPanel(
+                    controls: PreviewMocks.conversationControls,
+                    error: nil,
+                    disabled: false,
+                    onChoice: { _ in }
+                )
+                AgentComposer(
+                    text: .constant("My answer"),
+                    busy: false,
+                    queueEnabled: true,
+                    disabled: false,
+                    speech: SpeechRecognizer.preview(state: .idle),
+                    onSend: { _, _ in },
+                    onCancel: {},
+                    focused: FocusState<Bool>().projectedValue
+                )
+            }.padding(.horizontal, 16),
+            name: "72a-conversation-choices-queue",
+            size: CGSize(width: 393, height: 650)
         )
     }
 

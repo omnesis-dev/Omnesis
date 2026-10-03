@@ -4932,6 +4932,20 @@ enum PreviewMocks {
         )
     }()
 
+    static let agentConversationControls = AppStore.AgentPreviewSeed(
+        sessionId: "conversation-controls-preview",
+        model: "preview",
+        backend: "preview",
+        title: "Activity comparison",
+        turns: [
+            .user(id: "preview-prompt", text: "Compare my activity."),
+            .assistant(AgentAssistantTurn(id: "preview-answer", parts: [.text("Which period should I compare?")], historyCompleted: true)),
+        ],
+        citations: [],
+        conversations: [],
+        connected: true
+    )
+
     static let conversationFollowupDraft = "Use this year instead, and include a short summary."
 
     static let conversationControls = ConversationControls(
@@ -4943,7 +4957,11 @@ enum PreviewMocks {
                 .init(label: "This year", description: "Compare with the previous year"),
             ]
         ),
-        queuedMessages: [.init(id: "queued-example", text: "Include a short summary.", status: "queued", error: nil)]
+        queuedMessages: [
+            .init(id: "queued-example", text: "Include a short summary.", status: "queued", error: nil),
+            .init(id: "queued-second", text: "Compare the totals too.", status: "queued", error: nil),
+        ],
+        capabilities: .init(coalescedQueue: true, queueSendNow: true)
     )
 
     static let agentBusyStreaming = AppStore.AgentPreviewSeed(
