@@ -26,7 +26,7 @@ function panel() {
     },
   };
   const messages: unknown[] = [];
-  const sendMessage = vi.fn(async <T>(msg: unknown) => {
+  const sendMessage = vi.fn(async (msg: unknown) => {
     messages.push(msg);
     const message = msg as { type: string; text?: string; selection?: string };
     if (message.type === "notes-update")
@@ -35,10 +35,15 @@ function panel() {
         draft: { ...view.draft!, text: message.text!, selection: message.selection! },
       };
     if (message.type === "notes-submit") view = { ...view, pending: 1, draft: null };
-    return view as T;
+    return view;
   });
   initNotesPanel(document as unknown as Document, {
-    runtime: { sendMessage },
+    runtime: {
+      sendMessage: async <T>(message: unknown): Promise<T> => {
+        const result: unknown = await sendMessage(message);
+        return result as T;
+      },
+    },
     storage: { onChanged: { addListener: vi.fn() } },
   });
   return { document, window, messages };

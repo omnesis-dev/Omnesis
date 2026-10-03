@@ -17,13 +17,18 @@ function entry(name: "options.html" | "popup.html") {
     pending: 0,
   };
   let changed: ((changes: Record<string, unknown>, area: string) => void) | undefined;
-  const sendMessage = vi.fn(async <T>() => view as T);
+  const sendMessage = vi.fn(async (_message: unknown) => view);
   const query = vi.fn(async () => [
     { id: 1, url: "https://example.org/article", title: "Example article" },
   ]);
   initNotesEntry(document, {
     tabs: { query },
-    runtime: { sendMessage },
+    runtime: {
+      sendMessage: async <T>(message: unknown): Promise<T> => {
+        const result: unknown = await sendMessage(message);
+        return result as T;
+      },
+    },
     storage: {
       onChanged: {
         addListener: (callback) => {
