@@ -105,6 +105,7 @@ describe("attached page links before capture", () => {
           input.metadata,
           String(input.sourceId),
           input.externalId,
+          null,
         );
       expect(edges()).toEqual([{ normalized_target: url, target_doc_id: null }]);
       for (let pass = 0; pass < 3; pass++) {
