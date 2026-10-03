@@ -1,12 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { prepareIOSSimulator } from "./ci/prepare-ios-simulator.mjs";
+import { waitForIOSDestination } from "./ci/wait-ios-destination.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const read = (path) => readFileSync(join(root, path), "utf8");
@@ -366,5 +377,263 @@ describe("hosted iOS simulator preparation", () => {
       "OMNESIS_JOURNEY_IOS_UDID=$udid",
     );
     expect(read("scripts/run-mobile-journeys.sh")).toContain('udid="$OMNESIS_JOURNEY_IOS_UDID"');
+  });
+});
+
+describe("Xcode simulator destination discovery", () => {
+  const udid = "00000000-0000-0000-0000-000000000017";
+  const destination = `platform=iOS Simulator,id=${udid}`;
+  const heading = 'Available destinations for the "Omnesis" scheme:';
+  const phone = `{ platform:iOS Simulator, arch:arm64, id:${udid}, OS:26.5, name:iPhone 17 }`;
+  const placeholder =
+    "{ platform:iOS Simulator, id:dvtdevice-DVTiOSDeviceSimulatorPlaceholder-iphonesimulator:placeholder, name:Any iOS simulator }";
+
+  function discovery(outputs, options = {}) {
+    let elapsed = 0;
+    const calls = [];
+    const logs = [];
+    return {
+      calls,
+      logs,
+      elapsed: () => elapsed,
+      invoke: () =>
+        waitForIOSDestination({
+          destination,
+          timeoutMs: 5000,
+          packageFlags: [
+            "-clonedSourcePackagesDirPath",
+            "build/packages",
+            "-disableAutomaticPackageResolution",
+          ],
+          run: (command, args, timeout) => {
+            calls.push({ command, args, timeout });
+            const output = outputs[Math.min(calls.length - 1, outputs.length - 1)];
+            if (output instanceof Error) throw output;
+            return output;
+          },
+          now: () => elapsed,
+          wait: (milliseconds) => {
+            elapsed += milliseconds;
+          },
+          log: (message) => logs.push(message),
+          ...options,
+        }),
+    };
+  }
+
+  it("waits for a concrete eligible phone after Xcode initially lists placeholders", () => {
+    const check = discovery([`${heading}\n${placeholder}`, `${heading}\n${phone}`]);
+    check.invoke();
+    expect(check.calls).toHaveLength(2);
+    expect(check.elapsed()).toBe(2000);
+    expect(check.calls[0]).toEqual({
+      command: "xcodebuild",
+      args: [
+        "-project",
+        "Omnesis.xcodeproj",
+        "-scheme",
+        "Omnesis",
+        "-showdestinations",
+        "-clonedSourcePackagesDirPath",
+        "build/packages",
+        "-disableAutomaticPackageResolution",
+      ],
+      timeout: 5000,
+    });
+    expect(check.calls[1].timeout).toBe(3000);
+  });
+
+  it("bounds absent destinations by wall time and preserves the final inventory", () => {
+    const inventory = `${heading}\n${placeholder}`;
+    const check = discovery([inventory]);
+    expect(check.invoke).toThrow("within 5s");
+    expect(check.elapsed()).toBe(5000);
+    expect(check.calls.map((call) => call.timeout)).toEqual([5000, 3000, 1000]);
+    expect(check.logs.at(-1)).toContain(inventory);
+  });
+
+  it("does not accept the selected UDID from ineligible destinations", () => {
+    const check = discovery([
+      `${heading}\n${placeholder}\nIneligible destinations for the "Omnesis" scheme:\n${phone}`,
+    ]);
+    expect(check.invoke).toThrow("did not discover eligible destination");
+  });
+
+  it("honors explicit name, OS and architecture selectors", () => {
+    const check = discovery(
+      [
+        `${heading}\n${phone.replace("26.5", "26.4")}`,
+        `${heading}\n${phone.replace("arm64", "x86_64")}`,
+        `${heading}\n${phone}`,
+      ],
+      { destination: "platform=iOS Simulator,name=iPhone 17,OS=26.5,arch=arm64" },
+    );
+    check.invoke();
+    expect(check.calls).toHaveLength(3);
+  });
+
+  it("caps slow discovery probes and includes probe failure diagnostics", () => {
+    let elapsed = 0;
+    const check = discovery([], {
+      timeoutMs: 35000,
+      now: () => elapsed,
+      wait: (milliseconds) => {
+        elapsed += milliseconds;
+      },
+      run: (_command, _args, timeout) => {
+        expect(timeout).toBe(elapsed === 0 ? 30000 : 3000);
+        elapsed += timeout;
+        const error = new Error("discovery probe timed out");
+        error.stderr = "CoreSimulator discovery unavailable";
+        throw error;
+      },
+    });
+    expect(check.invoke).toThrow("within 35s");
+    expect(elapsed).toBe(35000);
+    expect(check.logs.at(-1)).toContain("CoreSimulator discovery unavailable");
+  });
+});
+
+it("rejects OS=latest before probing instead of accepting an older phone", () => {
+  expect(() =>
+    waitForIOSDestination({
+      destination: "platform=iOS Simulator,name=iPhone 17,OS=latest",
+      run: () => {
+        throw new Error("must not probe");
+      },
+    }),
+  ).toThrow("Use a concrete OS version");
+});
+
+// Run the actual wrapper through startup failure without Xcode or a gateway.
+// Child stubs record whether readiness failure cleans up and preserves evidence.
+describe("iOS live gateway startup", () => {
+  function failedStartup({ destination, simulatorFails = false, discoveryFails = false } = {}) {
+    const fixture = mkdtempSync(join(tmpdir(), "ios-e2e-startup-"));
+    try {
+      const scripts = join(fixture, "scripts");
+      const bin = join(fixture, "bin");
+      const config = join(fixture, "config");
+      const calls = join(fixture, "calls");
+      mkdirSync(scripts);
+      mkdirSync(join(scripts, "ci"));
+      mkdirSync(join(fixture, "ios"));
+      mkdirSync(bin);
+      copyFileSync(join(root, "scripts/run-ios-e2e.sh"), join(scripts, "run-ios-e2e.sh"));
+      function executable(path, source) {
+        writeFileSync(path, `#!/usr/bin/env bash\nset -eu\n${source}`);
+        chmodSync(path, 0o755);
+      }
+      executable(
+        join(bin, "node"),
+        `
+        if [[ "$1" == */wait-ios-destination.mjs ]]; then
+          echo "discover:$2" >> "$TEST_CALLS"
+          ${discoveryFails ? "exit 71" : "exit 0"}
+        fi
+        echo "prepare:$*" >> "$TEST_CALLS"
+        ${simulatorFails ? "exit 70" : 'echo "00000000-0000-0000-0000-000000000017"'}
+      `,
+      );
+      executable(join(bin, "xcodegen"), 'echo "project" >> "$TEST_CALLS"');
+      executable(join(scripts, "ci/resolve-ios-packages.sh"), 'echo "packages" >> "$TEST_CALLS"');
+      executable(
+        join(scripts, "synth-gateway.sh"),
+        `
+        echo "$1:$OMNESIS_SYNTH_READY_TIMEOUT" >> "$TEST_CALLS"
+        if [[ "$1" == start ]]; then
+          mkdir -p "$OMNESIS_CONFIG_DIR/logs"
+          echo "synthetic startup diagnostic" > "$OMNESIS_CONFIG_DIR/logs/gateway.stdout.log"
+          echo "SYNTH_GATEWAY_NOT_READY" >&2
+          exit 23
+        fi
+      `,
+      );
+      const env = {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        OMNESIS_CONFIG_DIR: config,
+        OMNESIS_SYNTH_READY_TIMEOUT: "300",
+        TEST_CALLS: calls,
+      };
+      delete env.OMNESIS_E2E_DEST;
+      if (destination) env.OMNESIS_E2E_DEST = destination;
+      const result = spawnSync("bash", [join(scripts, "run-ios-e2e.sh")], {
+        env,
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+      return {
+        ...result,
+        calls: readFileSync(calls, "utf8").trim().split("\n"),
+        log:
+          simulatorFails || discoveryFails
+            ? undefined
+            : readFileSync(join(config, "logs/gateway.stdout.log"), "utf8"),
+      };
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  }
+
+  it("resolves an available iPhone before startup and cleans up failed startup", () => {
+    const result = failedStartup();
+    expect(result.status).toBe(1);
+    expect(result.calls[0]).toMatch(/prepare:.*scripts\/ci\/prepare-ios-simulator.mjs$/);
+    expect(result.calls.slice(1)).toEqual([
+      "project",
+      "packages",
+      "discover:platform=iOS Simulator,id=00000000-0000-0000-0000-000000000017",
+      "start:300",
+      "stop:300",
+    ]);
+    expect(result.stderr).toContain("SYNTH_GATEWAY_NOT_READY");
+    expect(result.stderr).toContain("synthetic startup diagnostic");
+    expect(result.log).toBe("synthetic startup diagnostic\n");
+  });
+
+  it("honors a destination already prepared by CI", () => {
+    const result = failedStartup({
+      destination: "platform=iOS Simulator,id=00000000-0000-0000-0000-000000000018",
+    });
+    expect(result.status).toBe(1);
+    expect(result.calls).toEqual([
+      "project",
+      "packages",
+      "discover:platform=iOS Simulator,id=00000000-0000-0000-0000-000000000018",
+      "start:300",
+      "stop:300",
+    ]);
+  });
+
+  it("does not spawn a gateway when simulator preparation fails", () => {
+    const result = failedStartup({ simulatorFails: true });
+    expect(result.status).toBe(70);
+    expect(result.calls).toHaveLength(1);
+    expect(result.calls[0]).toMatch(/^prepare:/);
+  });
+
+  it("does not spawn a gateway when Xcode cannot discover the prepared phone", () => {
+    const result = failedStartup({ discoveryFails: true });
+    expect(result.status).toBe(71);
+    expect(result.calls.map((call) => call.split(":")[0])).toEqual([
+      "prepare",
+      "project",
+      "packages",
+      "discover",
+    ]);
+  });
+
+  it("allows a cold macOS boot and uploads only failure logs after the live lane", () => {
+    const job = parse(read(".github/workflows/ios.yml")).jobs["live-gateway-e2e"];
+    expect(job.env.OMNESIS_SYNTH_READY_TIMEOUT).toBe("300");
+    const upload = job.steps.find((step) => step.name === "Upload live gateway failure logs");
+    expect(job.steps.indexOf(upload)).toBeGreaterThan(
+      job.steps.findIndex((step) => step.name === "lane [ios-live-e2e]"),
+    );
+    expect(upload.if).toBe("failure()");
+    expect(upload["continue-on-error"]).toBe(true);
+    expect(upload.with.path).toBe("${{ env.OMNESIS_CONFIG_DIR }}/logs/*.log");
+    expect(upload.with["retention-days"]).toBe(7);
   });
 });
