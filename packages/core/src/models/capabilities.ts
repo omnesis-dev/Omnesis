@@ -82,6 +82,8 @@ export interface TranscriptionResult {
 export interface TranscribeCapability {
   readonly name: string;
   readonly modelId: string;
+  /** Known vocabulary adapter runtime; absent means hints are unsupported. */
+  readonly vocabularyRuntime?: "smart-whisper";
   transcribe(
     audio: Uint8Array,
     mimeType: string,
@@ -94,6 +96,10 @@ export interface TranscribeCapability {
        * backend's own deadline so a slow host still finishes.
        */
       minTimeoutMs?: number;
+      /** Ranked personal vocabulary; the backend owns its hint encoding. */
+      vocabulary?: import("../transcription.js").TranscriptionVocabulary;
+      /** Conservative hint token budget, capped by the recognizer adapter. */
+      maxPromptTokens?: number;
     },
   ): Promise<TranscriptionResult>;
   dispose(): Promise<void>;

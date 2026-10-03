@@ -348,6 +348,16 @@ export function upsertDocuments(
         WHEN excluded.metadata != documents.metadata THEN NULL
         WHEN excluded.extracted_content_hash IS NOT documents.extracted_content_hash THEN NULL
         ELSE documents.links_extracted_at END,
+      vocabulary_revision = documents.vocabulary_revision + CASE
+        WHEN excluded.content_hash != documents.content_hash THEN 1
+        WHEN excluded.metadata != documents.metadata THEN 1
+        WHEN excluded.title != documents.title THEN 1
+        ELSE 0 END,
+      vocabulary_processed_at = CASE
+        WHEN excluded.content_hash != documents.content_hash THEN NULL
+        WHEN excluded.metadata != documents.metadata THEN NULL
+        WHEN excluded.title != documents.title THEN NULL
+        ELSE documents.vocabulary_processed_at END,
       people_resolved_at = CASE
         WHEN excluded.content_hash != documents.content_hash THEN NULL
         WHEN excluded.metadata != documents.metadata THEN NULL
@@ -415,7 +425,6 @@ export function upsertDocuments(
        AND extracted_content_hash IS ? AND source_updated_at = ? AND source_url IS ?
   `);
 
-  const now = new Date().toISOString();
   const documentTemporalProjection = options.documentTemporalProjection;
 
   let absencePlanScope = options.absencePlanScope;
@@ -423,6 +432,10 @@ export function upsertDocuments(
   const ignoredReplicaDocuments: Array<{ sourceId: string; externalId: string }> = [];
   let acceptedDocumentCount = 0;
   const insertMany = db.transaction((docs: PreparedDocumentInput[]) => {
+    // A yielded page commits in several transactions. Stamp each transaction
+    // separately so its later chunks cannot land behind an indexer checkpoint
+    // carrying the first chunk's older timestamp.
+    const now = new Date().toISOString();
     const acceptedDocuments: PreparedDocumentInput[] = [];
     for (const doc of docs) {
       if (documentTemporalProjection && doc.sourceId !== documentTemporalProjection.sourceId) {
@@ -1483,6 +1496,18 @@ export function listDocumentsLightweight(
 
   const hasMore = rows.length > limit;
   return { documents: rows.slice(0, limit), hasMore };
+}
+
+/** Highest committed document timestamp; the covering index makes this a point read. */
+export function getDocumentUpdatedAtBoundary(db: Db): string | null {
+  return (
+    db
+      .prepare<
+        [],
+        { updated_at: string | null }
+      >("SELECT MAX(updated_at) AS updated_at FROM documents INDEXED BY idx_documents_updated_at")
+      .get()?.updated_at ?? null
+  );
 }
 
 export function listDocumentIds(db: Db): string[] {

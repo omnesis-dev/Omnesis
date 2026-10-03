@@ -19,6 +19,7 @@
  */
 
 import { createLogger } from "@omnesis/core";
+import { getNoteEntry } from "../sources/omnesis-notes/storage.js";
 import {
   getPendingVoiceNote,
   listDuePendingVoiceNotes,
@@ -65,6 +66,8 @@ export interface VoiceNoteInput extends Omit<CaptureNoteInput, "text" | "id" | "
   mimeType: string;
   /** ISO 639 language hint, when the device knows it. */
   language?: string;
+  /** Set by the authenticated ingress, never by client metadata. */
+  allowVocabulary?: boolean;
 }
 
 export interface VoiceNoteServiceDeps {
@@ -74,7 +77,12 @@ export interface VoiceNoteServiceDeps {
   transcribe: (
     audio: Uint8Array,
     mimeType: string,
-    opts?: { language?: string; minTimeoutMs?: number },
+    opts?: {
+      language?: string;
+      minTimeoutMs?: number;
+      context?: import("@omnesis/core").TranscriptionContext;
+      allowVocabulary?: boolean;
+    },
   ) => Promise<TranscriptionResult | null>;
   /** The transcriber's readiness, once anything it is still checking has settled. */
   readiness: () => Promise<TranscriberReadiness>;
@@ -129,6 +137,7 @@ export class VoiceNoteService {
         audio: input.audio,
         mimeType: input.mimeType,
         language: input.language ?? null,
+        allowVocabulary: input.allowVocabulary !== false,
         savedText,
         placeholder: fallback.length === 0,
         nextAttemptAt: this.now().toISOString(),
@@ -211,6 +220,13 @@ export class VoiceNoteService {
     const result = await this.deps.transcribe(audio, note.mimeType, {
       ...(note.language ? { language: note.language } : {}),
       minTimeoutMs: PATIENCE_MS[Math.min(note.attempts, PATIENCE_MS.length - 1)],
+      allowVocabulary: note.allowVocabulary === true,
+      context: {
+        purpose: "dictation",
+        speaker: { isSelf: true },
+        recordedAt: getNoteEntry(this.deps.readDb, note.noteId)?.capturedAt,
+        ...(note.language ? { languageHints: [note.language] } : {}),
+      },
     });
     // The note may have been deleted while it was being transcribed; its row
     // went with it, and there is nothing left to update.

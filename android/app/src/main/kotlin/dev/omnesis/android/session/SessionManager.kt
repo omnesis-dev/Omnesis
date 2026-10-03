@@ -49,6 +49,9 @@ import dev.omnesis.android.transport.http.GatewayHttp
 import dev.omnesis.android.transport.tls.PinnedOkHttp
 import dev.omnesis.android.transport.ws.DeviceSocket
 import dev.omnesis.android.ui.agent.AgentCoordinator
+import dev.omnesis.android.voice.SpeechVocabulary
+import dev.omnesis.android.transport.client.TranscriptionVocabularyClient
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
@@ -197,6 +200,7 @@ internal suspend fun <Session> beginRelayEnrollmentForSession(
 @Singleton
 class SessionManager @Inject constructor(
     private val pairingService: PairingService,
+    private val speechVocabulary: SpeechVocabulary = SpeechVocabulary(),
     private val deviceCapabilities: DeviceCapabilities,
     private val sourceCatalog: SourceCatalog,
     private val agentCoordinator: AgentCoordinator,
@@ -228,6 +232,7 @@ class SessionManager @Inject constructor(
     /** The set of clients bound to the current pairing. */
     class GatewaySession(
         val pairing: Pairing,
+        val vocabulary: TranscriptionVocabularyClient,
         val gateway: GatewayClient,
         val search: SearchClient,
         val admin: AdminClient,
@@ -470,6 +475,7 @@ class SessionManager @Inject constructor(
         session ?: error("no active gateway session — app is unpaired")
 
     private fun rebuild(atLaunch: Boolean = false) {
+        speechVocabulary.cache.reset()
         sourceRemovalReconciler.invalidateSession()
         sessionJob?.cancel()
         sessionJob = null
@@ -537,6 +543,7 @@ class SessionManager @Inject constructor(
         socket.start()
         val built = GatewaySession(
             pairing = pairing,
+            vocabulary = TranscriptionVocabularyClient(http),
             gateway = GatewayClient(http),
             search = SearchClient(http),
             admin = admin,
@@ -781,13 +788,22 @@ class SessionManager @Inject constructor(
         statusProbeSerializer.run probe@{
             if (session !== current) return@probe false
             // Re-reading status may reveal an updated gateway, so search re-asks its capabilities.
+            val vocabularyOwner = speechVocabulary.cache.ownerToken()
             current.search.invalidateSearchCapabilities()
-            val status = runCatching { current.gateway.status() }.getOrElse { return@probe false }
+            val status = runCatching { current.gateway.status() }.getOrElse {
+                if (session === current && (it is GatewayException.Unauthorized || it is GatewayException.Forbidden)) {
+                    speechVocabulary.cache.reset(expectedOwner = vocabularyOwner)
+                }
+                return@probe false
+            }
             if (session !== current) return@probe false
             _experimentalEnabled.value = status.experimental
             _developerEnabled.value = status.developer
             _briefsMenuEntry.value = BriefsMenuEntry.from(status.briefs)
             _dictation.value = status.dictation
+            this.current()?.let { childScope ->
+                speechVocabulary.cache.warm(status.transcriptionVocabulary, Locale.getDefault().toLanguageTag(), childScope, ownerToken = vocabularyOwner, fetch = current.vocabulary::fetch)
+            }
             true
         }
 

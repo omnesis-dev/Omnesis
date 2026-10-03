@@ -24,6 +24,8 @@ data class StatusSnapshot(
      * features hidden.
      */
     val experimental: Boolean = false,
+    /** Private speech hints are opt-in; older gateways omit this field. */
+    val transcriptionVocabulary: Boolean = false,
     /**
      * Whether the gateway runs in developer mode (`OMNESIS_DEV_MODE=1`).
      * Reveals the developer-annotation capture affordance

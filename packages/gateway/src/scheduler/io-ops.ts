@@ -64,7 +64,12 @@ import type { LinkExtractionDocRow } from "../domain/LinkExtraction-cpu.js";
 import type { ExtractedLinkBatchEntry } from "../domain/LinkExtraction.js";
 import type { DateExtractionDocRow } from "../enrichment/dates/extractor.js";
 import type { LikeSearchArgs, LikeSearchRow } from "../search/like-search.js";
-import type { PersonSummary as LookupPersonSummary, UrlCanonicalizerSpec } from "@omnesis/core";
+import type {
+  PersonSummary as LookupPersonSummary,
+  UrlCanonicalizerSpec,
+  TranscriptionContext,
+  TranscriptionVocabulary,
+} from "@omnesis/core";
 import type {
   ConversationRetentionCandidate,
   ConversationRetentionFile,
@@ -75,7 +80,14 @@ import type {
   SourceUrlRecanonicalizationPlan,
 } from "../domain/SourceUrlRecanonicalization.js";
 
+import type { VocabularySettings, VocabularyDocument } from "../transcribe/vocabulary/types.js";
+
 export interface IoGate {
+  fetchTranscriptionVocabularyBatch(settings: VocabularySettings): Promise<VocabularyDocument[]>;
+  getTranscriptionVocabulary(
+    context: TranscriptionContext,
+    settings: VocabularySettings,
+  ): Promise<TranscriptionVocabulary>;
   /** Sanity ping for tests. */
   echo<T>(value: T): Promise<T>;
   /** Single-row aggregate over `documents`. */
@@ -431,6 +443,8 @@ const DEFAULT_BUDGET_MS = 200;
 const HEAVY_BUDGET_MS = 2_000;
 
 const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
+  { name: "io.fetchTranscriptionVocabularyBatch", priority: "background" },
+  { name: "io.getTranscriptionVocabulary", priority: "user" },
   { name: "io.echo", priority: "background" },
   { name: "io.collectorRosterSnapshot", priority: "background" },
   { name: "io.planSourceUrlRecanonicalization", priority: "background" },
@@ -555,6 +569,10 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
   };
   return {
     echo: (value) => call("io.echo", [value]),
+    fetchTranscriptionVocabularyBatch: (settings) =>
+      call("io.fetchTranscriptionVocabularyBatch", [settings]),
+    getTranscriptionVocabulary: (context, settings) =>
+      call("io.getTranscriptionVocabulary", [context, settings]),
     collectorRosterSnapshot: () => call("io.collectorRosterSnapshot", []),
     planSourceUrlRecanonicalization: (specs, cursor) =>
       call("io.planSourceUrlRecanonicalization", [specs, cursor]),

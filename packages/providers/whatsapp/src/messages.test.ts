@@ -679,6 +679,37 @@ describe("WhatsAppMessagesSource", () => {
       return new WhatsAppMessagesSource(store, undefined, opts);
     }
 
+    test("self-authored audio uses self rather than the remote JID as speaker", async () => {
+      const transcribeAudio = vi.fn<NonNullable<WhatsAppMessagesSourceOptions["transcribeAudio"]>>(
+        async () => ({ text: "captured speech" }),
+      );
+      const src = new WhatsAppMessagesSource(store, "+15550100123", {
+        transcribeAudio,
+        downloadMedia: async () => ({ kind: "ok", data: new Uint8Array([1]) }),
+      });
+      store.addMessages([makeVoiceMsg({ fromMe: true })]);
+      const result = await src.sync(null);
+      expect(transcribeAudio.mock.calls[0][2]?.context?.speaker).toEqual({ isSelf: true });
+      expect(transcribeAudio.mock.calls[0][2]?.context?.conversation?.sourceId).toBe(src.id);
+      expect(result.documents[0].metadata.extra?.conversationId).toBe("1234@s.whatsapp.net");
+    });
+
+    test("LID audio carries a namespaced identity without fabricating a phone", async () => {
+      const transcribeAudio = vi.fn<NonNullable<WhatsAppMessagesSourceOptions["transcribeAudio"]>>(
+        async () => ({ text: "captured speech" }),
+      );
+      const src = makeSource({
+        transcribeAudio,
+        downloadMedia: async () => ({ kind: "ok", data: new Uint8Array([1]) }),
+      });
+      store.addMessages([makeVoiceMsg({ senderJid: "90001@lid" })]);
+      await src.sync(null);
+      expect(transcribeAudio.mock.calls[0][2]?.context?.speaker?.identifiers).toContainEqual({
+        kind: "lid",
+        value: "whatsapp:90001",
+      });
+    });
+
     test("transcribes a voice note and injects the transcript inline into the day-chat", async () => {
       const downloadMedia = vi.fn(async () => ({
         kind: "ok" as const,
@@ -693,6 +724,13 @@ describe("WhatsAppMessagesSource", () => {
       expect(transcribeAudio).toHaveBeenCalledWith(
         new Uint8Array([1, 2, 3]),
         "audio/ogg; codecs=opus",
+        {
+          context: expect.objectContaining({
+            purpose: "source-audio",
+            conversation: { sourceId: src.id, threadId: "1234@s.whatsapp.net" },
+            recordedAt: new Date(1709900000 * 1000).toISOString(),
+          }),
+        },
       );
       const doc = result.documents.find((d) => d.metadata.documentType === "conversation")!;
       expect(doc.content).toContain("Voice note");

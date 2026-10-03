@@ -207,7 +207,13 @@
             which transcribes it and replaces the note's text. The recording goes only to your
             gateway. The app deletes its copy once the gateway has it; the gateway keeps it in its
             database, alongside the rest of your data, only until it has transcribed it, for at most
-            a week, and deleting the note deletes it.
+            a week, and deleting the note deletes it. If you enable personal transcription
+            vocabulary on your gateway, the paired app can fetch a small list of names and terms
+            from your indexed data. It keeps this list in memory, for at most 24 hours without a
+            refresh, and supplies it only to on-device speech recognition. It does not supply
+            personal vocabulary to cloud recognizers, Siri, or other voice assistants. Unpairing
+            clears the list; disabling vocabulary clears it when the app next observes the gateway
+            setting.
           </li>
           <li>
             <strong>Location</strong> — on iOS, a location can be attached to a note captured in the

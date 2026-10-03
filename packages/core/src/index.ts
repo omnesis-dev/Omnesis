@@ -794,7 +794,13 @@ export type {
   AttachmentExtractFn,
 } from "./attachments.js";
 
-export type { AudioTranscribeFn } from "./transcription.js";
+export type {
+  AudioTranscribeFn,
+  TranscriptionContext,
+  TranscriptionPerson,
+  TranscriptionVocabulary,
+  TranscriptionVocabularyEntry,
+} from "./transcription.js";
 
 export type { OcrFn, OcrResult } from "./ocr.js";
 

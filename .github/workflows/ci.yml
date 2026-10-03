@@ -175,11 +175,11 @@ jobs:
 
       - name: lane [linux-lint]
         if: ${{ inputs.scope == 'full' }}
-        # Type-aware ESLint loads the whole TS program into one process; the
-        # default ~2 GB Node heap is not enough. 6 GB leaves headroom on the
-        # runner. Drop this once we shard lint by package.
+        # Type-aware ESLint loads the whole TS program into one process.
+        # An 8 GB heap leaves headroom on the public Ubuntu runner's 16 GB RAM.
+        # Drop this once we shard lint by package.
         env:
-          NODE_OPTIONS: "--max-old-space-size=6144"
+          NODE_OPTIONS: "--max-old-space-size=8192"
         run: exec node scripts/run-check.mjs lint
 
       - name: lane [format]

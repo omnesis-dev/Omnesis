@@ -49,6 +49,13 @@ class MockEmbedder implements Embedder {
 /** Source that counts `getByIds` invocations so we can pin batch iteration. */
 class MockSource implements DocumentSource {
   documents: IndexableDocument[] = [];
+
+  async getUpdatedAtBoundary(): Promise<string | null> {
+    return this.documents.reduce<string | null>(
+      (latest, doc) => (latest === null || doc.updatedAt > latest ? doc.updatedAt : latest),
+      null,
+    );
+  }
   allIds: string[] = [];
   getByIdsCalls = 0;
 
