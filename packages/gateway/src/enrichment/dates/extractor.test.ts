@@ -497,3 +497,73 @@ describe("unquoted", () => {
     ]);
   });
 });
+
+describe("anchor-day spans and rest-of compounds in a note told to the assistant", () => {
+  /**
+   * Invented notes, read the loose way a note told to the assistant is, as
+   * of a Tuesday morning. Each maps to the phrases that must come out as
+   * mentions; every other match must not.
+   */
+  const NOTE_ANCHOR_ISO = "2026-05-12T09:00:00.000Z";
+  const cases: Array<[string, string[]]> = [
+    // A rest-of compound noun names a kind of day, week or month, not a span.
+    ["Tomorrow is a rest day, then intervals later on.", ["Tomorrow"]],
+    ["Took a rest day after the long run.", []],
+    ["Next week is a rest week before the race.", ["Next week"]],
+    ["Planning a rest month in August, then build again.", ["August"]],
+    // A span that never leaves the note's own day is that day, like "today".
+    ["Pay the deposit today.", []],
+    ["Sore legs, couch for the rest of the day.", []],
+    ["Dinner with friends tonight.", []],
+    ["Call the plumber this afternoon.", []],
+    // Real mentions stay.
+    ["Book the hotel for the day after tomorrow.", ["the day after tomorrow"]],
+    ["Same time this day next week.", ["next week"]],
+    ["Busy for the rest of the week.", ["rest of the week"]],
+    ["Hand in the keys on 20 May.", ["20 May"]],
+    ["Journée de repos demain, puis fractionné.", ["demain"]],
+    ["Réserver le restaurant pour après-demain.", ["après-demain"]],
+    ["Mañana es día de descanso, luego series.", ["Mañana"]],
+    ["Descanso el resto del día.", []],
+    ["Reservar el hotel para pasado mañana.", ["pasado mañana"]],
+  ];
+
+  it.each(cases)("%s", (content, expected) => {
+    const [out] = extractDatesForDocs([
+      { id: "n", title: "Note", content, anchorAt: NOTE_ANCHOR_ISO, addressed: true },
+    ]);
+    const mentioned = out.dates.filter((_, index) => out.mentions?.[index]).map((d) => d.text);
+    expect(mentioned).toEqual(expected);
+  });
+
+  it("keeps a span that starts on the anchor day and runs past it", () => {
+    const dates = extractDatesFromText(
+      "Busy for the rest of the week.",
+      anchorFromIso(NOTE_ANCHOR_ISO)!,
+    );
+    expect(dates).toEqual([
+      expect.objectContaining({
+        kind: "range",
+        resolvedStart: "2026-05-12",
+        resolvedEnd: "2026-05-17",
+      }),
+    ]);
+  });
+
+  it("keeps an open-ended span bounded by the anchor day", () => {
+    const dates = extractDatesFromText("Send it by end of day.", anchorFromIso(NOTE_ANCHOR_ISO)!);
+    expect(dates).toEqual([expect.objectContaining({ kind: "range", mod: "before" })]);
+  });
+
+  it("drops the rest-of compound in each routed language and keeps the linked phrase", () => {
+    const at = anchorFromIso(NOTE_ANCHOR_ISO)!;
+    const texts = (text: string, culture: "fr-fr" | "es-es") =>
+      extractDatesFromText(text, at, {}, culture).map((d) => d.text);
+    expect(texts("libre resto semana", "es-es")).toEqual([]);
+    expect(texts("ocupado el resto de la semana", "es-es")).toEqual(["resto de la semana"]);
+    expect(texts("libre reste jour", "fr-fr")).toEqual([]);
+    expect(extractDatesFromText("busy the rest  of the week", at).map((d) => d.text)).toEqual([
+      "rest  of the week",
+    ]);
+  });
+});

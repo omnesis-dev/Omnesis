@@ -139,6 +139,33 @@ export function addDateMentions(db: Db): void {
 }
 
 /**
+ * Migration 188: queue for a rescan every document holding a date the
+ * extractor no longer keeps — a span that starts and ends on one day (the
+ * document's own day when it is "tonight" or "the rest of the day") or a
+ * rest-of match ("rest day", "rest week"). The selection is a superset: a
+ * rescanned document whose dates still stand gets the same rows back.
+ */
+export function rescanSameDaySpansAndRestCompounds(db: Db): void {
+  const has = (table: string, column: string): boolean =>
+    db
+      .prepare<[string], { name: string }>("SELECT name FROM pragma_table_info(?)")
+      .all(table)
+      .some((c) => c.name === column);
+  if (!has("documents", "dates_extracted_at") || !has("document_extracted_dates", "matched_text")) {
+    return;
+  }
+  db.exec(
+    `UPDATE documents SET dates_extracted_at = NULL
+       WHERE dates_extracted_at IS NOT NULL
+         AND id IN (
+           SELECT document_id FROM document_extracted_dates
+            WHERE (kind = 'range' AND mod IS NULL AND resolved_start = resolved_end)
+               OR lower(matched_text) LIKE 'rest%'
+         )`,
+  );
+}
+
+/**
  * Partial index over un-extracted documents — the extraction pass's cheap
  * "find work" query (mirrors idx_documents_links_unprocessed). References
  * `documents.dates_extracted_at`, which the migration adds by ALTER, so this
