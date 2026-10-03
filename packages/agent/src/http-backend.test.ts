@@ -3,9 +3,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { BACKGROUND_RATE_LIMIT_PATIENCE, type AgentEvent, type ToolResult } from "@omnesis/core";
 import { searchModelContextResult } from "./test-fixtures/search-model-context.js";
 
-import { BACKGROUND_RATE_LIMIT_PATIENCE, type AgentEvent, type ToolResult } from "@omnesis/core";
 import { HttpChatBackend, convertHistoryToOpenAI, convertToolsToOpenAI } from "./http-backend.js";
 import type { LlmRequestTiming, ToolHandle } from "./backend.js";
 
@@ -1402,6 +1402,10 @@ describe("HttpChatBackend", () => {
     globalThis.fetch = vi.fn((_input: string | URL | Request, init?: RequestInit) => {
       const body = new ReadableStream<Uint8Array>({
         start(stream) {
+          if (init?.signal?.aborted) {
+            stream.error(init.signal.reason);
+            return;
+          }
           init?.signal?.addEventListener("abort", () => stream.error(init.signal?.reason), {
             once: true,
           });
@@ -1410,7 +1414,7 @@ describe("HttpChatBackend", () => {
       return Promise.resolve(mockFetchResponse(body));
     });
     const backend = new HttpChatBackend({
-      baseUrl: "http://localhost:8000",
+      baseUrl: "http://127.0.0.1:8000",
       model: "test",
       timeoutMs: 5,
     });
@@ -1431,6 +1435,10 @@ describe("HttpChatBackend", () => {
         }
         const body = new ReadableStream<Uint8Array>({
           start(stream) {
+            if (init?.signal?.aborted) {
+              stream.error(init.signal.reason);
+              return;
+            }
             init?.signal?.addEventListener("abort", () => stream.error(init.signal?.reason), {
               once: true,
             });
@@ -1444,7 +1452,7 @@ describe("HttpChatBackend", () => {
         );
       });
       const backend = new HttpChatBackend({
-        baseUrl: "http://localhost:8000",
+        baseUrl: "http://127.0.0.1:8000",
         model: "test",
         timeoutMs: 5,
       });
