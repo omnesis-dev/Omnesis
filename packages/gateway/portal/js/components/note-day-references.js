@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { getNotesProvenance } from "../api.js";
 import { navigate } from "../lib/router.js";
 import { useVisiblePoll } from "../lib/use-visible-poll.js";
+import { TimeIndexPills } from "./time-index-pills.js";
 
 const REFRESH_MS = 30_000;
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
@@ -38,15 +39,17 @@ function ReferenceLink({ href, label }) {
   </a>`;
 }
 
-function TimeReferences({ title, items }) {
+function TimeReferences({ origin, items }) {
   if (items.length === 0) return null;
   return items.map(
     (item) => html`<div class="note-reference-row" key=${item.id}>
-      <span class="note-reference-heading">${title}</span>
-      <${ReferenceLink}
-        href=${`/portal/debug/calendar/${encodeURIComponent(item.id)}`}
-        label=${item.label}
-      />
+      <div class="note-reference-body">
+        <${ReferenceLink}
+          href=${`/portal/debug/calendar/${encodeURIComponent(item.id)}`}
+          label=${item.label}
+        />
+        <${TimeIndexPills} origin=${item.origin ?? origin} kind=${item.kind} />
+      </div>
       <span class="note-reference-detail">${referenceDate(item)}</span>
     </div>`,
   );
@@ -107,15 +110,17 @@ export function NoteDayReferences({ day, revision, experimental = false, onDocum
       <span class="note-reference-count">${summary}</span>
     </summary>
     <div class="note-reference-content">
-    <${TimeReferences} title="Dates mentioned" items=${mentions} />
-    <${TimeReferences} title="Related events" items=${annotations} />
+    <${TimeReferences} origin="mention" items=${mentions} />
+    <${TimeReferences} origin="annotation" items=${annotations} />
     ${loops.map(
       (loop) => html`<div class="note-reference-row" key=${loop.id}>
-        <span class="note-reference-heading">Open loops</span>
-        <${ReferenceLink}
-          href=${`/portal/debug/cognition/loops/${encodeURIComponent(loop.id)}`}
-          label=${loop.title}
-        />
+        <div class="note-reference-body">
+          <${ReferenceLink}
+            href=${`/portal/debug/cognition/loops/${encodeURIComponent(loop.id)}`}
+            label=${loop.title}
+          />
+          <span class="note-reference-heading">Open loop</span>
+        </div>
         <span class="note-reference-detail">${loop.status}</span>
       </div>`,
     )}

@@ -9,8 +9,8 @@ import { html } from "htm/preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { getCalendarItem, getCalendarWindow, getDocumentSummariesBulk } from "../api.js";
 import { navigate, replaceRoute } from "../lib/router.js";
+import { MOMENT_KINDS } from "../lib/time-index-labels.js";
 import {
-  MOMENT_KINDS,
   entryStartMs,
   localDayKey,
   visibleCalendarDays,
@@ -32,8 +32,8 @@ import {
   MentionSection,
 } from "./calendar-agenda.js";
 import { CalendarEntryDetail } from "./calendar-detail.js";
+export { CALENDAR_KINDS } from "../lib/time-index-labels.js";
 export {
-  CALENDAR_KINDS,
   calendarDateLabel,
   dayKeyInTimeZone,
   entryDayKeys,
