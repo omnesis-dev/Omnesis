@@ -1026,6 +1026,34 @@ describe("the policy a review ran under", () => {
   });
 });
 
+describe("answer progress dots", () => {
+  const running = { ...SHARED_EXCHANGE, status: "running", outcome: "checking" };
+  const dots = (nodes: any[]) => nodes.filter((node) => node.class === "agent-typing privacy-progress-dots");
+
+  test("the audit row marks active work and removes dots for terminal outcomes", () => {
+    expect(dots(expandToHostNodes(PrivacyFeedRow({ exchange: running })))).toHaveLength(1);
+    for (const outcome of ["shared", "needs_review", "failed", "blocked", "ready"]) {
+      expect(dots(expandToHostNodes(PrivacyFeedRow({
+        exchange: { ...SHARED_EXCHANGE, status: "complete", outcome },
+      })))).toHaveLength(0);
+    }
+  });
+
+  test("the spine marks only the stage currently working", () => {
+    for (const draftAnswer of [null, "An invented answer."]) {
+      const nodes = expandToHostNodes(PrivacyExchangeSpine({
+        exchange: { ...running, draftAnswer, sharedAnswer: null }, events: [],
+      }));
+      expect(dots(nodes)).toHaveLength(1);
+      expect(dots(nodes)[0].props["aria-hidden"]).toBe("true");
+      expect(allText(nodes)).toContain(draftAnswer ? "checking" : "drafting");
+    }
+    expect(dots(expandToHostNodes(PrivacyExchangeSpine({
+      exchange: SHARED_EXCHANGE, events: AUDIT_EVENTS,
+    })))).toHaveLength(0);
+  });
+});
+
 describe("the exchange spine", () => {
   function spine(overrides: Record<string, unknown> = {}, events = AUDIT_EVENTS) {
     return expandToHostNodes(

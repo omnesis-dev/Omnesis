@@ -161,7 +161,11 @@ struct PrivacyFeedOutcomeStatus: View {
         let display = privacyFeedOutcomeDisplay(exchange)
         if privacyFeedOutcomeIsQuiet(exchange.outcome) {
             HStack(spacing: 7) {
-                mark(display.tone)
+                if privacyExchangeNeedsPolling(exchange) {
+                    AgentWorkingDots().accessibilityHidden(true)
+                } else {
+                    mark(display.tone)
+                }
                 Text(display.label)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Theme.textSecondary)
@@ -739,6 +743,16 @@ private struct PrivacyActivityPaneHarness<Content: View>: View {
             previewResolution: PreviewMocks.privacyApprovedResolution
         )
     }
+}
+
+#Preview("Privacy feed — answers in progress") {
+    VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+        PrivacyFeedRow(exchange: PreviewMocks.privacyRunningExchange)
+        PrivacyFeedRow(exchange: PreviewMocks.privacyCheckingExchange)
+    }
+    .padding(Theme.Spacing.lg)
+    .background(Theme.bgPrimary)
+    .omnesisColorScheme()
 }
 
 #Preview("Privacy feed rows") {

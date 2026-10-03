@@ -18,6 +18,7 @@
  */
 
 import { html } from "htm/preact";
+import { ThinkingDots } from "../../components/thinking-dots.js";
 
 import { LoadMore } from "../../components/load-more.js";
 import { KindIcon } from "../../lib/device-kind-icon.js";
@@ -193,7 +194,9 @@ export function PrivacyFeedOutcome({ exchange }) {
     return html`<span class=${`privacy-chip privacy-chip--${display.tone}`}>${display.label}</span>`;
   }
   return html`<span class=${`privacy-status privacy-status--${display.tone}`}>
-    <span class="privacy-status-dot" aria-hidden="true"></span>
+    ${exchange?.status === "running"
+      ? html`<${ThinkingDots} />`
+      : html`<span class="privacy-status-dot" aria-hidden="true"></span>`}
     ${display.label}
   </span>`;
 }
@@ -335,13 +338,13 @@ const ACTOR_GLYPHS = {
  * when it has one (see `CallerMark`), so the same caller looks the same here
  * as on the Access and Devices pages.
  */
-export function PrivacyActor({ kind, label, caller = null }) {
+export function PrivacyActor({ kind, label, caller = null, working = false }) {
   const Glyph = ACTOR_GLYPHS[kind] ?? ExternalAgentGlyph;
   return html`<span class="privacy-actor">
     ${kind === "external"
       ? html`<${CallerMark} caller=${caller} size=${16} class="privacy-glyph privacy-glyph--device" fallback=${html`<${Glyph} />`} />`
       : html`<${Glyph} />`}
-    <span class="privacy-actor-label">${label}</span>
+    <span class="privacy-actor-label">${label}${working ? html`<${ThinkingDots} />` : null}</span>
   </span>`;
 }
 

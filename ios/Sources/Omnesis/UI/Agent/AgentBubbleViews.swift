@@ -304,7 +304,7 @@ private struct AgentThinkingDots: View {
     @State private var animating = false
     var body: some View {
         HStack(spacing: 2) {
-            ForEach(0 ..< 3, id: \.self) { i in
+            ForEach(0 ..< 3, id: \.self) { index in
                 Circle()
                     .fill(Theme.accent)
                     .frame(width: 3, height: 3)
@@ -313,7 +313,7 @@ private struct AgentThinkingDots: View {
                     .animation(
                         .easeInOut(duration: 0.65)
                             .repeatForever(autoreverses: true)
-                            .delay(Double(i) * 0.18),
+                            .delay(Double(index) * 0.18),
                         value: animating
                     )
             }
@@ -368,6 +368,41 @@ private struct AgentThinkingShimmerLabel: View {
 /// the dots effectively never appeared.
 let agentWorkingRevealDelayNs: UInt64 = 350_000_000
 
+/// The conversation's three working dots, also used for answers being drafted
+/// or checked in the audit feed and exchange detail.
+@available(iOS 17.0, *)
+struct AgentWorkingDots: View {
+    @Environment(\.accessibilityReduceMotion) private var environmentReduceMotion
+    var reduceMotionOverride: Bool?
+    @State private var animating = false
+
+    private var reduceMotion: Bool {
+        environmentReduceMotion || reduceMotionOverride == true
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(0 ..< 3, id: \.self) { index in
+                Circle()
+                    .fill(Theme.accent)
+                    .frame(width: 5, height: 5)
+                    .opacity(reduceMotion || animating ? 1.0 : 0.3)
+                    .offset(y: animating ? -2 : 0)
+                    .animation(
+                        reduceMotion ? nil : .easeInOut(duration: 0.6)
+                            .repeatForever(autoreverses: true)
+                            .delay(Double(index) * 0.18),
+                        value: animating
+                    )
+            }
+        }
+        .padding(.vertical, 2)
+        .onAppear { animating = !reduceMotion }
+        .onDisappear { animating = false }
+        .onChange(of: reduceMotion) { _, reduced in animating = !reduced }
+    }
+}
+
 /// A small row of bouncing dots pinned below the in-flight assistant turn — the
 /// transcript's answer to "is anything still happening?" during the beats where
 /// no sub-item carries its own affordance: after a text block finishes but
@@ -389,7 +424,6 @@ struct AgentWorkingIndicator: View {
     let version: Int
 
     @State private var revealed: Bool
-    @State private var animating: Bool
 
     /// `initiallyRevealed` seeds the reveal state so a synchronous snapshot
     /// render (which captures before the debounce `.task` fires) can show the
@@ -398,7 +432,6 @@ struct AgentWorkingIndicator: View {
         self.active = active
         self.version = version
         _revealed = State(initialValue: initiallyRevealed)
-        _animating = State(initialValue: initiallyRevealed)
     }
 
     /// Restarts the debounce whenever activity state or transcript content
@@ -424,32 +457,10 @@ struct AgentWorkingIndicator: View {
                 .frame(width: 0, height: 0)
                 .task(id: SettleKey(active: active, version: version)) { await settle() }
             if revealed {
-                HStack(spacing: 4) {
-                    ForEach(0 ..< 3, id: \.self) { i in
-                        Circle()
-                            .fill(Theme.accent)
-                            .frame(width: 5, height: 5)
-                            .opacity(animating ? 1.0 : 0.3)
-                            .offset(y: animating ? -2 : 0)
-                            .animation(
-                                .easeInOut(duration: 0.6)
-                                    .repeatForever(autoreverses: true)
-                                    .delay(Double(i) * 0.18),
-                                value: animating
-                            )
-                    }
-                }
-                .padding(.vertical, 2)
-                .transition(.opacity)
-                // Reset on removal so the next reveal re-fires the bounce: the
-                // `.animation(value: animating)` transition only re-triggers on
-                // a false→true edge, so without this reset a second reveal in
-                // the same indicator's lifetime would render frozen at the
-                // peak pose instead of bouncing.
-                .onAppear { animating = true }
-                .onDisappear { animating = false }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Working")
+                AgentWorkingDots()
+                    .transition(.opacity)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Working")
             }
         }
     }
@@ -953,6 +964,20 @@ private func toolSymbol(_ tool: String) -> String {
     .background(Theme.bgPrimary)
     .environment(AppStore.preview())
     .preferredColorScheme(.dark)
+}
+
+@available(iOS 17.0, *)
+#Preview("Working dots") {
+    AgentWorkingDots()
+        .padding()
+        .background(Theme.bgPrimary)
+}
+
+@available(iOS 17.0, *)
+#Preview("Working dots — reduced motion") {
+    AgentWorkingDots(reduceMotionOverride: true)
+        .padding()
+        .background(Theme.bgPrimary)
 }
 
 @available(iOS 17.0, *)

@@ -233,7 +233,12 @@ struct PrivacyExchangeSpine: View {
 
     private func draftCard(_ event: PrivacyAuditEventSummary?) -> some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-            PrivacyActorLine(kind: .omnesis, label: privacyDraftActorLabel(exchange))
+            HStack(spacing: Theme.Spacing.xs) {
+                PrivacyActorLine(kind: .omnesis, label: privacyDraftActorLabel(exchange))
+                if privacyExchangeNeedsPolling(exchange), privacyDisplayedAnswer(exchange) == nil {
+                    AgentWorkingDots().accessibilityHidden(true)
+                }
+            }
             if let answer = privacyDisplayedAnswer(exchange) {
                 PrivacyAnswerBlock(answer: answer.text, role: answer.role)
                 if let citations = privacyDraftCitationList(exchange) {
@@ -311,10 +316,18 @@ struct PrivacyExchangeSpine: View {
     private func decisionCard(_ event: PrivacyAuditEventSummary?) -> some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
             PrivacyActorLine(kind: .check, label: "Privacy check")
-            Text(privacyExchangeDecisionCopy(exchange))
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(Theme.textPrimary)
-                .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .top, spacing: Theme.Spacing.xs) {
+                Text(privacyExchangeDecisionCopy(exchange))
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if privacyExchangeNeedsPolling(exchange), exchange.outcome == .checking,
+                   privacyDisplayedAnswer(exchange) != nil {
+                    AgentWorkingDots()
+                        .padding(.top, 8)
+                        .accessibilityHidden(true)
+                }
+            }
             if privacyReviewFailed(exchange) {
                 failureLines
             }
@@ -465,5 +478,27 @@ struct PrivacyExchangeSpine: View {
         }
     }
 }
+
+#if DEBUG
+#Preview("Exchange spine — drafting") {
+    ScrollView {
+        PrivacyExchangeSpine(exchange: PreviewMocks.privacyRunningExchange)
+            .padding(Theme.Spacing.lg)
+    }
+    .environment(AppStore.preview())
+    .background(Theme.bgPrimary)
+    .omnesisColorScheme()
+}
+
+#Preview("Exchange spine — checking") {
+    ScrollView {
+        PrivacyExchangeSpine(exchange: PreviewMocks.privacyCheckingExchange)
+            .padding(Theme.Spacing.lg)
+    }
+    .environment(AppStore.preview())
+    .background(Theme.bgPrimary)
+    .omnesisColorScheme()
+}
+#endif
 
 #endif

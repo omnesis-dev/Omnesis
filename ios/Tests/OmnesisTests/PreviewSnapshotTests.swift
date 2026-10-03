@@ -5826,6 +5826,34 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
+    func testAnswerWorkingDotsReducedMotion() {
+        snapshot(
+            AgentWorkingDots(reduceMotionOverride: true)
+                .padding(Theme.Spacing.lg)
+                .background(Theme.bgPrimary),
+            name: "111yad-answer-working-dots-reduced-motion",
+            size: CGSize(width: 120, height: 80)
+        )
+    }
+
+    func testPrivacyFeedAnswersInProgress() {
+        let view = VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+            PrivacyFeedRow(exchange: PreviewMocks.privacyRunningExchange)
+            PrivacyFeedRow(exchange: PreviewMocks.privacyCheckingExchange)
+        }
+        .padding(Theme.Spacing.lg)
+        .background(Theme.bgPrimary)
+        snapshot(view, name: "111yab-privacy-feed-in-progress", size: CGSize(width: 393, height: 320))
+    }
+
+    func testPrivacyExchangeChecking() {
+        let view = NavigationStack {
+            PrivacyExchangeDetailView(previewExchange: PreviewMocks.privacyCheckingExchange)
+        }
+        .environment(AppStore.preview())
+        snapshot(view, name: "111yac-privacy-spine-checking", size: CGSize(width: 393, height: 1100))
+    }
+
     func testPrivacyExchangeDrafting() {
         let view = NavigationStack {
             PrivacyExchangeDetailView(previewExchange: PreviewMocks.privacyRunningExchange)

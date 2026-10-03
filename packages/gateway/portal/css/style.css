@@ -19199,3 +19199,9 @@ a.agent-loop-row.agent-ephemeral-result-link:hover .agent-loop-state {
    muted weight of the generic actor glyphs. */
 .privacy-caller-logo { display: inline-flex; flex: none; }
 .privacy-direct-caller { display: flex; align-items: center; gap: 5px; }
+
+/* Inline twin of the conversation waiting indicator. */
+.privacy-progress-dots { display: inline-flex; vertical-align: middle; padding: 0 4px; }
+@media (prefers-reduced-motion: reduce) {
+  .agent-typing > span { animation: none; opacity: 0.7; }
+}
