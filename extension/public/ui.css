@@ -458,6 +458,7 @@ button.secondary:hover {
   overflow-wrap: anywhere;
 }
 .note-context a {
+  color: var(--accent);
   font-size: 12px;
 }
 .notes-panel textarea {
