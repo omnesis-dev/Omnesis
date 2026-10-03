@@ -8,7 +8,11 @@ import {
   processTransactionsPage,
   toAccountContext,
 } from "@omnesis/provider-lunchflow";
-import { loadActiveUniverse, loadSourceFixtureJson } from "@omnesis/providers-synth-common";
+import {
+  loadActiveUniverse,
+  loadSourceFixtureJson,
+  sourceFixtureClock,
+} from "@omnesis/providers-synth-common";
 import type {
   LunchflowAccount,
   LunchflowBalance,
@@ -76,7 +80,13 @@ export function loadTransactions(): LfAccountTransactionsFixture[] {
 /** `lunchflow_accounts` rows via the real normalizer. */
 export function accountRecords(sourceAccountId: string): Record<string, unknown>[] {
   return loadAccounts().map((account) =>
-    accountToRecord(account, { syncedAt: SYNTH_SYNCED_AT, sourceAccountId }),
+    accountToRecord(account, {
+      syncedAt: sourceFixtureClock("lunchflow-accounts", {
+        snapshotDay: SYNTH_SNAPSHOT_DATE,
+        syncedAt: SYNTH_SYNCED_AT,
+      }).syncedAt,
+      sourceAccountId,
+    }),
   );
 }
 
@@ -86,7 +96,10 @@ export function balanceRecords(sourceAccountId: string): Record<string, unknown>
     const { record, skipped } = balanceToRecord(group.balance, {
       sourceAccountId,
       accountId: String(group.account_id),
-      snapshotDate: SYNTH_SNAPSHOT_DATE,
+      snapshotDate: sourceFixtureClock("lunchflow-accounts", {
+        snapshotDay: SYNTH_SNAPSHOT_DATE,
+        syncedAt: SYNTH_SYNCED_AT,
+      }).snapshotDay,
     });
     if (skipped || !record) {
       throw new Error(

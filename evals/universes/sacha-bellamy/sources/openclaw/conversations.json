@@ -1,0 +1,2532 @@
+[
+  {
+    "chatId": "sb-extra-openclaw-0000",
+    "chatName": "Local tool help: query pagination",
+    "platform": "synthetic-local",
+    "day": "2026-04-15",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can a table show whether there are more results?",
+        "at": "2026-04-15T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Fetch one extra row beyond the visible page size. Return a next-page indicator when that extra row exists, and do not include it in the displayed page.",
+        "at": "2026-04-15T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-04-15T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0001",
+    "chatName": "Local tool help: local tests",
+    "platform": "synthetic-local",
+    "day": "2026-04-16",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can I compare an expected output without depending on the current clock?",
+        "at": "2026-04-16T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Supply a fixed clock through a function argument or dependency. Build the expected timestamps from that same explicit clock instead of reading the wall clock inside the test.",
+        "at": "2026-04-16T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-04-16T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0002",
+    "chatName": "Local tool help: text encodings",
+    "platform": "synthetic-local",
+    "day": "2026-04-18",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why do accented letters look wrong after reading this file?",
+        "at": "2026-04-18T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "The bytes may have been decoded with the wrong character encoding. Confirm the export encoding and decode it explicitly before changing or replacing individual characters.",
+        "at": "2026-04-18T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-04-18T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0003",
+    "chatName": "Local tool help: input validation",
+    "platform": "synthetic-local",
+    "day": "2026-04-19",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Where should I validate a form value before saving?",
+        "at": "2026-04-19T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Validate at the server boundary even when the browser also checks the form. Return a field-specific error for expected invalid input; keep the storage operation behind that validated boundary.",
+        "at": "2026-04-19T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-04-19T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0004",
+    "chatName": "Local tool help: CSS spacing",
+    "platform": "synthetic-local",
+    "day": "2026-04-21",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why does the first heading add a gap above this panel?",
+        "at": "2026-04-21T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Inspect the heading margin and margin collapse at the container boundary. A flow-root container or explicit panel padding can make the intended spacing easier to reason about.",
+        "at": "2026-04-21T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-04-21T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0005",
+    "chatName": "Local tool help: async cancellation",
+    "platform": "synthetic-local",
+    "day": "2026-04-22",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can I stop an old request replacing a newer search result?",
+        "at": "2026-04-22T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Associate each request with a generation number or AbortSignal. Apply the result only if that request still owns the active generation when it settles.",
+        "at": "2026-04-22T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-04-22T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0006",
+    "chatName": "Local tool help: log rotation",
+    "platform": "synthetic-local",
+    "day": "2026-04-24",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can a small local tool avoid one ever-growing log file?",
+        "at": "2026-04-24T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Rotate on a bounded size or date and retain a limited number of files. Record rotation failures separately rather than silently discarding diagnostic output.",
+        "at": "2026-04-24T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-04-24T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0007",
+    "chatName": "Local tool help: Unicode labels",
+    "platform": "synthetic-local",
+    "day": "2026-04-25",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Should a character counter use string length for accented names?",
+        "at": "2026-04-25T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "JavaScript string length counts UTF-16 code units. If the visible-character limit matters, segment grapheme clusters instead, and explain the limit beside the input.",
+        "at": "2026-04-25T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-04-25T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0008",
+    "chatName": "Local tool help: empty states",
+    "platform": "synthetic-local",
+    "day": "2026-04-27",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What should a table display when a filter matches no rows?",
+        "at": "2026-04-27T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Keep the column context and show a concise empty-state message with a way to clear the filter. Distinguish no matches from a failed request.",
+        "at": "2026-04-27T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-04-27T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0009",
+    "chatName": "Local tool help: file names",
+    "platform": "synthetic-local",
+    "day": "2026-04-29",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can two exported files avoid overwriting each other?",
+        "at": "2026-04-29T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Choose a deterministic unique suffix or refuse an existing destination unless replacement was requested. Do not rely on a display title alone as a safe filesystem path.",
+        "at": "2026-04-29T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-04-29T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0010",
+    "chatName": "Local tool help: accessibility labels",
+    "platform": "synthetic-local",
+    "day": "2026-04-30",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Does an icon-only button need an accessible name?",
+        "at": "2026-04-30T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Yes. Provide a concise accessible name describing the action. A tooltip is useful for sighted users but is not a substitute for the control name.",
+        "at": "2026-04-30T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-04-30T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0011",
+    "chatName": "Local tool help: database migrations",
+    "platform": "synthetic-local",
+    "day": "2026-05-02",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What makes a small schema change safe to rerun?",
+        "at": "2026-05-02T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Track the applied migration version and run each step once in a transaction where supported. Test an existing populated database as well as an empty one.",
+        "at": "2026-05-02T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-05-02T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0012",
+    "chatName": "Local tool help: HTTP retries",
+    "platform": "synthetic-local",
+    "day": "2026-05-03",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Should every failed request be retried immediately?",
+        "at": "2026-05-03T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Retry only eligible transient failures with bounded backoff. Respect Retry-After when present, and avoid automatically repeating a non-idempotent write without an idempotency key.",
+        "at": "2026-05-03T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-05-03T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0013",
+    "chatName": "Local tool help: decimal arithmetic",
+    "platform": "synthetic-local",
+    "day": "2026-05-05",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why does adding two displayed decimal values produce a tiny rounding difference?",
+        "at": "2026-05-05T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Binary floating-point cannot represent every decimal exactly. For fixed currency precision, calculate in integer minor units; for arbitrary precision use a decimal representation.",
+        "at": "2026-05-05T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-05-05T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0014",
+    "chatName": "Local tool help: release notes",
+    "platform": "synthetic-local",
+    "day": "2026-05-06",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What belongs in a useful changelog entry for a small fix?",
+        "at": "2026-05-06T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Describe the trigger and the corrected user-visible behavior. Include migration or compatibility steps only when the reader actually needs to take them.",
+        "at": "2026-05-06T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-05-06T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0015",
+    "chatName": "Local tool help: CSV exports",
+    "platform": "synthetic-local",
+    "day": "2026-05-08",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can I preserve a comma inside a quoted CSV field?",
+        "at": "2026-05-08T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Quote the field and double any embedded quote characters. A parser should read the escaped field as one value; splitting every line at commas loses that distinction.",
+        "at": "2026-05-08T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-05-08T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0016",
+    "chatName": "Local tool help: date sorting",
+    "platform": "synthetic-local",
+    "day": "2026-05-09",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why does sorting date labels as strings give an odd order?",
+        "at": "2026-05-09T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Display labels and ordering keys serve different purposes. Keep an ISO date or numeric timestamp as the ordering key, then format the label only when rendering.",
+        "at": "2026-05-09T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-05-09T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0017",
+    "chatName": "Local tool help: keyboard navigation",
+    "platform": "synthetic-local",
+    "day": "2026-05-11",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What should happen when a list item disappears while it has focus?",
+        "at": "2026-05-11T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Choose a nearby surviving item as the next focus target, or focus the list container when it becomes empty. Test removal of the first, middle and last item.",
+        "at": "2026-05-11T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-05-11T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0018",
+    "chatName": "Local tool help: JSON imports",
+    "platform": "synthetic-local",
+    "day": "2026-05-13",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Can a trailing comma cause a JSON import to fail?",
+        "at": "2026-05-13T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Strict JSON does not permit trailing commas. Remove the comma before the closing bracket or brace; a JavaScript object literal is a different syntax.",
+        "at": "2026-05-13T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-05-13T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0019",
+    "chatName": "Local tool help: image sizing",
+    "platform": "synthetic-local",
+    "day": "2026-05-14",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why does this thumbnail stretch when its container is narrow?",
+        "at": "2026-05-14T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Keep the intrinsic aspect ratio and constrain the maximum width. If cropping is intended, use a bounded container with object-fit: cover rather than changing the image proportions.",
+        "at": "2026-05-14T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-05-14T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0020",
+    "chatName": "Local tool help: query pagination",
+    "platform": "synthetic-local",
+    "day": "2026-05-16",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can a table show whether there are more results?",
+        "at": "2026-05-16T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Fetch one extra row beyond the visible page size. Return a next-page indicator when that extra row exists, and do not include it in the displayed page.",
+        "at": "2026-05-16T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-05-16T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0021",
+    "chatName": "Local tool help: local tests",
+    "platform": "synthetic-local",
+    "day": "2026-05-17",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can I compare an expected output without depending on the current clock?",
+        "at": "2026-05-17T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Supply a fixed clock through a function argument or dependency. Build the expected timestamps from that same explicit clock instead of reading the wall clock inside the test.",
+        "at": "2026-05-17T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-05-17T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0022",
+    "chatName": "Local tool help: text encodings",
+    "platform": "synthetic-local",
+    "day": "2026-05-19",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why do accented letters look wrong after reading this file?",
+        "at": "2026-05-19T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "The bytes may have been decoded with the wrong character encoding. Confirm the export encoding and decode it explicitly before changing or replacing individual characters.",
+        "at": "2026-05-19T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-05-19T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0023",
+    "chatName": "Local tool help: input validation",
+    "platform": "synthetic-local",
+    "day": "2026-05-20",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Where should I validate a form value before saving?",
+        "at": "2026-05-20T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Validate at the server boundary even when the browser also checks the form. Return a field-specific error for expected invalid input; keep the storage operation behind that validated boundary.",
+        "at": "2026-05-20T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-05-20T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0024",
+    "chatName": "Local tool help: CSS spacing",
+    "platform": "synthetic-local",
+    "day": "2026-05-22",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why does the first heading add a gap above this panel?",
+        "at": "2026-05-22T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Inspect the heading margin and margin collapse at the container boundary. A flow-root container or explicit panel padding can make the intended spacing easier to reason about.",
+        "at": "2026-05-22T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-05-22T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0025",
+    "chatName": "Local tool help: async cancellation",
+    "platform": "synthetic-local",
+    "day": "2026-05-23",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can I stop an old request replacing a newer search result?",
+        "at": "2026-05-23T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Associate each request with a generation number or AbortSignal. Apply the result only if that request still owns the active generation when it settles.",
+        "at": "2026-05-23T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-05-23T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0026",
+    "chatName": "Local tool help: log rotation",
+    "platform": "synthetic-local",
+    "day": "2026-05-25",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can a small local tool avoid one ever-growing log file?",
+        "at": "2026-05-25T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Rotate on a bounded size or date and retain a limited number of files. Record rotation failures separately rather than silently discarding diagnostic output.",
+        "at": "2026-05-25T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-05-25T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0027",
+    "chatName": "Local tool help: Unicode labels",
+    "platform": "synthetic-local",
+    "day": "2026-05-27",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Should a character counter use string length for accented names?",
+        "at": "2026-05-27T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "JavaScript string length counts UTF-16 code units. If the visible-character limit matters, segment grapheme clusters instead, and explain the limit beside the input.",
+        "at": "2026-05-27T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-05-27T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0028",
+    "chatName": "Local tool help: empty states",
+    "platform": "synthetic-local",
+    "day": "2026-05-28",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What should a table display when a filter matches no rows?",
+        "at": "2026-05-28T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Keep the column context and show a concise empty-state message with a way to clear the filter. Distinguish no matches from a failed request.",
+        "at": "2026-05-28T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-05-28T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0029",
+    "chatName": "Local tool help: file names",
+    "platform": "synthetic-local",
+    "day": "2026-05-30",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can two exported files avoid overwriting each other?",
+        "at": "2026-05-30T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Choose a deterministic unique suffix or refuse an existing destination unless replacement was requested. Do not rely on a display title alone as a safe filesystem path.",
+        "at": "2026-05-30T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-05-30T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0030",
+    "chatName": "Local tool help: accessibility labels",
+    "platform": "synthetic-local",
+    "day": "2026-05-31",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Does an icon-only button need an accessible name?",
+        "at": "2026-05-31T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Yes. Provide a concise accessible name describing the action. A tooltip is useful for sighted users but is not a substitute for the control name.",
+        "at": "2026-05-31T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-05-31T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0031",
+    "chatName": "Local tool help: database migrations",
+    "platform": "synthetic-local",
+    "day": "2026-06-02",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What makes a small schema change safe to rerun?",
+        "at": "2026-06-02T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Track the applied migration version and run each step once in a transaction where supported. Test an existing populated database as well as an empty one.",
+        "at": "2026-06-02T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-06-02T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0032",
+    "chatName": "Local tool help: HTTP retries",
+    "platform": "synthetic-local",
+    "day": "2026-06-03",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Should every failed request be retried immediately?",
+        "at": "2026-06-03T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Retry only eligible transient failures with bounded backoff. Respect Retry-After when present, and avoid automatically repeating a non-idempotent write without an idempotency key.",
+        "at": "2026-06-03T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-06-03T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0033",
+    "chatName": "Local tool help: decimal arithmetic",
+    "platform": "synthetic-local",
+    "day": "2026-06-05",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why does adding two displayed decimal values produce a tiny rounding difference?",
+        "at": "2026-06-05T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Binary floating-point cannot represent every decimal exactly. For fixed currency precision, calculate in integer minor units; for arbitrary precision use a decimal representation.",
+        "at": "2026-06-05T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-06-05T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0034",
+    "chatName": "Local tool help: release notes",
+    "platform": "synthetic-local",
+    "day": "2026-06-07",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What belongs in a useful changelog entry for a small fix?",
+        "at": "2026-06-07T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Describe the trigger and the corrected user-visible behavior. Include migration or compatibility steps only when the reader actually needs to take them.",
+        "at": "2026-06-07T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-06-07T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0035",
+    "chatName": "Local tool help: CSV exports",
+    "platform": "synthetic-local",
+    "day": "2026-06-08",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can I preserve a comma inside a quoted CSV field?",
+        "at": "2026-06-08T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Quote the field and double any embedded quote characters. A parser should read the escaped field as one value; splitting every line at commas loses that distinction.",
+        "at": "2026-06-08T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-06-08T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0036",
+    "chatName": "Local tool help: date sorting",
+    "platform": "synthetic-local",
+    "day": "2026-06-10",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why does sorting date labels as strings give an odd order?",
+        "at": "2026-06-10T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Display labels and ordering keys serve different purposes. Keep an ISO date or numeric timestamp as the ordering key, then format the label only when rendering.",
+        "at": "2026-06-10T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-06-10T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0037",
+    "chatName": "Local tool help: keyboard navigation",
+    "platform": "synthetic-local",
+    "day": "2026-06-11",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What should happen when a list item disappears while it has focus?",
+        "at": "2026-06-11T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Choose a nearby surviving item as the next focus target, or focus the list container when it becomes empty. Test removal of the first, middle and last item.",
+        "at": "2026-06-11T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-06-11T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0038",
+    "chatName": "Local tool help: JSON imports",
+    "platform": "synthetic-local",
+    "day": "2026-06-13",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Can a trailing comma cause a JSON import to fail?",
+        "at": "2026-06-13T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Strict JSON does not permit trailing commas. Remove the comma before the closing bracket or brace; a JavaScript object literal is a different syntax.",
+        "at": "2026-06-13T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-06-13T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0039",
+    "chatName": "Local tool help: image sizing",
+    "platform": "synthetic-local",
+    "day": "2026-06-14",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why does this thumbnail stretch when its container is narrow?",
+        "at": "2026-06-14T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Keep the intrinsic aspect ratio and constrain the maximum width. If cropping is intended, use a bounded container with object-fit: cover rather than changing the image proportions.",
+        "at": "2026-06-14T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-06-14T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0040",
+    "chatName": "Local tool help: query pagination",
+    "platform": "synthetic-local",
+    "day": "2026-06-16",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can a table show whether there are more results?",
+        "at": "2026-06-16T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Fetch one extra row beyond the visible page size. Return a next-page indicator when that extra row exists, and do not include it in the displayed page.",
+        "at": "2026-06-16T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-06-16T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0041",
+    "chatName": "Local tool help: local tests",
+    "platform": "synthetic-local",
+    "day": "2026-06-17",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can I compare an expected output without depending on the current clock?",
+        "at": "2026-06-17T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Supply a fixed clock through a function argument or dependency. Build the expected timestamps from that same explicit clock instead of reading the wall clock inside the test.",
+        "at": "2026-06-17T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-06-17T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0042",
+    "chatName": "Local tool help: text encodings",
+    "platform": "synthetic-local",
+    "day": "2026-06-19",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why do accented letters look wrong after reading this file?",
+        "at": "2026-06-19T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "The bytes may have been decoded with the wrong character encoding. Confirm the export encoding and decode it explicitly before changing or replacing individual characters.",
+        "at": "2026-06-19T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-06-19T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0043",
+    "chatName": "Local tool help: input validation",
+    "platform": "synthetic-local",
+    "day": "2026-06-21",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Where should I validate a form value before saving?",
+        "at": "2026-06-21T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Validate at the server boundary even when the browser also checks the form. Return a field-specific error for expected invalid input; keep the storage operation behind that validated boundary.",
+        "at": "2026-06-21T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-06-21T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0044",
+    "chatName": "Local tool help: CSS spacing",
+    "platform": "synthetic-local",
+    "day": "2026-06-22",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why does the first heading add a gap above this panel?",
+        "at": "2026-06-22T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Inspect the heading margin and margin collapse at the container boundary. A flow-root container or explicit panel padding can make the intended spacing easier to reason about.",
+        "at": "2026-06-22T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-06-22T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0045",
+    "chatName": "Local tool help: async cancellation",
+    "platform": "synthetic-local",
+    "day": "2026-06-24",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can I stop an old request replacing a newer search result?",
+        "at": "2026-06-24T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Associate each request with a generation number or AbortSignal. Apply the result only if that request still owns the active generation when it settles.",
+        "at": "2026-06-24T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-06-24T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0046",
+    "chatName": "Local tool help: log rotation",
+    "platform": "synthetic-local",
+    "day": "2026-06-25",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can a small local tool avoid one ever-growing log file?",
+        "at": "2026-06-25T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Rotate on a bounded size or date and retain a limited number of files. Record rotation failures separately rather than silently discarding diagnostic output.",
+        "at": "2026-06-25T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-06-25T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0047",
+    "chatName": "Local tool help: Unicode labels",
+    "platform": "synthetic-local",
+    "day": "2026-06-27",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Should a character counter use string length for accented names?",
+        "at": "2026-06-27T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "JavaScript string length counts UTF-16 code units. If the visible-character limit matters, segment grapheme clusters instead, and explain the limit beside the input.",
+        "at": "2026-06-27T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-06-27T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0048",
+    "chatName": "Local tool help: empty states",
+    "platform": "synthetic-local",
+    "day": "2026-06-28",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What should a table display when a filter matches no rows?",
+        "at": "2026-06-28T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Keep the column context and show a concise empty-state message with a way to clear the filter. Distinguish no matches from a failed request.",
+        "at": "2026-06-28T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-06-28T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0049",
+    "chatName": "Local tool help: file names",
+    "platform": "synthetic-local",
+    "day": "2026-06-30",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can two exported files avoid overwriting each other?",
+        "at": "2026-06-30T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Choose a deterministic unique suffix or refuse an existing destination unless replacement was requested. Do not rely on a display title alone as a safe filesystem path.",
+        "at": "2026-06-30T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-06-30T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0050",
+    "chatName": "Local tool help: accessibility labels",
+    "platform": "synthetic-local",
+    "day": "2026-07-01",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Does an icon-only button need an accessible name?",
+        "at": "2026-07-01T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Yes. Provide a concise accessible name describing the action. A tooltip is useful for sighted users but is not a substitute for the control name.",
+        "at": "2026-07-01T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-07-01T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0051",
+    "chatName": "Local tool help: database migrations",
+    "platform": "synthetic-local",
+    "day": "2026-07-03",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What makes a small schema change safe to rerun?",
+        "at": "2026-07-03T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Track the applied migration version and run each step once in a transaction where supported. Test an existing populated database as well as an empty one.",
+        "at": "2026-07-03T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-07-03T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0052",
+    "chatName": "Local tool help: HTTP retries",
+    "platform": "synthetic-local",
+    "day": "2026-07-05",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Should every failed request be retried immediately?",
+        "at": "2026-07-05T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Retry only eligible transient failures with bounded backoff. Respect Retry-After when present, and avoid automatically repeating a non-idempotent write without an idempotency key.",
+        "at": "2026-07-05T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-07-05T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0053",
+    "chatName": "Local tool help: decimal arithmetic",
+    "platform": "synthetic-local",
+    "day": "2026-07-06",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why does adding two displayed decimal values produce a tiny rounding difference?",
+        "at": "2026-07-06T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Binary floating-point cannot represent every decimal exactly. For fixed currency precision, calculate in integer minor units; for arbitrary precision use a decimal representation.",
+        "at": "2026-07-06T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-07-06T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0054",
+    "chatName": "Local tool help: release notes",
+    "platform": "synthetic-local",
+    "day": "2026-07-08",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What belongs in a useful changelog entry for a small fix?",
+        "at": "2026-07-08T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Describe the trigger and the corrected user-visible behavior. Include migration or compatibility steps only when the reader actually needs to take them.",
+        "at": "2026-07-08T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-07-08T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0055",
+    "chatName": "Local tool help: CSV exports",
+    "platform": "synthetic-local",
+    "day": "2026-07-09",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can I preserve a comma inside a quoted CSV field?",
+        "at": "2026-07-09T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Quote the field and double any embedded quote characters. A parser should read the escaped field as one value; splitting every line at commas loses that distinction.",
+        "at": "2026-07-09T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-07-09T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0056",
+    "chatName": "Local tool help: date sorting",
+    "platform": "synthetic-local",
+    "day": "2026-07-11",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why does sorting date labels as strings give an odd order?",
+        "at": "2026-07-11T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Display labels and ordering keys serve different purposes. Keep an ISO date or numeric timestamp as the ordering key, then format the label only when rendering.",
+        "at": "2026-07-11T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-07-11T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0057",
+    "chatName": "Local tool help: keyboard navigation",
+    "platform": "synthetic-local",
+    "day": "2026-07-12",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What should happen when a list item disappears while it has focus?",
+        "at": "2026-07-12T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Choose a nearby surviving item as the next focus target, or focus the list container when it becomes empty. Test removal of the first, middle and last item.",
+        "at": "2026-07-12T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-07-12T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0058",
+    "chatName": "Local tool help: JSON imports",
+    "platform": "synthetic-local",
+    "day": "2026-07-14",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Can a trailing comma cause a JSON import to fail?",
+        "at": "2026-07-14T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Strict JSON does not permit trailing commas. Remove the comma before the closing bracket or brace; a JavaScript object literal is a different syntax.",
+        "at": "2026-07-14T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-07-14T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0059",
+    "chatName": "Local tool help: image sizing",
+    "platform": "synthetic-local",
+    "day": "2026-07-16",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why does this thumbnail stretch when its container is narrow?",
+        "at": "2026-07-16T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Keep the intrinsic aspect ratio and constrain the maximum width. If cropping is intended, use a bounded container with object-fit: cover rather than changing the image proportions.",
+        "at": "2026-07-16T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-07-16T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0060",
+    "chatName": "Local tool help: query pagination",
+    "platform": "synthetic-local",
+    "day": "2026-07-17",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can a table show whether there are more results?",
+        "at": "2026-07-17T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Fetch one extra row beyond the visible page size. Return a next-page indicator when that extra row exists, and do not include it in the displayed page.",
+        "at": "2026-07-17T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-07-17T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0061",
+    "chatName": "Local tool help: local tests",
+    "platform": "synthetic-local",
+    "day": "2026-07-19",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can I compare an expected output without depending on the current clock?",
+        "at": "2026-07-19T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Supply a fixed clock through a function argument or dependency. Build the expected timestamps from that same explicit clock instead of reading the wall clock inside the test.",
+        "at": "2026-07-19T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-07-19T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0062",
+    "chatName": "Local tool help: text encodings",
+    "platform": "synthetic-local",
+    "day": "2026-07-20",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why do accented letters look wrong after reading this file?",
+        "at": "2026-07-20T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "The bytes may have been decoded with the wrong character encoding. Confirm the export encoding and decode it explicitly before changing or replacing individual characters.",
+        "at": "2026-07-20T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-07-20T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0063",
+    "chatName": "Local tool help: input validation",
+    "platform": "synthetic-local",
+    "day": "2026-07-22",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Where should I validate a form value before saving?",
+        "at": "2026-07-22T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Validate at the server boundary even when the browser also checks the form. Return a field-specific error for expected invalid input; keep the storage operation behind that validated boundary.",
+        "at": "2026-07-22T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-07-22T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0064",
+    "chatName": "Local tool help: CSS spacing",
+    "platform": "synthetic-local",
+    "day": "2026-07-23",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why does the first heading add a gap above this panel?",
+        "at": "2026-07-23T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Inspect the heading margin and margin collapse at the container boundary. A flow-root container or explicit panel padding can make the intended spacing easier to reason about.",
+        "at": "2026-07-23T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-07-23T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0065",
+    "chatName": "Local tool help: async cancellation",
+    "platform": "synthetic-local",
+    "day": "2026-07-25",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can I stop an old request replacing a newer search result?",
+        "at": "2026-07-25T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Associate each request with a generation number or AbortSignal. Apply the result only if that request still owns the active generation when it settles.",
+        "at": "2026-07-25T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-07-25T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0066",
+    "chatName": "Local tool help: log rotation",
+    "platform": "synthetic-local",
+    "day": "2026-07-26",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can a small local tool avoid one ever-growing log file?",
+        "at": "2026-07-26T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Rotate on a bounded size or date and retain a limited number of files. Record rotation failures separately rather than silently discarding diagnostic output.",
+        "at": "2026-07-26T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-07-26T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0067",
+    "chatName": "Local tool help: Unicode labels",
+    "platform": "synthetic-local",
+    "day": "2026-07-28",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Should a character counter use string length for accented names?",
+        "at": "2026-07-28T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "JavaScript string length counts UTF-16 code units. If the visible-character limit matters, segment grapheme clusters instead, and explain the limit beside the input.",
+        "at": "2026-07-28T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-07-28T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0068",
+    "chatName": "Local tool help: empty states",
+    "platform": "synthetic-local",
+    "day": "2026-07-30",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What should a table display when a filter matches no rows?",
+        "at": "2026-07-30T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Keep the column context and show a concise empty-state message with a way to clear the filter. Distinguish no matches from a failed request.",
+        "at": "2026-07-30T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-07-30T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0069",
+    "chatName": "Local tool help: file names",
+    "platform": "synthetic-local",
+    "day": "2026-07-31",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can two exported files avoid overwriting each other?",
+        "at": "2026-07-31T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Choose a deterministic unique suffix or refuse an existing destination unless replacement was requested. Do not rely on a display title alone as a safe filesystem path.",
+        "at": "2026-07-31T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-07-31T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0070",
+    "chatName": "Local tool help: accessibility labels",
+    "platform": "synthetic-local",
+    "day": "2026-08-02",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Does an icon-only button need an accessible name?",
+        "at": "2026-08-02T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Yes. Provide a concise accessible name describing the action. A tooltip is useful for sighted users but is not a substitute for the control name.",
+        "at": "2026-08-02T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-08-02T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0071",
+    "chatName": "Local tool help: database migrations",
+    "platform": "synthetic-local",
+    "day": "2026-08-03",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What makes a small schema change safe to rerun?",
+        "at": "2026-08-03T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Track the applied migration version and run each step once in a transaction where supported. Test an existing populated database as well as an empty one.",
+        "at": "2026-08-03T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-08-03T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0072",
+    "chatName": "Local tool help: HTTP retries",
+    "platform": "synthetic-local",
+    "day": "2026-08-05",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Should every failed request be retried immediately?",
+        "at": "2026-08-05T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Retry only eligible transient failures with bounded backoff. Respect Retry-After when present, and avoid automatically repeating a non-idempotent write without an idempotency key.",
+        "at": "2026-08-05T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-08-05T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0073",
+    "chatName": "Local tool help: decimal arithmetic",
+    "platform": "synthetic-local",
+    "day": "2026-08-06",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why does adding two displayed decimal values produce a tiny rounding difference?",
+        "at": "2026-08-06T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Binary floating-point cannot represent every decimal exactly. For fixed currency precision, calculate in integer minor units; for arbitrary precision use a decimal representation.",
+        "at": "2026-08-06T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-08-06T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0074",
+    "chatName": "Local tool help: release notes",
+    "platform": "synthetic-local",
+    "day": "2026-08-08",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What belongs in a useful changelog entry for a small fix?",
+        "at": "2026-08-08T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Describe the trigger and the corrected user-visible behavior. Include migration or compatibility steps only when the reader actually needs to take them.",
+        "at": "2026-08-08T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-08-08T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0075",
+    "chatName": "Local tool help: CSV exports",
+    "platform": "synthetic-local",
+    "day": "2026-08-09",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can I preserve a comma inside a quoted CSV field?",
+        "at": "2026-08-09T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Quote the field and double any embedded quote characters. A parser should read the escaped field as one value; splitting every line at commas loses that distinction.",
+        "at": "2026-08-09T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-08-09T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0076",
+    "chatName": "Local tool help: date sorting",
+    "platform": "synthetic-local",
+    "day": "2026-08-11",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why does sorting date labels as strings give an odd order?",
+        "at": "2026-08-11T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Display labels and ordering keys serve different purposes. Keep an ISO date or numeric timestamp as the ordering key, then format the label only when rendering.",
+        "at": "2026-08-11T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-08-11T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0077",
+    "chatName": "Local tool help: keyboard navigation",
+    "platform": "synthetic-local",
+    "day": "2026-08-13",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What should happen when a list item disappears while it has focus?",
+        "at": "2026-08-13T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Choose a nearby surviving item as the next focus target, or focus the list container when it becomes empty. Test removal of the first, middle and last item.",
+        "at": "2026-08-13T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-08-13T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0078",
+    "chatName": "Local tool help: JSON imports",
+    "platform": "synthetic-local",
+    "day": "2026-08-14",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Can a trailing comma cause a JSON import to fail?",
+        "at": "2026-08-14T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Strict JSON does not permit trailing commas. Remove the comma before the closing bracket or brace; a JavaScript object literal is a different syntax.",
+        "at": "2026-08-14T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-08-14T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0079",
+    "chatName": "Local tool help: image sizing",
+    "platform": "synthetic-local",
+    "day": "2026-08-16",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why does this thumbnail stretch when its container is narrow?",
+        "at": "2026-08-16T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Keep the intrinsic aspect ratio and constrain the maximum width. If cropping is intended, use a bounded container with object-fit: cover rather than changing the image proportions.",
+        "at": "2026-08-16T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-08-16T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0080",
+    "chatName": "Local tool help: query pagination",
+    "platform": "synthetic-local",
+    "day": "2026-08-17",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can a table show whether there are more results?",
+        "at": "2026-08-17T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Fetch one extra row beyond the visible page size. Return a next-page indicator when that extra row exists, and do not include it in the displayed page.",
+        "at": "2026-08-17T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-08-17T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0081",
+    "chatName": "Local tool help: local tests",
+    "platform": "synthetic-local",
+    "day": "2026-08-19",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can I compare an expected output without depending on the current clock?",
+        "at": "2026-08-19T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Supply a fixed clock through a function argument or dependency. Build the expected timestamps from that same explicit clock instead of reading the wall clock inside the test.",
+        "at": "2026-08-19T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-08-19T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0082",
+    "chatName": "Local tool help: text encodings",
+    "platform": "synthetic-local",
+    "day": "2026-08-20",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why do accented letters look wrong after reading this file?",
+        "at": "2026-08-20T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "The bytes may have been decoded with the wrong character encoding. Confirm the export encoding and decode it explicitly before changing or replacing individual characters.",
+        "at": "2026-08-20T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-08-20T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0083",
+    "chatName": "Local tool help: input validation",
+    "platform": "synthetic-local",
+    "day": "2026-08-22",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Where should I validate a form value before saving?",
+        "at": "2026-08-22T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Validate at the server boundary even when the browser also checks the form. Return a field-specific error for expected invalid input; keep the storage operation behind that validated boundary.",
+        "at": "2026-08-22T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-08-22T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0084",
+    "chatName": "Local tool help: CSS spacing",
+    "platform": "synthetic-local",
+    "day": "2026-08-24",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why does the first heading add a gap above this panel?",
+        "at": "2026-08-24T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Inspect the heading margin and margin collapse at the container boundary. A flow-root container or explicit panel padding can make the intended spacing easier to reason about.",
+        "at": "2026-08-24T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-08-24T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0085",
+    "chatName": "Local tool help: async cancellation",
+    "platform": "synthetic-local",
+    "day": "2026-08-25",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can I stop an old request replacing a newer search result?",
+        "at": "2026-08-25T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Associate each request with a generation number or AbortSignal. Apply the result only if that request still owns the active generation when it settles.",
+        "at": "2026-08-25T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-08-25T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0086",
+    "chatName": "Local tool help: log rotation",
+    "platform": "synthetic-local",
+    "day": "2026-08-27",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can a small local tool avoid one ever-growing log file?",
+        "at": "2026-08-27T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Rotate on a bounded size or date and retain a limited number of files. Record rotation failures separately rather than silently discarding diagnostic output.",
+        "at": "2026-08-27T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-08-27T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0087",
+    "chatName": "Local tool help: Unicode labels",
+    "platform": "synthetic-local",
+    "day": "2026-08-28",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Should a character counter use string length for accented names?",
+        "at": "2026-08-28T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "JavaScript string length counts UTF-16 code units. If the visible-character limit matters, segment grapheme clusters instead, and explain the limit beside the input.",
+        "at": "2026-08-28T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-08-28T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0088",
+    "chatName": "Local tool help: empty states",
+    "platform": "synthetic-local",
+    "day": "2026-08-30",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What should a table display when a filter matches no rows?",
+        "at": "2026-08-30T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Keep the column context and show a concise empty-state message with a way to clear the filter. Distinguish no matches from a failed request.",
+        "at": "2026-08-30T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-08-30T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0089",
+    "chatName": "Local tool help: file names",
+    "platform": "synthetic-local",
+    "day": "2026-08-31",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can two exported files avoid overwriting each other?",
+        "at": "2026-08-31T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Choose a deterministic unique suffix or refuse an existing destination unless replacement was requested. Do not rely on a display title alone as a safe filesystem path.",
+        "at": "2026-08-31T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-08-31T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0090",
+    "chatName": "Local tool help: accessibility labels",
+    "platform": "synthetic-local",
+    "day": "2026-09-02",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Does an icon-only button need an accessible name?",
+        "at": "2026-09-02T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Yes. Provide a concise accessible name describing the action. A tooltip is useful for sighted users but is not a substitute for the control name.",
+        "at": "2026-09-02T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-09-02T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0091",
+    "chatName": "Local tool help: database migrations",
+    "platform": "synthetic-local",
+    "day": "2026-09-03",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What makes a small schema change safe to rerun?",
+        "at": "2026-09-03T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Track the applied migration version and run each step once in a transaction where supported. Test an existing populated database as well as an empty one.",
+        "at": "2026-09-03T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-09-03T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0092",
+    "chatName": "Local tool help: HTTP retries",
+    "platform": "synthetic-local",
+    "day": "2026-09-05",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Should every failed request be retried immediately?",
+        "at": "2026-09-05T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Retry only eligible transient failures with bounded backoff. Respect Retry-After when present, and avoid automatically repeating a non-idempotent write without an idempotency key.",
+        "at": "2026-09-05T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-09-05T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0093",
+    "chatName": "Local tool help: decimal arithmetic",
+    "platform": "synthetic-local",
+    "day": "2026-09-07",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why does adding two displayed decimal values produce a tiny rounding difference?",
+        "at": "2026-09-07T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Binary floating-point cannot represent every decimal exactly. For fixed currency precision, calculate in integer minor units; for arbitrary precision use a decimal representation.",
+        "at": "2026-09-07T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-09-07T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0094",
+    "chatName": "Local tool help: release notes",
+    "platform": "synthetic-local",
+    "day": "2026-09-08",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What belongs in a useful changelog entry for a small fix?",
+        "at": "2026-09-08T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Describe the trigger and the corrected user-visible behavior. Include migration or compatibility steps only when the reader actually needs to take them.",
+        "at": "2026-09-08T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-09-08T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0095",
+    "chatName": "Local tool help: CSV exports",
+    "platform": "synthetic-local",
+    "day": "2026-09-10",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can I preserve a comma inside a quoted CSV field?",
+        "at": "2026-09-10T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Quote the field and double any embedded quote characters. A parser should read the escaped field as one value; splitting every line at commas loses that distinction.",
+        "at": "2026-09-10T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-09-10T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0096",
+    "chatName": "Local tool help: date sorting",
+    "platform": "synthetic-local",
+    "day": "2026-09-11",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why does sorting date labels as strings give an odd order?",
+        "at": "2026-09-11T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Display labels and ordering keys serve different purposes. Keep an ISO date or numeric timestamp as the ordering key, then format the label only when rendering.",
+        "at": "2026-09-11T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-09-11T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0097",
+    "chatName": "Local tool help: keyboard navigation",
+    "platform": "synthetic-local",
+    "day": "2026-09-13",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What should happen when a list item disappears while it has focus?",
+        "at": "2026-09-13T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Choose a nearby surviving item as the next focus target, or focus the list container when it becomes empty. Test removal of the first, middle and last item.",
+        "at": "2026-09-13T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-09-13T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0098",
+    "chatName": "Local tool help: JSON imports",
+    "platform": "synthetic-local",
+    "day": "2026-09-14",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Can a trailing comma cause a JSON import to fail?",
+        "at": "2026-09-14T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Strict JSON does not permit trailing commas. Remove the comma before the closing bracket or brace; a JavaScript object literal is a different syntax.",
+        "at": "2026-09-14T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-09-14T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0099",
+    "chatName": "Local tool help: image sizing",
+    "platform": "synthetic-local",
+    "day": "2026-09-16",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why does this thumbnail stretch when its container is narrow?",
+        "at": "2026-09-16T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Keep the intrinsic aspect ratio and constrain the maximum width. If cropping is intended, use a bounded container with object-fit: cover rather than changing the image proportions.",
+        "at": "2026-09-16T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-09-16T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0100",
+    "chatName": "Local tool help: query pagination",
+    "platform": "synthetic-local",
+    "day": "2026-09-17",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can a table show whether there are more results?",
+        "at": "2026-09-17T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Fetch one extra row beyond the visible page size. Return a next-page indicator when that extra row exists, and do not include it in the displayed page.",
+        "at": "2026-09-17T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-09-17T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0101",
+    "chatName": "Local tool help: local tests",
+    "platform": "synthetic-local",
+    "day": "2026-09-19",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can I compare an expected output without depending on the current clock?",
+        "at": "2026-09-19T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Supply a fixed clock through a function argument or dependency. Build the expected timestamps from that same explicit clock instead of reading the wall clock inside the test.",
+        "at": "2026-09-19T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-09-19T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0102",
+    "chatName": "Local tool help: text encodings",
+    "platform": "synthetic-local",
+    "day": "2026-09-21",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why do accented letters look wrong after reading this file?",
+        "at": "2026-09-21T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "The bytes may have been decoded with the wrong character encoding. Confirm the export encoding and decode it explicitly before changing or replacing individual characters.",
+        "at": "2026-09-21T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-09-21T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0103",
+    "chatName": "Local tool help: input validation",
+    "platform": "synthetic-local",
+    "day": "2026-09-22",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Where should I validate a form value before saving?",
+        "at": "2026-09-22T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Validate at the server boundary even when the browser also checks the form. Return a field-specific error for expected invalid input; keep the storage operation behind that validated boundary.",
+        "at": "2026-09-22T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-09-22T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0104",
+    "chatName": "Local tool help: CSS spacing",
+    "platform": "synthetic-local",
+    "day": "2026-09-24",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Why does the first heading add a gap above this panel?",
+        "at": "2026-09-24T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Inspect the heading margin and margin collapse at the container boundary. A flow-root container or explicit panel padding can make the intended spacing easier to reason about.",
+        "at": "2026-09-24T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-09-24T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0105",
+    "chatName": "Local tool help: async cancellation",
+    "platform": "synthetic-local",
+    "day": "2026-09-25",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can I stop an old request replacing a newer search result?",
+        "at": "2026-09-25T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Associate each request with a generation number or AbortSignal. Apply the result only if that request still owns the active generation when it settles.",
+        "at": "2026-09-25T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-09-25T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0106",
+    "chatName": "Local tool help: log rotation",
+    "platform": "synthetic-local",
+    "day": "2026-09-27",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can a small local tool avoid one ever-growing log file?",
+        "at": "2026-09-27T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Rotate on a bounded size or date and retain a limited number of files. Record rotation failures separately rather than silently discarding diagnostic output.",
+        "at": "2026-09-27T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-09-27T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0107",
+    "chatName": "Local tool help: Unicode labels",
+    "platform": "synthetic-local",
+    "day": "2026-09-28",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Should a character counter use string length for accented names?",
+        "at": "2026-09-28T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "JavaScript string length counts UTF-16 code units. If the visible-character limit matters, segment grapheme clusters instead, and explain the limit beside the input.",
+        "at": "2026-09-28T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-09-28T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0108",
+    "chatName": "Local tool help: empty states",
+    "platform": "synthetic-local",
+    "day": "2026-09-30",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What should a table display when a filter matches no rows?",
+        "at": "2026-09-30T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Keep the column context and show a concise empty-state message with a way to clear the filter. Distinguish no matches from a failed request.",
+        "at": "2026-09-30T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-09-30T12:12:00.000Z"
+      }
+    ]
+  },
+  {
+    "chatId": "sb-extra-openclaw-0109",
+    "chatName": "Local tool help: file names",
+    "platform": "synthetic-local",
+    "day": "2026-10-02",
+    "messages": [
+      {
+        "role": "user",
+        "text": "How can two exported files avoid overwriting each other?",
+        "at": "2026-10-02T12:10:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "text": "Choose a deterministic unique suffix or refuse an existing destination unless replacement was requested. Do not rely on a display title alone as a safe filesystem path.",
+        "at": "2026-10-02T12:11:00.000Z"
+      },
+      {
+        "role": "user",
+        "text": "Thanks. I will try that on a small example before changing the rest.",
+        "at": "2026-10-02T12:12:00.000Z"
+      }
+    ]
+  }
+]

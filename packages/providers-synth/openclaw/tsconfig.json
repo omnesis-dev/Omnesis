@@ -1,0 +1,26 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "composite": true
+  },
+  "include": ["src"],
+  "references": [
+    {
+      "path": "../../core"
+    },
+    {
+      "path": "../../source-sdk"
+    },
+    {
+      "path": "../../types"
+    },
+    {
+      "path": "../_common"
+    },
+    {
+      "path": "../../providers/openclaw"
+    }
+  ]
+}

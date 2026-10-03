@@ -1,0 +1,772 @@
+[
+  {
+    "id": "sb-extra-codex-0000",
+    "createdAt": "2026-05-05T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why does this thumbnail stretch when its container is narrow? Context: the image sizing experiment is running locally.",
+    "answer": "Keep the intrinsic aspect ratio and constrain the maximum width. If cropping is intended, use a bounded container with object-fit: cover rather than changing the image proportions. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0001",
+    "createdAt": "2026-05-06T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can a table show whether there are more results? Context: the query pagination experiment is running locally.",
+    "answer": "Fetch one extra row beyond the visible page size. Return a next-page indicator when that extra row exists, and do not include it in the displayed page. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0002",
+    "createdAt": "2026-05-07T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can I compare an expected output without depending on the current clock? Context: the local tests experiment is running locally.",
+    "answer": "Supply a fixed clock through a function argument or dependency. Build the expected timestamps from that same explicit clock instead of reading the wall clock inside the test. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0003",
+    "createdAt": "2026-05-09T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why do accented letters look wrong after reading this file? Context: the text encodings experiment is running locally.",
+    "answer": "The bytes may have been decoded with the wrong character encoding. Confirm the export encoding and decode it explicitly before changing or replacing individual characters. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0004",
+    "createdAt": "2026-05-10T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Where should I validate a form value before saving? Context: the input validation experiment is running locally.",
+    "answer": "Validate at the server boundary even when the browser also checks the form. Return a field-specific error for expected invalid input; keep the storage operation behind that validated boundary. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0005",
+    "createdAt": "2026-05-11T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why does the first heading add a gap above this panel? Context: the CSS spacing experiment is running locally.",
+    "answer": "Inspect the heading margin and margin collapse at the container boundary. A flow-root container or explicit panel padding can make the intended spacing easier to reason about. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0006",
+    "createdAt": "2026-05-13T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can I stop an old request replacing a newer search result? Context: the async cancellation experiment is running locally.",
+    "answer": "Associate each request with a generation number or AbortSignal. Apply the result only if that request still owns the active generation when it settles. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0007",
+    "createdAt": "2026-05-14T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can a small local tool avoid one ever-growing log file? Context: the log rotation experiment is running locally.",
+    "answer": "Rotate on a bounded size or date and retain a limited number of files. Record rotation failures separately rather than silently discarding diagnostic output. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0008",
+    "createdAt": "2026-05-16T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Should a character counter use string length for accented names? Context: the Unicode labels experiment is running locally.",
+    "answer": "JavaScript string length counts UTF-16 code units. If the visible-character limit matters, segment grapheme clusters instead, and explain the limit beside the input. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0009",
+    "createdAt": "2026-05-17T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: What should a table display when a filter matches no rows? Context: the empty states experiment is running locally.",
+    "answer": "Keep the column context and show a concise empty-state message with a way to clear the filter. Distinguish no matches from a failed request. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0010",
+    "createdAt": "2026-05-18T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can two exported files avoid overwriting each other? Context: the file names experiment is running locally.",
+    "answer": "Choose a deterministic unique suffix or refuse an existing destination unless replacement was requested. Do not rely on a display title alone as a safe filesystem path. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0011",
+    "createdAt": "2026-05-20T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Does an icon-only button need an accessible name? Context: the accessibility labels experiment is running locally.",
+    "answer": "Yes. Provide a concise accessible name describing the action. A tooltip is useful for sighted users but is not a substitute for the control name. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0012",
+    "createdAt": "2026-05-21T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: What makes a small schema change safe to rerun? Context: the database migrations experiment is running locally.",
+    "answer": "Track the applied migration version and run each step once in a transaction where supported. Test an existing populated database as well as an empty one. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0013",
+    "createdAt": "2026-05-22T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Should every failed request be retried immediately? Context: the HTTP retries experiment is running locally.",
+    "answer": "Retry only eligible transient failures with bounded backoff. Respect Retry-After when present, and avoid automatically repeating a non-idempotent write without an idempotency key. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0014",
+    "createdAt": "2026-05-24T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why does adding two displayed decimal values produce a tiny rounding difference? Context: the decimal arithmetic experiment is running locally.",
+    "answer": "Binary floating-point cannot represent every decimal exactly. For fixed currency precision, calculate in integer minor units; for arbitrary precision use a decimal representation. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0015",
+    "createdAt": "2026-05-25T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: What belongs in a useful changelog entry for a small fix? Context: the release notes experiment is running locally.",
+    "answer": "Describe the trigger and the corrected user-visible behavior. Include migration or compatibility steps only when the reader actually needs to take them. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0016",
+    "createdAt": "2026-05-27T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can I preserve a comma inside a quoted CSV field? Context: the CSV exports experiment is running locally.",
+    "answer": "Quote the field and double any embedded quote characters. A parser should read the escaped field as one value; splitting every line at commas loses that distinction. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0017",
+    "createdAt": "2026-05-28T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why does sorting date labels as strings give an odd order? Context: the date sorting experiment is running locally.",
+    "answer": "Display labels and ordering keys serve different purposes. Keep an ISO date or numeric timestamp as the ordering key, then format the label only when rendering. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0018",
+    "createdAt": "2026-05-29T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: What should happen when a list item disappears while it has focus? Context: the keyboard navigation experiment is running locally.",
+    "answer": "Choose a nearby surviving item as the next focus target, or focus the list container when it becomes empty. Test removal of the first, middle and last item. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0019",
+    "createdAt": "2026-05-31T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Can a trailing comma cause a JSON import to fail? Context: the JSON imports experiment is running locally.",
+    "answer": "Strict JSON does not permit trailing commas. Remove the comma before the closing bracket or brace; a JavaScript object literal is a different syntax. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0020",
+    "createdAt": "2026-06-01T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why does this thumbnail stretch when its container is narrow? Context: the image sizing experiment is running locally.",
+    "answer": "Keep the intrinsic aspect ratio and constrain the maximum width. If cropping is intended, use a bounded container with object-fit: cover rather than changing the image proportions. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0021",
+    "createdAt": "2026-06-02T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can a table show whether there are more results? Context: the query pagination experiment is running locally.",
+    "answer": "Fetch one extra row beyond the visible page size. Return a next-page indicator when that extra row exists, and do not include it in the displayed page. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0022",
+    "createdAt": "2026-06-04T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can I compare an expected output without depending on the current clock? Context: the local tests experiment is running locally.",
+    "answer": "Supply a fixed clock through a function argument or dependency. Build the expected timestamps from that same explicit clock instead of reading the wall clock inside the test. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0023",
+    "createdAt": "2026-06-05T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why do accented letters look wrong after reading this file? Context: the text encodings experiment is running locally.",
+    "answer": "The bytes may have been decoded with the wrong character encoding. Confirm the export encoding and decode it explicitly before changing or replacing individual characters. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0024",
+    "createdAt": "2026-06-07T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Where should I validate a form value before saving? Context: the input validation experiment is running locally.",
+    "answer": "Validate at the server boundary even when the browser also checks the form. Return a field-specific error for expected invalid input; keep the storage operation behind that validated boundary. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0025",
+    "createdAt": "2026-06-08T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why does the first heading add a gap above this panel? Context: the CSS spacing experiment is running locally.",
+    "answer": "Inspect the heading margin and margin collapse at the container boundary. A flow-root container or explicit panel padding can make the intended spacing easier to reason about. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0026",
+    "createdAt": "2026-06-09T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can I stop an old request replacing a newer search result? Context: the async cancellation experiment is running locally.",
+    "answer": "Associate each request with a generation number or AbortSignal. Apply the result only if that request still owns the active generation when it settles. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0027",
+    "createdAt": "2026-06-11T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can a small local tool avoid one ever-growing log file? Context: the log rotation experiment is running locally.",
+    "answer": "Rotate on a bounded size or date and retain a limited number of files. Record rotation failures separately rather than silently discarding diagnostic output. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0028",
+    "createdAt": "2026-06-12T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Should a character counter use string length for accented names? Context: the Unicode labels experiment is running locally.",
+    "answer": "JavaScript string length counts UTF-16 code units. If the visible-character limit matters, segment grapheme clusters instead, and explain the limit beside the input. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0029",
+    "createdAt": "2026-06-13T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: What should a table display when a filter matches no rows? Context: the empty states experiment is running locally.",
+    "answer": "Keep the column context and show a concise empty-state message with a way to clear the filter. Distinguish no matches from a failed request. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0030",
+    "createdAt": "2026-06-15T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can two exported files avoid overwriting each other? Context: the file names experiment is running locally.",
+    "answer": "Choose a deterministic unique suffix or refuse an existing destination unless replacement was requested. Do not rely on a display title alone as a safe filesystem path. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0031",
+    "createdAt": "2026-06-16T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Does an icon-only button need an accessible name? Context: the accessibility labels experiment is running locally.",
+    "answer": "Yes. Provide a concise accessible name describing the action. A tooltip is useful for sighted users but is not a substitute for the control name. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0032",
+    "createdAt": "2026-06-18T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: What makes a small schema change safe to rerun? Context: the database migrations experiment is running locally.",
+    "answer": "Track the applied migration version and run each step once in a transaction where supported. Test an existing populated database as well as an empty one. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0033",
+    "createdAt": "2026-06-19T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Should every failed request be retried immediately? Context: the HTTP retries experiment is running locally.",
+    "answer": "Retry only eligible transient failures with bounded backoff. Respect Retry-After when present, and avoid automatically repeating a non-idempotent write without an idempotency key. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0034",
+    "createdAt": "2026-06-20T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why does adding two displayed decimal values produce a tiny rounding difference? Context: the decimal arithmetic experiment is running locally.",
+    "answer": "Binary floating-point cannot represent every decimal exactly. For fixed currency precision, calculate in integer minor units; for arbitrary precision use a decimal representation. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0035",
+    "createdAt": "2026-06-22T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: What belongs in a useful changelog entry for a small fix? Context: the release notes experiment is running locally.",
+    "answer": "Describe the trigger and the corrected user-visible behavior. Include migration or compatibility steps only when the reader actually needs to take them. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0036",
+    "createdAt": "2026-06-23T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can I preserve a comma inside a quoted CSV field? Context: the CSV exports experiment is running locally.",
+    "answer": "Quote the field and double any embedded quote characters. A parser should read the escaped field as one value; splitting every line at commas loses that distinction. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0037",
+    "createdAt": "2026-06-24T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why does sorting date labels as strings give an odd order? Context: the date sorting experiment is running locally.",
+    "answer": "Display labels and ordering keys serve different purposes. Keep an ISO date or numeric timestamp as the ordering key, then format the label only when rendering. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0038",
+    "createdAt": "2026-06-26T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: What should happen when a list item disappears while it has focus? Context: the keyboard navigation experiment is running locally.",
+    "answer": "Choose a nearby surviving item as the next focus target, or focus the list container when it becomes empty. Test removal of the first, middle and last item. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0039",
+    "createdAt": "2026-06-27T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Can a trailing comma cause a JSON import to fail? Context: the JSON imports experiment is running locally.",
+    "answer": "Strict JSON does not permit trailing commas. Remove the comma before the closing bracket or brace; a JavaScript object literal is a different syntax. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0040",
+    "createdAt": "2026-06-29T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why does this thumbnail stretch when its container is narrow? Context: the image sizing experiment is running locally.",
+    "answer": "Keep the intrinsic aspect ratio and constrain the maximum width. If cropping is intended, use a bounded container with object-fit: cover rather than changing the image proportions. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0041",
+    "createdAt": "2026-06-30T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can a table show whether there are more results? Context: the query pagination experiment is running locally.",
+    "answer": "Fetch one extra row beyond the visible page size. Return a next-page indicator when that extra row exists, and do not include it in the displayed page. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0042",
+    "createdAt": "2026-07-01T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can I compare an expected output without depending on the current clock? Context: the local tests experiment is running locally.",
+    "answer": "Supply a fixed clock through a function argument or dependency. Build the expected timestamps from that same explicit clock instead of reading the wall clock inside the test. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0043",
+    "createdAt": "2026-07-03T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why do accented letters look wrong after reading this file? Context: the text encodings experiment is running locally.",
+    "answer": "The bytes may have been decoded with the wrong character encoding. Confirm the export encoding and decode it explicitly before changing or replacing individual characters. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0044",
+    "createdAt": "2026-07-04T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Where should I validate a form value before saving? Context: the input validation experiment is running locally.",
+    "answer": "Validate at the server boundary even when the browser also checks the form. Return a field-specific error for expected invalid input; keep the storage operation behind that validated boundary. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0045",
+    "createdAt": "2026-07-05T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why does the first heading add a gap above this panel? Context: the CSS spacing experiment is running locally.",
+    "answer": "Inspect the heading margin and margin collapse at the container boundary. A flow-root container or explicit panel padding can make the intended spacing easier to reason about. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0046",
+    "createdAt": "2026-07-07T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can I stop an old request replacing a newer search result? Context: the async cancellation experiment is running locally.",
+    "answer": "Associate each request with a generation number or AbortSignal. Apply the result only if that request still owns the active generation when it settles. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0047",
+    "createdAt": "2026-07-08T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can a small local tool avoid one ever-growing log file? Context: the log rotation experiment is running locally.",
+    "answer": "Rotate on a bounded size or date and retain a limited number of files. Record rotation failures separately rather than silently discarding diagnostic output. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0048",
+    "createdAt": "2026-07-10T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Should a character counter use string length for accented names? Context: the Unicode labels experiment is running locally.",
+    "answer": "JavaScript string length counts UTF-16 code units. If the visible-character limit matters, segment grapheme clusters instead, and explain the limit beside the input. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0049",
+    "createdAt": "2026-07-11T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: What should a table display when a filter matches no rows? Context: the empty states experiment is running locally.",
+    "answer": "Keep the column context and show a concise empty-state message with a way to clear the filter. Distinguish no matches from a failed request. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0050",
+    "createdAt": "2026-07-12T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can two exported files avoid overwriting each other? Context: the file names experiment is running locally.",
+    "answer": "Choose a deterministic unique suffix or refuse an existing destination unless replacement was requested. Do not rely on a display title alone as a safe filesystem path. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0051",
+    "createdAt": "2026-07-14T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Does an icon-only button need an accessible name? Context: the accessibility labels experiment is running locally.",
+    "answer": "Yes. Provide a concise accessible name describing the action. A tooltip is useful for sighted users but is not a substitute for the control name. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0052",
+    "createdAt": "2026-07-15T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: What makes a small schema change safe to rerun? Context: the database migrations experiment is running locally.",
+    "answer": "Track the applied migration version and run each step once in a transaction where supported. Test an existing populated database as well as an empty one. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0053",
+    "createdAt": "2026-07-16T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Should every failed request be retried immediately? Context: the HTTP retries experiment is running locally.",
+    "answer": "Retry only eligible transient failures with bounded backoff. Respect Retry-After when present, and avoid automatically repeating a non-idempotent write without an idempotency key. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0054",
+    "createdAt": "2026-07-18T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why does adding two displayed decimal values produce a tiny rounding difference? Context: the decimal arithmetic experiment is running locally.",
+    "answer": "Binary floating-point cannot represent every decimal exactly. For fixed currency precision, calculate in integer minor units; for arbitrary precision use a decimal representation. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0055",
+    "createdAt": "2026-07-19T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: What belongs in a useful changelog entry for a small fix? Context: the release notes experiment is running locally.",
+    "answer": "Describe the trigger and the corrected user-visible behavior. Include migration or compatibility steps only when the reader actually needs to take them. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0056",
+    "createdAt": "2026-07-21T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can I preserve a comma inside a quoted CSV field? Context: the CSV exports experiment is running locally.",
+    "answer": "Quote the field and double any embedded quote characters. A parser should read the escaped field as one value; splitting every line at commas loses that distinction. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0057",
+    "createdAt": "2026-07-22T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why does sorting date labels as strings give an odd order? Context: the date sorting experiment is running locally.",
+    "answer": "Display labels and ordering keys serve different purposes. Keep an ISO date or numeric timestamp as the ordering key, then format the label only when rendering. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0058",
+    "createdAt": "2026-07-23T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: What should happen when a list item disappears while it has focus? Context: the keyboard navigation experiment is running locally.",
+    "answer": "Choose a nearby surviving item as the next focus target, or focus the list container when it becomes empty. Test removal of the first, middle and last item. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0059",
+    "createdAt": "2026-07-25T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Can a trailing comma cause a JSON import to fail? Context: the JSON imports experiment is running locally.",
+    "answer": "Strict JSON does not permit trailing commas. Remove the comma before the closing bracket or brace; a JavaScript object literal is a different syntax. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0060",
+    "createdAt": "2026-07-26T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why does this thumbnail stretch when its container is narrow? Context: the image sizing experiment is running locally.",
+    "answer": "Keep the intrinsic aspect ratio and constrain the maximum width. If cropping is intended, use a bounded container with object-fit: cover rather than changing the image proportions. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0061",
+    "createdAt": "2026-07-27T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can a table show whether there are more results? Context: the query pagination experiment is running locally.",
+    "answer": "Fetch one extra row beyond the visible page size. Return a next-page indicator when that extra row exists, and do not include it in the displayed page. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0062",
+    "createdAt": "2026-07-29T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can I compare an expected output without depending on the current clock? Context: the local tests experiment is running locally.",
+    "answer": "Supply a fixed clock through a function argument or dependency. Build the expected timestamps from that same explicit clock instead of reading the wall clock inside the test. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0063",
+    "createdAt": "2026-07-30T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why do accented letters look wrong after reading this file? Context: the text encodings experiment is running locally.",
+    "answer": "The bytes may have been decoded with the wrong character encoding. Confirm the export encoding and decode it explicitly before changing or replacing individual characters. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0064",
+    "createdAt": "2026-08-01T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Where should I validate a form value before saving? Context: the input validation experiment is running locally.",
+    "answer": "Validate at the server boundary even when the browser also checks the form. Return a field-specific error for expected invalid input; keep the storage operation behind that validated boundary. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0065",
+    "createdAt": "2026-08-02T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why does the first heading add a gap above this panel? Context: the CSS spacing experiment is running locally.",
+    "answer": "Inspect the heading margin and margin collapse at the container boundary. A flow-root container or explicit panel padding can make the intended spacing easier to reason about. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0066",
+    "createdAt": "2026-08-03T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can I stop an old request replacing a newer search result? Context: the async cancellation experiment is running locally.",
+    "answer": "Associate each request with a generation number or AbortSignal. Apply the result only if that request still owns the active generation when it settles. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0067",
+    "createdAt": "2026-08-05T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can a small local tool avoid one ever-growing log file? Context: the log rotation experiment is running locally.",
+    "answer": "Rotate on a bounded size or date and retain a limited number of files. Record rotation failures separately rather than silently discarding diagnostic output. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0068",
+    "createdAt": "2026-08-06T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Should a character counter use string length for accented names? Context: the Unicode labels experiment is running locally.",
+    "answer": "JavaScript string length counts UTF-16 code units. If the visible-character limit matters, segment grapheme clusters instead, and explain the limit beside the input. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0069",
+    "createdAt": "2026-08-07T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: What should a table display when a filter matches no rows? Context: the empty states experiment is running locally.",
+    "answer": "Keep the column context and show a concise empty-state message with a way to clear the filter. Distinguish no matches from a failed request. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0070",
+    "createdAt": "2026-08-09T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can two exported files avoid overwriting each other? Context: the file names experiment is running locally.",
+    "answer": "Choose a deterministic unique suffix or refuse an existing destination unless replacement was requested. Do not rely on a display title alone as a safe filesystem path. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0071",
+    "createdAt": "2026-08-10T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Does an icon-only button need an accessible name? Context: the accessibility labels experiment is running locally.",
+    "answer": "Yes. Provide a concise accessible name describing the action. A tooltip is useful for sighted users but is not a substitute for the control name. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0072",
+    "createdAt": "2026-08-12T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: What makes a small schema change safe to rerun? Context: the database migrations experiment is running locally.",
+    "answer": "Track the applied migration version and run each step once in a transaction where supported. Test an existing populated database as well as an empty one. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0073",
+    "createdAt": "2026-08-13T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Should every failed request be retried immediately? Context: the HTTP retries experiment is running locally.",
+    "answer": "Retry only eligible transient failures with bounded backoff. Respect Retry-After when present, and avoid automatically repeating a non-idempotent write without an idempotency key. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0074",
+    "createdAt": "2026-08-14T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why does adding two displayed decimal values produce a tiny rounding difference? Context: the decimal arithmetic experiment is running locally.",
+    "answer": "Binary floating-point cannot represent every decimal exactly. For fixed currency precision, calculate in integer minor units; for arbitrary precision use a decimal representation. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0075",
+    "createdAt": "2026-08-16T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: What belongs in a useful changelog entry for a small fix? Context: the release notes experiment is running locally.",
+    "answer": "Describe the trigger and the corrected user-visible behavior. Include migration or compatibility steps only when the reader actually needs to take them. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0076",
+    "createdAt": "2026-08-17T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can I preserve a comma inside a quoted CSV field? Context: the CSV exports experiment is running locally.",
+    "answer": "Quote the field and double any embedded quote characters. A parser should read the escaped field as one value; splitting every line at commas loses that distinction. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0077",
+    "createdAt": "2026-08-18T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why does sorting date labels as strings give an odd order? Context: the date sorting experiment is running locally.",
+    "answer": "Display labels and ordering keys serve different purposes. Keep an ISO date or numeric timestamp as the ordering key, then format the label only when rendering. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0078",
+    "createdAt": "2026-08-20T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: What should happen when a list item disappears while it has focus? Context: the keyboard navigation experiment is running locally.",
+    "answer": "Choose a nearby surviving item as the next focus target, or focus the list container when it becomes empty. Test removal of the first, middle and last item. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0079",
+    "createdAt": "2026-08-21T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Can a trailing comma cause a JSON import to fail? Context: the JSON imports experiment is running locally.",
+    "answer": "Strict JSON does not permit trailing commas. Remove the comma before the closing bracket or brace; a JavaScript object literal is a different syntax. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0080",
+    "createdAt": "2026-08-23T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why does this thumbnail stretch when its container is narrow? Context: the image sizing experiment is running locally.",
+    "answer": "Keep the intrinsic aspect ratio and constrain the maximum width. If cropping is intended, use a bounded container with object-fit: cover rather than changing the image proportions. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0081",
+    "createdAt": "2026-08-24T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can a table show whether there are more results? Context: the query pagination experiment is running locally.",
+    "answer": "Fetch one extra row beyond the visible page size. Return a next-page indicator when that extra row exists, and do not include it in the displayed page. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0082",
+    "createdAt": "2026-08-25T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can I compare an expected output without depending on the current clock? Context: the local tests experiment is running locally.",
+    "answer": "Supply a fixed clock through a function argument or dependency. Build the expected timestamps from that same explicit clock instead of reading the wall clock inside the test. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0083",
+    "createdAt": "2026-08-27T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why do accented letters look wrong after reading this file? Context: the text encodings experiment is running locally.",
+    "answer": "The bytes may have been decoded with the wrong character encoding. Confirm the export encoding and decode it explicitly before changing or replacing individual characters. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0084",
+    "createdAt": "2026-08-28T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Where should I validate a form value before saving? Context: the input validation experiment is running locally.",
+    "answer": "Validate at the server boundary even when the browser also checks the form. Return a field-specific error for expected invalid input; keep the storage operation behind that validated boundary. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0085",
+    "createdAt": "2026-08-29T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why does the first heading add a gap above this panel? Context: the CSS spacing experiment is running locally.",
+    "answer": "Inspect the heading margin and margin collapse at the container boundary. A flow-root container or explicit panel padding can make the intended spacing easier to reason about. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0086",
+    "createdAt": "2026-08-31T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can I stop an old request replacing a newer search result? Context: the async cancellation experiment is running locally.",
+    "answer": "Associate each request with a generation number or AbortSignal. Apply the result only if that request still owns the active generation when it settles. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0087",
+    "createdAt": "2026-09-01T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can a small local tool avoid one ever-growing log file? Context: the log rotation experiment is running locally.",
+    "answer": "Rotate on a bounded size or date and retain a limited number of files. Record rotation failures separately rather than silently discarding diagnostic output. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0088",
+    "createdAt": "2026-09-03T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Should a character counter use string length for accented names? Context: the Unicode labels experiment is running locally.",
+    "answer": "JavaScript string length counts UTF-16 code units. If the visible-character limit matters, segment grapheme clusters instead, and explain the limit beside the input. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0089",
+    "createdAt": "2026-09-04T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: What should a table display when a filter matches no rows? Context: the empty states experiment is running locally.",
+    "answer": "Keep the column context and show a concise empty-state message with a way to clear the filter. Distinguish no matches from a failed request. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0090",
+    "createdAt": "2026-09-05T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can two exported files avoid overwriting each other? Context: the file names experiment is running locally.",
+    "answer": "Choose a deterministic unique suffix or refuse an existing destination unless replacement was requested. Do not rely on a display title alone as a safe filesystem path. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0091",
+    "createdAt": "2026-09-07T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Does an icon-only button need an accessible name? Context: the accessibility labels experiment is running locally.",
+    "answer": "Yes. Provide a concise accessible name describing the action. A tooltip is useful for sighted users but is not a substitute for the control name. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0092",
+    "createdAt": "2026-09-08T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: What makes a small schema change safe to rerun? Context: the database migrations experiment is running locally.",
+    "answer": "Track the applied migration version and run each step once in a transaction where supported. Test an existing populated database as well as an empty one. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0093",
+    "createdAt": "2026-09-09T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Should every failed request be retried immediately? Context: the HTTP retries experiment is running locally.",
+    "answer": "Retry only eligible transient failures with bounded backoff. Respect Retry-After when present, and avoid automatically repeating a non-idempotent write without an idempotency key. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0094",
+    "createdAt": "2026-09-11T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why does adding two displayed decimal values produce a tiny rounding difference? Context: the decimal arithmetic experiment is running locally.",
+    "answer": "Binary floating-point cannot represent every decimal exactly. For fixed currency precision, calculate in integer minor units; for arbitrary precision use a decimal representation. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0095",
+    "createdAt": "2026-09-12T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: What belongs in a useful changelog entry for a small fix? Context: the release notes experiment is running locally.",
+    "answer": "Describe the trigger and the corrected user-visible behavior. Include migration or compatibility steps only when the reader actually needs to take them. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0096",
+    "createdAt": "2026-09-14T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can I preserve a comma inside a quoted CSV field? Context: the CSV exports experiment is running locally.",
+    "answer": "Quote the field and double any embedded quote characters. A parser should read the escaped field as one value; splitting every line at commas loses that distinction. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0097",
+    "createdAt": "2026-09-15T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why does sorting date labels as strings give an odd order? Context: the date sorting experiment is running locally.",
+    "answer": "Display labels and ordering keys serve different purposes. Keep an ISO date or numeric timestamp as the ordering key, then format the label only when rendering. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0098",
+    "createdAt": "2026-09-16T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: What should happen when a list item disappears while it has focus? Context: the keyboard navigation experiment is running locally.",
+    "answer": "Choose a nearby surviving item as the next focus target, or focus the list container when it becomes empty. Test removal of the first, middle and last item. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0099",
+    "createdAt": "2026-09-18T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Can a trailing comma cause a JSON import to fail? Context: the JSON imports experiment is running locally.",
+    "answer": "Strict JSON does not permit trailing commas. Remove the comma before the closing bracket or brace; a JavaScript object literal is a different syntax. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0100",
+    "createdAt": "2026-09-19T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why does this thumbnail stretch when its container is narrow? Context: the image sizing experiment is running locally.",
+    "answer": "Keep the intrinsic aspect ratio and constrain the maximum width. If cropping is intended, use a bounded container with object-fit: cover rather than changing the image proportions. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0101",
+    "createdAt": "2026-09-20T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can a table show whether there are more results? Context: the query pagination experiment is running locally.",
+    "answer": "Fetch one extra row beyond the visible page size. Return a next-page indicator when that extra row exists, and do not include it in the displayed page. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0102",
+    "createdAt": "2026-09-22T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can I compare an expected output without depending on the current clock? Context: the local tests experiment is running locally.",
+    "answer": "Supply a fixed clock through a function argument or dependency. Build the expected timestamps from that same explicit clock instead of reading the wall clock inside the test. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0103",
+    "createdAt": "2026-09-23T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why do accented letters look wrong after reading this file? Context: the text encodings experiment is running locally.",
+    "answer": "The bytes may have been decoded with the wrong character encoding. Confirm the export encoding and decode it explicitly before changing or replacing individual characters. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0104",
+    "createdAt": "2026-09-25T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Where should I validate a form value before saving? Context: the input validation experiment is running locally.",
+    "answer": "Validate at the server boundary even when the browser also checks the form. Return a field-specific error for expected invalid input; keep the storage operation behind that validated boundary. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0105",
+    "createdAt": "2026-09-26T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Why does the first heading add a gap above this panel? Context: the CSS spacing experiment is running locally.",
+    "answer": "Inspect the heading margin and margin collapse at the container boundary. A flow-root container or explicit panel padding can make the intended spacing easier to reason about. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0106",
+    "createdAt": "2026-09-27T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can I stop an old request replacing a newer search result? Context: the async cancellation experiment is running locally.",
+    "answer": "Associate each request with a generation number or AbortSignal. Apply the result only if that request still owns the active generation when it settles. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0107",
+    "createdAt": "2026-09-29T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: How can a small local tool avoid one ever-growing log file? Context: the log rotation experiment is running locally.",
+    "answer": "Rotate on a bounded size or date and retain a limited number of files. Record rotation failures separately rather than silently discarding diagnostic output. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0108",
+    "createdAt": "2026-09-30T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: Should a character counter use string length for accented names? Context: the Unicode labels experiment is running locally.",
+    "answer": "JavaScript string length counts UTF-16 code units. If the visible-character limit matters, segment grapheme clusters instead, and explain the limit beside the input. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  },
+  {
+    "id": "sb-extra-codex-0109",
+    "createdAt": "2026-10-02T10:00:00.000Z",
+    "prompt": "In my little household catalogue prototype: What should a table display when a filter matches no rows? Context: the empty states experiment is running locally.",
+    "answer": "Keep the column context and show a concise empty-state message with a way to clear the filter. Distinguish no matches from a failed request. Start with a small example and verify the edge case before changing the wider catalogue.",
+    "project": "/fictional-projects/household-catalogue"
+  }
+]

@@ -67,3 +67,7 @@ export {
   type UniverseSourceEntry,
   type UniverseIssue,
 } from "./universe.js";
+
+export { materializeSyntheticFiles, universeAccounts, type SyntheticFile } from "./files.js";
+
+export { sourceFixtureClock, type SourceFixtureClock } from "./fixture-clock.js";

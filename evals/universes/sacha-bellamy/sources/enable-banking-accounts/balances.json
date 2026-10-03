@@ -1,0 +1,13 @@
+[
+  {
+    "account_key": "sb-eur-main",
+    "balances": [
+      {
+        "name": "Closing booked",
+        "balance_type": "CLBD",
+        "balance_amount": { "currency": "EUR", "amount": "917.26" },
+        "reference_date": "2026-10-03"
+      }
+    ]
+  }
+]

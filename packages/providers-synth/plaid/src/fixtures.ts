@@ -34,6 +34,10 @@ export const PLAID_SANDBOX_HOST = "sandbox.plaid.com";
  * holdings reads are single point-in-time responses.
  */
 export interface PlaidResponsesFixture {
+  /** Institution displayed by this fictional connection. */
+  institutionName?: string;
+  /** Stable UTC snapshot day for balances and holdings. */
+  snapshotDay?: string;
   /** Pages of `POST /transactions/sync`, served in order (cursor → next page). */
   transactionsSyncPages: unknown[];
   /** `POST /accounts/get`. */
@@ -47,6 +51,22 @@ export interface PlaidResponsesFixture {
    * snapshot's consent read succeeds (and reports `null`) rather than 404ing.
    */
   itemGet?: unknown;
+}
+
+/** Resolve fixture presentation and snapshot settings with legacy defaults. */
+export function plaidFixtureSettings(
+  fixture: PlaidResponsesFixture,
+  snapshotOverride?: string,
+): { institutionName: string; snapshotDay: string } {
+  const snapshotDay = snapshotOverride ?? fixture.snapshotDay ?? "2026-05-15";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(snapshotDay)) {
+    throw new Error("Synthetic Plaid snapshotDay must be a valid YYYY-MM-DD date");
+  }
+  const date = new Date(`${snapshotDay}T12:00:00.000Z`);
+  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== snapshotDay) {
+    throw new Error("Synthetic Plaid snapshotDay must be a valid YYYY-MM-DD date");
+  }
+  return { institutionName: fixture.institutionName ?? "Northstar Bank", snapshotDay };
 }
 
 let cachedResponses: PlaidResponsesFixture | null = null;

@@ -48,7 +48,19 @@ interface Workout {
   energyKcal: number;
 }
 
+interface MoodEntry {
+  kind: string;
+  valence: number;
+  labels: string[];
+  associations: string[];
+  date: string;
+  hour: number;
+}
+
 interface HealthFixture {
+  /** First day represented by the per-metric value arrays. */
+  startDay?: string;
+  moods?: MoodEntry[];
   accountId: string;
   device: string;
   sourceApp: string;
@@ -65,11 +77,22 @@ interface HealthFixture {
 let cached: HealthFixture | null = null;
 function loadFixture(): HealthFixture {
   if (cached) return cached;
-  cached = loadSourceFixtureJson<HealthFixture>(
+  const fixture = loadSourceFixtureJson<HealthFixture>(
     loadActiveUniverse(),
     "apple-health",
     "health.json",
   );
+  if (fixture.startDay !== undefined) {
+    const date = new Date(`${fixture.startDay}T00:00:00.000Z`);
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(fixture.startDay) ||
+      !Number.isFinite(date.getTime()) ||
+      date.toISOString().slice(0, 10) !== fixture.startDay
+    ) {
+      throw new Error("Synthetic Apple Health startDay must be a valid YYYY-MM-DD date");
+    }
+  }
+  cached = fixture;
   return cached;
 }
 
@@ -83,10 +106,10 @@ function isoAt(dateStr: string, hour: number, minute = 0): string {
   return `${dateStr}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00.000Z`;
 }
 
-/** 14-day window ending today-ish so the data feels current relative to the cast. */
+/** Legacy start day for fixtures that omit their own timeline anchor. */
 const DAY_ANCHOR = "2025-09-01";
 function dayOffset(i: number): string {
-  const base = new Date(`${DAY_ANCHOR}T00:00:00.000Z`).getTime();
+  const base = new Date(`${loadFixture().startDay ?? DAY_ANCHOR}T00:00:00.000Z`).getTime();
   const d = new Date(base + i * 86_400_000);
   return d.toISOString().slice(0, 10);
 }
@@ -110,7 +133,7 @@ function rowPerSampleRecords(
 ): RowPerSample[] {
   const f = loadFixture();
   const out: RowPerSample[] = [];
-  // Daily-resolution metrics map one value per day starting at DAY_ANCHOR.
+  // Daily-resolution metrics map one value per day from the fixture start day.
   // Multi-sample-per-day metrics (heart_rate has 4 per day) interleave at
   // realistic hours.
   for (const spec of f[category]) {
@@ -271,24 +294,26 @@ export interface MoodRecord {
 
 export function moodRecords(): MoodRecord[] {
   const fixture = loadFixture();
-  return [
-    {
-      kind: "momentaryEmotion",
-      valence: 0.4,
-      labels: ["calm"],
-      associations: ["community"],
-      date: "2025-09-07",
-      hour: 18,
-    },
-    {
-      kind: "dailyMood",
-      valence: 0.2,
-      labels: ["content"],
-      associations: ["hobbies"],
-      date: "2025-09-10",
-      hour: 20,
-    },
-  ].map(({ kind, valence, labels, associations, date, hour }) => {
+  return (
+    fixture.moods ?? [
+      {
+        kind: "momentaryEmotion",
+        valence: 0.4,
+        labels: ["calm"],
+        associations: ["community"],
+        date: "2025-09-07",
+        hour: 18,
+      },
+      {
+        kind: "dailyMood",
+        valence: 0.2,
+        labels: ["content"],
+        associations: ["hobbies"],
+        date: "2025-09-10",
+        hour: 20,
+      },
+    ]
+  ).map(({ kind, valence, labels, associations, date, hour }) => {
     const time = isoAt(date, hour);
     return {
       id: deterministicId([kind, date, hour]),

@@ -2,7 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { noteToDocument, noteToRecord } from "@omnesis/provider-granola";
-import { loadActiveUniverse, loadSourceFixtureJson } from "@omnesis/providers-synth-common";
+import {
+  loadActiveUniverse,
+  loadSourceFixtureJson,
+  sourceFixtureClock,
+} from "@omnesis/providers-synth-common";
 import type { GranolaNoteDetail } from "@omnesis/provider-granola";
 import type { DocumentInput, ProviderId, SourceId } from "@omnesis/types";
 
@@ -28,7 +32,14 @@ export function mapMeetingRecord(
   note: GranolaNoteDetail,
   accountId: string,
 ): Record<string, unknown> {
-  return noteToRecord(note, SYNTH_SYNCED_AT, accountId);
+  return noteToRecord(
+    note,
+    sourceFixtureClock("granola-meetings", {
+      snapshotDay: SYNTH_SYNCED_AT.slice(0, 10),
+      syncedAt: SYNTH_SYNCED_AT,
+    }).syncedAt,
+    accountId,
+  );
 }
 
 /** Map a fixture note to a searchable document via the real normalizer. */

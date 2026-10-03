@@ -1,0 +1,10 @@
+[
+  {
+    "account_key": "sb-eur-main",
+    "uid": "sb-eur-session",
+    "currency": "EUR",
+    "name": "Family travel reserve",
+    "cash_account_type": "CACC",
+    "product": "Synthetic EUR current account"
+  }
+]

@@ -1,0 +1,49 @@
+{
+  "accountsPages": [
+    {
+      "accounts": [
+        {
+          "uuid": "sb-crypto-usd",
+          "currency": "USD",
+          "type": "ACCOUNT_TYPE_FIAT",
+          "available_balance": { "value": "120.00", "currency": "USD" },
+          "hold": { "value": "0", "currency": "USD" }
+        }
+      ],
+      "has_next": false
+    }
+  ],
+  "portfolios": {
+    "portfolios": [
+      {
+        "uuid": "sb-small-portfolio",
+        "name": "Small experimental portfolio",
+        "type": "DEFAULT",
+        "deleted": false
+      }
+    ]
+  },
+  "breakdowns": {
+    "sb-small-portfolio": {
+      "breakdown": {
+        "spot_positions": [
+          {
+            "asset": "USD",
+            "is_cash": true,
+            "total_balance_crypto": 120,
+            "available_to_trade_crypto": 120,
+            "cost_basis": { "value": "120", "currency": "USD" },
+            "total_balance_fiat": 120,
+            "allocation": 1,
+            "account_uuid": "sb-crypto-usd"
+          }
+        ]
+      }
+    }
+  },
+  "ordersPages": [{ "orders": [], "has_next": false }],
+  "fillsPages": [{ "fills": [], "has_next": false }],
+  "v2AccountsPages": [{ "data": [], "pagination": { "next_starting_after": null } }],
+  "v2TransactionsPages": {},
+  "v2Grant": false
+}

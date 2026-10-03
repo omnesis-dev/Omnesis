@@ -68,6 +68,16 @@
         "src/e2e/brain-bench/codex-fixture.mjs"
       ],
       "ignoreDependencies": [
+        "@omnesis/provider-activity-segments-synth",
+        "@omnesis/provider-claude-code-synth",
+        "@omnesis/provider-codex-synth",
+        "@omnesis/provider-hermes-synth",
+        "@omnesis/provider-imap-synth",
+        "@omnesis/provider-local-files-synth",
+        "@omnesis/provider-openclaw-synth",
+        "@omnesis/provider-photos-synth",
+        "@omnesis/provider-pi-synth",
+        "@omnesis/provider-web-synth",
         "@omnesis/provider-android-call-log-synth",
         "@omnesis/provider-apple",
         "@omnesis/provider-apple-health-synth",

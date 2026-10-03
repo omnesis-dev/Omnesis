@@ -341,7 +341,7 @@ Exit code is 0 with only warnings, non-zero on any `error`-severity issue. `npm 
 
 ## Current limitations
 
-- **No procedural generation.** All fixtures are hand-authored JSON committed to the repo; there is no fixture generator.
+- **Optional deterministic generation.** A universe may own a reproducible `_build/` generator that materializes fixtures for an explicit reference day. Generated source data must come from that universe’s original fictional authoring modules. The default universe keeps its existing fixture behavior; runtime loaders do not silently regenerate or rebase it.
 - **No versioning / compat checking.** There is no `version` field and no schema-mismatch detection. Universes are read at face value.
 - **No universe registry beyond the in-tree `evals/universes/` directory.** External universes work via path-mode but aren't discoverable as names.
 
@@ -375,3 +375,31 @@ consumes the token and removes it from the browser URL after opening it.
 For parallel instances, choose distinct `OMNESIS_CONFIG_DIR` and
 `OMNESIS_GATEWAY_PORT` values. Use `scripts/dev-instance.sh stop` with those
 same values to retire your instance when review finishes.
+
+## Large and current demo fixtures
+
+The document twins retain a five-entry default page size. Set
+`OMNESIS_SYNTH_BATCH_SIZE` to an integer from 1 to 500 for a larger demo corpus;
+an explicit provider page size takes precedence. Invalid overrides fail loudly.
+This changes pagination, not corpus contents or snapshot membership.
+
+WhatsApp and iMessage day fixtures may declare `participants`, an array of cast
+references. When present, each message's `from` resolves through the cast rather
+than using the chat title, and all declared participants and senders become unique
+person mentions. Fixtures omitting the field preserve their existing rendering.
+
+Apple Health's `health.json` may declare `startDay` (`YYYY-MM-DD`) for the first
+sample in its per-metric value arrays, and `moods` with entries containing `kind`,
+`valence`, `labels`, `associations`, `date`, and `hour`. An empty `moods` array emits
+no mood samples. Omitting these fields retains the legacy sample timeline and
+mood examples.
+
+Plaid's `responses.json` may declare `institutionName` and `snapshotDay`
+(`YYYY-MM-DD`). These label the synthetic institution and set its balances/holdings
+snapshot date. The test override `OMNESIS_PLAID_SYNTH_DAY` takes precedence over
+`snapshotDay`. Omitted fields retain the existing fictional institution and date.
+
+These are fixture controls, not a virtual product clock. A generator can
+materialize relative scenarios into an external universe directory for a chosen
+recording date, preserving fixed historical evidence and keeping prose, calendar
+records, tasks and analytics timestamps consistent before ingestion.

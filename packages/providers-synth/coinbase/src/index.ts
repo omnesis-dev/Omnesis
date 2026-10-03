@@ -26,6 +26,7 @@ import {
   fakeLocalFlow,
   preDiscoveredAccounts,
   selfAccountId,
+  sourceFixtureClock,
 } from "@omnesis/providers-synth-common";
 import { activeResponses, COINBASE_DESCRIPTOR_ID, syntheticCoinbaseClient } from "./fixtures.js";
 
@@ -54,7 +55,12 @@ const DEFAULT_SYNTH_DAY = "2025-12-31";
  * syncs of the same gateway process.
  */
 function synthNow(): Date {
-  const day = process.env.OMNESIS_COINBASE_SYNTH_DAY ?? DEFAULT_SYNTH_DAY;
+  const day =
+    process.env.OMNESIS_COINBASE_SYNTH_DAY ??
+    sourceFixtureClock(COINBASE_DESCRIPTOR_ID, {
+      snapshotDay: DEFAULT_SYNTH_DAY,
+      syncedAt: `${DEFAULT_SYNTH_DAY}T12:00:00.000Z`,
+    }).snapshotDay;
   return new Date(`${day}T12:00:00.000Z`);
 }
 

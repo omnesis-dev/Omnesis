@@ -1,0 +1,4 @@
+[
+  { "account_id": 901, "balance": { "amount": 41756.66, "currency": "GBP" } },
+  { "account_id": 902, "balance": { "amount": 8900, "currency": "GBP" } }
+]

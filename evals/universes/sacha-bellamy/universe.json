@@ -1,0 +1,132 @@
+{
+  "name": "sacha-bellamy",
+  "description": "A wholly fictional French London household: ten-year source history, everyday-life demonstrations and unrelated background. Live agents only.",
+  "cast": "cast.json",
+  "agentDemos": null,
+  "devices": [
+    { "id": "macbook", "name": "Sacha demo laptop", "kind": "collector" },
+    { "id": "iphone", "name": "Sacha demo iPhone", "kind": "ios" },
+    { "id": "browser", "name": "Sacha demo browser", "kind": "browser" }
+  ],
+  "sources": [
+    {
+      "descriptorId": "activity-segments",
+      "accountIds": ["ios-sacha-bellamy"],
+      "device": "iphone"
+    },
+    {
+      "descriptorId": "apple-calendar",
+      "accountIds": ["sacha.bellamy@icloud.example.com"],
+      "device": "macbook"
+    },
+    {
+      "descriptorId": "apple-call-log",
+      "accountIds": ["sacha.bellamy@icloud.example.com"],
+      "device": "macbook"
+    },
+    {
+      "descriptorId": "apple-contacts",
+      "accountIds": ["sacha.bellamy@icloud.example.com"],
+      "device": "macbook"
+    },
+    { "descriptorId": "apple-health", "accountIds": ["ios-sacha-bellamy"], "device": "iphone" },
+    {
+      "descriptorId": "apple-imessage",
+      "accountIds": ["sacha.bellamy@icloud.example.com"],
+      "device": "macbook"
+    },
+    {
+      "descriptorId": "apple-notes",
+      "accountIds": ["sacha.bellamy@icloud.example.com"],
+      "device": "macbook"
+    },
+    {
+      "descriptorId": "apple-reminders",
+      "accountIds": ["sacha.bellamy@icloud.example.com"],
+      "device": "macbook"
+    },
+    {
+      "descriptorId": "apple-voicemail",
+      "accountIds": ["sacha.bellamy@icloud.example.com"],
+      "device": "macbook"
+    },
+    { "descriptorId": "browser-history", "accountIds": ["safari"], "device": "macbook" },
+    {
+      "descriptorId": "chrome-bookmarks",
+      "accountIds": ["sacha.bellamy@example.com"],
+      "device": "macbook"
+    },
+    { "descriptorId": "claude-code", "accountIds": ["claude-sacha"], "device": "macbook" },
+    { "descriptorId": "codex", "accountIds": ["codex-sacha"], "device": "macbook" },
+    { "descriptorId": "coinbase", "accountIds": ["bellamy-crypto"], "device": "macbook" },
+    {
+      "descriptorId": "core-location-visits",
+      "accountIds": ["ios-sacha-bellamy"],
+      "device": "iphone"
+    },
+    {
+      "descriptorId": "enable-banking-accounts",
+      "accountIds": ["bellamy-eur"],
+      "device": "macbook"
+    },
+    { "descriptorId": "github", "accountIds": ["fictional-sacha"], "device": "macbook" },
+    { "descriptorId": "github-commits", "accountIds": ["fictional-sacha"], "device": "macbook" },
+    { "descriptorId": "gmail", "accountIds": ["sacha.bellamy@example.com"], "device": "macbook" },
+    {
+      "descriptorId": "google-calendar",
+      "accountIds": ["sacha.bellamy@example.com"],
+      "device": "macbook"
+    },
+    {
+      "descriptorId": "google-contacts",
+      "accountIds": ["sacha.bellamy@example.com"],
+      "device": "macbook"
+    },
+    {
+      "descriptorId": "google-drive",
+      "accountIds": ["sacha.bellamy@example.com"],
+      "device": "macbook"
+    },
+    {
+      "descriptorId": "granola-meetings",
+      "accountIds": ["sacha.bellamy@example.com"],
+      "device": "macbook"
+    },
+    { "descriptorId": "hermes", "accountIds": ["hermes-sacha"], "device": "macbook" },
+    { "descriptorId": "imap", "accountIds": ["imap-sacha"], "device": "macbook" },
+    { "descriptorId": "local-files", "accountIds": ["files-sacha"], "device": "macbook" },
+    { "descriptorId": "lunchflow-accounts", "accountIds": ["default"], "device": "macbook" },
+    { "descriptorId": "maildir", "accountIds": ["mail-sacha-bellamy"], "device": "macbook" },
+    { "descriptorId": "notion-databases", "accountIds": ["user_sacha"], "device": "macbook" },
+    { "descriptorId": "notion-pages", "accountIds": ["user_sacha"], "device": "macbook" },
+    { "descriptorId": "obsidian-notes", "accountIds": ["Personal"], "device": "macbook" },
+    {
+      "descriptorId": "onedrive",
+      "accountIds": ["sacha.bellamy@harbour-lantern.example.com"],
+      "device": "macbook"
+    },
+    { "descriptorId": "openclaw", "accountIds": ["openclaw-sacha"], "device": "macbook" },
+    {
+      "descriptorId": "outlook-calendar",
+      "accountIds": ["sacha.bellamy@harbour-lantern.example.com"],
+      "device": "macbook"
+    },
+    {
+      "descriptorId": "outlook-email",
+      "accountIds": ["sacha.bellamy@harbour-lantern.example.com"],
+      "device": "macbook"
+    },
+    { "descriptorId": "photos", "accountIds": ["ios-sacha-bellamy"], "device": "iphone" },
+    { "descriptorId": "pi", "accountIds": ["pi-sacha"], "device": "macbook" },
+    { "descriptorId": "plaid", "accountIds": ["plaid-bellamy-us"], "device": "macbook" },
+    {
+      "descriptorId": "screen-time",
+      "accountIds": ["sacha.bellamy@icloud.example.com"],
+      "device": "macbook"
+    },
+    { "descriptorId": "strava-activities", "accountIds": ["8800100"], "device": "macbook" },
+    { "descriptorId": "things", "accountIds": ["local"], "device": "macbook" },
+    { "descriptorId": "web", "accountIds": ["web-sacha"], "device": "browser" },
+    { "descriptorId": "whatsapp-messages", "accountIds": ["+447700900100"], "device": "macbook" }
+  ]
+}

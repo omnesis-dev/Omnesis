@@ -65,7 +65,17 @@
     { "path": "packages/providers-synth/screen-time" },
     { "path": "packages/providers-synth/strava" },
     { "path": "packages/providers-synth/things" },
-    { "path": "packages/providers-synth/whatsapp" }
+    { "path": "packages/providers-synth/whatsapp" },
+    { "path": "packages/providers-synth/local-files" },
+    { "path": "packages/providers-synth/imap" },
+    { "path": "packages/providers-synth/web" },
+    { "path": "packages/providers-synth/codex" },
+    { "path": "packages/providers-synth/claude-code" },
+    { "path": "packages/providers-synth/pi" },
+    { "path": "packages/providers-synth/openclaw" },
+    { "path": "packages/providers-synth/hermes" },
+    { "path": "packages/providers-synth/photos" },
+    { "path": "packages/providers-synth/activity-segments" }
   ],
   "files": []
 }

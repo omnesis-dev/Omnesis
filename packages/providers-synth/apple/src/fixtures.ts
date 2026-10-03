@@ -120,6 +120,8 @@ interface DailyChatEntry {
   chatTitle: string;
   date: string;
   counterparty: string;
+  /** Cast references of every participant, including self when present. */
+  participants?: string[];
   messages: ChatMessage[];
 }
 let chatsCache: DailyChatEntry[] | null = null;
@@ -137,14 +139,21 @@ export function mapChat(
   ctx: { sourceId: SourceId; providerId: ProviderId },
 ): DocumentInput[] {
   const lines = e.messages.map((m) => {
-    const speaker = m.from === "self" ? "You" : e.chatTitle;
+    const speaker =
+      m.from === "self" ? "You" : e.participants ? getPerson(m.from).name : e.chatTitle;
     return `[${m.at.slice(11, 16)}] ${speaker}: ${m.text}`;
   });
   const content = `# ${e.chatTitle} — ${e.date}\n\n${lines.join("\n")}`;
-  const people: PersonMention[] = [
-    personMention("self", "participant"),
-    personMention(e.counterparty, "participant"),
-  ];
+  const participantRefs = e.participants
+    ? ["self", ...e.participants, ...e.messages.map((message) => message.from)]
+    : ["self", e.counterparty];
+  const seenPeople = new Set<string>();
+  const people: PersonMention[] = participantRefs.flatMap((ref) => {
+    const person = getPerson(ref);
+    if (seenPeople.has(person.id)) return [];
+    seenPeople.add(person.id);
+    return [personMention(ref, "participant")];
+  });
   const firstAt = e.messages[0]?.at ?? `${e.date}T00:00:00Z`;
   const lastAt = e.messages[e.messages.length - 1]?.at ?? firstAt;
   const dayDocument: DocumentInput = {

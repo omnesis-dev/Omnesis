@@ -1,0 +1,19 @@
+{
+  "name": "@omnesis/provider-openclaw-synth",
+  "version": "0.5.14",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@omnesis/core": "*",
+    "@omnesis/provider-openclaw": "*",
+    "@omnesis/providers-synth-common": "*",
+    "@omnesis/source-sdk": "*",
+    "@omnesis/types": "*",
+    "zod": "^4.6.5"
+  },
+  "files": [
+    "dist"
+  ]
+}

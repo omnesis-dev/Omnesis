@@ -18,7 +18,7 @@ export interface FixtureAddress {
 export interface FixtureAttachment {
   filename: string;
   mimeType: string;
-  content: string;
+  content: string | Uint8Array;
 }
 
 export interface FixtureMessage {
@@ -42,12 +42,9 @@ function formatAddress(address: FixtureAddress): string {
   return address.name ? `"${address.name}" <${address.address}>` : `<${address.address}>`;
 }
 
-function base64Lines(content: string): string {
-  return (
-    Buffer.from(content)
-      .toString("base64")
-      .match(/.{1,76}/g) ?? []
-  ).join("\r\n");
+function base64Lines(content: string | Uint8Array): string {
+  const bytes = typeof content === "string" ? Buffer.from(content, "utf8") : Buffer.from(content);
+  return (bytes.toString("base64").match(/.{1,76}/g) ?? []).join("\r\n");
 }
 
 /** Render a message as the bytes a mail tool would store. */

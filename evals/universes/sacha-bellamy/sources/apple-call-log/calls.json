@@ -1,0 +1,4502 @@
+[
+  {
+    "externalId": "sb-bg-call-day-00000",
+    "date": "2016-09-01",
+    "calls": [
+      {
+        "id": "sb-bg-call-00000",
+        "time": "2016-09-01T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_alice"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00001",
+    "date": "2016-09-13",
+    "calls": [
+      {
+        "id": "sb-bg-call-00001",
+        "time": "2016-09-13T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 701,
+        "connected": true,
+        "counterparty": "p_finn"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00002",
+    "date": "2016-09-25",
+    "calls": [
+      {
+        "id": "sb-bg-call-00002",
+        "time": "2016-09-25T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 418,
+        "connected": true,
+        "counterparty": "p_ines"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00003",
+    "date": "2016-10-07",
+    "calls": [
+      {
+        "id": "sb-bg-call-00003",
+        "time": "2016-10-07T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1366,
+        "connected": true,
+        "counterparty": "p_hugo"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00004",
+    "date": "2016-10-20",
+    "calls": [
+      {
+        "id": "sb-bg-call-00004",
+        "time": "2016-10-20T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 758,
+        "connected": true,
+        "counterparty": "p_owen"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00005",
+    "date": "2016-11-01",
+    "calls": [
+      {
+        "id": "sb-bg-call-00005",
+        "time": "2016-11-01T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 619,
+        "connected": true,
+        "counterparty": "p_marc"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00006",
+    "date": "2016-11-13",
+    "calls": [
+      {
+        "id": "sb-bg-call-00006",
+        "time": "2016-11-13T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 536,
+        "connected": true,
+        "counterparty": "p_max"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00007",
+    "date": "2016-11-26",
+    "calls": [
+      {
+        "id": "sb-bg-call-00007",
+        "time": "2016-11-26T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_ben"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00008",
+    "date": "2016-12-08",
+    "calls": [
+      {
+        "id": "sb-bg-call-00008",
+        "time": "2016-12-08T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 671,
+        "connected": true,
+        "counterparty": "p_marc"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00009",
+    "date": "2016-12-20",
+    "calls": [
+      {
+        "id": "sb-bg-call-00009",
+        "time": "2016-12-20T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1038,
+        "connected": true,
+        "counterparty": "p_alice"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00010",
+    "date": "2017-01-02",
+    "calls": [
+      {
+        "id": "sb-bg-call-00010",
+        "time": "2017-01-02T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 147,
+        "connected": true,
+        "counterparty": "p_ava"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00011",
+    "date": "2017-01-14",
+    "calls": [
+      {
+        "id": "sb-bg-call-00011",
+        "time": "2017-01-14T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 620,
+        "connected": true,
+        "counterparty": "p_caleb"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00012",
+    "date": "2017-01-26",
+    "calls": [
+      {
+        "id": "sb-bg-call-00012",
+        "time": "2017-01-26T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 1132,
+        "connected": true,
+        "counterparty": "p_rosie"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00013",
+    "date": "2017-02-08",
+    "calls": [
+      {
+        "id": "sb-bg-call-00013",
+        "time": "2017-02-08T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 791,
+        "connected": true,
+        "counterparty": "p_zoe"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00014",
+    "date": "2017-02-20",
+    "calls": [
+      {
+        "id": "sb-bg-call-00014",
+        "time": "2017-02-20T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_sam"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00015",
+    "date": "2017-03-04",
+    "calls": [
+      {
+        "id": "sb-bg-call-00015",
+        "time": "2017-03-04T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 738,
+        "connected": true,
+        "counterparty": "p_elliot"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00016",
+    "date": "2017-03-17",
+    "calls": [
+      {
+        "id": "sb-bg-call-00016",
+        "time": "2017-03-17T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 1205,
+        "connected": true,
+        "counterparty": "p_sam"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00017",
+    "date": "2017-03-29",
+    "calls": [
+      {
+        "id": "sb-bg-call-00017",
+        "time": "2017-03-29T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 425,
+        "connected": true,
+        "counterparty": "p_dina"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00018",
+    "date": "2017-04-10",
+    "calls": [
+      {
+        "id": "sb-bg-call-00018",
+        "time": "2017-04-10T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 758,
+        "connected": true,
+        "counterparty": "p_emile"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00019",
+    "date": "2017-04-23",
+    "calls": [
+      {
+        "id": "sb-bg-call-00019",
+        "time": "2017-04-23T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 139,
+        "connected": true,
+        "counterparty": "p_dina"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00020",
+    "date": "2017-05-05",
+    "calls": [
+      {
+        "id": "sb-bg-call-00020",
+        "time": "2017-05-05T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 991,
+        "connected": true,
+        "counterparty": "p_alice"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00021",
+    "date": "2017-05-17",
+    "calls": [
+      {
+        "id": "sb-bg-call-00021",
+        "time": "2017-05-17T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_jamie"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00022",
+    "date": "2017-05-29",
+    "calls": [
+      {
+        "id": "sb-bg-call-00022",
+        "time": "2017-05-29T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 1006,
+        "connected": true,
+        "counterparty": "p_marc"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00023",
+    "date": "2017-06-11",
+    "calls": [
+      {
+        "id": "sb-bg-call-00023",
+        "time": "2017-06-11T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1044,
+        "connected": true,
+        "counterparty": "p_max"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00024",
+    "date": "2017-06-23",
+    "calls": [
+      {
+        "id": "sb-bg-call-00024",
+        "time": "2017-06-23T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 639,
+        "connected": true,
+        "counterparty": "p_dina"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00025",
+    "date": "2017-07-05",
+    "calls": [
+      {
+        "id": "sb-bg-call-00025",
+        "time": "2017-07-05T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 344,
+        "connected": true,
+        "counterparty": "p_hugo"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00026",
+    "date": "2017-07-18",
+    "calls": [
+      {
+        "id": "sb-bg-call-00026",
+        "time": "2017-07-18T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 1324,
+        "connected": true,
+        "counterparty": "p_leo"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00027",
+    "date": "2017-07-30",
+    "calls": [
+      {
+        "id": "sb-bg-call-00027",
+        "time": "2017-07-30T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 731,
+        "connected": true,
+        "counterparty": "p_emile"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00028",
+    "date": "2017-08-11",
+    "calls": [
+      {
+        "id": "sb-bg-call-00028",
+        "time": "2017-08-11T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_priya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00029",
+    "date": "2017-08-24",
+    "calls": [
+      {
+        "id": "sb-bg-call-00029",
+        "time": "2017-08-24T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 637,
+        "connected": true,
+        "counterparty": "p_priya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00030",
+    "date": "2017-09-05",
+    "calls": [
+      {
+        "id": "sb-bg-call-00030",
+        "time": "2017-09-05T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 1260,
+        "connected": true,
+        "counterparty": "p_ben"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00031",
+    "date": "2017-09-17",
+    "calls": [
+      {
+        "id": "sb-bg-call-00031",
+        "time": "2017-09-17T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 761,
+        "connected": true,
+        "counterparty": "p_leila"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00032",
+    "date": "2017-09-30",
+    "calls": [
+      {
+        "id": "sb-bg-call-00032",
+        "time": "2017-09-30T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 920,
+        "connected": true,
+        "counterparty": "p_finn"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00033",
+    "date": "2017-10-12",
+    "calls": [
+      {
+        "id": "sb-bg-call-00033",
+        "time": "2017-10-12T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 991,
+        "connected": true,
+        "counterparty": "p_marc"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00034",
+    "date": "2017-10-24",
+    "calls": [
+      {
+        "id": "sb-bg-call-00034",
+        "time": "2017-10-24T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 432,
+        "connected": true,
+        "counterparty": "p_ruth"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00035",
+    "date": "2017-11-06",
+    "calls": [
+      {
+        "id": "sb-bg-call-00035",
+        "time": "2017-11-06T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_ava"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00036",
+    "date": "2017-11-18",
+    "calls": [
+      {
+        "id": "sb-bg-call-00036",
+        "time": "2017-11-18T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 1093,
+        "connected": true,
+        "counterparty": "p_nora"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00037",
+    "date": "2017-11-30",
+    "calls": [
+      {
+        "id": "sb-bg-call-00037",
+        "time": "2017-11-30T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 149,
+        "connected": true,
+        "counterparty": "p_louis"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00038",
+    "date": "2017-12-13",
+    "calls": [
+      {
+        "id": "sb-bg-call-00038",
+        "time": "2017-12-13T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 188,
+        "connected": true,
+        "counterparty": "p_sophia"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00039",
+    "date": "2017-12-25",
+    "calls": [
+      {
+        "id": "sb-bg-call-00039",
+        "time": "2017-12-25T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 528,
+        "connected": true,
+        "counterparty": "p_max"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00040",
+    "date": "2018-01-06",
+    "calls": [
+      {
+        "id": "sb-bg-call-00040",
+        "time": "2018-01-06T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 229,
+        "connected": true,
+        "counterparty": "p_dina"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00041",
+    "date": "2018-01-19",
+    "calls": [
+      {
+        "id": "sb-bg-call-00041",
+        "time": "2018-01-19T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 380,
+        "connected": true,
+        "counterparty": "p_ada"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00042",
+    "date": "2018-01-31",
+    "calls": [
+      {
+        "id": "sb-bg-call-00042",
+        "time": "2018-01-31T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_ben"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00043",
+    "date": "2018-02-12",
+    "calls": [
+      {
+        "id": "sb-bg-call-00043",
+        "time": "2018-02-12T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 218,
+        "connected": true,
+        "counterparty": "p_ada"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00044",
+    "date": "2018-02-24",
+    "calls": [
+      {
+        "id": "sb-bg-call-00044",
+        "time": "2018-02-24T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 1223,
+        "connected": true,
+        "counterparty": "p_leila"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00045",
+    "date": "2018-03-09",
+    "calls": [
+      {
+        "id": "sb-bg-call-00045",
+        "time": "2018-03-09T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 809,
+        "connected": true,
+        "counterparty": "p_noemi"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00046",
+    "date": "2018-03-21",
+    "calls": [
+      {
+        "id": "sb-bg-call-00046",
+        "time": "2018-03-21T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 1088,
+        "connected": true,
+        "counterparty": "p_ines"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00047",
+    "date": "2018-04-02",
+    "calls": [
+      {
+        "id": "sb-bg-call-00047",
+        "time": "2018-04-02T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 115,
+        "connected": true,
+        "counterparty": "p_ben"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00048",
+    "date": "2018-04-15",
+    "calls": [
+      {
+        "id": "sb-bg-call-00048",
+        "time": "2018-04-15T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 979,
+        "connected": true,
+        "counterparty": "p_priya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00049",
+    "date": "2018-04-27",
+    "calls": [
+      {
+        "id": "sb-bg-call-00049",
+        "time": "2018-04-27T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_ada"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00050",
+    "date": "2018-05-09",
+    "calls": [
+      {
+        "id": "sb-bg-call-00050",
+        "time": "2018-05-09T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 521,
+        "connected": true,
+        "counterparty": "p_leo"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00051",
+    "date": "2018-05-22",
+    "calls": [
+      {
+        "id": "sb-bg-call-00051",
+        "time": "2018-05-22T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1069,
+        "connected": true,
+        "counterparty": "p_ava"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00052",
+    "date": "2018-06-03",
+    "calls": [
+      {
+        "id": "sb-bg-call-00052",
+        "time": "2018-06-03T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 447,
+        "connected": true,
+        "counterparty": "p_ruth"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00053",
+    "date": "2018-06-15",
+    "calls": [
+      {
+        "id": "sb-bg-call-00053",
+        "time": "2018-06-15T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 850,
+        "connected": true,
+        "counterparty": "p_clara"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00054",
+    "date": "2018-06-28",
+    "calls": [
+      {
+        "id": "sb-bg-call-00054",
+        "time": "2018-06-28T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 840,
+        "connected": true,
+        "counterparty": "p_jamie"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00055",
+    "date": "2018-07-10",
+    "calls": [
+      {
+        "id": "sb-bg-call-00055",
+        "time": "2018-07-10T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 372,
+        "connected": true,
+        "counterparty": "p_finn"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00056",
+    "date": "2018-07-22",
+    "calls": [
+      {
+        "id": "sb-bg-call-00056",
+        "time": "2018-07-22T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_caleb"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00057",
+    "date": "2018-08-04",
+    "calls": [
+      {
+        "id": "sb-bg-call-00057",
+        "time": "2018-08-04T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 660,
+        "connected": true,
+        "counterparty": "p_leo"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00058",
+    "date": "2018-08-16",
+    "calls": [
+      {
+        "id": "sb-bg-call-00058",
+        "time": "2018-08-16T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 793,
+        "connected": true,
+        "counterparty": "p_sophia"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00059",
+    "date": "2018-08-28",
+    "calls": [
+      {
+        "id": "sb-bg-call-00059",
+        "time": "2018-08-28T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 98,
+        "connected": true,
+        "counterparty": "p_louis"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00060",
+    "date": "2018-09-10",
+    "calls": [
+      {
+        "id": "sb-bg-call-00060",
+        "time": "2018-09-10T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 1279,
+        "connected": true,
+        "counterparty": "p_tariq"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00061",
+    "date": "2018-09-22",
+    "calls": [
+      {
+        "id": "sb-bg-call-00061",
+        "time": "2018-09-22T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 918,
+        "connected": true,
+        "counterparty": "p_daniel"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00062",
+    "date": "2018-10-04",
+    "calls": [
+      {
+        "id": "sb-bg-call-00062",
+        "time": "2018-10-04T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 796,
+        "connected": true,
+        "counterparty": "p_leo"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00063",
+    "date": "2018-10-17",
+    "calls": [
+      {
+        "id": "sb-bg-call-00063",
+        "time": "2018-10-17T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_jamie"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00064",
+    "date": "2018-10-29",
+    "calls": [
+      {
+        "id": "sb-bg-call-00064",
+        "time": "2018-10-29T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 1316,
+        "connected": true,
+        "counterparty": "p_maya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00065",
+    "date": "2018-11-10",
+    "calls": [
+      {
+        "id": "sb-bg-call-00065",
+        "time": "2018-11-10T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 200,
+        "connected": true,
+        "counterparty": "p_sophia"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00066",
+    "date": "2018-11-22",
+    "calls": [
+      {
+        "id": "sb-bg-call-00066",
+        "time": "2018-11-22T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 1218,
+        "connected": true,
+        "counterparty": "p_max"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00067",
+    "date": "2018-12-05",
+    "calls": [
+      {
+        "id": "sb-bg-call-00067",
+        "time": "2018-12-05T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1006,
+        "connected": true,
+        "counterparty": "p_hugo"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00068",
+    "date": "2018-12-17",
+    "calls": [
+      {
+        "id": "sb-bg-call-00068",
+        "time": "2018-12-17T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 672,
+        "connected": true,
+        "counterparty": "p_owen"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00069",
+    "date": "2018-12-29",
+    "calls": [
+      {
+        "id": "sb-bg-call-00069",
+        "time": "2018-12-29T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 948,
+        "connected": true,
+        "counterparty": "p_ada"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00070",
+    "date": "2019-01-11",
+    "calls": [
+      {
+        "id": "sb-bg-call-00070",
+        "time": "2019-01-11T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_ava"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00071",
+    "date": "2019-01-23",
+    "calls": [
+      {
+        "id": "sb-bg-call-00071",
+        "time": "2019-01-23T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1042,
+        "connected": true,
+        "counterparty": "p_louis"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00072",
+    "date": "2019-02-04",
+    "calls": [
+      {
+        "id": "sb-bg-call-00072",
+        "time": "2019-02-04T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 267,
+        "connected": true,
+        "counterparty": "p_tariq"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00073",
+    "date": "2019-02-17",
+    "calls": [
+      {
+        "id": "sb-bg-call-00073",
+        "time": "2019-02-17T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1203,
+        "connected": true,
+        "counterparty": "p_caleb"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00074",
+    "date": "2019-03-01",
+    "calls": [
+      {
+        "id": "sb-bg-call-00074",
+        "time": "2019-03-01T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 1045,
+        "connected": true,
+        "counterparty": "p_noemi"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00075",
+    "date": "2019-03-13",
+    "calls": [
+      {
+        "id": "sb-bg-call-00075",
+        "time": "2019-03-13T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 517,
+        "connected": true,
+        "counterparty": "p_emile"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00076",
+    "date": "2019-03-26",
+    "calls": [
+      {
+        "id": "sb-bg-call-00076",
+        "time": "2019-03-26T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 792,
+        "connected": true,
+        "counterparty": "p_maya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00077",
+    "date": "2019-04-07",
+    "calls": [
+      {
+        "id": "sb-bg-call-00077",
+        "time": "2019-04-07T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_ben"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00078",
+    "date": "2019-04-19",
+    "calls": [
+      {
+        "id": "sb-bg-call-00078",
+        "time": "2019-04-19T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 151,
+        "connected": true,
+        "counterparty": "p_marc"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00079",
+    "date": "2019-05-02",
+    "calls": [
+      {
+        "id": "sb-bg-call-00079",
+        "time": "2019-05-02T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 426,
+        "connected": true,
+        "counterparty": "p_marc"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00080",
+    "date": "2019-05-14",
+    "calls": [
+      {
+        "id": "sb-bg-call-00080",
+        "time": "2019-05-14T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 822,
+        "connected": true,
+        "counterparty": "p_priya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00081",
+    "date": "2019-05-26",
+    "calls": [
+      {
+        "id": "sb-bg-call-00081",
+        "time": "2019-05-26T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 267,
+        "connected": true,
+        "counterparty": "p_ada"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00082",
+    "date": "2019-06-08",
+    "calls": [
+      {
+        "id": "sb-bg-call-00082",
+        "time": "2019-06-08T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 257,
+        "connected": true,
+        "counterparty": "p_marc"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00083",
+    "date": "2019-06-20",
+    "calls": [
+      {
+        "id": "sb-bg-call-00083",
+        "time": "2019-06-20T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 536,
+        "connected": true,
+        "counterparty": "p_alice"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00084",
+    "date": "2019-07-02",
+    "calls": [
+      {
+        "id": "sb-bg-call-00084",
+        "time": "2019-07-02T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_leo"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00085",
+    "date": "2019-07-15",
+    "calls": [
+      {
+        "id": "sb-bg-call-00085",
+        "time": "2019-07-15T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 242,
+        "connected": true,
+        "counterparty": "p_caleb"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00086",
+    "date": "2019-07-27",
+    "calls": [
+      {
+        "id": "sb-bg-call-00086",
+        "time": "2019-07-27T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 127,
+        "connected": true,
+        "counterparty": "p_louis"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00087",
+    "date": "2019-08-08",
+    "calls": [
+      {
+        "id": "sb-bg-call-00087",
+        "time": "2019-08-08T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 383,
+        "connected": true,
+        "counterparty": "p_hugo"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00088",
+    "date": "2019-08-20",
+    "calls": [
+      {
+        "id": "sb-bg-call-00088",
+        "time": "2019-08-20T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 1336,
+        "connected": true,
+        "counterparty": "p_ada"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00089",
+    "date": "2019-09-02",
+    "calls": [
+      {
+        "id": "sb-bg-call-00089",
+        "time": "2019-09-02T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 651,
+        "connected": true,
+        "counterparty": "p_maya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00090",
+    "date": "2019-09-14",
+    "calls": [
+      {
+        "id": "sb-bg-call-00090",
+        "time": "2019-09-14T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 347,
+        "connected": true,
+        "counterparty": "p_hugo"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00091",
+    "date": "2019-09-26",
+    "calls": [
+      {
+        "id": "sb-bg-call-00091",
+        "time": "2019-09-26T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_marc"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00092",
+    "date": "2019-10-09",
+    "calls": [
+      {
+        "id": "sb-bg-call-00092",
+        "time": "2019-10-09T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 682,
+        "connected": true,
+        "counterparty": "p_jamie"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00093",
+    "date": "2019-10-21",
+    "calls": [
+      {
+        "id": "sb-bg-call-00093",
+        "time": "2019-10-21T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 330,
+        "connected": true,
+        "counterparty": "p_rosie"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00094",
+    "date": "2019-11-02",
+    "calls": [
+      {
+        "id": "sb-bg-call-00094",
+        "time": "2019-11-02T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 764,
+        "connected": true,
+        "counterparty": "p_alice"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00095",
+    "date": "2019-11-15",
+    "calls": [
+      {
+        "id": "sb-bg-call-00095",
+        "time": "2019-11-15T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 524,
+        "connected": true,
+        "counterparty": "p_celine"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00096",
+    "date": "2019-11-27",
+    "calls": [
+      {
+        "id": "sb-bg-call-00096",
+        "time": "2019-11-27T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 273,
+        "connected": true,
+        "counterparty": "p_marc"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00097",
+    "date": "2019-12-09",
+    "calls": [
+      {
+        "id": "sb-bg-call-00097",
+        "time": "2019-12-09T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1353,
+        "connected": true,
+        "counterparty": "p_caleb"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00098",
+    "date": "2019-12-22",
+    "calls": [
+      {
+        "id": "sb-bg-call-00098",
+        "time": "2019-12-22T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_ben"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00099",
+    "date": "2020-01-03",
+    "calls": [
+      {
+        "id": "sb-bg-call-00099",
+        "time": "2020-01-03T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 370,
+        "connected": true,
+        "counterparty": "p_louis"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00100",
+    "date": "2020-01-15",
+    "calls": [
+      {
+        "id": "sb-bg-call-00100",
+        "time": "2020-01-15T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 840,
+        "connected": true,
+        "counterparty": "p_sam"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00101",
+    "date": "2020-01-28",
+    "calls": [
+      {
+        "id": "sb-bg-call-00101",
+        "time": "2020-01-28T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 552,
+        "connected": true,
+        "counterparty": "p_tariq"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00102",
+    "date": "2020-02-09",
+    "calls": [
+      {
+        "id": "sb-bg-call-00102",
+        "time": "2020-02-09T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 1240,
+        "connected": true,
+        "counterparty": "p_leo"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00103",
+    "date": "2020-02-21",
+    "calls": [
+      {
+        "id": "sb-bg-call-00103",
+        "time": "2020-02-21T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1125,
+        "connected": true,
+        "counterparty": "p_ada"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00104",
+    "date": "2020-03-05",
+    "calls": [
+      {
+        "id": "sb-bg-call-00104",
+        "time": "2020-03-05T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 1357,
+        "connected": true,
+        "counterparty": "p_maya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00105",
+    "date": "2020-03-17",
+    "calls": [
+      {
+        "id": "sb-bg-call-00105",
+        "time": "2020-03-17T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_celine"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00106",
+    "date": "2020-03-29",
+    "calls": [
+      {
+        "id": "sb-bg-call-00106",
+        "time": "2020-03-29T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 908,
+        "connected": true,
+        "counterparty": "p_daniel"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00107",
+    "date": "2020-04-10",
+    "calls": [
+      {
+        "id": "sb-bg-call-00107",
+        "time": "2020-04-10T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1247,
+        "connected": true,
+        "counterparty": "p_ben"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00108",
+    "date": "2020-04-23",
+    "calls": [
+      {
+        "id": "sb-bg-call-00108",
+        "time": "2020-04-23T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 413,
+        "connected": true,
+        "counterparty": "p_noemi"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00109",
+    "date": "2020-05-05",
+    "calls": [
+      {
+        "id": "sb-bg-call-00109",
+        "time": "2020-05-05T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1315,
+        "connected": true,
+        "counterparty": "p_hugo"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00110",
+    "date": "2020-05-17",
+    "calls": [
+      {
+        "id": "sb-bg-call-00110",
+        "time": "2020-05-17T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 691,
+        "connected": true,
+        "counterparty": "p_leo"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00111",
+    "date": "2020-05-30",
+    "calls": [
+      {
+        "id": "sb-bg-call-00111",
+        "time": "2020-05-30T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 762,
+        "connected": true,
+        "counterparty": "p_marc"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00112",
+    "date": "2020-06-11",
+    "calls": [
+      {
+        "id": "sb-bg-call-00112",
+        "time": "2020-06-11T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_elliot"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00113",
+    "date": "2020-06-23",
+    "calls": [
+      {
+        "id": "sb-bg-call-00113",
+        "time": "2020-06-23T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 375,
+        "connected": true,
+        "counterparty": "p_ines"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00114",
+    "date": "2020-07-06",
+    "calls": [
+      {
+        "id": "sb-bg-call-00114",
+        "time": "2020-07-06T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 723,
+        "connected": true,
+        "counterparty": "p_owen"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00115",
+    "date": "2020-07-18",
+    "calls": [
+      {
+        "id": "sb-bg-call-00115",
+        "time": "2020-07-18T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 861,
+        "connected": true,
+        "counterparty": "p_sam"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00116",
+    "date": "2020-07-30",
+    "calls": [
+      {
+        "id": "sb-bg-call-00116",
+        "time": "2020-07-30T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 306,
+        "connected": true,
+        "counterparty": "p_jamie"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00117",
+    "date": "2020-08-12",
+    "calls": [
+      {
+        "id": "sb-bg-call-00117",
+        "time": "2020-08-12T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 480,
+        "connected": true,
+        "counterparty": "p_ines"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00118",
+    "date": "2020-08-24",
+    "calls": [
+      {
+        "id": "sb-bg-call-00118",
+        "time": "2020-08-24T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 429,
+        "connected": true,
+        "counterparty": "p_marc"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00119",
+    "date": "2020-09-05",
+    "calls": [
+      {
+        "id": "sb-bg-call-00119",
+        "time": "2020-09-05T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_dina"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00120",
+    "date": "2020-09-18",
+    "calls": [
+      {
+        "id": "sb-bg-call-00120",
+        "time": "2020-09-18T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 490,
+        "connected": true,
+        "counterparty": "p_ada"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00121",
+    "date": "2020-09-30",
+    "calls": [
+      {
+        "id": "sb-bg-call-00121",
+        "time": "2020-09-30T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 479,
+        "connected": true,
+        "counterparty": "p_sam"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00122",
+    "date": "2020-10-12",
+    "calls": [
+      {
+        "id": "sb-bg-call-00122",
+        "time": "2020-10-12T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 1010,
+        "connected": true,
+        "counterparty": "p_rosie"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00123",
+    "date": "2020-10-25",
+    "calls": [
+      {
+        "id": "sb-bg-call-00123",
+        "time": "2020-10-25T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 547,
+        "connected": true,
+        "counterparty": "p_elliot"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00124",
+    "date": "2020-11-06",
+    "calls": [
+      {
+        "id": "sb-bg-call-00124",
+        "time": "2020-11-06T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 1123,
+        "connected": true,
+        "counterparty": "p_ada"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00125",
+    "date": "2020-11-18",
+    "calls": [
+      {
+        "id": "sb-bg-call-00125",
+        "time": "2020-11-18T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1099,
+        "connected": true,
+        "counterparty": "p_daniel"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00126",
+    "date": "2020-12-01",
+    "calls": [
+      {
+        "id": "sb-bg-call-00126",
+        "time": "2020-12-01T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_dina"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00127",
+    "date": "2020-12-13",
+    "calls": [
+      {
+        "id": "sb-bg-call-00127",
+        "time": "2020-12-13T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1021,
+        "connected": true,
+        "counterparty": "p_ada"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00128",
+    "date": "2020-12-25",
+    "calls": [
+      {
+        "id": "sb-bg-call-00128",
+        "time": "2020-12-25T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 1196,
+        "connected": true,
+        "counterparty": "p_ava"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00129",
+    "date": "2021-01-06",
+    "calls": [
+      {
+        "id": "sb-bg-call-00129",
+        "time": "2021-01-06T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 504,
+        "connected": true,
+        "counterparty": "p_leo"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00130",
+    "date": "2021-01-19",
+    "calls": [
+      {
+        "id": "sb-bg-call-00130",
+        "time": "2021-01-19T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 533,
+        "connected": true,
+        "counterparty": "p_finn"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00131",
+    "date": "2021-01-31",
+    "calls": [
+      {
+        "id": "sb-bg-call-00131",
+        "time": "2021-01-31T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 884,
+        "connected": true,
+        "counterparty": "p_priya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00132",
+    "date": "2021-02-12",
+    "calls": [
+      {
+        "id": "sb-bg-call-00132",
+        "time": "2021-02-12T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 1293,
+        "connected": true,
+        "counterparty": "p_louis"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00133",
+    "date": "2021-02-25",
+    "calls": [
+      {
+        "id": "sb-bg-call-00133",
+        "time": "2021-02-25T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_ines"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00134",
+    "date": "2021-03-09",
+    "calls": [
+      {
+        "id": "sb-bg-call-00134",
+        "time": "2021-03-09T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 1093,
+        "connected": true,
+        "counterparty": "p_emile"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00135",
+    "date": "2021-03-21",
+    "calls": [
+      {
+        "id": "sb-bg-call-00135",
+        "time": "2021-03-21T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 887,
+        "connected": true,
+        "counterparty": "p_leo"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00136",
+    "date": "2021-04-03",
+    "calls": [
+      {
+        "id": "sb-bg-call-00136",
+        "time": "2021-04-03T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 435,
+        "connected": true,
+        "counterparty": "p_rosie"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00137",
+    "date": "2021-04-15",
+    "calls": [
+      {
+        "id": "sb-bg-call-00137",
+        "time": "2021-04-15T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1228,
+        "connected": true,
+        "counterparty": "p_max"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00138",
+    "date": "2021-04-27",
+    "calls": [
+      {
+        "id": "sb-bg-call-00138",
+        "time": "2021-04-27T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 850,
+        "connected": true,
+        "counterparty": "p_dina"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00139",
+    "date": "2021-05-10",
+    "calls": [
+      {
+        "id": "sb-bg-call-00139",
+        "time": "2021-05-10T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 951,
+        "connected": true,
+        "counterparty": "p_maya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00140",
+    "date": "2021-05-22",
+    "calls": [
+      {
+        "id": "sb-bg-call-00140",
+        "time": "2021-05-22T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_finn"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00141",
+    "date": "2021-06-03",
+    "calls": [
+      {
+        "id": "sb-bg-call-00141",
+        "time": "2021-06-03T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 452,
+        "connected": true,
+        "counterparty": "p_celine"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00142",
+    "date": "2021-06-16",
+    "calls": [
+      {
+        "id": "sb-bg-call-00142",
+        "time": "2021-06-16T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 1291,
+        "connected": true,
+        "counterparty": "p_zoe"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00143",
+    "date": "2021-06-28",
+    "calls": [
+      {
+        "id": "sb-bg-call-00143",
+        "time": "2021-06-28T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 130,
+        "connected": true,
+        "counterparty": "p_marc"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00144",
+    "date": "2021-07-10",
+    "calls": [
+      {
+        "id": "sb-bg-call-00144",
+        "time": "2021-07-10T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 524,
+        "connected": true,
+        "counterparty": "p_tariq"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00145",
+    "date": "2021-07-23",
+    "calls": [
+      {
+        "id": "sb-bg-call-00145",
+        "time": "2021-07-23T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 234,
+        "connected": true,
+        "counterparty": "p_ben"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00146",
+    "date": "2021-08-04",
+    "calls": [
+      {
+        "id": "sb-bg-call-00146",
+        "time": "2021-08-04T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 129,
+        "connected": true,
+        "counterparty": "p_maya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00147",
+    "date": "2021-08-16",
+    "calls": [
+      {
+        "id": "sb-bg-call-00147",
+        "time": "2021-08-16T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_emile"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00148",
+    "date": "2021-08-29",
+    "calls": [
+      {
+        "id": "sb-bg-call-00148",
+        "time": "2021-08-29T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 350,
+        "connected": true,
+        "counterparty": "p_noemi"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00149",
+    "date": "2021-09-10",
+    "calls": [
+      {
+        "id": "sb-bg-call-00149",
+        "time": "2021-09-10T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 872,
+        "connected": true,
+        "counterparty": "p_louis"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00150",
+    "date": "2021-09-22",
+    "calls": [
+      {
+        "id": "sb-bg-call-00150",
+        "time": "2021-09-22T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 1076,
+        "connected": true,
+        "counterparty": "p_ava"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00151",
+    "date": "2021-10-04",
+    "calls": [
+      {
+        "id": "sb-bg-call-00151",
+        "time": "2021-10-04T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 804,
+        "connected": true,
+        "counterparty": "p_max"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00152",
+    "date": "2021-10-17",
+    "calls": [
+      {
+        "id": "sb-bg-call-00152",
+        "time": "2021-10-17T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 388,
+        "connected": true,
+        "counterparty": "p_ava"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00153",
+    "date": "2021-10-29",
+    "calls": [
+      {
+        "id": "sb-bg-call-00153",
+        "time": "2021-10-29T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 602,
+        "connected": true,
+        "counterparty": "p_clara"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00154",
+    "date": "2021-11-10",
+    "calls": [
+      {
+        "id": "sb-bg-call-00154",
+        "time": "2021-11-10T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_jamie"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00155",
+    "date": "2021-11-23",
+    "calls": [
+      {
+        "id": "sb-bg-call-00155",
+        "time": "2021-11-23T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1139,
+        "connected": true,
+        "counterparty": "p_noemi"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00156",
+    "date": "2021-12-05",
+    "calls": [
+      {
+        "id": "sb-bg-call-00156",
+        "time": "2021-12-05T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 1253,
+        "connected": true,
+        "counterparty": "p_priya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00157",
+    "date": "2021-12-17",
+    "calls": [
+      {
+        "id": "sb-bg-call-00157",
+        "time": "2021-12-17T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1057,
+        "connected": true,
+        "counterparty": "p_sophia"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00158",
+    "date": "2021-12-30",
+    "calls": [
+      {
+        "id": "sb-bg-call-00158",
+        "time": "2021-12-30T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 985,
+        "connected": true,
+        "counterparty": "p_dina"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00159",
+    "date": "2022-01-11",
+    "calls": [
+      {
+        "id": "sb-bg-call-00159",
+        "time": "2022-01-11T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 338,
+        "connected": true,
+        "counterparty": "p_emile"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00160",
+    "date": "2022-01-23",
+    "calls": [
+      {
+        "id": "sb-bg-call-00160",
+        "time": "2022-01-23T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 575,
+        "connected": true,
+        "counterparty": "p_sam"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00161",
+    "date": "2022-02-05",
+    "calls": [
+      {
+        "id": "sb-bg-call-00161",
+        "time": "2022-02-05T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_celine"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00162",
+    "date": "2022-02-17",
+    "calls": [
+      {
+        "id": "sb-bg-call-00162",
+        "time": "2022-02-17T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 283,
+        "connected": true,
+        "counterparty": "p_ines"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00163",
+    "date": "2022-03-01",
+    "calls": [
+      {
+        "id": "sb-bg-call-00163",
+        "time": "2022-03-01T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1284,
+        "connected": true,
+        "counterparty": "p_tariq"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00164",
+    "date": "2022-03-14",
+    "calls": [
+      {
+        "id": "sb-bg-call-00164",
+        "time": "2022-03-14T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 1064,
+        "connected": true,
+        "counterparty": "p_ada"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00165",
+    "date": "2022-03-26",
+    "calls": [
+      {
+        "id": "sb-bg-call-00165",
+        "time": "2022-03-26T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 940,
+        "connected": true,
+        "counterparty": "p_ines"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00166",
+    "date": "2022-04-07",
+    "calls": [
+      {
+        "id": "sb-bg-call-00166",
+        "time": "2022-04-07T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 694,
+        "connected": true,
+        "counterparty": "p_emile"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00167",
+    "date": "2022-04-20",
+    "calls": [
+      {
+        "id": "sb-bg-call-00167",
+        "time": "2022-04-20T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 663,
+        "connected": true,
+        "counterparty": "p_louis"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00168",
+    "date": "2022-05-02",
+    "calls": [
+      {
+        "id": "sb-bg-call-00168",
+        "time": "2022-05-02T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_marc"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00169",
+    "date": "2022-05-14",
+    "calls": [
+      {
+        "id": "sb-bg-call-00169",
+        "time": "2022-05-14T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 592,
+        "connected": true,
+        "counterparty": "p_ava"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00170",
+    "date": "2022-05-27",
+    "calls": [
+      {
+        "id": "sb-bg-call-00170",
+        "time": "2022-05-27T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 164,
+        "connected": true,
+        "counterparty": "p_louis"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00171",
+    "date": "2022-06-08",
+    "calls": [
+      {
+        "id": "sb-bg-call-00171",
+        "time": "2022-06-08T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1018,
+        "connected": true,
+        "counterparty": "p_tariq"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00172",
+    "date": "2022-06-20",
+    "calls": [
+      {
+        "id": "sb-bg-call-00172",
+        "time": "2022-06-20T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 595,
+        "connected": true,
+        "counterparty": "p_caleb"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00173",
+    "date": "2022-07-02",
+    "calls": [
+      {
+        "id": "sb-bg-call-00173",
+        "time": "2022-07-02T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 515,
+        "connected": true,
+        "counterparty": "p_sophia"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00174",
+    "date": "2022-07-15",
+    "calls": [
+      {
+        "id": "sb-bg-call-00174",
+        "time": "2022-07-15T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 853,
+        "connected": true,
+        "counterparty": "p_daniel"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00175",
+    "date": "2022-07-27",
+    "calls": [
+      {
+        "id": "sb-bg-call-00175",
+        "time": "2022-07-27T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_zoe"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00176",
+    "date": "2022-08-08",
+    "calls": [
+      {
+        "id": "sb-bg-call-00176",
+        "time": "2022-08-08T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 290,
+        "connected": true,
+        "counterparty": "p_priya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00177",
+    "date": "2022-08-21",
+    "calls": [
+      {
+        "id": "sb-bg-call-00177",
+        "time": "2022-08-21T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 526,
+        "connected": true,
+        "counterparty": "p_marc"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00178",
+    "date": "2022-09-02",
+    "calls": [
+      {
+        "id": "sb-bg-call-00178",
+        "time": "2022-09-02T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 693,
+        "connected": true,
+        "counterparty": "p_sam"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00179",
+    "date": "2022-09-14",
+    "calls": [
+      {
+        "id": "sb-bg-call-00179",
+        "time": "2022-09-14T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 669,
+        "connected": true,
+        "counterparty": "p_tariq"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00180",
+    "date": "2022-09-27",
+    "calls": [
+      {
+        "id": "sb-bg-call-00180",
+        "time": "2022-09-27T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 487,
+        "connected": true,
+        "counterparty": "p_marc"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00181",
+    "date": "2022-10-09",
+    "calls": [
+      {
+        "id": "sb-bg-call-00181",
+        "time": "2022-10-09T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1025,
+        "connected": true,
+        "counterparty": "p_hugo"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00182",
+    "date": "2022-10-21",
+    "calls": [
+      {
+        "id": "sb-bg-call-00182",
+        "time": "2022-10-21T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_sophia"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00183",
+    "date": "2022-11-03",
+    "calls": [
+      {
+        "id": "sb-bg-call-00183",
+        "time": "2022-11-03T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 543,
+        "connected": true,
+        "counterparty": "p_clara"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00184",
+    "date": "2022-11-15",
+    "calls": [
+      {
+        "id": "sb-bg-call-00184",
+        "time": "2022-11-15T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 760,
+        "connected": true,
+        "counterparty": "p_emile"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00185",
+    "date": "2022-11-27",
+    "calls": [
+      {
+        "id": "sb-bg-call-00185",
+        "time": "2022-11-27T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 208,
+        "connected": true,
+        "counterparty": "p_daniel"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00186",
+    "date": "2022-12-10",
+    "calls": [
+      {
+        "id": "sb-bg-call-00186",
+        "time": "2022-12-10T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 90,
+        "connected": true,
+        "counterparty": "p_leo"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00187",
+    "date": "2022-12-22",
+    "calls": [
+      {
+        "id": "sb-bg-call-00187",
+        "time": "2022-12-22T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 569,
+        "connected": true,
+        "counterparty": "p_nora"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00188",
+    "date": "2023-01-03",
+    "calls": [
+      {
+        "id": "sb-bg-call-00188",
+        "time": "2023-01-03T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 512,
+        "connected": true,
+        "counterparty": "p_caleb"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00189",
+    "date": "2023-01-16",
+    "calls": [
+      {
+        "id": "sb-bg-call-00189",
+        "time": "2023-01-16T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_ruth"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00190",
+    "date": "2023-01-28",
+    "calls": [
+      {
+        "id": "sb-bg-call-00190",
+        "time": "2023-01-28T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 456,
+        "connected": true,
+        "counterparty": "p_clara"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00191",
+    "date": "2023-02-09",
+    "calls": [
+      {
+        "id": "sb-bg-call-00191",
+        "time": "2023-02-09T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 831,
+        "connected": true,
+        "counterparty": "p_marc"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00192",
+    "date": "2023-02-22",
+    "calls": [
+      {
+        "id": "sb-bg-call-00192",
+        "time": "2023-02-22T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 960,
+        "connected": true,
+        "counterparty": "p_ines"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00193",
+    "date": "2023-03-06",
+    "calls": [
+      {
+        "id": "sb-bg-call-00193",
+        "time": "2023-03-06T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1011,
+        "connected": true,
+        "counterparty": "p_caleb"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00194",
+    "date": "2023-03-18",
+    "calls": [
+      {
+        "id": "sb-bg-call-00194",
+        "time": "2023-03-18T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 826,
+        "connected": true,
+        "counterparty": "p_dina"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00195",
+    "date": "2023-03-30",
+    "calls": [
+      {
+        "id": "sb-bg-call-00195",
+        "time": "2023-03-30T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1186,
+        "connected": true,
+        "counterparty": "p_marc"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00196",
+    "date": "2023-04-12",
+    "calls": [
+      {
+        "id": "sb-bg-call-00196",
+        "time": "2023-04-12T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_dina"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00197",
+    "date": "2023-04-24",
+    "calls": [
+      {
+        "id": "sb-bg-call-00197",
+        "time": "2023-04-24T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1346,
+        "connected": true,
+        "counterparty": "p_priya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00198",
+    "date": "2023-05-06",
+    "calls": [
+      {
+        "id": "sb-bg-call-00198",
+        "time": "2023-05-06T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 213,
+        "connected": true,
+        "counterparty": "p_sam"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00199",
+    "date": "2023-05-19",
+    "calls": [
+      {
+        "id": "sb-bg-call-00199",
+        "time": "2023-05-19T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 784,
+        "connected": true,
+        "counterparty": "p_caleb"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00200",
+    "date": "2023-05-31",
+    "calls": [
+      {
+        "id": "sb-bg-call-00200",
+        "time": "2023-05-31T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 639,
+        "connected": true,
+        "counterparty": "p_noemi"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00201",
+    "date": "2023-06-12",
+    "calls": [
+      {
+        "id": "sb-bg-call-00201",
+        "time": "2023-06-12T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 173,
+        "connected": true,
+        "counterparty": "p_leila"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00202",
+    "date": "2023-06-25",
+    "calls": [
+      {
+        "id": "sb-bg-call-00202",
+        "time": "2023-06-25T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 1353,
+        "connected": true,
+        "counterparty": "p_emile"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00203",
+    "date": "2023-07-07",
+    "calls": [
+      {
+        "id": "sb-bg-call-00203",
+        "time": "2023-07-07T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_zoe"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00204",
+    "date": "2023-07-19",
+    "calls": [
+      {
+        "id": "sb-bg-call-00204",
+        "time": "2023-07-19T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 911,
+        "connected": true,
+        "counterparty": "p_sophia"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00205",
+    "date": "2023-08-01",
+    "calls": [
+      {
+        "id": "sb-bg-call-00205",
+        "time": "2023-08-01T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1065,
+        "connected": true,
+        "counterparty": "p_dina"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00206",
+    "date": "2023-08-13",
+    "calls": [
+      {
+        "id": "sb-bg-call-00206",
+        "time": "2023-08-13T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 723,
+        "connected": true,
+        "counterparty": "p_ava"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00207",
+    "date": "2023-08-25",
+    "calls": [
+      {
+        "id": "sb-bg-call-00207",
+        "time": "2023-08-25T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 933,
+        "connected": true,
+        "counterparty": "p_leo"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00208",
+    "date": "2023-09-07",
+    "calls": [
+      {
+        "id": "sb-bg-call-00208",
+        "time": "2023-09-07T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 1309,
+        "connected": true,
+        "counterparty": "p_priya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00209",
+    "date": "2023-09-19",
+    "calls": [
+      {
+        "id": "sb-bg-call-00209",
+        "time": "2023-09-19T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 903,
+        "connected": true,
+        "counterparty": "p_maya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00210",
+    "date": "2023-10-01",
+    "calls": [
+      {
+        "id": "sb-bg-call-00210",
+        "time": "2023-10-01T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_ava"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00211",
+    "date": "2023-10-14",
+    "calls": [
+      {
+        "id": "sb-bg-call-00211",
+        "time": "2023-10-14T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 497,
+        "connected": true,
+        "counterparty": "p_zoe"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00212",
+    "date": "2023-10-26",
+    "calls": [
+      {
+        "id": "sb-bg-call-00212",
+        "time": "2023-10-26T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 788,
+        "connected": true,
+        "counterparty": "p_max"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00213",
+    "date": "2023-11-07",
+    "calls": [
+      {
+        "id": "sb-bg-call-00213",
+        "time": "2023-11-07T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 356,
+        "connected": true,
+        "counterparty": "p_zoe"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00214",
+    "date": "2023-11-19",
+    "calls": [
+      {
+        "id": "sb-bg-call-00214",
+        "time": "2023-11-19T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 847,
+        "connected": true,
+        "counterparty": "p_louis"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00215",
+    "date": "2023-12-02",
+    "calls": [
+      {
+        "id": "sb-bg-call-00215",
+        "time": "2023-12-02T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 447,
+        "connected": true,
+        "counterparty": "p_sophia"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00216",
+    "date": "2023-12-14",
+    "calls": [
+      {
+        "id": "sb-bg-call-00216",
+        "time": "2023-12-14T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 134,
+        "connected": true,
+        "counterparty": "p_max"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00217",
+    "date": "2023-12-26",
+    "calls": [
+      {
+        "id": "sb-bg-call-00217",
+        "time": "2023-12-26T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_priya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00218",
+    "date": "2024-01-08",
+    "calls": [
+      {
+        "id": "sb-bg-call-00218",
+        "time": "2024-01-08T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 835,
+        "connected": true,
+        "counterparty": "p_ben"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00219",
+    "date": "2024-01-20",
+    "calls": [
+      {
+        "id": "sb-bg-call-00219",
+        "time": "2024-01-20T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 724,
+        "connected": true,
+        "counterparty": "p_clara"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00220",
+    "date": "2024-02-01",
+    "calls": [
+      {
+        "id": "sb-bg-call-00220",
+        "time": "2024-02-01T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 1139,
+        "connected": true,
+        "counterparty": "p_tariq"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00221",
+    "date": "2024-02-14",
+    "calls": [
+      {
+        "id": "sb-bg-call-00221",
+        "time": "2024-02-14T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1323,
+        "connected": true,
+        "counterparty": "p_ines"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00222",
+    "date": "2024-02-26",
+    "calls": [
+      {
+        "id": "sb-bg-call-00222",
+        "time": "2024-02-26T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 561,
+        "connected": true,
+        "counterparty": "p_marc"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00223",
+    "date": "2024-03-09",
+    "calls": [
+      {
+        "id": "sb-bg-call-00223",
+        "time": "2024-03-09T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 285,
+        "connected": true,
+        "counterparty": "p_zoe"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00224",
+    "date": "2024-03-22",
+    "calls": [
+      {
+        "id": "sb-bg-call-00224",
+        "time": "2024-03-22T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_priya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00225",
+    "date": "2024-04-03",
+    "calls": [
+      {
+        "id": "sb-bg-call-00225",
+        "time": "2024-04-03T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 496,
+        "connected": true,
+        "counterparty": "p_marc"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00226",
+    "date": "2024-04-15",
+    "calls": [
+      {
+        "id": "sb-bg-call-00226",
+        "time": "2024-04-15T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 103,
+        "connected": true,
+        "counterparty": "p_alice"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00227",
+    "date": "2024-04-28",
+    "calls": [
+      {
+        "id": "sb-bg-call-00227",
+        "time": "2024-04-28T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1169,
+        "connected": true,
+        "counterparty": "p_celine"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00228",
+    "date": "2024-05-10",
+    "calls": [
+      {
+        "id": "sb-bg-call-00228",
+        "time": "2024-05-10T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 1116,
+        "connected": true,
+        "counterparty": "p_ruth"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00229",
+    "date": "2024-05-22",
+    "calls": [
+      {
+        "id": "sb-bg-call-00229",
+        "time": "2024-05-22T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1199,
+        "connected": true,
+        "counterparty": "p_leo"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00230",
+    "date": "2024-06-04",
+    "calls": [
+      {
+        "id": "sb-bg-call-00230",
+        "time": "2024-06-04T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 816,
+        "connected": true,
+        "counterparty": "p_finn"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00231",
+    "date": "2024-06-16",
+    "calls": [
+      {
+        "id": "sb-bg-call-00231",
+        "time": "2024-06-16T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_jamie"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00232",
+    "date": "2024-06-28",
+    "calls": [
+      {
+        "id": "sb-bg-call-00232",
+        "time": "2024-06-28T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 179,
+        "connected": true,
+        "counterparty": "p_alice"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00233",
+    "date": "2024-07-11",
+    "calls": [
+      {
+        "id": "sb-bg-call-00233",
+        "time": "2024-07-11T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 836,
+        "connected": true,
+        "counterparty": "p_ava"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00234",
+    "date": "2024-07-23",
+    "calls": [
+      {
+        "id": "sb-bg-call-00234",
+        "time": "2024-07-23T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 1280,
+        "connected": true,
+        "counterparty": "p_hugo"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00235",
+    "date": "2024-08-04",
+    "calls": [
+      {
+        "id": "sb-bg-call-00235",
+        "time": "2024-08-04T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 467,
+        "connected": true,
+        "counterparty": "p_zoe"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00236",
+    "date": "2024-08-16",
+    "calls": [
+      {
+        "id": "sb-bg-call-00236",
+        "time": "2024-08-16T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 751,
+        "connected": true,
+        "counterparty": "p_hugo"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00237",
+    "date": "2024-08-29",
+    "calls": [
+      {
+        "id": "sb-bg-call-00237",
+        "time": "2024-08-29T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1150,
+        "connected": true,
+        "counterparty": "p_ruth"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00238",
+    "date": "2024-09-10",
+    "calls": [
+      {
+        "id": "sb-bg-call-00238",
+        "time": "2024-09-10T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_nora"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00239",
+    "date": "2024-09-22",
+    "calls": [
+      {
+        "id": "sb-bg-call-00239",
+        "time": "2024-09-22T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 292,
+        "connected": true,
+        "counterparty": "p_ava"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00240",
+    "date": "2024-10-05",
+    "calls": [
+      {
+        "id": "sb-bg-call-00240",
+        "time": "2024-10-05T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 1207,
+        "connected": true,
+        "counterparty": "p_alice"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00241",
+    "date": "2024-10-17",
+    "calls": [
+      {
+        "id": "sb-bg-call-00241",
+        "time": "2024-10-17T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 668,
+        "connected": true,
+        "counterparty": "p_sam"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00242",
+    "date": "2024-10-29",
+    "calls": [
+      {
+        "id": "sb-bg-call-00242",
+        "time": "2024-10-29T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 800,
+        "connected": true,
+        "counterparty": "p_clara"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00243",
+    "date": "2024-11-11",
+    "calls": [
+      {
+        "id": "sb-bg-call-00243",
+        "time": "2024-11-11T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 216,
+        "connected": true,
+        "counterparty": "p_jamie"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00244",
+    "date": "2024-11-23",
+    "calls": [
+      {
+        "id": "sb-bg-call-00244",
+        "time": "2024-11-23T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 779,
+        "connected": true,
+        "counterparty": "p_zoe"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00245",
+    "date": "2024-12-05",
+    "calls": [
+      {
+        "id": "sb-bg-call-00245",
+        "time": "2024-12-05T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_celine"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00246",
+    "date": "2024-12-18",
+    "calls": [
+      {
+        "id": "sb-bg-call-00246",
+        "time": "2024-12-18T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 781,
+        "connected": true,
+        "counterparty": "p_maya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00247",
+    "date": "2024-12-30",
+    "calls": [
+      {
+        "id": "sb-bg-call-00247",
+        "time": "2024-12-30T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 647,
+        "connected": true,
+        "counterparty": "p_ines"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00248",
+    "date": "2025-01-11",
+    "calls": [
+      {
+        "id": "sb-bg-call-00248",
+        "time": "2025-01-11T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 1136,
+        "connected": true,
+        "counterparty": "p_leo"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00249",
+    "date": "2025-01-24",
+    "calls": [
+      {
+        "id": "sb-bg-call-00249",
+        "time": "2025-01-24T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 172,
+        "connected": true,
+        "counterparty": "p_maya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00250",
+    "date": "2025-02-05",
+    "calls": [
+      {
+        "id": "sb-bg-call-00250",
+        "time": "2025-02-05T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 1217,
+        "connected": true,
+        "counterparty": "p_sam"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00251",
+    "date": "2025-02-17",
+    "calls": [
+      {
+        "id": "sb-bg-call-00251",
+        "time": "2025-02-17T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 416,
+        "connected": true,
+        "counterparty": "p_priya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00252",
+    "date": "2025-03-02",
+    "calls": [
+      {
+        "id": "sb-bg-call-00252",
+        "time": "2025-03-02T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_nora"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00253",
+    "date": "2025-03-14",
+    "calls": [
+      {
+        "id": "sb-bg-call-00253",
+        "time": "2025-03-14T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 547,
+        "connected": true,
+        "counterparty": "p_marc"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00254",
+    "date": "2025-03-26",
+    "calls": [
+      {
+        "id": "sb-bg-call-00254",
+        "time": "2025-03-26T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 860,
+        "connected": true,
+        "counterparty": "p_sam"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00255",
+    "date": "2025-04-08",
+    "calls": [
+      {
+        "id": "sb-bg-call-00255",
+        "time": "2025-04-08T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 444,
+        "connected": true,
+        "counterparty": "p_hugo"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00256",
+    "date": "2025-04-20",
+    "calls": [
+      {
+        "id": "sb-bg-call-00256",
+        "time": "2025-04-20T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 458,
+        "connected": true,
+        "counterparty": "p_caleb"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00257",
+    "date": "2025-05-02",
+    "calls": [
+      {
+        "id": "sb-bg-call-00257",
+        "time": "2025-05-02T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 143,
+        "connected": true,
+        "counterparty": "p_leila"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00258",
+    "date": "2025-05-14",
+    "calls": [
+      {
+        "id": "sb-bg-call-00258",
+        "time": "2025-05-14T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 1112,
+        "connected": true,
+        "counterparty": "p_ruth"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00259",
+    "date": "2025-05-27",
+    "calls": [
+      {
+        "id": "sb-bg-call-00259",
+        "time": "2025-05-27T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_jamie"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00260",
+    "date": "2025-06-08",
+    "calls": [
+      {
+        "id": "sb-bg-call-00260",
+        "time": "2025-06-08T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 1301,
+        "connected": true,
+        "counterparty": "p_leila"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00261",
+    "date": "2025-06-20",
+    "calls": [
+      {
+        "id": "sb-bg-call-00261",
+        "time": "2025-06-20T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1133,
+        "connected": true,
+        "counterparty": "p_priya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00262",
+    "date": "2025-07-03",
+    "calls": [
+      {
+        "id": "sb-bg-call-00262",
+        "time": "2025-07-03T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 678,
+        "connected": true,
+        "counterparty": "p_ada"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00263",
+    "date": "2025-07-15",
+    "calls": [
+      {
+        "id": "sb-bg-call-00263",
+        "time": "2025-07-15T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 923,
+        "connected": true,
+        "counterparty": "p_celine"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00264",
+    "date": "2025-07-27",
+    "calls": [
+      {
+        "id": "sb-bg-call-00264",
+        "time": "2025-07-27T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 854,
+        "connected": true,
+        "counterparty": "p_noemi"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00265",
+    "date": "2025-08-09",
+    "calls": [
+      {
+        "id": "sb-bg-call-00265",
+        "time": "2025-08-09T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 153,
+        "connected": true,
+        "counterparty": "p_celine"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00266",
+    "date": "2025-08-21",
+    "calls": [
+      {
+        "id": "sb-bg-call-00266",
+        "time": "2025-08-21T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_jamie"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00267",
+    "date": "2025-09-02",
+    "calls": [
+      {
+        "id": "sb-bg-call-00267",
+        "time": "2025-09-02T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 147,
+        "connected": true,
+        "counterparty": "p_elliot"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00268",
+    "date": "2025-09-15",
+    "calls": [
+      {
+        "id": "sb-bg-call-00268",
+        "time": "2025-09-15T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 1256,
+        "connected": true,
+        "counterparty": "p_emile"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00269",
+    "date": "2025-09-27",
+    "calls": [
+      {
+        "id": "sb-bg-call-00269",
+        "time": "2025-09-27T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 403,
+        "connected": true,
+        "counterparty": "p_maya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00270",
+    "date": "2025-10-09",
+    "calls": [
+      {
+        "id": "sb-bg-call-00270",
+        "time": "2025-10-09T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 580,
+        "connected": true,
+        "counterparty": "p_ada"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00271",
+    "date": "2025-10-22",
+    "calls": [
+      {
+        "id": "sb-bg-call-00271",
+        "time": "2025-10-22T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 700,
+        "connected": true,
+        "counterparty": "p_sam"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00272",
+    "date": "2025-11-03",
+    "calls": [
+      {
+        "id": "sb-bg-call-00272",
+        "time": "2025-11-03T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 265,
+        "connected": true,
+        "counterparty": "p_max"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00273",
+    "date": "2025-11-15",
+    "calls": [
+      {
+        "id": "sb-bg-call-00273",
+        "time": "2025-11-15T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_dina"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00274",
+    "date": "2025-11-28",
+    "calls": [
+      {
+        "id": "sb-bg-call-00274",
+        "time": "2025-11-28T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 353,
+        "connected": true,
+        "counterparty": "p_ruth"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00275",
+    "date": "2025-12-10",
+    "calls": [
+      {
+        "id": "sb-bg-call-00275",
+        "time": "2025-12-10T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 706,
+        "connected": true,
+        "counterparty": "p_dina"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00276",
+    "date": "2025-12-22",
+    "calls": [
+      {
+        "id": "sb-bg-call-00276",
+        "time": "2025-12-22T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 1324,
+        "connected": true,
+        "counterparty": "p_celine"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00277",
+    "date": "2026-01-04",
+    "calls": [
+      {
+        "id": "sb-bg-call-00277",
+        "time": "2026-01-04T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1331,
+        "connected": true,
+        "counterparty": "p_tariq"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00278",
+    "date": "2026-01-16",
+    "calls": [
+      {
+        "id": "sb-bg-call-00278",
+        "time": "2026-01-16T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 756,
+        "connected": true,
+        "counterparty": "p_sam"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00279",
+    "date": "2026-01-28",
+    "calls": [
+      {
+        "id": "sb-bg-call-00279",
+        "time": "2026-01-28T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 615,
+        "connected": true,
+        "counterparty": "p_dina"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00280",
+    "date": "2026-02-09",
+    "calls": [
+      {
+        "id": "sb-bg-call-00280",
+        "time": "2026-02-09T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_maya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00281",
+    "date": "2026-02-22",
+    "calls": [
+      {
+        "id": "sb-bg-call-00281",
+        "time": "2026-02-22T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 326,
+        "connected": true,
+        "counterparty": "p_leila"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00282",
+    "date": "2026-03-06",
+    "calls": [
+      {
+        "id": "sb-bg-call-00282",
+        "time": "2026-03-06T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 928,
+        "connected": true,
+        "counterparty": "p_sam"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00283",
+    "date": "2026-03-18",
+    "calls": [
+      {
+        "id": "sb-bg-call-00283",
+        "time": "2026-03-18T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 964,
+        "connected": true,
+        "counterparty": "p_jamie"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00284",
+    "date": "2026-03-31",
+    "calls": [
+      {
+        "id": "sb-bg-call-00284",
+        "time": "2026-03-31T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 767,
+        "connected": true,
+        "counterparty": "p_clara"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00285",
+    "date": "2026-04-12",
+    "calls": [
+      {
+        "id": "sb-bg-call-00285",
+        "time": "2026-04-12T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1087,
+        "connected": true,
+        "counterparty": "p_ada"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00286",
+    "date": "2026-04-24",
+    "calls": [
+      {
+        "id": "sb-bg-call-00286",
+        "time": "2026-04-24T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 784,
+        "connected": true,
+        "counterparty": "p_zoe"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00287",
+    "date": "2026-05-07",
+    "calls": [
+      {
+        "id": "sb-bg-call-00287",
+        "time": "2026-05-07T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_ben"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00288",
+    "date": "2026-05-19",
+    "calls": [
+      {
+        "id": "sb-bg-call-00288",
+        "time": "2026-05-19T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 1084,
+        "connected": true,
+        "counterparty": "p_priya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00289",
+    "date": "2026-05-31",
+    "calls": [
+      {
+        "id": "sb-bg-call-00289",
+        "time": "2026-05-31T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 125,
+        "connected": true,
+        "counterparty": "p_dina"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00290",
+    "date": "2026-06-13",
+    "calls": [
+      {
+        "id": "sb-bg-call-00290",
+        "time": "2026-06-13T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 773,
+        "connected": true,
+        "counterparty": "p_noemi"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00291",
+    "date": "2026-06-25",
+    "calls": [
+      {
+        "id": "sb-bg-call-00291",
+        "time": "2026-06-25T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 306,
+        "connected": true,
+        "counterparty": "p_max"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00292",
+    "date": "2026-07-07",
+    "calls": [
+      {
+        "id": "sb-bg-call-00292",
+        "time": "2026-07-07T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 88,
+        "connected": true,
+        "counterparty": "p_zoe"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00293",
+    "date": "2026-07-20",
+    "calls": [
+      {
+        "id": "sb-bg-call-00293",
+        "time": "2026-07-20T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 945,
+        "connected": true,
+        "counterparty": "p_leila"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00294",
+    "date": "2026-08-01",
+    "calls": [
+      {
+        "id": "sb-bg-call-00294",
+        "time": "2026-08-01T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 0,
+        "connected": false,
+        "counterparty": "p_maya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00295",
+    "date": "2026-08-13",
+    "calls": [
+      {
+        "id": "sb-bg-call-00295",
+        "time": "2026-08-13T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1286,
+        "connected": true,
+        "counterparty": "p_owen"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00296",
+    "date": "2026-08-26",
+    "calls": [
+      {
+        "id": "sb-bg-call-00296",
+        "time": "2026-08-26T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "facetime",
+        "durationSeconds": 1365,
+        "connected": true,
+        "counterparty": "p_jamie"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00297",
+    "date": "2026-09-07",
+    "calls": [
+      {
+        "id": "sb-bg-call-00297",
+        "time": "2026-09-07T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 798,
+        "connected": true,
+        "counterparty": "p_leila"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00298",
+    "date": "2026-09-19",
+    "calls": [
+      {
+        "id": "sb-bg-call-00298",
+        "time": "2026-09-19T18:15:00.000Z",
+        "direction": "outgoing",
+        "medium": "phone",
+        "durationSeconds": 895,
+        "connected": true,
+        "counterparty": "p_priya"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-bg-call-day-00299",
+    "date": "2026-10-02",
+    "calls": [
+      {
+        "id": "sb-bg-call-00299",
+        "time": "2026-10-02T18:15:00.000Z",
+        "direction": "incoming",
+        "medium": "phone",
+        "durationSeconds": 1143,
+        "connected": true,
+        "counterparty": "p_maya"
+      }
+    ]
+  }
+]

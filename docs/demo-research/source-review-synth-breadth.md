@@ -1,0 +1,49 @@
+# Synthetic source breadth review
+
+Reviewed the ten previously missing non-Android synthetic twins against `.claude/commands/source-review.md` and `.claude/commands/omnesis-review.md`. This review covers the synthetic fixture boundary and reuse of production normalization; it does not certify new production integrations.
+
+| Source              | Fixture              | Production seam exercised                                                          | Isolation and identity                                                                                                     |
+| ------------------- | -------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `local-files`       | `files.json`         | Actual file source, extraction and document builder                                | Only materialized files under account-scoped host state; original filename paths are preserved inside that owned root      |
+| `imap`              | `messages.json`      | Actual IMAP source, cursor validation, email normalization                         | In-memory implementation of the production IMAP client; no socket, credentials or mailbox discovery                        |
+| `web`               | `pages.json`         | Browser extension page-document and page-visit builders, original analytics schema | Canonical URL hash identity; synthetic pull execution replaces gateway capture transport                                   |
+| `codex`             | `sessions.json`      | Actual native session JSONL parser/source                                          | Native event-message user records and assistant response records; owned synthetic session directory                        |
+| `claude-code`       | `sessions.json`      | Actual native session JSONL parser/source                                          | Linked native user/assistant records; owned synthetic session directory                                                    |
+| `pi`                | `sessions.json`      | Actual native session JSONL parser/source                                          | Native session and linked conversation records; owned synthetic session directory                                          |
+| `openclaw`          | `conversations.json` | Production conversation-day renderer                                               | Fictional historical captures only; message/day agreement checked; no replay agent configuration                           |
+| `hermes`            | `conversations.json` | Production conversation-day renderer                                               | Fictional historical captures only; message/day agreement checked; no replay agent configuration                           |
+| `photos`            | `photos.json`        | TypeScript mirror of native `PhotosDocumentBuilder` analysis-fragment output       | Partitioned phone source; original asset ID, screenshot type, deduplicated tags and low-signal behavior                    |
+| `activity-segments` | `segments.json`      | Mirror of native motion document and analytics contracts                           | Partitioned phone source; original segment ID; daily documents split midnight crossings without duplicating analytics rows |
+
+## Findings resolved
+
+All source-specific readers, fixture validation, native record serialization and metadata stay inside the corresponding synthetic provider package. The collector change only registers packages through development dependencies. Package manifests, lockfile workspace links, root TypeScript references and Knip registration ignores include all ten packages. Their main TypeScript programs include colocated tests.
+
+Existing production descriptors are retained for the eight sources that have TypeScript provider definitions; synthetic authentication and discovery are replaced so they cannot select real stores or credentials. Web and agent-integration twins change gateway/external execution to fixture pull execution explicitly. Native Photos and motion define separate synthetic descriptors with partitioned mode and document-event profiles. They do not introduce shared source-name switches, production routes, migrations, native app changes or production setup changes.
+
+The common file materializer requires an absolute host-owned state directory, refuses traversal, symlink parents/targets and ambiguous paths, writes with restrictive permissions and no-follow handles, preserves unchanged file mtimes, and retires only previously recorded owned files. Its ownership manifest lives outside the input tree so local-files never indexes it. Materialization is bounded to 100,000 files and 25 MiB per file; production reader bounds still apply. This helper contains file safety logic only, with no source-specific parsing.
+
+Fixture validation happens before creation/sync. Duplicate stable identities are rejected where a duplicate would overwrite an item. Native sessions use bounded safe IDs. IMAP attachment requests fail explicitly because binary fixtures are unsupported; they cannot fall back to a real server. Existing inherited production lifecycle/cursor behavior applies to file-backed and IMAP sources. Complete fixture snapshots are emitted only on final pages, through the existing common fixture pagination or inherited production reader.
+
+Email people and source URLs come from the production normalizer. Transcript sources retain production conversation rendering and identities. Photos/motion legitimately contain no counterpart person; no fictional contact is created from asset text or motion labels. Native twins contain no invented app deep link. Existing branded source icons are inherited; native icon presentation follows their native SF Symbol/color descriptors, leaving generic web glyph fallback where no raster icon is available.
+
+## Verification
+
+- Production baseline for Codex, Claude Code, Pi and IMAP passed before implementing twins.
+- Expanded focused unit pass: 15 test files, 116 tests; wait 0 s, run 4 s. Includes all ten new source suites, file-safety tests, source-descriptor extraction, snapshot-contract, document-event profiles and record-citation contract suites. Final repetition after cleanup and native profile additions passed with the same 15 files / 116 tests: wait 24 s, run 4 s.
+- Targeted ten-package TypeScript build passed: wait 2 s, run 2 s. Final follow-up build passed: wait 0 s, run 2 s; covers native event-profile declarations and import cleanup.
+- Admitted ESLint pass: wait 0 s, run 11 s; zero errors. Unused fixture-test imports were subsequently removed. Remaining async-without-await warnings follow the existing Promise-based synthetic source interfaces.
+- Privacy scan of every new provider source/test and the common materializer passed without adding identity allowlist entries. Fixtures use reserved email domains and newly invented generic content.
+- No model inference runs in these tests. JSONL parser tests, fake IMAP transport and native mirrors replace only source transport/input, not an agent model.
+
+Bootstrap and unchanged incremental cycles are covered for each new twin. File/session sources additionally prove newly added native items produce incremental output. IMAP additionally proves new UID ingestion and binary-fixture refusal. Web tests exercise canonical URL identity, real visit records and invalid dwell/URL input. Motion tests exercise midnight splitting, unchanged incremental analytics and invalid duration/duplicate IDs. File materializer tests exercise removal, unchanged mtimes, traversal and symlink rejection.
+
+## Integration validation and limits
+
+The parent task owns the authoritative affected/full gate and the isolated 43-source bootstrap. The seeder must advertise every actor's actual descriptor `multiDeviceModes` and `replicaVersionPolicies` before registering sources; otherwise partitioned phone fixtures can register with exclusive ownership semantics. This is an integration requirement, not a provider reader workaround.
+
+Photos analysis fragments are supplied fixture input; this twin does not run PhotoKit, image recognition or OCR. Motion intervals are fixture input, not sensor observations. Genuine OCR/STT demonstrations must cite separately generated binary artifacts processed through the actual extraction/transcription pipeline. Historical agent/coding captures establish indexed source breadth; they do not configure a replay inference backend.
+
+Synthetic fixture offsets represent a materialized immutable universe. Changed fixtures require an explicit resync/recreated universe rather than claiming arbitrary edit detection for offset-only fixture readers. Inherited file/IMAP readers retain their actual change detection. Default/e2e-minimal universes remain unchanged; discovery returns only accounts declared in the active universe, so these packages do not silently add fake sources to old universes.
+
+Before merge, run the authoritative affected gate on the final tree and verify the isolated portal source list/timeline, every declared actor and source ownership, bootstrap status and expected document/analytics counts. Search representative production-normalized emails and coding captures, inspect Photo/Screenshot and midnight motion documents, and confirm the demo agent uses the intended live inference configuration. Provider-specific real-platform auth, mobile permission, quota and push-transport acceptance remain covered by their production integrations; they are outside this synthetic input slice.
