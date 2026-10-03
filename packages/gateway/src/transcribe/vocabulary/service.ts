@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { getActivePriority, runWithPriority } from "../../priority.js";
 import type { TranscriptionContext, TranscriptionVocabulary } from "@omnesis/core";
 import type { IoGate } from "../../scheduler/io-ops.js";
-import { getActivePriority, runWithPriority } from "../../priority.js";
 import type { VocabularySettings } from "./types.js";
 
 /** Bounded dictionary reads use the caller's priority, independent of extraction. */
@@ -30,5 +30,23 @@ export class TranscriptionVocabularyService {
       this.deps.ioGate.getTranscriptionVocabulary(context, settings),
     );
     return this.enabled() ? vocabulary : { entries: [] };
+  }
+
+  /** Clients refresh opportunistically; expiry bounds disconnected use of private hints. */
+  async getSnapshot(context: TranscriptionContext): Promise<
+    TranscriptionVocabulary & {
+      enabled: boolean;
+      refreshAfterSeconds: number;
+      expiresAfterSeconds: number;
+    }
+  > {
+    const vocabulary = await this.getDictionary(context);
+    const enabled = this.enabled();
+    return {
+      enabled,
+      entries: enabled ? vocabulary.entries.slice(0, 100) : [],
+      refreshAfterSeconds: 30 * 60,
+      expiresAfterSeconds: 24 * 60 * 60,
+    };
   }
 }

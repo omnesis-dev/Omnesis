@@ -780,9 +780,22 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
 
         <p>
           When <code>inference.transcriptionVocabulary.enabled</code> is explicitly set to
-          <code>true</code>, the gateway uses the same personal vocabulary hints as source audio
-          transcription. This setting is disabled by default. See
+          <code>true</code>, personal vocabulary hints can improve both gateway Whisper and the
+          apps' on-device recognition, including voice questions to the agent and notes captured
+          with gateway dictation off. This setting is disabled by default. The apps fetch hints in
+          the background, keep them in memory for offline use for up to 24 hours, and refresh them
+          opportunistically after 30 minutes when returning to the foreground or refreshing gateway
+          status. Starting a recording never waits for hints. See
           <a href="/docs/operating">Operating Omnesis</a> for vocabulary behavior.
+        </p>
+        <p>
+          iOS supplies hints only to on-device recognition. Android requires Android 13 or later and
+          a compatible on-device recognizer; the recognition service may ignore hints. Recognition
+          that uses an operating-system cloud service receives no personal dictionary. Apple Watch
+          recordings transcribed on the paired iPhone can use hints. Watch system dictation,
+          keyboard dictation, and voice-assistant input do not expose vocabulary hints to the app.
+          Android hints apply to the app's Ask/Tell voice capture and voice follow-ups; typing or
+          using the keyboard microphone in the agent composer does not use this dictionary.
         </p>
         <h3 id="gateway-dictation-behaviour">What happens to a voice note</h3>
         <p>

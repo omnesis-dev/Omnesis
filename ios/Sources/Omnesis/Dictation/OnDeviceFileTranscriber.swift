@@ -25,6 +25,9 @@ enum OnDeviceFileTranscriber {
         let request = SFSpeechURLRecognitionRequest(url: audio)
         request.shouldReportPartialResults = false
         request.requiresOnDeviceRecognition = true
+        request.contextualStrings = await MainActor.run {
+            TranscriptionVocabularyCache.shared.terms(onDevice: true)
+        }
         let recognition = Recognition()
         return await withCheckedContinuation { continuation in
             recognition.start(continuation)

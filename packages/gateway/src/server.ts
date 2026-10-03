@@ -1227,6 +1227,8 @@ export function createServer(
     getReleaseCheck: opts?.getReleaseCheck,
     getBriefsStatus: opts?.getBriefsStatus,
     getDictationStatus: opts?.getDictationStatus,
+    getTranscriptionVocabularyEnabled: () =>
+      opts?.transcriptionVocabularyService?.enabled() ?? false,
     getDiskUsage: opts?.getDiskUsage,
   });
 

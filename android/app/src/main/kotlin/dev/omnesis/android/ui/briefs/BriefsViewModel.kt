@@ -302,6 +302,7 @@ class BriefsViewModel internal constructor(
      * thought would end the recording.
      */
     fun startDictation(brief: BriefRecordDto) {
+        transcriber.setPurpose("agent")
         if (!transcriber.isAvailable()) {
             _state.value = _state.value.copy(
                 dictationUnavailable = "Dictation isn't available on this device.",

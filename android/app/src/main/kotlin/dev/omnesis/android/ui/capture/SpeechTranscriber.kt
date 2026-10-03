@@ -9,6 +9,7 @@ import android.media.AudioFormat
 import android.os.Build
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
+import java.util.Locale
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -26,6 +27,7 @@ import javax.inject.Inject
  */
 open class SpeechTranscriber @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val vocabulary: dev.omnesis.android.voice.SpeechVocabulary = dev.omnesis.android.voice.SpeechVocabulary(),
 ) {
 
     interface Listener {
@@ -69,12 +71,46 @@ open class SpeechTranscriber @Inject constructor(
         LANGUAGE_NOT_SUPPORTED,
     }
 
-    private var recognizer: SpeechRecognizer? = null
+    private var recognizer: RecognizerBackend? = null
+    internal var factory: RecognizerFactory = PlatformRecognizerFactory(context)
+    private var purpose = "dictation"
+    private val supportedLocales = mutableMapOf<String, Long>()
+    private val checkedLocales = mutableMapOf<String, Long>()
+    private val supportProbes = mutableMapOf<RecognizerBackend, String>()
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /** Context for this capture, independent of whether gateway voice-note storage is enabled. */
+    fun setPurpose(value: String) {
+        require(value == "dictation" || value == "agent")
+        purpose = value
+    }
+
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    private fun preflight(locale: String) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (checkedLocales[locale]?.let { now - it < 300_000 } == true) return
+        checkedLocales.clear()
+        checkedLocales[locale] = now
+        supportedLocales.keys.retainAll(setOf(locale))
+        val probe = runCatching { factory.onDevice() }.getOrNull() ?: return
+        supportProbes[probe] = locale
+        val release = Runnable { if (supportProbes.remove(probe) != null) probe.destroy() }
+        handler.postDelayed(release, 10_000)
+        try {
+            probe.support(speechIntent(emptyList(), null, locale)) { installed ->
+                if (probe in supportProbes && installed?.any { it.equals(locale, ignoreCase = true) } == true) {
+                    supportedLocales[locale] = android.os.SystemClock.elapsedRealtime()
+                }
+                handler.removeCallbacks(release)
+                release.run()
+            }
+        } catch (_: Exception) { handler.removeCallbacks(release); release.run() }
+    }
 
     /** The pipe the current session reads from, when the app is recording the microphone itself. */
     private var audioInput: RecognizerAudioInput? = null
 
-    open fun isAvailable(): Boolean = SpeechRecognizer.isRecognitionAvailable(context)
+    open fun isAvailable(): Boolean = factory.available()
 
     /** Starts one recognition session. The caller restarts on [Listener.onEnded] to keep listening. */
     open fun start(listener: Listener) = begin(listener, audio = null)
@@ -91,9 +127,16 @@ open class SpeechTranscriber @Inject constructor(
     private fun begin(listener: Listener, audio: RecognizerAudioInput?) {
         cancel()
         audioInput = audio
-        val r = SpeechRecognizer.createSpeechRecognizer(context)
+        val locale = Locale.getDefault().toLanguageTag()
+        val hints = vocabulary.cache.phrases(purpose, locale)
+        val onDeviceAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            hints.isNotEmpty() && factory.onDeviceAvailable()
+        val local = if (onDeviceAvailable && supportedLocales[locale]?.let { android.os.SystemClock.elapsedRealtime() - it < 300_000 } == true) {
+            runCatching { factory.onDevice() }.getOrNull()
+        } else null
+        val r = local ?: factory.default()
         recognizer = r
-        r.setRecognitionListener(object : RecognitionListener {
+        r.listener(object : RecognitionListener {
             override fun onPartialResults(partialResults: Bundle?) {
                 firstResult(partialResults)?.let(listener::onPartial)
             }
@@ -110,7 +153,12 @@ open class SpeechTranscriber @Inject constructor(
                 if (error != SpeechRecognizer.ERROR_NO_MATCH && error != SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
                     Log.i(TAG, "Speech recognition ended with error $error")
                 }
-                listener.onEnded(endReasonFor(error))
+                if (local != null && (error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE || error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED)) {
+                    supportedLocales.remove(locale)
+                    // The caller's existing bounded retry starts the default provider unhinted.
+                    // Do not replay consumed audio or reopen the microphone here.
+                    listener.onEnded(EndReason.FAULT)
+                } else listener.onEnded(endReasonFor(error))
             }
 
             override fun onReadyForSpeech(params: Bundle?) = Unit
@@ -120,28 +168,42 @@ open class SpeechTranscriber @Inject constructor(
             override fun onEndOfSpeech() = Unit
             override fun onEvent(eventType: Int, params: Bundle?) = Unit
         })
-        r.startListening(
-            Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-                if (audio != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        r.start(speechIntent(if (local != null) hints else emptyList(), audio, if (local != null) locale else null))
+        // Support discovery does no microphone work and never holds up microphone startup.
+        if (onDeviceAvailable && local == null) handler.post { if (recognizer === r) preflight(locale) }
+    }
+
+    /** Biasing strings are supplied only by the verified on-device branch above. */
+    internal fun speechIntent(hints: List<String>, audio: RecognizerAudioInput?, locale: String? = null): Intent =
+        Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            if (locale != null) putExtra(RecognizerIntent.EXTRA_LANGUAGE, locale)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                if (hints.isNotEmpty()) putStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS, ArrayList(hints))
+                if (audio != null) {
                     putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, audio.pipe)
                     putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1)
                     putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
                     putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, audio.sampleRateHz)
                 }
-            },
-        )
-    }
+            }
+        }
 
     /** Stops capturing audio; any already-heard speech still delivers a final result. */
     open fun stop() {
-        recognizer?.stopListening()
+        recognizer?.stop()
     }
 
     /** Abandons the session without waiting for results and releases the recognizer. */
     open fun cancel() {
+        supportProbes.forEach { (probe, locale) ->
+            checkedLocales.remove(locale)
+            probe.destroy()
+        }
+        supportProbes.clear()
+        handler.removeCallbacksAndMessages(null)
         recognizer?.let {
             it.cancel()
             it.destroy()

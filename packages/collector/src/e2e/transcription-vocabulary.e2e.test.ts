@@ -48,6 +48,7 @@ describe("transcription vocabulary materialization and API (E2E)", () => {
     processedDocuments: number;
     vocabularyRows: number;
     jobState: string;
+    advertised: boolean;
   };
 
   beforeAll(async () => {
@@ -116,6 +117,8 @@ describe("transcription vocabulary materialization and API (E2E)", () => {
       ),
       vocabularyRows: readCount("SELECT count(*) AS count FROM transcription_vocabulary_terms"),
       jobState: "",
+      advertised: (await harness.gatewayJson<{ transcriptionVocabulary: boolean }>("/status"))
+        .transcriptionVocabulary,
     };
     await vi.waitFor(
       async () => {
@@ -155,11 +158,43 @@ describe("transcription vocabulary materialization and API (E2E)", () => {
 
   test("omitted opt-in starts with no materialization, hints, or active background job", () => {
     expect(omittedSettingBoot).toEqual({
-      dictionary: { entries: [] },
+      dictionary: {
+        enabled: false,
+        entries: [],
+        refreshAfterSeconds: 1800,
+        expiresAfterSeconds: 86400,
+      },
       processedDocuments: 0,
       vocabularyRows: 0,
       jobState: "disabled",
+      advertised: false,
     });
+  });
+
+  test("advertises client hints independently from gateway dictation and serves a private snapshot", async () => {
+    await harness.gatewayJson("/admin/config", {
+      method: "PATCH",
+      body: JSON.stringify({ inference: { dictation: { transcribeOnGateway: false } } }),
+    });
+    const status = await harness.gatewayJson<{
+      transcriptionVocabulary: boolean;
+      dictation: { active: boolean };
+    }>("/status");
+    expect(status.transcriptionVocabulary).toBe(true);
+    expect(status.dictation.active).toBe(false);
+    const response = await harness.gatewayFetch(ENDPOINT, {
+      method: "POST",
+      body: JSON.stringify({ purpose: "agent", speaker: { isSelf: true } }),
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    const snapshot = await response.json();
+    expect(snapshot).toMatchObject({
+      enabled: true,
+      refreshAfterSeconds: 1800,
+      expiresAfterSeconds: 86400,
+    });
+    expect(snapshot.entries.length).toBeGreaterThan(0);
   });
 
   test("selects relationship vocabulary across sources using canonical aliases", async () => {
@@ -224,7 +259,14 @@ describe("transcription vocabulary materialization and API (E2E)", () => {
       },
     ]);
     await tick(harness);
-    expect(await dictionary(harness, { purpose: "dictation" })).toEqual({ entries: [] });
+    expect(await dictionary(harness, { purpose: "dictation" })).toMatchObject({
+      enabled: false,
+      entries: [],
+    });
+    expect(
+      (await harness.gatewayJson<{ transcriptionVocabulary: boolean }>("/status"))
+        .transcriptionVocabulary,
+    ).toBe(false);
     expect(
       db
         .prepare(

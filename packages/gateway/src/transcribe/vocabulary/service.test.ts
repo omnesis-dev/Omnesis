@@ -35,6 +35,12 @@ describe("transcription vocabulary service opt-in", () => {
     const { service, read } = fixture(config);
     expect(service.enabled()).toBe(false);
     expect(await service.getDictionary({ purpose: "dictation" })).toEqual({ entries: [] });
+    expect(await service.getSnapshot({ purpose: "agent" })).toEqual({
+      enabled: false,
+      entries: [],
+      refreshAfterSeconds: 1800,
+      expiresAfterSeconds: 86400,
+    });
     expect(read).not.toHaveBeenCalled();
   });
 
@@ -58,5 +64,37 @@ describe("transcription vocabulary service opt-in", () => {
     });
     expect(await service.getDictionary({ purpose: "dictation" })).toEqual({ entries: [] });
     expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  test("mobile snapshots cap ranked phrases and publish refresh and expiry bounds", async () => {
+    const { service, read } = fixture({
+      inference: { transcriptionVocabulary: { enabled: true } },
+    });
+    const entries = Array.from({ length: 128 }, (_, index) => ({
+      text: `Vocabulary ${index}`,
+      score: 128 - index,
+    }));
+    read.mockResolvedValue({ entries });
+    expect(await service.getSnapshot({ purpose: "agent", speaker: { isSelf: true } })).toEqual({
+      enabled: true,
+      entries: entries.slice(0, 100),
+      refreshAfterSeconds: 1800,
+      expiresAfterSeconds: 86400,
+    });
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  test("mobile snapshots discard a read when vocabulary is disabled while awaiting it", async () => {
+    const { service, read, setConfig } = fixture({
+      inference: { transcriptionVocabulary: { enabled: true } },
+    });
+    read.mockImplementation(() => {
+      setConfig({});
+      return Promise.resolve(vocabulary);
+    });
+    expect(await service.getSnapshot({ purpose: "dictation" })).toMatchObject({
+      enabled: false,
+      entries: [],
+    });
   });
 });

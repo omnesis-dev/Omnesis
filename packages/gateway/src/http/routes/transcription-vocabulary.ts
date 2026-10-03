@@ -26,7 +26,8 @@ export function mountTranscriptionVocabularyRoutes(
       }
       const parsed = transcriptionContextSchema.safeParse(body);
       if (!parsed.success) throw new BadRequestError("Invalid transcription context");
-      return c.json(await service.getDictionary(parsed.data));
+      c.header("Cache-Control", "no-store");
+      return c.json(await service.getSnapshot(parsed.data));
     },
   );
 }
