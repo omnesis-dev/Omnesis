@@ -19,6 +19,7 @@
  */
 
 import { createLogger } from "@omnesis/core";
+import { getNoteEntry } from "../sources/omnesis-notes/storage.js";
 import {
   getPendingVoiceNote,
   listDuePendingVoiceNotes,
@@ -30,7 +31,6 @@ import type { TranscriberReadiness } from "../transcribe/index.js";
 import type { TranscriptionResult } from "@omnesis/core";
 import type { WriteGate } from "../write-gate.js";
 import type Database from "better-sqlite3";
-import { getNoteEntry } from "../sources/omnesis-notes/storage.js";
 
 const log = createLogger("gateway:voice-notes");
 

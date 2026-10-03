@@ -22,6 +22,7 @@ import { createAgentMessagesTables } from "../sources/agent-conversations/storag
 import { createAccessTables } from "../access/store.js";
 import { createAnswerPrivacyTables, createDirectAuditTables } from "../privacy/store.js";
 import { createSubscriptionTables } from "../subscriptions/store-schema.js";
+import { createTranscriptionVocabularyTables } from "../transcribe/vocabulary/storage.js";
 import { addSourceSyncIssues } from "./migration-179-source-sync-issues.js";
 import { indexDocumentsBySourceExternalId } from "./migration-187-documents-source-external-index.js";
 import { addPendingSourcePages } from "./migration-178-pending-source-pages.js";
@@ -40,7 +41,6 @@ import {
 import { createSourceMemberConfigContractTable } from "./repositories/SourceMemberConfigContractRepository.js";
 import { createReplicaDeletionClaimsTable } from "./repositories/ReplicaDeletionClaimRepository.js";
 import { createDeviceDoctorRunsTable } from "./repositories/DeviceDoctorRunRepository.js";
-import { createTranscriptionVocabularyTables } from "../transcribe/vocabulary/storage.js";
 import type Database from "better-sqlite3";
 
 type Db = Database.Database;

@@ -27,11 +27,11 @@ import { MAX_AUDIO_BYTES } from "../../transcribe/index.js";
 import { BadRequestError, HttpError, ValidationError } from "../errors.js";
 import { enforceWriteScopeForSource, scope } from "../scope.js";
 import { voiceNoteMetadata } from "../schemas/index.js";
+import { transcriptionVocabularyAllowed } from "../transcription-access.js";
 import { clientIp, isLoopbackRequest } from "./admin/internals.js";
 import type { DictationFeatureStatus } from "../../dictation/index.js";
 import type { VoiceNoteService } from "../../voice-notes/index.js";
 import type { RouteApp } from "./types.js";
-import { transcriptionVocabularyAllowed } from "../transcription-access.js";
 
 /** Room for the `note` part and multipart framing beside the largest recording. */
 const METADATA_ALLOWANCE_BYTES = 64 * 1024;
