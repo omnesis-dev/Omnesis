@@ -1,0 +1,7 @@
+{
+  "triggers": ["help me choose a summary of the vendor matrix"],
+  "placeholders": {
+    "docExternalIds": [],
+    "personNames": []
+  }
+}

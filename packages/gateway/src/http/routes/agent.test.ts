@@ -2082,3 +2082,128 @@ test("remote inference disabled is actionable in config and session creation", a
     error: "Cloud inference is disabled.",
   });
 });
+
+describe("conversation submission compatibility", () => {
+  test("keeps legacy messages and exposes additive controls without requiring new fields", async () => {
+    const created = await app.request("/agent/sessions", { method: "POST" });
+    const { sessionId } = await created.json();
+    const controls = await app.request(`/agent/sessions/${sessionId}/controls`);
+    expect(controls.status).toBe(200);
+    expect(await controls.json()).toEqual({
+      busy: false,
+      queuedMessages: [],
+      capabilities: { coalescedQueue: true, queueSendNow: true },
+    });
+    const sent = await app.request(`/agent/sessions/${sessionId}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "Legacy client prompt" }),
+    });
+    expect(sent.status).toBe(200);
+    expect(await sent.json()).toMatchObject({
+      messageId: expect.any(String),
+      userMessageId: expect.any(String),
+    });
+    await service.dispose();
+  });
+
+  test("validates new submission envelopes and keeps controls admin-only", async () => {
+    const { sessionId } = await service.createSession("device:A");
+    const invalid = await app.request(`/agent/sessions/${sessionId}/submissions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "", mode: "unexpected", clientMessageId: "key" }),
+    });
+    expect(invalid.status).toBe(400);
+    const invalidSendNow = await app.request(`/agent/sessions/${sessionId}/queue/send-now`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ submissionIds: [] }),
+    });
+    expect(invalidSendNow.status).toBe(400);
+    const reader = buildScopedApp(service, [SCOPE_READ]);
+    expect(
+      (
+        await reader.request(`/agent/sessions/${sessionId}/queue/send-now`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ submissionIds: ["one"] }),
+        })
+      ).status,
+    ).toBe(403);
+    expect((await reader.request(`/agent/sessions/${sessionId}/controls`)).status).toBe(403);
+    expect(
+      (
+        await reader.request(`/agent/sessions/${sessionId}/submissions`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text: "Hello", mode: "queue", clientMessageId: "key" }),
+        })
+      ).status,
+    ).toBe(403);
+    await service.dispose();
+  });
+
+  test("returns durable acceptance and a stable receipt to another admin device", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "omnesis-route-controls-"));
+    const store = new FsConversationStore(dir);
+    const replay = new AgentService({
+      backendFactory: () =>
+        new ReplayBackend({
+          fixtures: [
+            {
+              entries: [
+                {
+                  afterMs: 0,
+                  event: {
+                    type: "agent.message.end",
+                    payload: { sessionId: "$SESSION", messageId: "$MSG", stopReason: "end_turn" },
+                  },
+                },
+              ],
+            },
+          ],
+        }),
+      ports: { search: stubSearch, document: stubDocument },
+      systemPrompt: "test",
+      store,
+    });
+    try {
+      const client = buildApp(replay);
+      const { sessionId } = await replay.createSession("device:A");
+      const body = { text: "A durable prompt", mode: "queue", clientMessageId: "receipt" };
+      const send = (token: string, text = body.text) =>
+        client.request(`/agent/sessions/${sessionId}/submissions`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-test-token": token },
+          body: JSON.stringify({ ...body, text }),
+        });
+      const first = await send("tokenA");
+      expect(first.status).toBe(202);
+      expect(await first.json()).toMatchObject({ submission: { id: "receipt", text: body.text } });
+      const retry = await send("tokenB");
+      expect(retry.status).toBe(202);
+      expect((await store.load(sessionId))?.controls?.submissions).toHaveLength(1);
+      expect((await send("tokenB", "Changed payload")).status).toBe(409);
+      const sendNow = await client.request(`/agent/sessions/${sessionId}/queue/send-now`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-test-token": "tokenB" },
+        body: JSON.stringify({ submissionIds: ["receipt"] }),
+      });
+      expect(sendNow.status).toBe(202);
+      expect(await sendNow.json()).toMatchObject({
+        capabilities: { queueSendNow: true },
+        queuedMessages: [],
+      });
+      const stale = await client.request(`/agent/sessions/${sessionId}/queue/send-now`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ submissionIds: ["unknown"] }),
+      });
+      expect(stale.status).toBe(409);
+    } finally {
+      await replay.dispose();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

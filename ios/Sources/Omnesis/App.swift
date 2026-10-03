@@ -38,6 +38,9 @@ public struct OmnesisApp: App {
         // `AutomationPairing`. Runs before AppStore reads the Keychain.
         #if DEBUG
         AutomationPairing.applyLaunchEnvironment()
+        if ProcessInfo.processInfo.environment["DEMO_DISABLE_ANIMATIONS"] == "1" {
+            UIView.setAnimationsEnabled(false)
+        }
         #endif
 
         // iOS only accepts BGTaskScheduler.register calls that happen
@@ -154,6 +157,7 @@ public struct OmnesisApp: App {
     static var agentPreviewSeed: AppStore.AgentPreviewSeed? {
         switch ProcessInfo.processInfo.environment["DEMO_AGENT_PREVIEW"] {
         case "store": PreviewMocks.agentStoreTranscript
+        case "conversation-controls": PreviewMocks.agentConversationControls
         case "tall": PreviewMocks.agentTallTranscript
         case "scroll-stress", "scroll-stress-delayed": PreviewMocks.agentScrollStressTranscript
         default: nil
@@ -207,8 +211,12 @@ public struct OmnesisApp: App {
 
     /// The seeded agent transcript shown when `DEMO_AGENT_PREVIEW` is set.
     private func agentPreviewRoot(_ seed: AppStore.AgentPreviewSeed) -> some View {
-        AgentView(menuOpen: .constant(false))
-            .environment(AppStore.preview(agentPreview: seed))
+        let store = AppStore.preview(agentPreview: seed)
+        if ProcessInfo.processInfo.environment["DEMO_AGENT_PREVIEW"] == "conversation-controls" {
+            store.agent.installPreviewConversationControls(PreviewMocks.conversationControls)
+        }
+        return AgentView(menuOpen: .constant(false))
+            .environment(store)
             .environment(\.appearanceStore, AppearanceStore(mode: .dark))
     }
     #endif

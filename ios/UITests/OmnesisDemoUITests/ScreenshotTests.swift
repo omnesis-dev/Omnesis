@@ -119,6 +119,48 @@ final class ScreenshotTests: XCTestCase {
         try captureStoreScreenshot(named: "04-privacy-settings")
     }
 
+    func test_conversation_message_menus() throws {
+        app = XCUIApplication()
+        app.launchEnvironment["DEMO_AGENT_PREVIEW"] = "conversation-controls"
+        app.launchEnvironment["DEMO_DISABLE_ANIMATIONS"] = "1"
+        app.launchEnvironment["DEMO_APPEARANCE"] = "dark"
+        app.launch()
+        dismissSystemAlerts()
+        let prompt = app.staticTexts["Compare my activity."]
+        XCTAssertTrue(prompt.waitForExistence(timeout: 30))
+        let directory = URL(fileURLWithPath: "/tmp/omnesis-snapshots", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let answer = "I can compare your activity.\n\n```swift\nlet total = 42\n```"
+        for (text, action, name, copiedText) in [
+            ("Compare my activity.", "Edit and resend", "73a-user-message-menu", "Compare my activity."),
+            (
+                "Include a short summary.\n\nCompare the totals too.",
+                "Send now",
+                "73b-queued-message-menu",
+                "Include a short summary.\n\nCompare the totals too."
+            ),
+            ("I can compare your activity.", "Copy", "73c-assistant-message-menu", answer),
+            ("let total = 42", "Copy", "73d-assistant-code-menu", answer),
+        ] {
+            app.staticTexts[text].firstMatch.press(forDuration: 1.2)
+            XCTAssertTrue(app.buttons["Copy"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons[action].exists)
+            try XCUIScreen.main.screenshot().pngRepresentation.write(to: directory.appendingPathComponent("\(name).png"))
+            app.buttons["Copy"].tap()
+            let composer = app.textFields["agentComposer"]
+            composer.tap()
+            composer.press(forDuration: 1.2)
+            let paste = app.descendants(matching: .any).matching(identifier: "Paste").firstMatch
+            XCTAssertTrue(paste.waitForExistence(timeout: 5))
+            paste.tap()
+            XCTAssertEqual(composer.value as? String, copiedText)
+            composer.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: copiedText.count))
+            app.terminate()
+            app.launch()
+            XCTAssertTrue(prompt.waitForExistence(timeout: 30))
+        }
+    }
+
     private func launchPaired(tab: String, environment: [String: String] = [:]) {
         app = XCUIApplication()
         if let pairingJSON = ProcessInfo.processInfo.environment["DEMO_PAIRING_JSON"] {

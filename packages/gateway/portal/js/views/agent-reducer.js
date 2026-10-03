@@ -1692,6 +1692,8 @@ export function reducer(state, action) {
       if (existing || (state.busy && liveAssistant)) return state;
       return {
         ...state,
+        busy: true,
+        planItems: [],
         turns: [
           ...state.turns,
           {

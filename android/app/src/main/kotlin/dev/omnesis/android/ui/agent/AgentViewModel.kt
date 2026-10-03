@@ -45,6 +45,16 @@ class AgentViewModel @Inject constructor(
     fun ackLastTurnError() = coordinator.ackLastTurnError()
 
     fun cancelTurn() = coordinator.cancelTurn()
+    fun updateDraft(text: String, commandId: String?) = coordinator.updateDraft(text, commandId)
+    fun editPrompt(text: String) = coordinator.editPrompt(text)
+    fun finishDraftSubmission() = coordinator.finishDraftSubmission()
+    fun cancelPromptEdit() = coordinator.cancelPromptEdit()
+    fun interruptAndSend(text: String, command: SlashCommand?) =
+        coordinator.submitFollowUp(text, command?.deepResearch ?: false, interrupt = true)
+    fun answerClarification(text: String) = coordinator.submitFollowUp(text)
+    fun sendQueuedNow(ids: List<String>) = coordinator.sendQueuedNow(ids)
+    fun retrySubmission(id: String) = coordinator.retrySubmission(id)
+    fun editPendingSubmission(id: String) = coordinator.editPendingSubmission(id)
 
     fun retry() = coordinator.retry()
     fun retryLiveSession() = coordinator.retryLiveSession()

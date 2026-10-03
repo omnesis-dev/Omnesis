@@ -25,6 +25,8 @@
 import { html } from "htm/preact";
 import { useEffect, useReducer, useRef, useState } from "preact/hooks";
 
+import { migrateClarificationDraft, submissionForRetry, clearPendingSubmission, readPendingSubmission, readConversationDraft, writeConversationDraft, clearConversationDraft } from "../lib/conversation-draft.js";
+import { ConversationControls } from "../components/agent/conversation-controls.js";
 import { createAgentClient } from "../lib/agent-client.js";
 import {
   Composer,
@@ -77,6 +79,17 @@ export async function requestAgentCancel(client, sessionId) {
   return result;
 }
 
+/** Older gateways retain ordinary idle messaging without accepting unsupported control semantics. */
+export async function requestConversationSubmission(client, sessionId, submission, busy = false) {
+  try {
+    return await client.submitMessage(sessionId, submission);
+  } catch (error) {
+    if (error.status !== 404) throw error;
+    if (busy) throw new Error("This gateway needs an update to accept follow-ups while working.");
+    return client.sendMessage(sessionId, submission.text, { deepResearch: submission.deepResearch === true });
+  }
+}
+
 export function agentRequestIsCurrent(
   requestGeneration,
   currentGeneration,
@@ -96,7 +109,7 @@ export function AgentActionError({ message, onDismiss }) {
     <span>${message}</span>
     <button
       type="button"
-      aria-label="Dismiss stop error"
+      aria-label="Dismiss action error"
       onClick=${onDismiss}
     >×</button>
   </div>`;
@@ -271,6 +284,36 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState(null);
   const [actionFailure, setActionFailure] = useState(null);
+  const [controls, setControls] = useState(null);
+  const [editPrompt, setEditPrompt] = useState(null);
+  const [unconfirmed, setUnconfirmed] = useState(null);
+  const composerDraftKey = convoId ?? (shouldReplaceLandingUrl(window.location.pathname) ? "new" : (state.sessionId ?? "new"));
+  const controlsRequestRef = useRef(0);
+  async function refreshControls(sessionId = activeSessionIdRef.current) {
+    if (!sessionId || !clientRef.current) return;
+    setUnconfirmed({ sessionId, submission: readPendingSubmission(sessionId) });
+    const request = ++controlsRequestRef.current;
+    try {
+      const result = await clientRef.current.getControls(sessionId);
+      if (request === controlsRequestRef.current && activeSessionIdRef.current === sessionId) {
+        if (result.pendingClarification && migrateClarificationDraft(sessionId, result.pendingClarification.id)) {
+          window.dispatchEvent(new CustomEvent("omnesis:conversation-draft", { detail: { key: sessionId } }));
+        }
+        setControls({ ...result, sessionId });
+      }
+    } catch (error) {
+      if (error.status === 404 && request === controlsRequestRef.current && activeSessionIdRef.current === sessionId) {
+        setControls({ sessionId, unsupported: true });
+      }
+    }
+  }
+  useEffect(() => {
+    const savedEdit = readConversationDraft(`${composerDraftKey}:edit`);
+    setEditPrompt(savedEdit.text ? { text: savedEdit.text } : null);
+    refreshControls(state.sessionId);
+    const timer = setInterval(() => refreshControls(state.sessionId), 2000);
+    return () => clearInterval(timer);
+  }, [state.sessionId]);
 
   // The model that would answer right now — the current agent assignment,
   // independent of any one conversation's history. Shown in a small header
@@ -820,7 +863,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
     if (pinnedToBottomRef.current) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [state.turns]);
+  }, [state.turns, JSON.stringify([controls?.queuedMessages, controls?.pendingClarification, unconfirmed?.submission])]);
 
   // Grace-period clear for the plan panel: when a turn finishes (`busy`
   // flips true → false), wait ~700ms so the final ✓ animation reads,
@@ -878,14 +921,14 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
   // Research pill contributes `{ deepResearch: true }`); the Composer clears
   // its pill after handing them off so the next send is an ordinary turn.
   async function send(text, options = {}) {
-    if (!clientRef.current || state.terminalFailure) return;
+    if (!clientRef.current || state.terminalFailure) return false;
     const sendGeneration = ++sendGenerationRef.current;
     cancelGenerationRef.current += 1;
     setActionFailure(null);
     let sessionId = state.sessionId;
     const pending = pendingSessionRef.current;
     if (pending) {
-      if (pendingActivationRef.current) return;
+      if (pendingActivationRef.current) return false;
       const loadSeq = sessionLoadSeqRef.current;
       const activation = activatePendingSession(clientRef.current, pending);
       pendingActivationRef.current = activation;
@@ -895,7 +938,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
           loadSeq !== sessionLoadSeqRef.current ||
           pendingSessionRef.current !== pending
         ) {
-          return;
+          return false;
         }
         pendingSessionRef.current = null;
         sessionId = session.sessionId;
@@ -917,7 +960,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
           loadSeq !== sessionLoadSeqRef.current ||
           pendingSessionRef.current !== pending
         ) {
-          return;
+          return false;
         }
         const failedId =
           typeof crypto !== "undefined" && crypto.randomUUID
@@ -933,12 +976,12 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
           kind: "agent.error",
           payload: { code: err?.code === "remote_inference_disabled" ? err.code : "send_failed", message: err.message ?? String(err) },
         });
-        return;
+        return false;
       } finally {
         if (pendingActivationRef.current === activation) pendingActivationRef.current = null;
       }
     }
-    if (!sessionId) return;
+    if (!sessionId) return false;
     // First message in a fresh hero session — stamp the URL with the
     // session id so a refresh or a shared link resumes this conversation,
     // and tell the sidebar it's now the active row. (refreshConversations
@@ -947,6 +990,8 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
     // Read the browser location rather than the route prop here. `replaceUrl`
     // intentionally does not dispatch a route-change, so a stale prop must
     // never prevent the first durable conversation URL from being written.
+    const landingDraft = shouldReplaceLandingUrl(window.location.pathname) ? readConversationDraft("new") : null;
+    if (landingDraft?.text) writeConversationDraft(sessionId, landingDraft.text, landingDraft.command);
     if (shouldReplaceLandingUrl(window.location.pathname)) {
       replaceUrl(`/portal/agent/${encodeURIComponent(sessionId)}`);
       lastLoadedConvoIdRef.current = sessionId;
@@ -955,60 +1000,53 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
         new CustomEvent("omnesis:agent-active-convo", { detail: { id: sessionId } }),
       );
     }
-    // UUID-based optimistic id so the eventual `agent.user.message` event
-    // (which carries the server-assigned `userMessageId`) can be deduped
-    // against this placeholder without colliding on a turn-index counter.
-    const optimisticId =
-      typeof crypto !== "undefined" && crypto.randomUUID
-        ? `u-pending-${crypto.randomUUID()}`
-        : `u-pending-${Date.now()}-${Math.random()}`;
-    dispatch({ kind: "user-send", text, optimisticId, deepResearch: options.deepResearch === true });
-    clientRef.current
-      .sendMessage(sessionId, text, options)
-      .then((resp) => {
-        if (!agentRequestIsCurrent(
-          sendGeneration,
-          sendGenerationRef.current,
-          sessionId,
-          activeSessionIdRef.current,
-        )) return;
-        // The send response is the gateway's authoritative confirmation that
-        // this session is now a durable conversation. Repeat the landing-URL
-        // stamp here in case an earlier render raced the first optimistic send.
-        if (
-          activeSessionIdRef.current === sessionId &&
-          shouldReplaceLandingUrl(window.location.pathname)
-        ) {
-          replaceUrl(`/portal/agent/${encodeURIComponent(resp?.conversationId ?? sessionId)}`);
-        }
-        if (resp && resp.userMessageId) {
-          dispatch({ kind: "stamp-user-message", optimisticId, userMessageId: resp.userMessageId });
-        }
-      })
-      .catch((err) => {
-        if (!agentRequestIsCurrent(
-          sendGeneration,
-          sendGenerationRef.current,
-          sessionId,
-          activeSessionIdRef.current,
-        )) return;
-        if (err?.code === "CONTEXT_WINDOW_EXCEEDED") {
-          // The gateway is authoritative. Re-resume to discard the stale
-          // optimistic bubble and load its persisted terminalFailure.
-          resumeConversation(sessionId);
-          return;
-        }
-        dispatch({
-          kind: "agent.error",
-          payload: {
-            code: err?.code === "remote_inference_disabled" ? err.code : "send_failed",
-            message: err.message ?? String(err),
-          },
-        });
+    let submission;
+    try {
+      submission = submissionForRetry(sessionId, text, {
+        mode: options.mode ?? "queue",
+        ...(options.deepResearch ? { deepResearch: true } : {}),
+        ...(options.clarificationId ? { clarificationId: options.clarificationId } : {}),
       });
+      const result = await requestConversationSubmission(clientRef.current, sessionId, submission, state.busy);
+      if (result?.submission?.status === "failed") {
+        clearPendingSubmission(sessionId, submission.clientMessageId);
+        throw new Error(result.submission.error || "The message failed. Send again to retry.");
+      }
+      clearPendingSubmission(sessionId, submission.clientMessageId);
+      if (landingDraft) clearConversationDraft(sessionId, landingDraft.text, landingDraft.command);
+      if (activeSessionIdRef.current === sessionId) {
+        await refreshControls(sessionId);
+        refreshConversations();
+      }
+      return true;
+    } catch (err) {
+      if (submission && err.status >= 400 && err.status < 500) clearPendingSubmission(sessionId, submission.clientMessageId);
+      if (agentRequestIsCurrent(sendGeneration, sendGenerationRef.current, sessionId, activeSessionIdRef.current)) {
+        if (err?.code === "CONTEXT_WINDOW_EXCEEDED") resumeConversation(sessionId);
+        if (err?.code === "remote_inference_disabled") {
+          dispatch({ kind: "agent.error", payload: { code: err.code, message: err.message } });
+        }
+        setUnconfirmed({ sessionId, submission: readPendingSubmission(sessionId) });
+        setActionFailure({ sessionId, message: `Message not confirmed. Send again to retry. ${err.message ?? String(err)}` });
+      }
+      return false;
+    }
   }
+
+  async function sendQueuedNow(submissionIds) {
+    const sessionId = state.sessionId;
+    if (!sessionId || !clientRef.current || state.terminalFailure) return;
+    setActionFailure(null);
+    try {
+      await clientRef.current.sendQueuedNow(sessionId, submissionIds);
+      if (activeSessionIdRef.current === sessionId) await refreshControls(sessionId);
+    } catch (error) {
+      if (activeSessionIdRef.current === sessionId) setActionFailure({ sessionId, message: `Queued messages were not confirmed. Try Send now again. ${error.message ?? String(error)}` });
+    }
+  }
+
   function cancel() {
-    if (!state.busy || !state.sessionId || !clientRef.current) return;
+    if (!state.sessionId || !clientRef.current) return;
     const sessionId = state.sessionId;
     const cancelGeneration = ++cancelGenerationRef.current;
     setActionFailure(null);
@@ -1045,7 +1083,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
             key=${`${state.sessionId ?? "pending"}:${cloudRecovery.key}`}
             recovery=${cloudRecovery}
             model=${agentModel}
-            busy=${state.busy}
+            busy=${state.busy || (controls?.sessionId === state.sessionId && controls.busy)}
             getConfig=${() => clientRef.current.getConfig()}
             onEnabled=${(config) => {
               configPromiseRef.current = Promise.resolve(config);
@@ -1081,6 +1119,13 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
               </div>
             `
             : null}
+              ${actionFailure?.sessionId === state.sessionId
+                ? html`<${AgentActionError}
+                    message=${actionFailure.message}
+                    onDismiss=${() => setActionFailure(null)}
+                  />`
+                : null}
+
           ${state.turns.length === 0 &&
           !state.terminalFailure &&
           !hasContextCard(state.briefOrigin)
@@ -1089,11 +1134,24 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
                 <span class="agent-hero-mark" aria-hidden="true"></span>
                 <h1 class="agent-hero-headline">Ask Omnesis about your corpus</h1>
                 <div class="agent-hero-composer">
+              <${ConversationControls}
+                controls=${controls?.sessionId === state.sessionId ? controls : null}
+                unconfirmed=${unconfirmed?.sessionId === state.sessionId ? unconfirmed.submission : null}
+                onAnswer=${send}
+                onSendNow=${sendQueuedNow}
+              />
                   <${Composer}
-                    key=${state.sessionId ?? "fresh-pending"}
                     disabled=${agentComposerDisabled(state.sessionId, state.agentConfig)}
-                    busy=${state.busy}
-                    onSubmit=${send}
+                    busy=${state.busy || (controls?.sessionId === state.sessionId && controls.busy)}
+                    controlsSupported=${!(controls?.sessionId === state.sessionId && controls.unsupported)}
+                    key=${editPrompt ? "editing" : "draft"}
+                    draftKey=${editPrompt ? `${composerDraftKey}:edit` : composerDraftKey}
+                    onSubmit=${async (text, options) => {
+                      const clarificationId = controls?.sessionId === state.sessionId ? controls.pendingClarification?.id : null;
+                      const accepted = await send(text, { ...options, ...(clarificationId ? { clarificationId } : {}) });
+                      if (accepted && activeSessionIdRef.current === state.sessionId) setEditPrompt(null);
+                      return accepted;
+                    }}
                     onCancel=${cancel}
                     variant="hero"
                     autoFocus=${true}
@@ -1120,27 +1178,40 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
                   label="Load earlier messages"
                 />
                 ${state.turns.map((turn) => html`
-                  <${MessageBubble} key=${turn.id} turn=${turn} citations=${state.citations} dispatch=${dispatch} />
+                  <${MessageBubble} key=${turn.id} turn=${turn} citations=${state.citations} dispatch=${dispatch} canEdit=${!state.terminalFailure} onEdit=${(text) => { writeConversationDraft(`${composerDraftKey}:edit`, text); setEditPrompt({ text }); }} />
                 `)}
                 <${WorkingIndicator}
                   active=${workingIndicatorActive(state)}
                   rev=${workingIndicatorRev(state)} />
+              <${ConversationControls}
+                controls=${controls?.sessionId === state.sessionId ? controls : null}
+                unconfirmed=${unconfirmed?.sessionId === state.sessionId ? unconfirmed.submission : null}
+                onAnswer=${send}
+                onSendNow=${sendQueuedNow}
+              />
               </div>
               <${PlanPanel} items=${state.planItems} />
-              ${actionFailure?.sessionId === state.sessionId
-                ? html`<${AgentActionError}
-                    message=${actionFailure.message}
-                    onDismiss=${() => setActionFailure(null)}
-                  />`
-                : null}
+
+
+              ${editPrompt ? html`<div class="agent-edit-notice">Editing as a new message. The original exchange stays in this conversation.
+                <button type="button" onClick=${() => { writeConversationDraft(`${composerDraftKey}:edit`, ""); setEditPrompt(null); }}>Cancel edit</button>
+              </div>` : null}
               ${state.terminalFailure
                 ? html`<${ContextWindowExceededCard}
                     onNewConversation=${newConversation}
                   />`
                 : html`<${Composer}
                     disabled=${agentComposerDisabled(state.sessionId, state.agentConfig)}
-                    busy=${state.busy}
-                    onSubmit=${send}
+                    busy=${state.busy || (controls?.sessionId === state.sessionId && controls.busy)}
+                    controlsSupported=${!(controls?.sessionId === state.sessionId && controls.unsupported)}
+                    key=${editPrompt ? "editing" : "draft"}
+                    draftKey=${editPrompt ? `${composerDraftKey}:edit` : composerDraftKey}
+                    onSubmit=${async (text, options) => {
+                      const clarificationId = controls?.sessionId === state.sessionId ? controls.pendingClarification?.id : null;
+                      const accepted = await send(text, { ...options, ...(clarificationId ? { clarificationId } : {}) });
+                      if (accepted && activeSessionIdRef.current === state.sessionId) setEditPrompt(null);
+                      return accepted;
+                    }}
                     onCancel=${cancel}
                     experimental=${experimental}
                   />`}

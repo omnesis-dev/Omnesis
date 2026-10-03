@@ -86,6 +86,12 @@ const SSE_HEARTBEAT_MS = 25_000;
 
 const log = createLogger("gateway:http").child("routes:agent");
 
+import {
+  submissionInputSchema,
+  sendQueuedInputSchema,
+  ConversationControlError,
+} from "../../agent/conversation-controls.js";
+
 const messageBody = z.object({
   text: z.string().min(1).max(10_000),
   // Explicit, per-message opt-in to the Deep Research loop. Off/absent =
@@ -726,6 +732,53 @@ export function mountAgentRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
     },
   );
 
+  app.get("/agent/sessions/:id/controls", scope.admin(), (c) => {
+    callerOf(c);
+    try {
+      return c.json(requireService().conversationControls(c.req.param("id")));
+    } catch (error) {
+      throw mapAgentError(error);
+    }
+  });
+
+  app.post(
+    "/agent/sessions/:id/submissions",
+    scope.admin(),
+    agentBodyLimit,
+    validateJson(submissionInputSchema),
+    async (c) => {
+      try {
+        return c.json(
+          await requireService().submitMessage(callerOf(c), c.req.param("id"), c.req.valid("json")),
+          202,
+        );
+      } catch (error) {
+        throw mapAgentError(error);
+      }
+    },
+  );
+
+  app.post(
+    "/agent/sessions/:id/queue/send-now",
+    scope.admin(),
+    agentBodyLimit,
+    validateJson(sendQueuedInputSchema),
+    async (c) => {
+      try {
+        return c.json(
+          await requireService().sendQueuedNow(
+            callerOf(c),
+            c.req.param("id"),
+            c.req.valid("json").submissionIds,
+          ),
+          202,
+        );
+      } catch (error) {
+        throw mapAgentError(error);
+      }
+    },
+  );
+
   app.post("/agent/sessions/:id/cancel", scope.admin(), agentBodyLimit, (c) => {
     const service = requireService();
     const sessionId = c.req.param("id");
@@ -883,6 +936,8 @@ function parseTranscriptLimit(raw: string | undefined, minimum: 0 | 1): number |
 }
 
 function mapAgentError(err: unknown): Error {
+  if (err instanceof ConversationControlError)
+    return new HttpError(409, "CONVERSATION_CONFLICT", err.message);
   if (err instanceof AgentError) {
     if (err.code === "session_not_found") return new NotFoundError(err.message);
     if (err.code === "forbidden") return new ForbiddenError(err.message);

@@ -51,7 +51,6 @@ struct AgentTurnBubble: View {
                     .padding(.vertical, 10)
                     .background(Theme.accent.opacity(0.10))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .textSelection(.enabled)
             }
         case .assistant(let assistant):
             VStack(alignment: .leading, spacing: 10) {
@@ -523,7 +522,8 @@ struct AgentPartView: View {
                 bodyFont: assistantBodyFont(size: 15),
                 copyValues: turnDone,
                 plainValueFences: true,
-                copyFont: UIFont(name: "InterVariable", size: 15) ?? .systemFont(ofSize: 15)
+                copyFont: UIFont(name: "InterVariable", size: 15) ?? .systemFont(ofSize: 15),
+                allowsTextSelection: false
             )
         case .thinking(let raw):
             AgentThinkingBlock(text: raw, active: thinkingActive)

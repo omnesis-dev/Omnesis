@@ -54,11 +54,174 @@ import kotlin.math.pow
  * collector and user actions never race on the reducer state.
  */
 @Singleton
-class AgentCoordinator @Inject constructor() {
+class AgentCoordinator @Inject constructor(private val composerStore: AgentComposerStore) {
+    constructor() : this(AgentComposerStore())
+
+    private var composerAccount = ""
+    private var controlsJob: Job? = null
+    private val submissionsInFlight = mutableSetOf<String>()
+
+    fun updateDraft(text: String, commandId: String?) {
+        val st = _state.value
+        val record = composerStore.read(composerAccount, st.sessionId).copy(text = text, commandId = commandId)
+        composerStore.write(composerAccount, st.sessionId, record)
+        _state.update { it.copy(composer = record) }
+    }
+
+    fun editPrompt(text: String) {
+        val st = _state.value
+        val previous = composerStore.read(composerAccount, st.sessionId)
+        val record = previous.copy(text = text, commandId = null, editingPrompt = true,
+            savedDraftText = if (previous.editingPrompt) previous.savedDraftText else previous.text,
+            savedDraftCommandId = if (previous.editingPrompt) previous.savedDraftCommandId else previous.commandId)
+        composerStore.write(composerAccount, st.sessionId, record)
+        _state.update { it.copy(composer = record, composerGeneration = it.composerGeneration + 1) }
+    }
+
+    fun finishDraftSubmission() {
+        // Legacy sends have no durable receipt: retain their draft until HTTP acknowledgement.
+        if (!_state.value.controlsAvailable) return
+        restoreSavedDraft()
+    }
+
+    private fun restoreSavedDraft() {
+        val st = _state.value
+        val previous = composerStore.read(composerAccount, st.sessionId)
+        val next = previous.copy(text = previous.savedDraftText ?: "", commandId = previous.savedDraftCommandId,
+            editingPrompt = false, savedDraftText = null, savedDraftCommandId = null)
+        composerStore.write(composerAccount, st.sessionId, next)
+        _state.update { it.copy(composer = next, composerGeneration = it.composerGeneration + 1) }
+    }
+
+    fun cancelPromptEdit() = restoreSavedDraft()
+
+    fun submitFollowUp(text: String, deepResearch: Boolean = false, interrupt: Boolean = false, clarificationId: String? = null, answerCurrentQuestion: Boolean = true) {
+        val cleaned = text.trim().takeIf { it.isNotEmpty() } ?: return
+        if (!_state.value.controlsAvailable || !_state.value.canCompose) {
+            _state.update { it.copy(sendRejectedText = cleaned) }
+            return
+        }
+        val sid = _state.value.sessionId ?: return
+        val body = dev.omnesis.android.transport.client.ConversationSubmissionBody(
+            clientMessageId = UUID.randomUUID().toString(), text = cleaned,
+            mode = if (interrupt) "interrupt" else "queue",
+            deepResearch = if (deepResearch) true else null,
+            clarificationId = clarificationId ?: if (answerCurrentQuestion) _state.value.controls.pendingClarification?.id else null,
+        )
+        val record = composerStore.read(composerAccount, sid)
+        val next = record.copy(pending = record.pending + body)
+        composerStore.write(composerAccount, sid, next)
+        _state.update { it.copy(composer = next) }
+        deliverSubmission(sid, body)
+    }
+
+    fun editPendingSubmission(id: String) {
+        val sid = _state.value.sessionId ?: return
+        if (id in submissionsInFlight) return
+        val record = composerStore.read(composerAccount, sid)
+        val message = record.pending.firstOrNull { it.clientMessageId == id } ?: return
+        val next = record.copy(text = message.text, commandId = if (message.deepResearch == true) "deep-research" else null,
+            editingPrompt = true,
+            savedDraftText = if (record.editingPrompt) record.savedDraftText else record.text,
+            savedDraftCommandId = if (record.editingPrompt) record.savedDraftCommandId else record.commandId)
+        composerStore.write(composerAccount, sid, next)
+        _state.update { it.copy(composer = next, composerGeneration = it.composerGeneration + 1) }
+    }
+
+    fun retrySubmission(id: String) {
+        val sid = _state.value.sessionId ?: return
+        val local = _state.value.composer.pending.firstOrNull { it.clientMessageId == id }
+        if (local != null) deliverSubmission(sid, local)
+        else _state.value.controls.queuedMessages.firstOrNull { it.id == id && it.status == "failed" }
+            ?.let { submitFollowUp(it.text, deepResearch = it.deepResearch == true, answerCurrentQuestion = false) }
+    }
+
+    fun sendQueuedNow(submissionIds: List<String>) {
+        val st = _state.value
+        val sid = st.sessionId ?: return
+        val c = client ?: return
+        if (!st.controlsAvailable || !st.controls.capabilities.queueSendNow || submissionIds.isEmpty()) return
+        scope.launch {
+            try {
+                val controls = c.sendQueuedNow(sid, submissionIds)
+                if (client === c && _state.value.sessionId == sid) {
+                    _state.update { it.copy(controls = controls) }
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                if (client === c && _state.value.sessionId == sid) {
+                    _state.update { it.copy(chat = it.chat.copy(lastTurnError = "Could not send queued messages: ${classifyGatewayError(error)}")) }
+                }
+            }
+        }
+    }
+
+    private fun deliverSubmission(sid: String, body: dev.omnesis.android.transport.client.ConversationSubmissionBody) {
+        val c = client ?: return
+        if (!submissionsInFlight.add(body.clientMessageId)) return
+        val account = composerAccount
+        _state.update { it.copy(submissionsSending = submissionsInFlight.toSet()) }
+        scope.launch {
+            try {
+                c.submit(sid, body)
+                val record = composerStore.read(account, sid)
+                composerStore.write(account, sid, record.copy(pending = record.pending.filterNot { it.clientMessageId == body.clientMessageId }))
+                if (client === c && _state.value.sessionId == sid) {
+                    _state.update { it.copy(composer = composerStore.read(account, sid)) }
+                    refreshControls(sid)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (client === c && _state.value.sessionId == sid) {
+                    _state.update { it.copy(chat = it.chat.copy(lastTurnError = "Message saved on this device. Retry to confirm delivery: ${classifyGatewayError(e)}")) }
+                }
+            } finally {
+                submissionsInFlight.remove(body.clientMessageId)
+                _state.update { it.copy(submissionsSending = submissionsInFlight.toSet()) }
+            }
+        }
+    }
+
+    private suspend fun refreshControls(sid: String) {
+        val c = client ?: return
+        val controls = try {
+            c.controls(sid)
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            if (e is GatewayException.NotFound && client === c && _state.value.sessionId == sid) {
+                _state.update { it.copy(controlsAvailable = false, controls = dev.omnesis.android.transport.client.ConversationControls()) }
+            }
+            return
+        }
+        if (client === c && _state.value.sessionId == sid) {
+            val record = composerStore.read(composerAccount, sid)
+            val confirmedIds = controls.queuedMessages.mapTo(hashSetOf()) { it.id }
+            val reconciled = record.copy(pending = record.pending.filterNot { it.clientMessageId in confirmedIds })
+            if (reconciled != record) composerStore.write(composerAccount, sid, reconciled)
+            _state.update { it.copy(controls = controls, controlsAvailable = true, composer = reconciled) }
+        }
+    }
+
+    private fun startControlsPolling(id: String) {
+        controlsJob?.cancel()
+        controlsJob = scope.launch {
+            while (isActive && visibleConversationId == id && appForeground) {
+                refreshControls(id)
+                delay(2_000)
+            }
+        }
+    }
+
 
     /** The full surface the agent UI renders. Wraps the reducer's [AgentChatState]. */
     data class UiState(
         val chat: AgentChatState = AgentChatState(),
+        val composer: ComposerRecord = ComposerRecord(),
+        val controls: dev.omnesis.android.transport.client.ConversationControls = dev.omnesis.android.transport.client.ConversationControls(),
+        val controlsAvailable: Boolean = false,
+        val submissionsSending: Set<String> = emptySet(),
         val sessionId: String? = null,
         val model: String? = null,
         val backend: String? = null,
@@ -86,6 +249,7 @@ class AgentCoordinator @Inject constructor() {
          * prompt cannot leak into a different conversation's composer.
          */
         val sendRejectedText: String? = null,
+        val sendRejectedCommandId: String? = null,
         /** Durable context exhaustion, kept outside model-visible chat history. */
         val terminalFailure: AgentConversationTerminalFailure? = null,
         /** Bumped whenever a fresh conversation must reset and refocus the local composer. */
@@ -203,17 +367,20 @@ class AgentCoordinator @Inject constructor() {
     // MARK: - Lifecycle
 
     /** Bring the agent surface up on a fresh pairing. */
-    fun rebuild(client: AgentClient, events: AgentEventSource) {
+    fun rebuild(client: AgentClient, events: AgentEventSource, account: String = "") {
         teardown()
         this.client = client
         this.events = events
-        _state.value = UiState(hasClient = true)
+        composerAccount = account
+        _state.value = UiState(hasClient = true, composer = composerStore.read(account, null))
         startEventStream()
         scope.launch { bootstrap() }
     }
 
     /** Drop client + event stream. Called on unpair / re-pair. */
     fun teardown() {
+        controlsJob?.cancel()
+        controlsJob = null
         stopSeenLease()
         visibleConversationId = null
         streamJob?.cancel()
@@ -380,6 +547,8 @@ class AgentCoordinator @Inject constructor() {
             // claimed the surface. It no longer owns the lease in that case.
             if (visibleConversationId != id) return
             visibleConversationId = null
+            controlsJob?.cancel()
+            controlsJob = null
             stopSeenLease()
             return
         }
@@ -389,6 +558,7 @@ class AgentCoordinator @Inject constructor() {
         }
         if (!appForeground || seenLeaseJob != null) return
         startSeenLease(id)
+        startControlsPolling(id)
     }
 
     /** The transcript is not visible while the whole application is backgrounded. */
@@ -396,9 +566,11 @@ class AgentCoordinator @Inject constructor() {
         if (appForeground == foreground) return
         appForeground = foreground
         if (!foreground) {
+            controlsJob?.cancel()
+            controlsJob = null
             stopSeenLease()
         } else {
-            visibleConversationId?.let(::startSeenLease)
+            visibleConversationId?.let { startSeenLease(it); startControlsPolling(it) }
         }
     }
 
@@ -503,6 +675,9 @@ class AgentCoordinator @Inject constructor() {
         _state.update {
             it.copy(
                 sessionId = null,
+                composer = composerStore.read(composerAccount, null),
+                controls = dev.omnesis.android.transport.client.ConversationControls(),
+                controlsAvailable = false,
                 model = null,
                 backend = null,
                 title = "",
@@ -514,6 +689,7 @@ class AgentCoordinator @Inject constructor() {
                 transcriptPrependVersion = 0,
                 terminalFailure = null,
                 sendRejectedText = null,
+                sendRejectedCommandId = null,
                 conversationActionError = null,
                 conversationActionErrorSessionId = null,
                 activeConversationPinned = false,
@@ -541,6 +717,10 @@ class AgentCoordinator @Inject constructor() {
         _state.update {
             it.copy(
                 sessionId = id,
+                composer = composerStore.read(composerAccount, id),
+                composerGeneration = it.composerGeneration + 1,
+                controls = dev.omnesis.android.transport.client.ConversationControls(),
+                controlsAvailable = false,
                 model = summary?.model,
                 backend = summary?.backend,
                 title = summary?.title ?: "",
@@ -552,6 +732,7 @@ class AgentCoordinator @Inject constructor() {
                 transcriptPrependVersion = 0,
                 terminalFailure = null,
                 sendRejectedText = null,
+                sendRejectedCommandId = null,
                 conversationActionError = null,
                 conversationActionErrorSessionId = null,
                 activeConversationPinned = summary?.pinned ?: false,
@@ -634,6 +815,9 @@ class AgentCoordinator @Inject constructor() {
      * transcript reconciliation begins with the subsequent message POST/SSE stream.
      */
     private fun adoptFreshlyMintedSession(session: CreateSessionResponse) {
+        val draft = composerStore.read(composerAccount, null)
+        composerStore.write(composerAccount, session.sessionId, draft)
+        composerStore.remove(composerAccount, null)
         cancelEphemeralGateTimeout()
         _state.update {
             it.copy(
@@ -770,9 +954,13 @@ class AgentCoordinator @Inject constructor() {
         if (_state.value.terminalFailure != null) return
         val cleaned = text.trim()
         if (cleaned.isEmpty()) return
-        // Compose blocks both the visible Send affordance and the IME action while busy. Keep a
-        // coordinator-side guard as the final authority for a stale-composition race, restoring
-        // the text because the composer's submit callback clears its local draft after dispatch.
+        // Capable gateways durably queue follow-ups. Older gateways keep their one-turn guard;
+        // a stale composition must restore its text rather than losing the rejected send.
+        if (_state.value.sessionId != null && _state.value.controlsAvailable) {
+            submitFollowUp(cleaned, deepResearch)
+            return
+        }
+        _state.update { it.copy(sendRejectedCommandId = if (deepResearch) "deep-research" else null) }
         if (_state.value.chat.busy) {
             _state.update { it.copy(sendRejectedText = cleaned) }
             return
@@ -859,9 +1047,19 @@ class AgentCoordinator @Inject constructor() {
                 return@launch
             }
             val sendSessionChoice = sessionChoice
+            val sendAccount = composerAccount
 
             runCatching { c.sendMessage(liveSid, cleaned, deepResearch) }.fold(
                 onSuccess = { resp ->
+                    val draft = composerStore.read(sendAccount, liveSid)
+                    if (draft.text.trim() == cleaned && draft.commandId == if (deepResearch) "deep-research" else null) {
+                        val restored = draft.copy(text = draft.savedDraftText ?: "", commandId = draft.savedDraftCommandId,
+                            editingPrompt = false, savedDraftText = null, savedDraftCommandId = null)
+                        composerStore.write(sendAccount, liveSid, restored)
+                        if (client === c && _state.value.sessionId == liveSid) {
+                            _state.update { it.copy(composer = restored, composerGeneration = it.composerGeneration + 1) }
+                        }
+                    }
                     if (
                         sessionChoice != sendSessionChoice ||
                         _state.value.sessionId != liveSid
@@ -969,7 +1167,7 @@ class AgentCoordinator @Inject constructor() {
      * re-restored on the next state emission.
      */
     fun ackSendRejected() {
-        if (_state.value.sendRejectedText != null) _state.update { it.copy(sendRejectedText = null) }
+        if (_state.value.sendRejectedText != null) _state.update { it.copy(sendRejectedText = null, sendRejectedCommandId = null) }
     }
 
     /** Dismiss the current action-level error without disturbing the transcript. */
@@ -1169,6 +1367,7 @@ class AgentCoordinator @Inject constructor() {
             runCatching { c.deleteConversation(id) }.fold(
                 onSuccess = {
                     if (client !== c) return@fold
+                    composerStore.remove(composerAccount, id)
                     conversationListGeneration++
                     _state.update {
                         it.copy(
