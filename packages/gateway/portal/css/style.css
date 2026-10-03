@@ -11367,6 +11367,7 @@ div.source-activity-popover-link:hover {
 .calendar-item--mention .calendar-entry-title { color: var(--text-muted); }
 .calendar-item--mention .calendar-entry-spine { width: 2px; flex-basis: 2px; background: var(--border); }
 .calendar-item--projection .calendar-entry-spine { background: var(--calendar-kind); }
+.time-index-pills { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .calendar-entry-pills { display: flex; align-items: center; gap: 4px; padding: 0 9px 8px 22px; font-size: 10px; }
 .calendar-entry-pills > .calendar-kind { white-space: nowrap; }
 .calendar-origin-pill { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; padding: 1px 6px; background: color-mix(in srgb, currentColor 12%, transparent); font-weight: 650; border-radius: 999px; }
@@ -18889,14 +18890,16 @@ a.agent-loop-row.agent-ephemeral-result-link:hover .agent-loop-state {
 
 .note-reference-row {
   display: grid;
-  grid-template-columns: 104px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
-  align-items: baseline;
-  padding: 4px 0;
+  align-items: start;
+  padding: 5px 0;
 }
 
+.note-reference-body { display: grid; justify-items: start; gap: 3px; min-width: 0; }
+.note-reference-body .time-index-pills { font-size: 10px; }
 .note-reference-heading { color: var(--text-muted); font-size: 11px; }
-.note-reference-link { min-width: 0; overflow-wrap: anywhere; line-height: 1.5; }
+.note-reference-link { max-width: 100%; overflow-wrap: anywhere; line-height: 1.5; }
 .note-reference-detail {
   color: var(--text-muted);
   font-size: 11px;
@@ -18923,7 +18926,8 @@ a.agent-loop-row.agent-ephemeral-result-link:hover .agent-loop-state {
   border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
 }
 .notes-table tbody tr:hover { background: transparent; }
-.notes-table .portal-table-actions-col { width: 32px; padding-left: 8px; }
+/* Border-box sizing counts the padding in the width: 28px trigger + 8px gap. */
+.notes-table .portal-table-actions-col { width: 36px; padding-left: 8px; }
 .notes-table .row-action-trigger {
   width: 28px;
   height: 28px;
@@ -18937,8 +18941,7 @@ a.agent-loop-row.agent-ephemeral-result-link:hover .agent-loop-state {
 
 @media (max-width: 560px) {
   .capture-day-actions { gap: 8px; }
-  .note-reference-row { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; }
-  .note-reference-heading { grid-column: 1 / -1; }
+  .note-reference-row { gap: 4px 10px; }
   .note-reference-count { font-size: 11px; }
 }
 

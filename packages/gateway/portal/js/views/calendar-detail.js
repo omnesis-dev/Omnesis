@@ -3,12 +3,11 @@
 
 import { html } from "htm/preact";
 import { Modal } from "../components/modal.js";
-import { OriginBadge, KindPill } from "./calendar-agenda.js";
+import { TimeIndexPills } from "../components/time-index-pills.js";
+import { CALENDAR_KINDS, ORIGIN_LABELS } from "../lib/time-index-labels.js";
 import { DevAnnotateButton } from "../components/dev-annotate-button.js";
 import { sourceIconUrl } from "../lib/format.js";
 import {
-  CALENDAR_KINDS,
-  ORIGIN_LABELS,
   calendarDateLabel,
   evidenceDocumentIds,
 } from "./calendar-model.js";
@@ -72,8 +71,7 @@ export function CalendarEntryDetail({
   return html`<${Modal} open=${true} onClose=${onClose} ariaLabel=${origin.row} size="lg">
     <div class=${`calendar-detail calendar-detail--${entry.origin}`}>
       <div class="calendar-detail-summary">
-        <${OriginBadge} origin=${entry.origin} />
-        <${KindPill} kind=${entry.kind} />
+        <${TimeIndexPills} origin=${entry.origin} kind=${entry.kind} />
         <span>${
           entry.allDay || entry.origin === "mention"
             ? calendarDateLabel(entry, timeZone)

@@ -38,6 +38,23 @@ describe("the portal stylesheet", () => {
     expect(declarations).toMatch(/\bmax-width:\s*none\s*;/);
   });
 
+  test("sizes the note history's action column to hold its trigger", () => {
+    // Every element is border-box, so a table cell's width includes its
+    // padding. A column narrower than the trigger plus that padding overflows
+    // the table, and the table's scroll wrapper shows a horizontal scrollbar.
+    const px = (selector: string, property: string) => {
+      const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const body = new RegExp(`(?:^|\\})\\s*${escaped}\\s*\\{([^}]*)\\}`).exec(css)?.[1] ?? "";
+      const value = new RegExp(`(?:^|;)\\s*${property}:\\s*(\\d+)px`).exec(body)?.[1];
+      expect(value, `${selector} { ${property} }`).toBeDefined();
+      return Number(value);
+    };
+    const column = ".notes-table .portal-table-actions-col";
+    expect(px(column, "width")).toBeGreaterThanOrEqual(
+      px(".notes-table .row-action-trigger", "width") + px(column, "padding-left"),
+    );
+  });
+
   test("closes every rule it opens", () => {
     let depth = 0;
     let line = 1;
