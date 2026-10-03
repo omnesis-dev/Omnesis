@@ -22,6 +22,7 @@ import {
 } from "./credentials.js";
 import { DEFAULT_GATEWAY_TIMEOUT_MS, OAUTH_TOKEN_TIMEOUT_MS } from "./http.js";
 import { silentIntegrationLogger, type IntegrationLogger } from "./logger.js";
+import { loadPendingAuthorization } from "./pending-authorization.js";
 import { mcpEndpointUrl } from "./tls.js";
 
 const REFRESH_LOCK_WAIT_MS = 25;
@@ -82,8 +83,20 @@ function isInteractiveAuthorizationRequired(error: unknown): boolean {
  * credential file holds no client information; an installation that already
  * registered keeps its client id, and the name it registered under, until
  * that information is cleared.
+ *
+ * Invalidating the token set never erases it. When the SDK decides
+ * the stored set is no good — the token endpoint answered `invalid_grant` —
+ * it asks the provider to invalidate it and goes on to look for a
+ * replacement. This provider stops offering that set to the SDK but leaves it
+ * on disk until a replacement is saved: an attempt that then fails, or is
+ * never completed, must not leave the installation with nothing, when the
+ * access token it held may still be good for minutes and the runtime's own
+ * headless recovery can still use the client it names.
  */
 export class IntegrationOAuthProvider implements OAuthClientProvider {
+  /** The access token of a set the SDK invalidated in this process, while it is still on disk. */
+  private withdrawnAccessToken: string | undefined;
+
   constructor(
     private readonly credentialsPath: string,
     private readonly clientName: string,
@@ -133,7 +146,11 @@ export class IntegrationOAuthProvider implements OAuthClientProvider {
 
   tokens(): StoredOAuthTokens | undefined {
     const value = this.loadState().tokens;
-    return typeof value.access_token === "string" ? (value as StoredOAuthTokens) : undefined;
+    if (typeof value.access_token !== "string") return undefined;
+    // A set written since — by this process or another — is a different one
+    // and is offered again.
+    if (value.access_token === this.withdrawnAccessToken) return undefined;
+    return value as StoredOAuthTokens;
   }
 
   saveTokens(tokens: StoredOAuthTokens): void {
@@ -155,6 +172,7 @@ export class IntegrationOAuthProvider implements OAuthClientProvider {
       codeVerifier: undefined,
       authorizationState: undefined,
     });
+    this.withdrawnAccessToken = undefined;
   }
 
   /** When the stored token set was issued, or undefined if it predates the stamp. */
@@ -167,10 +185,15 @@ export class IntegrationOAuthProvider implements OAuthClientProvider {
    *
    * The PKCE verifier is written when the consent page is opened and cleared
    * when tokens are saved, so its presence is what distinguishes "somebody is
-   * approving this right now" from an ordinary idle installation.
+   * approving this right now" from an ordinary idle installation. An approval
+   * `omnesis connect` recorded beside the file says how long that lasts: once
+   * its request has expired, a verifier left behind by a process that never
+   * finished is no longer anybody's attempt.
    */
   hasPendingAuthorization(): boolean {
-    return this.loadState().codeVerifier !== undefined;
+    if (this.loadState().codeVerifier === undefined) return false;
+    const recorded = loadPendingAuthorization(this.credentialsPath);
+    return recorded === null || recorded.expiresAt > this.now();
   }
 
   discoveryState(): OAuthDiscoveryState | undefined {
@@ -216,7 +239,8 @@ export class IntegrationOAuthProvider implements OAuthClientProvider {
     } else if (scope === "client") {
       this.update({ clientInformation: {} });
     } else if (scope === "tokens") {
-      this.update({ tokens: {} });
+      const accessToken = this.loadState().tokens.access_token;
+      if (typeof accessToken === "string") this.withdrawnAccessToken = accessToken;
     } else {
       this.update({ codeVerifier: undefined });
     }
@@ -386,11 +410,11 @@ export class SerializedIntegrationAuthProvider implements AuthProvider {
   /**
    * Recover, and leave nothing behind if recovery itself fails.
    *
-   * Getting here means the SDK went all the way to wanting a browser: it has
-   * already cleared the stored tokens and written a PKCE verifier for the
-   * authorization it was about to start. Nobody is going to complete that
+   * Getting here means the SDK went all the way to wanting a browser: it may
+   * have withdrawn the stored tokens, and it has written a PKCE verifier for
+   * the authorization it was about to start. Nobody is going to complete that
    * authorization — this provider cannot open a browser — so if recovery does
-   * not replace the tokens, the leftovers have to go. A verifier left on disk
+   * not replace the tokens, the verifier has to go. A verifier left on disk
    * reads as "somebody is approving this right now", which is precisely what
    * the scheduled keepalive stands down for: one transient recovery failure
    * would otherwise disarm it for the life of the installation.
@@ -548,7 +572,7 @@ function describeFetchError(error: unknown): string {
   return detail ? `${error.message}: ${detail}` : error.message;
 }
 
-/** @internal Exported for cross-language lease regression tests. */
+/** The cross-process refresh lease, shared with the Hermes adapter. */
 export async function withCredentialRefreshLock(
   credentialsPath: string,
   expectedBearer: string | undefined,

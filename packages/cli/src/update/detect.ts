@@ -936,9 +936,10 @@ export interface HarnessRole {
   /** The harness's home directory, as `../commands/connect.ts` resolved it. */
   home: string;
   /**
-   * True when the saved integration has no OAuth refresh token, so
-   * re-authorizing it needs a human at a browser. The updater refuses to
-   * start that flow unattended and prints the command instead.
+   * True when the saved integration has nothing to recover its OAuth access
+   * with headlessly, so re-authorizing it needs a human to approve it. The
+   * updater refuses to start that flow unattended and prints the command
+   * instead.
    */
   needsAuthorization: boolean;
 }
@@ -1044,10 +1045,12 @@ export function serviceUnitInstances(
 }
 
 /**
- * Whether refreshing this harness integration would need a human. The OAuth
- * grant renews itself silently while a refresh token is on file; without one
- * the flow opens a consent page and waits, which is not something an update
- * may do unattended.
+ * Whether refreshing this harness integration would need a human. A token
+ * set on file is renewed by the plugin itself, and a missing one is re-issued
+ * headlessly for the client the operator approved, with the device's
+ * management token. Only an integration with no registered client or no
+ * management token has nothing to recover with: it needs a consent page and
+ * somebody to approve it, which is not something an update may do unattended.
  *
  * Anything unreadable or unparseable counts as "needs a human" — the update
  * must not silently skip an integration it could not inspect.
@@ -1056,10 +1059,17 @@ export function harnessNeedsAuthorization(integrationJson: string | null): boole
   if (integrationJson === null) return true;
   try {
     const parsed = JSON.parse(integrationJson) as {
-      oauth?: { tokens?: { refresh_token?: unknown } };
+      managementToken?: unknown;
+      oauth?: { clientInformation?: { client_id?: unknown } };
     };
-    const refresh = parsed.oauth?.tokens?.refresh_token;
-    return typeof refresh !== "string" || refresh.length === 0;
+    const clientId = parsed.oauth?.clientInformation?.client_id;
+    const management = parsed.managementToken;
+    return (
+      typeof clientId !== "string" ||
+      clientId.length === 0 ||
+      typeof management !== "string" ||
+      management.length === 0
+    );
   } catch {
     return true;
   }
@@ -1553,13 +1563,19 @@ export function dockerApplyPlan(
 }
 
 /**
- * `omnesis connect <harness> --refresh --no-restart` — reinstall the plugin
- * and skill, run by `cli`: the command that starts the installed CLI. The
- * update restarts the harness itself, as its own step, so it can record a
- * restart that did not happen on the harness's device row.
+ * `omnesis connect <harness> --refresh --no-restart --no-interactive` —
+ * reinstall the plugin and skill, run by `cli`: the command that starts the
+ * installed CLI. The update restarts the harness itself, as its own step, so
+ * it can record a restart that did not happen on the harness's device row.
+ * It never asks for a new approval, even from a terminal: a token set on file
+ * is left to the plugin, a missing one is re-issued headlessly, and a
+ * connection with nothing approved left fails naming the command to run.
  */
 export function harnessRefreshSpec(harness: Harness, cli: CommandSpec): CommandSpec {
-  return { ...cli, args: [...cli.args, "connect", harness, "--refresh", "--no-restart"] };
+  return {
+    ...cli,
+    args: [...cli.args, "connect", harness, "--refresh", "--no-restart", "--no-interactive"],
+  };
 }
 
 /**

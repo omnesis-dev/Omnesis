@@ -776,7 +776,11 @@ const OPENCLAW_INTEGRATION = "/home/maya/.openclaw/omnesis/integration.json";
 /** A well-formed integration file whose grant renews without a human. */
 const LIVE_INTEGRATION = JSON.stringify({
   gatewayUrl: "https://gateway.example.com:7600",
-  oauth: { tokens: { access_token: "a", refresh_token: "r" } },
+  managementToken: "omn_management_fictional",
+  oauth: {
+    clientInformation: { client_id: "client_fictional" },
+    tokens: { access_token: "a", refresh_token: "r" },
+  },
 });
 
 function layout(overrides: Partial<Parameters<typeof detectHostRoles>[0]> = {}) {
@@ -809,17 +813,32 @@ describe("serviceUnitInstalled", () => {
 });
 
 describe("harnessNeedsAuthorization", () => {
-  test("a saved refresh token renews without a human", () => {
+  test("a saved token set renews without a human", () => {
     expect(harnessNeedsAuthorization(LIVE_INTEGRATION)).toBe(false);
   });
 
-  test("no refresh token needs a browser", () => {
-    expect(harnessNeedsAuthorization(JSON.stringify({ oauth: { tokens: {} } }))).toBe(true);
+  // The incident shape: a connect that stopped part-way left no tokens, but
+  // the approved client and the device's management token are still there,
+  // so the refresh re-issues headlessly instead of being skipped.
+  test("a missing token set is recovered headlessly, not by a human", () => {
+    const parsed = JSON.parse(LIVE_INTEGRATION) as { oauth: { tokens: unknown } };
+    parsed.oauth.tokens = {};
+    expect(harnessNeedsAuthorization(JSON.stringify(parsed))).toBe(false);
   });
 
-  test("an empty refresh token needs a browser", () => {
+  test("no registered client needs a human", () => {
     expect(
-      harnessNeedsAuthorization(JSON.stringify({ oauth: { tokens: { refresh_token: "" } } })),
+      harnessNeedsAuthorization(
+        JSON.stringify({ managementToken: "m", oauth: { clientInformation: {}, tokens: {} } }),
+      ),
+    ).toBe(true);
+  });
+
+  test("no management token needs a human", () => {
+    expect(
+      harnessNeedsAuthorization(
+        JSON.stringify({ oauth: { clientInformation: { client_id: "c" }, tokens: {} } }),
+      ),
     ).toBe(true);
   });
 
@@ -1786,7 +1805,7 @@ describe("apply plans", () => {
       formatCommandSpec(
         harnessRefreshSpec("openclaw", { command: "/usr/local/bin/omnesis", args: [] }),
       ),
-    ).toBe("/usr/local/bin/omnesis connect openclaw --refresh --no-restart");
+    ).toBe("/usr/local/bin/omnesis connect openclaw --refresh --no-restart --no-interactive");
     expect(formatCommandSpec(harnessRestartSpec("hermes"))).toBe("hermes gateway restart");
   });
 });

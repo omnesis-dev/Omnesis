@@ -45,6 +45,8 @@ const integrationMocks = vi.hoisted(() => ({
     },
   ),
   oauthFetch: vi.fn<() => OAuthFetch>(() => vi.fn<OAuthFetch>()),
+  /** The headless re-issue; by default the gateway has no approved credential to re-key. */
+  reissueOAuth: vi.fn<(provider: unknown) => Promise<void>>(),
 }));
 
 /** The `client_name` the last OAuth authorization would have registered. */
@@ -87,6 +89,7 @@ vi.mock("@omnesis/agent-integration", async (importOriginal) => {
     authorizeIntegrationOAuth: integrationMocks.authorizeOAuth,
     authorizeIntegrationOAuthWithCredentialLock: integrationMocks.authorizeOAuth,
     integrationOAuthFetch: integrationMocks.oauthFetch,
+    reissueIntegrationOAuthTokens: integrationMocks.reissueOAuth,
     PinnedGatewayHttpClient: class {
       requestJson(...args: unknown[]): Promise<unknown> {
         return integrationMocks.requestJson(...args);
@@ -124,6 +127,10 @@ import {
   loadIntegrationCredentials,
   writeIntegrationCredentials,
 } from "@omnesis/agent-integration";
+import {
+  IntegrationReauthorizationRequiredError,
+  type IntegrationOAuthProvider,
+} from "@omnesis/agent-integration";
 import { CliError } from "../utils.js";
 import {
   buildHarnessSkill,
@@ -154,7 +161,6 @@ import {
   skillFilePath,
   upsertEnvLines,
 } from "./connect.js";
-import type { IntegrationOAuthProvider } from "@omnesis/agent-integration";
 
 const tempHomes: string[] = [];
 const previousTrustFingerprint = process.env.OMNESIS_TRUST_FINGERPRINT;
@@ -288,6 +294,9 @@ beforeEach(() => {
     return "AUTHORIZED" as const;
   });
   integrationMocks.oauthFetch.mockImplementation(() => vi.fn<OAuthFetch>());
+  integrationMocks.reissueOAuth.mockImplementation(async () => {
+    throw new IntegrationReauthorizationRequiredError("hermes");
+  });
   process.env.OMNESIS_TRUST_FINGERPRINT = "a".repeat(64);
   const configDir = mkdtempSync(join(tmpdir(), "omnesis-connect-config-"));
   tempHomes.push(configDir);
@@ -973,7 +982,9 @@ describe("harness skill content", () => {
         { mode: 0o600 },
       );
 
-      await run({ harness, dir: home, refresh: true });
+      // A legacy pairing has no OAuth client to recover headlessly, so only
+      // an interactive refresh may add one.
+      await run({ harness, dir: home, refresh: true, interactive: true });
 
       expect(redeemAgentIntegrationPairingCode).not.toHaveBeenCalled();
       expect(JSON.parse(readFileSync(credentialsPath, "utf8"))).toMatchObject({
@@ -1250,6 +1261,10 @@ describe("harness skill content", () => {
     await expect(
       run({ harness: "openclaw", dir: home, refresh: true, "skill-only": true }),
     ).rejects.toThrow(/either --refresh or --skill-only/);
+    // A first connect always needs an approval, so the choice is a refresh's alone.
+    await expect(
+      run({ harness: "openclaw", dir: home, code: "PAIR-CODE", interactive: false }),
+    ).rejects.toThrow(/apply to --refresh only/);
     expect(redeemAgentIntegrationPairingCode).not.toHaveBeenCalled();
   });
 });
@@ -1668,7 +1683,7 @@ describe("connect credential wiring", () => {
     });
     integrationMocks.oauthFetch.mockReturnValueOnce(oauthFetch);
     try {
-      await run({ harness: "hermes", dir: home, refresh: true });
+      await run({ harness: "hermes", dir: home, refresh: true, interactive: true });
     } finally {
       await new Promise<void>((resolve, reject) =>
         occupied.close((error) => (error ? reject(error) : resolve())),

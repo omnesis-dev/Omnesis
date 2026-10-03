@@ -3830,6 +3830,101 @@ class OAuthRefreshTests(unittest.TestCase):
         refresh.assert_called_once_with("access_old_fictional")
 
 
+    def _drop_tokens(self, **oauth_extra):
+        raw = json.loads(self.path.read_text(encoding="utf-8"))
+        raw["oauth"]["tokens"] = {}
+        raw["oauth"].update(oauth_extra)
+        self.path.write_text(json.dumps(raw), encoding="utf-8")
+        self.instance._credentials = adapter_module._load_credentials(self.path)
+
+    _REISSUED = {
+        "access_token": "access_reissued_fictional",
+        "refresh_token": "refresh_reissued_fictional",
+        "token_type": "Bearer",
+    }
+
+    def test_a_file_left_without_tokens_still_loads_with_its_approved_client(self):
+        # An `omnesis connect` that stopped part-way leaves the approved client
+        # without a token set. Refusing the file would take delivery and
+        # ingestion down with it, over something a re-issue repairs.
+        self._drop_tokens()
+        credentials = self.instance._credentials
+        self.assertEqual(credentials.oauth_client_id, "client_fictional")
+        self.assertIsNone(credentials.oauth_access_token)
+        self.assertIsNone(credentials.oauth_refresh_token)
+
+    def test_a_file_without_a_client_keeps_delivery_and_names_the_repair(self):
+        # A connect interrupted between dropping a client and registering the
+        # next leaves nothing to re-issue for. Delivery and ingestion still
+        # load; the corpus tools answer with the repair.
+        raw = json.loads(self.path.read_text(encoding="utf-8"))
+        raw["oauth"]["clientInformation"] = {}
+        self.path.write_text(json.dumps(raw), encoding="utf-8")
+        credentials = adapter_module._load_credentials(self.path)
+        self.assertEqual(credentials.delivery_token, "omn_delivery_example")
+        self.assertIsNone(credentials.oauth_client_id)
+        self.assertIsNone(credentials.oauth_access_token)
+        self.instance._credentials = credentials
+        with patch.object(self.instance, "_request_json") as request_json:
+            self.assertIsNone(self.instance._principal_access_token())
+        request_json.assert_not_called()
+
+    def test_a_missing_token_set_is_re_issued_before_the_first_corpus_call(self):
+        self._drop_tokens()
+        with patch.object(
+            self.instance, "_request_json", return_value=dict(self._REISSUED)
+        ) as request_json:
+            token = self.instance._principal_access_token()
+        self.assertEqual(token, "access_reissued_fictional")
+        method, endpoint, bearer, payload, _timeout = request_json.call_args.args
+        self.assertEqual((method, endpoint), ("POST", "/agent-integration/oauth-reissue"))
+        self.assertEqual(bearer, "omn_management_example")
+        self.assertEqual(payload, {"clientId": "client_fictional"})
+        persisted = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            persisted["oauth"]["tokens"]["refresh_token"], "refresh_reissued_fictional"
+        )
+
+    def test_a_missing_token_set_with_nothing_approved_reports_the_repair(self):
+        self._drop_tokens()
+        refusal = adapter_module.GatewayHttpError(404, None, "NO_APPROVED_CREDENTIAL")
+        with patch.object(self.instance, "_request_json", side_effect=refusal):
+            self.assertIsNone(self.instance._principal_access_token())
+        payload = adapter_module._answer_failure_payload(adapter_module.GatewayHttpError(401))
+        self.assertIn("omnesis connect hermes --refresh", payload["repair"])
+
+    def test_a_refresh_with_no_refresh_token_re_issues_instead_of_giving_up(self):
+        self._drop_tokens()
+        with patch.object(
+            self.instance, "_request_json", return_value=dict(self._REISSUED)
+        ):
+            bearer = self.instance._refresh_oauth_token_locked()
+        self.assertEqual(bearer, "access_reissued_fictional")
+
+    def test_maintenance_repairs_a_missing_token_set(self):
+        self._drop_tokens(codeVerifier="verifier-of-an-abandoned-attempt")
+        with patch.object(
+            self.instance, "_request_json", return_value=dict(self._REISSUED)
+        ):
+            self.instance._maintain_oauth_once()
+        persisted = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            persisted["oauth"]["tokens"]["access_token"], "access_reissued_fictional"
+        )
+
+    def test_keepalive_resumes_once_a_recorded_approval_has_expired(self):
+        now = 1_900_000_000_000
+        raw = json.loads(json.dumps(self.raw))
+        raw["oauth"]["tokensObtainedAt"] = 1
+        raw["oauth"]["codeVerifier"] = "fictional-pkce-verifier"
+        record = adapter_module._pending_authorization_path(self.path)
+        # A verifier no record dates is somebody's live attempt.
+        self.assertFalse(adapter_module._refresh_keepalive_due(raw, now, self.path))
+        record.write_text(json.dumps({"expiresAt": now + 1}), encoding="utf-8")
+        self.assertFalse(adapter_module._refresh_keepalive_due(raw, now, self.path))
+        record.write_text(json.dumps({"expiresAt": now}), encoding="utf-8")
+        self.assertTrue(adapter_module._refresh_keepalive_due(raw, now, self.path))
+
     def test_cross_origin_https_refresh_uses_system_trust(self):
         raw = json.loads(self.path.read_text(encoding="utf-8"))
         raw["oauth"]["discoveryState"]["authorizationServerMetadata"][
@@ -4135,6 +4230,31 @@ class OAuthRefreshTests(unittest.TestCase):
                 tool_adapter._state.close()
         self.assertEqual(answer["code"], "authorization_required")
         self.assertEqual(management["code"], "authorization_required")
+
+    def test_an_ask_without_tokens_and_nothing_approved_answers_with_the_repair(self):
+        raw = json.loads(self.path.read_text(encoding="utf-8"))
+        raw["oauth"]["tokens"] = {}
+        self.path.write_text(json.dumps(raw), encoding="utf-8")
+        tool_adapter = adapter_module.OmnesisAdapter.for_tools()
+        tool_adapter._credential_path = self.path
+        tool_adapter._credentials = adapter_module._load_credentials(self.path)
+        refusal = adapter_module.GatewayHttpError(404, None, "NO_APPROVED_CREDENTIAL")
+        try:
+            with patch.object(
+                tool_adapter, "_request_json", side_effect=refusal
+            ) as request_json:
+                answer = json.loads(
+                    tool_adapter.answer({"question": "A fictional question?"}, "session-human")
+                )
+        finally:
+            if tool_adapter._state is not None:
+                tool_adapter._state.close()
+        # The re-issue was tried first, with the device's management token.
+        self.assertEqual(
+            request_json.call_args.args[:2], ("POST", "/agent-integration/oauth-reissue")
+        )
+        self.assertEqual(answer["code"], "authorization_required")
+        self.assertIn("omnesis connect hermes --refresh", answer["repair"])
 
     def test_refresh_rotation_is_atomically_persisted_with_private_mode(self):
         captured = {}
