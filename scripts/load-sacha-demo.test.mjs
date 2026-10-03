@@ -102,7 +102,7 @@ test("fresh configuration preserves assignments/auth but excludes stores and mut
     await seed(dir, {
       spawnProcess: (command, args, options) => {
         assert.equal(command, process.execPath);
-        assert.ok(args.at(-1).endsWith("/synthetic-demo-host.ts"));
+        assert.ok(args.at(-1).endsWith("/scripts/demo-host/synthetic-demo-host.ts"));
         assert.equal(options.env.OMNESIS_SYNTH_RESIDENT, "1");
         assert.equal(options.env.OMNESIS_CONFIG_DIR, dir);
         assert.equal(options.stdio, "inherit");

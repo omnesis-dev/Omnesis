@@ -113,7 +113,7 @@ export function addFranceTrip({ add, fact }) {
   );
   fact(
     "F07",
-    "What did the May 2025 France holiday cost me after cancellations, refunds and Maya's split? Use booked GBP amounts and show unknowns.",
+    "How much did the France trip cost me after the cancelled-room refund and Maya’s reimbursement? Show the arithmetic, currencies and cash uncertainty. Cite the underlying transaction rows using their actual transaction table and row keys, alongside the coverage note.",
     {
       sharedNetGBP: 1130,
       paidBeforeRefundGBP: 1220,

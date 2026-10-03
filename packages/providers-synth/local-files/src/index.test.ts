@@ -13,8 +13,15 @@ vi.mock("@omnesis/providers-synth-common", async (importOriginal) => ({
   loadActiveUniverse: () => ({}),
   universeAccounts: () => ["synthetic"],
 }));
+import realSource from "@omnesis/provider-local-files";
+import {
+  withVersionedState,
+  isStateEnvelope,
+  type StateOutcome,
+  type SourceInstance,
+  type SyncCursor,
+} from "@omnesis/source-sdk";
 import source from "./index.js";
-import type { SourceInstance, SyncCursor } from "@omnesis/source-sdk";
 let root: string;
 const instances: SourceInstance[] = [];
 beforeEach(() => {
@@ -57,6 +64,32 @@ describe("local-files synthetic source", () => {
         modifiedAt: "2026-10-03T12:00:00Z",
       },
     ];
+  });
+  test("a persisted production-version envelope resumes through the twin's host state boundary", async () => {
+    const realState = realSource.contract!.state!;
+    const twinState = source.contract!.state!;
+    expect(twinState).not.toBe(realState);
+    const oldHost = withVersionedState(await create(), realState, { sourceId: options().sourceId });
+    const first = await drain(oldHost);
+    expect(isStateEnvelope(first.cursor)).toBe(true);
+    const outcomes: StateOutcome[] = [];
+    const restartedHost = withVersionedState(await create(), twinState, {
+      sourceId: options().sourceId,
+      onResolve: (outcome) => outcomes.push(outcome),
+    });
+    const persisted = JSON.parse(JSON.stringify(first.cursor));
+    expect((await drain(restartedHost, persisted)).documents).toEqual([]);
+    expect(outcomes[0]?.kind).toBe("resume");
+    expect(twinState.decode({ offset: 1 })).toBeNull();
+  });
+  test("native cursor survives persistence with its independently declared native state", async () => {
+    const first = await drain(await create());
+    const persisted = JSON.parse(JSON.stringify(first.cursor)) as SyncCursor;
+    expect(source.contract?.state?.decode(persisted)).toEqual(persisted);
+    expect(persisted).toHaveProperty("fileMap");
+    expect(persisted).toHaveProperty("version", 1);
+    expect(persisted).not.toHaveProperty("offset");
+    expect((await drain(await create(), persisted)).documents).toEqual([]);
   });
   test("bootstrap uses the real normalizer and incremental sync emits no unchanged data", async () => {
     const instance = await create();

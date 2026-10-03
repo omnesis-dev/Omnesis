@@ -36,6 +36,7 @@ export default defineConfig({
       "extension/scripts/**/*.test.mjs",
       "packages/**/*.test.ts",
       "skills/**/*.test.ts",
+      "scripts/demo-host/**/*.test.ts",
       "scripts/release/**/*.test.mjs",
       "scripts/install-e2e/**/*.test.mjs",
       "scripts/nx/**/*.test.mjs",

@@ -31,7 +31,7 @@ export function addLoans({ day, add, fact }) {
   );
   fact(
     "A14",
-    "Who still has something I lent them? Check later return messages rather than listing every historic loan.",
+    "Who still has something that I explicitly lent them? Require evidence of my ownership or a lending agreement, then check later returns. Mere possession of somebody’s own belongings does not count.",
     {
       outstanding: "silver Lumina compact camera",
       borrower: "Priya Calder",

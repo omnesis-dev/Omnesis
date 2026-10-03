@@ -102,6 +102,15 @@ export default defineProvider<Record<string, never>>({
   disposeContext: async () => {},
   sources: rest.sources.map((source) => ({
     ...source,
+    // Fixture IMAP still drives native mailbox state. Retain its envelope version
+    // and pure validation semantics through a declaration owned by this twin.
+    contract: {
+      ...source.contract,
+      state: {
+        ...source.contract!.state!,
+        decode: (value) => source.contract!.state!.decode(value),
+      },
+    },
     async create(options) {
       const entries = loadMessages();
       const instance = new ImapEmailSource(

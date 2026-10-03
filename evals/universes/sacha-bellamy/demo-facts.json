@@ -19,7 +19,7 @@
     },
     {
       "id": "A12",
-      "prompt": "Prepare a factual timeline for my GP appointment next week using recorded symptoms, voice notes and measured sleep. Count asleep stages only, group nights consistently in London time, distinguish absent future data from missing historical data, and avoid diagnosis.",
+      "prompt": "Prepare a factual timeline for my GP appointment next week using recorded symptoms, voice notes and measured sleep. Summarize total asleep time for the two 14-night windows before and after the running-club timetable change. Keep each night’s stages together across midnight, anchored to London bedtime; exclude awake/in-bed and partial-day totals. State the final covered sleep night and other gaps. Avoid diagnosis.",
       "expected": {
         "appointment": "2026-10-07",
         "symptoms": ["waking during night", "morning tiredness"],
@@ -48,7 +48,7 @@
     },
     {
       "id": "A14",
-      "prompt": "Who still has something I lent them? Check later return messages rather than listing every historic loan.",
+      "prompt": "Who still has something that I explicitly lent them? Require evidence of my ownership or a lending agreement, then check later returns. Mere possession of somebody’s own belongings does not count.",
       "expected": {
         "outstanding": "silver Lumina compact camera",
         "borrower": "Priya Calder",
@@ -243,7 +243,7 @@
     },
     {
       "id": "F04",
-      "prompt": "What changed around the time my sleep got worse? Calculate asleep-stage averages for the two weeks before and after the running-club timetable change; do not count awake/in-bed duration.",
+      "prompt": "Compare total asleep time for the 14 nights before and after the running-club timetable change. Use only asleepCore/asleepREM/asleepDeep. Keep each night’s stages together across midnight, anchored to the local bedtime rather than splitting stages by calendar date. Cite the change evidence and show the averaging method; association is not causation.",
       "expected": {
         "changeDay": "2026-09-13",
         "beforeStart": "2026-08-30",
@@ -268,7 +268,7 @@
     },
     {
       "id": "F05",
-      "prompt": "What exactly did I promise Nora in the voice memo last week? Include the date, time, collection place and what to bring.",
+      "prompt": "What exactly did I promise Nora in the voice memo last week? Give the date, time, collection place and what to bring. Express all times in Europe/London local time, converting UTC timestamps before comparing them.",
       "expected": {
         "date": "2026-10-06",
         "localTime": "17:30",
@@ -306,7 +306,7 @@
     },
     {
       "id": "F07",
-      "prompt": "What did the May 2025 France holiday cost me after cancellations, refunds and Maya's split? Use booked GBP amounts and show unknowns.",
+      "prompt": "How much did the France trip cost me after the cancelled-room refund and Maya’s reimbursement? Show the arithmetic, currencies and cash uncertainty. Cite the underlying transaction rows using their actual transaction table and row keys, alongside the coverage note.",
       "expected": {
         "sharedNetGBP": 1130,
         "paidBeforeRefundGBP": 1220,

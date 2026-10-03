@@ -15,6 +15,8 @@
   // is a record of the ones that still are.
   "extends": "./tsconfig.json",
   "compilerOptions": {
+    // Development demo hosts import the same collector seams from scripts/.
+    "rootDir": "../..",
     "composite": false,
     "declaration": false,
     "declarationMap": false,
@@ -26,6 +28,7 @@
   // fails on another package's untyped dependency rather than on a suite.
   "include": [
     "src/**/*.test.ts",
+    "../../scripts/demo-host/**/*.ts",
     "src/**/*.d.ts",
     "../gateway/src/**/*.d.ts",
     "../agent-integration/src/**/*.d.ts",

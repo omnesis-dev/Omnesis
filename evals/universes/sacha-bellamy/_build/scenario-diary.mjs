@@ -27,7 +27,7 @@ export function addDiaryTasks({ day, add, fact }) {
   });
   fact(
     "A12",
-    "Prepare a factual timeline for my GP appointment next week using recorded symptoms, voice notes and measured sleep. Count asleep stages only, group nights consistently in London time, distinguish absent future data from missing historical data, and avoid diagnosis.",
+    "Prepare a factual timeline for my GP appointment next week using recorded symptoms, voice notes and measured sleep. Summarize total asleep time for the two 14-night windows before and after the running-club timetable change. Keep each night’s stages together across midnight, anchored to London bedtime; exclude awake/in-bed and partial-day totals. State the final covered sleep night and other gaps. Avoid diagnosis.",
     {
       appointment: day(9),
       symptoms: ["waking during night", "morning tiredness"],

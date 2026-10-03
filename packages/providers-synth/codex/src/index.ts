@@ -57,6 +57,17 @@ const { type: _type, ...rest } = realSource;
 /** Real parsing/normalization over invented, isolated input files; no default host roots. */
 export default defineSource({
   ...rest,
+  // The native reader writes the same cursor shape. Declare an independent
+  // synthetic boundary while retaining its validator and envelope generation.
+  contract: {
+    ...realSource.contract,
+    state: {
+      version: 1,
+      decode: realSource.contract!.state!.decode,
+      maxBytes: 20 * 1024 * 1024,
+      onUnreadable: "rebootstrap",
+    },
+  },
   config: undefined,
   params: undefined,
   resolveAccountId: undefined,

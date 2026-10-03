@@ -109,7 +109,7 @@ export function addCommitments({ day, add, fact }) {
   });
   fact(
     "F05",
-    "What exactly did I promise Nora in the voice memo last week? Include the date, time, collection place and what to bring.",
+    "What exactly did I promise Nora in the voice memo last week? Give the date, time, collection place and what to bring. Express all times in Europe/London local time, converting UTC timestamps before comparing them.",
     {
       date: day(8),
       localTime: "17:30",

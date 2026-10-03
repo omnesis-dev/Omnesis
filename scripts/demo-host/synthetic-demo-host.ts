@@ -17,9 +17,9 @@ import {
   SCOPE_READ,
   defaultScopesForDeviceKind,
 } from "@omnesis/types";
-import { createAttachmentExtractor } from "./attachments/index.js";
-import { SyncEngine } from "./sync-engine.js";
-import { setupSources } from "./source-instantiator.js";
+import { createAttachmentExtractor } from "../../packages/collector/src/attachments/index.js";
+import { SyncEngine } from "../../packages/collector/src/sync-engine.js";
+import { setupSources } from "../../packages/collector/src/source-instantiator.js";
 import { prepareDemoHostStates } from "./synthetic-demo-host-state.js";
 import { retainDemoHost, waitForDemoGraph } from "./synthetic-demo-host-lifecycle.js";
 
@@ -85,7 +85,8 @@ export async function seedDemoUniverse(options: {
   const status = await adminJson<{ testInstance?: unknown }>("/status");
   if (!health.experimental || !status.testInstance)
     throw new Error("Refusing a gateway without synthetic/test-instance identity");
-  const { allDefinitions, extractDescriptors } = await import("./source-descriptors.js");
+  const { allDefinitions, extractDescriptors } =
+    await import("../../packages/collector/src/source-descriptors.js");
   const descriptors = allDefinitions.flatMap(extractDescriptors);
   const sourceToProvider = new Map(descriptors.map((d) => [d.id, d.provider.id]));
   for (const source of manifest.sources)
@@ -232,7 +233,7 @@ export async function seedDemoUniverse(options: {
       collectDocumentEventProfiles,
       collectWidgetOrigins,
       collectWidgetRenderers,
-    } = await import("./source-manager.js");
+    } = await import("../../packages/collector/src/source-manager.js");
     const publishDeclarations = async () => {
       await primary.pushSourcePriorDefaults(everySource);
       await primary.pushSelfIdentitySources(everySource);

@@ -576,7 +576,7 @@ export function buildFinanceHealth(ctx) {
       {
         id: "F04",
         prompt:
-          "What changed around the time my sleep got worse? Calculate asleep-stage averages for the two weeks before and after the running-club timetable change; do not count awake/in-bed duration.",
+          "Compare total asleep time for the 14 nights before and after the running-club timetable change. Use only asleepCore/asleepREM/asleepDeep. Keep each night’s stages together across midnight, anchored to the local bedtime rather than splitting stages by calendar date. Cite the change evidence and show the averaging method; association is not causation.",
         expected: {
           changeDay: day(-15),
           beforeStart: day(-29),

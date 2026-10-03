@@ -2,9 +2,10 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { ImapEmailSource } from "@omnesis/provider-imap";
+import realProvider, { ImapEmailSource } from "@omnesis/provider-imap";
+import { withVersionedState, isStateEnvelope, type StateOutcome } from "@omnesis/source-sdk";
 import { ProviderId, SourceId } from "@omnesis/types";
-import { fixtureClient, loadMessages, type ImapFixtureMessage } from "./index.js";
+import provider, { fixtureClient, loadMessages, type ImapFixtureMessage } from "./index.js";
 const state = vi.hoisted(() => ({ fixture: [] as unknown }));
 vi.mock("@omnesis/providers-synth-common", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@omnesis/providers-synth-common")>()),
@@ -25,6 +26,81 @@ afterEach(async () => {
   for (const instance of instances.splice(0)) await instance.dispose();
 });
 describe("synthetic IMAP production seam", () => {
+  test("a persisted production-version envelope resumes through the twin's host state boundary", async () => {
+    state.fixture = [row(1)];
+    const definition = provider.sources[0]!;
+    const realState = realProvider.sources[0]!.contract!.state!;
+    const twinState = definition.contract!.state!;
+    expect(twinState).not.toBe(realState);
+    const makeInstance = () =>
+      definition.create!(
+        {
+          sourceId: SourceId("imap:owner@example.com"),
+          providerId: ProviderId("imap:owner@example.com"),
+          accountId: "owner@example.com",
+          sourceConfig: {},
+        } as never,
+        {},
+      );
+    const oldHost = withVersionedState(await makeInstance(), realState, {
+      sourceId: "imap:owner@example.com",
+    });
+    const outcomes: StateOutcome[] = [];
+    const restartedHost = withVersionedState(await makeInstance(), twinState, {
+      sourceId: "imap:owner@example.com",
+      onResolve: (outcome) => outcomes.push(outcome),
+    });
+    try {
+      let first = await oldHost.sync(null);
+      while (first.hasMore) first = await oldHost.sync(first.cursor);
+      expect(isStateEnvelope(first.cursor)).toBe(true);
+      const persisted = JSON.parse(JSON.stringify(first.cursor));
+      let resumed = await restartedHost.sync(persisted);
+      const documents = [...resumed.documents];
+      while (resumed.hasMore) {
+        resumed = await restartedHost.sync(resumed.cursor);
+        documents.push(...resumed.documents);
+      }
+      expect(documents).toEqual([]);
+      expect(outcomes[0]?.kind).toBe("resume");
+      expect(twinState.decode({ offset: 1 })).toBeNull();
+    } finally {
+      await oldHost.dispose?.();
+      await restartedHost.dispose?.();
+    }
+  });
+  test("native cursor survives persistence with its independently declared native state", async () => {
+    state.fixture = [row(1)];
+    const definition = provider.sources[0]!;
+    expect(definition.contract?.state).toBeDefined();
+    const instance = await definition.create!(
+      {
+        sourceId: SourceId("imap:owner@example.com"),
+        providerId: ProviderId("imap:owner@example.com"),
+        accountId: "owner@example.com",
+        sourceConfig: {},
+        context: {},
+      } as never,
+      {},
+    );
+    try {
+      let result = await instance.sync(null);
+      while (result.hasMore) result = await instance.sync(result.cursor);
+      const persisted = JSON.parse(JSON.stringify(result.cursor));
+      expect(definition.contract?.state?.decode(persisted)).toEqual(persisted);
+      expect(persisted).toHaveProperty("mailboxes");
+      expect(persisted).not.toHaveProperty("offset");
+      let resumed = await instance.sync(persisted);
+      const documents = [...resumed.documents];
+      while (resumed.hasMore) {
+        resumed = await instance.sync(resumed.cursor);
+        documents.push(...resumed.documents);
+      }
+      expect(documents).toEqual([]);
+    } finally {
+      await instance.dispose?.();
+    }
+  });
   test("bootstrap and appended UID use real normalization and incremental cursor", async () => {
     const entries = [row(1)];
     const instance = new ImapEmailSource(

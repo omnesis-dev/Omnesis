@@ -13,6 +13,8 @@ vi.mock("@omnesis/providers-synth-common", async (importOriginal) => ({
   loadActiveUniverse: () => ({}),
   universeAccounts: () => ["synthetic"],
 }));
+import realSource from "@omnesis/provider-codex";
+import { withVersionedState, resolveSourceState } from "@omnesis/source-sdk";
 import source from "./index.js";
 import type { SourceInstance, SyncCursor } from "@omnesis/source-sdk";
 let root: string;
@@ -35,7 +37,7 @@ const options = () => ({
 async function create() {
   const instance = await source.create!(options() as never);
   instances.push(instance);
-  return instance;
+  return withVersionedState(instance, source.contract?.state, { sourceId: options().sourceId });
 }
 async function drain(instance: SourceInstance, cursor: SyncCursor | null = null) {
   const documents = [];
@@ -65,7 +67,18 @@ describe("codex synthetic source", () => {
     expect(first.documents[0]?.metadata.documentType).toBe("conversation");
     expect(first.documents[0]?.content).toContain("Inspect the fictional household checklist");
     expect(first.documents[0]?.content).toContain("filter, plants and torch");
-    const unchanged = await drain(instance, first.cursor);
+    expect(source.contract?.state).not.toBe(realSource.contract?.state);
+    expect(first.cursor).toMatchObject({ e: 1, v: 1, s: options().sourceId });
+    expect(source.config).toBeUndefined();
+    const persistedCursor = JSON.parse(JSON.stringify(first.cursor)) as SyncCursor;
+    // Existing envelopes written with the inherited production declaration
+    // remain readable after the synthetic boundary becomes independent.
+    expect(
+      resolveSourceState(realSource.contract!.state!, persistedCursor, {
+        sourceId: options().sourceId,
+      }).kind,
+    ).toBe("resume");
+    const unchanged = await drain(await create(), persistedCursor);
     expect(unchanged.documents).toEqual([]);
   });
   test("a newly materialized input appears on incremental sync", async () => {

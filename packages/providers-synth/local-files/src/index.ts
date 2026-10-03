@@ -28,6 +28,15 @@ const { type: _type, ...rest } = realSource;
 /** Real parsing/normalization over invented, isolated input files; no default host roots. */
 export default defineSource({
   ...rest,
+  // Materialized files use the real reader's native cursor and existing envelope version.
+  // Own the declaration while reusing the production boundary's pure decoder.
+  contract: {
+    ...rest.contract,
+    state: {
+      ...rest.contract!.state!,
+      decode: (value) => rest.contract!.state!.decode(value),
+    },
+  },
   config: undefined,
   params: undefined,
   resolveAccountId: undefined,

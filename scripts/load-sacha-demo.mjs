@@ -189,7 +189,7 @@ export async function seed(dir, { spawnProcess = spawn } = {}) {
   const { env } = await demoEnvironment(dir);
   const child = spawnProcess(
     process.execPath,
-    ["--import", "tsx", join(root, "packages/collector/src/synthetic-demo-host.ts")],
+    ["--import", "tsx", join(root, "scripts/demo-host/synthetic-demo-host.ts")],
     { cwd: root, env: { ...env, OMNESIS_SYNTH_RESIDENT: "1" }, stdio: "inherit" },
   );
   await new Promise((ok, fail) => {
