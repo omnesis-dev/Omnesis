@@ -680,6 +680,13 @@ cleanup() {
   rm -rf "$RELEASES/.staging-$$" "$RELEASE_ROOT/.current-new" "$RELEASE_ROOT/.previous-new"
 }
 
+# Initial activation has no working release to restore. Cancel systemd's
+# restarts on every failure, including errors before the health poll begins.
+cleanup_failed_install() {
+  systemctl stop "$UNIT_NAME" >/dev/null 2>&1 || true
+  cleanup
+}
+
 # Clean up on every way out. A shell killed by a signal skips its EXIT trap, so
 # the signals exit through it instead.
 arm_cleanup() {
@@ -824,12 +831,13 @@ cmd_install() {
   mkdir -p "$(dirname "$ADMIN_LINK")"
   ln -sfn "$CURRENT/$SCRIPT_REL" "$ADMIN_LINK"
   step "Installing $UNIT_NAME"
+  trap cleanup_failed_install EXIT
   render_unit
   systemctl restart "$UNIT_NAME"
   if ! wait_for_version "$RELEASE_VERSION"; then
-    systemctl stop "$UNIT_NAME" >/dev/null 2>&1 || true
-    fail "$UNIT_NAME did not start serving $RELEASE_VERSION within ${HEALTH_TIMEOUT_SECONDS}s, so it was stopped. Inspect it with: journalctl -u $UNIT_NAME -n 50, then run the install again."
+    fail "$UNIT_NAME did not start serving $RELEASE_VERSION within ${HEALTH_TIMEOUT_SECONDS}s; stopping it. Inspect it with: journalctl -u $UNIT_NAME -n 50, then run the install again."
   fi
+  trap cleanup EXIT
   prune_releases
   print_installed
 }
