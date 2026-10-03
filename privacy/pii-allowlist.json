@@ -10282,6 +10282,81 @@
       "value": "Miro Vale",
       "paths": ["packages/gateway/src/transcribe/vocabulary-adapter.test.ts"],
       "reason": "Invented vocabulary component and phrase-boundary fixtures; no indexed corpus data."
+    },
+    {
+      "value": "Nevara Quenil",
+      "paths": ["packages/gateway/src/transcribe/vocabulary-adapter.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Ruvella Research",
+      "paths": ["packages/gateway/src/transcribe/vocabulary-adapter.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Nuvorel Valera",
+      "paths": ["packages/gateway/src/transcribe/vocabulary-adapter.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Stellar Sound",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Will May",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Hello Nexularis",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Project Virellune",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Thank You",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Virellune Orelvax",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Quoted Zeralith",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Ovelia Ternol",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/quality.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Ivero Calden",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/quality.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Dispatch Template",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/quality.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Elara Quill",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/text.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Rohan Vale",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/text.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
     }
   ],
   "secretFixtures": [

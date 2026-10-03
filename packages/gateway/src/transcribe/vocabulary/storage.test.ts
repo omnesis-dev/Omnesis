@@ -61,6 +61,7 @@ function extracted(
     contentHash: "hash",
     updatedAt: "2026-01-01",
     revision: 0,
+    generation: 1,
     scopes: [{ kind, key: scopeKey }],
     recordedAt: "2026-01-01",
     terms: terms.map((text) => ({ term: text.toLowerCase(), text, benefit: 3 })),
@@ -403,6 +404,7 @@ describe("vocabulary extraction", () => {
       contentHash: "hash",
       updatedAt: "2026-01-01",
       revision: 0,
+      generation: 1,
       title: "",
       content:
         "quorvex Quorvex see https://nimbrax.example.org/alpha nimbrax@example.org and nimbrax.example.org",
@@ -421,6 +423,7 @@ describe("vocabulary extraction", () => {
       contentHash: "hash",
       updatedAt: "2026-01-01",
       revision: 0,
+      generation: 1,
       title: "",
       content: "Hello the garden maison casa Haus Quorvex Nimbrax quorvex quorvex",
       sourceId: "fictional:messages",

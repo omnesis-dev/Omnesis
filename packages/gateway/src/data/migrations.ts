@@ -79,6 +79,7 @@ import {
   createSubscriptionApprovalListIndexes,
   createSubscriptionTables,
 } from "../subscriptions/store-schema.js";
+import { createTranscriptionVocabularyState } from "../transcribe/vocabulary/rebuild.js";
 import { installTranscriptionVocabulary } from "../transcribe/vocabulary/storage.js";
 import { migrateV152AccessGrants } from "./migration-152-access-grants.js";
 import { migrateV153AccessPolicyFamilies } from "./migration-153-access-policy-families.js";
@@ -4746,6 +4747,11 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 189,
     description: "materialize contextual transcription vocabulary",
     up: installTranscriptionVocabulary,
+  },
+  {
+    version: 190,
+    description: "version contextual transcription vocabulary materialization",
+    up: createTranscriptionVocabularyState,
   },
 ];
 

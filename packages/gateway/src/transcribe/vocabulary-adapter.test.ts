@@ -108,7 +108,77 @@ describe("adaptTranscriptionVocabulary", () => {
       ),
       { runtime: "smart-whisper" },
     );
-    expect(result?.initial_prompt).toBe("Tessa, Rowan, Tessa Rowan, Miro Sela Vale, Miro Vale");
+    expect(result?.initial_prompt).toBe("Tessa Rowan, Miro Sela Vale, Miro Vale");
+  });
+
+  test("equal-ranked full names replace a prefix component within an exact budget", () => {
+    const result = adaptTranscriptionVocabulary(
+      vocabulary(["Nevara", 10], ["Nevara Quenil", 10], ["Quenil", 10]),
+      { runtime: "smart-whisper", maxPromptTokens: 13 },
+    );
+    expect(result?.initial_prompt).toBe("Nevara Quenil");
+    expect(Buffer.byteLength(result!.initial_prompt, "utf8")).toBe(13);
+  });
+
+  test("later full spellings preserve higher-ranked unrelated hints and their order", () => {
+    const input = vocabulary(["AX", 12], ["Ruvella", 10], ["KX", 9], ["Ruvella Research", 2]);
+    expect(
+      adaptTranscriptionVocabulary(input, { runtime: "smart-whisper", maxPromptTokens: 24 })
+        ?.initial_prompt,
+    ).toBe("AX, Ruvella Research, KX");
+    expect(
+      adaptTranscriptionVocabulary(input, { runtime: "smart-whisper", maxPromptTokens: 23 })
+        ?.initial_prompt,
+    ).toBe("AX, Ruvella, KX");
+  });
+
+  test("one full phrase can replace multiple independently packed complete components", () => {
+    const result = adaptTranscriptionVocabulary(
+      vocabulary(["Quenil", 12], ["KX", 11], ["Nevara", 10], ["Nevara Quenil", 2]),
+      { runtime: "smart-whisper", maxPromptTokens: 18 },
+    );
+    expect(result?.initial_prompt).toBe("Nevara Quenil, KX");
+  });
+
+  test("phrase upgrades preserve normalized multilingual spellings", () => {
+    const result = adaptTranscriptionVocabulary(
+      vocabulary(
+        ["ÉVÉRIA", 12],
+        ["Veyro", 11],
+        ["星苑", 10],
+        ["Évéria Nuvorel", 3],
+        ["Lurena del Veyro", 2],
+        ["雲輪 星苑", 1],
+      ),
+      { runtime: "smart-whisper" },
+    );
+    expect(result?.initial_prompt).toBe("Évéria Nuvorel, Lurena del Veyro, 雲輪 星苑");
+  });
+
+  test("phrase upgrades cannot cover unrelated substrings, hyphens or apostrophes", () => {
+    const result = adaptTranscriptionVocabulary(
+      vocabulary(
+        ["Rill", 12],
+        ["Arven", 11],
+        ["Nuvor", 10],
+        ["Vale", 9],
+        ["North-Rill Labs", 3],
+        ["Sylvara d’Arven", 2],
+        ["Nuvorel Valera", 1],
+      ),
+      { runtime: "smart-whisper" },
+    );
+    expect(result?.initial_prompt).toBe(
+      "Rill, Arven, Nuvor, Vale, North-Rill Labs, Sylvara d’Arven, Nuvorel Valera",
+    );
+  });
+
+  test("an oversized lower-ranked phrase does not remove affordable components", () => {
+    const result = adaptTranscriptionVocabulary(
+      vocabulary(["Nevara", 10], ["KX", 9], ["Nevara " + "Quenil ".repeat(40), 2]),
+      { runtime: "smart-whisper", maxPromptTokens: 20 },
+    );
+    expect(result?.initial_prompt).toBe("Nevara, KX");
   });
 
   test("fails closed for unknown capabilities and unusable candidates", () => {

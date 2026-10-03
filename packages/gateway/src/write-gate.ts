@@ -647,10 +647,17 @@ import {
   type CommittedReminderNotificationResult,
 } from "./push/reminder-notification-operations.js";
 
+import { advanceTranscriptionVocabularyRebuild } from "./transcribe/vocabulary/rebuild.js";
 import { applyTranscriptionVocabularyBatch } from "./transcribe/vocabulary/storage.js";
-import type { ExtractedVocabularyDocument } from "./transcribe/vocabulary/types.js";
+import type {
+  VocabularySettings,
+  ExtractedVocabularyDocument,
+} from "./transcribe/vocabulary/types.js";
 
 export interface WriteGate {
+  advanceTranscriptionVocabularyRebuild(
+    settings: VocabularySettings,
+  ): Promise<{ ready: boolean; worked: boolean }>;
   applyTranscriptionVocabularyBatch(
     docs: ExtractedVocabularyDocument[],
   ): Promise<{ applied: number; skipped: number }>;
@@ -2360,6 +2367,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
       call("db.requeueStaleMentionJudgements", [rubricVersion, limit]),
     drainPendingEdges: (limit) => call("edges.drainPending", [limit]),
     upsertExtractedLinksBatch: (rows) => call("links.upsertExtractedLinksBatch", [rows]),
+    advanceTranscriptionVocabularyRebuild: (settings) =>
+      call("vocabulary.advanceRebuild", [settings]),
     applyTranscriptionVocabularyBatch: (docs) => call("vocabulary.applyBatch", [docs]),
     markLinkStatsDirty: () => call("links.markLinkStatsDirty", []),
     upsertLinkStats: (agg) => call("links.upsertLinkStats", [agg]),
@@ -2925,6 +2934,8 @@ export function directWriteGate(db: Db): WriteGate {
       requeueStaleMentionJudgementsInDb(db, rubricVersion, limit),
     drainPendingEdges: async (limit) => drainPendingEdges(db, { limit }),
     upsertExtractedLinksBatch: async (rows) => upsertExtractedLinksBatch(db, rows),
+    advanceTranscriptionVocabularyRebuild: async (settings) =>
+      advanceTranscriptionVocabularyRebuild(db, settings),
     applyTranscriptionVocabularyBatch: async (docs) => applyTranscriptionVocabularyBatch(db, docs),
     markLinkStatsDirty: async () => {
       markLinkStatsDirty(db);

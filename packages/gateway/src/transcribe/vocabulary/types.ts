@@ -22,6 +22,8 @@ export interface VocabularyDocument {
   contentHash: string;
   updatedAt: string;
   revision: number;
+  /** Persisted materialization generation fences extraction across rebuilds. */
+  generation: number;
   title: string;
   content: string;
   sourceId: string;
@@ -43,6 +45,8 @@ export interface ExtractedVocabularyDocument {
   contentHash: string;
   updatedAt: string;
   revision: number;
+  /** Persisted materialization generation fences extraction across rebuilds. */
+  generation: number;
   scopes: VocabularyScope[];
   terms: VocabularyCandidate[];
   recordedAt: string;

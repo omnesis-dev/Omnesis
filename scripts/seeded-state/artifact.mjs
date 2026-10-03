@@ -223,6 +223,7 @@ const SAFE_TABLES = new Set([
   // document processing markers depend on this materialized state.
   "transcription_vocabulary_document_terms",
   "transcription_vocabulary_terms",
+  "transcription_vocabulary_state",
   "temporal_annotations",
   "watermark",
   "worth_answers",
