@@ -155,6 +155,8 @@ const realFetch: FetchLike = (input, init) => {
   const hasBody = init.method !== "GET" && init.method !== "HEAD" && init.body !== "";
   return fetch(input, {
     method: init.method,
+    // A browser's paired credential must never borrow a logged-in portal session.
+    credentials: "omit",
     headers: init.headers,
     ...(hasBody ? { body: init.body } : {}),
     ...(init.signal ? { signal: init.signal } : {}),

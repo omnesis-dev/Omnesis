@@ -645,6 +645,17 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
   test("when the gateway revokes the device the popup says to re-pair", async () => {
     const storage = await extensionStorage();
     const { deviceId } = JSON.parse(String(storage["omnesis.pairing.v1"])) as { deviceId: string };
+    // A logged-in owner session must not make this browser's revoked capture
+    // credential appear authorized.
+    const login = await context.request.post(`${harness.gatewayUrl}/portal/api/login`, {
+      data: { token: harness.apiKey },
+    });
+    expect(login.ok()).toBe(true);
+    expect(
+      (await context.cookies(harness.gatewayUrl)).some((cookie) =>
+        cookie.name.startsWith("__omnesis_session"),
+      ),
+    ).toBe(true);
     await harness.gatewayJson(`/admin/devices/${deviceId}`, { method: "DELETE" });
 
     // Opening the popup runs an immediate auth probe against the gateway.
