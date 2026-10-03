@@ -1,5 +1,0 @@
----
-"omnesis": patch
----
-
-Strava activity documents keep every part of an activity as its details, comments and kudos are fetched. Fetching comments and kudos used to write the document again without the description, calories, device, perceived exertion, top results and photo caption, and fetching details again wrote it without the comments and kudos, so after a first sync every document had lost its description; the caption is kept in a new `photo_caption` column of `strava_activities`. Fetching an activity's details no longer sends it back for the comments, zones and streams already fetched for it. Documents name the gear an activity used, not its gear id, without waiting for the weekly athlete refresh, and an activity edited on Strava keeps its gear when it is written again. A pace whose seconds round up to a minute reads `6:00 /km`, not `5:60 /km`, and an activity's start time reads the same however its document was last written. Documents already stored change when their activity is next written: after an edit or new kudos or comments on Strava, or after a resync from the Sources page or with `omnesis sources resync strava-activities`.
