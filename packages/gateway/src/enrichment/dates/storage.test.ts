@@ -10,6 +10,7 @@ import { createDatabase } from "../../db.js";
 import { upsertDocuments, deleteDocuments } from "../../data/repositories/DocumentRepository.js";
 import {
   addDateMentions,
+  rescanSameDaySpansAndRestCompounds,
   applyExtractedDates,
   countExtractedDocuments,
   countPendingDateExtraction,
@@ -95,6 +96,46 @@ describe("date-enrichment storage", () => {
     expect(countPendingDateExtraction(db)).toBe(0);
     addDateMentions(db);
     expect(countPendingDateExtraction(db)).toBe(2);
+  });
+
+  it("migration 188 queues only documents holding a same-day span or a rest-of match", () => {
+    const span = (text: string, start: string, end: string): ExtractedDate => ({
+      kind: "range",
+      resolvedStart: start,
+      resolvedEnd: end,
+      timex: "",
+      relative: true,
+      text,
+      charStart: 0,
+      charEnd: text.length,
+    });
+    const day: ExtractedDate = {
+      ...span("12 May 2026", "2026-05-12", "2026-05-12"),
+      kind: "date",
+      resolvedEnd: null,
+    };
+    upsertDocuments(
+      db,
+      ["tonight", "rest-week", "kept-span", "kept-day"].map((externalId) =>
+        makeDoc({ externalId }),
+      ),
+    );
+    applyExtractedDates(db, [
+      { id: docId(db, "tonight"), dates: [span("tonight", "2026-05-12", "2026-05-12")] },
+      { id: docId(db, "rest-week"), dates: [span("rest week", "2026-05-12", "2026-05-17")] },
+      { id: docId(db, "kept-span"), dates: [span("1 to 3 June", "2026-06-01", "2026-06-03")] },
+      { id: docId(db, "kept-day"), dates: [day] },
+    ]);
+    expect(countPendingDateExtraction(db)).toBe(0);
+    rescanSameDaySpansAndRestCompounds(db);
+    rescanSameDaySpansAndRestCompounds(db);
+    const pending = db
+      .prepare<[], { external_id: string }>(
+        "SELECT external_id FROM documents WHERE dates_extracted_at IS NULL ORDER BY external_id",
+      )
+      .all()
+      .map((r) => r.external_id);
+    expect(pending).toEqual(["rest-week", "tonight"]);
   });
 
   it("counts relative dates from the source's anchor day and flags addressed content", () => {

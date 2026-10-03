@@ -59,6 +59,7 @@ import {
   createExtractedDatesTables,
   createDatesUnprocessedIndex,
   addDateMentions,
+  rescanSameDaySpansAndRestCompounds,
 } from "../enrichment/dates/storage.js";
 import {
   cascadeTemporalAnnotationPrivacyDelete,
@@ -4734,6 +4735,11 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 187,
     description: "index documents by source and external id for declared-edge resolution",
     up: indexDocumentsBySourceExternalId,
+  },
+  {
+    version: 188,
+    description: "rescan documents holding same-day spans or rest-of compounds as dates",
+    up: rescanSameDaySpansAndRestCompounds,
   },
 ];
 

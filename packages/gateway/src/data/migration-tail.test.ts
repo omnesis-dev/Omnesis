@@ -57,7 +57,9 @@ const TAIL_VERSIONS = Array.from(
  * `windBack` to undo; its input is planted by the test that replays it, and
  * it is named here on the same terms as the rest.
  */
-const WOUND_BACK = [172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187];
+const WOUND_BACK = [
+  172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188,
+];
 
 let dir: string;
 let dbPath: string;
