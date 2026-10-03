@@ -56,6 +56,11 @@ private struct BreadcrumbRichText: UIViewRepresentable {
         view.textContainer.lineFragmentPadding = 0
         view.adjustsFontForContentSizeCategory = true
         view.delegate = context.coordinator
+        // A long-press on a link opens its menu, never a text drag. UIKit's
+        // drag of a range holding an icon attachment raises a range exception
+        // while it builds the drag item, and a dragged internal navigation URL
+        // means nothing outside this view anyway.
+        view.textDragInteraction?.isEnabled = false
         view.isAccessibilityElement = true
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         return view
