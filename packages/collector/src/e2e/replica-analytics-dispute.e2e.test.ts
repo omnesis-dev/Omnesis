@@ -41,11 +41,12 @@ const TABLE = "replica_counters";
 const NAMESPACE = `analytics:${TABLE}`;
 const MIN_OBSERVATIONS = 3;
 /**
- * Wide enough that one multi-request tick (begin, page, cursor, snapshot)
- * fits inside the derived spacing even under load, so a back-to-back snapshot
- * is reliably "too soon" to count.
+ * The policy spaces counted omissions `MIN_AGE_MS / MIN_OBSERVATIONS` apart
+ * (500 ms here). That spacing must hold a whole multi-request tick (begin,
+ * page, cursor, snapshot) on a loaded CI runner, so a back-to-back snapshot is
+ * reliably "too soon" to count.
  */
-const MIN_AGE_MS = 300;
+const MIN_AGE_MS = 1_500;
 /**
  * Comfortably past the spacing the policy derives (age / observations); load
  * can only widen the gaps. Spread over the observations after the first so

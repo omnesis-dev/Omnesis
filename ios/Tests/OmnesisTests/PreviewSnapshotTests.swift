@@ -771,6 +771,7 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view, name: "11-search-breadcrumbs")
         searchBreadcrumbsLargeText()
         searchBreadcrumbsManyCopies()
+        searchBreadcrumbsOutline()
         searchBreadcrumbsHubOnly()
     }
 
@@ -786,6 +787,17 @@ final class PreviewSnapshotTests: XCTestCase {
             }.background(Theme.bgPrimary)
         }.environment(\.dynamicTypeSize, .accessibility3)
         snapshot(view, name: "11-search-breadcrumbs-large-text", size: CGSize(width: 393, height: 1800))
+    }
+
+    private func searchBreadcrumbsOutline() {
+        let view = NavigationStack {
+            SearchBreadcrumbsView(
+                provenance: PreviewMocks.searchProvenanceOutline,
+                documentId: "sample-root",
+                store: AppStore.preview()
+            ).padding()
+        }
+        snapshot(view, name: "11-search-breadcrumbs-outline")
     }
 
     private func searchBreadcrumbsManyCopies() {
@@ -5368,6 +5380,16 @@ final class PreviewSnapshotTests: XCTestCase {
                 .navigationBarTitleDisplayMode(.inline)
         }
         snapshot(view.environment(AppStore.preview()), name: "111-models-capability-list")
+    }
+
+    func testModelsReadOnlyRole() {
+        // A role this app cannot configure: no chevron, a portal hint, beside
+        // a tappable card.
+        let view = NavigationStack {
+            ModelsView(previewOverview: ModelsPreviewData.overviewWithReadOnlyRole())
+                .environment(AppStore.preview())
+        }
+        snapshot(view, name: "111bb-models-read-only-role")
     }
 
     func testModelsViewLoading() {

@@ -490,6 +490,7 @@ export class SearchPipeline {
       this.hydrateMetadataFields(ctx.results);
       ctx.results = enrichAgentSearch(this.gatewayDb, ctx.results, {
         ...v2,
+        cleanRefCounts: true,
         limit: ctx.limit,
         excludeDocumentIds: options.excludeDocumentIds,
         indexedContentHashes: cg.contentHashByDoc,

@@ -259,6 +259,14 @@ export interface CapabilityMetadata {
    * component reasons about what the user's records mean.
    */
   readonly section: "core" | "cognition";
+  /**
+   * Set when only a special family of backend can serve the role, so a
+   * client's ordinary model picker (local models, chat backends) offers
+   * nothing that works for it. `typed-decision` roles take only
+   * typed-decision backends such as TypeSafe. Absent for every role an
+   * ordinary model serves.
+   */
+  readonly backendFamily?: "typed-decision";
 }
 
 /**
@@ -370,5 +378,6 @@ export const CAPABILITY_METADATA: Readonly<Record<CapabilityRole, CapabilityMeta
       "Answers typed questions about a document — yes/no, a score on described levels, or one choice. Judges whether an email is worth recording, so time queries can leave out the dates in marketing and newsletters when the mention worth gate is on. Supports TypeSafe Jev; each scored email's subject, sender and opening text are sent to TypeSafe.",
     icon: "scale",
     section: "cognition",
+    backendFamily: "typed-decision",
   },
 };

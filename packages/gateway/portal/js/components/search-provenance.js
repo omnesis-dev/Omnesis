@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { html } from "htm/preact";
-import { provenanceSentences } from "../lib/search-provenance.js";
+import { nestProvenanceLines, provenanceLines } from "../lib/search-provenance.js";
 import { docHref, sourceLabel, sourceIcon } from "../lib/format.js";
 
 const COPY_REFERENCE_LIMIT = 5;
@@ -13,8 +13,6 @@ export function SearchProvenance({ provenance, documents = {}, panelId, resultDo
   const copies = (provenance.copies || []).filter((copy) => copy.documentId !== resultDocumentId);
   const current = (provenance.copies || []).find((copy) => copy.documentId === resultDocumentId);
   const physicalLocation = current && (current.deviceName || current.path);
-  const sentences = provenanceSentences(provenance);
-  if (!copies.length && !sentences.length && !physicalLocation) return null;
   const byId = new Map();
   const ids = new Set([
     ...(provenance.copies || []).map((copy) => copy.documentId),
@@ -25,8 +23,16 @@ export function SearchProvenance({ provenance, documents = {}, panelId, resultDo
     byId.set(id, { documentId: id, title: doc?.title, sourceId: doc?.source_id });
   }
   for (const copy of provenance.copies || []) byId.set(copy.documentId, { ...byId.get(copy.documentId), ...copy });
+  // The visible result is "This document", never a same-named copy to fold away.
+  const lines = provenanceLines(provenance, (id) => id === resultDocumentId ? undefined : byId.get(id)?.title);
+  if (!copies.length && !lines.length && !physicalLocation) return null;
   const reference = (id) => id === resultDocumentId
     ? "This document" : html`<${GraphDocumentLink} document=${byId.get(id) || { documentId: id }} />`;
+  const renderLine = (line) => html`
+    <li class="search-provenance-connection" data-depth=${line.depth}>${line.parts.map((part) => part.documentId
+      ? html`${reference(part.documentId)}${part.more ? ` (and ${part.more} more with this name)` : ""}`
+      : part.text)}${line.children.length > 0 && html`<ul class="search-provenance-branches">${line.children.map(renderLine)}</ul>`}</li>
+  `;
   const copyLocation = (copy) => (copy.deviceName || copy.path) && html` (${copy.deviceName ? `on ${copy.deviceName}` : "at"}${copy.deviceName && copy.path ? " at" : ""}${copy.path ? ` ${copy.path}` : ""})`;
   return html`
     <section id=${panelId} class="search-provenance" aria-label="Related information">
@@ -35,9 +41,7 @@ export function SearchProvenance({ provenance, documents = {}, panelId, resultDo
         ${copies.length > 0 && html`
           <li class="search-provenance-copies">The same text appears in ${provenance.stopReasons?.includes("copies") ? "at least " : ""}${copies.length} other ${copies.length === 1 ? "document" : "documents"}: ${copies.slice(0, COPY_REFERENCE_LIMIT).map((copy, index) => html`${index ? ", " : ""}<${GraphDocumentLink} document=${byId.get(copy.documentId)} />${copyLocation(copy)}`)}${copies.length > COPY_REFERENCE_LIMIT ? `, and ${copies.length - COPY_REFERENCE_LIMIT} more` : ""}.</li>
         `}
-        ${sentences.map((sentence) => html`
-          <li class="search-provenance-connection">${reference(sentence.root)}${sentence.steps.map((step, index) => html`${index ? ", which " : " "}${step.relation} ${reference(step.documentId)}`)}${sentence.steps.length ? ", which " : " "}${sentence.clauses.map((clause, index) => html`${index ? " and " : ""}${clause.relation} ${reference(clause.documentId)}`)}.</li>
-        `)}
+        ${nestProvenanceLines(lines).map(renderLine)}
       </ul>
     </section>
   `;

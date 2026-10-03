@@ -127,6 +127,7 @@ import { addSourceSyncIssues } from "./migration-179-source-sync-issues.js";
 import { normalizeSourceTimestamps } from "./migration-180-source-timestamps.js";
 import { migrateV182PrivateKeyJwtClients } from "./migration-182-private-key-jwt-clients.js";
 import { addCredentialApprovedAudience } from "./migration-183-credential-approved-audience.js";
+import { indexDocumentsBySourceExternalId } from "./migration-187-documents-source-external-index.js";
 import { LATEST_SCHEMA_VERSION } from "./schema-version.js";
 import type { Db } from "./types.js";
 
@@ -1063,7 +1064,7 @@ export const MIGRATIONS: readonly Migration[] = [
     },
   },
   {
-    // Omnesis-derived date-enrichment signal (experimental): a
+    // Omnesis-derived date-enrichment signal: a
     // `dates_extracted_at` dirty-flag column on documents (mirrors
     // links_extracted_at) plus the `document_extracted_dates` sidecar table.
     // The ALTER adds the column on existing installs; createExtractedDatesTables
@@ -4723,6 +4724,16 @@ export const MIGRATIONS: readonly Migration[] = [
         db.exec("ALTER TABLE note_entries ADD COLUMN transcribed_at TEXT");
       }
     },
+  },
+  {
+    // Declared edges resolve their endpoints by `(source_id, external_id)`
+    // inside the writer transaction; without an index on that pair each
+    // lookup scans the whole target source. Schema setup creates the index
+    // before migrations run, so this step is a no-op on every path that
+    // reaches it; it records the schema change in the version chain.
+    version: 187,
+    description: "index documents by source and external id for declared-edge resolution",
+    up: indexDocumentsBySourceExternalId,
   },
 ];
 

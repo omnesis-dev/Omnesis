@@ -88,15 +88,25 @@ describe("dateExtractionTask — contention guarantee", () => {
 });
 
 describe("dateExtractionTask — content still due to be replaced", () => {
-  function build(opts: { pending: Set<string>; waitMs?: number }) {
+  const corpus = [
+    { id: "voice-day", content: "dentist on friday", anchorAt: "2026-09-30T10:00:00Z" },
+    { id: "email", content: "meet tomorrow", anchorAt: "2026-09-30T10:00:00Z" },
+  ];
+
+  function build(opts: { pending: Set<string>; waitMs?: number; batchSize?: number }) {
     const extracted: string[] = [];
     const asked: number[] = [];
+    const fetches: string[][] = [];
     const task = dateExtractionTask({
       ioGate: {
-        fetchDateExtractionBatch: async () => [
-          { id: "voice-day", content: "dentist on friday", anchorAt: "2026-09-30T10:00:00Z" },
-          { id: "email", content: "meet tomorrow", anchorAt: "2026-09-30T10:00:00Z" },
-        ],
+        fetchDateExtractionBatch: async (
+          limit: number,
+          _maxChars: number,
+          excludeIds: readonly string[] = [],
+        ) => {
+          fetches.push([...excludeIds]);
+          return corpus.filter((row) => !excludeIds.includes(row.id)).slice(0, limit);
+        },
       } as unknown as IoGate,
       cpuGate: {
         extractDatesFromDocs: async (rows: unknown) => {
@@ -114,6 +124,7 @@ describe("dateExtractionTask — content still due to be replaced", () => {
       getSettings: () => ({
         ...DATE_ENRICHMENT_DEFAULTS,
         enabled: true,
+        ...(opts.batchSize !== undefined ? { batchSize: opts.batchSize } : {}),
         ...(opts.waitMs !== undefined ? { pendingContentWaitMs: opts.waitMs } : {}),
       }),
       tracker: new QueueTracker(),
@@ -123,7 +134,7 @@ describe("dateExtractionTask — content still due to be replaced", () => {
       },
       log,
     });
-    return { task, extracted, asked };
+    return { task, extracted, asked, fetches };
   }
 
   it("leaves a document awaiting its transcript unread and reads the rest", async () => {
@@ -134,7 +145,15 @@ describe("dateExtractionTask — content still due to be replaced", () => {
     expect(outcome).toMatchObject({ kind: "done", value: { idle: false } });
   });
 
-  it("idles when every fetched document is awaiting its transcript", async () => {
+  it("reads past a batch made only of documents awaiting their transcript", async () => {
+    const { task, extracted, fetches } = build({ pending: new Set(["voice-day"]), batchSize: 1 });
+    const outcome = await task.run(undefined);
+    expect(extracted).toEqual(["email"]);
+    expect(fetches).toEqual([[], ["voice-day"]]);
+    expect(outcome).toMatchObject({ kind: "done", value: { idle: false } });
+  });
+
+  it("idles when every unread document is awaiting its transcript", async () => {
     const { task, extracted } = build({ pending: new Set(["voice-day", "email"]) });
     const outcome = await task.run(undefined);
     expect(extracted).toEqual([]);

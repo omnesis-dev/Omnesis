@@ -402,7 +402,11 @@ final class AdminClientTests: XCTestCase {
                 body: """
                 {"assignmentDisplays":{"agent":{"providerId":"anthropic","providerLabel":"Anthropic",
                   "modelName":"Claude","available":true,"configured":true}},
-                "capabilities":[{"role":"agent","title":"Agent","description":"d","icon":"bot"},{"role":"entailment-verifier","title":"Entailment verifier","description":"d","icon":"shield-check","experimental":true,"section":"cognition"}],
+                "capabilities":[{"role":"agent","title":"Agent","description":"d","icon":"bot"},
+                  {"role":"decision","title":"Decision model","description":"d","icon":"scale",
+                   "section":"cognition","backendFamily":"typed-decision"},
+                  {"role":"entailment-verifier","title":"Entailment verifier","description":"d",
+                   "icon":"shield-check","experimental":true,"section":"cognition"}],
                 "inference":{"backends":{"nstar":{"type":"http","status":"ok","url":"http://x/v1",
                   "models":["m1"],"modelRoles":{"m1":["agent"]},"hasApiKey":false}},
                   "codex":{"type":"codex","configured":true,"status":"ok","loggedIn":true,
@@ -432,6 +436,11 @@ final class AdminClientTests: XCTestCase {
         // older gateway emits without it — the models-screen grouping key.
         XCTAssertNil(overview.capabilities.first?.section)
         XCTAssertEqual(overview.capabilities.last?.section, "cognition")
+        // A role only a named backend family serves is read-only on the phone;
+        // ordinary roles, and every role from a gateway without the field, stay
+        // configurable.
+        XCTAssertEqual(overview.capabilities.map(\.configurableOnDevice), [true, false, true])
+        XCTAssertEqual(overview.capabilities[1].backendFamily, "typed-decision")
         XCTAssertEqual(overview.inference.backends["nstar"]?.modelRoles?["m1"], ["agent"])
         XCTAssertEqual(overview.inference.codex?.configured, true)
         XCTAssertEqual(overview.inference.codex?.modelDetails?.first?.name, "GPT Example Frontier")

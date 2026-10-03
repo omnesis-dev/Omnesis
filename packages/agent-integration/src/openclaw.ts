@@ -63,7 +63,11 @@ import {
   type ForwardedTool,
 } from "./forwarded-tools.js";
 import { harnessClientName } from "./harness.js";
-import { IntegrationOAuthProvider, SerializedIntegrationAuthProvider } from "./oauth.js";
+import {
+  IntegrationOAuthProvider,
+  SerializedIntegrationAuthProvider,
+  withCredentialRefreshLock,
+} from "./oauth.js";
 import {
   REFRESH_KEEPALIVE_INTERVAL_MS,
   refreshKeepaliveDue,
@@ -1373,6 +1377,26 @@ class OpenClawIntegrationService {
     const credentialsPath = this.credentialsPath;
     if (!credentials || !credentialsPath || !hasIntegrationOAuth(credentials)) return;
     const provider = new IntegrationOAuthProvider(credentialsPath, harnessClientName("openclaw"));
+    // Without a registered client there is no approved credential to ask for
+    // by name; only `omnesis connect` can start one.
+    if (!provider.clientInformation()) return;
+    if (!provider.tokens()) {
+      // A file with no token set — a connect that stopped part-way — is
+      // repaired now, with the same headless re-issue a lapsed ticket gets,
+      // rather than when somebody next asks a question. There is nothing to
+      // trade first, so the re-issue is the whole of it.
+      await withCredentialRefreshLock(
+        credentialsPath,
+        undefined,
+        () => undefined,
+        async () => {
+          // Another process may have repaired it while this one waited.
+          if (provider.tokens()) return;
+          await reissueIntegrationOAuthTokens(provider, credentials, "openclaw");
+        },
+      );
+      return;
+    }
     if (!provider.tokens()?.refresh_token) return;
     // An `omnesis connect --refresh` running beside this service has a consent
     // page open and a PKCE verifier on disk waiting for it. Saving a rotated

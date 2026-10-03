@@ -87,6 +87,12 @@ export interface SystemPromptInput {
   /** Whether interactive clients offer copy controls on Markdown values. Defaults to false. */
   copyableValues?: boolean;
   /**
+   * Whether agent search carries graph context (search v2) for this caller.
+   * Selects the graph guidance: graph context facts, or the legacy
+   * `refCount` / `breadcrumb` cues. Defaults to false.
+   */
+  graphContext?: boolean;
+  /**
    * The operator's `OMNESIS.md` — their standing instructions to this agent, as
    * `OperatorInstructionsStore.promptText()` returns them (trimmed, and cut
    * with a marker when the file is over its cap). Empty or absent renders
@@ -113,6 +119,37 @@ const TRAIL_GUIDANCE = `**Read the adjacency signals before you conclude.** A re
 **The breadcrumb and \`includeNeighbors\` set are a capped, recency-ordered *sample* — the newest few neighbours, not the whole neighbourhood.** A non-empty breadcrumb, or \`neighborsTruncated: true\` on a \`fetch_many\` result, means there is **more** than you can see. Treat the sample as a pointer, never as the complete set: when completeness matters — above all for *"what's the latest / current status"* questions on a busy thread — run \`trace_connections\` over the hit for a bounded deeper walk. Inspect the walk's own \`truncated\` flag and qualify any incomplete neighbourhood.
 
 When a top hit is highly connected and its snippet doesn't fully answer the question, run \`trace_connections\` over it before concluding you've found everything: the walk reaches attachments, forwarded copies, thread members, near-duplicates, and the calendar event behind an email that keyword and vector search structurally miss. A walk is **not** free — it stays in your context for the rest of the turn and re-bills each turn — so seed it deliberately from the one or two hits the signals flag, not reflexively from every result. Its default budget (depth 4, fanout 25) is tuned for exactly that: one focused walk, with room to pass a larger depth/fanout when a question genuinely needs it.`;
+
+/**
+ * Graph guidance under graph context (search v2). Teaches the model to read
+ * the facts, reference table and limits search already built, and saves
+ * `trace_connections` for documents that cannot explain themselves and for
+ * frontiers a limit names — with a small depth from inside a long conversation,
+ * and an answer that says so when a walk stopped early.
+ */
+const GRAPH_CONTEXT_GUIDANCE = `**Read the graph context before you conclude.** A real thing in the user's life leaves a cluster of related documents. The leading search hits, and any later hit that several documents link to, carry a \`provenance\` block the gateway built by walking the link graph for you:
+
+- **\`facts\`** — plain sentences about how documents connect: an attachment and the message it came in, a reply, a calendar invitation, a reference, a link, and conversation membership: \`[D1] is in a 12-message conversation whose latest message is [D7] and is in the same conversation as [D5] and [D4]\`, or \`[D1] is the latest of 12 messages in a conversation that also has [D7]\` when the hit itself is the newest. A conversation lists its newest messages, so a short one appears whole.
+- **\`documents\`** — the reference table. Each \`[Dn]\` label maps to a \`documentId\` with its title, source, date and type. Labels are shared across one query's results: a document carries the same label in every hit, and \`Also in these search results: [D4] (result 2)\` means a connected document is itself a hit. Labels are not ids — pass the row's \`documentId\` to \`fetch_many\`, \`annotate_many\` or \`trace_connections\`. Labels restart for each query of a \`search_many\` call.
+- **\`limits\`** — where the walk stopped. A document whose further connections "were not explored because they are highly connected" is a frontier: it has more connections than the walk followed.
+
+\`refCount\` on a hit counts the distinct documents that attach to, reply to, invite to, reference or link to it — conversation membership aside — and is absent when none do: a *connectedness* signal, not relevance, and never something to narrate to the user as "importance".
+
+Use the facts before reaching for more tools. For *"what's the latest / current status"* questions, the conversation facts and the date column already name the newest message — read that one rather than walking the thread. When a fact points at a document the answer could turn on, read it with a \`fetch_many\` item; \`{ documentId, includeNeighbors: true }\` adds its direct neighbours over the same links, newest first; \`neighborsTruncated: true\` means more exist than are listed. Batch such follow-ups into one \`fetch_many\` call.
+
+Run \`trace_connections\` when a document cannot explain itself — an attachment, a bare image, a scanned page, a notification — and what it belongs to is the answer, or when a limit leaves connections unexplored that the question needs. From an attachment or another part of a larger document the walk defaults to depth 2, which reaches what it belongs to. Keep the depth small from a seed inside a long, many-person conversation: the neighbourhood grows fast and mostly brings unrelated documents. The walk follows the same links as search; name others in \`includeLinkTypes\` only when the question turns on them (copies, a shared phone number, browsing history). A walk stays in your context and re-bills each turn, so seed it from the one or two documents that need it. When a walk's result carries a \`note\` that it stopped early, say in your answer that the trail may be incomplete wherever completeness matters.`;
+
+/** The graph guidance for a caller: graph context facts, or the legacy cues. */
+function graphGuidance(graphContext: boolean | undefined): string {
+  return graphContext ? GRAPH_CONTEXT_GUIDANCE : TRAIL_GUIDANCE;
+}
+
+/** The interactive tool list's `trace_connections` entry for a caller's graph mode. */
+function traceConnectionsBullet(graphContext: boolean | undefined): string {
+  return graphContext
+    ? `- **\`trace_connections(seedIds, depth?, fanoutCap?, includeLinkTypes?)\`** — bounded deep walk of the graph around one or more seeds, in chronological order: attachments inline, replies, thread members, calendar events, references and links, each with its time and people by role, over the same links as search graph context unless \`includeLinkTypes\` names more. It reaches past what search graph context and \`includeNeighbors\` already show, but may return \`truncated: true\` with a \`note\`; qualify incomplete coverage. This is a **retrieval** tool — its documents are your working memory and do **not** appear on the Timeline unless you add them to an \`annotate_many\` call.`
+    : `- **\`trace_connections(seedIds, depth?, fanoutCap?)\`** — bounded deep walk of the graph around one or more seeds, in chronological order: related documents the configured depth and fanout reach (attachments inline, thread members, near-duplicates across channels, forwarded copies, the calendar event behind an email), each with its time and people by role. It is deeper than the capped one-hop \`breadcrumb\` / \`includeNeighbors\` sample but may return \`truncated: true\`; inspect that flag and qualify incomplete coverage. This is a **retrieval** tool — its documents are your working memory and do **not** appear on the Timeline unless you add them to an \`annotate_many\` call.`;
+}
 
 /**
  * Whether a prompt profile's surface actually renders a Timeline. Only the
@@ -198,6 +235,7 @@ function buildSubagentSystemPrompt(input: SystemPromptInput): string {
     fetchBatchLimit: 16,
     includeTemporal: input.temporal === true,
     includeCognition: input.experimental === true,
+    graphContext: input.graphContext === true,
   });
   const selfMemorySection =
     input.selfMemory && input.selfMemory.trim().length > 0
@@ -235,7 +273,7 @@ Deliberately test plausible competing explanations. If a finding relies on SQL, 
 
 Stop retrieving once the assigned branch is settled; exhaustive exploration after you have enough decisive evidence wastes time and risks losing the finding. Before composing the finding, call \`annotate_many\` for the decisive documents and include a short \`note\` on every annotation stating the point that document supports. Then immediately return a compact synthesis: conclusion first, decisive evidence, then any material caveat. Do not narrate your process or continue searching after the evidence is sufficient.
 
-${TRAIL_GUIDANCE}
+${graphGuidance(input.graphContext)}
 
 # Evidence for the parent
 
@@ -282,6 +320,7 @@ export function buildSystemPrompt(input: SystemPromptInput = {}): string {
     fetchBatchLimit: 16,
     includeTemporal: false,
     includeCognition: false,
+    graphContext: input.graphContext === true,
   });
 
   // Read-only loop tools + inline loop/annotation connections are experimental:
@@ -394,7 +433,7 @@ Your tools are listed in the tool catalog, each with its own description — the
 - **\`search_many({ queries: [ { query, filters?, limit? }, … ] })\`** — primary retrieval. Runs 1–16 independent searches at once, concurrently, in one round-trip; each is a hybrid BM25 + vector search across every indexed document, returning ranked snippets with source metadata — one result set per query, in order. Batch every search you'd otherwise issue separately into a single call.
 - **\`fetch_many({ documents: [ { documentId, includeNeighbors? }, … ] })\`** — read the full bodies of 1–16 documents by id at once, concurrently, in one round-trip (use after a search to read the most relevant hits in full). Fetch every body you need in a single call, not one at a time.
 - **\`lookup_document_by_url(url)\`** — resolve a source URL to its document **metadata** (a single \`DocRef\` — no body). Returns at most one ref, or none when the URL isn't in the corpus. Pair with a \`fetch_many\` item (\`{ documentId }\`) if you need to read the body. **Use BEFORE \`search_many\` whenever the user's question includes a URL.**
-- **\`trace_connections(seedIds, depth?, fanoutCap?)\`** — bounded deep walk of the graph around one or more seeds, in chronological order: related documents the configured depth and fanout reach (attachments inline, thread members, near-duplicates across channels, forwarded copies, the calendar event behind an email), each with its time and people by role. It is deeper than the capped one-hop \`breadcrumb\` / \`includeNeighbors\` sample but may return \`truncated: true\`; inspect that flag and qualify incomplete coverage. This is a **retrieval** tool — its documents are your working memory and do **not** appear on the Timeline unless you add them to an \`annotate_many\` call.
+${traceConnectionsBullet(input.graphContext)}
 - **\`run_sql(sql, maxRows?)\`** — read-only DuckDB query against the structured analytics database. Use for anything that needs aggregation, trends, or time-bucketed comparisons over the user's tabular data; follow the analytics guidance in the shared retrieval playbook.
 - **\`lookup_people(query, limit?)\`** — fuzzy person lookup across canonical name + every alias type (email, phone, handle). Returns 0..N candidates ordered by recency-decayed interaction score; each candidate carries the person's full alias list, document counts per channel (email / chat / meeting), and the timestamp of the last interaction. **Use BEFORE \`search_many\` whenever the user mentions a person by name and the right alias isn't obvious.**
 - **\`annotate_many({ annotations: [ { documentId, quote?, quoteAuthor?, note? }, … ] })\`** — mark the **documents** whose information you used in your answer; this is the **only** way a document lands on the Timeline panel. Copy each \`documentId\` from a document result (\`search_many\`, \`fetch_many\`, \`lookup_document_by_url\`, or \`trace_connections\`) — never pass a raw \`run_sql\` row value. If an item returns an error, resolve its canonical id and retry it before answering. Record every citation for the answer in one call (1–16 annotations). See the **Timeline** section below for when and how.
@@ -406,7 +445,7 @@ ${retrievalPlaybook}
 
 # Interactive retrieval additions
 
-${TRAIL_GUIDANCE}
+${graphGuidance(input.graphContext)}
 
 # Plan panel
 

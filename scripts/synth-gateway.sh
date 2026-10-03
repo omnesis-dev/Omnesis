@@ -370,6 +370,13 @@ for s in m['sources']:
     done
     if [[ "${add_status}" != 2* ]]; then
       echo "Failed to add synth source ${desc} (${aid}): HTTP ${add_status} ${add_response:-no gateway response}" >&2
+      # A source type the collector cannot host is usually a provider package
+      # that failed to load — most often one node_modules does not link yet.
+      if grep -q "Failed to load provider" "${CONFIG_DIR}/logs/collector.log" 2>/dev/null; then
+        echo "The collector could not load every provider (${CONFIG_DIR}/logs/collector.log):" >&2
+        grep "Failed to load provider" "${CONFIG_DIR}/logs/collector.log" | sed 's/^/  /' >&2
+        echo "Run 'npm install' in the primary checkout, or 'scripts/setup-worktree.sh' in a worktree." >&2
+      fi
       return 1
     fi
   done <<< "$specs"

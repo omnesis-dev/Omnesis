@@ -12,6 +12,7 @@ import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
@@ -41,7 +42,7 @@ internal fun SearchGraphContext(
         facts.forEach { fact ->
             val icons = mutableMapOf<String, InlineTextContent>()
             val text = buildAnnotatedString {
-                fact.forEachIndexed { index, part ->
+                fact.parts.forEachIndexed { index, part ->
                     val document = part.document
                     if (document == null) append(part.text) else {
                         val key = "doc-$index"
@@ -58,8 +59,9 @@ internal fun SearchGraphContext(
                     }
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("•", fontSize = 12.sp, lineHeight = 18.sp, color = colors.textMuted)
+            // A branch sits one level under the fact that ends with its colon.
+            Row(Modifier.padding(start = (fact.depth * 16).dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(if (fact.depth == 0) "•" else "◦", fontSize = 12.sp, lineHeight = 18.sp, color = colors.textMuted, modifier = Modifier.clearAndSetSemantics {})
                 Text(text, inlineContent = icons, fontSize = 12.sp, lineHeight = 18.sp, color = colors.textSecondary, modifier = Modifier.weight(1f))
             }
         }

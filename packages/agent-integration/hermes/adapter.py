@@ -126,9 +126,25 @@ _HELLO_HANDSHAKE_TIMEOUT_SECONDS = 15.0
 # settles in one transaction. Calls that run an agent turn behind the request
 # are far slower than this and state their own budget instead.
 GATEWAY_TIMEOUT_SECONDS = 20.0
+# Socket budget for a token-endpoint request and for the management-token
+# re-issue that stands in for a refresh. Each is a write on the gateway's single
+# writer thread, so it waits behind whatever that thread is doing — tens of
+# seconds while a restarted gateway rebuilds an index — and a refresh that gives
+# up first loses the answer to a rotation the gateway goes on to make. It bounds
+# each socket operation (connect, then waiting for the answer), which a
+# writer stall turns into one wait. Restated from `@omnesis/types`
+# (`OAUTH_TOKEN_REQUEST_TIMEOUT_MS`); `oauth-token-budget.test.ts` holds the
+# restatement to it.
+OAUTH_TOKEN_TIMEOUT_SECONDS = 55.0
 _OAUTH_REFRESH_LOCK_WAIT_SECONDS = 0.025
-_OAUTH_REFRESH_LOCK_TIMEOUT_SECONDS = 30.0
-_OAUTH_REFRESH_LOCK_STALE_SECONDS = 120.0
+# Outlasts the worst case of a holder in either runtime — a refresh, its one
+# repeat and a re-issue, each on the token-request budget, plus the two metadata
+# discoveries the TypeScript SDK may make on the ordinary budget — so a waiter
+# behind a stalled gateway adopts the holder's result instead of failing.
+OAUTH_REFRESH_LOCK_TIMEOUT_SECONDS = 215.0
+# Above the longest a live holder keeps the lease, so a holder whose process id
+# is not visible from here, as across a container boundary, is never cut short.
+OAUTH_REFRESH_LOCK_STALE_SECONDS = 240.0
 _OAUTH_REFRESH_TOKEN_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000
 _OAUTH_REFRESH_MARGIN_MS = 7 * 24 * 60 * 60 * 1000
 _OAUTH_KEEPALIVE_INTERVAL_SECONDS = 6 * 60 * 60.0
@@ -186,7 +202,7 @@ def _remove_stale_refresh_lock(path: Path) -> None:
         return
     try:
         inspected = os.fstat(descriptor)
-        if time.time() - inspected.st_mtime <= _OAUTH_REFRESH_LOCK_STALE_SECONDS:
+        if time.time() - inspected.st_mtime <= OAUTH_REFRESH_LOCK_STALE_SECONDS:
             return
         try:
             body = os.read(descriptor, 64).decode("ascii").strip()
@@ -221,7 +237,7 @@ def _release_owned_refresh_lock(path: Path, descriptor: int) -> None:
 
 def _acquire_refresh_lock(path: Path) -> int:
     """Acquire the existence-based lease shared with the TypeScript plugin."""
-    deadline = time.monotonic() + _OAUTH_REFRESH_LOCK_TIMEOUT_SECONDS
+    deadline = time.monotonic() + OAUTH_REFRESH_LOCK_TIMEOUT_SECONDS
     while True:
         try:
             descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
@@ -1084,15 +1100,29 @@ def _load_credentials(path: Path) -> Credentials:
             raise ConfigurationError("credential file is missing OAuth state")
         client = oauth.get("clientInformation")
         tokens = oauth.get("tokens")
-        if not isinstance(client, dict) or not isinstance(client.get("client_id"), str):
-            raise ConfigurationError("credential file is missing an OAuth client")
-        if not isinstance(tokens, dict) or not isinstance(tokens.get("access_token"), str):
-            raise ConfigurationError("credential file is missing an OAuth access token")
-        if not isinstance(tokens.get("refresh_token"), str):
-            raise ConfigurationError("credential file is missing an OAuth refresh token")
-        client_id = client["client_id"]
-        access_token = tokens["access_token"]
-        refresh_token = tokens["refresh_token"]
+        # A token set may be missing or partial: an `omnesis connect` that
+        # stopped part-way leaves the approved client without one. That is
+        # repaired headlessly from the client and the management token, so it
+        # loads rather than taking the whole integration down. Without a
+        # client there is nothing to repair with; delivery and ingestion keep
+        # running, and the corpus tools answer with the command that repairs
+        # it.
+        client_id = (
+            client["client_id"]
+            if isinstance(client, dict)
+            and isinstance(client.get("client_id"), str)
+            and client["client_id"]
+            else None
+        )
+        tokens = tokens if client_id is not None and isinstance(tokens, dict) else {}
+        access_token = (
+            tokens["access_token"] if isinstance(tokens.get("access_token"), str) else None
+        )
+        refresh_token = (
+            tokens["refresh_token"]
+            if access_token is not None and isinstance(tokens.get("refresh_token"), str)
+            else None
+        )
     return Credentials(
         gateway_url=raw["gatewayUrl"].rstrip("/"),
         delivery_token=raw["deliveryToken"],
@@ -1452,9 +1482,46 @@ async def _run_cli_update(
     }
 
 
-def _refresh_keepalive_due(raw: Any, now_ms: int) -> bool:
+def _pending_authorization_path(credential_path: Path) -> Path:
+    """Where `omnesis connect` records the approval request it is waiting on.
+
+    Declared in `packages/agent-integration/src/pending-authorization.ts`.
+    """
+    return Path(f"{credential_path}.pending-authorization")
+
+
+def _authorization_pending(
+    raw: Any, credential_path: Optional[Path], now_ms: int
+) -> bool:
+    """Is an interactive approval part-way through?
+
+    The PKCE verifier is on file while one is. The approval `omnesis connect`
+    recorded beside the file says how long that lasts: once its request has
+    expired, a verifier left by a process that never finished is nobody's
+    attempt any more.
+    """
     oauth = raw.get("oauth") if isinstance(raw, dict) else None
-    if not isinstance(oauth, dict) or oauth.get("codeVerifier") is not None:
+    if not isinstance(oauth, dict) or oauth.get("codeVerifier") is None:
+        return False
+    if credential_path is None:
+        return True
+    try:
+        recorded = json.loads(
+            _pending_authorization_path(credential_path).read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return True
+    expires_at = recorded.get("expiresAt") if isinstance(recorded, dict) else None
+    if not isinstance(expires_at, (int, float)) or isinstance(expires_at, bool):
+        return True
+    return expires_at > now_ms
+
+
+def _refresh_keepalive_due(
+    raw: Any, now_ms: int, credential_path: Optional[Path] = None
+) -> bool:
+    oauth = raw.get("oauth") if isinstance(raw, dict) else None
+    if not isinstance(oauth, dict) or _authorization_pending(raw, credential_path, now_ms):
         return False
     obtained = oauth.get("tokensObtainedAt")
     if not isinstance(obtained, (int, float)) or isinstance(obtained, bool):
@@ -1581,12 +1648,16 @@ def _refresh_forwarded_tools(
     offers none and keeps nothing.
     """
     credentials = _load_credentials(credentials_path)
+    # A missing token set is left to the gateway process's maintenance pass,
+    # which re-issues it: listing runs while Hermes loads its plugins, on a
+    # budget a re-issue behind a busy gateway could outlast.
     if credentials.oauth_access_token is None:
         return []
     probe = OmnesisAdapter.for_tools()
     probe._credential_path = credentials_path
     probe._credentials = credentials
     tools = probe.list_forwarded_tools(timeout)
+    credentials = probe._credentials
     cache = _forwarded_tools_cache_path(credentials_path)
     if _read_forwarded_tools_cache(cache, credentials) != tools:
         _write_private_json(
@@ -2949,10 +3020,9 @@ class OmnesisAdapter(BasePlatformAdapter):
             asyncio.create_task(self._delivery_loop(), name="omnesis-delivery"),
             asyncio.create_task(self._ingestion_loop(), name="omnesis-ingestion"),
         ]
-        if (
-            self._credentials.oauth_access_token is not None
-            and self._credentials.oauth_refresh_token is not None
-        ):
+        # An installation with an approved client is maintained even when its
+        # token set is missing: the maintenance pass is what re-issues it.
+        if self._credentials.oauth_client_id is not None:
             self._oauth_maintenance_task = asyncio.create_task(
                 self._oauth_maintenance_loop(), name="omnesis-oauth-maintenance"
             )
@@ -2981,14 +3051,23 @@ class OmnesisAdapter(BasePlatformAdapter):
             self._state = None
 
     def _maintain_oauth_once(self) -> None:
-        """Renew a quiet installation before its rotating refresh ticket expires."""
-        raw = json.loads(self._credential_path.read_text(encoding="utf-8"))
-        if not _refresh_keepalive_due(raw, int(time.time() * 1000)):
-            return
+        """Renew a quiet installation before its rotating refresh ticket expires.
+
+        A missing token set — an `omnesis connect` that stopped part-way — is
+        re-issued now rather than when somebody next asks a question.
+        """
         current = _load_credentials(self._credential_path)
-        if current.oauth_access_token is None or current.oauth_refresh_token is None:
+        if current.oauth_client_id is None:
             return
         self._credentials = current
+        if current.oauth_access_token is None:
+            self._recover_missing_oauth_tokens()
+            return
+        raw = json.loads(self._credential_path.read_text(encoding="utf-8"))
+        if not _refresh_keepalive_due(raw, int(time.time() * 1000), self._credential_path):
+            return
+        if current.oauth_refresh_token is None:
+            return
         self._refresh_oauth_token(current.oauth_access_token)
 
     async def _oauth_maintenance_loop(self) -> None:
@@ -3718,8 +3797,14 @@ class OmnesisAdapter(BasePlatformAdapter):
                 # The delivery is an operational wake. Corpus retrieval still
                 # authenticates as the installation's OAuth principal so the
                 # current grant and revocation state remain authoritative.
+                principal_token = self._principal_access_token()
+                if principal_token is None:
+                    raise McpProtocolError(
+                        "Omnesis corpus authorization needs repair. "
+                        "Run `omnesis connect hermes --refresh` on this machine."
+                    )
                 answer = self._mcp_call_tool(
-                    self._credentials.oauth_access_token,
+                    principal_token,
                     "get_answer_status",
                     {"taskId": delivery["taskId"]},
                 )
@@ -4113,7 +4198,8 @@ class OmnesisAdapter(BasePlatformAdapter):
         if not self._ensure_tool_resources():
             return json.dumps({"error": "Omnesis integration is unavailable"})
         assert self._credentials is not None
-        if self._credentials.oauth_access_token is None:
+        principal_token = self._principal_access_token()
+        if principal_token is None:
             return json.dumps(_answer_failure_payload(GatewayHttpError(401)))
         identity = self._session_identity(session_id)
         if identity is None or identity[0] == "omnesis":
@@ -4155,7 +4241,7 @@ class OmnesisAdapter(BasePlatformAdapter):
                 **({"approval": "never"} if scheduled else {}),
             }
             answer = self._await_mcp_answer(
-                self._credentials.oauth_access_token,
+                principal_token,
                 {**common, "requestId": request_id},
                 {
                     MCP_NATIVE_CONVERSATION_META_KEY: native_conversation_id,
@@ -4451,7 +4537,7 @@ class OmnesisAdapter(BasePlatformAdapter):
         if not self._ensure_tool_resources():
             return json.dumps({"error": "Omnesis integration is unavailable"})
         assert self._credentials is not None
-        token = self._credentials.oauth_access_token
+        token = self._principal_access_token()
         if token is None:
             return json.dumps(_answer_failure_payload(GatewayHttpError(401)))
         try:
@@ -4580,6 +4666,39 @@ class OmnesisAdapter(BasePlatformAdapter):
             raise McpProtocolError("Omnesis returned an invalid MCP result payload")
         return result
 
+    def _principal_access_token(self) -> Optional[str]:
+        """The installation's OAuth bearer, re-issued first when the file has none.
+
+        None when there is no approved client to re-issue for, or the re-issue
+        failed — which is logged with its reason, and which callers turn into
+        the repair the operator runs.
+        """
+        assert self._credentials is not None
+        if self._credentials.oauth_access_token is not None:
+            return self._credentials.oauth_access_token
+        if self._credentials.oauth_client_id is None:
+            return None
+        try:
+            return self._recover_missing_oauth_tokens()
+        except Exception as error:
+            logger.warning("Could not restore Omnesis corpus access: %s", error)
+            return None
+
+    def _recover_missing_oauth_tokens(self) -> str:
+        """Re-issue a missing token set for the client the operator approved."""
+        with self._oauth_refresh_lock:
+            lock_path = Path(f"{self._credential_path}.refresh.lock")
+            descriptor = _acquire_refresh_lock(lock_path)
+            try:
+                self._credentials = _load_credentials(self._credential_path)
+                # Another process may have repaired it while this one waited.
+                if self._credentials.oauth_access_token is not None:
+                    return self._credentials.oauth_access_token
+                raw = json.loads(self._credential_path.read_text(encoding="utf-8"))
+                return self._reissue_oauth_tokens_locked(raw)
+            finally:
+                _release_owned_refresh_lock(lock_path, descriptor)
+
     def _refresh_oauth_token(
         self, stale_access_token: str, *, adopt_persisted: bool = True
     ) -> str:
@@ -4598,10 +4717,9 @@ class OmnesisAdapter(BasePlatformAdapter):
                 self._credentials = persisted
                 if (
                     adopt_persisted
+                    and self._credentials.oauth_access_token is not None
                     and self._credentials.oauth_access_token != stale_access_token
                 ):
-                    if self._credentials.oauth_access_token is None:
-                        raise McpProtocolError("Omnesis corpus authorization needs repair")
                     return self._credentials.oauth_access_token
                 return self._refresh_oauth_token_locked()
             finally:
@@ -4610,19 +4728,17 @@ class OmnesisAdapter(BasePlatformAdapter):
     def _refresh_oauth_token_locked(self) -> str:
         """Refresh while holding ``_oauth_refresh_lock`` so rotation cannot race."""
         assert self._credentials is not None
-        if (
-            self._credentials.oauth_refresh_token is None
-            or self._credentials.oauth_client_id is None
-        ):
+        if self._credentials.oauth_client_id is None:
             raise McpProtocolError(
                 "Omnesis corpus authorization needs repair. "
                 "Run `omnesis connect hermes --refresh` on this machine."
             )
         raw = json.loads(self._credential_path.read_text(encoding="utf-8"))
+        # Nothing to trade: the headless re-issue is the whole repair.
+        if self._credentials.oauth_refresh_token is None:
+            return self._reissue_oauth_tokens_locked(raw)
         resource = _oauth_resource(raw, self._credentials.gateway_url)
         token_endpoint = _oauth_token_endpoint(raw, self._credentials.gateway_url)
-        parsed = urllib.parse.urlparse(token_endpoint)
-        gateway = urllib.parse.urlparse(self._credentials.gateway_url)
         body = urllib.parse.urlencode(
             {
                 "grant_type": "refresh_token",
@@ -4631,6 +4747,54 @@ class OmnesisAdapter(BasePlatformAdapter):
                 "resource": resource,
             }
         ).encode("ascii")
+        # The gateway rotates the refresh token as it answers, so a response
+        # lost to a timeout, a dropped connection or a proxy's 5xx may already
+        # have spent the token held here. For a short window the gateway
+        # answers an identical repeat from the same client with the pair it
+        # already issued, so one repeat turns a lost answer into the real one
+        # instead of a spent token. An OAuth error is the gateway's verdict and
+        # is never repeated.
+        try:
+            status, response_body = self._post_oauth_refresh(token_endpoint, body)
+        except (OSError, http.client.HTTPException) as error:
+            if isinstance(error, ssl.SSLError):
+                raise
+            status, response_body = self._post_oauth_refresh(token_endpoint, body)
+        else:
+            if status >= 500:
+                status, response_body = self._post_oauth_refresh(token_endpoint, body)
+        # A refresh token that rotated out, expired, or was revoked comes back
+        # as an OAuth error, not a transport failure. That is the cliff a quiet
+        # installation falls off, and the browser redirect that would repair it
+        # is the one thing this adapter cannot perform — so that one case falls
+        # through to the headless re-issue instead of ending the call.
+        spent_refresh_token = False
+        refreshed: Any = None
+        if not 200 <= status < 300:
+            failure = _gateway_http_error(status, response_body)
+            # Only `invalid_grant` means the refresh token itself is gone.
+            # `invalid_request`, `invalid_client`, a proxy's 401 and the
+            # rest are failures of this attempt, and folding them into
+            # recovery would hide a permanently broken refresh behind a
+            # management token that always succeeds.
+            if not _is_invalid_grant(status, response_body):
+                raise failure
+            spent_refresh_token = True
+        else:
+            refreshed = json.loads(response_body)
+        if spent_refresh_token:
+            return self._reissue_oauth_tokens_locked(raw)
+        if not isinstance(refreshed, dict) or not isinstance(
+            refreshed.get("access_token"), str
+        ):
+            raise McpProtocolError("Omnesis returned an invalid OAuth refresh response")
+        return self._persist_oauth_tokens(raw, refreshed)
+
+    def _post_oauth_refresh(self, token_endpoint: str, body: bytes) -> tuple[int, bytes]:
+        """POST one refresh-token request and return its status and body."""
+        assert self._credentials is not None
+        parsed = urllib.parse.urlparse(token_endpoint)
+        gateway = urllib.parse.urlparse(self._credentials.gateway_url)
         headers = {
             "Content-Type": "application/x-www-form-urlencoded",
             "Content-Length": str(len(body)),
@@ -4646,50 +4810,25 @@ class OmnesisAdapter(BasePlatformAdapter):
                     if same_gateway_origin
                     else ssl.create_default_context()
                 ),
-                timeout=GATEWAY_TIMEOUT_SECONDS,
+                timeout=OAUTH_TOKEN_TIMEOUT_SECONDS,
             )
-            connection.connect()
-            # The operational gateway keeps its paired leaf pin. A distinct
-            # authorization server discovered from that pinned gateway uses
-            # ordinary CA and hostname validation, as OAuth permits.
-            if same_gateway_origin:
-                _verify_leaf(connection.sock, self._credentials.leaf_fingerprint_sha256)
         else:
             connection = http.client.HTTPConnection(
-                parsed.hostname, parsed.port or 80, timeout=GATEWAY_TIMEOUT_SECONDS
+                parsed.hostname, parsed.port or 80, timeout=OAUTH_TOKEN_TIMEOUT_SECONDS
             )
-        # A refresh token that rotated out, expired, or was revoked comes back
-        # as an OAuth error, not a transport failure. That is the cliff a quiet
-        # installation falls off, and the browser redirect that would repair it
-        # is the one thing this adapter cannot perform — so that one case falls
-        # through to the headless re-issue instead of ending the call.
-        spent_refresh_token = False
-        refreshed: Any = None
         try:
+            if parsed.scheme == "https":
+                connection.connect()
+                # The operational gateway keeps its paired leaf pin. A distinct
+                # authorization server discovered from that pinned gateway uses
+                # ordinary CA and hostname validation, as OAuth permits.
+                if same_gateway_origin:
+                    _verify_leaf(connection.sock, self._credentials.leaf_fingerprint_sha256)
             connection.request("POST", parsed.path, body, headers)
             response = connection.getresponse()
-            response_body = response.read(MAX_FRAME_BYTES + 1)
-            if not 200 <= response.status < 300:
-                failure = _gateway_http_error(response.status, response_body)
-                # Only `invalid_grant` means the refresh token itself is gone.
-                # `invalid_request`, `invalid_client`, a proxy's 401 and the
-                # rest are failures of this attempt, and folding them into
-                # recovery would hide a permanently broken refresh behind a
-                # management token that always succeeds.
-                if not _is_invalid_grant(response.status, response_body):
-                    raise failure
-                spent_refresh_token = True
-            else:
-                refreshed = json.loads(response_body)
+            return response.status, response.read(MAX_FRAME_BYTES + 1)
         finally:
             connection.close()
-        if spent_refresh_token:
-            return self._reissue_oauth_tokens_locked(raw)
-        if not isinstance(refreshed, dict) or not isinstance(
-            refreshed.get("access_token"), str
-        ):
-            raise McpProtocolError("Omnesis returned an invalid OAuth refresh response")
-        return self._persist_oauth_tokens(raw, refreshed)
 
     def _reissue_oauth_tokens_locked(self, raw: Dict[str, Any]) -> str:
         """Re-key this device's approved OAuth credential without a browser.
@@ -4707,6 +4846,8 @@ class OmnesisAdapter(BasePlatformAdapter):
                 "/agent-integration/oauth-reissue",
                 self._credentials.management_token,
                 {"clientId": self._credentials.oauth_client_id},
+                # A write on the gateway's writer, like the refresh it replaces.
+                OAUTH_TOKEN_TIMEOUT_SECONDS,
             )
         except GatewayHttpError as error:
             # The gateway's own code, not the bare 404: a gateway too old to
@@ -4729,7 +4870,9 @@ class OmnesisAdapter(BasePlatformAdapter):
     ) -> str:
         """Atomically replace the stored token set and return the new bearer."""
         path = self._credential_path
-        previous = raw["oauth"]["tokens"]
+        previous = raw["oauth"].get("tokens")
+        if not isinstance(previous, dict):
+            previous = {}
         rotated = issued.get("refresh_token", previous.get("refresh_token")) != previous.get(
             "refresh_token"
         )

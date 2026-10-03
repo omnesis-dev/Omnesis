@@ -292,10 +292,12 @@ export class DirectMcpService {
       }
       return full;
     }
+    const context = await this.instructionContext(authorization);
     const instructions =
       DIRECT_MCP_ESSENTIAL_INSTRUCTIONS +
       renderReadOnlyRetrievalPlaybook({
-        sourceTypes: (await this.instructionContext(authorization)).sourceTypes,
+        sourceTypes: context.sourceTypes,
+        graphContext: context.graphContext,
         catalogMode: "discovery",
         fetchBatchLimit: MAX_DIRECT_MCP_FETCH_DOCUMENTS,
         includeTemporal: this.byName.has("temporal_query"),
@@ -548,10 +550,13 @@ export function createGatewayDirectMcpService(deps: GatewayDirectMcpDeps): Direc
             search: createGatewaySearchPort(deps.searchPipeline, deps.syncStatus, deps.db),
             document: createGatewayDocumentPort(deps.db, deps.syncStatus, {
               maxStoredDocumentBytes: MAX_DIRECT_MCP_STORED_DOCUMENT_BYTES,
+              graphContext: deps.searchPipeline.agentSearchV2Enabled,
             }),
             documentByUrl: createGatewayDocumentByUrlPort(deps.db, deps.syncStatus),
             person: createGatewayPersonPort(deps.db, { lookupGate: deps.personLookupGate }),
-            trail: createGatewayTrailPort(deps.db, deps.analyticsDb),
+            trail: createGatewayTrailPort(deps.db, deps.analyticsDb, {
+              graphContext: deps.searchPipeline.agentSearchV2Enabled,
+            }),
             sql: createGatewaySqlPort(deps.analyticsDb),
             temporal: createGatewayTemporalPort(
               deps.db,
@@ -584,6 +589,8 @@ export function createGatewayDirectMcpService(deps: GatewayDirectMcpDeps): Direc
               .map((source) => source.type),
           ),
         ],
+        // Source-restricted grants receive no graph context on their searches.
+        graphContext: !permitted && deps.searchPipeline.agentSearchV2Enabled,
       };
     },
     (authorization) => buildHandles(authorization),

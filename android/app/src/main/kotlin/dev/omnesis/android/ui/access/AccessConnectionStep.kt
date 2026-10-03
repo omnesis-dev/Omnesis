@@ -169,7 +169,7 @@ private fun ReplaceConnection(
                     onClick = { set(choice.copy(connectionId = target.id)) },
                 ) {
                     ChoiceTitle(target.name, isSuggested)
-                    overview.levels.firstOrNull { it.id == target.grant.levelId }?.let { Detail("Uses ${it.name}") }
+                    overview.levels.firstOrNull { it.id == target.grant.levelId }?.let { Detail(connectionLevelLabel(it.name)) }
                     Detail(lastUsedLabel(target.lastUsedAt, nowMillis))
                     if (isSuggested) Detail("Already connected on this device.")
                 }

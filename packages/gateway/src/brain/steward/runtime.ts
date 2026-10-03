@@ -457,9 +457,13 @@ export async function createCognitionRuntime(
 
   const basePorts: ToolPorts = {
     search: ports.createGatewaySearchPort(deps.searchPipeline, deps.syncStatus, deps.db),
-    document: ports.createGatewayDocumentPort(deps.db, deps.syncStatus),
+    document: ports.createGatewayDocumentPort(deps.db, deps.syncStatus, {
+      graphContext: deps.searchPipeline.agentSearchV2Enabled,
+    }),
     documentByUrl: ports.createGatewayDocumentByUrlPort(deps.db, deps.syncStatus),
-    trail: ports.createGatewayTrailPort(deps.db, deps.analyticsDb),
+    trail: ports.createGatewayTrailPort(deps.db, deps.analyticsDb, {
+      graphContext: deps.searchPipeline.agentSearchV2Enabled,
+    }),
     sql: ports.createGatewaySqlPort(deps.analyticsDb),
     record: ports.createGatewayRecordPort(deps.db, deps.analyticsDb),
     // Background runs enqueue `lookup_people` at BACKGROUND priority so they
@@ -646,6 +650,7 @@ export async function createCognitionRuntime(
       consumptionFor(run).note("person", [...self.annotationIds]);
       const basePrompt = buildCognitionRunPrompt(run, {
         db: deps.db,
+        graphContext: deps.searchPipeline.agentSearchV2Enabled,
         clock,
         cfg,
         // The standing memory, read at claim time.

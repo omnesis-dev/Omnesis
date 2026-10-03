@@ -394,20 +394,26 @@ export function createAgentService(
       operatorInstructions,
       citationSurface: options.citationSurface,
       copyableValues: options.copyableValues === true,
+      // Source-restricted grants receive no graph context on their searches.
+      graphContext: !restricted && searchPipeline.agentSearchV2Enabled,
     });
   };
   return new AgentService({
     backendFactory,
     ports: {
       // `db` is passed so the agent search port can attach the 1-hop
-      // breadcrumb to top hits.
+      // breadcrumb to top hits when graph context is off.
       search: createGatewaySearchPort(searchPipeline, syncStatus, db),
-      document: createGatewayDocumentPort(db, syncStatus),
+      document: createGatewayDocumentPort(db, syncStatus, {
+        graphContext: searchPipeline.agentSearchV2Enabled,
+      }),
       documentByUrl: createGatewayDocumentByUrlPort(db, syncStatus),
       // `trace_connections` surfaces `same-entity` bound rows as point-in-time
       // records, so it needs the same analytics DB `cite_record` uses
       // (for the bound-row resolver + the record-display contract).
-      trail: createGatewayTrailPort(db, analyticsDb),
+      trail: createGatewayTrailPort(db, analyticsDb, {
+        graphContext: searchPipeline.agentSearchV2Enabled,
+      }),
       sql: createGatewaySqlPort(analyticsDb),
       // `cite_record` persists a single analytics row as a record citation.
       //Wired with the same analytics DB as `run_sql` (for the table

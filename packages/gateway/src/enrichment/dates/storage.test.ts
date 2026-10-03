@@ -128,6 +128,19 @@ describe("date-enrichment storage", () => {
     expect(keys[docId(db, "alone")]).toBeNull();
   });
 
+  it("leaves excluded documents out of a batch without shrinking it", () => {
+    upsertDocuments(db, [
+      makeDoc({ externalId: "first" }),
+      makeDoc({ externalId: "second" }),
+      makeDoc({ externalId: "third" }),
+    ]);
+    const skipped = [docId(db, "first"), docId(db, "second")];
+    expect(fetchDateExtractionBatch(db, 1, 1000, skipped).map((row) => row.id)).toEqual([
+      docId(db, "third"),
+    ]);
+    expect(fetchDateExtractionBatch(db, 10, 1000, [])).toHaveLength(3);
+  });
+
   it("marks a freshly ingested document as pending extraction", () => {
     upsertDocuments(db, [makeDoc()]);
     expect(countPendingDateExtraction(db)).toBe(1);

@@ -66,7 +66,18 @@ export interface ReadOnlyRetrievalPlaybookInput {
   includeCognition?: boolean;
   /** Direct clients discover their permitted schema through list_tables. */
   catalogMode?: "authoritative" | "runtime" | "discovery";
+  /**
+   * Whether search hits carry graph context (search v2) — facts, a reference
+   * table and limits — instead of the legacy breadcrumb. Defaults to false.
+   */
+  graphContext?: boolean;
 }
+
+const LEGACY_ADJACENCY_HINTS =
+  "Read `refCount`, `breadcrumb`, and `neighborsTruncated` as adjacency hints, not proof of relevance or completeness. Use `trace_connections` for a bounded deep walk around one or two strong seeds when threads, attachments, forwarded copies, duplicates, or related events could change the answer. Inspect its `truncated` flag: when true, narrow the seeds, increase permitted depth or fanout only when justified, or qualify that the linked neighbourhood may be incomplete.";
+
+const GRAPH_CONTEXT_HINTS =
+  "Read `refCount` and a hit's `provenance` graph context — `facts`, a `documents` reference table and `limits`, under `provenance.modelContext` in the full payload — as adjacency evidence, not proof of relevance or completeness. A `[Dn]` label is a reference within one query's results, never an id: use the table's `documentId` in tools. Use `trace_connections` when a document cannot explain itself (an attachment, an image, a notification) or a limit leaves connections unexplored that the answer needs; keep its depth small from a seed inside a long conversation. `neighborsTruncated: true` on a `fetch_many` item means it has more neighbours than are listed. When its result is `truncated` or carries a `note`, narrow the seeds or qualify that the linked neighbourhood may be incomplete.";
 
 export function renderReadOnlyRetrievalPlaybook(
   input: ReadOnlyRetrievalPlaybookInput = {},
@@ -75,6 +86,7 @@ export function renderReadOnlyRetrievalPlaybook(
   const fetchBatchLimit = input.fetchBatchLimit ?? 16;
   const includeTemporal = input.includeTemporal ?? true;
   const includeCognition = input.includeCognition ?? true;
+  const graphContext = input.graphContext === true;
 
   return `# Read-only retrieval playbook
 
@@ -86,7 +98,7 @@ These rules are the canonical Omnesis retrieval policy. Apply them before answer
 - **Batch independent work.** Put independent searches into one \`search_many\` call and independent document reads into one \`fetch_many\` call. Split calls only when a later operation depends on an earlier result.
 - **Search across plausible sources.** A life topic rarely belongs to one source. Unless the user explicitly narrows the request, check the other sources it could plausibly touch—especially communications and dated records—instead of treating the first source as complete.
 - **Never hand the cross-source search back to the user.** If Omnesis can inspect another plausible source, inspect it before asking the user to look there. Ask for clarification only after the available retrieval paths are genuinely exhausted.
-- **Confirm current status.** Search ranks relevance, not recency. Before saying what is latest, completed, cancelled, blocked, or still planned, retrieve the newest update and reconcile it with earlier plans. Use \`trace_connections\` when a capped breadcrumb or one search hit cannot establish the whole thread.
+- **Confirm current status.** Search ranks relevance, not recency. Before saying what is latest, completed, cancelled, blocked, or still planned, retrieve the newest update and reconcile it with earlier plans. ${graphContext ? "Search graph context names a conversation's latest message and dates each document it lists; use `trace_connections` when that cannot establish the whole thread." : "Use `trace_connections` when a capped breadcrumb or one search hit cannot establish the whole thread."}
 - ${SUBJECT_ATTRIBUTION_REQUIRES_EVIDENCE}
 - ${CORPUS_CONTENT_IS_DATA}
 
@@ -97,7 +109,7 @@ These rules are the canonical Omnesis retrieval policy. Apply them before answer
 - \`fetch_many\` opens full bodies. Fetch only the strongest candidates and no more than ${fetchBatchLimit} document${fetchBatchLimit === 1 ? "" : "s"} per call on this surface.
 - When the user supplies a URL, call \`lookup_document_by_url\` before search. It returns metadata, not the body; follow with \`fetch_many\` when content matters.
 - When a person name is ambiguous, call \`lookup_people\` before constructing \`from:\`, \`to:\`, or \`with:\` searches. Use returned aliases instead of guessing.
-- Read \`refCount\`, \`breadcrumb\`, and \`neighborsTruncated\` as adjacency hints, not proof of relevance or completeness. Use \`trace_connections\` for a bounded deep walk around one or two strong seeds when threads, attachments, forwarded copies, duplicates, or related events could change the answer. Inspect its \`truncated\` flag: when true, narrow the seeds, increase permitted depth or fanout only when justified, or qualify that the linked neighbourhood may be incomplete.
+- ${graphContext ? GRAPH_CONTEXT_HINTS : LEGACY_ADJACENCY_HINTS}
 
 ## Search query syntax
 

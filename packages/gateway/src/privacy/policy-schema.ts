@@ -6,6 +6,7 @@ import {
   PRIVACY_POLICY_CREDENTIAL_APPROVAL_CLAUSE,
   PRIVACY_POLICY_CREDENTIAL_APPROVAL_SENTENCE,
   PRIVACY_POLICY_CREDENTIAL_DENY_SENTENCE,
+  PRIVACY_POLICY_CREDENTIAL_ROW_LABEL,
 } from "./policy-store.js";
 import type {
   PrivacyPolicyDecision,
@@ -153,11 +154,63 @@ export function applyPrivacyPolicySchemaEdit(
     ];
   }
 
+  if (edit.credentialApprovalEnabled === false) {
+    rows = rows.map(denyCredentialApproval);
+  } else if (
+    edit.credentialApprovalEnabled === true &&
+    !parsed.schema.credentialApprovalEnabled &&
+    edit.row?.normalize("NFC") !== PRIVACY_POLICY_CREDENTIAL_ROW_LABEL
+  ) {
+    rows = rows.map(reopenCredentialApproval);
+  }
+
   const spliced =
     policy.slice(0, parsed.table.start) + renderTable(rows) + policy.slice(parsed.table.end);
 
   if (edit.credentialApprovalEnabled === undefined) return spliced;
   return applyCredentialApproval(spliced, edit.credentialApprovalEnabled);
+}
+
+/**
+ * Keep the credentials row saying what the opt-in being off makes true. The
+ * deterministic gate then blocks credential values outright, so no approval
+ * can release one and nothing releases the exact value: every "Approval
+ * required" cell, and any decision in the Exact column, becomes "Deny". The
+ * Existence and Summary columns may still allow or reduce, since saying that a
+ * credential exists or describing it is not something the gate blocks. This
+ * only ever tightens the row, so it runs on every edit that turns the opt-in
+ * off, including one that finds it already off, and it overrides a decision
+ * the same edit asked for in that row.
+ *
+ * The row is found by the label the built-in templates give it; a policy that
+ * renamed it keeps the row as written.
+ */
+function denyCredentialApproval(row: PrivacyPolicyRow): PrivacyPolicyRow {
+  if (row.label !== PRIVACY_POLICY_CREDENTIAL_ROW_LABEL) return row;
+  const tighten = <T extends PrivacyPolicyDecision>(decision: T): T | "deny" =>
+    decision === "approve" ? "deny" : decision;
+  return {
+    label: row.label,
+    existence: tighten(row.existence),
+    summary: tighten(row.summary),
+    exact: "deny",
+  };
+}
+
+/**
+ * Undo {@link denyCredentialApproval} when the opt-in is turned on. A row
+ * denied in every column is the state turning the opt-in off produces, so it
+ * becomes "Approval required" throughout. Any other row was shaped by the
+ * operator and is left as written. This runs only when the opt-in actually
+ * changes from off to on and the same edit does not set the row itself, so a
+ * Deny the operator chose is never loosened.
+ */
+function reopenCredentialApproval(row: PrivacyPolicyRow): PrivacyPolicyRow {
+  if (row.label !== PRIVACY_POLICY_CREDENTIAL_ROW_LABEL) return row;
+  const deniedThroughout =
+    row.existence === "deny" && row.summary === "deny" && row.exact === "deny";
+  if (!deniedThroughout) return row;
+  return { label: row.label, existence: "approve", summary: "approve", exact: "approve" };
 }
 
 /**

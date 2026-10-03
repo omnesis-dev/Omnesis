@@ -110,7 +110,7 @@ beforeEach(() => {
       if (held) await held;
       return transcripts.length > 0 ? transcripts.shift()! : null;
     },
-    readiness: () => readiness,
+    readiness: async () => readiness,
     now: () => now,
   });
 });
@@ -309,7 +309,7 @@ describe("VoiceNoteService", () => {
       writeGate: directWriteGate(db),
       readDb: db,
       transcribe: async () => ({ text: "Pick up the dry cleaning" }),
-      readiness: () => ({ runnable: true }),
+      readiness: async () => ({ runnable: true }),
       now: () => now,
     });
     restarted.start();

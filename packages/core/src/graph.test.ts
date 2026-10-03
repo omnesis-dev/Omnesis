@@ -6,6 +6,8 @@ import { PERSON_ROLES } from "./document.js";
 import {
   NEAR_DUPLICATE_EDGE_TYPE,
   SAME_ENTITY_EDGE_TYPE,
+  GRAPH_CONTEXT_LINK_TYPES,
+  GRAPH_CONTEXT_OPTIONAL_LINK_TYPES,
   GRAPH_EDGE_TYPES,
   analyticsRowKey,
   parseAnalyticsRowKey,
@@ -155,5 +157,19 @@ describe("record reference identity", () => {
     expect(parseAnalyticsRowKey("doc:abc")).toBeNull();
     expect(parseAnalyticsRowKey("row:")).toBeNull();
     expect(parseAnalyticsRowKey("row:onlytable")).toBeNull();
+  });
+});
+
+describe("graph context link sets", () => {
+  it("place every document link in exactly one set, so a new type is never silently unreachable", () => {
+    const documentLinks = graphEdgeDescriptors()
+      .filter((d) => d.storage === "document_links" || d.type === NEAR_DUPLICATE_EDGE_TYPE)
+      .map((d) => d.type)
+      .sort();
+    // Agent citations join an Omnesis answer to what it cited; graph context
+    // never walks into Omnesis-generated documents, so neither set holds them.
+    const placed = [...GRAPH_CONTEXT_LINK_TYPES, ...GRAPH_CONTEXT_OPTIONAL_LINK_TYPES, "cited"];
+    expect(new Set(placed).size).toBe(placed.length);
+    expect([...placed].sort()).toEqual(documentLinks);
   });
 });

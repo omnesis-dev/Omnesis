@@ -272,6 +272,7 @@ export interface SearchConfig {
 export interface SearchV2Config {
   enabled: boolean;
   topN: number;
+  minRefCount: number;
   maxDepth: number;
   fanout: number;
   maxNodes: number;
@@ -283,6 +284,7 @@ export function resolveSearchV2Config(config?: SearchConfig): SearchV2Config {
   return {
     enabled: (config?.v2?.enabled ?? DEFAULT_SEARCH_V2_SETTINGS.enabled) === true,
     topN: config?.v2?.topN ?? DEFAULT_SEARCH_V2_SETTINGS.topN,
+    minRefCount: config?.v2?.minRefCount ?? DEFAULT_SEARCH_V2_SETTINGS.minRefCount,
     maxDepth: config?.v2?.maxDepth ?? DEFAULT_SEARCH_V2_SETTINGS.maxDepth,
     fanout: config?.v2?.fanout ?? DEFAULT_SEARCH_V2_SETTINGS.fanout,
     maxNodes: config?.v2?.maxNodes ?? DEFAULT_SEARCH_V2_SETTINGS.maxNodes,

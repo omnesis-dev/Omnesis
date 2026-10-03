@@ -31,7 +31,6 @@ import {
 import { STREAM_COLUMN } from "../analytics/internal.js";
 import { ScopedSqlDeniedError } from "../analytics/sandbox-tables.js";
 import { readDocConnections } from "../brain/doc-connections.js";
-import { isCognitionAuthoredDocument } from "../brain/cognition-authored.js";
 import { assemblePersonLookup, type PersonLookupGate } from "../domain/person-lookup.js";
 import {
   findDocumentIdBySourceExternalId,
@@ -44,11 +43,13 @@ import {
   type BoundDocumentBinding,
 } from "../analytics/bound-documents.js";
 import { buildDocumentGraphWithBoundRows, expandOneHop } from "../domain/DocumentGraphService.js";
+import { resolveContainingDocument } from "../domain/LinkGraphService.js";
 import { eventTrailFromGraph } from "../domain/buildTimeline.js";
 import { getUrlCanonicalizers } from "../url-canonicalizers.js";
 import { findConversationDocId } from "../sources/omnesis-chat/citation-writer.js";
 import { OMNESIS_CHAT_PROVIDER_ID, OMNESIS_CHAT_SOURCE_ID } from "../sources/omnesis-chat/ids.js";
 import { mergeFilters } from "../search/filters.js";
+import { graphContextPolicy } from "../search/graph-context-policy.js";
 import { parseQuery, type ParsedFilterToken } from "../search/query-parser.js";
 import type Database from "better-sqlite3";
 import type {
@@ -191,8 +192,9 @@ export function createGatewaySearchPort(
       // has gone away, even though an already-running search may finish its
       // bounded local computation in the background.
       signal?.throwIfAborted();
-      // Adjacency-aware retrieval: the agent sees the refCount
-      // connectedness hint and the auto-attached top-hit breadcrumb.
+      // Adjacency-aware retrieval: the agent sees the refCount connectedness
+      // hint, and either graph context on the leading hits or, with graph
+      // context off, the auto-attached top-hit breadcrumb.
       let results: DocRef[] = response.results
         .filter((item) => !permitted || permitted.has(item.sourceId))
         .map((item) => searchResultToDocRef(item, syncStatus, !authorization?.restricted));
@@ -205,8 +207,10 @@ export function createGatewaySearchPort(
       }
       // Breadcrumb is attached here in the AGENT search port only — never on
       // the public /search route — so portal / iOS search payloads stay lean.
-      if (db && !authorization?.restricted) {
-        attachBreadcrumbs(db, results, ownConversationDocId, pipeline.agentSearchV2Enabled);
+      // Graph context replaces it: the facts on the leading hits cover the
+      // same neighbours, and the prompt describes only one of the two.
+      if (db && !authorization?.restricted && !pipeline.agentSearchV2Enabled) {
+        attachBreadcrumbs(db, results, ownConversationDocId);
       }
       // Durable memory is generally available; loop and temporal connections
       // remain experimental. Restricted callers receive no memory overlays.
@@ -279,29 +283,9 @@ const BREADCRUMB_FANOUT = 3;
  * conversation reappears as a neighbour of its own citations, handing back the
  * id that was just withheld from the result list.
  */
-function attachBreadcrumbs(
-  db: Db,
-  results: DocRef[],
-  excludeDocId: string | null = null,
-  suppressDerived = false,
-): void {
-  const currentIdentity = suppressDerived
-    ? db.prepare<[string], { sourceId: string; documentType: string | null }>(
-        `SELECT source_id AS sourceId, json_extract(metadata, '$.documentType') AS documentType
-         FROM documents WHERE id = ?`,
-      )
-    : undefined;
+function attachBreadcrumbs(db: Db, results: DocRef[], excludeDocId: string | null = null): void {
   for (let i = 0; i < results.length && i < BREADCRUMB_TOP_N; i++) {
     const r = results[i]!;
-    if (r.provenance) continue;
-    if (currentIdentity) {
-      const current = currentIdentity.get(r.documentId);
-      if (
-        isCognitionAuthoredDocument(r.sourceId, r.documentType) ||
-        (current && isCognitionAuthoredDocument(current.sourceId, current.documentType))
-      )
-        continue;
-    }
     const { neighbors } = expandOneHop(db, r.documentId, { fanout: BREADCRUMB_FANOUT });
     const visible = excludeDocId
       ? neighbors.filter((n) => n.documentId !== excludeDocId)
@@ -422,7 +406,11 @@ function extraMimeType(metadata: Record<string, unknown> | undefined): string | 
 export function createGatewayDocumentPort(
   db: Db,
   syncStatus?: SyncStatusRegistry,
-  limits?: { maxStoredDocumentBytes?: number },
+  options?: {
+    maxStoredDocumentBytes?: number;
+    /** Neighbours follow the graph context policy search graph context uses. */
+    graphContext?: boolean;
+  },
   authorization?: CorpusAuthorization,
 ): DocumentPort {
   return {
@@ -432,7 +420,7 @@ export function createGatewayDocumentPort(
     ): Promise<DocumentPortResult | null> {
       const permitted = authorization ? permittedSourceIds(db, authorization) : null;
       const rows =
-        limits?.maxStoredDocumentBytes === undefined && !permitted
+        options?.maxStoredDocumentBytes === undefined && !permitted
           ? listDocumentsByIds(db, [documentId])
           : db.transaction((id: string, maxBytes: number | undefined) => {
               const size = db
@@ -454,7 +442,7 @@ export function createGatewayDocumentPort(
               // transaction/snapshot, so a collector update cannot enlarge
               // the body between authorization and materialization.
               return listDocumentsByIds(db, [id]);
-            })(documentId, limits?.maxStoredDocumentBytes);
+            })(documentId, options?.maxStoredDocumentBytes);
       const row = rows[0];
       if (!row) return null;
       const sourceType = row.sourceId.split(":", 1)[0] ?? row.sourceId;
@@ -516,7 +504,11 @@ export function createGatewayDocumentPort(
       // tells the agent the set is a recency-ordered sample, not the full
       // neighbourhood.
       if (opts?.includeNeighbors && !authorization?.restricted) {
-        const expansion = expandOneHop(db, row.id);
+        const expansion = expandOneHop(
+          db,
+          row.id,
+          options?.graphContext ? { policy: graphContextPolicy() } : {},
+        );
         if (expansion.neighbors.length > 0) {
           result.neighbors = expansion.neighbors.map((n) => oneHopNeighborToDocRef(n, syncStatus));
           result.neighborsTruncated = expansion.truncated;
@@ -1066,8 +1058,17 @@ export function createGatewayPersonPort(
 
 // ─── TrailPort (trace_connections) ──────────────────────────────────────────────
 
-export function createGatewayTrailPort(db: Db, analytics: AnalyticsDb): TrailPort {
+/** Graph context starts a walk from a part of a larger document this shallow by default. */
+const CHILD_SEED_DEFAULT_DEPTH = 2;
+
+export function createGatewayTrailPort(
+  db: Db,
+  analytics: AnalyticsDb,
+  options: { graphContext?: boolean } = {},
+): TrailPort {
+  const graphContext = options.graphContext === true;
   return {
+    graphContext,
     async build(seedIds: ReadonlyArray<string>, opts?: TrailPortOptions): Promise<EventTrail> {
       // Resolve each seed against the documents table — accept full ids
       // and unique prefixes (mirrors the /documents/:id/graph route).
@@ -1104,9 +1105,19 @@ export function createGatewayTrailPort(db: Db, analytics: AnalyticsDb): TrailPor
       // then derive each row's record-citation fields the SAME way `cite_record`
       // does (the shared `resolveRecordCitation` step) so the timeline can
       // surface a point-in-time record and dedup it against its document.
+      //
+      // Under graph context the walk follows the same links search graph
+      // context does, plus any the call names. A seed that is an attachment
+      // or another part of a larger document is explained by what it belongs
+      // to, one or two links away, so such seeds default to a shallow walk.
+      const childSeeds =
+        graphContext &&
+        opts?.depth === undefined &&
+        resolved.every((id) => resolveContainingDocument(db, id).kind === "contained");
       const graph = await buildDocumentGraphWithBoundRows(db, analytics, resolved, {
-        depth: opts?.depth ?? 4,
+        depth: opts?.depth ?? (childSeeds ? CHILD_SEED_DEFAULT_DEPTH : 4),
         fanoutCap: opts?.fanoutCap ?? 25,
+        ...(graphContext ? { policy: graphContextPolicy(opts?.includeLinkTypes) } : {}),
       });
       await attachRecordFields(db, analytics, graph);
       return eventTrailFromGraph(graph);

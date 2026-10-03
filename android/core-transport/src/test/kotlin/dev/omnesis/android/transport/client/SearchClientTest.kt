@@ -13,6 +13,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -55,15 +56,61 @@ class SearchClientTest {
     }
 
     @Test
-    fun graph_capability_is_rechecked_when_the_gateway_disables_it() = runTest {
+    fun graph_capability_is_asked_once_per_client_until_invalidated() = runTest {
         val sameClient = client()
-        for (enabled in listOf(true, false)) {
-            server.enqueue(MockResponse().setBody("""{"graphContextAvailable":$enabled}"""))
-            server.enqueue(MockResponse().setBody("""{"results":[]}"""))
-            sameClient.search("sample", graphContext = true)
-            server.takeRequest()
-            assertEquals(enabled, server.takeRequest().body.readUtf8().contains("includeGraphContext"))
+        server.enqueue(MockResponse().setBody("""{"graphContextAvailable":true}"""))
+        repeat(2) { server.enqueue(MockResponse().setBody("""{"results":[]}""")) }
+        sameClient.search("sample", graphContext = true)
+        sameClient.search("budget", graphContext = true)
+        assertEquals("/search/readiness", server.takeRequest().path)
+        repeat(2) {
+            val request = server.takeRequest()
+            assertEquals("/search", request.path)
+            assertTrue(request.body.readUtf8().contains("\"includeGraphContext\":true"))
         }
+
+        sameClient.invalidateSearchCapabilities()
+        server.enqueue(MockResponse().setBody("""{"graphContextAvailable":false}"""))
+        server.enqueue(MockResponse().setBody("""{"results":[]}"""))
+        sameClient.search("sample", graphContext = true)
+        assertEquals("/search/readiness", server.takeRequest().path)
+        assertFalse(server.takeRequest().body.readUtf8().contains("includeGraphContext"))
+    }
+
+    @Test
+    fun older_gateway_refusal_is_kept_but_a_server_error_is_asked_again() = runTest {
+        for (refusal in listOf(404, 403)) {
+            val older = client()
+            server.enqueue(MockResponse().setResponseCode(refusal))
+            repeat(2) { server.enqueue(MockResponse().setBody("""{"results":[]}""")) }
+            older.search("sample", graphContext = true)
+            older.search("sample", graphContext = true)
+            assertEquals(
+                listOf("/search/readiness", "/search", "/search"),
+                List(3) { server.takeRequest().path },
+            )
+        }
+
+        val failing = client()
+        server.enqueue(MockResponse().setResponseCode(503))
+        server.enqueue(MockResponse().setBody("""{"results":[]}"""))
+        server.enqueue(MockResponse().setBody("""{"graphContextAvailable":true}"""))
+        server.enqueue(MockResponse().setBody("""{"results":[]}"""))
+        failing.search("sample", graphContext = true)
+        failing.search("sample", graphContext = true)
+        assertEquals(
+            listOf("/search/readiness", "/search", "/search/readiness", "/search"),
+            List(4) { server.takeRequest().path },
+        )
+    }
+
+    @Test
+    fun invalidation_during_a_probe_discards_its_answer() {
+        val capability = SearchGraphCapability()
+        val generation = capability.read().generation
+        capability.invalidate()
+        capability.store(true, generation)
+        assertEquals(null, capability.read().value)
     }
 
     @Test

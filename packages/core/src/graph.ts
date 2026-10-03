@@ -264,6 +264,39 @@ export type SameEntityEdgeType = typeof SAME_ENTITY_EDGE_TYPE;
 export type GraphEdgeType = LinkType | NearDuplicateEdgeType | SameEntityEdgeType | PersonRole;
 
 /**
+ * The document links graph context follows, highest priority first: the
+ * structural relations a source declares or a body states. Search graph
+ * context, `fetch_many` neighbours and `trace_connections` share this set, so
+ * a follow-up walk never brings back what search deliberately left out —
+ * similarity, shared identifiers, browsing lineage and agent citations.
+ */
+export const GRAPH_CONTEXT_LINK_TYPES = [
+  "contains",
+  "calendar-event",
+  "replies-to",
+  "part-of-thread",
+  "references",
+  "url",
+] as const satisfies readonly LinkType[];
+
+/**
+ * Document links `trace_connections` follows only when a call names them.
+ * `cited` is in neither set: it joins an Omnesis answer to what it cited, and
+ * graph context never walks into Omnesis-generated documents.
+ */
+export const GRAPH_CONTEXT_OPTIONAL_LINK_TYPES = [
+  "succeeds",
+  "accompanies",
+  "same-resource",
+  "duplicate-content",
+  NEAR_DUPLICATE_EDGE_TYPE,
+  "bookmarks",
+  "visited",
+  "shares-phone",
+] as const satisfies readonly GraphEdgeType[];
+export type GraphContextOptionalLinkType = (typeof GRAPH_CONTEXT_OPTIONAL_LINK_TYPES)[number];
+
+/**
  * Where an edge's provenance comes from. Mirrors the four-kind taxonomy
  * the knowledge-graph-v2 series settles on so that, when a
  * per-row `provenance_kind` column eventually lands, the stored value

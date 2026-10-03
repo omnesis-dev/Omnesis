@@ -103,6 +103,7 @@ data class SearchResultItem(
     val score: Double,
     val refCount: Int? = null,
     val scoreBreakdown: SearchScoreBreakdown? = null,
+    @Serializable(with = LenientSearchProvenanceSerializer::class)
     val provenance: SearchProvenance? = null,
 )
 

@@ -39,6 +39,15 @@ let notesRuntime: OmnesisNotesRuntime | undefined;
 let languages: (string | undefined)[];
 /** While set, a transcription waits for it. */
 let held: Promise<void> | null = null;
+/** Stands in for importing the optional Whisper runtime, which a local assignment probes. */
+let loadWhisperRuntime: () => Promise<{ Whisper: unknown }>;
+const localWhisper: ResolvedAssignment = {
+  role: "transcriber",
+  kind: "local",
+  catalogId: "whisper-small",
+  modelPath: "/models/whisper-small.bin",
+  available: true,
+};
 
 function mintToken(scopes: readonly Scope[]): string {
   const dev = createDevice(db, { name: `test-${randomUUID()}`, kind: "ios" });
@@ -77,7 +86,13 @@ beforeEach(() => {
   optedIn = undefined;
   languages = [];
   held = null;
-  const transcribeService = new TranscribeService({ resolveAssignment: () => resolved });
+  loadWhisperRuntime = async () => {
+    throw new Error("Cannot find module 'smart-whisper'");
+  };
+  const transcribeService = new TranscribeService({
+    resolveAssignment: () => resolved,
+    deps: { loadModule: () => loadWhisperRuntime() },
+  });
   const transcribe = transcribeService.transcribe.bind(transcribeService);
   transcribeService.transcribe = async (audio, mime, opts) => {
     languages.push(opts?.language);
@@ -202,6 +217,24 @@ describe("POST /notes/voice", () => {
     });
   });
 
+  test("waits for the Whisper runtime probe instead of refusing on a not-yet", async () => {
+    resolved = localWhisper;
+    let finishProbe!: () => void;
+    const probed = new Promise<void>((resolve) => (finishProbe = resolve));
+    loadWhisperRuntime = async () => {
+      await probed;
+      throw new Error("Cannot find module 'smart-whisper'");
+    };
+    const response = post(voiceNoteForm({ id: randomUUID(), text: "call the plumber" }));
+    finishProbe();
+    const res = await response;
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({
+      code: "TRANSCRIBER_UNAVAILABLE",
+      error: expect.stringMatching(/smart-whisper/),
+    });
+  });
+
   test("requires the notes write scope", async () => {
     const reader = mintToken([SCOPE_READ]);
     expect((await post(voiceNoteForm({ id: randomUUID() }), reader)).status).toBe(403);
@@ -260,6 +293,33 @@ describe("GET /status dictation", () => {
     resolved = { role: "transcriber", kind: "replay" };
     process.env.OMNESIS_EXPERIMENTAL = "1";
     expect(await statusDictation()).toMatchObject({ visible: true, active: true });
+  });
+
+  test("a local model is not advertised until the Whisper runtime probe confirms it", async () => {
+    resolved = localWhisper;
+    let finishProbe!: (module: { Whisper: unknown }) => void;
+    loadWhisperRuntime = () => new Promise((resolve) => (finishProbe = resolve));
+    expect(await statusDictation()).toMatchObject({
+      modelAssigned: false,
+      active: false,
+      reason: "Checking for the local transcription runtime.",
+    });
+
+    finishProbe({ Whisper: class {} });
+    await vi.waitFor(async () =>
+      expect(await statusDictation()).toMatchObject({ modelAssigned: true, active: true }),
+    );
+  });
+
+  test("a local model without the Whisper runtime is never advertised", async () => {
+    resolved = localWhisper;
+    expect((await statusDictation()).active).toBe(false);
+    await vi.waitFor(async () =>
+      expect(await statusDictation()).toMatchObject({
+        active: false,
+        reason: expect.stringMatching(/smart-whisper/),
+      }),
+    );
   });
 
   test("a gateway without the gate wired advertises nothing to show", async () => {

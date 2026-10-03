@@ -12,7 +12,27 @@ interface Node {
   children: Map<string, Node>;
 }
 
-/** Build prose only from exact directed paths; labels are local to one search hit. */
+/** "A", "A and B", "A, B and C". */
+function list(items: readonly string[]): string {
+  return items.length < 2
+    ? (items[0] ?? "")
+    : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+}
+
+/**
+ * Labels shared by every hit of one search: `refs` maps a document id to its
+ * label, and `ranks` gives each hit's 1-based position in the results.
+ */
+export interface SharedReferences {
+  refs: Map<string, string>;
+  ranks: ReadonlyMap<string, number>;
+}
+
+/**
+ * Build prose only from exact directed paths. Each hit lists every document
+ * its facts name; labels are local to the hit unless `shared` carries them
+ * across one search's results.
+ */
 export function provenanceModelContext(
   rootId: string,
   copies: SearchProvenance["copies"],
@@ -23,16 +43,21 @@ export function provenanceModelContext(
   reasons: Set<Reason>,
   maxChars: number,
   derived = false,
+  shared?: SharedReferences,
 ): Context {
   const context: Context = { facts: [], documents: [], limits: [] };
-  const refs = new Map<string, string>();
+  const refs = shared?.refs ?? new Map<string, string>();
+  const listed = new Set<string>();
   const reference = (id: string): string => {
     let ref = refs.get(id);
     if (!ref) {
       ref = `D${refs.size + 1}`;
       refs.set(id, ref);
+    }
+    if (!listed.has(id)) {
       const document = documents.get(id);
       if (!document) throw new Error("Graph reference has no snapshot document");
+      listed.add(id);
       context.documents.push({ ref, ...document });
     }
     return `[${ref}]`;
@@ -89,8 +114,15 @@ export function provenanceModelContext(
       const children = [...node.children.values()];
       if (!children.length) return;
       if (children.every((child) => !child.children.size)) {
+        // Leaves sharing a relation read as one clause: "includes A, B and C".
+        const byRelation = new Map<string, string[]>();
+        for (const child of children)
+          byRelation.set(child.relation ?? "", [
+            ...(byRelation.get(child.relation ?? "") ?? []),
+            reference(child.id),
+          ]);
         fact(
-          `${prefix} ${children.map((child) => `${child.relation} ${reference(child.id)}`).join(" and ")}.`,
+          `${prefix} ${[...byRelation].map(([relation, refs]) => `${relation} ${list(refs)}`).join(" and ")}.`,
         );
         return;
       }
@@ -100,6 +132,16 @@ export function provenanceModelContext(
         else fact(`${clause}.`);
       }
     };
+    // Every path document is labelled by now. Which of them are other results
+    // goes ahead of the path sentences, so the budget drops a path first.
+    if (shared) {
+      const own = shared.ranks.get(rootId);
+      const alsoHits = context.documents.flatMap((document) => {
+        const rank = shared.ranks.get(document.documentId);
+        return rank === undefined || rank === own ? [] : [`[${document.ref}] (result ${rank})`];
+      });
+      if (alsoHits.length) fact(`Also in these search results: ${alsoHits.join(", ")}.`);
+    }
     for (const root of roots.values()) sentences(root, reference(root.id));
     for (const document of context.documents) {
       const labels = roles.get(document.documentId);

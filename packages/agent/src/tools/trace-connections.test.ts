@@ -112,4 +112,56 @@ describe("trace_connections tool", () => {
     expect(r.kind).toBe("error");
     if (r.kind === "error") expect(r.code).toBe("trail_walk_failed");
   });
+
+  describe("under graph context", () => {
+    it("describes the structural walk and leaves breadcrumbs out", () => {
+      const legacy = createTraceConnectionsTool({ port: { build: async () => makeTrail([]) } });
+      const graph = createTraceConnectionsTool({
+        port: { graphContext: true, build: async () => makeTrail([]) },
+      });
+      expect(legacy.description).toContain("breadcrumb");
+      expect(graph.description).not.toContain("breadcrumb");
+      expect(graph.description).toContain("includeLinkTypes");
+    });
+
+    it("passes named link types through and refuses unknown ones", async () => {
+      let seen: unknown;
+      const tool = createTraceConnectionsTool({
+        port: {
+          graphContext: true,
+          async build(seedIds, opts) {
+            seen = opts?.includeLinkTypes;
+            return makeTrail([...seedIds]);
+          },
+        },
+      });
+      await tool.invoke(
+        { seedIds: ["d1"], includeLinkTypes: ["shares-phone", "near-duplicate"] },
+        ctx,
+      );
+      expect(seen).toEqual(["shares-phone", "near-duplicate"]);
+      for (const type of ["contains", "cited"]) {
+        const refused = await tool.invoke({ seedIds: ["d1"], includeLinkTypes: [type] }, ctx);
+        expect(refused.kind).toBe("error");
+      }
+    });
+
+    it("explains a walk that stopped early, only under graph context", async () => {
+      const truncated = async (seedIds: ReadonlyArray<string>) => ({
+        ...makeTrail([...seedIds]),
+        truncated: true,
+      });
+      const graph = createTraceConnectionsTool({ port: { graphContext: true, build: truncated } });
+      const legacy = createTraceConnectionsTool({ port: { build: truncated } });
+      const withNote = await graph.invoke({ seedIds: ["d1"] }, ctx);
+      const without = await legacy.invoke({ seedIds: ["d1"] }, ctx);
+      expect(withNote.kind === "event_trail.built" && withNote.note).toMatch(/stopped early/);
+      expect(without.kind === "event_trail.built" && without.note).toBeUndefined();
+      const whole = createTraceConnectionsTool({
+        port: { graphContext: true, build: async (seedIds) => makeTrail([...seedIds]) },
+      });
+      const complete = await whole.invoke({ seedIds: ["d1"] }, ctx);
+      expect(complete.kind === "event_trail.built" && complete.note).toBeUndefined();
+    });
+  });
 });

@@ -14,6 +14,7 @@ import {
   PRIVACY_POLICY_CREDENTIAL_APPROVAL_CLAUSE,
   PRIVACY_POLICY_CREDENTIAL_APPROVAL_SENTENCE,
   PRIVACY_POLICY_CREDENTIAL_DENY_SENTENCE,
+  PRIVACY_POLICY_CREDENTIAL_ROW_LABEL,
   PRIVACY_POLICY_TEMPLATES,
 } from "./policy-store.js";
 
@@ -177,6 +178,147 @@ describe("privacy policy schema", () => {
     expect(applyPrivacyPolicySchemaEdit(disabled, { credentialApprovalEnabled: true })).toBe(
       unfiltered,
     );
+  });
+
+  describe("keeps the credentials row in step with the opt-in", () => {
+    const credentialRow = (policy: string) =>
+      parsePrivacyPolicySchema(policy)!.rows.find(
+        (row) => row.label === PRIVACY_POLICY_CREDENTIAL_ROW_LABEL,
+      );
+    const toggle = (policy: string, credentialApprovalEnabled: boolean) =>
+      applyPrivacyPolicySchemaEdit(policy, { credentialApprovalEnabled })!;
+
+    it.each(PRIVACY_POLICY_TEMPLATES.map((template) => [template.id, template.policy] as const))(
+      "%s: denies with the opt-in off, asks with it on, and round-trips",
+      (_id, template) => {
+        expect(credentialRow(template)).toMatchObject({
+          existence: "approve",
+          summary: "approve",
+          exact: "approve",
+        });
+
+        const disabled = toggle(template, false);
+        expect(parsePrivacyPolicySchema(disabled)!.credentialApprovalEnabled).toBe(false);
+        expect(credentialRow(disabled)).toMatchObject({
+          existence: "deny",
+          summary: "deny",
+          exact: "deny",
+        });
+        // Nothing left in the policy says a credential can be approved.
+        expect(disabled).not.toContain(PRIVACY_POLICY_CREDENTIAL_APPROVAL_SENTENCE);
+
+        const enabled = toggle(disabled, true);
+        expect(credentialRow(enabled)).toMatchObject({
+          existence: "approve",
+          summary: "approve",
+          exact: "approve",
+        });
+        expect(enabled).toBe(template);
+
+        // Repeating either edit changes nothing further.
+        expect(toggle(disabled, false)).toBe(disabled);
+        expect(toggle(enabled, true)).toBe(enabled);
+        expect(toggle(toggle(enabled, false), true)).toBe(template);
+      },
+    );
+
+    it("tightens an approval cell on an already disabled policy", () => {
+      const disabled = toggle(GUARDED, false);
+      const contradictory = disabled.replace(
+        `| ${PRIVACY_POLICY_CREDENTIAL_ROW_LABEL} | Deny | Deny | Deny |`,
+        `| ${PRIVACY_POLICY_CREDENTIAL_ROW_LABEL} | Approval required | Approval required | Approval required |`,
+      );
+      expect(contradictory).not.toBe(disabled);
+      expect(toggle(contradictory, false)).toBe(disabled);
+    });
+
+    it("leaves a row the operator shaped otherwise as written where the gate allows it", () => {
+      const customised = applyPrivacyPolicySchemaEdit(GUARDED, {
+        row: PRIVACY_POLICY_CREDENTIAL_ROW_LABEL,
+        existence: "allow",
+        summary: "reduce",
+      })!;
+
+      const disabled = toggle(customised, false);
+      // Only the cell that promised approval changes; what may be said about a
+      // credential is not something the gate blocks.
+      expect(credentialRow(disabled)).toMatchObject({
+        existence: "allow",
+        summary: "reduce",
+        exact: "deny",
+      });
+
+      // A deny the operator kept beside other decisions is never loosened.
+      const enabled = toggle(disabled, true);
+      expect(credentialRow(enabled)).toMatchObject({
+        existence: "allow",
+        summary: "reduce",
+        exact: "deny",
+      });
+      expect(parsePrivacyPolicySchema(enabled)!.credentialApprovalEnabled).toBe(true);
+    });
+
+    it("denies the exact credential value however the row allowed it", () => {
+      const allowed = applyPrivacyPolicySchemaEdit(GUARDED, {
+        row: PRIVACY_POLICY_CREDENTIAL_ROW_LABEL,
+        exact: "allow",
+      })!;
+      expect(credentialRow(toggle(allowed, false))).toMatchObject({ exact: "deny" });
+    });
+
+    it("never loosens a Deny the operator chose while the opt-in is on", () => {
+      const denied = applyPrivacyPolicySchemaEdit(GUARDED, {
+        row: PRIVACY_POLICY_CREDENTIAL_ROW_LABEL,
+        existence: "deny",
+        summary: "deny",
+        exact: "deny",
+      })!;
+      // Re-sending an opt-in that is already on changes nothing.
+      expect(toggle(denied, true)).toBe(denied);
+    });
+
+    it("keeps the row a request sets while turning the opt-in on", () => {
+      const disabled = toggle(GUARDED, false);
+      const edited = applyPrivacyPolicySchemaEdit(disabled, {
+        row: PRIVACY_POLICY_CREDENTIAL_ROW_LABEL,
+        existence: "deny",
+        summary: "deny",
+        exact: "deny",
+        credentialApprovalEnabled: true,
+      })!;
+      expect(parsePrivacyPolicySchema(edited)!.credentialApprovalEnabled).toBe(true);
+      expect(credentialRow(edited)).toMatchObject({
+        existence: "deny",
+        summary: "deny",
+        exact: "deny",
+      });
+    });
+
+    it("denies a row a request sets to approval while turning the opt-in off", () => {
+      const edited = applyPrivacyPolicySchemaEdit(GUARDED, {
+        row: PRIVACY_POLICY_CREDENTIAL_ROW_LABEL,
+        existence: "approve",
+        summary: "approve",
+        exact: "approve",
+        credentialApprovalEnabled: false,
+      })!;
+      expect(credentialRow(edited)).toMatchObject({
+        existence: "deny",
+        summary: "deny",
+        exact: "deny",
+      });
+    });
+
+    it("leaves a renamed credentials row alone", () => {
+      const renamed = GUARDED.replace(PRIVACY_POLICY_CREDENTIAL_ROW_LABEL, "Secrets");
+      const disabled = toggle(renamed, false);
+      expect(parsePrivacyPolicySchema(disabled)!.rows.at(-1)).toEqual({
+        label: "Secrets",
+        existence: "approve",
+        summary: "approve",
+        exact: "approve",
+      });
+    });
   });
 
   it("reports the credential opt-in the deterministic gate actually matches", () => {

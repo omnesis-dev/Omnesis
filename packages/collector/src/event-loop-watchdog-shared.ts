@@ -6,8 +6,6 @@
  * import so the worker thread loads nothing but Node built-ins and this file.
  */
 
-import type { RelaunchRequest } from "./relaunch-request.js";
-
 /** What the watchdog worker is started with. */
 export interface WatchdogWorkerData {
   /** One slot the main thread increments while its event loop turns. */
@@ -17,11 +15,6 @@ export interface WatchdogWorkerData {
   checkIntervalMs: number;
   /** How long capturing the stack may take before the process is killed without it. */
   captureTimeoutMs: number;
-}
-
-/** What the main thread sends the worker once it knows how the collector is restarted. */
-export interface WatchdogMessage {
-  relaunch: RelaunchRequest;
 }
 
 /** The message the worker posts once it is watching. */

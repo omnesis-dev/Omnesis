@@ -120,6 +120,7 @@ final class AccessConnectionRulesTests: XCTestCase {
         XCTAssertEqual(AccessConnectionCopy.connectionCount(0), "No connections")
         XCTAssertEqual(AccessConnectionCopy.connectionCount(1), "1 connection")
         XCTAssertEqual(AccessConnectionCopy.connectionCount(3), "3 connections")
+        XCTAssertEqual(AccessConnectionCopy.connectionLevel("Agent tools"), "Access level: Agent tools")
         XCTAssertEqual(
             AccessConnectionCopy.sharedLevel(otherConnections: 3),
             "Also used by 3 other connections. Changing this access level later changes all of them."

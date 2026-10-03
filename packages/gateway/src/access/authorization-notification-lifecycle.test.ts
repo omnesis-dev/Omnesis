@@ -168,6 +168,22 @@ describe("access authorization notification lifecycle", () => {
     },
   );
 
+  test("the newest prompt stands for an older waiting request it superseded", () => {
+    const older = request();
+    const newer = request();
+    enqueueAccessAuthorizationNotification(db, older.id, [phoneId], NOW + 1);
+    enqueueAccessAuthorizationNotification(db, newer.id, [phoneId], NOW + 1);
+    expect(pendingNotificationCount(db, phoneId, NOW + 1)).toBe(1);
+    decide(newer.id, "deny");
+
+    // The older request's own prompt was superseded; the surviving one is the
+    // only alert left for it, so it stays deliverable and counted.
+    expect(pendingNotificationCount(db, phoneId, NOW + 3)).toBe(1);
+    expect(claimNotification(db, { deviceId: phoneId, now: NOW + 3 })).toMatchObject({
+      kind: "access-authorization",
+    });
+  });
+
   test("keeps the generic prompt actionable while another request is waiting", () => {
     const first = request();
     const second = request();

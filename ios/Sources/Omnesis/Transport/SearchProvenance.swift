@@ -3,7 +3,10 @@
 
 import Foundation
 
-/// Optional bounded evidence. Unknown wire fields are ignored by Decodable.
+/// Optional bounded evidence. Unknown wire fields are ignored, and missing
+/// lists read as empty, so a gateway that trims a field still renders the
+/// rest. `SearchResultItem` drops a provenance block that cannot be read at
+/// all, which keeps one malformed hit from failing the whole search.
 /// Extracted-text matches do not establish identical file bytes.
 public struct SearchProvenance: Decodable, Hashable, Sendable {
     public let copies: [Document]
@@ -11,23 +14,95 @@ public struct SearchProvenance: Decodable, Hashable, Sendable {
     public let stopReasons: [String]
     public let modelContext: ModelContext?
 
+    public init(copies: [Document], paths: [Path], stopReasons: [String], modelContext: ModelContext?) {
+        self.copies = copies
+        self.paths = paths
+        self.stopReasons = stopReasons
+        self.modelContext = modelContext
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case copies, paths, stopReasons, modelContext
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        copies = try container.decodeIfPresent([Document].self, forKey: .copies) ?? []
+        paths = try container.decodeIfPresent([Path].self, forKey: .paths) ?? []
+        stopReasons = try container.decodeIfPresent([String].self, forKey: .stopReasons) ?? []
+        modelContext = try container.decodeIfPresent(ModelContext.self, forKey: .modelContext)
+    }
+
     public struct Document: Decodable, Hashable, Sendable {
         public let documentId: String
+        /// Empty when the gateway omits it; the breadcrumb then shows the
+        /// generic document icon.
         public let sourceId: String
         public let title: String?
         public let deviceName: String?
         public let path: String?
+
+        public init(documentId: String, sourceId: String, title: String?, deviceName: String?, path: String?) {
+            self.documentId = documentId
+            self.sourceId = sourceId
+            self.title = title
+            self.deviceName = deviceName
+            self.path = path
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: SearchProvenanceDocumentKeys.self)
+            documentId = try container.decode(String.self, forKey: .documentId)
+            sourceId = try container.decodeIfPresent(String.self, forKey: .sourceId) ?? ""
+            title = try container.decodeIfPresent(String.self, forKey: .title)
+            deviceName = try container.decodeIfPresent(String.self, forKey: .deviceName)
+            path = try container.decodeIfPresent(String.self, forKey: .path)
+        }
     }
 
     public struct Path: Decodable, Hashable, Sendable {
         public let documentIds: [String]
         public let edges: [String]
         public let relations: [String]?
+
+        public init(documentIds: [String], edges: [String], relations: [String]?) {
+            self.documentIds = documentIds
+            self.edges = edges
+            self.relations = relations
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: SearchProvenancePathKeys.self)
+            documentIds = try container.decodeIfPresent([String].self, forKey: .documentIds) ?? []
+            edges = try container.decodeIfPresent([String].self, forKey: .edges) ?? []
+            relations = try container.decodeIfPresent([String].self, forKey: .relations)
+        }
     }
 
     public struct ModelContext: Decodable, Hashable, Sendable {
         public let documents: [Document]
+
+        public init(documents: [Document]) {
+            self.documents = documents
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: SearchProvenanceModelContextKeys.self)
+            documents = try container.decodeIfPresent([Document].self, forKey: .documents) ?? []
+        }
     }
+}
+
+private enum SearchProvenanceDocumentKeys: String, CodingKey {
+    case documentId, sourceId, title, deviceName, path
+}
+
+private enum SearchProvenancePathKeys: String, CodingKey {
+    case documentIds, edges, relations
+}
+
+private enum SearchProvenanceModelContextKeys: String, CodingKey {
+    case documents
 }
 
 /// Text fragments keep navigation identities out of visible copy and make
@@ -39,16 +114,35 @@ struct SearchBreadcrumbFact: Equatable {
     }
 
     let fragments: [Fragment]
+    /// Outline level: a branch's facts sit one level under the fact ending with its colon.
+    var depth = 0
 
     var plainText: String {
         fragments
             .map {
                 switch $0 {
                 case .text(let text): text
-                case .document(let document): document.title.flatMap { $0.isEmpty ? nil : $0 } ?? "Untitled document"
+                case .document(let document): document.displayTitle
                 }
             }
             .joined()
+    }
+
+    /// The documents this fact links to, once each, in reading order. The
+    /// breadcrumb offers each as its own VoiceOver action.
+    var links: [SearchProvenance.Document] {
+        var seen = Set<String>()
+        return fragments.compactMap {
+            guard case .document(let document) = $0, seen.insert(document.documentId).inserted else { return nil }
+            return document
+        }
+    }
+}
+
+extension SearchProvenance.Document {
+    /// The title a breadcrumb shows and reads out for this document.
+    var displayTitle: String {
+        title.flatMap { $0.isEmpty ? nil : $0 } ?? "Untitled document"
     }
 }
 
@@ -62,6 +156,8 @@ enum SearchBreadcrumbFormatter {
     private final class Node {
         let step: Step
         var children: [Node] = []
+        /// Same-named leaves folded into this one.
+        var more = 0
         init(_ step: Step) {
             self.step = step
         }
@@ -102,42 +198,86 @@ enum SearchBreadcrumbFormatter {
         }
         if let copyFact = copiesFact(provenance, documentId: documentId) { facts.append(copyFact) }
         let roots = pathTrees(provenance.paths)
-        func collect(_ node: Node, root: String, steps: [Step]) {
-            guard !node.children.isEmpty else { return }
-            if node.children.allSatisfy(\.children.isEmpty) {
-                appendSentence(root: root, steps: steps, clauses: node.children.map(\.step))
-            } else {
-                for child in node.children {
-                    if child.children.isEmpty {
-                        appendSentence(root: root, steps: steps, clauses: [child.step])
-                    } else {
-                        collect(child, root: root, steps: steps + [child.step])
-                    }
-                }
-            }
-        }
-        func appendSentence(root: String, steps: [Step], clauses: [Step]) {
-            var fragments = [reference(root)]
-            for (index, step) in steps.enumerated() {
-                fragments.append(.text("\(index == 0 ? " " : ", which ")\(step.relation) "))
-                fragments.append(reference(step.documentId))
-            }
-            fragments.append(.text(steps.isEmpty ? " " : ", which "))
-            for (index, clause) in clauses.enumerated() {
-                if index > 0 { fragments.append(.text(" and ")) }
-                fragments.append(.text("\(clause.relation) "))
-                fragments.append(reference(clause.documentId))
-            }
-            fragments.append(.text("."))
-            facts.append(.init(fragments: fragments))
-        }
-        for root in roots {
-            collect(root, root: root.step.documentId, steps: [])
-        }
+        // The visible result is "This document", never a same-named copy to fold away.
+        foldRepeatedLeaves(roots) { $0 == documentId ? nil : documents[$0]?.title }
+        facts += outline(roots, reference: reference)
         if provenance.stopReasons.contains("hub") {
             facts.append(.init(fragments: [.text("This trail stops at highly connected documents.")]))
         } else if provenance.stopReasons.contains("depth") || provenance.stopReasons.contains("nodes") {
             facts.append(.init(fragments: [.text("This trail may be incomplete.")]))
+        }
+        return facts
+    }
+
+    /// Facts for each root's tree as an outline. A route is said once: a single
+    /// branch continues inline, siblings that share a relation read as one
+    /// clause, and where a document branches its fact ends with a colon and each
+    /// branch follows one level deeper.
+    private static func outline(
+        _ roots: [Node],
+        reference: (String) -> SearchBreadcrumbFact.Fragment
+    )
+        -> [SearchBreadcrumbFact] {
+        var facts: [SearchBreadcrumbFact] = []
+        func ref(_ node: Node) -> [SearchBreadcrumbFact.Fragment] {
+            [reference(node.step.documentId)]
+                + (node.more > 0 ? [.text(" (and \(node.more) more with this name)")] : [])
+        }
+        func list(_ nodes: [Node]) -> [SearchBreadcrumbFact.Fragment] {
+            nodes.enumerated().flatMap { index, node -> [SearchBreadcrumbFact.Fragment] in
+                (index == 0 ? [] : [.text(index == nodes.count - 1 ? " and " : ", ")]) + ref(node)
+            }
+        }
+        func groups(_ node: Node) -> [(relation: String, targets: [Node])] {
+            var result: [(relation: String, targets: [Node])] = []
+            for child in node.children {
+                if let index = result.firstIndex(where: { $0.relation == child.step.relation }) {
+                    result[index].targets.append(child)
+                } else {
+                    result.append((child.step.relation, [child]))
+                }
+            }
+            return result
+        }
+        /// Appends `node`'s facts, continuing `prefix` at outline level `depth`.
+        func render(_ node: Node, prefix: [SearchBreadcrumbFact.Fragment], depth: Int) {
+            let grouped = groups(node)
+            guard !grouped.isEmpty else { return }
+            if grouped.allSatisfy({ $0.targets.allSatisfy(\.children.isEmpty) }) {
+                var fragments = prefix
+                for (index, group) in grouped.enumerated() {
+                    fragments.append(.text("\(index == 0 ? "" : " and") \(group.relation) "))
+                    fragments += list(group.targets)
+                }
+                facts.append(.init(fragments: fragments + [.text(".")], depth: depth))
+                return
+            }
+            if grouped.count == 1, grouped[0].targets.count == 1 {
+                let target = grouped[0].targets[0]
+                render(
+                    target,
+                    prefix: prefix + [.text(" \(grouped[0].relation) ")] + ref(target) + [.text(", which")],
+                    depth: depth
+                )
+                return
+            }
+            facts.append(.init(fragments: prefix + [.text(":")], depth: depth))
+            var leaves: [SearchBreadcrumbFact.Fragment] = []
+            for group in grouped {
+                let leafTargets = group.targets.filter(\.children.isEmpty)
+                guard !leafTargets.isEmpty else { continue }
+                leaves.append(.text("\(leaves.isEmpty ? "" : " and ")\(group.relation) "))
+                leaves += list(leafTargets)
+            }
+            if !leaves.isEmpty { facts.append(.init(fragments: leaves + [.text(".")], depth: depth + 1)) }
+            for group in grouped {
+                for branch in group.targets where !branch.children.isEmpty {
+                    render(branch, prefix: [.text("\(group.relation) ")] + ref(branch) + [.text(", which")], depth: depth + 1)
+                }
+            }
+        }
+        for root in roots {
+            render(root, prefix: ref(root), depth: 0)
         }
         return facts
     }
@@ -162,6 +302,36 @@ enum SearchBreadcrumbFormatter {
             return .init(fragments: fragments)
         }
         return nil
+    }
+
+    /// Leaves sharing a relation and a title under different documents of one
+    /// root's tree (an inline image repeated in every message of a thread) fold
+    /// into the first one, which counts the rest. Siblings under one document
+    /// stay listed, and a document `title` does not name never folds.
+    private static func foldRepeatedLeaves(_ roots: [Node], title: (String) -> String?) {
+        var first: [String: (leaf: Node, parent: Node)] = [:]
+        func visit(_ node: Node) {
+            node.children = node.children.filter { child in
+                if !child.children.isEmpty {
+                    visit(child)
+                    return true
+                }
+                let name = (title(child.step.documentId) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                guard !name.isEmpty else { return true }
+                let key = "\(child.step.relation)\u{0}\(name)"
+                guard let kept = first[key] else {
+                    first[key] = (child, node)
+                    return true
+                }
+                guard kept.parent !== node, kept.leaf.step.documentId != child.step.documentId else { return true }
+                kept.leaf.more += 1
+                return false
+            }
+        }
+        for root in roots {
+            first = [:]
+            visit(root)
+        }
     }
 
     private static func pathTrees(_ paths: [SearchProvenance.Path]) -> [Node] {

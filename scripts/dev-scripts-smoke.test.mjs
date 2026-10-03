@@ -2834,7 +2834,7 @@ describe("agent-doc executable-claim drift guard (C6)", () => {
 
 describe("scripts/synth-gateway.sh source seeding", () => {
   // A fake curl answering the source add with the given status codes in turn.
-  function seedWith(addStatuses) {
+  function seedWith(addStatuses, { collectorLog } = {}) {
     const root = mkdtempSync(join(tmpdir(), "omnesis-synth-seed-test-"));
     try {
       const bin = join(root, "bin");
@@ -2842,6 +2842,10 @@ describe("scripts/synth-gateway.sh source seeding", () => {
       mkdirSync(bin);
       mkdirSync(config);
       writeFileSync(join(config, "token"), "fixture-token");
+      if (collectorLog !== undefined) {
+        mkdirSync(join(config, "logs"));
+        writeFileSync(join(config, "logs", "collector.log"), collectorLog);
+      }
       const counter = join(root, "adds");
       const curl = join(bin, "curl");
       writeFileSync(
@@ -2883,12 +2887,101 @@ esac
     expect(adds).toBe(1);
   });
 
+  it("names a provider the collector could not load when a source is refused", () => {
+    const { result } = seedWith([400], {
+      collectorLog:
+        "ERROR [collector:registry] Failed to load provider @omnesis/provider-fixture-synth: Cannot find package\n",
+    });
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("Failed to load provider @omnesis/provider-fixture-synth");
+    expect(result.stderr).toContain("scripts/setup-worktree.sh");
+  });
+
+  it("adds no provider hint when every provider loaded", () => {
+    const { result } = seedWith([400], { collectorLog: "INFO Loaded 22/22 providers\n" });
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).not.toContain("could not load every provider");
+  });
+
   it("retries a gateway that is still finishing its boot", () => {
     const { result, adds } = seedWith([503, 503, 200]);
     expect(result.stderr).not.toContain("Failed to add synth source");
     expect(result.stdout).toContain("Refreshing search snapshot");
     expect(adds).toBeGreaterThanOrEqual(3);
   }, 60_000);
+});
+
+describe("scripts/setup-worktree.sh workspace links", () => {
+  // A primary checkout whose node_modules predates a workspace package (the
+  // primary has not reinstalled since it was added) must still give the
+  // worktree a link to it, resolving into the worktree.
+  it("links every @omnesis workspace of the worktree, not only the primary's", () => {
+    const root = mkdtempSync(join(tmpdir(), "omnesis-setup-worktree-test-"));
+    try {
+      const primary = join(root, "primary");
+      const worktree = join(root, "worktree");
+      const git = (cwd, ...args) =>
+        execFileSync("git", args, {
+          cwd,
+          stdio: "pipe",
+          env: {
+            ...process.env,
+            GIT_AUTHOR_NAME: "Fixture",
+            GIT_AUTHOR_EMAIL: "fixture@example.com",
+            GIT_COMMITTER_NAME: "Fixture",
+            GIT_COMMITTER_EMAIL: "fixture@example.com",
+          },
+        });
+      mkdirSync(join(primary, "scripts"), { recursive: true });
+      writeFileSync(
+        join(primary, "scripts", "setup-worktree.sh"),
+        readFileSync(join(repoRoot, "scripts", "setup-worktree.sh")),
+      );
+      writeFileSync(
+        join(primary, "package.json"),
+        JSON.stringify({ private: true, workspaces: ["packages/core", "packages/providers/*"] }),
+      );
+      for (const [dir, name] of [
+        ["packages/core", "@omnesis/core"],
+        ["packages/providers/old", "@omnesis/provider-old"],
+        ["packages/providers/new", "@omnesis/provider-new"],
+        ["packages/cli", "omnesis"],
+      ]) {
+        mkdirSync(join(primary, dir), { recursive: true });
+        writeFileSync(join(primary, dir, "package.json"), JSON.stringify({ name }));
+      }
+      writeFileSync(join(primary, ".gitignore"), "node_modules\n");
+      git(primary, "init", "-q", "-b", "main");
+      git(primary, "add", ".");
+      git(primary, "commit", "-q", "-m", "fixture");
+      // The primary's install knows core and the old provider, not the new one.
+      mkdirSync(join(primary, "node_modules", "@omnesis"), { recursive: true });
+      mkdirSync(join(primary, "node_modules", "left-pad"));
+      symlinkSync("../../packages/core", join(primary, "node_modules", "@omnesis", "core"));
+      symlinkSync(
+        "../../packages/providers/old",
+        join(primary, "node_modules", "@omnesis", "provider-old"),
+      );
+      git(primary, "worktree", "add", "-q", worktree);
+
+      const result = spawnSync("bash", [join(worktree, "scripts", "setup-worktree.sh")], {
+        cwd: worktree,
+        encoding: "utf8",
+      });
+      expect(result.status, result.stderr).toBe(0);
+
+      const resolved = (name) => realpathSync(join(worktree, "node_modules", "@omnesis", name));
+      const real = realpathSync(worktree);
+      expect(resolved("core")).toBe(join(real, "packages/core"));
+      expect(resolved("provider-old")).toBe(join(real, "packages/providers/old"));
+      expect(resolved("provider-new")).toBe(join(real, "packages/providers/new"));
+      expect(realpathSync(join(worktree, "node_modules", "left-pad"))).toBe(
+        realpathSync(join(primary, "node_modules", "left-pad")),
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("scripts/shot-portal.sh on-demand portal screenshot loop (C9)", () => {
