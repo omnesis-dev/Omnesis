@@ -8,7 +8,6 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
-const PROBE_TIMEOUT_MS = 30_000;
 
 function execute(command, args, timeout) {
   const options = {
@@ -93,9 +92,7 @@ export function waitForIOSDestination({
   if (requested.OS === "latest") {
     // Resolve from installed runtimes, not the incomplete Xcode destination
     // list: an older phone becoming visible must not satisfy OS=latest.
-    const inventory = JSON.parse(
-      run("xcrun", ["simctl", "list", "runtimes", "--json"], Math.min(PROBE_TIMEOUT_MS, timeoutMs)),
-    );
+    const inventory = JSON.parse(run("xcrun", ["simctl", "list", "runtimes", "--json"], timeoutMs));
     const latest = (inventory.runtimes ?? [])
       .filter(
         (runtime) =>
@@ -119,8 +116,10 @@ export function waitForIOSDestination({
   let inventory = "No destination inventory returned.";
   log(`Waiting for Xcode destination ${destination} (timeout ${timeoutMs / 1000}s).`);
   while (now() < deadline) {
+    const probeBudget = deadline - now();
+    if (probeBudget <= 0) break;
     try {
-      inventory = run("xcodebuild", args, Math.min(PROBE_TIMEOUT_MS, deadline - now()));
+      inventory = run("xcodebuild", args, probeBudget);
       if (now() <= deadline && eligible(inventory, requested)) {
         log(`Xcode destination ready: ${destination}.`);
         return;

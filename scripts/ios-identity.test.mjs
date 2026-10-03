@@ -472,7 +472,25 @@ describe("Xcode simulator destination discovery", () => {
     expect(check.calls).toHaveLength(3);
   });
 
-  it("caps slow discovery probes and includes probe failure diagnostics", () => {
+  it("allows a cold Xcode query longer than thirty seconds within the overall budget", () => {
+    let elapsed = 0;
+    const check = discovery([], {
+      now: () => elapsed,
+      timeoutMs: 90000,
+      run: (_command, _args, timeout) => {
+        elapsed += 45000;
+        if (timeout < 45000) throw new Error("cold Xcode query timed out");
+        return `${heading}\n${phone}`;
+      },
+      wait: (milliseconds) => {
+        elapsed += milliseconds;
+      },
+    });
+    check.invoke();
+    expect(elapsed).toBe(45000);
+  });
+
+  it("bounds a slow discovery probe by the remaining wall budget and includes diagnostics", () => {
     let elapsed = 0;
     const check = discovery([], {
       timeoutMs: 35000,
@@ -481,7 +499,7 @@ describe("Xcode simulator destination discovery", () => {
         elapsed += milliseconds;
       },
       run: (_command, _args, timeout) => {
-        expect(timeout).toBe(elapsed === 0 ? 30000 : 3000);
+        expect(timeout).toBe(35000);
         elapsed += timeout;
         const error = new Error("discovery probe timed out");
         error.stderr = "CoreSimulator discovery unavailable";
