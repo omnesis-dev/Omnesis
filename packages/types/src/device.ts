@@ -63,7 +63,8 @@ export function tryTokenId(s: unknown): TokenId | null {
  * pushes them to the gateway over HTTP (`POST /documents` / `POST
  * /analytics/ingest`). Like the iOS app hosting Apple Health, it exists only as
  * a push client — the desktop collector never syncs on its behalf. Its token
- * carries `write:web` only: the device kind is the physical client, but the
+ * defaults to `write:web`; optional note capture uses a separate owner-approved
+ * `notes:create` credential. The device kind is the physical client, but the
  * source it contributes captures to is the unified `web` source.
  *
  * `integration` is third-party code that asks Omnesis questions on the
@@ -95,6 +96,7 @@ export function isDeviceKind(s: string): s is DeviceKind {
  *   - "read"                  — query, search, retrieve documents
  *   - "admin"                 — manage sources, devices, tokens
  *   - "push:claim"            — claim notifications for this token's device
+ *   - "notes:create"          — append notes through the browser capture boundary
  *   - "write:*"               — push documents for any source type
  *   - "write:<source-type>"   — push documents for a specific source type
  *
@@ -107,7 +109,7 @@ export function Scope(s: string): Scope {
     throw new BrandedIdError(
       "Scope",
       String(s),
-      "must be one of read|read:bulk|answer|admin|push:claim|subscriptions:manage|subscriptions:receive|subscriptions:answer|subscriptions:outcome|write:*|write:<source-type>",
+      "must be one of read|read:bulk|answer|admin|push:claim|subscriptions:manage|subscriptions:receive|subscriptions:answer|subscriptions:outcome|notes:create|write:*|write:<source-type>",
     );
   }
   return s as Scope;
@@ -162,6 +164,7 @@ export function isValidScope(s: string): boolean {
     s === "answer" ||
     s === "admin" ||
     s === "push:claim" ||
+    s === "notes:create" ||
     s === "subscriptions:manage" ||
     s === "subscriptions:receive" ||
     s === "subscriptions:answer" ||
@@ -309,6 +312,10 @@ export function defaultScopesForDeviceKind(kind: DeviceKind): Scope[] {
  */
 export function missingHostedWriteScopes(granted: readonly Scope[], kind: DeviceKind): Scope[] {
   const held = new Set(granted);
+  // Capability-only note credentials are separate from source ingestion; a
+  // device handshake must never upgrade them to its default capture grant.
+  if (held.has(Scope("notes:create")) && !granted.some((scope) => scope.startsWith("write:")))
+    return [];
   if (held.has(SCOPE_WRITE_ALL)) return [];
   return DEVICE_HOSTED_SOURCE_TYPES[kind].map(writeScope).filter((s) => !held.has(s));
 }
@@ -320,6 +327,7 @@ export type ScopeClass =
   | { kind: "answer" }
   | { kind: "admin" }
   | { kind: "push-claim" }
+  | { kind: "notes-create" }
   | { kind: "subscriptions-manage" }
   | { kind: "subscriptions-receive" }
   | { kind: "subscriptions-answer" }
@@ -342,6 +350,7 @@ export function classifyScope(scope: Scope): ScopeClass | null {
   if (scope === "answer") return { kind: "answer" };
   if (scope === "admin") return { kind: "admin" };
   if (scope === "push:claim") return { kind: "push-claim" };
+  if (scope === "notes:create") return { kind: "notes-create" };
   if (scope === "subscriptions:manage") return { kind: "subscriptions-manage" };
   if (scope === "subscriptions:receive") return { kind: "subscriptions-receive" };
   if (scope === "subscriptions:answer") return { kind: "subscriptions-answer" };

@@ -39,6 +39,7 @@ declare global {
     }
 
     namespace runtime {
+      const onInstalled: { addListener(callback: () => void): void };
       interface MessageSender {
         id?: string;
         url?: string;
@@ -118,6 +119,10 @@ declare global {
     }
 
     namespace scripting {
+      function executeScript<T>(details: {
+        target: { tabId: number };
+        func: () => T;
+      }): Promise<Array<{ result?: T }>>;
       interface RegisteredContentScript {
         id: string;
         matches: string[];
@@ -137,11 +142,38 @@ declare global {
       interface Tab {
         id?: number;
         url?: string;
+        title?: string;
+        incognito?: boolean;
       }
+      function create(details: { url: string }): Promise<Tab>;
       function query(queryInfo: { active: boolean; currentWindow: boolean }): Promise<Tab[]>;
       function sendMessage<T = unknown>(tabId: number, message: unknown): Promise<T>;
     }
 
+    namespace commands {
+      const onCommand: { addListener(callback: (command: string, tab?: tabs.Tab) => void): void };
+    }
+    namespace contextMenus {
+      function removeAll(): Promise<void>;
+      function create(details: {
+        id: string;
+        title: string;
+        contexts: string[];
+        documentUrlPatterns?: string[];
+      }): void;
+      const onClicked: {
+        addListener(
+          callback: (
+            info: { menuItemId: string | number; pageUrl?: string; selectionText?: string },
+            tab?: tabs.Tab,
+          ) => void,
+        ): void;
+      };
+    }
+    namespace sidePanel {
+      function setOptions(details: { enabled: boolean; path?: string }): Promise<void>;
+      function open(details: { tabId: number }): Promise<void>;
+    }
     namespace extension {
       /** True when this context runs in an incognito (private) window. */
       const inIncognitoContext: boolean;

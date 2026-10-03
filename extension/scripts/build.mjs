@@ -45,6 +45,7 @@ async function main() {
       background: join(root, "src/chrome/background.ts"),
       options: join(root, "src/chrome/options.ts"),
       popup: join(root, "src/chrome/popup.ts"),
+      notes: join(root, "src/chrome/notes.ts"),
       content: join(root, "src/chrome/content.ts"),
     },
     outdir,

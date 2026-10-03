@@ -8,7 +8,7 @@ import {
   PROFILE_LABEL_KEY,
   TOKEN_KEY,
 } from "./storage.js";
-import { initOptions } from "./options-page.js";
+import { initOptions, type OptionsHooks } from "./options-page.js";
 import {
   FakePageChrome,
   TEST_PAIRING,
@@ -53,13 +53,14 @@ function policyResponder(
 function openOptions(
   storage: Record<string, unknown>,
   configure: (chrome: FakePageChrome) => void = () => undefined,
+  hooks: OptionsHooks = {},
 ): Options {
   const { document, window } = loadPage("options.html");
   const chrome = new FakePageChrome(storage);
   chrome.respond = policyResponder(null);
   configure(chrome);
   vi.stubGlobal("chrome", chrome.api);
-  initOptions(document, chrome.api);
+  initOptions(document, chrome.api, hooks);
   const $ = (id: string): HTMLElement => {
     const el = document.getElementById(id);
     if (!el) throw new Error(`missing #${id}`);
@@ -311,6 +312,33 @@ describe("options — pairing form", () => {
     await waitForStatus(options, "Pairing failed: invalid or expired code");
     expect((options.$("pair-submit") as HTMLButtonElement).disabled).toBe(false);
     expect(options.$("pair-form").style.display).toBe("block");
+  });
+
+  it("keeps pairing and local notes when the before-unpair check is cancelled", async () => {
+    const beforeUnpair = vi.fn(async () => false);
+    const options = openOptions(pairedStorage(), undefined, { beforeUnpair });
+    await vi.waitFor(() => expect(options.$("paired").style.display).toBe("block"));
+    click(options, options.$("unpair"));
+    await vi.waitFor(() => expect(beforeUnpair).toHaveBeenCalledOnce());
+    expect(options.chrome.sent("unpair")).toEqual([]);
+    expect(options.chrome.storage[TOKEN_KEY]).toBe("invented-token");
+    expect(options.$("paired").style.display).toBe("block");
+  });
+
+  it("keeps pairing when the before-unpair notes read fails", async () => {
+    const options = openOptions(pairedStorage(), undefined, {
+      beforeUnpair: async () => {
+        throw new Error("Could not check unsent notes. Try unpairing again.");
+      },
+    });
+    await vi.waitFor(() => expect(options.$("paired").style.display).toBe("block"));
+    click(options, options.$("unpair"));
+    await waitForStatus(
+      options,
+      "Unpair failed: Could not check unsent notes. Try unpairing again.",
+    );
+    expect(options.chrome.sent("unpair")).toEqual([]);
+    expect(options.chrome.storage[TOKEN_KEY]).toBe("invented-token");
   });
 
   it("unpairs through the worker and returns to the form", async () => {

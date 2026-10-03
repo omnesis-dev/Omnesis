@@ -114,6 +114,10 @@ export function parseRoute() {
     return { view: "sources" };
   }
 
+  if (path === "/portal/browser-notes" || path === "/portal/browser-notes/") {
+    return { view: "browser-notes", requestId: new URLSearchParams(location.search).get("request") };
+  }
+
   if (path === "/portal/capture" || path === "/portal/capture/") {
     // `?day=YYYY-MM-DD` seeds the note history at that day — a
     // Manage-notes link from an old daily document lands on relevant

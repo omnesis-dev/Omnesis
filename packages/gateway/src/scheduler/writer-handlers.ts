@@ -412,6 +412,7 @@ import {
   deleteNoteEntry,
   applyNoteEntryTranscript,
   type NoteEntry,
+  type BrowserNoteAuthority,
 } from "../sources/omnesis-notes/storage.js";
 import {
   insertPendingVoiceNote,
@@ -1713,8 +1714,12 @@ export const writerHandlers = {
   // (one row per captured note); update/delete are the user's edit and
   // hard-delete of a single entry. The per-day document projection is
   // driven separately by the NotesDayUpserter, not by these ops.
-  "notes.appendEntry": (db: Db, entry: NoteEntry, audit?: McpToolInvocationAuditInput): boolean =>
-    insertNoteEntry(db, entry, audit),
+  "notes.appendEntry": (
+    db: Db,
+    entry: NoteEntry,
+    audit?: McpToolInvocationAuditInput,
+    browserAuthority?: BrowserNoteAuthority,
+  ): boolean => insertNoteEntry(db, entry, audit, browserAuthority),
   "notes.updateEntry": (db: Db, id: string, text: string, nowIso: string): boolean =>
     updateNoteEntryText(db, id, text, nowIso),
   "notes.deleteEntry": (db: Db, id: string) => deleteNoteEntry(db, id),

@@ -5,6 +5,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { describe, expect, it } from "vitest";
+import { NOTES_TOKEN_KEY } from "./chrome/notes-credential.js";
+import { NOTES_STATE_KEY } from "./chrome/notes-service.js";
 import { CONFIG_KEY, PAIRING_KEY, TOKEN_KEY } from "./chrome/storage.js";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -34,6 +36,8 @@ describe("bundle boundaries", () => {
     const content = await bundle("content.ts");
     expect(content).toContain(PAIRING_KEY);
     expect(content).not.toContain(TOKEN_KEY);
+    expect(content).not.toContain(NOTES_STATE_KEY);
+    expect(content).not.toContain(NOTES_TOKEN_KEY);
     // The legacy combined record holds the token too; only the worker migrates it.
     expect(content).not.toContain(CONFIG_KEY);
   }, 30_000);

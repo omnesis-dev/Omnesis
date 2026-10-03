@@ -844,6 +844,19 @@ describe("snapshot absence: the deadline's currencies and what a swept row takes
       }
     });
 
+    // HTTP health is available before background tasks finish registering.
+    // Wait for this sweep's observable registration before kicking it.
+    await waitForCondition(
+      async () => {
+        const snapshot = await harness.gatewayJson<{ jobs: Array<{ id: string }> }>(
+          "/admin/background-jobs",
+        );
+        return snapshot.jobs.some((job) => job.id === "absence.sweep");
+      },
+      30_000,
+      "the absence sweep to register after the gateway restart",
+    );
+
     // Find a tick that provably belonged to the document phase and provably
     // found work — which is what removes any need to know where `phaseIndex`
     // happens to be. A config edit alone kicks this periodic, so counting from

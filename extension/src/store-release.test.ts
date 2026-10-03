@@ -36,7 +36,7 @@ describe("Chrome Web Store release contract", () => {
     expect(contract.sourceRepository).toBe("https://github.com/omnesis-dev/Omnesis");
   });
 
-  it("declares exactly the gateway routes browser capture uses", () => {
+  it("declares exactly the gateway routes browser capture and notes use", () => {
     expect(contract.gatewayRoutes).toEqual([
       { method: "GET", path: "/health", authenticated: false },
       { method: "POST", path: "/devices/pair", authenticated: false },
@@ -51,8 +51,13 @@ describe("Chrome Web Store release contract", () => {
       { method: "DELETE", path: "/web-capture-policy/pause", authenticated: true },
       { method: "POST", path: "/documents", authenticated: true },
       { method: "POST", path: "/analytics/ingest", authenticated: true },
+      { method: "POST", path: "/browser/notes/authorization", authenticated: true },
+      { method: "GET", path: "/browser/notes/authorization/:id", authenticated: true },
+      { method: "GET", path: "/browser/notes", authenticated: true },
+      { method: "POST", path: "/browser/notes", authenticated: true },
     ]);
     expect(contract.tokenScopes).toEqual(["write:web"]);
+    expect(contract.optionalNotesTokenScopes).toEqual(["notes:create"]);
     expect(contract.deviceKind).toBe("browser");
   });
 
@@ -60,7 +65,15 @@ describe("Chrome Web Store release contract", () => {
     expect(manifest.manifest_version).toBe(3);
     expect(manifest.minimum_chrome_version).toBe("130");
     expect(manifest.optional_host_permissions).toEqual(["https://*/*"]);
-    expect(manifest.permissions).toEqual(["storage", "unlimitedStorage", "alarms", "scripting"]);
+    expect(manifest.permissions).toEqual([
+      "storage",
+      "unlimitedStorage",
+      "alarms",
+      "scripting",
+      "activeTab",
+      "contextMenus",
+      "sidePanel",
+    ]);
     expect(manifest.incognito).toBe("not_allowed");
     expect(manifest.background).toEqual({ service_worker: "background.js", type: "module" });
     expect(manifest).not.toHaveProperty("content_security_policy");
@@ -112,6 +125,8 @@ describe("Chrome Web Store release contract", () => {
         "icons/icon-32.png",
         "icons/icon-48.png",
         "manifest.json",
+        "notes.html",
+        "notes.js",
         "options.html",
         "options.js",
         "popup.html",
@@ -127,6 +142,9 @@ describe("Chrome Web Store release contract", () => {
       expect(packagedManifest).not.toHaveProperty("key");
       expect(packagedManifest).not.toHaveProperty("host_permissions");
       expect(packagedManifest.optional_host_permissions).toEqual(["https://*/*"]);
+      expect(packagedManifest.side_panel).toEqual({ default_path: "notes.html" });
+      expect(await archive.file("notes.html")?.async("string")).toContain('src="notes.js"');
+      expect(await archive.file("notes.js")?.async("string")).toContain("notes-submit");
       expect(await archive.file("THIRD_PARTY_NOTICES.txt")?.async("string")).toContain(
         "Copyright (c) 2025 Steph Ango",
       );

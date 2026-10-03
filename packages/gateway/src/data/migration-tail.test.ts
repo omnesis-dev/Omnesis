@@ -58,7 +58,7 @@ const TAIL_VERSIONS = Array.from(
  * it is named here on the same terms as the rest.
  */
 const WOUND_BACK = [
-  172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188,
+  172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189,
 ];
 
 let dir: string;
@@ -117,8 +117,8 @@ function windBack(db: Db): void {
     .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('note_entries')")
     .all()
     .map((row) => row.name);
-  if (noteColumns.includes("transcribed_at")) {
-    db.exec("ALTER TABLE note_entries DROP COLUMN transcribed_at");
+  for (const column of ["page_context", "transcribed_at"]) {
+    if (noteColumns.includes(column)) db.exec(`ALTER TABLE note_entries DROP COLUMN ${column}`);
   }
   const credentialColumns = db
     .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('principal_credentials')")
@@ -298,7 +298,7 @@ describe("an install several versions behind, upgrading", () => {
           .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('note_entries')")
           .all()
           .map((row) => row.name),
-      ).toContain("transcribed_at");
+      ).toEqual(expect.arrayContaining(["transcribed_at", "page_context"]));
       for (const [table, column] of [
         ["answer_approvals", "candidate_citations_json"],
         ["answer_releases", "citations_json"],
@@ -341,6 +341,28 @@ describe("an install several versions behind, upgrading", () => {
           >("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_documents_source_external_id'")
           .get(),
       ).toBeDefined();
+    } finally {
+      (db as unknown as Database.Database).close();
+    }
+  });
+
+  test("existing notes survive the page-context migration without gaining an attachment", () => {
+    seedOlderInstall((db) => {
+      expect(
+        db
+          .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('note_entries')")
+          .all()
+          .map((row) => row.name),
+      ).not.toContain("page_context");
+      db.prepare(
+        `INSERT INTO note_entries (id, day, captured_at, updated_at, text) VALUES ('older-note', '2026-01-01', '2026-01-01T09:00:00.000Z', '2026-01-01T09:00:00.000Z', 'Compare the examples.')`,
+      ).run();
+    });
+    const db = upgrade();
+    try {
+      expect(
+        db.prepare("SELECT text, page_context FROM note_entries WHERE id = 'older-note'").get(),
+      ).toEqual({ text: "Compare the examples.", page_context: null });
     } finally {
       (db as unknown as Database.Database).close();
     }

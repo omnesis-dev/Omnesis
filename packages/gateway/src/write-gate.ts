@@ -454,6 +454,7 @@ import {
   deleteNoteEntry,
   applyNoteEntryTranscript,
   type NoteEntry,
+  type BrowserNoteAuthority,
 } from "./sources/omnesis-notes/storage.js";
 import {
   insertPendingVoiceNote,
@@ -2026,7 +2027,11 @@ export interface WriteGate {
    * false when a row with that id already exists — the id doubles as
    * the client idempotency key, so a retried capture is a no-op.
    */
-  appendNoteEntry(entry: NoteEntry, audit?: McpToolInvocationAuditInput): Promise<boolean>;
+  appendNoteEntry(
+    entry: NoteEntry,
+    audit?: McpToolInvocationAuditInput,
+    browserAuthority?: BrowserNoteAuthority,
+  ): Promise<boolean>;
   /**
    * Replace an entry's text (bumps `updated_at`). Returns false when
    * the id is unknown.
@@ -2684,7 +2689,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     upsertConversationCitations: (sourceDocId, citations) =>
       call("omnesisChat.upsertConversationCitations", [sourceDocId, citations]),
 
-    appendNoteEntry: (entry, audit) => call("notes.appendEntry", [entry, audit]),
+    appendNoteEntry: (entry, audit, browserAuthority) =>
+      call("notes.appendEntry", [entry, audit, browserAuthority]),
     updateNoteEntry: (id, text, now) => call("notes.updateEntry", [id, text, now]),
     deleteNoteEntry: (id) => call("notes.deleteEntry", [id]),
     applyNoteEntryTranscript: (id, expected, text, now) =>
@@ -3339,7 +3345,8 @@ export function directWriteGate(db: Db): WriteGate {
     upsertConversationCitations: async (sourceDocId, citations) =>
       upsertConversationCitations(db, sourceDocId, citations),
 
-    appendNoteEntry: async (entry, audit) => insertNoteEntry(db, entry, audit),
+    appendNoteEntry: async (entry, audit, browserAuthority) =>
+      insertNoteEntry(db, entry, audit, browserAuthority),
     updateNoteEntry: async (id, text, now) => updateNoteEntryText(db, id, text, now),
     deleteNoteEntry: async (id) => deleteNoteEntry(db, id),
     applyNoteEntryTranscript: async (id, expected, text, now) =>

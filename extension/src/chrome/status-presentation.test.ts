@@ -173,18 +173,18 @@ describe("gatewayVersionNotice", () => {
     expect(gatewayVersionNotice("0.4.5", null)).toBe("");
     expect(gatewayVersionNotice("garbage", "0.4.5")).toBe("");
     // Same minor, any patch: HTTP changes within a minor are additive.
-    expect(gatewayVersionNotice("0.4.1", "0.4.5")).toBe("");
-    expect(gatewayVersionNotice("0.4.9", "0.4.5")).toBe("");
+    expect(gatewayVersionNotice("0.5.1", "0.5.5")).toBe("");
+    expect(gatewayVersionNotice("0.5.9", "0.5.5")).toBe("");
     // A gateway ahead of the extension is fine too.
     expect(gatewayVersionNotice("0.6.0", "0.4.5")).toBe("");
   });
 
-  it("warns when the gateway is a minor behind, and when the majors differ", () => {
+  it("warns only when the gateway predates the capture contract", () => {
     expect(gatewayVersionNotice("0.3.9", "0.4.5")).toMatch(
       /behind this extension.*Update the gateway/,
     );
-    expect(gatewayVersionNotice("1.0.0", "0.4.5")).toMatch(/different major versions/);
-    expect(gatewayVersionNotice("0.4.5", "1.0.0")).toMatch(/different major versions/);
+    expect(gatewayVersionNotice("1.0.0", "0.5.5")).toBe("");
+    expect(gatewayVersionNotice("0.5.5", "1.0.0")).toBe("");
   });
 
   it("is the lowest-priority warning in the popup ladder", () => {
