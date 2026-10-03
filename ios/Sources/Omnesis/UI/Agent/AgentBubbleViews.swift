@@ -304,7 +304,7 @@ private struct AgentThinkingDots: View {
     @State private var animating = false
     var body: some View {
         HStack(spacing: 2) {
-            ForEach(0 ..< 3, id: \.self) { i in
+            ForEach(0 ..< 3, id: \.self) { index in
                 Circle()
                     .fill(Theme.accent)
                     .frame(width: 3, height: 3)
@@ -313,7 +313,7 @@ private struct AgentThinkingDots: View {
                     .animation(
                         .easeInOut(duration: 0.65)
                             .repeatForever(autoreverses: true)
-                            .delay(Double(i) * 0.18),
+                            .delay(Double(index) * 0.18),
                         value: animating
                     )
             }
@@ -373,14 +373,16 @@ let agentWorkingRevealDelayNs: UInt64 = 350_000_000
 @available(iOS 17.0, *)
 struct AgentWorkingDots: View {
     @Environment(\.accessibilityReduceMotion) private var environmentReduceMotion
-    var reduceMotionOverride: Bool? = nil
+    var reduceMotionOverride: Bool?
     @State private var animating = false
 
-    private var reduceMotion: Bool { environmentReduceMotion || reduceMotionOverride == true }
+    private var reduceMotion: Bool {
+        environmentReduceMotion || reduceMotionOverride == true
+    }
 
     var body: some View {
         HStack(spacing: 4) {
-            ForEach(0 ..< 3, id: \.self) { i in
+            ForEach(0 ..< 3, id: \.self) { index in
                 Circle()
                     .fill(Theme.accent)
                     .frame(width: 5, height: 5)
@@ -389,7 +391,7 @@ struct AgentWorkingDots: View {
                     .animation(
                         reduceMotion ? nil : .easeInOut(duration: 0.6)
                             .repeatForever(autoreverses: true)
-                            .delay(Double(i) * 0.18),
+                            .delay(Double(index) * 0.18),
                         value: animating
                     )
             }
@@ -456,9 +458,9 @@ struct AgentWorkingIndicator: View {
                 .task(id: SettleKey(active: active, version: version)) { await settle() }
             if revealed {
                 AgentWorkingDots()
-                .transition(.opacity)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Working")
+                    .transition(.opacity)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Working")
             }
         }
     }
