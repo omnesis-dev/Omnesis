@@ -23,6 +23,7 @@ const doc: VocabularyDocument = {
   contentHash: "hash",
   updatedAt: "2026-01-01",
   revision: 0,
+  generation: 1,
   title: "",
   content: "Quorvex",
   sourceId: "fictional:messages",
@@ -35,6 +36,7 @@ function deps() {
     ioGate: { fetchTranscriptionVocabularyBatch: vi.fn(async () => [doc]) },
     cpuGate: { extractTranscriptionVocabulary: vi.fn(async () => []) },
     writeGate: {
+      advanceTranscriptionVocabularyRebuild: vi.fn(async () => ({ ready: true, worked: false })),
       applyTranscriptionVocabularyBatch: vi.fn(async () => ({ applied: 1, skipped: 0 })),
     },
     getSettings: () => settings,
@@ -53,6 +55,7 @@ describe("bounded vocabulary scheduler", () => {
     d.getSettings = () => resolveVocabularySettings(config);
     const task = createTranscriptionVocabularyTask(d);
     expect(await run(task)).toEqual({ kind: "done", value: { idle: true } });
+    expect(d.writeGate.advanceTranscriptionVocabularyRebuild).not.toHaveBeenCalled();
     expect(d.ioGate.fetchTranscriptionVocabularyBatch).not.toHaveBeenCalled();
     expect(d.cpuGate.extractTranscriptionVocabulary).not.toHaveBeenCalled();
     expect(d.writeGate.applyTranscriptionVocabularyBatch).not.toHaveBeenCalled();
@@ -81,9 +84,37 @@ describe("bounded vocabulary scheduler", () => {
       kind: "done",
       value: { idle: true },
     });
+    expect(d.writeGate.advanceTranscriptionVocabularyRebuild).not.toHaveBeenCalled();
     expect(d.ioGate.fetchTranscriptionVocabularyBatch).not.toHaveBeenCalled();
     expect(d.cpuGate.extractTranscriptionVocabulary).not.toHaveBeenCalled();
     expect(d.writeGate.applyTranscriptionVocabularyBatch).not.toHaveBeenCalled();
+  });
+  test("reset is bounded to one writer call and holds extraction closed", async () => {
+    const d = deps();
+    d.writeGate.advanceTranscriptionVocabularyRebuild.mockResolvedValue({
+      ready: false,
+      worked: true,
+    });
+    expect(await run(createTranscriptionVocabularyTask(d))).toEqual({
+      kind: "done",
+      value: { idle: false },
+    });
+    expect(d.writeGate.advanceTranscriptionVocabularyRebuild).toHaveBeenCalledTimes(1);
+    expect(d.ioGate.fetchTranscriptionVocabularyBatch).not.toHaveBeenCalled();
+  });
+  test("disable while resetting prevents subsequent IO", async () => {
+    const d = deps();
+    let enabled = true;
+    d.getSettings = () => ({ ...settings, enabled });
+    d.writeGate.advanceTranscriptionVocabularyRebuild.mockImplementation(async () => {
+      enabled = false;
+      return { ready: true, worked: true };
+    });
+    expect(await run(createTranscriptionVocabularyTask(d))).toEqual({
+      kind: "done",
+      value: { idle: true },
+    });
+    expect(d.ioGate.fetchTranscriptionVocabularyBatch).not.toHaveBeenCalled();
   });
   test("disable during IO prevents CPU and writer work", async () => {
     const d = deps();

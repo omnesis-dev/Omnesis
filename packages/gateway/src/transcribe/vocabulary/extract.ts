@@ -10,6 +10,7 @@ import {
 } from "./types.js";
 
 import { isCommonVocabularyWord } from "./common-words.js";
+import { vocabularyText } from "./text.js";
 
 // Consume the complete lexical run before applying the length cap. A bounded
 // regex would turn oversized strings into several invented vocabulary hints.
@@ -43,9 +44,9 @@ export function extractTranscriptionVocabulary(
   if (!settings.enabled) return [];
   return docs.slice(0, Math.min(settings.batchSize, 16)).map((doc) => {
     const candidates = new Map<string, VocabularyCandidate>();
-    const add = (text: string, benefit: number, groundedName = false): void => {
+    const add = (text: string, benefit: number): void => {
       const clean = text.normalize("NFC").replace(/^[.'’ -]+|[.'’ -]+$/gu, "");
-      if (clean.length < 3 || clean.length > 80 || (!groundedName && isCommon(clean))) return;
+      if (clean.length < 3 || clean.length > 80 || isCommon(clean)) return;
       if (!/\p{L}/u.test(clean) || /https?|www\.|@|\d{3}/iu.test(clean)) return;
       const term = normalize(clean);
       const existing = candidates.get(term);
@@ -58,18 +59,19 @@ export function extractTranscriptionVocabulary(
       if (person.name.length <= 80) {
         // People without a display name can legitimately use an email as
         // their canonical name. Neither it nor its fragments are vocabulary.
-        const name = stripIdentifiers(person.name)
+        const name = stripIdentifiers(person.name.split(/\s+\|\s+/u)[0])
+          .replace(/\([^()]*\)|\[[^\[\]]*\]/gu, " ")
           .replace(/[<>()[\]{}]/gu, " ")
           .replace(/\s+/gu, " ")
           .trim();
-        add(name, 3, true);
+        add(name, 4);
         for (const word of name.match(WORD) ?? []) {
-          if (withinWordLimit(word)) add(word, 2.5);
+          if (withinWordLimit(word)) add(word, 2);
         }
       }
     }
     const text = stripIdentifiers(
-      `${doc.title.slice(0, 256)}\n${doc.content.slice(0, settings.maxDocumentChars)}`,
+      `${vocabularyText(doc.title.slice(0, 256))}\n${vocabularyText(doc.content.slice(0, settings.maxDocumentChars))}`,
     );
     const words = new Map<string, { text: string; benefit: number }>();
     const wholeWordStarts = new Set<number>();
@@ -84,15 +86,17 @@ export function extractTranscriptionVocabulary(
       wholeWordEnds.add(match.index + word.length);
       if (isCommon(word)) continue;
       const key = normalize(word);
-      const acronym = /^[\p{Lu}]{2,10}$/u.test(word);
+      const uppercase = /\p{Lu}/u.test(word) && !/\p{Ll}/u.test(word);
       const mixedCase = /\p{Ll}\p{Lu}/u.test(word);
       const proper = /^\p{Lu}/u.test(word);
-      const benefit = acronym || mixedCase ? 3 : proper ? 2 : 1;
+      // Uppercase alone is also how templates and headings are written.
+      // It must not outweigh grounded names or ordinary mixed-case names.
+      const benefit = uppercase ? 1 : mixedCase ? 2.5 : proper ? 2 : 1;
       const prior = words.get(key);
       if (!prior || prior.benefit < benefit) words.set(key, { text: word, benefit });
     }
     for (const word of words.values()) {
-      // Weak lower-case terms need support across independent documents before
+      // Weak terms need support across independent documents before
       // inference uses them; the repository enforces that selection rule.
       add(word.text, word.benefit);
     }
@@ -105,9 +109,9 @@ export function extractTranscriptionVocabulary(
         // another occurrence cannot legitimize an oversized token's suffix.
         wholeWordStarts.has(match.index) &&
         wholeWordEnds.has(match.index + match[0].length) &&
-        match[0].split(" ").some((word) => !isCommon(word))
+        match[0].split(" ").every((word) => !isCommon(word))
       )
-        add(match[0], 2.5);
+        add(match[0], /\p{Ll}/u.test(match[0]) ? 2.5 : 1);
     }
     const scopes: ExtractedVocabularyDocument["scopes"] = [{ kind: "global", key: "" }];
     const people = new Set(
@@ -129,6 +133,7 @@ export function extractTranscriptionVocabulary(
       contentHash: doc.contentHash,
       updatedAt: doc.updatedAt,
       revision: doc.revision,
+      generation: doc.generation,
       scopes,
       recordedAt: doc.recordedAt,
       terms: [...candidates.values()]

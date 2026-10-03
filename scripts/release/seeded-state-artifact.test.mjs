@@ -123,7 +123,11 @@ describe("seeded-state artifacts", () => {
       ) VALUES ('doc-1', 'global', '', 'quorvex');
     `);
     source.close();
-    const tables = ["transcription_vocabulary_terms", "transcription_vocabulary_document_terms"];
+    const tables = [
+      "transcription_vocabulary_terms",
+      "transcription_vocabulary_document_terms",
+      "transcription_vocabulary_state",
+    ];
     createSeededStateArtifact(
       {
         ...spec(paths, tables),
@@ -147,6 +151,9 @@ describe("seeded-state artifacts", () => {
         )
         .get(),
     ).toEqual({ wr: 1 });
+    expect(
+      output.prepare("SELECT algorithm_version, phase FROM transcription_vocabulary_state").get(),
+    ).toEqual({ algorithm_version: 1, phase: "ready" });
     output.close();
   });
 

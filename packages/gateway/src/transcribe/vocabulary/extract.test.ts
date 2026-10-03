@@ -22,6 +22,7 @@ function terms(content: string, names: string[] = []): string[] {
     contentHash: "fictional-hash",
     updatedAt: "2026-01-01T00:00:00.000Z",
     revision: 0,
+    generation: 1,
     title: "",
     content,
     sourceId: "fictional:benchmark",
@@ -89,7 +90,7 @@ test("keeps complete uncommon phrases, including names with sentence punctuation
   expect(terms("'Nexularis Virellune'.")).toEqual(
     expect.arrayContaining(["nexularis virellune", "nexularis", "virellune"]),
   );
-  expect(terms("Project Nexularis.")).toContain("project nexularis");
+  expect(terms("Project Nexularis.")).toEqual(["nexularis"]);
 });
 
 test("retains the existing Unicode code-point cap for complete lexical words", () => {
@@ -104,4 +105,52 @@ test("discards long email and dotted identifiers without retaining their fragmen
   ]) {
     expect(terms(`${token} Nexularis`)).toEqual(["nexularis"]);
   }
+});
+
+test("keeps clean full names ahead of components and removes display annotations", () => {
+  expect(terms("", ["Nexularis Virellune | Stellar Sound (team)"])).toEqual([
+    "nexularis virellune",
+    "nexularis",
+    "virellune",
+  ]);
+  expect(terms("", ["Nexularis Virellune (guest)"])).toEqual([
+    "nexularis virellune",
+    "nexularis",
+    "virellune",
+  ]);
+  // A frequent single word is not useful just because it labels a person;
+  // full names retain common components as a complete grounded phrase.
+  expect(terms("", ["They"])).toEqual([]);
+  expect(terms("", ["Will May"])).toContain("will may");
+  expect(terms("", ["山田 花子"])).toContain("山田 花子");
+});
+
+test("does not turn ordinary capitalized prose into multiword personal hints", () => {
+  expect(terms("Hello Nexularis. Project Virellune. Thank You.")).toEqual([
+    "nexularis",
+    "virellune",
+  ]);
+});
+
+test("uppercase template text does not outrank uncommon prose or a grounded name", () => {
+  const selected = terms("VELQUORIN Nexularis", ["Virellune Orelvax"]);
+  expect(selected.indexOf("virellune orelvax")).toBeLessThan(selected.indexOf("virellune"));
+  expect(selected.indexOf("nexularis")).toBeLessThan(selected.indexOf("velquorin"));
+});
+
+test("uses prose rather than rendered metadata as evidence in any language", () => {
+  expect(
+    terms(
+      "# Export\n**Origine:** Byrelune\n**Destination:** Tyrelune\n**Horodatage:** ZORVEL\n---\n" +
+        "**08:12** Wyrelune: [Audio, 0:07]: Nexularis Virellune\n" +
+        "> Quoted Zeralith\n---\n**Files:** chart (QZP, 3KB)",
+    ),
+  ).toEqual(expect.arrayContaining(["nexularis", "virellune", "nexularis virellune"]));
+  expect(
+    terms(
+      "# Export\n**Origine:** Byrelune\n**Destination:** Tyrelune\n**Horodatage:** ZORVEL\n---\n" +
+        "**08:12** Wyrelune: [Audio, 0:07]: Nexularis Virellune\n" +
+        "> Quoted Zeralith\n---\n**Files:** chart (QZP, 3KB)",
+    ),
+  ).toHaveLength(3);
 });
