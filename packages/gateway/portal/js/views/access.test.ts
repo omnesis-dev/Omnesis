@@ -33,6 +33,8 @@ import * as accessModule from "./access.js";
 // @ts-expect-error — portal modules are plain JS without sibling declarations.
 import { errorMessage, expiresInLabel, timestamp } from "./access/shared.js";
 // @ts-expect-error — portal modules are plain JS without sibling declarations.
+import { shortConnectionId } from "./access/access-list.js";
+// @ts-expect-error — portal modules are plain JS without sibling declarations.
 import { timeAgo } from "../lib/format.js";
 
 // linkedom has no focus model: `focus()` is a no-op and `activeElement` is
@@ -267,6 +269,13 @@ describe("access authorization selections", () => {
       .toBe("All sources");
     expect(sourceSummary({ capability: "direct", sources: { mode: "all", sourceIds: [] } }, sources))
       .toBe("All sources");
+  });
+});
+
+describe("connection IDs", () => {
+  test("shows a UUID by its first group and any other ID in full", () => {
+    expect(shortConnectionId("0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d")).toBe("0a1b2c3d");
+    expect(shortConnectionId("principal-laptop")).toBe("principal-laptop");
   });
 });
 
@@ -653,7 +662,7 @@ describe("AccessView", () => {
     expect(notes.querySelector(".access-level-empty")?.textContent).toBe("No connections use this access level yet.");
     expect(notes.querySelector(".access-connection-row")).toBeNull();
     expect(notes.querySelector(".access-level-head .access-badge")).toBeNull();
-    expect(notes.querySelector(".access-level-terms .access-badge-notes")).not.toBeNull();
+    expect(notes.querySelector(".access-level-terms .access-term-notes:not(.access-term-off)")).not.toBeNull();
 
     // Permission details appear once beneath the level header.
     expect(levelGroup("fictional research").querySelector(".access-level-head .access-badge")).toBeNull();
@@ -664,26 +673,29 @@ describe("AccessView", () => {
     const policyLink = research.querySelector(".access-level-terms a")!;
     expect(policyLink.textContent).toBe("Household");
     expect(policyLink.getAttribute("href")).toBe("/portal/settings/policies/policy-a");
-    expect(research.querySelector(".access-level-terms .access-badge-answer")?.getAttribute("class")).not.toContain("is-off");
-    expect(research.querySelector(".access-level-terms .access-badge-direct")?.getAttribute("class")).toContain("is-off");
-    expect(research.querySelector(".access-level-terms")?.textContent).not.toContain("Not granted");
-    // Every capability keeps its tile, in the same order; a withheld one says Off.
-    const tiles = [...research.querySelectorAll(".access-level-terms .access-term")];
-    expect(tiles.map((tile) => tile.querySelector(".access-badge")?.textContent?.split(" ")[0]))
-      .toEqual(["Answer", "Direct", "Notes"]);
-    expect(tiles.map((tile) => tile.classList.contains("access-term-off"))).toEqual([false, true, true]);
-    expect(tiles[1].querySelector("dd")?.textContent).toBe("Off");
-    expect(tiles.every((tile) => tile.querySelector(".access-term-icon")?.getAttribute("aria-hidden") === "true")).toBe(true);
+    // Every capability keeps its row of the permissions table, in the same
+    // order; only the permission column says whether it is granted.
+    const table = research.querySelector(".access-level-terms table")!;
+    expect([...table.querySelectorAll("thead th")].map((cell) => cell.textContent))
+      .toEqual(["Capability", "Permission", "Details"]);
+    const rows = [...table.querySelectorAll("tbody tr")];
+    expect(rows.map((row) => row.querySelector("th")?.textContent)).toEqual(["Answer", "Direct", "Save notes"]);
+    expect(rows.map((row) => row.querySelector(".access-term-permission")?.textContent))
+      .toEqual(["Allowed", "Not granted", "Not granted"]);
+    expect(rows.map((row) => row.classList.contains("access-term-off"))).toEqual([false, true, true]);
+    expect(rows[0].querySelector(".access-term-details")?.textContent).toContain("Household policy");
+    expect(rows[1].querySelector(".access-term-details")?.textContent).toBe("—");
+    expect(rows.every((row) => row.querySelector(".access-term-icon")?.getAttribute("aria-hidden") === "true")).toBe(true);
 
     // Its connections follow it, inside the card: by name, the app that signed
-    // in, and when it was last used — with no column headings repeated per level.
-    expect(host.querySelector("table, thead, th")).toBeNull();
-    const rows = [...research.querySelectorAll(".access-level-body .access-connection-row")];
-    expect(rows.map((row) => row.querySelector(".access-connection-label")?.textContent))
+    // in, and when it was last used — with no column headings repeated per connection.
+    expect(research.querySelector(".access-level-body table, .access-level-body th")).toBeNull();
+    const connections = [...research.querySelectorAll(".access-level-body .access-connection-row")];
+    expect(connections.map((row) => row.querySelector(".access-connection-label")?.textContent))
       .toEqual(["Fictional desktop", "Fictional laptop"]);
-    expect(rows.map((row) => row.querySelector(".access-app-cell")?.textContent))
+    expect(connections.map((row) => row.querySelector(".access-app-cell")?.textContent))
       .toEqual(["Signed in from Fictional coding agent", "Signed in from Fictional desktop app"]);
-    expect(rows.map((row) => row.querySelector(".access-used-cell")?.textContent))
+    expect(connections.map((row) => row.querySelector(".access-used-cell")?.textContent))
       .toEqual(["Never used", `Last used ${timeAgo(1_757_000_000_000)}`]);
 
     expect(research.querySelector(".access-level-subhead")?.textContent).toBe("Connected agents (2)");
@@ -850,14 +862,14 @@ describe("AccessView", () => {
     await act(async () => { link.dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true })); });
     expect(router.navigate).toHaveBeenCalledWith("/portal/settings/policies/policy-a");
 
-    // An unreviewed Answer is named in words beside its badge.
+    // An unreviewed Answer is named in words beside its warning-coloured mark.
     const raw = levelGroup("Fictional raw reads");
     expect(raw.querySelector(".access-level-terms")?.textContent).toContain("No privacy review");
     expect(raw.querySelector(".access-level-terms a")).toBeNull();
     expect(raw.querySelector(".access-level-terms .access-unreviewed")).not.toBeNull();
-    const answer = raw.querySelector(".access-level-terms .access-badge-answer")!;
+    const answer = raw.querySelector(".access-level-terms .access-term-answer .access-permission")!;
     expect(answer.getAttribute("class")).toContain("is-unreviewed");
-    expect(answer.textContent).toContain("released without privacy review");
+    expect(answer.getAttribute("title")).toBe("Answers are released without privacy review");
     expect(raw.querySelector(".access-level-terms")?.textContent).toContain("Raw access");
     expect(raw.querySelector(".access-level-terms a")).toBeNull();
 
@@ -2229,8 +2241,8 @@ describe("AccessView", () => {
       await act(async () => { render(h(AccessView, {}), host); });
       expect(host.textContent).toContain("Your update was not applied");
       const head = levelGroup("fictional research").querySelector(".access-level-terms")!;
-      expect(head.querySelector(".access-badge-direct")?.getAttribute("class")).not.toContain("is-off");
-      expect(head.querySelector(".access-badge-answer")?.getAttribute("class")).toContain("is-off");
+      expect(head.querySelector(".access-term-direct")?.classList.contains("access-term-off")).toBe(false);
+      expect(head.querySelector(".access-term-answer")?.classList.contains("access-term-off")).toBe(true);
     });
 
     test("says a level that is gone is no longer available", async () => {
