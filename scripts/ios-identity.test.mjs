@@ -494,6 +494,32 @@ describe("Xcode simulator destination discovery", () => {
   });
 });
 
+it("reads eligible Xcode destinations emitted on stderr by a successful command", () => {
+  const fixture = mkdtempSync(join(tmpdir(), "ios-destination-output-"));
+  try {
+    const command = join(fixture, "xcodebuild");
+    const udid = "00000000-0000-0000-0000-000000000017";
+    writeFileSync(
+      command,
+      `#!/usr/bin/env bash\ncat >&2 <<'DESTINATIONS'\nAvailable destinations for the "Omnesis" scheme:\n{ platform:iOS Simulator, id:${udid}, OS:26.5, name:iPhone 17 }\nDESTINATIONS\n`,
+    );
+    chmodSync(command, 0o755);
+    const result = spawnSync(
+      process.execPath,
+      [join(root, "scripts/ci/wait-ios-destination.mjs"), `platform=iOS Simulator,id=${udid}`],
+      {
+        env: { ...process.env, PATH: `${fixture}:${process.env.PATH}` },
+        encoding: "utf8",
+        timeout: 5000,
+      },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toContain("Xcode destination ready");
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
 describe("latest iOS destination discovery", () => {
   const udid = "00000000-0000-0000-0000-000000000017";
   const heading = 'Available destinations for the "Omnesis" scheme:';

@@ -3,7 +3,7 @@
 
 // CoreSimulator can report a booted phone before Xcode discovers it for a
 // scheme. Wait for the selected destination without retrying any test run.
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,12 +11,23 @@ const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const PROBE_TIMEOUT_MS = 30_000;
 
 function execute(command, args, timeout) {
-  return execFileSync(command, args, {
+  const options = {
     encoding: "utf8",
     timeout,
     maxBuffer: 8 * 1024 * 1024,
     stdio: ["ignore", "pipe", "pipe"],
-  });
+  };
+  // simctl is a JSON boundary; Xcode's human-readable inventory can use either
+  // output stream, and both carry useful diagnostics when discovery fails.
+  if (command !== "xcodebuild") return execFileSync(command, args, options);
+  const result = spawnSync(command, args, options);
+  if (result.error || result.status !== 0) {
+    throw Object.assign(result.error ?? new Error(`xcodebuild exited with ${result.status}`), {
+      stdout: result.stdout,
+      stderr: result.stderr,
+    });
+  }
+  return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
 function fields(text, separator) {
