@@ -78,6 +78,13 @@ internal fun connectionCountLabel(count: Int): String = when (count) {
     else -> "$count connections"
 }
 
+/**
+ * The replace-mode row's line naming the access level a connection uses. Labelled as a level
+ * because several connections can share one, and a level is often named after the agent it was
+ * first made for.
+ */
+internal fun connectionLevelLabel(levelName: String): String = "Access level: $levelName"
+
 internal fun lastUsedLabel(lastUsedAt: Long?, nowMillis: Long): String =
     lastUsedAt?.let { "Last used ${TimeFormat.relative(it, nowMillis)}" } ?: "Never used"
 

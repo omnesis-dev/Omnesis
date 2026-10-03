@@ -230,7 +230,7 @@ function ReplaceChoices({ choice, options, onChange, disabled, idPrefix }) {
       />
       <span class="access-choice-text">
         <strong>${option.entry.name}${option.suggested ? html`<${SuggestedTag} />` : null}</strong>
-        ${option.level ? html`<small>${`Uses ${option.level.name}`}</small>` : null}
+        ${option.level ? html`<small>${`Access level: ${option.level.name}`}</small>` : null}
         <small>${option.entry.lastUsedAt ? `Last used ${timeAgo(option.entry.lastUsedAt)}` : "Never used"}</small>
         ${option.suggested ? html`<small class="access-suggestion">Already connected on this device.</small>` : null}
         <${NeedsAnswer} disabled=${option.disabled} />

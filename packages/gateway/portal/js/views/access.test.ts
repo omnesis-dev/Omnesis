@@ -2820,8 +2820,8 @@ describe("AccessView", () => {
       const laptop = () => choice("Fictional laptop").closest(".access-choice-option")!;
       expect(laptop().querySelector(".access-suggested-tag")?.textContent).toBe("Suggested");
       expect(cardLines("Fictional laptop"))
-        .toEqual(["Uses fictional research", `Last used ${timeAgo(1_757_000_000_000)}`, "Already connected on this device."]);
-      expect(cardLines("Fictional desktop")).toEqual(["Uses fictional research", "Never used"]);
+        .toEqual(["Access level: fictional research", `Last used ${timeAgo(1_757_000_000_000)}`, "Already connected on this device."]);
+      expect(cardLines("Fictional desktop")).toEqual(["Access level: fictional research", "Never used"]);
       expect(host.querySelectorAll(".access-suggestion")).toHaveLength(1);
       expect(host.textContent).not.toContain("already connected as");
       expect(choice("Fictional laptop").hasAttribute("checked")).toBe(true);

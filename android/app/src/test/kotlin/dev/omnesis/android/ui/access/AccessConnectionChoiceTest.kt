@@ -368,6 +368,7 @@ class AccessConnectionChoiceTest {
         assertEquals("No connections", connectionCountLabel(0))
         assertEquals("1 connection", connectionCountLabel(1))
         assertEquals("4 connections", connectionCountLabel(4))
+        assertEquals("Access level: Agent tools", connectionLevelLabel("Agent tools"))
         assertEquals("Never used", lastUsedLabel(null, 10_000_000))
         assertEquals("Last used 2h ago", lastUsedLabel(10_000_000 - 2 * 3_600_000, 10_000_000))
     }
