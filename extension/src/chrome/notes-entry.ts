@@ -90,3 +90,28 @@ export function initNotesEntry(document: Document, api: EntryChrome): void {
   });
   void refresh();
 }
+
+/** Ask only when unpairing would remove a written draft or an undelivered note. */
+export async function confirmNotesUnpair(
+  api: Pick<EntryChrome, "runtime">,
+  confirm: (message: string) => boolean,
+): Promise<boolean> {
+  let view: Partial<NotesView> | null | undefined;
+  try {
+    view = await api.runtime.sendMessage<Partial<NotesView> | null | undefined>({
+      type: "notes-view",
+    });
+  } catch {
+    // Older workers have no notes state; the existing unpair action reports worker errors itself.
+    return true;
+  }
+  const writtenDraft = typeof view?.draft?.text === "string" && view.draft.text.trim().length > 0;
+  const pendingNotes =
+    typeof view?.pending === "number" && Number.isInteger(view.pending) && view.pending > 0;
+  return (
+    (!writtenDraft && !pendingNotes) ||
+    confirm(
+      "Unpairing deletes this browser’s draft and unsent notes. Saved notes remain in Omnesis. Unpair?",
+    )
+  );
+}

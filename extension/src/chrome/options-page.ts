@@ -45,8 +45,16 @@ export interface OptionsChrome {
   };
 }
 
+export interface OptionsHooks {
+  beforeUnpair?: () => Promise<boolean>;
+}
+
 /** Wire the options document and load both of its views. */
-export function initOptions(document: Document, chrome: OptionsChrome): void {
+export function initOptions(
+  document: Document,
+  chrome: OptionsChrome,
+  hooks: OptionsHooks = {},
+): void {
   let pairingInFlight = false;
 
   const pairingActions = {
@@ -165,6 +173,7 @@ export function initOptions(document: Document, chrome: OptionsChrome): void {
 
   async function onUnpair(): Promise<void> {
     try {
+      if (hooks.beforeUnpair && !(await hooks.beforeUnpair())) return;
       const permissionWarning = await withBestEffortRefresh(
         () => unpairBrowser(pairingActions),
         refreshPairedAndExclusions,
