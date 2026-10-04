@@ -5,14 +5,18 @@ import { parseHTML } from "linkedom";
 import { describe, expect, it, vi } from "vitest";
 import { initPanelDismiss } from "./panel-dismiss.js";
 
-function panel(close = vi.fn().mockResolvedValue(undefined), beforeDismiss?: () => Promise<void>) {
+function panel(
+  close = vi.fn().mockResolvedValue(undefined),
+  beforeDismiss?: () => Promise<void>,
+  scope?: { windowId?: number; tabId?: number },
+) {
   const { document, window } = parseHTML("<input id='query'><button>Result</button>");
   const fallback = vi.fn();
   const api = {
     windows: { getCurrent: vi.fn().mockResolvedValue({ id: 42 }) },
     sidePanel: { close },
   };
-  initPanelDismiss(document as unknown as Document, api, fallback, beforeDismiss);
+  initPanelDismiss(document as unknown as Document, api, fallback, beforeDismiss, scope);
   const press = (key: string, options: { composing?: boolean; handled?: boolean } = {}) => {
     const event = new window.Event("keydown", { bubbles: true, cancelable: true });
     Object.assign(event, { key, isComposing: options.composing ?? false });
@@ -24,6 +28,13 @@ function panel(close = vi.fn().mockResolvedValue(undefined), beforeDismiss?: () 
 }
 
 describe("native panel dismissal", () => {
+  it("closes an actual tab-specific panel by tab ID instead of the global window", async () => {
+    const p = panel(vi.fn().mockResolvedValue(undefined), undefined, { windowId: 42, tabId: 7 });
+    p.press("Escape");
+    await vi.waitFor(() => expect(p.api.sidePanel.close).toHaveBeenCalledWith({ tabId: 7 }));
+    expect(p.api.windows.getCurrent).not.toHaveBeenCalled();
+  });
+
   it("closes only the current window's panel when Escape is pressed in the query", async () => {
     const p = panel();
     expect(p.press("Escape").defaultPrevented).toBe(true);

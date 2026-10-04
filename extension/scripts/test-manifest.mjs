@@ -4,14 +4,12 @@
 /**
  * The test-only manifest variant the headless browser E2E loads.
  *
- * Three edits, all of which must never reach a shipped build:
+ * Two edits, both of which must never reach a shipped build:
  *
  *   - the optional wildcard-HTTPS host permission becomes a mandatory one, so
  *     Chrome grants site access at install time. The real extension asks for
  *     it during pairing through a native dialog that no automation can click;
  *     a headless run would otherwise stall forever at "Pairing…".
- *   - optional API permissions become mandatory in this variant: native favicon
- *     and tab-access permission dialogs also cannot be automated headlessly.
  *   - a fixed `key` pins the extension id, so `chrome-extension://<id>/…`
  *     URLs are stable across runs and machines.
  *
@@ -27,15 +25,10 @@ const TEST_EXTENSION_KEY =
 export const TEST_EXTENSION_ID = "kfekefphldjmmilfoopcnmlbmfcilddi";
 
 export function applyTestManifest(manifest) {
-  const {
-    optional_host_permissions: optional,
-    optional_permissions: optionalApis,
-    ...rest
-  } = manifest;
+  const { optional_host_permissions: optional, ...rest } = manifest;
   return {
     ...rest,
     key: TEST_EXTENSION_KEY,
     host_permissions: optional ?? [],
-    permissions: [...new Set([...(rest.permissions ?? []), ...(optionalApis ?? [])])],
   };
 }

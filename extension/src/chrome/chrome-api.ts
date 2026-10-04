@@ -39,9 +39,24 @@ declare global {
     }
 
     namespace runtime {
+      interface Port {
+        name: string;
+        sender?: MessageSender;
+        postMessage(message: unknown): void;
+        disconnect(): void;
+        onMessage: { addListener(callback: (message: unknown) => void): void };
+        onDisconnect: { addListener(callback: () => void): void };
+      }
+      function connect(details: { name: string }): Port;
+      const onConnect: { addListener(callback: (port: Port) => void): void };
+      function getContexts(filter: {
+        documentIds: string[];
+        contextTypes: string[];
+      }): Promise<Array<{ windowId: number; tabId: number }>>;
       const onInstalled: { addListener(callback: () => void): void };
       interface MessageSender {
         id?: string;
+        documentId?: string;
         url?: string;
         tab?: { id?: number; url?: string; incognito?: boolean };
       }
@@ -180,7 +195,17 @@ declare global {
     namespace sidePanel {
       function setOptions(details: { enabled: boolean; path?: string }): Promise<void>;
       function open(details: { tabId: number }): Promise<void>;
-      function close(details: { windowId: number }): Promise<void>;
+      function close(details: { windowId?: number; tabId?: number }): Promise<void>;
+      const onOpened: {
+        addListener(
+          callback: (info: { windowId: number; tabId?: number; path: string }) => void,
+        ): void;
+      };
+      const onClosed: {
+        addListener(
+          callback: (info: { windowId: number; tabId?: number; path: string }) => void,
+        ): void;
+      };
     }
     namespace extension {
       /** True when this context runs in an incognito (private) window. */

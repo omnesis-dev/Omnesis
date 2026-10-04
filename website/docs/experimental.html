@@ -228,23 +228,28 @@
           access.
         </p>
         <p>
-          Press <strong>Alt/Option + Shift + F</strong> or choose <strong>Find</strong> in the
-          popup. Search results show titles, matching snippets, site icons and source links. Select
-          a result with the keyboard and press Enter, or click it, to switch to a matching tab and
-          its window. If no safe match exists, the source link opens in a new tab. The separate
-          new-tab action opens another copy. The query and results remain available when you reopen
-          the panel. The configured decision model chooses direct index search or a read-only agent
-          search. The panel shows its decision, streamed agent text and tool activity, then the
-          structured search results. Without an enabled decision model, Find uses direct search.
-          Each query starts a fresh task, with no timeline or follow-up conversation.
+          Press <strong>Alt + Shift + F</strong> (<strong>Control + Command + K</strong> on macOS)
+          or choose <strong>Find</strong> in the popup. Search results show titles, matching
+          snippets, site icons and source links. Select a result with the keyboard and press Enter,
+          or click it, to switch to a matching tab and its window. If no safe match exists, the
+          source link opens in a new tab. The separate new-tab action opens another copy. The query
+          and results remain available when you reopen the panel. The configured decision model
+          chooses direct index search or a read-only agent search. The panel shows its decision,
+          streamed agent text and tool activity, then the structured search results. Without an
+          enabled decision model, Find uses direct search. Each query starts a fresh task, with no
+          timeline or follow-up conversation.
         </p>
         <p>
-          Existing page-access grants allow matching open tabs on those sites. Choose
-          <strong>Enable open-tab matching</strong> to grant optional tab access for broader
-          matching. Tab URLs are compared locally and the tab list is not uploaded. Optional favicon
-          access displays icons through Chrome's favicon service. Find does not prompt for it;
-          available source icons or a fallback are used without it. Browser-history access is not
-          requested. Change either shortcut at <code>chrome://extensions/shortcuts</code>.
+          Chrome requests tab and favicon access at installation or upgrade. Find matches open tabs
+          and displays available site icons automatically. Tab URLs are compared locally; the tab
+          list is not uploaded. Icons use Chrome's local favicon service, with a fallback when an
+          icon is unavailable. Neither feature requests browser-history access.
+        </p>
+
+        <p>
+          Chrome may preserve existing shortcut assignments after an upgrade or reload. Set the
+          shortcuts at <code>chrome://extensions/shortcuts</code>; popup icon tooltips show the
+          active bindings.
         </p>
 
         <h3 id="browser-extension-notes">Tell Omnesis from a page</h3>
@@ -257,7 +262,7 @@
           permission.
         </p>
         <p>
-          Press <strong>Alt + Shift + N</strong> (<strong>Option + Shift + N</strong> on macOS),
+          Press <strong>Alt + Shift + N</strong> (<strong>Control + Command + T</strong> on macOS),
           choose <strong>Tell Omnesis</strong> in the extension popup, or right-click the page. If
           text is selected, the note includes that quotation; you can remove it before sending. Each
           opens a side panel with the page context and a focused note field. The icon need not be

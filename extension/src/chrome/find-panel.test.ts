@@ -61,7 +61,6 @@ function panel() {
   let changed:
     | ((changes: Record<string, { newValue?: unknown }>, area: string) => void)
     | undefined;
-  const request = vi.fn().mockResolvedValue(true);
   const activated = vi.fn();
   const openOptionsPage = vi.fn().mockResolvedValue(undefined);
   const send = vi.fn(async (message: unknown) => {
@@ -87,7 +86,6 @@ function panel() {
           return value as T;
         },
       },
-      permissions: { request },
       storage: {
         local: {
           get: async () => ({ "omnesis.panel.view.v1": "find" }),
@@ -109,7 +107,6 @@ function panel() {
     openOptionsPage,
     input,
     send,
-    request,
     focus: (element: Element) => {
       active = element;
     },
@@ -309,12 +306,10 @@ describe("Find panel", () => {
     expect(p.document.getElementById("find-form")?.hidden).toBe(true);
     expect((p.document.querySelector(".find-footer") as unknown as HTMLElement).hidden).toBe(true);
   });
-  it("requests broader tabs access only from its explicit action", async () => {
+  it("offers results immediately without an additional tab-access action", async () => {
     const p = panel();
     await vi.waitFor(() => expect(p.document.querySelectorAll(".find-result")).toHaveLength(2));
-    expect(p.request).not.toHaveBeenCalled();
-    p.document.getElementById("find-match-tabs")!.dispatchEvent(new p.window.Event("click"));
-    expect(p.request).toHaveBeenCalledWith({ permissions: ["tabs"] });
+    expect(p.document.getElementById("find-match-tabs")).toBeNull();
   });
   it("typing saves the query without starting a billed decision or agent turn", async () => {
     const p = panel();

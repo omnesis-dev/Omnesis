@@ -12,7 +12,9 @@
     "scripting",
     "activeTab",
     "contextMenus",
-    "sidePanel"
+    "sidePanel",
+    "tabs",
+    "favicon"
   ],
   "optional_host_permissions": ["https://*/*"],
   "background": {
@@ -46,17 +48,16 @@
     "tell-omnesis": {
       "suggested_key": {
         "default": "Alt+Shift+N",
-        "mac": "Alt+Shift+N"
+        "mac": "MacCtrl+Command+T"
       },
       "description": "Tell Omnesis about the current page or selection"
     },
     "find-omnesis": {
       "suggested_key": {
         "default": "Alt+Shift+F",
-        "mac": "Alt+Shift+F"
+        "mac": "MacCtrl+Command+K"
       },
       "description": "Find an Omnesis result and switch to its open tab"
     }
-  },
-  "optional_permissions": ["tabs", "favicon"]
+  }
 }

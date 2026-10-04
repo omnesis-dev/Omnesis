@@ -29,8 +29,9 @@ import { SyntheticE2EHarness } from "./synth-harness.js";
  *
  * The extension is built with the TEST manifest (`extension/scripts/
  * test-manifest.mjs`): the wildcard-HTTPS host permission is granted at install
- * time instead of through the native dialog no automation can click. Optional
- * API permissions are pre-granted for the same reason, and the extension id is pinned. The store ZIP is asserted never to carry that
+ * time instead of through the native dialog no automation can click. API
+ * permissions match the production manifest, and the extension id is pinned.
+ * The store ZIP is asserted never to carry that
  * variant. The gateway serves a self-signed certificate; the worker's `fetch`
  * does not honour Playwright's `ignoreHTTPSErrors`, so Chromium runs with
  * `--ignore-certificate-errors` — a test-lane concession the real extension
@@ -591,8 +592,6 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
     await expect
       .poll(
         async () => {
-          const hint = await popup.locator("#notes-entry-hint").textContent();
-          if (hint?.includes("sidePanel.open")) throw new Error(hint);
           const state = (await extensionStorage())["omnesis.notes.state.v1"] as
             | { draft?: { selection: string } }
             | undefined;
@@ -601,7 +600,7 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
         { timeout: 20_000 },
       )
       .toBe(quotation);
-    await popup.close();
+    await expect.poll(() => popup.isClosed(), { timeout: 20_000 }).toBe(true);
 
     // Open the same extension document as a tab so Playwright can inspect the composer.
     // Chrome's native side panel is outside Playwright's ordinary page target list.
@@ -818,12 +817,15 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
     await panel.locator("#find-section").waitFor({ state: "visible", timeout: 20_000 });
     await panel.locator("#find-query").fill("Waypoint");
     await panel.locator("#find-query").press("Enter");
-    await expect
-      .poll(async () => panel.locator(".find-result-open").count(), {
-        timeout: 30_000,
-        interval: 250,
-      })
-      .toBe(3);
+    // The active fixture page may also be captured under its canonical URL hash.
+    // Verify the intended destinations individually rather than counting unrelated captures.
+    for (const title of [webTitle, notionTitle, "Waypoint email guide"])
+      await expect
+        .poll(() => panel.locator(".find-result-title").filter({ hasText: title }).count(), {
+          timeout: 30_000,
+          interval: 250,
+        })
+        .toBe(1);
     await expect
       .poll(() => panel.locator("#find-decision").textContent())
       .toContain("Direct search");

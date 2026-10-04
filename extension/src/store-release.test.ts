@@ -21,7 +21,7 @@ const contract = JSON.parse(
 const extensionRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
 describe("Chrome Web Store release contract", () => {
-  it("pre-grants optional permissions only in the isolated headless test manifest", async () => {
+  it("pre-grants HTTPS only in the isolated headless test manifest and keeps required tab/icon access", async () => {
     const { applyTestManifest } = await import(
       pathToFileURL(join(extensionRoot, "scripts", "test-manifest.mjs")).href
     );
@@ -30,9 +30,8 @@ describe("Chrome Web Store release contract", () => {
     expect(testManifest).not.toHaveProperty("optional_permissions");
     expect(testManifest.host_permissions).toEqual(["https://*/*"]);
     expect(testManifest.key).toBeTruthy();
-    expect(manifest.permissions).not.toContain("tabs");
-    expect(manifest.permissions).not.toContain("favicon");
-    expect(manifest.optional_permissions).toEqual(["tabs", "favicon"]);
+    expect(manifest.permissions).toEqual(expect.arrayContaining(["tabs", "favicon"]));
+    expect(manifest).not.toHaveProperty("optional_permissions");
   });
 
   it("packages against one caller-recorded commit without refreshing a shared ref", () => {
@@ -90,7 +89,7 @@ describe("Chrome Web Store release contract", () => {
     expect(manifest.manifest_version).toBe(3);
     expect(manifest.minimum_chrome_version).toBe("130");
     expect(manifest.optional_host_permissions).toEqual(["https://*/*"]);
-    expect(manifest.optional_permissions).toEqual(["tabs", "favicon"]);
+    expect(manifest).not.toHaveProperty("optional_permissions");
     expect(manifest.permissions).toEqual([
       "storage",
       "unlimitedStorage",
@@ -99,12 +98,25 @@ describe("Chrome Web Store release contract", () => {
       "activeTab",
       "contextMenus",
       "sidePanel",
+      "tabs",
+      "favicon",
     ]);
     expect(manifest.incognito).toBe("not_allowed");
     expect(manifest.background).toEqual({ service_worker: "background.js", type: "module" });
     expect(manifest).not.toHaveProperty("content_security_policy");
     expect(manifest).not.toHaveProperty("externally_connectable");
     expect(manifest).not.toHaveProperty("web_accessible_resources");
+  });
+
+  it("uses the physical macOS Control key for both panel commands", () => {
+    expect(manifest.commands["tell-omnesis"].suggested_key).toEqual({
+      default: "Alt+Shift+N",
+      mac: "MacCtrl+Command+T",
+    });
+    expect(manifest.commands["find-omnesis"].suggested_key).toEqual({
+      default: "Alt+Shift+F",
+      mac: "MacCtrl+Command+K",
+    });
   });
 
   it("produces the same allowlisted archive across timezone and umask differences", async () => {
@@ -161,17 +173,16 @@ describe("Chrome Web Store release contract", () => {
         "ui.css",
       ]);
       expect(Object.keys(archive.files).some((path) => path.endsWith(".map"))).toBe(false);
-      // The isolated headless manifest pre-grants optional permissions and pins
-      // the extension id; production retains optional user consent.
+      // The isolated headless manifest pre-grants HTTPS host access and pins
+      // the extension id; production requests page access during pairing.
       const packagedManifest = JSON.parse(
         (await archive.file("manifest.json")?.async("string")) ?? "{}",
       ) as Record<string, unknown>;
       expect(packagedManifest).not.toHaveProperty("key");
       expect(packagedManifest).not.toHaveProperty("host_permissions");
       expect(packagedManifest.optional_host_permissions).toEqual(["https://*/*"]);
-      expect(packagedManifest.optional_permissions).toEqual(["tabs", "favicon"]);
-      expect(packagedManifest.permissions).not.toContain("tabs");
-      expect(packagedManifest.permissions).not.toContain("favicon");
+      expect(packagedManifest).not.toHaveProperty("optional_permissions");
+      expect(packagedManifest.permissions).toEqual(expect.arrayContaining(["tabs", "favicon"]));
       expect(packagedManifest.side_panel).toEqual({ default_path: "notes.html" });
       expect(await archive.file("notes.html")?.async("string")).toContain('src="notes.js"');
       expect(await archive.file("notes.js")?.async("string")).toContain("notes-submit");

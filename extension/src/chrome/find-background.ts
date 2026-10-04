@@ -5,7 +5,12 @@ import { loadConfig } from "./storage.js";
 import { FIND_STATE_KEY, MAX_FIND_QUERY, FindService, type FindView } from "./find-service.js";
 import { FIND_TOKEN_KEY } from "./find-credential.js";
 import { activateFindResult, findOpenTab } from "./find-tabs.js";
-import { registerPanelFeature, selectPanelView, setPanelFeature } from "./panel-surface.js";
+import {
+  registerPanelFeature,
+  selectPanelView,
+  setPanelFeature,
+  togglePanelShortcut,
+} from "./panel-surface.js";
 
 export function installFindBackground(): {
   clear(): Promise<void>;
@@ -71,7 +76,12 @@ export function installFindBackground(): {
     return { ok: true };
   }
   chrome.commands.onCommand.addListener((command, tab) => {
-    if (command === "find-omnesis" && tab?.id !== undefined && !tab.incognito)
+    if (
+      command === "find-omnesis" &&
+      tab?.id !== undefined &&
+      !tab.incognito &&
+      !togglePanelShortcut("find", tab)
+    )
       detached(open(tab.id));
   });
   async function viewWithTabs(

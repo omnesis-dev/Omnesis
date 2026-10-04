@@ -17,7 +17,6 @@ interface PanelApi {
     getURL(path: string): string;
     openOptionsPage?(): Promise<void>;
   };
-  permissions: { request(permission: { permissions: string[] }): Promise<boolean> };
   storage: {
     local: {
       get(keys: string): Promise<Record<string, unknown>>;
@@ -75,7 +74,6 @@ export function initFindPanel(
   const list = element<HTMLOListElement>("find-results");
   const status = element("find-status");
   const more = element<HTMLButtonElement>("find-more");
-  const matchTabs = element<HTMLButtonElement>("find-match-tabs");
   const findSection = element("find-section"),
     notesSection = element("notes-section");
   let view: FindPanelView | undefined,
@@ -157,7 +155,6 @@ export function initFindPanel(
     if (!dirtyInput) {
       input.value = next.query;
     }
-    matchTabs.hidden = !next.enabled || next.tabsPermission === true;
     more.hidden = !next.enabled || !next.hasMore;
     const currentResults = next.resultsQuery === input.value;
     cancel.hidden = !next.running || !currentResults;
@@ -380,14 +377,6 @@ export function initFindPanel(
   });
   more.addEventListener("click", () => {
     void search(true);
-  });
-  matchTabs.addEventListener("click", () => {
-    void api.permissions
-      .request({ permissions: ["tabs", "favicon"] })
-      .then(() => refresh(true))
-      .catch(() => {
-        status.textContent = "Open-tab matching uses only the sites this extension may access.";
-      });
   });
   api.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;

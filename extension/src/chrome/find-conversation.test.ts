@@ -69,6 +69,51 @@ describe("portal components in Chrome", () => {
     expect(p.host.querySelector(".agent-ephemeral")).toBeNull();
     expect(p.flush).toHaveBeenCalledWith("read", undefined);
   });
+  it("renders SQL hooks and query timers on a second run, then releases the buffered narration", async () => {
+    vi.useFakeTimers();
+    const p = mount();
+    await act(async () =>
+      p.conversation.render({
+        ...p.view,
+        progressId: "first",
+        agentText: "An invented earlier answer.",
+      }),
+    );
+    const progress = new FindProgress();
+    progress.update("agent.tool.start", {
+      toolCallId: "sql",
+      tool: "run_sql",
+      args: { sql: "SELECT value FROM example_records" },
+    });
+    progress.update("agent.tool.result", {
+      toolCallId: "sql",
+      result: { kind: "sql.rows", columns: ["value"], rows: [["Invented result"]] },
+    });
+    progress.update("agent.text.delta", { delta: "The invented result is ready." });
+    await act(async () =>
+      p.conversation.render({ ...p.view, progressId: "second", tools: progress.snapshot() }),
+    );
+    expect(p.host.textContent).not.toContain("An invented earlier answer.");
+    expect(p.host.querySelector(".agent-ephemeral-sql-line")?.textContent).toContain(
+      "SELECT value",
+    );
+    expect(p.host.textContent).toContain("Invented result");
+    expect(p.host.textContent).not.toContain("The invented result is ready.");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(350);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(p.flush).toHaveBeenCalledWith("sql", "second");
+    expect(p.host.querySelector(".agent-ephemeral")).toBeNull();
+    progress.flush("sql");
+    await act(async () =>
+      p.conversation.render({ ...p.view, progressId: "second", tools: progress.snapshot() }),
+    );
+    expect(p.host.textContent).toContain("The invented result is ready.");
+  });
+
   it("uses the shared Markdown component and does not revive a dismissed card", async () => {
     const p = mount();
     await act(async () =>

@@ -2,12 +2,14 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { html } from "htm/preact";
+import { useState, useRef, useEffect } from "preact/hooks";
 import {
   RollingSlot,
   EphemeralCard,
   EphemeralHeader,
   useRollingRotation,
   ephemeralResultArrived,
+  EPHEMERAL_REVEAL_MS,
   EPHEMERAL_SLOT_HEIGHT,
   EPHEMERAL_SQL_SLOT_HEIGHT,
   EPHEMERAL_SQL_ROWS_MAX,

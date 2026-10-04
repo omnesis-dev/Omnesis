@@ -3,7 +3,12 @@
 
 import "./chrome-api.js";
 import { normalizeCaptureUrl, preferCanonicalUrl } from "../capture/normalize.js";
-import { registerPanelFeature, selectPanelView, setPanelFeature } from "./panel-surface.js";
+import {
+  registerPanelFeature,
+  selectPanelView,
+  setPanelFeature,
+  togglePanelShortcut,
+} from "./panel-surface.js";
 import { loadConfig } from "./storage.js";
 import {
   NOTES_STATE_KEY,
@@ -138,7 +143,8 @@ export function installNotesBackground(): {
     if (view.enabled) await selectPanelView("notes");
   }
   chrome.commands.onCommand.addListener((command, tab) => {
-    if (command === "tell-omnesis" && tab) detached(open(tab));
+    if (command === "tell-omnesis" && tab && !togglePanelShortcut("notes", tab))
+      detached(open(tab));
   });
   chrome.contextMenus.onClicked.addListener((info, tab) => {
     if (tab && ["omnesis-note-page", "omnesis-note-selection"].includes(String(info.menuItemId)))
