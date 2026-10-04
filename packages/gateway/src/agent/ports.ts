@@ -652,6 +652,7 @@ export function createGatewaySqlPort(
       let result: Awaited<ReturnType<AnalyticsDb["executeQuery"]>>;
       try {
         result = await analytics.executeQuery(sql, {
+          includeReadTables: true,
           limit: maxRows + 1,
           timeoutMs: AGENT_SQL_QUERY_TIMEOUT_MS,
           signal: runOpts?.signal,
@@ -686,7 +687,15 @@ export function createGatewaySqlPort(
         ? fullCatalog.filter((entry) => permitted.has(entry.sourceId))
         : fullCatalog;
       const { sources, subjects } = enrichSqlWithCatalog(catalog, sql);
-      const rowIdentities = deriveRowIdentities(catalog, result.columns, result.rows);
+      // Identity comes only from tables the engine actually read. Unrelated
+      // catalog tables often share a key name such as id; comments and CTE
+      // aliases must not add phantom candidates or hide the actual row.
+      const readTables = new Set((result.readTables ?? []).map((table) => table.toLowerCase()));
+      const rowIdentities = deriveRowIdentities(
+        catalog.filter((entry) => readTables.has(entry.tableName.toLowerCase())),
+        result.columns,
+        result.rows,
+      );
       return {
         sql,
         columns: [...result.columns],

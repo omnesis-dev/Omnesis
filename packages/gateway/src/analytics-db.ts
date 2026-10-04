@@ -368,6 +368,8 @@ export class AnalyticsDb {
   async executeQuery(
     sql: string,
     opts?: {
+      /** Include vetted engine-parsed base tables for internal row identity attribution. */
+      includeReadTables?: boolean;
       limit?: number;
       timeoutMs?: number;
       signal?: AbortSignal;
@@ -380,6 +382,7 @@ export class AnalyticsDb {
     rowCount: number;
     timing: number;
     columnTypes: string[];
+    readTables?: string[];
   }> {
     return this.queries.executeQuery(sql, opts);
   }

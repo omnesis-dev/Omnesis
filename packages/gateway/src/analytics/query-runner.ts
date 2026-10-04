@@ -248,6 +248,8 @@ export class AnalyticsQueryRunner {
   async executeQuery(
     sql: string,
     opts?: {
+      /** Include vetted engine-parsed base tables for internal row identity attribution. */
+      includeReadTables?: boolean;
       limit?: number;
       timeoutMs?: number;
       signal?: AbortSignal;
@@ -274,6 +276,7 @@ export class AnalyticsQueryRunner {
     rowCount: number;
     timing: number;
     columnTypes: string[];
+    readTables?: string[];
   }> {
     if (!this.pool.isOpen) throw new Error("AnalyticsDb not open");
     const deadline = new QueryDeadline(opts?.timeoutMs, opts?.signal);
@@ -320,7 +323,7 @@ export class AnalyticsQueryRunner {
     const permittedSourceIds = opts?.permittedSourceIds;
     return this.pool.withSandboxStatement(
       querySql,
-      async ({ conn, statement }) => {
+      async ({ conn, statement, parseTree }) => {
         deadline.assertRemaining("query execution");
         if (namedBinds) statement.bind(namedBinds);
         const start = Date.now();
@@ -341,6 +344,13 @@ export class AnalyticsQueryRunner {
           rowCount: rows.length,
           timing,
           columnTypes,
+          ...(opts?.includeReadTables
+            ? {
+                readTables: [
+                  ...new Set(extractSandboxTableRefs(parseTree).tables.map((ref) => ref.table)),
+                ],
+              }
+            : {}),
         };
       },
       permittedSourceIds
