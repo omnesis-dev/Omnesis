@@ -102,6 +102,24 @@ describe("Browser Find owner-approved standard read (spawned gateway)", () => {
       enabled: true,
       canonicalizers: expect.any(Array),
     });
+    // Gateway-hosted provider metadata is seeded asynchronously at startup;
+    // the client receives a ready-to-render raster, never provider SVG markup.
+    let webIcon = "";
+    await expect
+      .poll(
+        async () => {
+          const status = (await (await request("/browser/find", credential.token)).json()) as {
+            sourceIcons?: Record<string, string>;
+          };
+          webIcon = status.sourceIcons?.web ?? "";
+          return webIcon;
+        },
+        { timeout: 30_000, interval: 250 },
+      )
+      .toMatch(/^data:image\/png;base64,[A-Za-z0-9+/]+=*$/);
+    expect(
+      Buffer.from(webIcon.slice("data:image/png;base64,".length), "base64").subarray(0, 8),
+    ).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
   });
   test("the read credential searches real indexed pages and retains ordinary corpus read authority", async () => {
     const text = "Orbit workshop describes an invented method for assembling a small telescope.";
@@ -225,6 +243,8 @@ describe("Stable browser capture without experimental note or Find APIs", () => 
     expect(health.experimental).toBe(false);
     expect(health.capabilities).not.toHaveProperty("browserNotes");
     expect(health.capabilities).not.toHaveProperty("browserFind");
+    expect(health.capabilities).not.toHaveProperty("browserFeatures");
+    expect(health.capabilities).not.toHaveProperty("browserNotesEdit");
     const minted = await stable.gatewayJson<{ pairingCode: string }>("/admin/devices/pair", {
       method: "POST",
       body: JSON.stringify({ kind: "browser", name: "Stable browser" }),
@@ -247,6 +267,7 @@ describe("Stable browser capture without experimental note or Find APIs", () => 
       for (const [path, token, body] of [
         [`/browser/${feature}`, existing.token, undefined],
         [`/browser/${feature}/authorization`, browser.token, { id }],
+        [`/browser/${feature}/enable`, browser.token, { id }],
         [`/browser/${feature}/authorization/${id}`, browser.token, undefined],
         [`/admin/browser-${feature}/authorizations/${id}`, stable.apiKey, undefined],
         [`/admin/browser-${feature}/authorizations/${id}/approve`, stable.apiKey, {}],
@@ -265,6 +286,36 @@ describe("Stable browser capture without experimental note or Find APIs", () => 
         });
         expect(response.status, path).toBe(404);
       }
+    }
+    const edit = await stable.gatewayJson<{ token: string }>("/admin/tokens", {
+      method: "POST",
+      body: JSON.stringify({
+        deviceId: browser.device.id,
+        scopes: ["notes:update"],
+        name: "Existing edit grant",
+      }),
+    });
+    for (const [path, token, method, body] of [
+      ["/browser/notes/edit/enable", browser.token, "POST", { id: randomUUID() }],
+      ["/browser/notes/edit?url=https%3A%2F%2Fexample.org%2Fstable", edit.token, "GET", undefined],
+      [
+        `/browser/notes/edit/${randomUUID()}`,
+        edit.token,
+        "PATCH",
+        {
+          version: 1,
+          url: "https://example.org/stable",
+          text: "Hidden edit",
+          revision: "0".repeat(64),
+        },
+      ],
+    ] as const) {
+      const response = await fetch(`${stable.gatewayUrl}${path}`, {
+        method,
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+      expect(response.status, path).toBe(404);
     }
     const text =
       "A fictional telescope assembly guide remains captured with experimental features off.";

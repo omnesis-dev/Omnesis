@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { normalizeUrl } from "@omnesis/core";
+import { browserNoteContext } from "../../sources/omnesis-notes/browser-note.js";
 import { BadRequestError, ForbiddenError, HttpError, NotFoundError } from "../errors.js";
 import { BrowserAuthorizationService } from "./BrowserAuthorizationService.js";
 import type { AuthContext } from "../routes/types.js";
@@ -10,7 +11,7 @@ import type { WriteGate } from "../../write-gate.js";
 import type { CaptureNoteInput, OmnesisNotesRuntime } from "../../sources/omnesis-notes/index.js";
 import type { NotePageContext } from "../../sources/omnesis-notes/storage.js";
 
-/** Creates browser notes using separately approved device-bound authority. */
+/** Creates browser notes using separate device-bound authority. */
 export class BrowserNotesService {
   private readonly authorizationService: BrowserAuthorizationService;
   constructor(
@@ -30,6 +31,9 @@ export class BrowserNotesService {
   }
   createAuthorization(auth: AuthContext, id: string) {
     return this.authorizationService.createAuthorization(auth, id);
+  }
+  enable(auth: AuthContext, id: string) {
+    return this.authorizationService.enable(auth, id);
   }
   authorization(id: string) {
     return this.authorizationService.authorization(id);
@@ -52,14 +56,7 @@ export class BrowserNotesService {
     url.username = "";
     url.password = "";
     const page = { ...input.page, url: normalizeUrl(url.href) };
-    const quote = page.selection
-      ? `\n\nSelected passage:\n${page.selection
-          .split("\n")
-          .map((line) => `> ${line}`)
-          .join("\n")}`
-      : "";
-    const title = page.title?.replace(/\s+/g, " ").trim();
-    const text = `${input.text.trim()}\n\nPage: ${title ? `${title} — ` : ""}${page.url}${quote}`;
+    const text = `${input.text.trim()}${browserNoteContext(page)}`;
     if (text.length > 8192)
       throw new BadRequestError("Note, page context and quotation must fit within 8192 characters");
     const entry = await this.deps

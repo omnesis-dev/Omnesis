@@ -2,9 +2,24 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, expect, it } from "vitest";
-import { readCanonicalizers, findSnippet, findQueryTerms } from "./find-results.js";
+import {
+  readCanonicalizers,
+  findSnippet,
+  findQueryTerms,
+  readSourceIcons,
+} from "./find-results.js";
 
 describe("Find provider identity boundary", () => {
+  it("accepts only bounded local raster icons and rejects remote or active image content", () => {
+    expect(
+      readSourceIcons({
+        example: "data:image/png;base64,AAAA",
+        remote: "https://example.org/icon.png",
+        active: "data:image/svg+xml;base64,AAAA",
+        huge: "data:image/png;base64," + "A".repeat(100001),
+      }),
+    ).toEqual({ example: "data:image/png;base64,AAAA" });
+  });
   it("accepts structured selectors while dropping all executable wire rules", () => {
     expect(
       readCanonicalizers([

@@ -28,6 +28,15 @@ export function mountBrowserFindRoutes(
     return next();
   });
   app.post(
+    "/browser/find/enable",
+    scope.deviceSelf(),
+    validateJson(authorizationBody),
+    async (c) => {
+      c.header("Cache-Control", "no-store");
+      return c.json(await service.enable(c.get("auth"), c.req.valid("json").id));
+    },
+  );
+  app.post(
     "/browser/find/authorization",
     scope.deviceSelf(),
     validateJson(authorizationBody),

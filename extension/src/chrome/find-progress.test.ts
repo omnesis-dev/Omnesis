@@ -4,49 +4,68 @@
 import { describe, expect, it } from "vitest";
 import { FindProgress } from "./find-progress.js";
 
-describe("ephemeral Find tool cards", () => {
-  it("preserves parallel call identities across preparing, arguments, result and error", () => {
+describe("shared Find transcript", () => {
+  it("keeps structured results and gates subsequent prose until the same portal dismiss action", () => {
     const progress = new FindProgress();
     progress.update("agent.tool.input_start", { toolCallId: "a", tool: "search_documents" });
-    progress.update("agent.tool.input_start", { toolCallId: "b", tool: "run_sql" });
     progress.update("agent.tool.start", {
       toolCallId: "a",
       tool: "search_documents",
-      argsSummary: "Invented query",
+      args: { query: "Invented" },
+      argsSummary: "Invented",
     });
-    progress.update("agent.tool.result", {
+    const result = {
+      kind: "search.results",
+      results: [{ title: "Invented guide", documentId: "doc", sourceId: "example:account" }],
+    };
+    progress.update("agent.tool.result", { toolCallId: "a", result });
+    progress.update("agent.text.delta", { delta: "The explanation." });
+    expect(progress.snapshot()).toHaveLength(1);
+    expect(progress.snapshot()[0]).toMatchObject({
       toolCallId: "a",
-      result: { kind: "search.results", results: [{ title: "Invented" }] },
+      result,
+      pendingTail: [{ kind: "agent.text.delta" }],
     });
-    progress.update("agent.tool.result", {
-      toolCallId: "b",
-      result: { kind: "error", message: "Invented error" },
+    progress.flush("a");
+    expect(progress.snapshot()[0]).toMatchObject({ tailDismissed: true });
+    expect(progress.snapshot()[1]).toMatchObject({ kind: "text", text: "The explanation." });
+    progress.flush("a");
+    expect(progress.snapshot()).toHaveLength(2);
+  });
+  it("retains batch child document content rather than reducing it to a count", () => {
+    const progress = new FindProgress();
+    progress.update("agent.tool.start", {
+      toolCallId: "batch",
+      tool: "fetch_many",
+      args: { documents: [{ documentId: "doc" }] },
     });
-    expect(progress.snapshot()).toEqual([
-      {
-        id: "a",
-        tool: "Searching documents",
-        summary: "Invented query",
-        status: "done",
-        result: "1 result found",
-      },
-      { id: "b", tool: "Querying records", summary: "", status: "error", result: "Invented error" },
+    progress.update("agent.tool.child.start", {
+      toolCallId: "batch",
+      childIndex: 0,
+      tool: "fetch_document",
+      argsSummary: "Invented guide",
+    });
+    const result = {
+      kind: "document",
+      ref: { documentId: "doc", title: "Invented guide" },
+      content: "Invented document content.",
+    };
+    progress.update("agent.tool.child.result", { toolCallId: "batch", childIndex: 0, result });
+    expect(progress.snapshot()[0]?.children).toEqual([
+      expect.objectContaining({ index: 0, result }),
     ]);
   });
-  it("bounds cards and summaries without collecting hidden reasoning or transcripts", () => {
+  it("bounds tool identities and rejects hidden reasoning", () => {
     const progress = new FindProgress();
-    for (let i = 0; i < 40; i++)
+    for (let i = 0; i < 45; i++)
       progress.update("agent.tool.start", {
         toolCallId: String(i),
-        tool: "search",
-        argsSummary: "x".repeat(2000),
+        tool: "fetch_document",
+        args: {},
       });
-    expect(progress.snapshot()).toHaveLength(20);
-    expect(progress.snapshot()[0]?.id).toBe("20");
-    expect(progress.snapshot()[0]?.summary).toHaveLength(500);
-    expect(
-      progress.update("agent.thinking.delta", { toolCallId: "private", delta: "Hidden" }),
-    ).toBe(false);
-    expect(progress.snapshot()).toHaveLength(20);
+    expect(progress.snapshot()).toHaveLength(40);
+    expect(progress.update("agent.thinking.delta", { delta: "Private reasoning" })).toBe(false);
+    progress.finish();
+    expect(progress.snapshot()).toEqual([]);
   });
 });

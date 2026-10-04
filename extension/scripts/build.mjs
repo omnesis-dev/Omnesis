@@ -62,6 +62,19 @@ async function main() {
   // public/icons/ — copied verbatim into the loadable bundle.
   await cp(join(root, "public"), outdir, { recursive: true });
 
+  const sharedStyles = await readFile(
+    fileURLToPath(import.meta.resolve("@omnesis/gateway/agent-ui/styles.css")),
+    "utf8",
+  );
+  await mkdir(join(outdir, "fonts"), { recursive: true });
+  await cp(
+    join(root, "../packages/gateway/portal/fonts/InterVariable.woff2"),
+    join(outdir, "fonts/InterVariable.woff2"),
+  );
+  const fontStyles = `@font-face { font-family: "Inter"; src: url("fonts/InterVariable.woff2") format("woff2"); font-weight: 100 900; font-style: normal; font-display: swap; }`;
+  const cssPath = join(outdir, "ui.css");
+  await writeFile(cssPath, `${await readFile(cssPath, "utf8")}\n${fontStyles}\n${sharedStyles}`);
+
   if (testBuild) {
     const manifestPath = join(outdir, "manifest.json");
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));

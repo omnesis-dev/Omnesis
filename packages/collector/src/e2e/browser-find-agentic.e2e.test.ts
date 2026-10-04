@@ -15,8 +15,8 @@ import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { pair, type FetchLike } from "@omnesis/extension";
 import { toolResultSchema } from "@omnesis/core";
-import { collectToolSteps } from "./brain-bench/puppet-plan.js";
 import stravaProvider from "@omnesis/provider-strava";
+import { collectToolSteps } from "./brain-bench/puppet-plan.js";
 import { SyntheticE2EHarness } from "./synth-harness.js";
 import { loginPortal } from "./mcp-oauth-helper.js";
 import { startDecisionServer, type DecisionServer } from "./brain-bench/decision-server.js";
@@ -46,7 +46,12 @@ declare const chrome: {
   storage: { local: { set(values: Record<string, unknown>): Promise<void> } };
 };
 
+if (!existsSync(chromium.executablePath()) && process.env.CI) {
+  throw new Error("The agentic browser E2E requires Chromium to be installed through Playwright");
+}
+
 const link = "https://example.org/workshop-guide";
+const proseOnly = "The requested destination is supported by the retrieved evidence.";
 const sourceId = "strava-activities:7000000";
 
 describe("Browser Find agentic destinations through scripted production backends", () => {
@@ -58,6 +63,7 @@ describe("Browser Find agentic destinations through scripted production backends
   let evidenceId = "";
   const tools: string[] = [];
   const diagnostics: string[] = [];
+  const proseQueries: string[] = [];
   beforeAll(async () => {
     decision = await startDecisionServer({
       policy: (request) => ({
@@ -98,6 +104,15 @@ describe("Browser Find agentic destinations through scripted production backends
         };
         if (called.includes("present_browser_results"))
           return { kind: "text", text: "Found the requested destination from its evidence." };
+        // First finish with prose despite having retrieved real evidence. The
+        // browser runtime must require structured destinations on a bounded continuation.
+        if (
+          (called.includes("fetch_many") || called.includes("run_sql")) &&
+          !messages.some((message) => message.role === "assistant" && message.content === proseOnly)
+        ) {
+          proseQueries.push(query);
+          return { kind: "text", text: proseOnly };
+        }
         if (query.includes("longest")) {
           if (!called.includes("run_sql"))
             return emit("run_sql", {
@@ -273,6 +288,7 @@ describe("Browser Find agentic destinations through scripted production backends
   }
   test("extracts the requested embedded link rather than returning its message", async () => {
     const events = await search("the link Maya shared yesterday");
+    expect(proseQueries).toContain("the link Maya shared yesterday");
     expect(
       events
         .filter((event) => event.type === "agent.tool.start")
@@ -329,6 +345,7 @@ describe("Browser Find agentic destinations through scripted production backends
   }, 120_000);
   test("computes the longest run through real read-only SQL and resolves its source-bound document", async () => {
     const events = await search("my longest Strava run");
+    expect(proseQueries).toContain("my longest Strava run");
     expect(
       events
         .filter((event) => event.type === "agent.tool.start")
@@ -400,8 +417,7 @@ describe("Browser Find agentic destinations through scripted production backends
       try {
         const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker"));
         await worker.evaluate(
-          async ({ gatewayUrl, browser, readToken }) => {
-            const identity = `${gatewayUrl}\0${browser.device.id}`;
+          async ({ gatewayUrl, browser }) => {
             await chrome.storage.local.set({
               "omnesis.pairing.v1": JSON.stringify({
                 gatewayUrl,
@@ -410,24 +426,10 @@ describe("Browser Find agentic destinations through scripted production backends
                 pairedAt: Date.now(),
               }),
               "omnesis.token.v1": browser.token,
-              "omnesis.find.token.v1": { pairing: identity, token: readToken },
-              "omnesis.find.state.v1": {
-                pairing: identity,
-                supported: true,
-                canonicalizers: [],
-                sourceLabels: {},
-                sourceAttributions: {},
-                query: "",
-                resultsQuery: "",
-                results: [],
-                limit: 25,
-                hasMore: false,
-                complete: true,
-              },
               "omnesis.panel.view.v1": "find",
             });
           },
-          { gatewayUrl: harness.gatewayUrl, browser: browserCredential, readToken },
+          { gatewayUrl: harness.gatewayUrl, browser: browserCredential },
         );
         const panel = await context.newPage();
         await panel.setViewportSize({ width: 380, height: 820 });
@@ -446,6 +448,19 @@ describe("Browser Find agentic destinations through scripted production backends
           .toContain("Found the requested destination");
         expect(await panel.locator("#find-results").textContent()).toContain("Workshop invitation");
         await panel.screenshot({ path: "/tmp/omnesis-extension-find-agent-results.png" });
+        await panel.locator("#find-query").fill("my longest Strava run");
+        await panel.locator("#find-query").press("Enter");
+        await expect
+          .poll(() => panel.locator("#find-results").textContent(), { timeout: 120_000 })
+          .toContain("Observatory ridge");
+        expect(await panel.locator(".find-result-open").count()).toBe(1);
+        await expect
+          .poll(() => panel.locator("#find-agent").textContent(), { timeout: 30_000 })
+          .toContain("Found the requested destination");
+        expect(await panel.locator("#find-results").textContent()).not.toContain(
+          "Workshop invitation",
+        );
+        await panel.screenshot({ path: "/tmp/omnesis-extension-find-agent-sql-results.png" });
       } finally {
         await context.close();
         await rm(dist, { recursive: true, force: true });

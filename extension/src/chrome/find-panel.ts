@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { createFindConversation } from "./find-conversation.js";
 import { findQueryTerms } from "./find-results.js";
 import { FIND_STATE_KEY, type FindResult, type FindView } from "./find-service.js";
-import { NOTES_STATE_KEY, type NotesView } from "./notes-service.js";
 import { PANEL_VIEW_KEY } from "./panel-surface.js";
 
 export interface FindPanelView extends FindView {
@@ -12,7 +12,11 @@ export interface FindPanelView extends FindView {
   faviconPermission?: boolean;
 }
 interface PanelApi {
-  runtime: { sendMessage<T>(message: unknown): Promise<T>; getURL(path: string): string };
+  runtime: {
+    sendMessage<T>(message: unknown): Promise<T>;
+    getURL(path: string): string;
+    openOptionsPage?(): Promise<void>;
+  };
   permissions: { request(permission: { permissions: string[] }): Promise<boolean> };
   storage: {
     local: {
@@ -56,7 +60,11 @@ export function highlightFindText(
   element.appendChild(document.createTextNode(text.slice(offset)));
 }
 
-export function initFindPanel(document: Document, api: PanelApi): void {
+export function initFindPanel(
+  document: Document,
+  api: PanelApi,
+  onActivated?: () => Promise<void> | void,
+): void {
   const element = <T extends HTMLElement>(id: string): T => {
     const value = document.getElementById(id);
     if (!value) throw new Error(`Missing #${id}`);
@@ -70,8 +78,6 @@ export function initFindPanel(document: Document, api: PanelApi): void {
   const matchTabs = element<HTMLButtonElement>("find-match-tabs");
   const findSection = element("find-section"),
     notesSection = element("notes-section");
-  const findNav = element<HTMLButtonElement>("panel-find"),
-    notesNav = element<HTMLButtonElement>("panel-notes");
   let view: FindPanelView | undefined,
     selected = 0,
     generation = 0,
@@ -81,12 +87,16 @@ export function initFindPanel(document: Document, api: PanelApi): void {
   let refreshGeneration = 0;
   let keepalive: ReturnType<typeof setInterval> | undefined;
   const cancel = element<HTMLButtonElement>("find-cancel");
+  const settings = element<HTMLButtonElement>("find-settings");
+  settings.addEventListener("click", () => {
+    void api.runtime.openOptionsPage?.();
+  });
   function selectMode(next: "find" | "notes"): void {
     mode = next;
+    const title = document.querySelector<HTMLElement>(".brand-title");
+    if (title) title.textContent = next === "find" ? "Find" : "Tell Omnesis";
     findSection.hidden = next !== "find";
     notesSection.hidden = next !== "notes";
-    findNav.setAttribute("aria-pressed", String(next === "find"));
-    notesNav.setAttribute("aria-pressed", String(next === "notes"));
     if (next === "find") {
       input.focus();
       input.select?.();
@@ -95,13 +105,10 @@ export function initFindPanel(document: Document, api: PanelApi): void {
       if (textarea && !textarea.closest("[hidden]")) textarea.focus();
     }
   }
-  findNav.addEventListener("click", () => {
-    selectMode("find");
-    void api.storage.local.set({ [PANEL_VIEW_KEY]: "find" });
-  });
-  notesNav.addEventListener("click", () => {
-    selectMode("notes");
-    void api.storage.local.set({ [PANEL_VIEW_KEY]: "notes" });
+  const conversation = createFindConversation(element("find-agent"), (toolCallId, progressId) => {
+    void api.runtime
+      .sendMessage({ type: "find-progress-flush", toolCallId, progressId })
+      .then(() => refresh(true));
   });
   function select(index: number, focus = false, scroll = true): void {
     selected = Math.max(0, Math.min(index, (view?.results.length ?? 1) - 1));
@@ -125,6 +132,7 @@ export function initFindPanel(document: Document, api: PanelApi): void {
         newCopy,
       });
       if (!response?.ok) throw new Error(response?.reason ?? "This result could not open");
+      await onActivated?.();
       void refresh(true);
     } catch (error) {
       status.textContent = error instanceof Error ? error.message : "Try again";
@@ -141,13 +149,13 @@ export function initFindPanel(document: Document, api: PanelApi): void {
       clearInterval(keepalive);
       keepalive = undefined;
     }
-    findNav.hidden = !next.enabled;
     form.hidden = !next.enabled;
+    settings.hidden = !next.supported || next.enabled;
     const footer = document.querySelector<HTMLElement>(".find-footer");
-    if (footer) footer.hidden = !next.enabled;
+    if (footer)
+      footer.hidden = !next.enabled || next.resultsQuery !== input.value || !next.results.length;
     if (!dirtyInput) {
       input.value = next.query;
-      if (mode === "find") input.select?.();
     }
     matchTabs.hidden = !next.enabled || next.tabsPermission === true;
     more.hidden = !next.enabled || !next.hasMore;
@@ -157,7 +165,7 @@ export function initFindPanel(document: Document, api: PanelApi): void {
     status.textContent = !next.supported
       ? "Find is unavailable on this gateway."
       : !next.enabled
-        ? "Enable Find in the extension settings to search your Omnesis data."
+        ? "Find is unavailable. Check the gateway connection and experimental mode."
         : next.running && currentResults
           ? next.activity
             ? `Omnesis · ${next.activity}`
@@ -175,55 +183,17 @@ export function initFindPanel(document: Document, api: PanelApi): void {
                 : !next.results.length
                   ? "No browser links found. Try a different query or search more results."
                   : `${next.results.length} ${next.results.length === 1 ? "result" : "results"} · ↑ ↓ to choose · Enter to open`));
-    const decision = element("find-decision"),
-      agent = element("find-agent");
+    const decision = element("find-decision");
     decision.hidden = !next.decision || !currentResults;
     decision.textContent = next.decision
       ? `${next.decision.mode === "agentic" ? "Agent search" : "Direct search"}${next.decision.model ? ` · ${next.decision.model}` : ""} · ${next.decision.reason}`
       : "";
-    agent.hidden = !next.agentText || !currentResults;
-    agent.textContent = next.agentText ?? "";
+    conversation.render(currentResults && next.enabled ? next : undefined);
     const focusedResult = (document.activeElement?.closest(".find-result") as HTMLElement | null)
       ?.dataset.resultId;
     const focusedAction = document.activeElement?.classList.contains("find-new-copy")
       ? ".find-new-copy"
       : ".find-result-open";
-    const tools = element("find-tools");
-    tools.replaceChildren();
-    tools.hidden = !currentResults || !next.running || !next.tools?.length;
-    if (!tools.hidden)
-      for (const tool of next.tools ?? []) {
-        const card = document.createElement("article");
-        card.className = "find-tool-card";
-        const head = document.createElement("div");
-        head.className = "find-tool-head";
-        const title = document.createElement("strong");
-        title.textContent = tool.tool;
-        const state = document.createElement("span");
-        state.textContent =
-          tool.status === "preparing"
-            ? "Preparing…"
-            : tool.status === "running"
-              ? "Running…"
-              : tool.status === "error"
-                ? "Failed"
-                : "Done";
-        state.className = `find-tool-state ${tool.status}`;
-        head.append(title, state);
-        card.appendChild(head);
-        if (tool.summary) {
-          const summary = document.createElement("p");
-          summary.textContent = tool.summary;
-          card.appendChild(summary);
-        }
-        if (tool.result) {
-          const result = document.createElement("p");
-          result.className = "find-tool-result";
-          result.textContent = tool.result;
-          card.appendChild(result);
-        }
-        tools.appendChild(card);
-      }
     list.replaceChildren();
     if (!next.enabled || !currentResults) {
       return;
@@ -387,9 +357,6 @@ export function initFindPanel(document: Document, api: PanelApi): void {
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       select(selected + (event.key === "ArrowDown" ? 1 : -1), true);
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      input.focus();
     } else if (
       event.key === "Enter" &&
       (event.metaKey || event.ctrlKey) &&
@@ -407,7 +374,7 @@ export function initFindPanel(document: Document, api: PanelApi): void {
   });
   matchTabs.addEventListener("click", () => {
     void api.permissions
-      .request({ permissions: ["tabs"] })
+      .request({ permissions: ["tabs", "favicon"] })
       .then(() => refresh(true))
       .catch(() => {
         status.textContent = "Open-tab matching uses only the sites this extension may access.";
@@ -421,16 +388,9 @@ export function initFindPanel(document: Document, api: PanelApi): void {
     )
       selectMode(changes[PANEL_VIEW_KEY]!.newValue as "find" | "notes");
     if (FIND_STATE_KEY in changes) void refresh(true);
-    if (NOTES_STATE_KEY in changes)
-      void api.runtime.sendMessage<NotesView>({ type: "notes-view" }).then((notes) => {
-        notesNav.hidden = !notes.enabled;
-      });
   });
   void api.storage.local.get(PANEL_VIEW_KEY).then((state) => {
     selectMode(state[PANEL_VIEW_KEY] === "find" ? "find" : "notes");
-  });
-  void api.runtime.sendMessage<NotesView>({ type: "notes-status" }).then((notes) => {
-    notesNav.hidden = !notes?.enabled;
   });
   void refresh().then(() => {
     if (mode === "find") input.focus();

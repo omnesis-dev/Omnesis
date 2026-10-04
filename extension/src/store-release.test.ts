@@ -73,10 +73,16 @@ describe("Chrome Web Store release contract", () => {
       { method: "GET", path: "/browser/find/authorization/:id", authenticated: true },
       { method: "GET", path: "/browser/find", authenticated: true },
       { method: "POST", path: "/browser/find/search", authenticated: true },
+      { method: "POST", path: "/browser/notes/enable", authenticated: true },
+      { method: "POST", path: "/browser/find/enable", authenticated: true },
+      { method: "POST", path: "/browser/notes/edit/enable", authenticated: true },
+      { method: "GET", path: "/browser/notes/edit", authenticated: true },
+      { method: "PATCH", path: "/browser/notes/edit/:id", authenticated: true },
     ]);
     expect(contract.tokenScopes).toEqual(["write:web"]);
     expect(contract.optionalNotesTokenScopes).toEqual(["notes:create"]);
     expect(contract.optionalFindTokenScopes).toEqual(["read"]);
+    expect(contract.optionalNotesEditTokenScopes).toEqual(["notes:update"]);
     expect(contract.deviceKind).toBe("browser");
   });
 
@@ -140,6 +146,7 @@ describe("Chrome Web Store release contract", () => {
         "THIRD_PARTY_NOTICES.txt",
         "background.js",
         "content.js",
+        "fonts/InterVariable.woff2",
         "icons/icon-128.png",
         "icons/icon-16.png",
         "icons/icon-32.png",

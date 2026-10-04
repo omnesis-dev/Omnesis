@@ -17,7 +17,12 @@ function entry(name: "options.html" | "popup.html") {
     pending: 0,
   };
   let changed: ((changes: Record<string, unknown>, area: string) => void) | undefined;
-  const sendMessage = vi.fn(async (_message: unknown) => view);
+  let opening: { ok: boolean; reason?: string } = { ok: true };
+  const close = vi.fn();
+  Object.defineProperty(window, "close", { configurable: true, value: close });
+  const sendMessage = vi.fn(async (message: unknown) =>
+    (message as { type?: string }).type === "notes-open" ? opening : view,
+  );
   const query = vi.fn(async () => [
     { id: 1, url: "https://example.org/article", title: "Example article" },
   ]);
@@ -42,6 +47,10 @@ function entry(name: "options.html" | "popup.html") {
     window,
     query,
     sendMessage,
+    close,
+    setOpening: (value: typeof opening) => {
+      opening = value;
+    },
     setView: (value: Partial<NotesView>) => {
       view = { ...view, ...value };
     },
@@ -60,7 +69,7 @@ describe("notes discovery", () => {
     e.setView({ supported: true, enabled: true });
     e.pair();
     await vi.waitFor(() => {
-      expect(e.document.getElementById("notes-entry")?.hidden).toBe(false);
+      expect(e.document.getElementById("notes-entry")?.hidden).toBe(true);
       expect(e.document.getElementById("tell-omnesis")?.hidden).toBe(false);
       expect((e.document.getElementById("tell-omnesis") as HTMLButtonElement)?.disabled).toBe(
         false,
@@ -73,17 +82,35 @@ describe("notes discovery", () => {
       page: { url: "https://example.org/article", title: "Example article", selection: "" },
     });
     expect(e.query).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(e.close).toHaveBeenCalledOnce());
   });
   it("refreshes capabilities when an already-open options page finishes pairing", async () => {
     const e = entry("options.html");
     await vi.waitFor(() => expect(e.sendMessage).toHaveBeenCalled());
-    e.setView({ supported: true });
+    e.setView({ supported: true, enabled: true });
     e.pair();
     await vi.waitFor(() => {
-      expect(e.document.getElementById("notes-entry")?.hidden).toBe(false);
-      expect(e.document.getElementById("enable-notes")?.hidden).toBe(false);
+      expect(e.document.getElementById("notes-entry")?.hidden).toBe(true);
+      expect(e.document.getElementById("tell-omnesis")?.hidden).toBe(true);
+      expect(e.document.getElementById("enable-notes")).toBeNull();
       expect(e.sendMessage).toHaveBeenLastCalledWith({ type: "notes-status" });
     });
+  });
+  it("keeps a failed popup opening visible with an actionable error", async () => {
+    const e = entry("popup.html");
+    await vi.waitFor(() => expect(e.sendMessage).toHaveBeenCalled());
+    e.setView({ supported: true, enabled: true });
+    e.setOpening({ ok: false, reason: "The side panel could not open. Try again." });
+    e.pair();
+    await vi.waitFor(() => expect(e.document.getElementById("tell-omnesis")?.hidden).toBe(false));
+    e.document.getElementById("tell-omnesis")!.dispatchEvent(new e.window.Event("click"));
+    await vi.waitFor(() =>
+      expect(e.document.getElementById("notes-entry-hint")?.textContent).toBe(
+        "The side panel could not open. Try again.",
+      ),
+    );
+    expect(e.document.getElementById("notes-entry")?.hidden).toBe(false);
+    expect(e.close).not.toHaveBeenCalled();
   });
 });
 
@@ -97,7 +124,7 @@ describe("unpairing with manual notes", () => {
       await confirmNotesUnpair(api({ draft: { text: "An unsent thought" }, pending: 0 }), confirm),
     ).toBe(false);
     expect(confirm).toHaveBeenCalledWith(
-      "Unpairing deletes this browser’s draft and unsent notes. Saved notes remain in Omnesis. Unpair?",
+      "Unpairing deletes this browser’s drafts, unsaved edits and unsent notes. Saved notes remain in Omnesis. Unpair?",
     );
   });
   it("confirms pending notes and recovery entries even after gateway downgrade", async () => {
@@ -105,6 +132,15 @@ describe("unpairing with manual notes", () => {
     expect(
       await confirmNotesUnpair(api({ supported: false, draft: null, pending: 2 }), confirm),
     ).toBe(true);
+    expect(confirm).toHaveBeenCalledOnce();
+  });
+  it("protects unsaved edits using the public pending flag without exposing authorization data", async () => {
+    const confirm = vi.fn(() => false);
+    const sendMessage = vi.fn(
+      async <T>(): Promise<T> => ({ pendingEdit: true, draft: null, pending: 0 }) as T,
+    );
+    expect(await confirmNotesUnpair({ runtime: { sendMessage } }, confirm)).toBe(false);
+    expect(sendMessage).toHaveBeenCalledExactlyOnceWith({ type: "notes-view" });
     expect(confirm).toHaveBeenCalledOnce();
   });
   it("does not prompt for an empty draft or notes already saved", async () => {

@@ -4,14 +4,20 @@
 import { readFileSync } from "node:fs";
 import { parseHTML } from "linkedom";
 import { afterEach, describe, expect, it, vi } from "vitest";
+vi.mock("dompurify", () => ({ default: { sanitize: (html: string) => html } }));
 import { highlightFindText, initFindPanel, type FindPanelView } from "./find-panel.js";
 import { FIND_STATE_KEY } from "./find-service.js";
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 function panel() {
   const { document, window } = parseHTML(
     readFileSync(new URL("../../public/notes.html", import.meta.url), "utf8"),
   );
+  vi.stubGlobal("document", document);
+  vi.stubGlobal("window", window);
   let active: Element | null = null;
   Object.defineProperty(document, "activeElement", { get: () => active });
   const input = document.getElementById("find-query") as unknown as HTMLInputElement;
@@ -56,6 +62,8 @@ function panel() {
     | ((changes: Record<string, { newValue?: unknown }>, area: string) => void)
     | undefined;
   const request = vi.fn().mockResolvedValue(true);
+  const activated = vi.fn();
+  const openOptionsPage = vi.fn().mockResolvedValue(undefined);
   const send = vi.fn(async (message: unknown) => {
     const msg = message as { type: string; query?: string };
     if (msg.type === "notes-view") return { enabled: true };
@@ -68,30 +76,37 @@ function panel() {
       };
     return view;
   });
-  initFindPanel(document as unknown as Document, {
-    runtime: {
-      getURL: (path) => `chrome-extension://test/${path}`,
-      sendMessage: async <T>(message: unknown): Promise<T> => {
-        const value: unknown = await send(message);
-        return value as T;
+  initFindPanel(
+    document as unknown as Document,
+    {
+      runtime: {
+        openOptionsPage,
+        getURL: (path) => `chrome-extension://test/${path}`,
+        sendMessage: async <T>(message: unknown): Promise<T> => {
+          const value: unknown = await send(message);
+          return value as T;
+        },
       },
-    },
-    permissions: { request },
-    storage: {
-      local: {
-        get: async () => ({ "omnesis.panel.view.v1": "find" }),
-        set: vi.fn().mockResolvedValue(undefined),
-      },
-      onChanged: {
-        addListener: (callback) => {
-          changed = callback;
+      permissions: { request },
+      storage: {
+        local: {
+          get: async () => ({ "omnesis.panel.view.v1": "find" }),
+          set: vi.fn().mockResolvedValue(undefined),
+        },
+        onChanged: {
+          addListener: (callback) => {
+            changed = callback;
+          },
         },
       },
     },
-  });
+    activated,
+  );
   return {
     document,
     window,
+    activated,
+    openOptionsPage,
     input,
     send,
     request,
@@ -105,6 +120,36 @@ function panel() {
   };
 }
 describe("Find panel", () => {
+  it("dismisses only after a successful result activation and leaves the panel open on failure", async () => {
+    const p = panel();
+    await vi.waitFor(() => expect(p.document.querySelectorAll(".find-result")).toHaveLength(2));
+    p.document.querySelector<HTMLButtonElement>(".find-result-open")!.click();
+    await vi.waitFor(() => expect(p.activated).toHaveBeenCalledTimes(1));
+    p.send.mockRejectedValueOnce(new Error("Invented opening failure"));
+    p.document.querySelector<HTMLButtonElement>(".find-result-open")!.click();
+    await vi.waitFor(() =>
+      expect(p.document.getElementById("find-status")?.textContent).toBe(
+        "Invented opening failure",
+      ),
+    );
+    expect(p.activated).toHaveBeenCalledTimes(1);
+  });
+  it("keeps the query selection stable during progress and offers settings only for supported missing authority", async () => {
+    const p = panel();
+    await vi.waitFor(() => expect(p.document.querySelectorAll(".find-result")).toHaveLength(2));
+    const select = vi.mocked(p.input.select);
+    select.mockClear();
+    p.update({ running: true, agentText: "Invented progress" });
+    await vi.waitFor(() => expect(p.document.getElementById("find-cancel")?.hidden).toBe(false));
+    expect(select).not.toHaveBeenCalled();
+    p.update({ running: false, enabled: false });
+    await vi.waitFor(() => expect(p.document.getElementById("find-settings")?.hidden).toBe(false));
+    p.document.getElementById("find-settings")!.click();
+    expect(p.openOptionsPage).toHaveBeenCalledOnce();
+    p.update({ supported: false });
+    await vi.waitFor(() => expect(p.document.getElementById("find-settings")?.hidden).toBe(true));
+    expect(p.document.querySelector(".panel-nav")).toBeNull();
+  });
   it("renders ranked highlighted cards with local favicon, source and open-tab badge", async () => {
     const p = panel();
     await vi.waitFor(() => expect(p.document.querySelectorAll(".find-result")).toHaveLength(2));
@@ -178,22 +223,26 @@ describe("Find panel", () => {
       agentText: "I found an invented link.",
       activity: "search documents",
       tools: [
-        { id: "tool-1", tool: "Searching documents", summary: "Invented query", status: "running" },
+        { kind: "text", text: "I found an invented link." },
+        {
+          kind: "tool",
+          toolCallId: "tool-1",
+          tool: "search_documents",
+          argsSummary: "Invented query",
+        },
       ],
     });
     await vi.waitFor(() =>
       expect(p.document.getElementById("find-agent")?.textContent).toContain("invented link"),
     );
     expect(p.document.getElementById("find-cancel")?.hidden).toBe(false);
-    expect(p.document.querySelector(".find-tool-card")?.textContent).toContain(
-      "Searching documents",
-    );
+    expect(p.document.querySelector(".agent-ephemeral")?.textContent).toContain("Search");
     p.update({ running: false });
     p.input.value = "different";
     p.input.dispatchEvent(new p.window.Event("input"));
     expect(p.document.getElementById("find-decision")?.hidden).toBe(true);
-    expect(p.document.getElementById("find-tools")?.hidden).toBe(true);
-    expect(p.document.querySelectorAll(".find-tool-card")).toHaveLength(0);
+    expect(p.document.getElementById("find-agent")?.hidden).toBe(true);
+    expect(p.document.querySelectorAll(".agent-ephemeral")).toHaveLength(0);
     expect(p.document.querySelectorAll(".find-result")).toHaveLength(0);
     await vi.waitFor(() =>
       expect(p.send).toHaveBeenCalledWith({ type: "find-update", query: "different" }),
@@ -246,7 +295,7 @@ describe("Find panel", () => {
     await vi.waitFor(() => expect(p.document.querySelectorAll(".find-result")).toHaveLength(2));
     p.update({ supported: false, enabled: false, results: [] });
     await vi.waitFor(() => expect(p.document.querySelectorAll(".find-result")).toHaveLength(0));
-    expect(p.document.getElementById("panel-find")?.hidden).toBe(true);
+    expect(p.document.getElementById("find-form")?.hidden).toBe(true);
     expect(p.document.getElementById("find-form")?.hidden).toBe(true);
     expect((p.document.querySelector(".find-footer") as unknown as HTMLElement).hidden).toBe(true);
   });

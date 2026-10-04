@@ -109,7 +109,11 @@ export class BrowserFindStreamService {
           void (async () => {
             try {
               abort.signal.throwIfAborted();
-              await this.deps.runner.search(input, { signal: abort.signal, emit });
+              await this.deps.runner.search(input, {
+                signal: abort.signal,
+                emit,
+                beforeModelCall: () => this.deps.authority.requireActive(auth),
+              });
             } catch {
               if (!abort.signal.aborted)
                 emit({

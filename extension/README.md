@@ -1,11 +1,11 @@
-# Omnesis Browser Capture (Chrome extension)
+# Omnesis (Chrome extension)
 
 The Manifest V3 extension that adds the web pages you read to your Omnesis
 index. It pairs once with a gateway you run, then captures the readable text of
 each HTTPS page you keep open long enough to count as a visit, and pushes it to
-that gateway with a token that can add pages and nothing else. Everything the
-user sees is in `website/docs/setup.html` (the browser-extension section) and
-`website/browser-extension-privacy-policy.html`; this file is for people
+that gateway with a token that can add pages and nothing else. Stable setup is documented in `website/docs/setup.html` and data handling in
+`website/browser-extension-privacy-policy.html`. Experimental page notes and Find
+are documented only in `website/docs/experimental.html`; this file is for people
 changing the code.
 
 ## Layout
@@ -31,7 +31,7 @@ code run under Node in the spawned-gateway E2E and byte for byte in the worker.
 ## How it works
 
 - **Pairing.** The options page redeems a one-time code (`omnesis devices pair --kind browser`)
-  against `POST /devices/pair` after reading `GET /health` and refusing a gateway older than the fixed capture-contract minimum (0.5.0). Optional notes use
+  against `POST /devices/pair` after reading `GET /health` and refusing a gateway older than the fixed capture-contract minimum (0.5.0). Experimental notes and Find use
   explicit capability discovery rather than product-minor comparisons. The gateway returns a `write:web` token, stored under its own key so the content
   script — which imports `pairing-record.ts` only — never sees it (`bundle-boundaries.test.ts`
   asserts the content bundle names neither the token key nor the legacy combined record). A retry
@@ -112,14 +112,16 @@ the setup page when the store listing goes live.
 
 ## Tell Omnesis
 
-This feature is unstable and requires `OMNESIS_EXPERIMENTAL=1` on the gateway. On compatible gateways advertising browser notes support, choose **Enable Tell Omnesis** in the popup or pairing settings and approve the create-only browser grant in the gateway portal. Existing page-capture pairing stays unchanged. Older gateways continue capturing pages without offering notes.
+This feature is unstable and requires `OMNESIS_EXPERIMENTAL=1` on the gateway. On compatible gateways, an already paired browser automatically receives a separate note credential. Existing page-capture pairing stays unchanged. Older gateways continue capturing pages without offering notes.
 
-Use **Alt/Option + Shift + N**, the popup's **Tell Omnesis** button, or the page/selection context menu. The native side panel freezes the page context and includes any selected text. **Ctrl/Cmd + Enter** saves; Enter inserts a newline. Unfinished drafts survive closing the panel and switching tabs. Unsent notes survive browser restarts and retry with stable IDs. A full 100-note queue refuses new saves and keeps the draft. Gateway-rejected notes can be reopened for editing. Chrome lets users change the shortcut at `chrome://extensions/shortcuts`.
+Use **Alt/Option + Shift + N**, the popup's **Tell Omnesis** icon, or the page/selection context menu. The native side panel fixes the page context for the note and includes any selected text. **Ctrl/Cmd + Enter** saves; Enter inserts a newline. Written drafts survive closing the panel and retain their original page when switching tabs. An untouched empty draft follows the page where you next invoke Tell Omnesis. Unsent notes survive browser restarts and retry with stable IDs. A full 100-note queue refuses new saves and keeps the draft. Gateway-rejected notes can be reopened for editing. Chrome lets users change the shortcut at `chrome://extensions/shortcuts`.
 
 ## Find
 
-Find is unstable and requires `OMNESIS_EXPERIMENTAL=1` on the gateway. Enable **Find** in the popup or settings and approve **Search your Omnesis data** in the gateway portal. This stores a separate `read` credential; capture stays on `write:web` and notes stay on `notes:create`. Read approval allows ordinary search across all indexed sources. The extension filters results for browser-openable HTTP(S) source links; that display filter is not an authorization restriction. Gateways without Find support keep capturing pages and do not offer Find.
+Find is unstable and requires `OMNESIS_EXPERIMENTAL=1` on the gateway. An already paired browser enables Find automatically on compatible gateways. This stores a separate `read` credential; capture stays on `write:web`, note creation stays on `notes:create`, and saved-note editing uses `notes:update`. The read credential allows ordinary search across all indexed sources. The extension filters results for browser-openable HTTP(S) source links; that display filter is not an authorization restriction. Gateways without Find support keep capturing pages and do not offer Find.
 
-Use **Alt/Option + Shift + F** or the popup's **Find** button. The shared native side panel shows titles, matching snippets, favicons and source links. Keyboard selection and Enter open a result: a safely matching tab and its window receive focus, otherwise the source link opens in a new tab. The separate new-tab action opens another copy. Query and result state survive closing the panel. Matching never relies on a domain alone; unprovable account aliases open the source link instead.
+Use **Alt/Option + Shift + F** or the popup's **Find** icon. Find and Tell Omnesis open separate workflows in the native side panel. Find shows titles, matching snippets, favicons and source links. Keyboard selection and Enter open a result: a safely matching tab and its window receive focus, otherwise the source link opens in a new tab. The separate new-tab action opens another copy. Query and result state survive closing the panel. Matching never relies on a domain alone; unprovable account aliases open the source link instead.
 
-Find reads tab URLs already available through page-access grants. **Match all open tabs** optionally requests Chrome's `tabs` permission; tab matching stays local and does not upload the tab list. Optional `favicon` access uses Chrome's favicon service, with a fallback when no icon is available. Neither feature requests browser-history access. The configured decision model chooses direct index retrieval or a read-only agent search. Without an enabled decision model, Find uses the index. The side panel shows the decision, streamed agent text and transient tool cards; the agent emits grounded destinations through a structured result tool. Each query is a fresh task, with no timeline or follow-up conversation.
+Find reads tab URLs already available through page-access grants. **Enable open-tab matching** optionally requests Chrome's `tabs` permission; tab matching stays local and does not upload the tab list. Optional `favicon` access uses Chrome's favicon service. Find does not prompt for icon access; without it, cards use available source icons or a fallback. Neither feature requests browser-history access. The configured decision model chooses direct index retrieval or a read-only agent search. Without an enabled decision model, Find uses the index. The side panel shows the decision, streamed agent text and the same conversation and ephemeral tool-card components used by the portal; the agent emits grounded destinations through a structured result tool. Each query is a fresh task, with no timeline or follow-up conversation.
+
+The popup icons show the configured shortcuts in their tooltips. Escape closes either workflow. Durably accepting a new note (including offline queuing), updating a saved note, or successfully opening a search result closes the panel; failed saves keep the text. Tell Omnesis lists notes associated with the current page through the gateway graph. Selecting a saved note opens an editor, using a separate `notes:update` credential and revision checks to prevent overwriting concurrent edits. Browser note edits retain the original page and selected passage. **New note** returns to the separate creation draft; editing changes only the note text, preserving its original page and quotation. Editing requires no additional Chrome permission.

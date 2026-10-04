@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { notesRateLimiter } from "../../rate-limit.js";
 import { experimentalEnabled } from "@omnesis/core";
+import { notesRateLimiter } from "../../rate-limit.js";
 import { scope } from "../scope.js";
 import { validateJson } from "../validate.js";
 import { authorizationBody, browserNoteBody } from "../schemas/browser-notes.js";
@@ -24,6 +24,15 @@ export function mountBrowserNotesRoutes(app: RouteApp, service: BrowserNotesServ
     return next();
   });
   const captureLimiter = notesRateLimiter();
+  app.post(
+    "/browser/notes/enable",
+    scope.deviceSelf(),
+    validateJson(authorizationBody),
+    async (c) => {
+      c.header("Cache-Control", "no-store");
+      return c.json(await service.enable(c.get("auth"), c.req.valid("json").id));
+    },
+  );
   app.post(
     "/browser/notes/authorization",
     scope.deviceSelf(),

@@ -4,6 +4,7 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { DeviceId, TokenId, Scope } from "@omnesis/types";
+import { BrowserAuthorizationService } from "./BrowserAuthorizationService.js";
 import { BrowserNotesService } from "./BrowserNotesService.js";
 import type { AuthContext } from "../routes/types.js";
 import type { DeviceService } from "./DeviceService.js";
@@ -140,6 +141,62 @@ describe("browser notes optional authority", () => {
         { id: randomUUID(), text: "A thought", page: { url: "https://example.org/article" } },
       ),
     ).rejects.toMatchObject({ status: 404 });
+  });
+
+  test.each(["notes:create", "notes:update", "read"])(
+    "automatic feature enable mints only %s and deduplicates concurrent retries",
+    async (scope) => {
+      const f = fixture();
+      const service = new BrowserAuthorizationService({
+        devices: {
+          getById: () => ({ kind: "browser", revokedAt: null }),
+          tokenIsActive: (id: TokenId) => f.tokens.has(id),
+          listTokens: () => [...f.tokens].map((id) => ({ id })),
+        } as unknown as DeviceService,
+        writeGate: { createToken: f.createToken, revokeToken: f.revokeToken },
+        scope,
+        label: "Browser capability",
+        feature: "browser-feature",
+      });
+      const id = randomUUID();
+      const replies = await Promise.all([
+        service.enable(f.auth, id),
+        service.enable(f.auth, randomUUID()),
+      ]);
+      expect(replies[0]).toEqual(replies[1]);
+      expect(replies[0]).toMatchObject({
+        status: "approved",
+        credential: { deviceId: f.deviceId, scopes: [scope] },
+      });
+      expect(f.createToken).toHaveBeenCalledExactlyOnceWith(
+        f.deviceId,
+        [Scope(scope)],
+        "Browser capability",
+      );
+      expect(f.auth.scopes).toEqual(["write:web"]);
+      vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
+      await expect(service.enable(f.auth, id)).rejects.toMatchObject({ status: 404 });
+      expect(f.createToken).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  test("automatic enable revokes an in-flight grant when the capture pairing is revoked", async () => {
+    const f = fixture();
+    let release!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    f.createToken.mockImplementationOnce(async () => {
+      await waiting;
+      f.tokens.add(f.mintedId);
+      return { id: f.mintedId, token: "fictional-secret" };
+    });
+    const grant = f.service.enable(f.auth, randomUUID());
+    f.tokens.delete(f.tokenId);
+    release();
+    await expect(grant).rejects.toMatchObject({ status: 403 });
+    expect(f.revokeToken).toHaveBeenCalledExactlyOnceWith(f.mintedId);
+    expect(f.tokens.has(f.mintedId)).toBe(false);
   });
 
   test("only an approved request yields a separate create-only credential", async () => {

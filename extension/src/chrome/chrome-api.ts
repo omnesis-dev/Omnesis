@@ -153,9 +153,11 @@ declare global {
     }
     namespace windows {
       function update(windowId: number, details: { focused: boolean }): Promise<unknown>;
+      function getCurrent(): Promise<{ id?: number }>;
     }
 
     namespace commands {
+      function getAll(): Promise<Array<{ name?: string; shortcut?: string }>>;
       const onCommand: { addListener(callback: (command: string, tab?: tabs.Tab) => void): void };
     }
     namespace contextMenus {
@@ -178,6 +180,7 @@ declare global {
     namespace sidePanel {
       function setOptions(details: { enabled: boolean; path?: string }): Promise<void>;
       function open(details: { tabId: number }): Promise<void>;
+      function close(details: { windowId: number }): Promise<void>;
     }
     namespace extension {
       /** True when this context runs in an incognito (private) window. */

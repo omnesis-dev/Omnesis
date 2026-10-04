@@ -25,8 +25,8 @@ interface NotesState {
   pairing: string;
   supported: boolean;
   experimental?: boolean;
+  automatic?: boolean;
   requestId?: string;
-  approvalPath?: string;
   token?: string;
   draft?: NoteDraft;
   queue: QueuedNote[];
@@ -134,13 +134,14 @@ export class NotesService {
       config,
       state: {
         pairing: identity(config),
-        supported: state.supported === true && state.experimental === true,
+        supported:
+          state.supported === true && state.experimental === true && state.automatic === true,
+        automatic: state.automatic === true,
         experimental: state.experimental === true,
         queue: queue.filter(isDraft),
         ...(isDraft(state.draft) ? { draft: state.draft } : {}),
         ...(typeof state.token === "string" ? { token: state.token } : {}),
         ...(typeof state.requestId === "string" ? { requestId: state.requestId } : {}),
-        ...(typeof state.approvalPath === "string" ? { approvalPath: state.approvalPath } : {}),
         ...(typeof state.lastSavedId === "string" ? { lastSavedId: state.lastSavedId } : {}),
         ...(quarantined.length ? { quarantined } : {}),
       },
@@ -180,7 +181,10 @@ export class NotesService {
     try {
       const health = (await this.request(config, "/health")) as {
         experimental?: unknown;
-        capabilities?: { browserNotes?: { min?: unknown; max?: unknown } };
+        capabilities?: {
+          browserNotes?: { min?: unknown; max?: unknown };
+          browserFeatures?: { min?: unknown; max?: unknown };
+        };
       };
       const range = health?.capabilities?.browserNotes;
       const compatible =
@@ -193,35 +197,42 @@ export class NotesService {
         range.min <= 1 &&
         range.max >= 1;
       state.experimental = health?.experimental === true;
-      state.supported = compatible && state.experimental;
+      const features = health?.capabilities?.browserFeatures;
+      const automatic =
+        features?.min === 1 &&
+        typeof features.max === "number" &&
+        Number.isInteger(features.max) &&
+        features.max >= 1;
+      state.automatic = automatic;
+      state.supported = compatible && state.experimental && automatic;
+      if (state.supported && automatic && !state.token) {
+        checking = "authorization";
+        state.requestId ??= crypto.randomUUID();
+        await this.persist(config, state);
+        const enabled = (await this.request(config, "/browser/notes/enable", config.token, {
+          id: state.requestId,
+        })) as {
+          status?: string;
+          credential?: { token?: string; tokenId?: string; deviceId?: string; scopes?: string[] };
+        };
+        const credential = enabled.credential;
+        if (
+          enabled.status !== "approved" ||
+          credential?.deviceId !== config.deviceId ||
+          credential.scopes?.length !== 1 ||
+          credential.scopes[0] !== "notes:create" ||
+          typeof credential.token !== "string" ||
+          !credential.token ||
+          typeof credential.tokenId !== "string" ||
+          !credential.tokenId
+        )
+          throw new Error("Gateway returned an invalid note credential");
+        state.token = credential.token;
+      }
 
       if (state.supported && state.token) {
         checking = "credential";
         await this.request(config, "/browser/notes", state.token);
-      } else if (state.supported && state.requestId) {
-        checking = "authorization";
-        const auth = (await this.request(
-          config,
-          `/browser/notes/authorization/${encodeURIComponent(state.requestId)}`,
-          config.token,
-        )) as {
-          status?: string;
-          credential?: { token?: string; deviceId?: string; scopes?: string[] };
-        };
-        if (
-          auth.status === "approved" &&
-          auth.credential?.deviceId === config.deviceId &&
-          auth.credential.scopes?.length === 1 &&
-          auth.credential.scopes[0] === "notes:create" &&
-          typeof auth.credential.token === "string" &&
-          auth.credential.token.length > 0
-        ) {
-          state.token = auth.credential.token;
-        } else if (auth.status !== "pending") {
-          delete state.token;
-          delete state.requestId;
-          delete state.approvalPath;
-        }
       }
     } catch (error) {
       // A network outage keeps drafts and authorized offline enqueue available.
@@ -233,7 +244,6 @@ export class NotesService {
         }
         delete state.token;
         delete state.requestId;
-        delete state.approvalPath;
         if (error.status === 404 && checking !== "authorization") state.supported = false;
       }
     }
@@ -243,7 +253,7 @@ export class NotesService {
     return {
       supported: state?.supported ?? false,
       enabled: !!state?.supported && !!state.token,
-      pendingApproval: !!state?.requestId && !state.token,
+      pendingApproval: false,
       draft: state?.draft ?? null,
       pending: (state?.queue.length ?? 0) + (state?.quarantined?.length ?? 0),
       lastSavedId: state?.lastSavedId,
@@ -263,35 +273,6 @@ export class NotesService {
       return this.view(loaded.state);
     });
   }
-  activate(): Promise<string> {
-    return this.run(async () => {
-      const loaded = await this.load();
-      if (!loaded) throw new Error("Pair this browser first");
-      const { config, state } = loaded;
-      await this.refresh(config, state);
-      if (!state.supported) throw new Error("This gateway does not support browser notes");
-      if (!state.requestId) {
-        state.requestId = crypto.randomUUID();
-        await this.persist(config, state);
-      }
-      const response = (await this.request(config, "/browser/notes/authorization", config.token, {
-        id: state.requestId,
-      })) as { requestId?: string; approvalPath?: string };
-      if (
-        typeof response.requestId !== "string" ||
-        !/^[a-f0-9-]{36}$/i.test(response.requestId) ||
-        typeof response.approvalPath !== "string" ||
-        !response.approvalPath.startsWith("/portal/") ||
-        response.approvalPath.startsWith("//")
-      ) {
-        throw new Error("Gateway returned an invalid approval link");
-      }
-      state.requestId = response.requestId;
-      state.approvalPath = response.approvalPath;
-      await this.persist(config, state);
-      return new URL(response.approvalPath, config.gatewayUrl).href;
-    });
-  }
   begin(page: NotePage): Promise<NotesView> {
     return this.run(async () => {
       if (!notePage(page)) throw new Error("This page cannot be attached to a note");
@@ -301,7 +282,7 @@ export class NotesService {
       await this.refresh(config, state);
       if (!this.view(state).enabled) return this.view(state);
       // An unfinished thought keeps its original page, even if a different tab invokes the composer.
-      if (!state.draft)
+      if (!state.draft?.text.trim())
         state.draft = {
           ...page,
           id: crypto.randomUUID(),

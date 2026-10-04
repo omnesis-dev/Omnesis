@@ -23,6 +23,7 @@ describe("Find worker entrypoints", () => {
         pairing: identity,
         supported: true,
         experimental: true,
+        automatic: true,
         query: "",
         results: [],
       },
@@ -61,7 +62,13 @@ describe("Find worker entrypoints", () => {
         new Response(
           JSON.stringify(
             String(input).endsWith("/health")
-              ? { experimental: true, capabilities: { browserFind: { min: 1, max: 1 } } }
+              ? {
+                  experimental: true,
+                  capabilities: {
+                    browserFind: { min: 1, max: 1 },
+                    browserFeatures: { min: 1, max: 1 },
+                  },
+                }
               : { experimental: true, enabled: true, canonicalizers: [] },
           ),
         ),

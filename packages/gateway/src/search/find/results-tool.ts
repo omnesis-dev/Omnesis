@@ -35,10 +35,32 @@ export const browserResultsSchema = z.object({
             "Use the evidence document title or a verbatim body span; unsupported titles fall back to the document title",
           ),
         snippet: z.string().max(1200).optional(),
-        evidence: z.union([
-          z.object({ documentIds: z.array(z.string().min(1).max(512)).min(1).max(8) }),
-          z.object({ record: referenceSchema }),
-        ]),
+        // The shared model-schema converter exposes objects but not unions.
+        // Keep both supported receipt shapes visible to every backend.
+        evidence: z
+          .object({
+            documentIds: z
+              .array(z.string().min(1).max(512))
+              .min(1)
+              .max(8)
+              .optional()
+              .describe(
+                "Supporting document IDs returned by a retrieval tool; omit when using a record",
+              ),
+            record: referenceSchema
+              .optional()
+              .describe(
+                "Copy one exact rowIdentities reference from run_sql; omit when using document IDs",
+              ),
+          })
+          .superRefine((evidence, ctx) => {
+            if ((evidence.documentIds === undefined) === (evidence.record === undefined)) {
+              ctx.addIssue({
+                code: "custom",
+                message: "Provide exactly one of documentIds or record",
+              });
+            }
+          }),
       }),
     )
     .max(20),
@@ -207,7 +229,14 @@ export function createBrowserResultsTool(options: {
     async invoke(raw, context): Promise<ToolResult> {
       const parsed = browserResultsSchema.safeParse(raw);
       if (!parsed.success)
-        return { kind: "error", code: "invalid_args", message: "Invalid browser results" };
+        return {
+          kind: "error",
+          code: "invalid_args",
+          message: parsed.error.issues
+            .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+            .join("; ")
+            .slice(0, 1000),
+        };
       const results: FindSearchResult[] = [];
       for (const item of parsed.data.results) {
         if (context.abortSignal?.aborted)
@@ -221,7 +250,7 @@ export function createBrowserResultsTool(options: {
           };
         let ids: string[];
         let identity: string;
-        if ("record" in item.evidence) {
+        if (item.evidence.record !== undefined) {
           const reference = item.evidence.record;
           const receipt = options.evidence.records.get(referenceKey(reference));
           if (!receipt || !options.ports.record)
@@ -251,7 +280,7 @@ export function createBrowserResultsTool(options: {
           ids = [record.boundDocumentId];
           identity = referenceKey(reference);
         } else {
-          ids = item.evidence.documentIds;
+          ids = item.evidence.documentIds ?? [];
           if (ids.some((id) => !options.evidence.documentIds.has(id)))
             return {
               kind: "error",

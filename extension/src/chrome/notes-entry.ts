@@ -14,13 +14,12 @@ interface EntryChrome {
     };
   };
 }
-/** Discovery lives in the popup; one-time owner approval lives alongside pairing settings. */
+/** Experimental actions appear automatically for a compatible paired gateway. */
 export function initNotesEntry(document: Document, api: EntryChrome): void {
   const wrap = document.getElementById("notes-entry");
   const open = document.getElementById("tell-omnesis") as HTMLButtonElement | null;
-  const enable = document.getElementById("enable-notes") as HTMLButtonElement | null;
   const hint = document.getElementById("notes-entry-hint");
-  if (!wrap || !open || !enable || !hint) return;
+  if (!wrap || !open || !hint) return;
   const options = document.querySelector('script[src="options.js"]') !== null;
   let currentTab: chrome.tabs.Tab | undefined;
   if (!options) {
@@ -50,25 +49,24 @@ export function initNotesEntry(document: Document, api: EntryChrome): void {
         type: cached ? "notes-view" : "notes-status",
       });
       if (generation !== renderRequest) return;
-      wrap!.hidden = !view?.supported || (options && view.enabled);
+      wrap!.hidden = !view?.supported || view.enabled;
       open!.hidden = !view?.enabled || options;
-      enable!.hidden = view?.enabled ?? true;
-      hint!.textContent = view?.enabled
-        ? "Alt / Option + Shift + N · Include selected text automatically"
-        : view?.pendingApproval
-          ? "Approve access in the gateway portal. Capture keeps working."
-          : "Allow this browser to create notes. Gateway-owner approval is required.";
-      enable!.textContent = view?.pendingApproval ? "Open approval page" : "Enable Tell Omnesis";
+      hint!.textContent = "";
     } catch {
-      if (generation === renderRequest) wrap!.hidden = true;
+      if (generation === renderRequest) {
+        wrap!.hidden = true;
+        open!.hidden = true;
+      }
     }
   }
   async function action(message: { type: string; tabId?: number; page?: unknown }): Promise<void> {
     try {
       const result = await api.runtime.sendMessage<{ ok?: boolean; reason?: string }>(message);
       if (!result?.ok) throw new Error(result?.reason ?? "Try again");
-      await refresh();
+      if (!options) document.defaultView?.close();
+      else await refresh();
     } catch (error) {
+      wrap!.hidden = false;
       hint!.textContent = error instanceof Error ? error.message : "Try again";
     }
   }
@@ -79,9 +77,6 @@ export function initNotesEntry(document: Document, api: EntryChrome): void {
       tabId: currentTab.id,
       page: { url: currentTab.url, title: (currentTab.title ?? "").slice(0, 512), selection: "" },
     });
-  });
-  enable.addEventListener("click", () => {
-    void action({ type: "notes-activate" });
   });
   api.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
@@ -96,10 +91,10 @@ export async function confirmNotesUnpair(
   api: Pick<EntryChrome, "runtime">,
   confirm: (message: string) => boolean,
 ): Promise<boolean> {
-  let view: (Partial<NotesView> & { ok?: unknown }) | null | undefined;
+  let view: (Partial<NotesView> & { ok?: unknown; pendingEdit?: unknown }) | null | undefined;
   try {
     view = await api.runtime.sendMessage<
-      (Partial<NotesView> & { ok?: unknown }) | null | undefined
+      (Partial<NotesView> & { ok?: unknown; pendingEdit?: unknown }) | null | undefined
     >({
       type: "notes-view",
     });
@@ -111,9 +106,9 @@ export async function confirmNotesUnpair(
   const pendingNotes =
     typeof view?.pending === "number" && Number.isInteger(view.pending) && view.pending > 0;
   return (
-    (!writtenDraft && !pendingNotes) ||
+    (!writtenDraft && !pendingNotes && view?.pendingEdit !== true) ||
     confirm(
-      "Unpairing deletes this browser’s draft and unsent notes. Saved notes remain in Omnesis. Unpair?",
+      "Unpairing deletes this browser’s drafts, unsaved edits and unsent notes. Saved notes remain in Omnesis. Unpair?",
     )
   );
 }

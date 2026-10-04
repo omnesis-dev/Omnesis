@@ -2284,6 +2284,8 @@ export class AgentService {
   async buildReadOnlySearchSession(options: {
     systemPromptSuffix: string;
     timeZone?: string;
+    initialHistory?: ReadonlyArray<ChatMessage>;
+    retrieval?: boolean;
     tools: readonly ToolHandle[];
     wrapRetrievalTool?: (tool: ToolHandle) => ToolHandle;
   }): Promise<AgentSession> {
@@ -2314,11 +2316,14 @@ export class AgentService {
       sessionId: this.sessionIdGen(),
       backend,
       tools: [
-        ...retrieval.map((tool) => options.wrapRetrievalTool?.(tool) ?? tool),
+        ...(options.retrieval === false
+          ? []
+          : retrieval.map((tool) => options.wrapRetrievalTool?.(tool) ?? tool)),
         ...options.tools,
       ],
       systemPrompt: `${basePrompt}\n${options.systemPromptSuffix}`,
       timeZone: options.timeZone,
+      initialHistory: options.initialHistory,
       caller: { kind: "operator" },
     });
   }

@@ -6,6 +6,7 @@ import {
   readSourceLabels,
   readCanonicalizers,
   parseFindResults,
+  readSourceIcons,
   type FindResult,
 } from "./find-results.js";
 import type { UrlCanonicalizerSpec } from "@omnesis/core/url-normalize";
@@ -27,9 +28,11 @@ interface FindState {
   pairing: string;
   supported: boolean;
   experimental?: boolean;
+  automatic?: boolean;
   canonicalizers: UrlCanonicalizerSpec[];
   sourceLabels: Record<string, string>;
   sourceAttributions: Record<string, string>;
+  sourceIcons: Record<string, string>;
   token?: string;
   requestId?: string;
   query: string;
@@ -56,6 +59,9 @@ export interface FindView {
   agentText?: string;
   activity?: string;
   tools?: FindToolCard[];
+  progressId?: string;
+  sourceLabels?: Record<string, string>;
+  sourceIcons?: Record<string, string>;
   running: boolean;
   interrupted: boolean;
   error?: string;
@@ -86,6 +92,7 @@ export class FindService {
   private lane: Promise<unknown> = Promise.resolve();
   private searchGeneration = 0;
   private searchAbort?: AbortController;
+  private transcript?: { query: string; id: string; progress: FindProgress };
   private active?: { generation: number; query: string; activity?: string; tools: FindProgress };
   constructor(private readonly deps: FindDeps) {}
   private run<T>(work: () => Promise<T>): Promise<T> {
@@ -103,6 +110,7 @@ export class FindService {
       canonicalizers: [],
       sourceLabels: {},
       sourceAttributions: {},
+      sourceIcons: {},
       query: "",
       resultsQuery: "",
       results: [],
@@ -115,11 +123,13 @@ export class FindService {
       config,
       state: {
         ...empty,
-        supported: raw.supported === true && raw.experimental === true,
+        supported: raw.supported === true && raw.experimental === true && raw.automatic === true,
+        automatic: raw.automatic === true,
         experimental: raw.experimental === true,
         canonicalizers: readCanonicalizers(raw.canonicalizers),
         sourceLabels: readSourceLabels(raw.sourceLabels),
         sourceAttributions: readSourceLabels(raw.sourceAttributions, 1024),
+        sourceIcons: readSourceIcons(raw.sourceIcons),
         ...(typeof raw.token === "string" ? { token: raw.token } : {}),
         ...(typeof raw.requestId === "string" ? { requestId: raw.requestId } : {}),
         query: typeof raw.query === "string" ? raw.query.slice(0, MAX_FIND_QUERY) : "",
@@ -180,7 +190,10 @@ export class FindService {
     });
     if (!response.ok) throw new FindHttpError(response.status);
     return JSON.parse(
-      await readBoundedResponseText(response, path === "/search" ? 2000000 : 100000),
+      await readBoundedResponseText(
+        response,
+        path === "/search" || path === "/browser/find" ? 2000000 : 100000,
+      ),
     ) as unknown;
   }
   private async refresh(config: ExtensionConfig, state: FindState): Promise<void> {
@@ -188,7 +201,10 @@ export class FindService {
     try {
       const health = (await this.request(config, "/health")) as {
         experimental?: unknown;
-        capabilities?: { browserFind?: { min?: unknown; max?: unknown } };
+        capabilities?: {
+          browserFind?: { min?: unknown; max?: unknown };
+          browserFeatures?: { min?: unknown; max?: unknown };
+        };
       };
       const range = health?.capabilities?.browserFind;
       const compatible =
@@ -200,11 +216,50 @@ export class FindService {
         range.min <= range.max &&
         range.min <= 1 &&
         range.max >= 1;
+      const broker = health?.capabilities?.browserFeatures;
+      const automatic =
+        typeof broker?.min === "number" &&
+        typeof broker.max === "number" &&
+        Number.isInteger(broker.min) &&
+        Number.isInteger(broker.max) &&
+        broker.min > 0 &&
+        broker.min <= broker.max &&
+        broker.min <= 1 &&
+        broker.max >= 1;
+      state.automatic = automatic;
       state.experimental = health?.experimental === true;
-      state.supported = compatible && state.experimental;
+      state.supported = compatible && automatic && state.experimental;
 
       if (!state.supported) this.searchAbort?.abort();
 
+      if (state.supported && !state.token) {
+        checking = "automatic authorization";
+        state.requestId ??= crypto.randomUUID();
+        await this.persist(config, state);
+        const response = (await this.request(config, "/browser/find/enable", config.token, {
+          id: state.requestId,
+        })) as {
+          status?: unknown;
+          credential?: { token?: unknown; tokenId?: unknown; deviceId?: unknown; scopes?: unknown };
+        };
+        const credential = response?.credential;
+        if (
+          response?.status !== "approved" ||
+          credential?.deviceId !== config.deviceId ||
+          !Array.isArray(credential.scopes) ||
+          credential.scopes.length !== 1 ||
+          credential.scopes[0] !== "read" ||
+          typeof credential.token !== "string" ||
+          !credential.token.length ||
+          credential.token.length > 8192 ||
+          typeof credential.tokenId !== "string" ||
+          !/^[a-f0-9-]{36}$/i.test(credential.tokenId)
+        )
+          throw new Error("Gateway returned an invalid Find credential");
+        state.token = credential.token;
+        delete state.requestId;
+        await this.persist(config, state);
+      }
       if (state.supported && state.token) {
         checking = "credential";
         const validation = (await this.request(config, "/browser/find", state.token)) as {
@@ -212,35 +267,13 @@ export class FindService {
           canonicalizers?: unknown;
           sourceLabels?: unknown;
           sourceAttributions?: unknown;
+          sourceIcons?: unknown;
         };
         if (validation?.enabled !== true) throw new Error("Invalid Find authorization response");
         state.canonicalizers = readCanonicalizers(validation.canonicalizers);
         state.sourceLabels = readSourceLabels(validation.sourceLabels);
         state.sourceAttributions = readSourceLabels(validation.sourceAttributions, 1024);
-      } else if (state.supported && state.requestId) {
-        checking = "authorization";
-        const auth = (await this.request(
-          config,
-          `/browser/find/authorization/${encodeURIComponent(state.requestId)}`,
-          config.token,
-        )) as {
-          status?: string;
-          credential?: { token?: string; deviceId?: string; scopes?: string[] };
-        };
-        if (
-          auth.status === "approved" &&
-          auth.credential?.deviceId === config.deviceId &&
-          auth.credential.scopes?.length === 1 &&
-          auth.credential.scopes[0] === "read" &&
-          typeof auth.credential.token === "string" &&
-          auth.credential.token.length > 0
-        )
-          state.token = auth.credential.token;
-        else if (auth.status !== "pending") {
-          eraseRetrievedCache(state);
-          delete state.token;
-          delete state.requestId;
-        }
+        state.sourceIcons = readSourceIcons(validation.sourceIcons);
       }
       delete state.error;
     } catch (error) {
@@ -267,7 +300,7 @@ export class FindService {
       canonicalizers: enabled ? state!.canonicalizers : [],
       supported: state?.supported ?? false,
       enabled,
-      pendingApproval: !!state?.requestId && !state.token,
+      pendingApproval: false,
       query: state?.query ?? "",
       resultsQuery: state?.resultsQuery ?? "",
       results: enabled ? state!.results : [],
@@ -275,7 +308,14 @@ export class FindService {
       decision: enabled ? state?.decision : undefined,
       agentText: enabled ? state?.agentText : undefined,
       activity: enabled ? this.active?.activity : undefined,
-      tools: enabled ? this.active?.tools.snapshot() : [],
+      tools:
+        enabled && this.transcript?.query === state?.resultsQuery
+          ? this.transcript.progress.snapshot()
+          : [],
+      progressId:
+        enabled && this.transcript?.query === state?.resultsQuery ? this.transcript.id : undefined,
+      sourceLabels: enabled ? state?.sourceLabels : {},
+      sourceIcons: enabled ? state?.sourceIcons : {},
       running: enabled && this.active?.query === state?.resultsQuery,
       interrupted:
         enabled && state?.complete === false && this.active?.query !== state?.resultsQuery,
@@ -288,36 +328,6 @@ export class FindService {
       if (!loaded) return this.view();
       if (fresh) await this.refresh(loaded.config, loaded.state);
       return this.view(loaded.state);
-    });
-  }
-  activate(): Promise<string> {
-    return this.run(async () => {
-      const loaded = await this.load();
-      if (!loaded) throw new Error("Pair this browser first");
-      const { config, state } = loaded;
-      await this.refresh(config, state);
-      if (!state.supported) throw new Error("Find is unavailable on this gateway");
-      if (!state.requestId) {
-        state.requestId = crypto.randomUUID();
-        await this.persist(config, state);
-      }
-      const approval = (await this.request(config, "/browser/find/authorization", config.token, {
-        id: state.requestId,
-      })) as { requestId?: unknown; approvalPath?: unknown };
-      if (
-        typeof approval.requestId !== "string" ||
-        !/^[a-f0-9-]{36}$/i.test(approval.requestId) ||
-        typeof approval.approvalPath !== "string" ||
-        !approval.approvalPath.startsWith("/portal/") ||
-        approval.approvalPath.startsWith("//")
-      )
-        throw new Error("Gateway returned an invalid approval link");
-      const url = new URL(approval.approvalPath, config.gatewayUrl);
-      if (url.origin !== new URL(config.gatewayUrl).origin)
-        throw new Error("Invalid approval origin");
-      state.requestId = approval.requestId;
-      await this.persist(config, state);
-      return url.href;
     });
   }
   update(query: string): Promise<FindView> {
@@ -336,7 +346,9 @@ export class FindService {
     this.searchAbort?.abort();
     const controller = new AbortController();
     this.searchAbort = controller;
-    this.active = { generation, query, tools: new FindProgress() };
+    const progress = new FindProgress();
+    this.active = { generation, query, tools: progress };
+    this.transcript = { query, id: crypto.randomUUID(), progress };
     try {
       const loaded = await this.run(async () => {
         const loaded = await this.load();
@@ -459,6 +471,8 @@ export class FindService {
               ) {
                 if (this.active?.generation === generation)
                   this.active.activity = payload.tool.replace(/_/g, " ").slice(0, 128);
+              } else if (type === "agent.tool.child.start" || type === "agent.tool.child.result") {
+                // Keep the shared batch renderer's source-shaped child payloads intact.
               } else if (type === "agent.tool.result") {
                 if (this.active?.generation === generation) this.active.activity = undefined;
               } else return;
@@ -483,7 +497,10 @@ export class FindService {
             ? error.message
             : "Search failed. Try again.";
       } finally {
-        if (this.active?.generation === generation) this.active = undefined;
+        if (this.active?.generation === generation) {
+          progress.finish();
+          this.active = undefined;
+        }
       }
       await publish();
       return this.status(false);
@@ -491,6 +508,17 @@ export class FindService {
       if (this.active?.generation === generation) this.active = undefined;
       if (this.searchAbort === controller) this.searchAbort = undefined;
     }
+  }
+  flushProgress(toolCallId: string, progressId: string): Promise<FindView> {
+    return this.run(async () => {
+      const loaded = await this.load();
+      if (!loaded || !this.view(loaded.state).enabled) return this.view(loaded?.state);
+      if (this.transcript?.id !== progressId) return this.view(loaded.state);
+      this.transcript.progress.flush(toolCallId);
+      loaded.state.progressRevision = (loaded.state.progressRevision ?? 0) + 1;
+      await this.persist(loaded.config, loaded.state);
+      return this.view(loaded.state);
+    });
   }
   cancel(): Promise<FindView> {
     this.searchAbort?.abort();
@@ -501,6 +529,7 @@ export class FindService {
     this.searchGeneration++;
     this.searchAbort?.abort();
     this.active = undefined;
+    this.transcript = undefined;
     return this.run(async () => this.deps.write(null));
   }
 }

@@ -17,7 +17,11 @@ interface PanelChrome {
     };
   };
 }
-export function initNotesPanel(document: Document, api: PanelChrome): void {
+export function initNotesPanel(
+  document: Document,
+  api: PanelChrome,
+  onAccepted?: () => Promise<void> | void,
+): () => Promise<void> {
   const element = <T extends HTMLElement>(id: string): T => {
     const value = document.getElementById(id);
     if (!value) throw new Error(`Missing #${id}`);
@@ -34,11 +38,12 @@ export function initNotesPanel(document: Document, api: PanelChrome): void {
   let dirty = false;
   function render(view: NotesView): void {
     if (!view || typeof view.supported !== "boolean") return;
-    form.hidden = !view.enabled || !view.draft;
+    form.hidden =
+      !view.enabled || !view.draft || element("notes-section").dataset.savedEdit === "true";
     status.textContent = !view.supported
       ? "Tell Omnesis is unavailable on this gateway. Your draft is kept."
       : !view.enabled
-        ? "Enable Tell Omnesis in the extension settings. Your draft is kept."
+        ? "Tell Omnesis is unavailable. Check the gateway connection and experimental mode. Your draft is kept."
         : (view.error ??
           (view.pending
             ? `${view.pending} ${view.pending === 1 ? "note is" : "notes are"} waiting to sync. Kept safely in this browser.`
@@ -192,6 +197,7 @@ export function initNotesPanel(document: Document, api: PanelChrome): void {
         draft = null;
         dirty = false;
         render(view);
+        if (view?.ok === true) await onAccepted?.();
       } catch (error) {
         status.textContent =
           error instanceof Error ? error.message : "Your note was not sent. Your draft is kept.";
@@ -212,4 +218,7 @@ export function initNotesPanel(document: Document, api: PanelChrome): void {
     if (area === "local" && NOTES_STATE_KEY in changes) void refresh(true);
   });
   void refresh();
+  return async () => {
+    await updates;
+  };
 }

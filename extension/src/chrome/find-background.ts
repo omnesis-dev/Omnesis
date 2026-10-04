@@ -9,6 +9,7 @@ import { registerPanelFeature, selectPanelView, setPanelFeature } from "./panel-
 
 export function installFindBackground(): {
   clear(): Promise<void>;
+  ensureRead(): Promise<FindView>;
   message(
     message: unknown,
     sender: chrome.runtime.MessageSender,
@@ -109,16 +110,13 @@ export function installFindBackground(): {
       more?: unknown;
       tabId?: unknown;
       resultId?: unknown;
+      toolCallId?: unknown;
+      progressId?: unknown;
       newCopy?: unknown;
     };
     let task: Promise<unknown>;
     if (msg.type === "find-status") task = viewWithTabs(true);
     else if (msg.type === "find-view") task = viewWithTabs();
-    else if (msg.type === "find-activate")
-      task = service.activate().then(async (url) => {
-        await chrome.tabs.create({ url });
-        return { ok: true };
-      });
     else if (
       msg.type === "find-open" &&
       sender.url === chrome.runtime.getURL("popup.html") &&
@@ -138,6 +136,15 @@ export function installFindBackground(): {
           ? service.search(msg.query, msg.more === true)
           : service.update(msg.query)
       ).then(() => viewWithTabs());
+    else if (
+      sender.url === chrome.runtime.getURL("notes.html") &&
+      msg.type === "find-progress-flush" &&
+      typeof msg.toolCallId === "string" &&
+      msg.toolCallId.length <= 128 &&
+      typeof msg.progressId === "string" &&
+      msg.progressId.length <= 128
+    )
+      task = service.flushProgress(msg.toolCallId, msg.progressId).then(() => viewWithTabs());
     else if (sender.url === chrome.runtime.getURL("notes.html") && msg.type === "find-cancel")
       task = service.cancel().then(() => viewWithTabs());
     else if (
@@ -174,6 +181,7 @@ export function installFindBackground(): {
   );
   return {
     message,
+    ensureRead: () => service.status(),
     alarm: (name) => {
       if (name === "omnesis-find-refresh") detached(refresh());
     },

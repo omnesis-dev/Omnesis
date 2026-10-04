@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Omnesis Browser Capture</title>
+    <title>Omnesis</title>
     <link rel="stylesheet" href="ui.css" />
   </head>
   <body class="popup" data-paired="false" data-warn="false" data-notice="false" data-paused="false">
@@ -12,6 +12,49 @@
       <div>
         <div class="brand-title">Omnesis</div>
         <div class="brand-sub">Browser Capture</div>
+      </div>
+      <div class="brand-actions">
+        <button
+          id="tell-omnesis"
+          class="icon-action"
+          type="button"
+          aria-label="Tell Omnesis"
+          title="Tell Omnesis · Alt/Option + Shift + N"
+          hidden
+        >
+          <svg
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M12 4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-7" />
+            <path d="m16 3 5 5-9 9-5 1 1-5Z" />
+          </svg>
+        </button>
+        <button
+          id="find-omnesis"
+          class="icon-action"
+          type="button"
+          aria-label="Find in Omnesis"
+          title="Find in Omnesis · Alt/Option + Shift + F"
+          hidden
+        >
+          <svg
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+          >
+            <circle cx="10.5" cy="10.5" r="6.5" />
+            <path d="m16 16 5 5" />
+          </svg>
+        </button>
       </div>
     </header>
 
@@ -62,13 +105,9 @@
 
     <button id="open-options" class="secondary" type="button">Pairing settings</button>
     <div id="notes-entry" class="controls" hidden>
-      <button id="tell-omnesis" type="button">Tell Omnesis</button>
-      <button id="enable-notes" type="button" class="secondary">Enable Tell Omnesis</button>
       <p id="notes-entry-hint" class="hint" role="status"></p>
     </div>
     <div id="find-entry" class="controls" hidden>
-      <button id="find-omnesis" type="button">Find in Omnesis</button>
-      <button id="enable-find" type="button" class="secondary">Enable Find</button>
       <p id="find-entry-hint" class="hint" role="status"></p>
     </div>
     <script type="module" src="popup.js"></script>

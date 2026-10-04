@@ -219,3 +219,12 @@ export function parseFindResults(
   }
   return cards;
 }
+
+/** Only normalized raster data travels into cards; metadata cannot cause third-party requests. */
+export function readSourceIcons(value: unknown): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(readSourceLabels(value, 100000)).filter(([, icon]) =>
+      /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(icon),
+    ),
+  );
+}

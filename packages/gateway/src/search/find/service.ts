@@ -22,6 +22,8 @@ export class FindSearchService {
   async search(input: FindSearchInput, execution: FindSearchExecution): Promise<void> {
     const { signal, emit } = execution;
     signal.throwIfAborted();
+    execution.beforeModelCall?.();
+    signal.throwIfAborted();
     const decision = await decideFindRoute(
       input,
       this.deps.getDecision,
@@ -65,6 +67,7 @@ export class FindSearchService {
           agent,
           limit: Math.min(input.limit ?? 20, 20),
           query: input.text,
+          beforeModelCall: execution.beforeModelCall,
           timeZone: input.timeZone,
           signal,
           onEvent: (event) => {

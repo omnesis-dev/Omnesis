@@ -33,6 +33,10 @@ import {
   getNoteEntry,
   listNoteEntriesForDay,
   listNoteEntriesHistory,
+  listBrowserPageNotes,
+  type BrowserPageNote,
+  type BrowserNoteEditInput,
+  type BrowserNoteEditResult,
   type NoteEntry,
   type NotePageContext,
   type BrowserNoteAuthority,
@@ -108,6 +112,8 @@ export interface OmnesisNotesRuntime {
   capture(input: CaptureNoteInput, audit?: McpToolInvocationAuditInput): Promise<NoteEntry>;
   /** Replace an entry's text; null when the id is unknown. */
   edit(id: string, text: string): Promise<NoteEntry | null>;
+  editBrowser(input: BrowserNoteEditInput): Promise<BrowserNoteEditResult>;
+  listBrowser(deviceId: BrowserNoteAuthority["deviceId"], url: string): BrowserPageNote[];
   /**
    * Write a voice note's gateway transcript over its text, only while the
    * text still reads `expected`: an edit the user made in the meantime wins.
@@ -252,6 +258,12 @@ export function bootOmnesisNotes(deps: OmnesisNotesBootDeps): OmnesisNotesRuntim
       upserter.enqueue(existing.day);
       return { ...existing, text: trimmed, updatedAt: now };
     },
+    editBrowser: async (input) => {
+      const result = await deps.writeGate.updateBrowserNoteEntry(input);
+      if (result.outcome === "updated") upserter.enqueue(result.entry.day);
+      return result;
+    },
+    listBrowser: (deviceId, url) => listBrowserPageNotes(deps.readDb, deviceId, url),
     applyTranscript: async (id, expected, text) => {
       const trimmed = text.trim();
       if (trimmed.length === 0) {

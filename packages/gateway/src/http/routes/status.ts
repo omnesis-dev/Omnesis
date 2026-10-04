@@ -125,7 +125,12 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       capabilities: {
         sourceContract: SOURCE_CONTRACT_WIRE_RANGE,
         ...(experimentalEnabled()
-          ? { browserNotes: { min: 1, max: 1 }, browserFind: { min: 1, max: 1 } }
+          ? {
+              browserFeatures: { min: 1, max: 1 },
+              browserNotes: { min: 1, max: 1 },
+              browserFind: { min: 1, max: 1 },
+              browserNotesEdit: { min: 1, max: 1 },
+            }
           : {}),
         // Watch management and Watch-reaction delivery sit on the Watch
         // runtime, which is still experimental. The rest of the agent

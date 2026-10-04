@@ -10247,7 +10247,10 @@
     },
     {
       "value": "Tell Omnesis",
-      "paths": ["packages/collector/src/e2e/browser-extension.e2e.test.ts"],
+      "paths": [
+        "packages/collector/src/e2e/browser-extension.e2e.test.ts",
+        "extension/src/chrome/entry-shortcuts.test.ts"
+      ],
       "reason": "Public product UI phrase asserted by browser notes end-to-end coverage; not a person name."
     },
     {

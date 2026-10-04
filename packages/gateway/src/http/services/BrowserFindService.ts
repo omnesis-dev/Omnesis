@@ -11,6 +11,7 @@ export class BrowserFindService extends BrowserAuthorizationService {
   constructor(
     private readonly findDeps: ConstructorParameters<typeof BrowserAuthorizationService>[0] & {
       sourceLabels: () => Record<string, string>;
+      sourceIcons: () => Record<string, string>;
     },
   ) {
     super(findDeps);
@@ -23,6 +24,7 @@ export class BrowserFindService extends BrowserAuthorizationService {
     return {
       enabled: true,
       sourceLabels: this.findDeps.sourceLabels(),
+      sourceIcons: this.findDeps.sourceIcons(),
       sourceAttributions: getSourceAttributions(),
       canonicalizers: getUrlCanonicalizerSpecs()
         .filter((spec) => spec.browserIdentity)

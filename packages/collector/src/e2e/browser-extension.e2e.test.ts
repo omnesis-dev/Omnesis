@@ -43,8 +43,14 @@ import { SyntheticE2EHarness } from "./synth-harness.js";
 /** The slice of the `chrome.*` API the assertions read from inside the worker. */
 declare const chrome: {
   runtime: { sendMessage(message: unknown): Promise<unknown> };
+  commands: { getAll(): Promise<Array<{ name?: string; shortcut?: string }>> };
   storage: { local: { get(keys: null): Promise<Record<string, unknown>> } };
   permissions: { getAll(): Promise<{ origins?: string[] }> };
+  windows: { getCurrent(): Promise<{ id?: number }> };
+  sidePanel: {
+    open(options: { windowId: number }): Promise<void>;
+    onClosed: { addListener(listener: () => void): void };
+  };
   tabs: {
     query(query: {
       active?: boolean;
@@ -522,7 +528,7 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
     CAPTURE_WAIT_MS * 2 + 60_000,
   );
 
-  test("Tell Omnesis preserves a selected-page draft and saves through the create-only grant", async () => {
+  test("Tell Omnesis automatically enables and preserves a selected-page draft through the create-only grant", async () => {
     const options = await openPage(optionsUrl);
     const health = await fetch(`${harness.gatewayUrl}/health`);
     expect(await health.json()).toMatchObject({
@@ -531,46 +537,17 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
     const discovered = await options.evaluate(() =>
       chrome.runtime.sendMessage({ type: "notes-status" }),
     );
-    expect(discovered).toMatchObject({ supported: true, enabled: false });
-    await options.locator("#enable-notes").waitFor({ state: "visible", timeout: 20_000 });
-    await options.click("#enable-notes");
-    let requestId = "";
+    expect(discovered).toMatchObject({ supported: true, enabled: true });
     await expect
       .poll(
-        async () => {
-          const state = (await extensionStorage())["omnesis.notes.state.v1"] as
-            | { requestId?: string }
-            | undefined;
-          requestId = state?.requestId ?? "";
-          return requestId;
-        },
+        async () =>
+          ((await extensionStorage())["omnesis.notes.token.v1"] as { token?: string } | undefined)
+            ?.token,
         { timeout: 20_000 },
       )
-      .toMatch(/^[0-9a-f-]{36}$/);
-
-    const login = await context.request.post(`${harness.gatewayUrl}/portal/api/login`, {
-      data: { token: harness.apiKey },
-    });
-    expect(login.status()).toBe(200);
-    const approval = await openPage(
-      `${harness.gatewayUrl}/portal/browser-notes?request=${requestId}`,
-    );
-    await approval
-      .getByRole("button", { name: "Enable Tell Omnesis", exact: true })
-      .waitFor({ state: "visible", timeout: 20_000 });
-    await approval.screenshot({
-      path: join(tmpdir(), "omnesis-browser-notes-approval.png"),
-      fullPage: true,
-    });
-    await approval.getByRole("button", { name: "Enable Tell Omnesis", exact: true }).click();
-    await approval
-      .getByRole("heading", { name: "Tell Omnesis is enabled", exact: true })
-      .waitFor({ state: "visible", timeout: 20_000 });
-    await approval.screenshot({
-      path: join(tmpdir(), "omnesis-browser-notes-approved.png"),
-      fullPage: true,
-    });
-    await approval.close();
+      .toBeTruthy();
+    expect(await options.locator("#enable-notes").count()).toBe(0);
+    expect(await options.locator("#enable-find").count()).toBe(0);
     await options.close();
 
     const article = await openPage(`${FIXTURE_ORIGIN}/notes-six`);
@@ -590,6 +567,25 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
     await expect
       .poll(() => popup.locator("#tell-omnesis").isVisible(), { timeout: 20_000 })
       .toBe(true);
+    expect(await popup.locator(".brand-title").textContent()).toBe("Omnesis");
+    expect(await popup.locator(".brand-actions #tell-omnesis").count()).toBe(1);
+    expect(await popup.locator(".brand-actions #find-omnesis").count()).toBe(1);
+    expect(await popup.locator("#tell-omnesis").getAttribute("aria-label")).toBe("Tell Omnesis");
+    expect(await popup.locator("#find-omnesis").getAttribute("aria-label")).toBe("Find in Omnesis");
+    const commands = await popup.evaluate(() => chrome.commands.getAll());
+    for (const [id, label] of [
+      ["tell-omnesis", "Tell Omnesis"],
+      ["find-omnesis", "Find in Omnesis"],
+    ]) {
+      const shortcut = commands.find((command) => command.name === id)?.shortcut;
+      await expect
+        .poll(() => popup.locator(`#${id}`).getAttribute("title"))
+        .toBe(
+          shortcut
+            ? `${label} · ${shortcut}`
+            : `${label} · Assign a shortcut in chrome://extensions/shortcuts`,
+        );
+    }
     // The popup caches the article before the trusted click gives this test tab focus.
     await popup.locator("#tell-omnesis").click();
     await expect
@@ -625,6 +621,50 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
       path: join(tmpdir(), "omnesis-extension-notes-composer.png"),
       fullPage: true,
     });
+    // Open a real native panel in this window from a trusted test click. The
+    // rendered extension document then exercises its production Escape handler.
+    await panel.evaluate(async () => {
+      const window = await chrome.windows.getCurrent();
+      const windowId = window.id;
+      if (windowId === undefined) throw new Error("The browser window ID is unavailable");
+      let closed = 0;
+      chrome.sidePanel.onClosed.addListener(() => {
+        document.body.dataset.nativeClosed = String(++closed);
+      });
+      const open = document.createElement("button");
+      open.id = "e2e-open-native-panel";
+      open.textContent = "Open test panel";
+      open.addEventListener("click", () => {
+        void chrome.sidePanel.open({ windowId }).then(
+          () => {
+            document.body.dataset.nativeOpened = "true";
+          },
+          (error: unknown) => {
+            document.body.dataset.nativeOpenError = String(error);
+          },
+        );
+      });
+      document.body.append(open);
+    });
+    await panel.locator("#e2e-open-native-panel").click();
+    await expect
+      .poll(
+        async () => {
+          const error = await panel.locator("body").getAttribute("data-native-open-error");
+          if (error) throw new Error(error);
+          return panel.locator("body").getAttribute("data-native-opened");
+        },
+        { timeout: 10_000 },
+      )
+      .toBe("true");
+    await panel.locator("#note-text").press("Escape");
+    await expect
+      .poll(() => panel.locator("body").getAttribute("data-native-closed"), { timeout: 10_000 })
+      .toBe("1");
+    expect(await panel.inputValue("#note-text")).toBe(thought);
+    expect((await extensionStorage())["omnesis.notes.state.v1"]).toMatchObject({
+      draft: { text: thought },
+    });
     await panel.close();
 
     const other = await openPage(`${FIXTURE_ORIGIN}/notes-seven`);
@@ -637,7 +677,12 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
       .poll(() => reopened.locator("#notes-status").textContent(), { timeout: 30_000 })
       .toBe("Saved to Omnesis.");
     const notes = await harness.gatewayJson<{
-      entries: Array<{ text: string; surface: string; page?: { url: string; selection: string } }>;
+      entries: Array<{
+        id: string;
+        text: string;
+        surface: string;
+        page?: { url: string; selection: string };
+      }>;
     }>("/notes");
     const saved = notes.entries.filter((note) => note.text.includes(thought));
     expect(saved).toHaveLength(1);
@@ -645,6 +690,28 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
       surface: "chrome-extension",
       page: { url: article.url(), selection: quotation },
     });
+    const savedId = saved[0]!.id;
+    const savedButton = reopened.locator(`#saved-notes-list button[data-note-id="${savedId}"]`);
+    await savedButton.waitFor({ state: "visible", timeout: 30_000 });
+    await savedButton.click();
+    await reopened.locator("#saved-note-editor").waitFor({ state: "visible" });
+    expect(await reopened.inputValue("#saved-note-text")).toBe(thought);
+    expect(await reopened.locator("#saved-note-url").getAttribute("href")).toBe(article.url());
+    const revised =
+      "Keep this revised fictional observation without changing its selected passage.";
+    await reopened.fill("#saved-note-text", revised);
+    await reopened.locator("#saved-note-text").press("Control+Enter");
+    await expect
+      .poll(() => reopened.locator("#saved-notes-status").textContent(), { timeout: 30_000 })
+      .toBe("Changes saved to Omnesis.");
+    const edited = await harness.gatewayJson<{
+      entries: Array<{ id: string; text: string; page?: { url: string; selection: string } }>;
+    }>("/notes");
+    const entry = edited.entries.find((note) => note.id === savedId);
+    expect(entry?.text).toContain(revised);
+    expect(entry?.text).not.toContain(thought);
+    expect(entry?.page).toMatchObject({ url: article.url(), selection: quotation });
+    expect(edited.entries.filter((note) => note.id === savedId)).toHaveLength(1);
     await reopened.close();
     await other.close();
     await article.close();
@@ -716,38 +783,7 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
     const discovered = await options.evaluate(() =>
       chrome.runtime.sendMessage({ type: "find-status" }),
     );
-    expect(discovered).toMatchObject({ supported: true, enabled: false });
-    await options.locator("#enable-find").waitFor({ state: "visible", timeout: 20_000 });
-    await options.locator("#enable-find").click();
-    let requestId = "";
-    await expect
-      .poll(
-        async () => {
-          const state = (await extensionStorage())["omnesis.find.state.v1"] as
-            | { requestId?: string }
-            | undefined;
-          requestId = state?.requestId ?? "";
-          return requestId;
-        },
-        { timeout: 20_000, interval: 250 },
-      )
-      .toMatch(/^[0-9a-f-]{36}$/);
-    const login = await context.request.post(`${harness.gatewayUrl}/portal/api/login`, {
-      data: { token: harness.apiKey },
-    });
-    expect(login.status()).toBe(200);
-    const approval = await openPage(
-      `${harness.gatewayUrl}/portal/browser-find?request=${requestId}`,
-    );
-    await approval
-      .getByRole("button", { name: "Enable Find", exact: true })
-      .waitFor({ state: "visible", timeout: 20_000 });
-    await expect.poll(() => approval.locator("body").textContent()).toContain("whole index");
-    await approval.screenshot({ path: "/tmp/omnesis-browser-find-approval.png", fullPage: true });
-    await approval.getByRole("button", { name: "Enable Find", exact: true }).click();
-    await approval
-      .getByRole("heading", { name: "Find is enabled", exact: true })
-      .waitFor({ state: "visible", timeout: 20_000 });
+    expect(discovered).toMatchObject({ supported: true, enabled: true });
     await expect
       .poll(
         async () =>
@@ -756,12 +792,13 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
         { timeout: 20_000, interval: 250 },
       )
       .toBeTruthy();
+    expect(await options.locator("#enable-notes").count()).toBe(0);
+    expect(await options.locator("#enable-find").count()).toBe(0);
     const storage = await extensionStorage();
     expect(storage["omnesis.notes.token.v1"]).toBeTruthy();
     expect(JSON.parse(String(storage["omnesis.pairing.v1"]))).toMatchObject({
       scopes: ["write:web"],
     });
-    await approval.close();
     await options.close();
     const article = await openPage(articleUrl);
     const popup = await openPage(popupUrl);

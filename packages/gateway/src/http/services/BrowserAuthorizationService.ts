@@ -25,7 +25,7 @@ interface Authorization {
   approving?: Promise<void>;
 }
 
-/** Owner-approved optional authority, bound to one browser capture credential. */
+/** Feature authority bound to one active browser capture credential. */
 export class BrowserAuthorizationService {
   private readonly authorizations = new Map<string, Authorization>();
   constructor(
@@ -69,6 +69,7 @@ export class BrowserAuthorizationService {
     const device = this.deps.devices.getById(request.deviceId);
     return (
       !!device &&
+      device.kind === "browser" &&
       device.revokedAt === null &&
       this.deps.devices.tokenIsActive(request.tokenId, request.deviceId)
     );
@@ -127,6 +128,12 @@ export class BrowserAuthorizationService {
       expiresAt: request.expiresAt,
       approvalPath: `/portal/${this.deps.feature}?request=${encodeURIComponent(request.requestId)}`,
     };
+  }
+  /** Experimental clients enable features without a second pairing ceremony. */
+  async enable(auth: AuthContext, id: string) {
+    const request = this.createAuthorization(auth, id);
+    await this.approve(request.requestId);
+    return this.poll(auth, request.requestId);
   }
   private requireUnrevokedCredential(request: Authorization): void {
     if (

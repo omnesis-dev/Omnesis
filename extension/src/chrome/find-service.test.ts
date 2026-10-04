@@ -12,8 +12,8 @@ function sse(events: unknown[]): Response {
 }
 function harness() {
   let stored: unknown,
-    approved = false,
     revoked = false;
+  let broker: unknown = { min: 1, max: 1 };
   let experimental: unknown = true;
   let capability: unknown = { min: 1, max: 1 };
   let config: ExtensionConfig | null = {
@@ -32,21 +32,22 @@ function harness() {
   const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const path = new URL(String(input)).pathname;
     if (path === "/health")
-      return respond({ experimental, capabilities: { browserFind: capability } });
-    if (path === "/browser/find/authorization")
       return respond({
-        requestId: JSON.parse(String(init?.body)).id,
-        approvalPath: "/portal/browser-find?request=example",
+        experimental,
+        capabilities: { browserFind: capability, browserFeatures: broker },
       });
-    if (path.startsWith("/browser/find/authorization/"))
-      return respond(
-        approved
-          ? {
-              status: "approved",
-              credential: { deviceId: config!.deviceId, token: "read-token", scopes: ["read"] },
-            }
-          : { status: "pending" },
-      );
+    if (path === "/browser/find/enable")
+      return revoked
+        ? respond({}, 403)
+        : respond({
+            status: "approved",
+            credential: {
+              deviceId: config!.deviceId,
+              token: "read-token",
+              tokenId: "22222222-2222-4222-8222-222222222222",
+              scopes: ["read"],
+            },
+          });
     if (revoked) return respond({}, 401);
     if (path === "/browser/find")
       return respond({
@@ -96,8 +97,8 @@ function harness() {
     },
     deps,
     fetch,
-    approve: () => {
-      approved = true;
+    broker: (value: unknown) => {
+      broker = value;
     },
     revoke: () => {
       revoked = true;
@@ -126,8 +127,6 @@ const hit = (id: string, sourceUrl: string) => ({
   sourceId: "source-example",
 });
 async function enable(h: ReturnType<typeof harness>): Promise<void> {
-  await h.service.activate();
-  h.approve();
   expect((await h.service.status()).enabled).toBe(true);
 }
 
@@ -153,12 +152,55 @@ describe("Find authorization and durable results", () => {
       const h = harness();
       h.capability(capability);
       expect((await h.service.status()).supported).toBe(false);
-      await expect(h.service.activate()).rejects.toThrow("unavailable");
+      expect((await h.service.status()).enabled).toBe(false);
       expect(h.fetch.mock.calls.every(([url]) => new URL(String(url)).pathname === "/health")).toBe(
         true,
       );
     },
   );
+  it.each([undefined, { min: 2, max: 3 }, { min: 0, max: 1 }])(
+    "hides Find without a compatible automatic broker %j",
+    async (broker) => {
+      const h = harness();
+      h.broker(broker);
+      expect(await h.service.status()).toMatchObject({ supported: false, enabled: false });
+      expect(h.fetch.mock.calls.every(([url]) => new URL(String(url)).pathname === "/health")).toBe(
+        true,
+      );
+    },
+  );
+  it("does not treat an old manual grant cache as automatic support when discovery is unavailable", async () => {
+    const h = harness();
+    await enable(h);
+    const state = (await h.deps.read()) as Record<string, unknown>;
+    delete state.automatic;
+    await h.deps.write(state);
+    h.fetch.mockRejectedValue(new Error("Invented network outage"));
+    expect(await new FindService(h.deps).status()).toMatchObject({
+      supported: false,
+      enabled: false,
+      results: [],
+    });
+  });
+  it("automatically obtains and validates a device-bound read grant without opening owner approval", async () => {
+    const h = harness();
+    expect(await h.service.status()).toMatchObject({ enabled: true, pendingApproval: false });
+    const grants = h.fetch.mock.calls.filter(
+      ([url]) => new URL(String(url)).pathname === "/browser/find/enable",
+    );
+    expect(grants).toHaveLength(1);
+    expect(grants[0]?.[1]?.headers).toMatchObject({ authorization: "Bearer web-token" });
+    expect(JSON.parse(String(grants[0]?.[1]?.body))).toEqual({
+      id: expect.stringMatching(/^[a-f0-9-]{36}$/i),
+    });
+    await h.service.status();
+    expect(
+      h.fetch.mock.calls.filter(
+        ([url]) => new URL(String(url)).pathname === "/browser/find/enable",
+      ),
+    ).toHaveLength(1);
+    expect(h.fetch.mock.calls.some(([url]) => String(url).includes("/authorization"))).toBe(false);
+  });
   it("uses only read for search, filters links client-side, and preserves rank across mixed sources", async () => {
     const h = harness();
     await enable(h);
@@ -270,7 +312,10 @@ describe("Find authorization and durable results", () => {
           type: "find.decision",
           payload: { mode: "agentic", status: "decided", reason: "Related evidence needed" },
         },
-        { type: "agent.tool.start", payload: { toolCallId: "tool-1", tool: "search", args: {} } },
+        {
+          type: "agent.tool.start",
+          payload: { toolCallId: "tool-1", tool: "search_documents", args: {} },
+        },
         { type: "agent.text.delta", payload: { delta: "Here is the invented guide." } },
         {
           type: "find.results",
@@ -285,7 +330,9 @@ describe("Find authorization and durable results", () => {
       decision: { mode: "agentic" },
       running: false,
     });
-    expect(completed.tools ?? []).toEqual([]);
+    expect(completed.tools?.filter((part) => part.kind === "tool" && !part.tailDismissed)).toEqual(
+      [],
+    );
     expect(await h.deps.read()).not.toHaveProperty("tools");
     const restored = await new FindService(h.deps).status(false);
     expect(restored).toMatchObject({
@@ -413,7 +460,7 @@ describe("Find authorization and durable results", () => {
       const h = harness();
       h.setExperimental(flag);
       expect(await h.service.status()).toMatchObject({ supported: false, enabled: false });
-      await expect(h.service.activate()).rejects.toThrow("unavailable");
+      expect((await h.service.status()).enabled).toBe(false);
     }
   });
   it("hides already approved Find grants and blocks paid requests while the flag is off", async () => {

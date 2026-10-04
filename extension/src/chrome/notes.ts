@@ -2,10 +2,23 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import "./chrome-api.js";
+import { initNotesEditPanel } from "./notes-edit-panel.js";
 import { initFindPanel } from "./find-panel.js";
 import { initNotesPanel } from "./notes-panel.js";
+import { initPanelDismiss } from "./panel-dismiss.js";
 
 document.addEventListener("DOMContentLoaded", () => {
-  initNotesPanel(document, chrome);
-  initFindPanel(document, chrome);
+  let flushNotes: () => Promise<void> = async () => {};
+  let flushEdits: () => Promise<void> = async () => {};
+  const dismiss = initPanelDismiss(
+    document,
+    chrome,
+    () => window.close(),
+    async () => {
+      await Promise.all([flushNotes(), flushEdits()]);
+    },
+  );
+  flushNotes = initNotesPanel(document, chrome, dismiss);
+  flushEdits = initNotesEditPanel(document, chrome, dismiss);
+  initFindPanel(document, chrome, dismiss);
 });

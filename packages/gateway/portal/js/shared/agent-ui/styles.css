@@ -1,0 +1,539 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Copyright (c) 2026 Adrien Conrath */
+
+/* Shared portal/native Find agent presentation. */
+.agent-msg-assistant .agent-msg-body {
+  align-self: stretch;
+  padding: 4px 0;
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.agent-part-text {
+  line-height: 1.5;
+  /* Inter for assistant prose — a humanist sans that visually
+     separates the agent's reply from the user's message (which
+     keeps the system sans). Falls back to the system stack if the
+     woff2 hasn't loaded yet. Tool cards / tables / code blocks
+     deliberately stay on the system stack: this rule only applies
+     to the text part of the assistant turn. */
+  font-family: "Inter", var(--font-sans);
+  /* Pin the optical-letterforms axis Inter exposes (cv11) on so the
+     "single-storey a / open digits" feel comes through — that's
+     what makes Inter recognisable vs SF Pro. */
+  font-feature-settings: "cv11", "ss01";
+  /* Cap prose width at a comfortable reading measure (~75ch). Tool cards,
+     tables, and code blocks below are deliberately NOT bounded here so
+     they can use the full column width. The cap applies only to text. */
+  max-width: 75ch;
+}
+.agent-part-text > :first-child {
+  margin-top: 0;
+}
+.agent-part-text > :last-child {
+  margin-bottom: 0;
+}
+.agent-part-text p {
+  margin: 0 0 8px 0;
+}
+.agent-part-text ul,
+.agent-part-text ol {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+.agent-part-text li {
+  margin: 2px 0;
+}
+.agent-part-text code {
+  background: var(--bg-tertiary, rgba(127, 127, 127, 0.12));
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.92em;
+}
+.agent-part-text pre {
+  background: var(--bg-tertiary, rgba(127, 127, 127, 0.1));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  overflow-x: auto;
+  font-size: 12px;
+  margin: 8px 0;
+}
+.agent-part-text pre code {
+  background: none;
+  padding: 0;
+}
+.has-copy-error {
+  position: relative;
+}
+.copy-feedback-error {
+  top: 100%;
+  left: 0;
+  position: absolute;
+  z-index: 2;
+  width: 220px;
+  max-width: calc(100vw - 32px);
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font: 12px/1.4 var(--font-sans);
+  white-space: normal;
+}
+.agent-value-copy-inline {
+  display: inline;
+  margin-left: 2px;
+}
+.agent-value-text-block {
+  margin: 8px 0;
+  white-space: pre-wrap;
+  font: inherit;
+}
+.agent-value-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  vertical-align: middle;
+}
+.agent-value-copy-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+.agent-value-copy-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.agent-value-code-block {
+  position: relative;
+  margin: 8px 0;
+}
+.agent-value-code-block > pre {
+  margin: 0;
+  padding-right: 44px;
+}
+.agent-value-copy-block .copy-feedback-error {
+  left: auto;
+  right: 0;
+}
+.agent-value-copy-block {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+}
+@media (pointer: coarse) {
+  .agent-value-copy-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .agent-value-code-block > pre {
+    padding-right: 58px;
+  }
+}
+.agent-part-text table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 13px;
+  display: block;
+  overflow-x: auto;
+}
+.agent-part-text th,
+.agent-part-text td {
+  border-bottom: 1px solid var(--border-light);
+  padding: 4px 8px;
+  text-align: left;
+}
+.agent-part-text th {
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 12px;
+}
+.agent-part-text tbody tr:hover {
+  background: var(--bg-tertiary);
+}
+.agent-part-text blockquote {
+  margin: 6px 0;
+  padding: 2px 10px;
+  border-left: 3px solid var(--border);
+  color: var(--text-muted);
+}
+.agent-part-text h1,
+.agent-part-text h2,
+.agent-part-text h3 {
+  margin: 10px 0 4px 0;
+  font-weight: 600;
+}
+.agent-part-text h1 {
+  font-size: 16px;
+}
+.agent-part-text h2 {
+  font-size: 15px;
+}
+.agent-part-text h3 {
+  font-size: 14px;
+}
+.agent-part-text a {
+  color: var(--accent);
+}
+/* ─── Ephemeral tool-call cards — search / fetch_document / run_sql ──────
+   Thin-rail inline activity row with a single rolling slot. Items
+   stream through the slot at ~350ms each, then the whole card fades
+   away. No border, no bg fill — the 2px accent rail carries the
+   "agent is doing something here" signal. Mirrors iOS's
+   AgentEphemeralCards. */
+.agent-ephemeral {
+  border-left: 2px solid rgba(88, 166, 255, 0.5);
+  padding: 4px 0 4px 8px;
+  min-width: 0;
+  max-width: 100%;
+  /* Card-wide fade-out on dismiss. The slot itself never animates
+     opacity — it's the marquee that draws the eye, not a fade. */
+  opacity: 1;
+  max-height: 200px;
+  overflow: hidden;
+  transition:
+    opacity 300ms ease-out,
+    max-height 300ms ease-out,
+    padding-top 300ms ease-out,
+    padding-bottom 300ms ease-out,
+    margin-top 300ms ease-out,
+    margin-bottom 300ms ease-out;
+}
+.agent-ephemeral.is-dismissed {
+  opacity: 0;
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+/* Static twin (sub-agent nested transcript / after-the-fact): no fade, no
+   height clamp animation — a persistent chip with its full result list (#890). */
+.agent-ephemeral-static {
+  max-height: none;
+  overflow: visible;
+  transition: none;
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+.agent-ephemeral-static + .agent-ephemeral-static {
+  margin-top: 4px;
+}
+.agent-ephemeral-static-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 3px;
+  /* Cap a verbose result list so one tool call never dominates the transcript. */
+  max-height: 140px;
+  overflow-y: auto;
+}
+.agent-ephemeral-header {
+  display: flex;
+  /* Text baselines, not box centers: the label (semibold system 11px) and
+     the argument (mono 11px) use different fonts, and centering their
+     unequal line boxes leaves the glyphs ~1px apart. Baseline alignment
+     puts both texts on the same line; icons opt back into centering. */
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.agent-ephemeral-glyph {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.agent-ephemeral-trailing {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  gap: 6px;
+  flex: none;
+}
+.agent-ephemeral-time {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.agent-ephemeral-raw {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.agent-ephemeral-raw:hover {
+  color: var(--text-link);
+  background: var(--bg-hover);
+}
+.agent-raw-json {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0;
+  max-height: 60vh;
+  overflow: auto;
+  white-space: pre;
+}
+.agent-ephemeral-label {
+  font-weight: 600;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.agent-ephemeral-arg {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-ephemeral-doc-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+}
+.agent-ephemeral-doc-title > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+/* Source attribution next to the "Run SQL" label — one icon per table
+   source the query touches, followed by the gateway-supplied friendly
+   subject names (e.g. "Strava Activities") joined with " + ". */
+.agent-ephemeral-sql-subject {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  color: var(--text-muted);
+  overflow: hidden;
+}
+.agent-ephemeral-sql-subject-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+/* Tiny spinner pinned right — same idiom as the legacy toolcall
+   "running…" dots but visually quieter (no text, no horizontal travel).
+   12px diameter, accent-tinted, 800ms rotation. */
+.agent-ephemeral-spinner {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(88, 166, 255, 0.25);
+  border-top-color: var(--accent);
+  animation: agent-ephemeral-spin 800ms linear infinite;
+  flex-shrink: 0;
+  align-self: center;
+  margin-left: auto;
+}
+@keyframes agent-ephemeral-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* Fixed-height slot — only the active row is visible. The inner stack
+   is the thing that translates; the slot itself clips. */
+.agent-ephemeral-slot {
+  position: relative;
+  overflow: hidden;
+  margin-top: 2px;
+}
+.agent-ephemeral-stack {
+  display: flex;
+  flex-direction: column;
+  will-change: transform;
+}
+.agent-ephemeral-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.agent-ephemeral-result {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  font-size: 11px;
+}
+.agent-ephemeral-result-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.agent-ephemeral-result-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+/* Muted notes inside static tool cards — the "No result" empty state and
+   count lines ("+3 more rows", "2 retired"). Same size as the card title. */
+.agent-ephemeral-empty,
+.agent-ephemeral-note {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.agent-ephemeral-empty {
+  margin-top: 2px;
+}
+/* Document/person links inside static tool cards read as plain rows —
+   same color as the surrounding text, underlined on hover only. */
+.agent-ephemeral-result-link {
+  color: inherit;
+}
+/* The global a:hover underline never applies to transcript links …
+   the grey span-level lines below are the only hover affordance. */
+.agent-ephemeral-result-link,
+.agent-ephemeral-result-link:hover {
+  text-decoration: none;
+}
+/* … and the line is drawn on the text span itself (never the anchor) so
+   its color always matches the text: grey row titles and loop pills. */
+.agent-ephemeral-result-link:hover .agent-ephemeral-result-title,
+a.agent-ephemeral-doc-title.agent-ephemeral-result-link:hover > span:last-child,
+a.agent-loop-row.agent-ephemeral-result-link:hover .agent-loop-title,
+a.agent-loop-row.agent-ephemeral-result-link:hover .agent-loop-state {
+  text-decoration: underline;
+  text-decoration-color: var(--text-secondary);
+}
+/* The Look-up-URL input link reads as plain argument text, grey like the
+   rest, with the global hover line in the same colour. */
+.agent-ephemeral-arg a {
+  color: inherit;
+}
+.agent-ephemeral-doc-line {
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
+}
+.agent-ephemeral-sql-line {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
+}
+/* Result-row block under the SQL slot. Column headers pinned above
+   the rotating value row; cells share width via flex:1. */
+.agent-ephemeral-sql-rowblock {
+  margin-top: 4px;
+}
+.agent-ephemeral-sql-cols {
+  display: flex;
+  gap: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.agent-ephemeral-sql-col {
+  flex: 1;
+  min-width: 60px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-ephemeral-sql-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+.agent-ephemeral-sql-cell {
+  flex: 1;
+  min-width: 60px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Ephemeral lookup_people card — one row per candidate. Display name
+   reads in the secondary text colour (same as a search-result title),
+   the primary alias trails as a muted monospace hint so the agent's
+   choice of name + alias is glanceable. */
+.agent-ephemeral-people-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.agent-ephemeral-people-name {
+  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 50%;
+}
+.agent-ephemeral-people-alias {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* URL lookup — "no match" row when the canonical URL isn't in the
+   corpus. Reads as a quiet status note rather than an error. */
+.agent-ephemeral-url-nomatch {
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
+}
+/* Generic loop-agent action card — failed-outcome row. */
+.agent-ephemeral-error .agent-ephemeral-result-title {
+  color: var(--warning, #d29922);
+}

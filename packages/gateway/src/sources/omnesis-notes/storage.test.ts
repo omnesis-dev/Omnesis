@@ -19,8 +19,11 @@ import {
   insertNoteEntry,
   listNoteEntriesForDay,
   updateNoteEntryText,
+  updateBrowserNoteEntry,
+  listBrowserPageNotes,
   type NoteEntry,
 } from "./storage.js";
+import { browserNoteRevision, browserNoteContext, browserNoteUserText } from "./browser-note.js";
 import type Database from "better-sqlite3";
 
 function testDbPath(): string {
@@ -137,6 +140,124 @@ describe("note_entries storage", () => {
     );
     updateNoteEntryText(db, entry.id, "Revised thought", "2026-06-15T10:00:00.000Z");
     expect(getNoteEntry(db, entry.id)?.page).toEqual(entry.page);
+  });
+
+  test("browser update grants edit associated notes across capturing devices without changing provenance", () => {
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+    const device = createDevice(db, { name: "Example browser", kind: "browser" });
+    const token = createToken(db, device.id, [Scope("notes:update")]);
+    const page = { url: "https://example.org/article", selection: "A passage" };
+    const entry = makeEntry({
+      surface: "chrome-extension",
+      deviceId: "other-browser",
+      page,
+      text: `First thought${browserNoteContext(page)}`,
+    });
+    insertNoteEntry(db, entry);
+    const input = {
+      id: entry.id,
+      url: page.url,
+      text: "Revised thought",
+      revision: browserNoteRevision(entry),
+      authority: { deviceId: device.id, tokenId: token.id },
+    };
+    const result = updateBrowserNoteEntry(db, input);
+    expect(result.outcome).toBe("updated");
+    const saved = getNoteEntry(db, entry.id)!;
+    expect(browserNoteUserText(saved)).toBe("Revised thought");
+    expect(saved).toMatchObject({
+      page,
+      deviceId: "other-browser",
+      surface: entry.surface,
+      capturedAt: entry.capturedAt,
+    });
+    expect(updateBrowserNoteEntry(db, { ...input, text: "Lost competing edit" })).toEqual({
+      outcome: "conflict",
+    });
+    expect(getNoteEntry(db, entry.id)).toEqual(saved);
+    expect(updateBrowserNoteEntry(db, { ...input, id: "arbitrary-document" })).toEqual({
+      outcome: "missing",
+    });
+    expect(updateBrowserNoteEntry(db, { ...input, url: "https://example.org/unrelated" })).toEqual({
+      outcome: "missing",
+    });
+  });
+
+  test("edit permission cannot be borrowed from create authority and is fenced against revocation and flag changes", () => {
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+    const device = createDevice(db, { name: "Example browser", kind: "browser" });
+    const create = createToken(db, device.id, [Scope("notes:create")]);
+    const edit = createToken(db, device.id, [Scope("notes:update")]);
+    const entry = makeEntry({ text: "A note about https://example.org/article" });
+    insertNoteEntry(db, entry);
+    const input = {
+      id: entry.id,
+      url: "https://example.org/article",
+      text: "Changed https://example.org/article",
+      revision: browserNoteRevision(entry),
+      authority: { deviceId: device.id, tokenId: create.id },
+    };
+    expect(() => updateBrowserNoteEntry(db, input)).toThrow("no longer active");
+    revokeToken(db, edit.id);
+    expect(() =>
+      updateBrowserNoteEntry(db, { ...input, authority: { ...input.authority, tokenId: edit.id } }),
+    ).toThrow("no longer active");
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
+    expect(() => updateBrowserNoteEntry(db, input)).toThrow("unavailable");
+    expect(getNoteEntry(db, entry.id)).toEqual(entry);
+  });
+
+  test("editing a portal note may remove its page mention without changing capture provenance", () => {
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+    const device = createDevice(db, { name: "Example browser", kind: "browser" });
+    const token = createToken(db, device.id, [Scope("notes:update")]);
+    const entry = makeEntry({ text: "Read https://example.org/article", surface: "portal" });
+    insertNoteEntry(db, entry);
+    const result = updateBrowserNoteEntry(db, {
+      id: entry.id,
+      url: "https://example.org/article",
+      text: "A revised thought",
+      revision: browserNoteRevision(entry),
+      authority: { deviceId: device.id, tokenId: token.id },
+    });
+    expect(result.outcome).toBe("updated");
+    expect(getNoteEntry(db, entry.id)).toMatchObject({
+      text: "A revised thought",
+      surface: "portal",
+      capturedAt: entry.capturedAt,
+    });
+    expect(listBrowserPageNotes(db, device.id, "https://example.org/article")).toEqual([]);
+  });
+
+  test("page listings use graph-linked daily docs but exclude unrelated sibling entries", () => {
+    const device = createDevice(db, { name: "Example browser", kind: "browser" });
+    const first = makeEntry({
+      text: "Article thought https://example.org/article",
+      surface: "portal",
+    });
+    const unrelated = makeEntry({ text: "A separate grocery thought", surface: "portal" });
+    insertNoteEntry(db, first);
+    insertNoteEntry(db, unrelated);
+    db.prepare(
+      `INSERT INTO documents (id, provider_id, source_id, external_id, title, content, content_hash, metadata, source_created_at, source_updated_at, ingested_at, updated_at) VALUES ('notes-day', 'system', 'omnesis-notes', ?, 'Notes', '', 'hash', '{}', '', '', '', '')`,
+    ).run(first.day);
+    db.prepare(
+      `INSERT INTO document_links (source_doc_id, link_type, raw_target, normalized_target, created_at) VALUES ('notes-day', 'url', 'https://example.org/article', 'https://example.org/article', '')`,
+    ).run();
+    expect(listBrowserPageNotes(db, device.id, "https://example.org/article")).toEqual([
+      { documentId: "notes-day", entry: first },
+    ]);
+    expect(listBrowserPageNotes(db, device.id, "https://example.org/missing")).toEqual([]);
+    const pending = makeEntry({
+      day: "2026-06-16",
+      deviceId: device.id,
+      surface: "chrome-extension",
+      page: { url: "https://example.org/pending" },
+    });
+    insertNoteEntry(db, pending);
+    expect(listBrowserPageNotes(db, device.id, "https://example.org/pending")).toEqual([
+      { documentId: null, entry: pending },
+    ]);
   });
 
   test("get returns null for an unknown id", () => {

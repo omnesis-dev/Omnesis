@@ -400,6 +400,8 @@ describe("health endpoint", () => {
       const syntheticOnly = await (await app.request("/health")).json();
       expect(syntheticOnly.capabilities).not.toHaveProperty("browserNotes");
       expect(syntheticOnly.capabilities).not.toHaveProperty("browserFind");
+      expect(syntheticOnly.capabilities).not.toHaveProperty("browserFeatures");
+      expect(syntheticOnly.capabilities).not.toHaveProperty("browserNotesEdit");
       process.env.OMNESIS_EXPERIMENTAL = "1";
       const on = await (await app.request("/health")).json();
       expect(on.experimental).toBe(true);
@@ -408,6 +410,8 @@ describe("health endpoint", () => {
         sourceContract: SOURCE_CONTRACT_WIRE_RANGE,
         browserNotes: { min: 1, max: 1 },
         browserFind: { min: 1, max: 1 },
+        browserFeatures: { min: 1, max: 1 },
+        browserNotesEdit: { min: 1, max: 1 },
       });
     } finally {
       if (originalExperimental === undefined) delete process.env.OMNESIS_EXPERIMENTAL;

@@ -108,6 +108,8 @@ import { mountBrowserFindRoutes } from "./http/routes/browser-find.js";
 import { FindSearchService } from "./search/find/service.js";
 import { BrowserFindStreamService } from "./http/services/BrowserFindStreamService.js";
 import { BrowserFindService } from "./http/services/BrowserFindService.js";
+import { BrowserNotesEditService } from "./http/services/BrowserNotesEditService.js";
+import { mountBrowserNotesEditRoutes } from "./http/routes/browser-notes-edit.js";
 import { BrowserNotesService } from "./http/services/BrowserNotesService.js";
 import { mountNotesRoutes } from "./http/routes/notes.js";
 import { NotesProvenanceService } from "./sources/omnesis-notes/provenance.js";
@@ -1657,6 +1659,12 @@ export function createServer(
           metadata.label ? [[id, metadata.label]] : [],
         ),
       ),
+    sourceIcons: () =>
+      Object.fromEntries(
+        Object.entries(sourceService.getMeta()).flatMap(([id, metadata]) =>
+          metadata.icon ? [[id, metadata.icon]] : [],
+        ),
+      ),
   });
   mountBrowserFindRoutes(
     app,
@@ -1669,6 +1677,17 @@ export function createServer(
         recordDecisionSpend: opts?.recordFindDecisionSpend,
         getAgentService: () => opts?.agentRouteDeps?.agentService ?? opts?.agentService ?? null,
       }),
+    }),
+  );
+  mountBrowserNotesEditRoutes(
+    app,
+    new BrowserNotesEditService({
+      devices: deviceService,
+      writeGate: w,
+      runtime: getOmnesisNotesRuntime,
+      scope: "notes:update",
+      label: "Browser notes editing",
+      feature: "browser-notes-edit",
     }),
   );
   mountBrowserNotesRoutes(

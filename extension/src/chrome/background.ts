@@ -32,6 +32,7 @@ import {
   readCachedPolicy,
   writeCachedPolicy,
 } from "../capture/policy.js";
+import { installNotesEditBackground } from "./notes-edit-background.js";
 import { installFindBackground } from "./find-background.js";
 import { installNotesBackground } from "./notes-background.js";
 import { PAIRING_ATTEMPT_KEY, resolvePairingAttempt } from "./pairing-attempt.js";
@@ -701,7 +702,11 @@ function handlePairingState(
             // data. A mid-transition storage failure can then neither drain an
             // old queue with the new credential nor leave a half-cleared old
             // pairing claiming to be healthy.
-            await Promise.all([notesBackground.clear(), findBackground.clear()]);
+            await Promise.all([
+              notesBackground.clear(),
+              findBackground.clear(),
+              notesEditBackground.clear(),
+            ]);
             await clearConfig();
             await clearPushQueue(chromeLocalStore);
             await clearPushObservability(chromeLocalStore);
@@ -719,7 +724,11 @@ function handlePairingState(
           // pairing into a failure acknowledgement.
           await saveConfig(config, profileLabel);
         } else {
-          await Promise.all([notesBackground.clear(), findBackground.clear()]);
+          await Promise.all([
+            notesBackground.clear(),
+            findBackground.clear(),
+            notesEditBackground.clear(),
+          ]);
           await clearConfig();
           await clearPushQueue(chromeLocalStore);
           await clearPushObservability(chromeLocalStore);
@@ -866,6 +875,7 @@ chrome.runtime.onMessage.addListener(
   (message, sender, sendResponse) =>
     notesBackground.message(message, sender, sendResponse) ||
     findBackground.message(message, sender, sendResponse) ||
+    notesEditBackground.message(message, sender, sendResponse) ||
     routeBackgroundMessage(message, sender, sendResponse, {
       runtimeId: chrome.runtime.id ?? "",
       popupUrl: chrome.runtime.getURL("popup.html"),
@@ -910,3 +920,5 @@ runEvent(refreshBadge());
 
 const notesBackground = installNotesBackground();
 const findBackground = installFindBackground();
+
+const notesEditBackground = installNotesEditBackground(findBackground.ensureRead);

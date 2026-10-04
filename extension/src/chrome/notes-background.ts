@@ -13,6 +13,7 @@ import {
   type NotePage,
 } from "./notes-service.js";
 
+import { NOTES_EDIT_STATE_KEY, NOTES_PAGE_KEY } from "./notes-edit-service.js";
 import { NOTES_TOKEN_KEY } from "./notes-credential.js";
 
 /** Only extension-owned surfaces may invoke this worker's create-only notes credential. */
@@ -132,6 +133,7 @@ export function installNotesBackground(): {
       }
     }
     page.url = normalizeCaptureUrl(page.url);
+    await chrome.storage.local.set({ [NOTES_PAGE_KEY]: { url: page.url, title: page.title } });
     const view = await service.begin(page);
     if (view.enabled) await selectPanelView("notes");
   }
@@ -169,11 +171,17 @@ export function installNotesBackground(): {
         await refresh(false);
         return state;
       });
-    else if (msg.type === "notes-view") task = service.status(false);
-    else if (msg.type === "notes-activate")
-      task = service.activate().then(async (url) => {
-        await chrome.tabs.create({ url });
-        return { ok: true };
+    else if (msg.type === "notes-view")
+      task = service.status(false).then(async (view) => {
+        const stored = await chrome.storage.local.get(NOTES_EDIT_STATE_KEY);
+        const state = stored[NOTES_EDIT_STATE_KEY] as {
+          draft?: { text?: unknown; original?: unknown };
+        } | null;
+        return {
+          ...view,
+          pendingEdit:
+            typeof state?.draft?.text === "string" && state.draft.text !== state.draft.original,
+        };
       });
     else if (
       msg.type === "notes-open" &&

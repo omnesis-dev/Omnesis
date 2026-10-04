@@ -15,6 +15,30 @@ const auth: AuthContext = {
 };
 
 describe("browser Find stream lifetime", () => {
+  test("rechecks the browser grant before a new model call", async () => {
+    let active = true;
+    let prevented = false;
+    const transport = new BrowserFindStreamService({
+      authority: {
+        requireActive: () => {
+          if (!active) throw new Error("revoked");
+        },
+      },
+      runner: {
+        search: async (_input, context) => {
+          context.beforeModelCall?.();
+          active = false;
+          try {
+            context.beforeModelCall?.();
+          } catch {
+            prevented = true;
+          }
+        },
+      },
+    });
+    await transport.stream(auth, { text: "orbit" }, new AbortController().signal).text();
+    expect(prevented).toBe(true);
+  });
   test("frames results and completion without persisting a conversation", async () => {
     const transport = new BrowserFindStreamService({
       authority: { requireActive: () => ({ enabled: true, canonicalizers: [], sourceLabels: {} }) },

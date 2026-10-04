@@ -213,19 +213,19 @@
         <p>
           These features are unstable and require <code>OMNESIS_EXPERIMENTAL=1</code> on the
           gateway. With the flag unset or <code>0</code>, the extension hides both features and the
-          gateway refuses their endpoints, including approval and requests using previously approved
+          gateway refuses their endpoints, including activation and requests using previously issued
           credentials. Older gateways without the feature capabilities also hide them. Automatic
           page capture remains available without experimental mode. Notes in the portal and mobile
           apps remain available as usual.
         </p>
         <h3 id="browser-extension-find">Find and reopen indexed content</h3>
         <p>
-          Enable <strong>Find</strong> in the extension popup or settings, then approve
-          <strong>Search your Omnesis data</strong> in the gateway portal. This grants ordinary read
-          access across the index, separately from page capture and note creation. Find displays
-          only results with an HTTP or HTTPS source link, including captured pages, Gmail messages
-          and Notion pages. Native-only links are omitted. This display filter does not restrict the
-          credential's access.
+          On compatible gateways, an already paired browser enables
+          <strong>Find</strong> automatically; no separate portal approval is required. Its separate
+          credential grants ordinary read access across the index. Find displays only results with
+          an HTTP or HTTPS source link, including captured pages, Gmail messages and Notion pages.
+          Native-only links are omitted. This display filter does not restrict the credential's
+          access.
         </p>
         <p>
           Press <strong>Alt/Option + Shift + F</strong> or choose <strong>Find</strong> in the
@@ -240,21 +240,21 @@
         </p>
         <p>
           Existing page-access grants allow matching open tabs on those sites. Choose
-          <strong>Match all open tabs</strong> to grant optional tab access for broader matching.
-          Tab URLs are compared locally and the tab list is not uploaded. Optional favicon access
-          displays icons through Chrome's favicon service; missing icons have a fallback.
-          Browser-history access is not requested. Change either shortcut at
-          <code>chrome://extensions/shortcuts</code>.
+          <strong>Enable open-tab matching</strong> to grant optional tab access for broader
+          matching. Tab URLs are compared locally and the tab list is not uploaded. Optional favicon
+          access displays icons through Chrome's favicon service. Find does not prompt for it;
+          available source icons or a fallback are used without it. Browser-history access is not
+          requested. Change either shortcut at <code>chrome://extensions/shortcuts</code>.
         </p>
 
         <h3 id="browser-extension-notes">Tell Omnesis from a page</h3>
         <p>
-          With experimental mode enabled on a compatible gateway, enable
-          <strong>Tell Omnesis</strong> in the extension's Options page. It opens the gateway portal
-          for a one-time approval for this browser. Approval issues a separate credential that can
-          create notes, but cannot read, edit or delete existing notes. The page-capture credential
-          remains <code>write:web</code> only. Updating the gateway does not expand an existing
-          browser's permissions.
+          With experimental mode enabled on a compatible gateway, an already paired browser
+          automatically enables <strong>Tell Omnesis</strong>. Separate device-bound credentials
+          grant <code>notes:create</code> for new notes, <code>read</code> for searching and listing
+          page-associated notes, and <code>notes:update</code> for editing them. The page-capture
+          credential remains <code>write:web</code>; editing requires no additional Chrome
+          permission.
         </p>
         <p>
           Press <strong>Alt + Shift + N</strong> (<strong>Option + Shift + N</strong> on macOS),
@@ -266,13 +266,24 @@
         </p>
         <p>
           <strong>Ctrl + Enter</strong> (<strong>Command + Enter</strong> on macOS) sends the note;
-          Enter adds a line break. Drafts retain their original page even when you change tabs.
-          Submitted notes wait locally while the gateway is unavailable and show whether they are
-          waiting to sync or saved. They appear alongside other notes in the portal's
-          <strong>Tell Omnesis</strong> page and in the day's searchable Notes document, with the
-          page URL and optional quotation. Its page reference can resolve when the page is indexed
-          later; taking a note does not automatically capture an excluded page. Automatic capture
-          pauses and exclusions do not prevent you from explicitly submitting a note.
+          Enter adds a line break. Written drafts retain their original page even when you change
+          tabs; an untouched empty draft follows the page where you next invoke Tell Omnesis.
+          Submitted notes wait locally while the gateway is unavailable; reopening Tell Omnesis
+          shows whether they are waiting to sync or saved. They appear alongside other notes in the
+          portal's <strong>Tell Omnesis</strong> page and in the day's searchable Notes document,
+          with the page URL and optional quotation. Its page reference can resolve when the page is
+          indexed later; taking a note does not automatically capture an excluded page. Automatic
+          capture pauses and exclusions do not prevent you from explicitly submitting a note.
+        </p>
+
+        <p>
+          Tell Omnesis lists saved notes associated with the page through the gateway graph. Select
+          one to edit its text, or choose <strong>New note</strong> for a separate draft. Concurrent
+          edits are detected before overwriting. Browser note edits retain the original page context
+          and quotation. The popup provides separate icons with shortcut tooltips. Escape closes
+          either panel; durably accepting a new note (including offline queuing), updating a saved
+          note, or successfully opening a result closes it automatically. Failed saves retain your
+          text. Agent searches reuse the portal's conversation and ephemeral tool components.
         </p>
 
         <h2 id="brain">Omnesis Brain</h2>

@@ -25,13 +25,13 @@
     </script>
     <meta
       name="description"
-      content="How Omnesis Browser Capture handles page content, browsing metadata, pairing credentials, and local extension storage."
+      content="How Omnesis handles page content, browsing metadata, pairing credentials, and local extension storage."
     />
     <link rel="canonical" href="https://omnesis.dev/browser-extension-privacy-policy" />
     <meta property="og:title" content="Omnesis Browser Extension Privacy Policy — Omnesis" />
     <meta
       property="og:description"
-      content="How Omnesis Browser Capture handles page content, browsing metadata, pairing credentials, and local extension storage."
+      content="How Omnesis handles page content, browsing metadata, pairing credentials, and local extension storage."
     />
     <meta property="og:image" content="https://omnesis.dev/og-image.png" />
     <meta property="og:type" content="website" />
@@ -67,12 +67,12 @@
 
         <h2>Summary</h2>
         <p>
-          Omnesis Browser Capture reads supported HTTPS pages only after you explicitly grant Chrome
-          page access. It extracts readable text and visit metadata and sends them directly to the
-          HTTPS Omnesis gateway you pair with the extension. Ordinarily that gateway runs on
-          hardware you control. If you deliberately select a developer-operated gateway, the
-          developer receives the data as that gateway's operator. The extension contains no
-          analytics, advertising, or crash-reporting SDK.
+          Omnesis reads supported HTTPS pages only after you explicitly grant Chrome page access. It
+          extracts readable text and visit metadata and sends them directly to the HTTPS Omnesis
+          gateway you pair with the extension. Ordinarily that gateway runs on hardware you control.
+          If you deliberately select a developer-operated gateway, the developer receives the data
+          as that gateway's operator. The extension contains no analytics, advertising, or
+          crash-reporting SDK.
         </p>
 
         <h2>What the extension accesses</h2>
@@ -102,27 +102,31 @@
           </li>
           <li>
             <strong>Experimental features</strong> — page notes and Find are hidden unless the
-            paired gateway runs with <code>OMNESIS_EXPERIMENTAL=1</code>. Previously approved
-            credentials cannot bypass that gate. Automatic page capture remains available by
-            default.
+            paired gateway runs with <code>OMNESIS_EXPERIMENTAL=1</code>. Existing credentials
+            cannot bypass that gate. Compatible experimental gateways automatically enable these
+            features for an already paired browser without separate portal approval. Automatic page
+            capture remains available by default.
           </li>
           <li>
             <strong>Tell Omnesis notes</strong> — the text you submit, the page title and URL, an
             optional selected quotation, the capture time and timezone, and the paired browser
-            identity. Drafts stay in the extension until you submit them. This optional feature
-            requires gateway-owner approval and uses a separate create-only notes credential.
+            identity. Drafts stay in the extension until you submit them. Creating notes uses a
+            separate <code>notes:create</code> credential. Tell Omnesis also lists saved notes
+            associated with the page using its <code>read</code> credential and allows explicit text
+            edits with a separate <code>notes:update</code> credential. Edits retain the original
+            page context and quotation; revision checks prevent silently overwriting concurrent
+            edits.
           </li>
           <li>
             <strong>Find</strong> — queries sent to the paired gateway and returned document titles,
-            snippets and source links. This optional feature requires gateway-owner approval for a
-            separate read credential that permits ordinary search across indexed sources. The
-            extension filters results for browser-openable source links. The current query, results
-            and bounded agent explanation stay in local extension storage so the panel can reopen
-            them. When a decision model is enabled, it can choose a read-only agent search that
-            inspects indexed evidence and returns browser destinations. The panel shows the
-            decision, streamed explanation and transient tool activity. Each query starts a fresh
-            task, with no follow-up conversation. Open-tab URLs are compared locally and the tab
-            list is not uploaded.
+            snippets and source links. A separate device-bound <code>read</code> credential permits
+            ordinary search across indexed sources. The extension filters results for
+            browser-openable source links. The current query, results and bounded agent explanation
+            stay in local extension storage so the panel can reopen them. When a decision model is
+            enabled, it can choose a read-only agent search that inspects indexed evidence and
+            returns browser destinations. The panel shows the decision, streamed explanation and
+            transient tool activity. Each query starts a fresh task, with no follow-up conversation.
+            Open-tab URLs are compared locally and the tab list is not uploaded.
           </li>
           <li>
             <strong>Local controls and delivery state</strong> — Chrome profile label, the paired
@@ -197,14 +201,14 @@
           </li>
           <li>
             <strong>Optional tabs</strong> lets Find match source links against open tabs across the
-            Chrome profile after you choose <strong>Match all open tabs</strong>. Existing
+            Chrome profile after you choose <strong>Enable open-tab matching</strong>. Existing
             page-access grants allow matching those sites without this permission. Browser-history
             access is not requested.
           </li>
           <li>
             <strong>Optional favicon</strong> displays site icons through Chrome's favicon service.
-            Missing icons have a fallback; the extension sends no result URLs to a third-party icon
-            service.
+            Find does not prompt for this permission; available source icons or a fallback are used
+            without it. The extension sends no result URLs to a third-party icon service.
           </li>
         </ul>
 

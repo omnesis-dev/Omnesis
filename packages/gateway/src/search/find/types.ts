@@ -41,6 +41,8 @@ export type FindStreamEvent =
   | { type: "find.complete"; payload: { mode: "direct" | "agentic" } }
   | { type: "find.error"; payload: { message: string; code?: string } };
 export interface FindSearchExecution {
+  /** Recheck caller authority immediately before each paid model pass. */
+  beforeModelCall?: () => void;
   signal: AbortSignal;
   emit(event: FindStreamEvent): void;
 }

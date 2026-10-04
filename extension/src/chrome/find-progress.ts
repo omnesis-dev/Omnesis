@@ -1,84 +1,59 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-function toolLabel(value: string): string {
-  const labels: Record<string, string> = {
-    search_documents: "Searching documents",
-    search_many: "Searching documents",
-    fetch_document: "Reading a document",
-    fetch_many: "Reading documents",
-    run_sql: "Querying records",
-    lookup_people: "Finding people",
-    trace_connections: "Following connections",
-    temporal_query: "Searching dates",
-    lookup_document_by_url: "Finding a source link",
-    present_browser_results: "Presenting results",
-  };
-  return Object.hasOwn(labels, value) ? labels[value]! : value.replace(/_/g, " ");
-}
-export interface FindToolCard {
-  id: string;
-  tool: string;
-  summary: string;
-  status: "preparing" | "running" | "done" | "error";
-  result?: string;
-}
-/** Live bounded tool cards are deliberately separate from the durable search result. */
+import { initialState, reducer, type AgentUiState } from "@omnesis/gateway/agent-ui/reducer";
+import type { AgentUiPart } from "@omnesis/gateway/agent-ui";
+
+export type FindToolCard = AgentUiPart;
+const EVENTS = new Set([
+  "agent.text.delta",
+  "agent.tool.input_start",
+  "agent.tool.start",
+  "agent.tool.result",
+  "agent.tool.child.start",
+  "agent.tool.child.result",
+]);
+
+/** The portal reducer owns ordering and tool-card causality; only this current run is kept. */
 export class FindProgress {
-  private readonly cards = new Map<string, FindToolCard>();
+  private state: AgentUiState = reducer(initialState(), {
+    kind: "agent.message.start",
+    payload: { messageId: "find", sessionId: null },
+  });
+  private textLength = 0;
+  private toolCount = 0;
+  private readonly toolIds = new Set<string>();
   update(type: string, payload: Record<string, unknown>): boolean {
-    if (
-      !["agent.tool.input_start", "agent.tool.start", "agent.tool.result"].includes(type) ||
-      typeof payload.toolCallId !== "string"
-    )
-      return false;
-    const id = payload.toolCallId.slice(0, 128);
-    let card = this.cards.get(id);
-    if (!card) {
-      if (this.cards.size >= 20) this.cards.delete(this.cards.keys().next().value!);
-      card = {
-        id,
-        tool: typeof payload.tool === "string" ? toolLabel(payload.tool.slice(0, 128)) : "Tool",
-        summary: "",
-        status: "preparing",
-      };
-      this.cards.set(id, card);
+    if (!EVENTS.has(type)) return false;
+    if (type === "agent.text.delta") {
+      if (typeof payload.delta !== "string") return false;
+      const delta = payload.delta.slice(0, Math.max(0, 32000 - this.textLength));
+      this.textLength += delta.length;
+      payload = { ...payload, delta };
+    } else {
+      if (typeof payload.toolCallId !== "string" || payload.toolCallId.length > 128) return false;
+      if (!this.toolIds.has(payload.toolCallId)) {
+        if (this.toolCount >= 40) return false;
+        this.toolIds.add(payload.toolCallId);
+        this.toolCount++;
+      }
     }
-    if (type === "agent.tool.input_start") card.status = "preparing";
-    else if (type === "agent.tool.start") {
-      card.status = "running";
-      card.tool =
-        typeof payload.tool === "string" ? toolLabel(payload.tool.slice(0, 128)) : card.tool;
-      card.summary =
-        typeof payload.argsSummary === "string"
-          ? payload.argsSummary.slice(0, 500)
-          : typeof payload.intent === "string"
-            ? payload.intent.slice(0, 500)
-            : "";
-    } else if (type === "agent.tool.result") {
-      const result =
-        payload.result && typeof payload.result === "object"
-          ? (payload.result as Record<string, unknown>)
-          : {};
-      card.status = result.kind === "error" || result.error ? "error" : "done";
-      const data =
-        result.data && typeof result.data === "object"
-          ? (result.data as Record<string, unknown>)
-          : {};
-      card.result =
-        typeof result.message === "string"
-          ? result.message.slice(0, 1000)
-          : typeof data.count === "number" && Number.isInteger(data.count) && data.count >= 0
-            ? `${data.count} ${data.count === 1 ? "result" : "results"} ready`
-            : Array.isArray(result.results)
-              ? `${result.results.length} ${result.results.length === 1 ? "result" : "results"} found`
-              : Array.isArray(result.rows)
-                ? `${result.rows.length} ${result.rows.length === 1 ? "record" : "records"} returned`
-                : "Completed";
-    } else return false;
+    // Find has one worker-fenced run rather than a portal conversation session.
+    this.state = reducer(this.state, { kind: type, payload: { ...payload, sessionId: null } });
     return true;
   }
-  snapshot(): FindToolCard[] {
-    return [...this.cards.values()].map((card) => ({ ...card }));
+  flush(toolCallId: string): void {
+    this.state = reducer(this.state, { kind: "ephemeral-tail-flush", toolCallId });
+  }
+  finish(): void {
+    this.state = reducer(this.state, {
+      kind: "agent.message.end",
+      payload: { sessionId: null, stopReason: "end_turn" },
+    });
+  }
+  snapshot(): AgentUiPart[] {
+    return this.state.turns.flatMap((turn) =>
+      turn.done ? turn.parts.filter((part) => part.kind === "text") : turn.parts,
+    );
   }
 }

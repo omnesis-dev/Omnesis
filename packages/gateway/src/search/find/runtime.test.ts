@@ -2,18 +2,23 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, expect, it, vi } from "vitest";
-import { AgentService } from "../../agent/service.js";
-import { BrowserFindEvidence, createBrowserResultsTool } from "./results-tool.js";
-import { buildBrowserFindRuntime } from "./runtime.js";
-import type { AgentEvent } from "@omnesis/core";
 import {
   selectSubagentTools,
+  zodToJsonSchema,
   type ChatBackend,
   type DocumentPort,
   type RecordPort,
   type TurnInput,
   type ToolHandle,
 } from "@omnesis/agent";
+import { AgentService } from "../../agent/service.js";
+import {
+  browserResultsSchema,
+  BrowserFindEvidence,
+  createBrowserResultsTool,
+} from "./results-tool.js";
+import { buildBrowserFindRuntime } from "./runtime.js";
+import type { AgentEvent } from "@omnesis/core";
 
 const document: DocumentPort = {
   fetch: async (id) =>
@@ -76,6 +81,45 @@ function result(destinationUrl = "https://example.org/activity/1") {
 }
 
 describe("grounded browser result presentation", () => {
+  it("exposes both evidence shapes to model schemas and requires exactly one receipt shape", () => {
+    const schema = zodToJsonSchema(browserResultsSchema) as {
+      properties: {
+        results: {
+          items: {
+            required: string[];
+            properties: {
+              evidence: {
+                properties: Record<
+                  string,
+                  { required?: string[]; properties?: Record<string, unknown> }
+                >;
+              };
+            };
+          };
+        };
+      };
+    };
+    const item = schema.properties.results.items;
+    expect(item.required).toEqual(expect.arrayContaining(["destinationUrl", "title", "evidence"]));
+    expect(item.properties.evidence.properties).toHaveProperty("documentIds");
+    expect(item.properties.evidence.properties.record!.required).toEqual([
+      "table",
+      "recordKey",
+      "primaryKeyColumns",
+    ]);
+    expect(item.properties.evidence.properties.record!.properties).toHaveProperty(
+      "primaryKeyColumns",
+    );
+    expect(
+      browserResultsSchema.safeParse({ results: [{ ...result(), evidence: {} }] }).success,
+    ).toBe(false);
+    expect(
+      browserResultsSchema.safeParse({
+        results: [{ ...result(), evidence: { documentIds: ["doc-1"], record: reference } }],
+      }).success,
+    ).toBe(false);
+  });
+
   it("requires retrieved evidence, accepts embedded URLs, and rejects invented snippets atomically", async () => {
     const f = fixture();
     expect(await f.tool.invoke({ results: [result()] }, context)).toMatchObject({
@@ -284,6 +328,41 @@ class PuppetBackend implements ChatBackend {
   }
 }
 
+class FinalizationBackend implements ChatBackend {
+  readonly name = "puppet";
+  readonly model = "puppet";
+  readonly inputs: TurnInput[] = [];
+  readonly disposals: number[] = [];
+  async dispose(): Promise<void> {
+    this.disposals.push(this.inputs.length);
+  }
+  constructor(private readonly succeeds = true) {}
+  async *runTurn(input: TurnInput): AsyncIterable<AgentEvent> {
+    this.inputs.push(input);
+    const payload = { sessionId: input.sessionId, messageId: input.messageId };
+    yield { type: "agent.message.start", payload: { ...payload, role: "assistant" } };
+    if (this.inputs.length === 1) {
+      await input.tools
+        .find((tool) => tool.name === "fetch_many")!
+        .invoke({ documents: [{ documentId: "doc-1" }] }, context);
+      yield {
+        type: "agent.text.delta",
+        payload: { ...payload, delta: "Here is the source link: https://example.org/activity/1" },
+      };
+    } else if (this.succeeds) {
+      await input.tools
+        .find((tool) => tool.name === "present_browser_results")!
+        .invoke({ results: [result()] }, context);
+    } else {
+      yield { type: "agent.text.delta", payload: { ...payload, delta: "Only prose" } };
+    }
+    yield {
+      type: "agent.message.end",
+      payload: { ...payload, stopReason: "end_turn", usage: { inputTokens: 10, outputTokens: 2 } },
+    };
+  }
+}
+
 describe("ephemeral read-only browser search", () => {
   it("retains builtin retrieval handles with the read-only default and excludes explicit writes", async () => {
     const retrieval: ToolHandle[] = [];
@@ -365,25 +444,154 @@ describe("ephemeral read-only browser search", () => {
     await service.dispose();
   });
 
-  it("does not treat Markdown alone as a structured result", async () => {
+  it("repairs a prose-only research ending with a private presentation-only phase", async () => {
+    const backend = new FinalizationBackend();
+    const broadcast = vi.fn(),
+      recordSpend = vi.fn(),
+      onResults = vi.fn();
     const service = new AgentService({
-      backendFactory: () => new PuppetBackend(false),
+      backendFactory: () => backend,
       ports: {
         document,
         search: { search: async () => ({ query: "", durationMs: 0, results: [] }) },
       },
       systemPrompt: "Corpus prompt",
-      broadcastEvent: () => {},
+      broadcastEvent: broadcast,
+      recordSpend,
     });
+    const events: AgentEvent[] = [];
     expect(
       await buildBrowserFindRuntime({
         query: "Find route",
         agent: service,
         signal: new AbortController().signal,
+        onEvent: (event) => events.push(event),
+        onResults,
+      }),
+    ).toEqual({ presented: true });
+    expect(backend.inputs).toHaveLength(2);
+    expect(backend.disposals).toEqual([1, 2]);
+    expect(backend.inputs[1]!.tools.map((tool) => tool.name)).toEqual(["present_browser_results"]);
+    expect(
+      backend.inputs[1]!.history.some(
+        (message) =>
+          message.role === "user" &&
+          message.parts.some((part) => part.kind === "text" && part.text === "Find route"),
+      ),
+    ).toBe(true);
+    expect(events.filter((event) => event.type === "agent.user.message")).toHaveLength(1);
+    expect(
+      events
+        .filter((event) => event.type === "agent.text.delta")
+        .map((event) => event.payload.delta),
+    ).toContain("Here is the source link: https://example.org/activity/1");
+    expect(onResults.mock.lastCall![0][0].sourceUrl).toBe("https://example.org/activity/1");
+    expect(recordSpend).toHaveBeenCalledExactlyOnceWith({
+      mechanism: "browser-find",
+      modelId: "puppet",
+      usage: { inputTokens: 20, outputTokens: 4 },
+      completed: true,
+    });
+    expect(broadcast).not.toHaveBeenCalled();
+    expect(await service.listConversations()).toHaveLength(0);
+    await service.dispose();
+  });
+
+  it("bounds finalization retries and fails explicitly when every response remains prose-only", async () => {
+    const backend = new FinalizationBackend(false),
+      onResults = vi.fn(),
+      recordSpend = vi.fn();
+    const service = new AgentService({
+      backendFactory: () => backend,
+      ports: {
+        document,
+        search: { search: async () => ({ query: "", durationMs: 0, results: [] }) },
+      },
+      systemPrompt: "Corpus prompt",
+      recordSpend,
+    });
+    await expect(
+      buildBrowserFindRuntime({
+        query: "Find route",
+        agent: service,
+        signal: new AbortController().signal,
         onEvent: () => {},
+        onResults,
+      }),
+    ).rejects.toThrow("could not present supported search results");
+    expect(backend.inputs).toHaveLength(3);
+    expect(onResults).not.toHaveBeenCalled();
+    expect(recordSpend).toHaveBeenCalledExactlyOnceWith({
+      mechanism: "browser-find",
+      modelId: "puppet",
+      usage: { inputTokens: 30, outputTokens: 6 },
+      completed: false,
+    });
+    await service.dispose();
+  });
+
+  it("rechecks caller authority before a finalization model pass", async () => {
+    const backend = new FinalizationBackend(),
+      recordSpend = vi.fn(),
+      onResults = vi.fn();
+    let calls = 0;
+    const beforeModelCall = vi.fn(() => {
+      if (++calls > 1) throw new Error("Fictional authority revoked");
+    });
+    const service = new AgentService({
+      backendFactory: () => backend,
+      ports: {
+        document,
+        search: { search: async () => ({ query: "", durationMs: 0, results: [] }) },
+      },
+      systemPrompt: "Corpus prompt",
+      recordSpend,
+    });
+    await expect(
+      buildBrowserFindRuntime({
+        query: "Find route",
+        agent: service,
+        signal: new AbortController().signal,
+        beforeModelCall,
+        onEvent: () => {},
+        onResults,
+      }),
+    ).rejects.toThrow("Fictional authority revoked");
+    expect(beforeModelCall).toHaveBeenCalledTimes(2);
+    expect(backend.inputs).toHaveLength(1);
+    expect(onResults).not.toHaveBeenCalled();
+    expect(recordSpend).toHaveBeenCalledExactlyOnceWith({
+      mechanism: "browser-find",
+      modelId: "puppet",
+      usage: { inputTokens: 10, outputTokens: 2 },
+      completed: false,
+    });
+    await service.dispose();
+  });
+
+  it("does not run a finalization request after cancellation", async () => {
+    const backend = new FinalizationBackend(),
+      controller = new AbortController();
+    const service = new AgentService({
+      backendFactory: () => backend,
+      ports: {
+        document,
+        search: { search: async () => ({ query: "", durationMs: 0, results: [] }) },
+      },
+      systemPrompt: "Corpus prompt",
+    });
+    await expect(
+      buildBrowserFindRuntime({
+        query: "Find route",
+        agent: service,
+        signal: controller.signal,
+        onEvent: (event) => {
+          if (event.type === "agent.message.end") controller.abort();
+        },
         onResults: () => {},
       }),
-    ).toEqual({ presented: false });
+    ).rejects.toThrow();
+    expect(backend.inputs).toHaveLength(1);
     await service.dispose();
   });
 

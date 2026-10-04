@@ -2,7 +2,7 @@
 
 ## Name
 
-Omnesis Browser Capture
+Omnesis
 
 ## Summary
 
@@ -10,15 +10,15 @@ Capture pages, add notes and find browser-openable content through your paired O
 
 ## Description
 
-Omnesis Browser Capture adds the readable web pages you choose to browse to your private Omnesis index.
+Omnesis adds the readable web pages you choose to browse to your private Omnesis index.
 
 Pair the extension with an HTTPS Omnesis gateway, enter the name shown in Chrome's profile menu, grant Chrome access to HTTPS pages, and browse normally. After a page remains focused long enough to count as a visit, the extension extracts readable Markdown, its title and normalized URL, then sends them directly to the paired gateway. It also records the visit time, focused dwell duration, stable paired-browser device ID, and the profile name you entered so visits remain attributable across Chrome profiles; one-per-URL page metadata names the profile whose capture most recently changed that snapshot. Pages in private windows, sign-in and payment pages, and pages on domains you exclude are never captured. Exclusions and the capture pause are stored on your gateway and shared by every browser paired with it; you can unpair at any time.
 
-The extension stores its scoped pairing credential, a copy of the gateway's capture settings and a bounded retry queue in Chrome local extension storage. It has no advertising, analytics or crash-reporting SDK. Browsing data goes only to the gateway the user deliberately selects; if that gateway is operated by the developer, the developer receives the data as its operator. Its gateway token is limited to `write:web`; it cannot read the user's Omnesis corpus.
+The extension stores its scoped pairing credential, a copy of the gateway's capture settings and a bounded retry queue in Chrome local extension storage. It has no advertising, analytics or crash-reporting SDK. Browsing data goes only to the gateway the user deliberately selects; if that gateway is operated by the developer, the developer receives the data as its operator. The page-capture token is limited to `write:web` and cannot read the Omnesis corpus. Experimental notes and Find use separate credentials described below.
 
-Tell Omnesis and Find are experimental, hidden unless your gateway runs with OMNESIS_EXPERIMENTAL=1. On supported gateways with that flag enabled, enable Tell Omnesis with gateway-owner approval to write a note about the current page or a selected passage. Open it from the extension popup, the page's right-click menu, or Alt/Option + Shift + N. The native side panel keeps the page visible while you write. Drafts and unsent notes survive browser restarts; Ctrl/Cmd + Enter saves. Notes use a separate create-only credential and never broaden the page-capture token. Older gateways continue capturing pages and do not offer notes.
+Tell Omnesis and Find are experimental, hidden unless your gateway runs with OMNESIS_EXPERIMENTAL=1. On supported gateways with that flag enabled, Tell Omnesis is enabled automatically for a paired browser to write a note about the current page or a selected passage. Open it from the extension popup, the page's right-click menu, or Alt/Option + Shift + N. The native side panel keeps the page visible while you write. Drafts and unsent notes survive browser restarts; Ctrl/Cmd + Enter saves. Creating notes uses a separate `notes:create` credential and never broadens the page-capture token. Tell Omnesis also lists notes associated with the page and lets you edit their text with a separate `notes:update` credential; the original page and quotation remain attached. Older gateways continue capturing pages and do not offer notes.
 
-Find returns browser-openable results from your Omnesis data, including captured pages, Gmail and Notion. Approve search access separately in the gateway portal. Alt/Option + Shift + F opens the side panel with matching snippets and favicons. Open a result to switch to a matching tab or open its source link in a new tab. Optional tab access improves matching across open tabs; the tab list stays in your browser. When a decision model is enabled, it chooses direct search or read-only agent research for complex queries. Agent text and tool activity stream into the panel, followed by structured results. Each search is a fresh task without follow-up chat.
+Find returns browser-openable results from your Omnesis data, including captured pages, Gmail and Notion. Find is enabled automatically for a paired browser on compatible experimental gateways and uses a separate `read` credential. Alt/Option + Shift + F opens the side panel with matching snippets and favicons. Open a result to switch to a matching tab or open its source link in a new tab. Optional tab access improves matching across open tabs; the tab list stays in your browser. When a decision model is enabled, it chooses direct search or read-only agent research for complex queries. Agent text and ephemeral tool cards use the same components as the gateway portal, followed by structured result cards. Each search is a fresh task without follow-up chat. Find and Tell Omnesis have independent shortcuts and compact popup icons whose tooltips show the configured shortcuts. Escape closes the panel; successfully opening a result or saving a note closes it automatically.
 
 An Omnesis gateway with a browser-trusted HTTPS certificate is required.
 

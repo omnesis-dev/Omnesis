@@ -95,8 +95,34 @@
       "method": "POST",
       "path": "/browser/find/search",
       "authenticated": true
+    },
+    {
+      "method": "POST",
+      "path": "/browser/notes/enable",
+      "authenticated": true
+    },
+    {
+      "method": "POST",
+      "path": "/browser/find/enable",
+      "authenticated": true
+    },
+    {
+      "method": "POST",
+      "path": "/browser/notes/edit/enable",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/browser/notes/edit",
+      "authenticated": true
+    },
+    {
+      "method": "PATCH",
+      "path": "/browser/notes/edit/:id",
+      "authenticated": true
     }
   ],
   "optionalNotesTokenScopes": ["notes:create"],
-  "optionalFindTokenScopes": ["read"]
+  "optionalFindTokenScopes": ["read"],
+  "optionalNotesEditTokenScopes": ["notes:update"]
 }
