@@ -31,8 +31,8 @@ function harness() {
     new Response(JSON.stringify(value), { status });
   const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const path = new URL(String(input)).pathname;
-    if (path === "/status") return respond({ experimental });
-    if (path === "/health") return respond({ capabilities: { browserFind: capability } });
+    if (path === "/health")
+      return respond({ experimental, capabilities: { browserFind: capability } });
     if (path === "/browser/find/authorization")
       return respond({
         requestId: JSON.parse(String(init?.body)).id,
@@ -474,12 +474,12 @@ describe("Find authorization and durable results", () => {
     expect(aborted).toBe(true);
     expect(await h.service.status(false)).toMatchObject({ supported: false, enabled: false });
   });
-  it("closes discovery when experimental-status access is explicitly rejected", async () => {
+  it("closes discovery when health access is explicitly rejected", async () => {
     const h = harness();
     await enable(h);
     const original = h.fetch.getMockImplementation()!;
     h.fetch.mockImplementation(async (input, init) =>
-      String(input).endsWith("/status")
+      String(input).endsWith("/health")
         ? new Response("{}", { status: 403 })
         : original(input, init),
     );

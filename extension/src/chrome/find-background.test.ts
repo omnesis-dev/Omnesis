@@ -61,7 +61,7 @@ describe("Find worker entrypoints", () => {
         new Response(
           JSON.stringify(
             String(input).endsWith("/health")
-              ? { capabilities: { browserFind: { min: 1, max: 1 } } }
+              ? { experimental: true, capabilities: { browserFind: { min: 1, max: 1 } } }
               : { experimental: true, enabled: true, canonicalizers: [] },
           ),
         ),

@@ -85,8 +85,8 @@ certificate.
 `src/storage-keys.test.ts` pins every literal. Renaming one needs a worker-start
 migration in the same commit.
 
-The Notes and Find workers require both a compatible health capability and
-`GET /status` reporting `experimental: true`. They persist this verification
+The Notes and Find workers require `GET /health` reporting both a compatible feature capability and
+`experimental: true`. They persist this verification
 separately from older capability caches. Previously verified notes may still be
 queued during a network outage; an explicit disabled experimental flag hides
 both features, stops delivery and preserves drafts and unsent notes. Native

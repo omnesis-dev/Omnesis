@@ -187,6 +187,7 @@ export class FindService {
     let checking = "health";
     try {
       const health = (await this.request(config, "/health")) as {
+        experimental?: unknown;
         capabilities?: { browserFind?: { min?: unknown; max?: unknown } };
       };
       const range = health?.capabilities?.browserFind;
@@ -199,17 +200,9 @@ export class FindService {
         range.min <= range.max &&
         range.min <= 1 &&
         range.max >= 1;
-      if (compatible) {
-        checking = "experimental";
-        const status = (await this.request(config, "/status", config.token)) as {
-          experimental?: unknown;
-        };
-        state.experimental = status?.experimental === true;
-        state.supported = state.experimental;
-      } else {
-        state.experimental = false;
-        state.supported = false;
-      }
+      state.experimental = health?.experimental === true;
+      state.supported = compatible && state.experimental;
+
       if (!state.supported) this.searchAbort?.abort();
 
       if (state.supported && state.token) {
@@ -252,7 +245,7 @@ export class FindService {
       delete state.error;
     } catch (error) {
       if (error instanceof FindHttpError && [401, 403, 404, 410].includes(error.status)) {
-        if (checking === "health" || checking === "experimental") {
+        if (checking === "health") {
           state.supported = false;
           state.experimental = false;
         }

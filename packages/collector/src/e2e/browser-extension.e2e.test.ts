@@ -911,8 +911,7 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
       await options.check("#capture-consent");
       await options.click("#pair-submit");
       await options.locator("#paired").waitFor({ state: "visible", timeout: 30_000 });
-      worker = await currentWorker();
-      const support = await worker.evaluate(async () => ({
+      const support = await options.evaluate(async () => ({
         notes: await chrome.runtime.sendMessage({ type: "notes-status" }),
         find: await chrome.runtime.sendMessage({ type: "find-status" }),
       }));

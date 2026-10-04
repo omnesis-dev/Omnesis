@@ -176,9 +176,10 @@ export class NotesService {
     return JSON.parse(text) as unknown;
   }
   private async refresh(config: ExtensionConfig, state: NotesState): Promise<void> {
-    let checking: "health" | "experimental" | "credential" | "authorization" = "health";
+    let checking: "health" | "credential" | "authorization" = "health";
     try {
       const health = (await this.request(config, "/health")) as {
+        experimental?: unknown;
         capabilities?: { browserNotes?: { min?: unknown; max?: unknown } };
       };
       const range = health?.capabilities?.browserNotes;
@@ -191,17 +192,8 @@ export class NotesService {
         range.min <= range.max &&
         range.min <= 1 &&
         range.max >= 1;
-      if (compatible) {
-        checking = "experimental";
-        const status = (await this.request(config, "/status", config.token)) as {
-          experimental?: unknown;
-        };
-        state.experimental = status?.experimental === true;
-        state.supported = state.experimental;
-      } else {
-        state.experimental = false;
-        state.supported = false;
-      }
+      state.experimental = health?.experimental === true;
+      state.supported = compatible && state.experimental;
 
       if (state.supported && state.token) {
         checking = "credential";
@@ -235,7 +227,7 @@ export class NotesService {
       // A network outage keeps drafts and authorized offline enqueue available.
       // An explicit authorization rejection always closes the feature.
       if (error instanceof NotesHttpError && [401, 403, 404, 410].includes(error.status)) {
-        if (checking === "health" || checking === "experimental") {
+        if (checking === "health") {
           state.supported = false;
           state.experimental = false;
         }

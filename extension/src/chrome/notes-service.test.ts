@@ -34,9 +34,8 @@ function harness() {
     if (offline) throw new Error("offline");
     const url = String(input);
     const respond = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
-    if (url.endsWith("/status")) return respond({ experimental });
     if (url.endsWith("/health"))
-      return respond({ capabilities: supported ? { browserNotes: capability } : {} });
+      return respond({ experimental, capabilities: supported ? { browserNotes: capability } : {} });
     if (url.endsWith("/authorization")) {
       requestId = JSON.parse(String(init?.body)).id;
       return respond({ requestId, approvalPath: `/portal/browser-notes?id=${requestId}` });
@@ -387,12 +386,12 @@ describe("browser notes", () => {
     expect(await h.restart().status(false)).toMatchObject({ supported: false, enabled: false });
     expect(await h.service.status()).toMatchObject({ supported: false, enabled: false });
   });
-  it("closes discovery when experimental-status access is explicitly rejected", async () => {
+  it("closes discovery when health access is explicitly rejected", async () => {
     const h = harness();
     await enabled(h);
     const original = h.fetch.getMockImplementation()!;
     h.fetch.mockImplementation(async (input, init) =>
-      String(input).endsWith("/status")
+      String(input).endsWith("/health")
         ? new Response("{}", { status: 403 })
         : original(input, init),
     );
