@@ -136,10 +136,22 @@ describe("unpairing with manual notes", () => {
   });
   it("protects unsaved edits using the public pending flag without exposing authorization data", async () => {
     const confirm = vi.fn(() => false);
-    const sendMessage = vi.fn(
-      async <T>(): Promise<T> => ({ pendingEdit: true, draft: null, pending: 0 }) as T,
-    );
-    expect(await confirmNotesUnpair({ runtime: { sendMessage } }, confirm)).toBe(false);
+    const sendMessage = vi.fn(async (_message: unknown) => ({
+      pendingEdit: true,
+      draft: null,
+      pending: 0,
+    }));
+    expect(
+      await confirmNotesUnpair(
+        {
+          runtime: {
+            sendMessage: async <T>(message: unknown): Promise<T> =>
+              (await sendMessage(message)) as T,
+          },
+        },
+        confirm,
+      ),
+    ).toBe(false);
     expect(sendMessage).toHaveBeenCalledExactlyOnceWith({ type: "notes-view" });
     expect(confirm).toHaveBeenCalledOnce();
   });
