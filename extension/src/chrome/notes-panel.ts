@@ -219,6 +219,11 @@ export function initNotesPanel(
   });
   void refresh();
   return async () => {
-    await updates;
+    // Include keystrokes arriving while a slower storage write is still pending.
+    let pending: Promise<unknown>;
+    do {
+      pending = updates;
+      await pending;
+    } while (pending !== updates);
   };
 }

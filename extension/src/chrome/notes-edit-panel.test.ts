@@ -110,6 +110,37 @@ describe("saved-note editor", () => {
     await vi.waitFor(() => expect(p.newText.focus).toHaveBeenCalledOnce());
     expect(p.document.getElementById("saved-note-editor")?.hidden).toBe(true);
   });
+  it("flushes a newer keystroke arriving while an earlier write is pending", async () => {
+    const p = panel();
+    await vi.waitFor(() => expect(p.document.querySelectorAll("[data-note-id]")).toHaveLength(1));
+    p.document.querySelector<HTMLButtonElement>("[data-note-id]")!.click();
+    await vi.waitFor(() => expect(p.textarea.value).toBe("Invented saved thought"));
+    p.textarea.value = "First invented edit";
+    p.textarea.dispatchEvent(new p.window.Event("input"));
+    await vi.waitFor(() =>
+      expect(p.send).toHaveBeenCalledWith({
+        type: "notes-edit-update",
+        text: "First invented edit",
+      }),
+    );
+    let persisted = false;
+    const flushed = p.flush().then(() => {
+      persisted = true;
+    });
+    p.textarea.value = "Latest invented edit";
+    p.textarea.dispatchEvent(new p.window.Event("input"));
+    p.release();
+    await vi.waitFor(() =>
+      expect(p.send).toHaveBeenCalledWith({
+        type: "notes-edit-update",
+        text: "Latest invented edit",
+      }),
+    );
+    expect(persisted).toBe(false);
+    p.release();
+    await flushed;
+    expect(persisted).toBe(true);
+  });
   it("keeps the editor visible when discarding changes fails", async () => {
     const p = panel();
     await vi.waitFor(() => expect(p.document.querySelectorAll("[data-note-id]")).toHaveLength(1));
