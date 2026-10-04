@@ -66,6 +66,6 @@ The agent's actual `temporal_query` rehearsal and the production pipeline E2E
 check establish both source projections and parsed date-mention retrieval.
 
 Luna establishes factual feasibility. Cerebras has not been rehearsed, and no
-recording-model latency guarantee follows from these runs. The final affected
-validation gate remains pending. Physical recording interactions remain outside
+recording-model latency guarantee follows from these runs. Final validation
+outcome is recorded separately at handoff. Physical recording interactions remain outside
 these retrieval and artifact checks.

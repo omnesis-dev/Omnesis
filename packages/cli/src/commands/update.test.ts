@@ -4,6 +4,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineCommand, runCommand } from "citty";
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import {
@@ -3503,16 +3504,22 @@ describe("updateCommand", () => {
   });
 
   test("an exact commit must be full lowercase hex and cannot be mixed with a release selector", async () => {
-    await expect(invoke({ commit: "abc" })).rejects.toMatchObject({
-      exitCode: EXIT_USER_ERROR,
-      message: expect.stringMatching(/full 40-character lowercase commit id/u),
-    });
-    await expect(
-      invoke({ commit: "a".repeat(40), "target-version": "0.5.0" }),
-    ).rejects.toMatchObject({
-      exitCode: EXIT_USER_ERROR,
-      message: expect.stringMatching(/cannot be combined/u),
-    });
+    const argv1 = process.argv[1];
+    process.argv[1] = fileURLToPath(new URL("../index.ts", import.meta.url));
+    try {
+      await expect(invoke({ commit: "abc" })).rejects.toMatchObject({
+        exitCode: EXIT_USER_ERROR,
+        message: expect.stringMatching(/full 40-character lowercase commit id/u),
+      });
+      await expect(
+        invoke({ commit: "a".repeat(40), "target-version": "0.5.0" }),
+      ).rejects.toMatchObject({
+        exitCode: EXIT_USER_ERROR,
+        message: expect.stringMatching(/cannot be combined/u),
+      });
+    } finally {
+      process.argv[1] = argv1;
+    }
   });
 
   test("an unrecognized install prints the manual instructions", async () => {
