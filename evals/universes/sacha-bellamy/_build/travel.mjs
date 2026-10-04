@@ -86,12 +86,12 @@ export function buildTravel() {
     );
     chats.push(
       chat(`${prefix}-arrival`, trip.counterparty, trip.from, [
-        `Just arrived in ${trip.city} today. ${trip.purpose}.`,
-        "Glad you arrived safely.",
+        `Have you arrived in ${trip.city} safely, Sacha?`,
+        `Yes, I arrived in ${trip.city} today. ${trip.purpose}.`,
       ]),
       chat(`${prefix}-home`, trip.counterparty, trip.to, [
-        "Back at the London flat now. The return journey was today.",
-        "Good to hear you made it home.",
+        "Are you back at your London flat yet, Sacha?",
+        "Yes, I am back at the London flat now. My return journey was today.",
       ]),
     );
     events.push(

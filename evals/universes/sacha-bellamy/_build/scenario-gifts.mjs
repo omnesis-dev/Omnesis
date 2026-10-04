@@ -5,6 +5,11 @@ import { mail, chat } from "./shared.mjs";
 
 export function addGifts({ day, add, fact }) {
   const wishes = [
+    [
+      "sb-wish-sketching-stool",
+      "2020-06-14",
+      "A little folding stool would make sketching outdoors so much nicer. I keep sitting on wet grass.",
+    ],
     ["sb-wish-ceramics", "2019-11-09", "I would love to try a pottery wheel class one day."],
     [
       "sb-wish-theatre",
@@ -34,6 +39,26 @@ export function addGifts({ day, add, fact }) {
       "messages.json",
       chat(id, "p_maya", date, [text, "Noted — that does sound like your kind of thing."]),
     );
+  add(
+    "gmail",
+    "messages.json",
+    mail(
+      "sb-sketching-stool-order",
+      "Amazon order EXAMPLE-731-2048 delivered",
+      "Order EXAMPLE-731-2048: one Meadowfold portable sketching stool, £32. Delivered 22 June 2020 to Sacha Bellamy. Gift message: Happy birthday Maya — for your outdoor sketching trips.",
+      "2020-06-22",
+      "p_gift_orders",
+      { fromEmail: "orders@amazon.example.com" },
+    ),
+  );
+  add(
+    "apple-imessage",
+    "messages.json",
+    chat("sb-sketching-stool-received", "p_maya", "2020-06-24", [
+      "Thank you for the folding sketching stool! Took it out today and my trousers finally stayed dry.",
+      "Glad your birthday present got its first outing already.",
+    ]),
+  );
   add(
     "gmail",
     "messages.json",
@@ -77,12 +102,22 @@ export function addGifts({ day, add, fact }) {
     {
       gift: "small practical darkroom printing workshop",
       exclude: [
+        "portable sketching stool received 2020-06-24",
         "pottery wheel class attended 2022-07-16",
         "intimate theatre attended 2023-09-08",
         "balloon/climbing gifts rejected",
       ],
     },
-    wishes.map(([id]) => id).concat(["sb-pottery-attended", "sb-theatre-attended"]),
+    wishes
+      .map(([id]) => id)
+      .concat([
+        "sb-sketching-stool-order",
+        "sb-sketching-stool-received",
+        "sb-pottery-confirmed",
+        "sb-pottery-attended",
+        "sb-theatre-receipt",
+        "sb-theatre-attended",
+      ]),
     [
       "Absence of a completion record is not proof it never happened; current availability requires external research.",
     ],

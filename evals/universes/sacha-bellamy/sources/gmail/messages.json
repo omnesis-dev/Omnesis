@@ -30092,6 +30092,18 @@
     "labels": ["INBOX"]
   },
   {
+    "externalId": "sb-sketching-stool-order",
+    "subject": "Amazon order EXAMPLE-731-2048 delivered",
+    "from": "p_gift_orders",
+    "fromEmail": "orders@amazon.example.com",
+    "to": ["self"],
+    "toEmails": ["sacha.bellamy@example.com"],
+    "body": "Order EXAMPLE-731-2048: one Meadowfold portable sketching stool, £32. Delivered 22 June 2020 to Sacha Bellamy. Gift message: Happy birthday Maya — for your outdoor sketching trips.",
+    "sentAt": "2020-06-22T10:00:00.000Z",
+    "threadId": "thread-sb-sketching-stool-order",
+    "labels": ["INBOX"]
+  },
+  {
     "externalId": "sb-pottery-confirmed",
     "subject": "Wheel class booking WK-220716",
     "from": "p_ceramics",
@@ -30176,6 +30188,44 @@
     "labels": ["INBOX"]
   },
   {
+    "externalId": "sb-audio-promise",
+    "threadId": "sb-audio-promise@example.com",
+    "from": "self",
+    "fromEmail": "sacha.bellamy@example.com",
+    "to": ["self"],
+    "toEmails": ["sacha.bellamy@example.com"],
+    "subject": "Voice memo after talking to Nora",
+    "body": "Attached is my recorded voice memo. The recording contains the details; this mail body does not repeat them.",
+    "sentAt": "2026-09-24T16:00:00.000Z",
+    "labels": ["INBOX"],
+    "attachments": [
+      {
+        "filename": "lantern-promise.wav",
+        "mimeType": "audio/wav",
+        "assetPath": "assets/lantern-promise.wav"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-real-scanned-receipt",
+    "threadId": "sb-receipt-wa8842@example.com",
+    "from": "p_merchant",
+    "fromEmail": "felix.moss@example.com",
+    "to": ["self"],
+    "toEmails": ["sacha.bellamy@example.com"],
+    "subject": "Your scanned paper receipt WA-8842",
+    "body": "The image-only PDF is attached. Keep the original for a claim; this email contains no item or payment details.",
+    "sentAt": "2026-06-29T12:00:00.000Z",
+    "labels": ["INBOX"],
+    "attachments": [
+      {
+        "filename": "receipt-wa8842.pdf",
+        "mimeType": "application/pdf",
+        "assetPath": "assets/receipt-wa8842.pdf"
+      }
+    ]
+  },
+  {
     "externalId": "sb-machine-order",
     "subject": "Order WA-8842 delivered",
     "from": "p_merchant",
@@ -30210,6 +30260,63 @@
     "sentAt": "2026-09-13T10:00:00.000Z",
     "threadId": "thread-sb-refund-control",
     "labels": ["INBOX"]
+  },
+  {
+    "externalId": "sb-symptom-voice",
+    "threadId": "sb-symptom-voice@example.com",
+    "from": "self",
+    "fromEmail": "sacha.bellamy@example.com",
+    "to": ["self"],
+    "toEmails": ["sacha.bellamy@example.com"],
+    "subject": "Recorded symptom diary",
+    "body": "My personal voice diary is attached; recorded observations only.",
+    "sentAt": "2026-09-16T19:00:00.000Z",
+    "labels": ["INBOX"],
+    "attachments": [
+      {
+        "filename": "symptom-diary.wav",
+        "mimeType": "audio/wav",
+        "assetPath": "assets/symptom-diary.wav"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-tenancy-scan",
+    "threadId": "sb-tenancy-scan@example.com",
+    "from": "p_landlord",
+    "fromEmail": "paula.wren@example.com",
+    "to": ["self"],
+    "toEmails": ["sacha.bellamy@example.com"],
+    "subject": "Original scanned tenancy 2016",
+    "body": "The original signed tenancy scan is attached.",
+    "sentAt": "2016-09-01T12:00:00.000Z",
+    "labels": ["INBOX"],
+    "attachments": [
+      {
+        "filename": "oldest-tenancy.pdf",
+        "mimeType": "application/pdf",
+        "assetPath": "assets/oldest-tenancy.pdf"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-warranty-native-pdf",
+    "threadId": "sb-warranty-pdf@example.com",
+    "from": "p_repair",
+    "fromEmail": "simon.alder@example.com",
+    "to": ["self"],
+    "toEmails": ["sacha.bellamy@example.com"],
+    "subject": "Ember Mini warranty document",
+    "body": "The warranty PDF is attached. Please retain it with purchase proof.",
+    "sentAt": "2026-06-29T12:00:00.000Z",
+    "labels": ["INBOX"],
+    "attachments": [
+      {
+        "filename": "ember-mini-warranty.pdf",
+        "mimeType": "application/pdf",
+        "assetPath": "assets/ember-mini-warranty.pdf"
+      }
+    ]
   },
   {
     "externalId": "sb-running-change-email",

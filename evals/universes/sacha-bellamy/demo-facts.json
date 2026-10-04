@@ -198,19 +198,25 @@
       "expected": {
         "gift": "small practical darkroom printing workshop",
         "exclude": [
+          "portable sketching stool received 2020-06-24",
           "pottery wheel class attended 2022-07-16",
           "intimate theatre attended 2023-09-08",
           "balloon/climbing gifts rejected"
         ]
       },
       "evidence": [
+        "sb-wish-sketching-stool",
         "sb-wish-ceramics",
         "sb-wish-theatre",
         "sb-wish-darkroom",
         "sb-wish-balloons",
         "sb-wish-correction",
         "sb-wish-current",
+        "sb-sketching-stool-order",
+        "sb-sketching-stool-received",
+        "sb-pottery-confirmed",
         "sb-pottery-attended",
+        "sb-theatre-receipt",
         "sb-theatre-attended"
       ],
       "limits": [

@@ -205,7 +205,8 @@ export function buildExtras(ctx) {
     Array.from({ length: 160 }, (_, i) => {
       const day = dateBetween(i, 160, "2018-01-01", last);
       const [name, body] = householdDocs[i % householdDocs.length];
-      const p = ctx.cast.people[2 + (i % (ctx.cast.people.length - 2))];
+      const correspondents = ctx.cast.people.slice(2).filter((p) => p.id !== "p_gift_orders");
+      const p = correspondents[i % correspondents.length];
       return {
         uid: i + 1,
         subject: `Community notes: ${name.replaceAll("-", " ")}`,

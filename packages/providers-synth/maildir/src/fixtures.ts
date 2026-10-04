@@ -1,19 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import {
-  closeSync,
-  constants,
-  existsSync,
-  fstatSync,
-  openSync,
-  readSync,
-  realpathSync,
-} from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { deliverMessage } from "@omnesis/provider-maildir/testing";
 import {
   loadActiveUniverse,
+  loadBinaryFixtureAssets,
   loadSourceFixtureJson,
   resolvePerson,
   type PersonRef,
@@ -47,69 +40,12 @@ export interface MaildirFixtureAttachment {
   mimeType: string;
 }
 
-/** Fixture safety limits, independent of extraction settings. */
-const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
-const MAX_MESSAGE_ATTACHMENT_BYTES = 50 * 1024 * 1024;
-
-function contained(root: string, path: string): boolean {
-  const rel = relative(root, path);
-  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
-}
-
-/** Load bounded binary data; resolve symlinks before enforcing the universe boundary. */
+/** Materialize binary MIME parts through the shared bounded universe reader. */
 export function loadFixtureAttachments(
   attachments: readonly MaildirFixtureAttachment[],
   universeDir: string,
 ): NonNullable<FixtureMessage["attachments"]> {
-  if (!Array.isArray(attachments) || attachments.length > 20)
-    throw new Error("Maildir fixture attachments must be an array of at most 20 parts");
-  const root = realpathSync(universeDir);
-  let totalBytes = 0;
-  return attachments.map((attachment) => {
-    if (
-      !attachment ||
-      typeof attachment.filename !== "string" ||
-      !attachment.filename.trim() ||
-      !/^[^\x00-\x1f\x7f"\\/]{1,255}$/.test(attachment.filename) ||
-      attachment.filename === "." ||
-      attachment.filename === ".." ||
-      typeof attachment.mimeType !== "string" ||
-      attachment.mimeType.length > 127 ||
-      !/^[a-zA-Z0-9!#$&^_.+-]+\/[a-zA-Z0-9!#$&^_.+-]+$/.test(attachment.mimeType)
-    )
-      throw new Error("Maildir fixture attachment has an invalid filename or MIME type");
-    const path = attachment.assetPath;
-    if (typeof path !== "string" || !path || path.includes("\0") || isAbsolute(path))
-      throw new Error("Maildir fixture asset path must be universe-relative");
-    const requested = resolve(root, path);
-    if (!contained(root, requested)) throw new Error("Maildir fixture asset escapes its universe");
-    const resolved = realpathSync(requested);
-    if (!contained(root, resolved)) throw new Error("Maildir fixture asset escapes its universe");
-    const fd = openSync(resolved, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    try {
-      const stat = fstatSync(fd);
-      if (!stat.isFile() || stat.size > MAX_ATTACHMENT_BYTES)
-        throw new Error("Maildir fixture asset must be a regular file of at most 25 MiB");
-      if (totalBytes + stat.size > MAX_MESSAGE_ATTACHMENT_BYTES)
-        throw new Error("Maildir fixture message attachments exceed 50 MiB");
-      const content = Buffer.alloc(stat.size + 1);
-      let length = 0;
-      while (length < content.length) {
-        const count = readSync(fd, content, length, content.length - length, null);
-        if (!count) break;
-        length += count;
-      }
-      if (length !== stat.size) throw new Error("Maildir fixture asset changed while being read");
-      totalBytes += length;
-      return {
-        filename: attachment.filename,
-        mimeType: attachment.mimeType,
-        content: content.subarray(0, length),
-      };
-    } finally {
-      closeSync(fd);
-    }
-  });
+  return loadBinaryFixtureAssets(attachments, universeDir);
 }
 
 export function loadMessages(): MaildirFixtureEntry[] {

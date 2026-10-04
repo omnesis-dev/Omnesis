@@ -71,3 +71,6 @@ export {
 export { materializeSyntheticFiles, universeAccounts, type SyntheticFile } from "./files.js";
 
 export { sourceFixtureClock, type SourceFixtureClock } from "./fixture-clock.js";
+
+export { loadBinaryFixtureAssets, validateBinaryFixtureAssets } from "./binary-assets.js";
+export type { BinaryFixtureAsset, LoadedBinaryFixtureAsset } from "./binary-assets.js";

@@ -489,6 +489,18 @@
         "appleContactGuid": "SB-CONTACT-sam",
         "githubLogin": "fictional-sam"
       }
+    },
+    {
+      "id": "p_gift_orders",
+      "name": "Amazon Orders",
+      "emails": ["amazon.orders@example.com"],
+      "phones": ["+447700900140"],
+      "lids": ["800100040@lid"],
+      "extra": {
+        "notionUserId": "user_gift_orders",
+        "appleContactGuid": "SB-CONTACT-gift_orders",
+        "githubLogin": "fictional-gift_orders"
+      }
     }
   ],
   "orgs": [

@@ -2499,8 +2499,7 @@
         "evals/universes/sacha-bellamy/sources/apple-notes/notes.json",
         "evals/universes/sacha-bellamy/sources/gmail/messages.json",
         "evals/universes/sacha-bellamy/sources/google-drive/files.json",
-        "evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json",
-        "evals/universes/sacha-bellamy/sources/maildir/messages.json"
+        "evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"
       ],
       "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
     },
@@ -11756,6 +11755,14 @@
       "value": "The Brain",
       "paths": ["packages/gateway/src/http/routes/temporal.test.ts"],
       "reason": "ordinary words, not a name"
+    },
+    {
+      "value": "Amazon Orders",
+      "paths": [
+        "evals/universes/sacha-bellamy/_build/shared.mjs",
+        "evals/universes/sacha-bellamy/cast.json"
+      ],
+      "reason": "Public retailer label explicitly requested for a fictional gift-order demo; the sender uses a reserved example.com address and an invented order reference, with no personal-corpus provenance."
     }
   ],
   "secretFixtures": [

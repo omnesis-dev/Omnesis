@@ -1,23 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mail, drive, at, anniversary } from "./shared.mjs";
+import { email, OWNER_EMAIL, mail, drive, at, anniversary } from "./shared.mjs";
 
 export function addPurchases({ day, add, fact }) {
   const purchaseDay = day(-91),
     expiry = anniversary(purchaseDay, 2);
   const receipt = `WILLOW APPLIANCE COOPERATIVE\nReceipt WA-8842\nCustomer Sacha Bellamy\nDate ${purchaseDay}\nItem: Ember Mini espresso machine\nSerial: EM-SB-8842\nPaid GBP 249.00 by Lantern Current debit card\nKeep this receipt for warranty claims.`;
   const warranty = `Ember Mini limited warranty. Covers manufacturing faults for two years from original purchase, supported by purchase proof and matching serial number. Accidental damage and consumables excluded. Contact Alder Appliance Workshop. Serial EM-SB-8842. Purchase ${purchaseDay}. Receipt WA-8842. No claim has been submitted.`;
-  add("maildir", "messages.json", {
-    id: "sb-real-scanned-receipt",
-    messageId: "sb-receipt-wa8842@example.com",
+  add("gmail", "messages.json", {
+    externalId: "sb-real-scanned-receipt",
+    threadId: "sb-receipt-wa8842@example.com",
     from: "p_merchant",
+    fromEmail: email("p_merchant"),
     to: ["self"],
+    toEmails: [OWNER_EMAIL],
     subject: "Your scanned paper receipt WA-8842",
     body: "The image-only PDF is attached. Keep the original for a claim; this email contains no item or payment details.",
     sentAt: at(purchaseDay),
-    folders: ["INBOX"],
-    flags: "S",
+    labels: ["INBOX"],
+
     attachments: [
       {
         filename: "receipt-wa8842.pdf",

@@ -22,6 +22,7 @@ export function eligiblePeople(ctx, day) {
         "p_repair",
         "p_gp",
         "p_merchant",
+        "p_gift_orders",
         "p_travel",
         "p_running",
       ].includes(p.id),

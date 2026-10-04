@@ -50,6 +50,7 @@ const identities = [
   ["max", "Max Dewberry"],
   ["dina", "Dina Hazell"],
   ["sam", "Sam Redfern"],
+  ["gift_orders", "Amazon Orders"],
 ];
 
 export const cast = {

@@ -452730,6 +452730,25 @@
     ]
   },
   {
+    "externalId": "sb-wish-sketching-stool",
+    "chatId": "chat-p_maya",
+    "chatTitle": "Maya Bellamy",
+    "date": "2020-06-14",
+    "counterparty": "p_maya",
+    "messages": [
+      {
+        "from": "p_maya",
+        "at": "2020-06-14T18:00:00.000Z",
+        "text": "A little folding stool would make sketching outdoors so much nicer. I keep sitting on wet grass."
+      },
+      {
+        "from": "self",
+        "at": "2020-06-14T18:01:00.000Z",
+        "text": "Noted — that does sound like your kind of thing."
+      }
+    ]
+  },
+  {
     "externalId": "sb-wish-ceramics",
     "chatId": "chat-p_maya",
     "chatTitle": "Maya Bellamy",
@@ -452978,9 +452997,13 @@
       {
         "from": "p_celine",
         "at": "2017-12-20T18:00:00.000Z",
-        "text": "Just arrived in Lyon today. Visit parents for winter break."
+        "text": "Have you arrived in Lyon safely, Sacha?"
       },
-      { "from": "self", "at": "2017-12-20T18:01:00.000Z", "text": "Glad you arrived safely." }
+      {
+        "from": "self",
+        "at": "2017-12-20T18:01:00.000Z",
+        "text": "Yes, I arrived in Lyon today. Visit parents for winter break."
+      }
     ]
   },
   {
@@ -452993,9 +453016,13 @@
       {
         "from": "p_celine",
         "at": "2017-12-29T18:00:00.000Z",
-        "text": "Back at the London flat now. The return journey was today."
+        "text": "Are you back at your London flat yet, Sacha?"
       },
-      { "from": "self", "at": "2017-12-29T18:01:00.000Z", "text": "Good to hear you made it home." }
+      {
+        "from": "self",
+        "at": "2017-12-29T18:01:00.000Z",
+        "text": "Yes, I am back at the London flat now. My return journey was today."
+      }
     ]
   },
   {
@@ -453008,9 +453035,13 @@
       {
         "from": "p_maya",
         "at": "2018-08-09T18:00:00.000Z",
-        "text": "Just arrived in Paris today. Short summer trip with Maya."
+        "text": "Have you arrived in Paris safely, Sacha?"
       },
-      { "from": "self", "at": "2018-08-09T18:01:00.000Z", "text": "Glad you arrived safely." }
+      {
+        "from": "self",
+        "at": "2018-08-09T18:01:00.000Z",
+        "text": "Yes, I arrived in Paris today. Short summer trip with Maya."
+      }
     ]
   },
   {
@@ -453023,9 +453054,13 @@
       {
         "from": "p_maya",
         "at": "2018-08-13T18:00:00.000Z",
-        "text": "Back at the London flat now. The return journey was today."
+        "text": "Are you back at your London flat yet, Sacha?"
       },
-      { "from": "self", "at": "2018-08-13T18:01:00.000Z", "text": "Good to hear you made it home." }
+      {
+        "from": "self",
+        "at": "2018-08-13T18:01:00.000Z",
+        "text": "Yes, I am back at the London flat now. My return journey was today."
+      }
     ]
   },
   {
@@ -453038,9 +453073,13 @@
       {
         "from": "p_marc",
         "at": "2019-07-01T18:00:00.000Z",
-        "text": "Just arrived in San Francisco today. Ten-week software placement; London residence retained."
+        "text": "Have you arrived in San Francisco safely, Sacha?"
       },
-      { "from": "self", "at": "2019-07-01T18:01:00.000Z", "text": "Glad you arrived safely." }
+      {
+        "from": "self",
+        "at": "2019-07-01T18:01:00.000Z",
+        "text": "Yes, I arrived in San Francisco today. Ten-week software placement; London residence retained."
+      }
     ]
   },
   {
@@ -453053,9 +453092,13 @@
       {
         "from": "p_marc",
         "at": "2019-09-08T18:00:00.000Z",
-        "text": "Back at the London flat now. The return journey was today."
+        "text": "Are you back at your London flat yet, Sacha?"
       },
-      { "from": "self", "at": "2019-09-08T18:01:00.000Z", "text": "Good to hear you made it home." }
+      {
+        "from": "self",
+        "at": "2019-09-08T18:01:00.000Z",
+        "text": "Yes, I am back at the London flat now. My return journey was today."
+      }
     ]
   },
   {
@@ -453068,9 +453111,13 @@
       {
         "from": "p_celine",
         "at": "2022-12-21T18:00:00.000Z",
-        "text": "Just arrived in Lyon today. Winter family visit with Maya."
+        "text": "Have you arrived in Lyon safely, Sacha?"
       },
-      { "from": "self", "at": "2022-12-21T18:01:00.000Z", "text": "Glad you arrived safely." }
+      {
+        "from": "self",
+        "at": "2022-12-21T18:01:00.000Z",
+        "text": "Yes, I arrived in Lyon today. Winter family visit with Maya."
+      }
     ]
   },
   {
@@ -453083,9 +453130,13 @@
       {
         "from": "p_celine",
         "at": "2022-12-30T18:00:00.000Z",
-        "text": "Back at the London flat now. The return journey was today."
+        "text": "Are you back at your London flat yet, Sacha?"
       },
-      { "from": "self", "at": "2022-12-30T18:01:00.000Z", "text": "Good to hear you made it home." }
+      {
+        "from": "self",
+        "at": "2022-12-30T18:01:00.000Z",
+        "text": "Yes, I am back at the London flat now. My return journey was today."
+      }
     ]
   },
   {
@@ -453098,9 +453149,13 @@
       {
         "from": "p_maya",
         "at": "2024-06-23T18:00:00.000Z",
-        "text": "Just arrived in Porto today. Honeymoon after 15 June wedding."
+        "text": "Have you arrived in Porto safely, Sacha?"
       },
-      { "from": "self", "at": "2024-06-23T18:01:00.000Z", "text": "Glad you arrived safely." }
+      {
+        "from": "self",
+        "at": "2024-06-23T18:01:00.000Z",
+        "text": "Yes, I arrived in Porto today. Honeymoon after 15 June wedding."
+      }
     ]
   },
   {
@@ -453113,9 +453168,13 @@
       {
         "from": "p_maya",
         "at": "2024-06-30T18:00:00.000Z",
-        "text": "Back at the London flat now. The return journey was today."
+        "text": "Are you back at your London flat yet, Sacha?"
       },
-      { "from": "self", "at": "2024-06-30T18:01:00.000Z", "text": "Good to hear you made it home." }
+      {
+        "from": "self",
+        "at": "2024-06-30T18:01:00.000Z",
+        "text": "Yes, I am back at the London flat now. My return journey was today."
+      }
     ]
   }
 ]

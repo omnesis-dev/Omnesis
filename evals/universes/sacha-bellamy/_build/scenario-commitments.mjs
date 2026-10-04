@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { chat, calendar, at, londonAt } from "./shared.mjs";
+import { email, OWNER_EMAIL, chat, calendar, at, londonAt } from "./shared.mjs";
 
 export function addCommitments({ day, add, fact }) {
   add(
@@ -73,16 +73,18 @@ export function addCommitments({ day, add, fact }) {
   );
 
   const audioText = `Quick note to myself. I promised Nora I would collect the paper lantern lights from Willow Kiln Studio on Tuesday ${day(8)} at five thirty in the afternoon. They are for Daniel's party. Not Wednesday: Amber closes early that day. I should take the blue canvas bag.`;
-  add("maildir", "messages.json", {
-    id: "sb-audio-promise",
-    messageId: "sb-audio-promise@example.com",
+  add("gmail", "messages.json", {
+    externalId: "sb-audio-promise",
+    threadId: "sb-audio-promise@example.com",
     from: "self",
+    fromEmail: email("self"),
     to: ["self"],
+    toEmails: [OWNER_EMAIL],
     subject: "Voice memo after talking to Nora",
     body: "Attached is my recorded voice memo. The recording contains the details; this mail body does not repeat them.",
     sentAt: at(day(-4), "16:00"),
-    folders: ["INBOX"],
-    flags: "S",
+    labels: ["INBOX"],
+
     attachments: [
       {
         filename: "lantern-promise.wav",

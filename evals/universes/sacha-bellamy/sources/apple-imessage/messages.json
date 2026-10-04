@@ -141380,6 +141380,25 @@
     ]
   },
   {
+    "externalId": "sb-sketching-stool-received",
+    "chatId": "chat-p_maya",
+    "chatTitle": "Maya Bellamy",
+    "date": "2020-06-24",
+    "counterparty": "p_maya",
+    "messages": [
+      {
+        "from": "p_maya",
+        "at": "2020-06-24T18:00:00.000Z",
+        "text": "Thank you for the folding sketching stool! Took it out today and my trousers finally stayed dry."
+      },
+      {
+        "from": "self",
+        "at": "2020-06-24T18:01:00.000Z",
+        "text": "Glad your birthday present got its first outing already."
+      }
+    ]
+  },
+  {
     "externalId": "sb-theatre-attended",
     "chatId": "chat-p_maya",
     "chatTitle": "Maya Bellamy",

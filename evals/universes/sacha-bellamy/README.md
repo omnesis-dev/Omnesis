@@ -4,6 +4,8 @@ This fictional household has source-native history and fifteen evidence question
 
 The authoring modules under `_build/` generate current recording-week commitments in the Europe/London calendar. Historic events retain their original dates. `build.mjs --as-of YYYY-MM-DD --out DIRECTORY` gives a reproducible anchor; the fresh launcher uses today's London date unless `--as-of` is supplied.
 
+The practical demonstrations use Gmail as the household's email account, including original PDF and voice attachments. Other mailbox fixtures are background coverage, not extra corroboration for a demo. The birthday history includes a fictional Amazon order at a reserved example address and a separate recipient acknowledgement; buying a physical gift does not establish attendance at a workshop. Journey confirmations are spoken by the traveller, while bookings and calendar entries establish plans.
+
 ## Fresh isolated load
 
 Start from an **already configured isolated demonstration template**, with a working admin token, localhost TLS certificate, model manifest/weights, and optional Codex authentication. Configure its agent assignment independently from extraction: for example, keep the chosen live agent, set `transcriber` to `local/whisper-small`, and set `ocr` to the bare native-runtime name `tesseract`. Install Whisper through `omnesis model install whisper-small` against that template's explicit gateway URL/token/config directory. These commands never use a production template.
