@@ -51,6 +51,7 @@ import { OMNESIS_CHAT_PROVIDER_ID, OMNESIS_CHAT_SOURCE_ID } from "../sources/omn
 import { mergeFilters } from "../search/filters.js";
 import { graphContextPolicy } from "../search/graph-context-policy.js";
 import { parseQuery, type ParsedFilterToken } from "../search/query-parser.js";
+import { hydrateBrowserRecord } from "./record-browser-urls.js";
 import type Database from "better-sqlite3";
 import type {
   Breadcrumb,
@@ -809,6 +810,7 @@ export function createGatewayRecordPort(db: Database.Database, analytics: Analyt
         recordKey: reference.recordKey,
         primaryKeyColumns: reference.primaryKeyColumns,
         snapshot,
+        includeBrowserUrls: input.includeBrowserUrls,
       });
       if (resolved.kind === "unknown_table") {
         throw new RecordPortError({ reason: "unknown_table", table: reference.table });
@@ -851,6 +853,7 @@ async function resolveRecordCitation(
     recordKey: string;
     primaryKeyColumns: ReadonlyArray<{ name: string; value: string; castType?: string }>;
     snapshot: Record<string, string | number | boolean | null>;
+    includeBrowserUrls?: boolean;
   },
 ): Promise<RecordResolveResult> {
   const table = await analytics.getRecordTableSchema(input.table);
@@ -864,6 +867,9 @@ async function resolveRecordCitation(
     return { kind: "not_timeline_eligible" };
   }
 
+  const browserRecord = input.includeBrowserUrls
+    ? await hydrateBrowserRecord(analytics, table, input.primaryKeyColumns)
+    : undefined;
   const fields = deriveRecordCitationFields(
     {
       displayName: table.displayName,
@@ -871,7 +877,7 @@ async function resolveRecordCitation(
       record: table.record,
       semanticTimeColumn: table.semanticTimeColumn,
     },
-    input.snapshot,
+    browserRecord?.snapshot ?? input.snapshot,
   );
 
   // The declared column exists but this row's value is empty → not a
@@ -897,6 +903,7 @@ async function resolveRecordCitation(
       sourceType,
       tableDisplayName: table.displayName,
       boundDocumentId,
+      ...(browserRecord ? { browserUrls: browserRecord.urls } : {}),
     },
   };
 }

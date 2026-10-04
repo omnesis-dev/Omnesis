@@ -221,8 +221,8 @@ export function createBrowserResultsTool(options: {
     mutates: false,
     description:
       "Present the final clickable browser search results. Call even when results are empty. " +
-      "Every HTTP(S) destination must be a retrieved document's source URL or an exact URL in its body. " +
-      "For SQL results copy a rowIdentities reference; the destination must match that row's bound document. " +
+      "Document destinations must be a retrieved document's source URL or an exact URL in its body. " +
+      "For SQL results copy a rowIdentities reference; the destination must match a provider-declared stored row URL or its bound document. " +
       "Use the source document title or a verbatim body span as the title; other titles fall back to the source title. " +
       "A snippet must be a verbatim passage from the supporting document. Never invent URLs or evidence.",
     schema: browserResultsSchema,
@@ -263,7 +263,7 @@ export function createBrowserResultsTool(options: {
             };
           let record: Awaited<ReturnType<RecordPort["resolve"]>>;
           try {
-            record = await options.ports.record.resolve(receipt);
+            record = await options.ports.record.resolve({ ...receipt, includeBrowserUrls: true });
           } catch {
             return {
               kind: "error",
@@ -271,11 +271,41 @@ export function createBrowserResultsTool(options: {
               message: "This row cannot resolve a source-bound browser destination",
             };
           }
+          if (record.browserUrls?.some((value) => browserUrl(value) === url)) {
+            const passages = Object.values(record.snapshot).filter(
+              (value): value is string => typeof value === "string",
+            );
+            if (item.snippet && !passages.some((value) => value.includes(item.snippet!)))
+              return {
+                kind: "error",
+                code: "ungrounded_snippet",
+                message: "Use a verbatim stored row passage as the snippet",
+              };
+            results.push({
+              id: createHash("sha256")
+                .update(`${url}\n${referenceKey(reference)}`)
+                .digest("hex"),
+              title:
+                item.title === record.title || passages.some((value) => value.includes(item.title))
+                  ? item.title
+                  : record.title.slice(0, 512) || url,
+              sourceUrl: url,
+              sourceId: record.sourceId,
+              chunkText:
+                item.snippet ??
+                record.keyFields
+                  .map(({ label, value }) => `${label}: ${value ?? ""}`)
+                  .join("; ")
+                  .slice(0, 600),
+              sourceCreatedAt: record.semanticTime,
+            });
+            continue;
+          }
           if (!record.boundDocumentId)
             return {
               kind: "error",
               code: "ungrounded_destination",
-              message: "This record has no source-bound browser document",
+              message: "This record has no matching source-declared browser URL or bound document",
             };
           ids = [record.boundDocumentId];
           identity = referenceKey(reference);

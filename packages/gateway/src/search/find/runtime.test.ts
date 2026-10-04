@@ -196,8 +196,72 @@ describe("grounded browser result presentation", () => {
     expect(f.resolve).toHaveBeenCalledWith({
       reference,
       snapshot: { id: "1", url: "https://example.org/invented" },
+      includeBrowserUrls: true,
     });
     expect(f.onResults).toHaveBeenCalledTimes(1);
+  });
+
+  it("presents authoritative stored row URLs without any bound browser document", async () => {
+    const f = fixture();
+    f.evidence.observe({
+      kind: "sql.rows",
+      sql: "SELECT id FROM demo_activities",
+      columns: ["id"],
+      rows: [["1"]],
+      rowCount: 1,
+      durationMs: 0,
+      rowIdentities: [reference],
+    });
+    f.resolve.mockImplementation(async () => ({
+      table: reference.table,
+      recordKey: reference.recordKey,
+      primaryKeyColumns: reference.primaryKeyColumns,
+      title: "Stored activity",
+      keyFields: [],
+      semanticTime: "2026-01-01",
+      snapshot: { name: "Stored activity" },
+      sourceId: "demo:one",
+      sourceType: "demo",
+      tableDisplayName: "Activities",
+      boundDocumentId: null,
+      browserUrls: ["https://example.org/activity/1"],
+    }));
+    expect(
+      await f.tool.invoke(
+        {
+          results: [
+            {
+              destinationUrl: "https://example.org/invented",
+              title: "Stored activity",
+              evidence: { record: reference },
+            },
+          ],
+        },
+        context,
+      ),
+    ).toMatchObject({ kind: "error", code: "ungrounded_destination" });
+    expect(
+      await f.tool.invoke(
+        {
+          results: [
+            {
+              destinationUrl: "https://example.org/activity/1",
+              title: "Invented winner",
+              evidence: { record: reference },
+            },
+          ],
+        },
+        context,
+      ),
+    ).toMatchObject({ kind: "structured" });
+    expect(f.onResults).toHaveBeenCalledWith([
+      expect.objectContaining({
+        title: "Stored activity",
+        sourceUrl: "https://example.org/activity/1",
+        sourceId: "demo:one",
+      }),
+    ]);
+    expect(f.onResults.mock.calls[0]![0][0]).not.toHaveProperty("documentId");
   });
 
   it("supports explicit no matches and refuses unsafe schemes and canceled emissions", async () => {
@@ -266,7 +330,11 @@ describe("browser result evidence boundaries", () => {
     expect(
       await f.tool.invoke({ results: [{ ...result(), evidence: { record: tampered } }] }, context),
     ).toMatchObject({ kind: "structured" });
-    expect(f.resolve).toHaveBeenLastCalledWith({ reference, snapshot: { id: "1" } });
+    expect(f.resolve).toHaveBeenLastCalledWith({
+      reference,
+      snapshot: { id: "1" },
+      includeBrowserUrls: true,
+    });
   });
 
   it("bounds retained evidence without authorizing dropped identities", async () => {

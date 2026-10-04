@@ -324,6 +324,8 @@ export interface RecordCitationResolved {
   tableDisplayName: string;
   /** Co-described document id when the row binds one, else `null`. */
   boundDocumentId: string | null;
+  /** Provider-declared URL columns hydrated from the actual identified row. */
+  browserUrls?: string[];
 }
 
 /**
@@ -377,6 +379,8 @@ export interface RecordPort {
       recordKey: string;
       primaryKeyColumns: { name: string; value: string; castType?: string }[];
     };
+    /** Hydrate source-declared browser destinations from the stored row, not SQL projections. */
+    includeBrowserUrls?: boolean;
     /** The row's column values the agent cited — the immutable snapshot. */
     snapshot: Record<string, string | number | boolean | null>;
   }): Promise<RecordCitationResolved>;
