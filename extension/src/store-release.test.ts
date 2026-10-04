@@ -21,6 +21,20 @@ const contract = JSON.parse(
 const extensionRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
 describe("Chrome Web Store release contract", () => {
+  it("pre-grants optional permissions only in the isolated headless test manifest", async () => {
+    const { applyTestManifest } = await import(
+      pathToFileURL(join(extensionRoot, "scripts", "test-manifest.mjs")).href
+    );
+    const testManifest = applyTestManifest(manifest);
+    expect(testManifest.permissions).toEqual(expect.arrayContaining(["tabs", "favicon"]));
+    expect(testManifest).not.toHaveProperty("optional_permissions");
+    expect(testManifest.host_permissions).toEqual(["https://*/*"]);
+    expect(testManifest.key).toBeTruthy();
+    expect(manifest.permissions).not.toContain("tabs");
+    expect(manifest.permissions).not.toContain("favicon");
+    expect(manifest.optional_permissions).toEqual(["tabs", "favicon"]);
+  });
+
   it("packages against one caller-recorded commit without refreshing a shared ref", () => {
     const packageScript = readFileSync(join(extensionRoot, "scripts", "package-store.mjs"), "utf8");
     expect(packageScript).toContain("OMNESIS_EXTENSION_RELEASE_COMMIT");
@@ -140,14 +154,17 @@ describe("Chrome Web Store release contract", () => {
         "ui.css",
       ]);
       expect(Object.keys(archive.files).some((path) => path.endsWith(".map"))).toBe(false);
-      // The headless E2E's test manifest pre-grants host access and pins the
-      // extension id; neither may ever reach the store.
+      // The isolated headless manifest pre-grants optional permissions and pins
+      // the extension id; production retains optional user consent.
       const packagedManifest = JSON.parse(
         (await archive.file("manifest.json")?.async("string")) ?? "{}",
       ) as Record<string, unknown>;
       expect(packagedManifest).not.toHaveProperty("key");
       expect(packagedManifest).not.toHaveProperty("host_permissions");
       expect(packagedManifest.optional_host_permissions).toEqual(["https://*/*"]);
+      expect(packagedManifest.optional_permissions).toEqual(["tabs", "favicon"]);
+      expect(packagedManifest.permissions).not.toContain("tabs");
+      expect(packagedManifest.permissions).not.toContain("favicon");
       expect(packagedManifest.side_panel).toEqual({ default_path: "notes.html" });
       expect(await archive.file("notes.html")?.async("string")).toContain('src="notes.js"');
       expect(await archive.file("notes.js")?.async("string")).toContain("notes-submit");

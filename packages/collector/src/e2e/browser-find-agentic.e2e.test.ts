@@ -14,13 +14,14 @@ import { chromium } from "playwright";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { pair, type FetchLike } from "@omnesis/extension";
+import { toolResultSchema } from "@omnesis/core";
+import { collectToolSteps } from "./brain-bench/puppet-plan.js";
 import stravaProvider from "@omnesis/provider-strava";
 import { SyntheticE2EHarness } from "./synth-harness.js";
 import { loginPortal } from "./mcp-oauth-helper.js";
 import { startDecisionServer, type DecisionServer } from "./brain-bench/decision-server.js";
 import {
   startOpenAiServer,
-  safeParse,
   userPromptOf,
   type OpenAiServerHandle,
 } from "./brain-bench/openai-server.js";
@@ -56,6 +57,7 @@ describe("Browser Find agentic destinations through scripted production backends
   let browserCredential: Awaited<ReturnType<typeof pair>>;
   let evidenceId = "";
   const tools: string[] = [];
+  const diagnostics: string[] = [];
   beforeAll(async () => {
     decision = await startDecisionServer({
       policy: (request) => ({
@@ -72,9 +74,24 @@ describe("Browser Find agentic destinations through scripted production backends
       modelId: "browser-find-scripted",
       respond: (messages) => {
         const query = userPromptOf(messages);
-        const called = messages
-          .flatMap((message) => message.tool_calls ?? [])
-          .map((call) => call.function.name);
+        const steps = collectToolSteps(messages);
+        const called = steps.map((step) => step.name);
+        const rejected = steps.find((step) => {
+          const parsed = toolResultSchema.safeParse(step.result);
+          return (
+            parsed.success &&
+            (parsed.data.kind === "error" ||
+              (parsed.data.kind === "document.batch" &&
+                parsed.data.items.some((item) => item.kind === "error")))
+          );
+        });
+        if (rejected) {
+          diagnostics.push(`${rejected.name}: ${JSON.stringify(rejected.result)}`);
+          return {
+            kind: "text",
+            text: "The scripted search could not retrieve or present its evidence.",
+          };
+        }
         const emit = (name: string, args: Record<string, unknown>) => {
           tools.push(name);
           return { kind: "tool" as const, name, args };
@@ -86,12 +103,24 @@ describe("Browser Find agentic destinations through scripted production backends
             return emit("run_sql", {
               sql: "SELECT * FROM strava_activities WHERE sport_type = 'Run' ORDER BY distance_m DESC LIMIT 1",
             });
-          const last = messages.filter((message) => message.role === "tool").at(-1);
-          const result = safeParse(last?.content) as {
-            columns: string[];
-            rows: unknown[][];
-            rowIdentities: unknown[];
-          };
+          const parsed = toolResultSchema.safeParse(
+            steps.find((step) => step.name === "run_sql")?.result,
+          );
+          if (
+            !parsed.success ||
+            parsed.data.kind !== "sql.rows" ||
+            !parsed.data.rows[0] ||
+            !parsed.data.rowIdentities?.[0]
+          ) {
+            diagnostics.push(
+              `run_sql returned no identifiable row: ${JSON.stringify(steps.find((step) => step.name === "run_sql")?.result)}`,
+            );
+            return {
+              kind: "text",
+              text: "The scripted search could not identify its SQL evidence.",
+            };
+          }
+          const result = parsed.data;
           const row = result.rows[0]!;
           return emit("present_browser_results", {
             results: [
@@ -243,7 +272,32 @@ describe("Browser Find agentic destinations through scripted production backends
   }
   test("extracts the requested embedded link rather than returning its message", async () => {
     const events = await search("the link Maya shared yesterday");
-    expect(events.filter((event) => event.type === "find.error")).toEqual([]);
+    expect(
+      events
+        .filter((event) => event.type === "agent.tool.start")
+        .map((event) => event.payload.tool),
+      diagnostics.join("\n"),
+    ).toEqual(expect.arrayContaining(["fetch_many", "present_browser_results"]));
+    expect(
+      events
+        .filter((event) => event.type === "agent.tool.result")
+        .map((event) => event.payload.result),
+      diagnostics.join("\n"),
+    ).toContainEqual(
+      expect.objectContaining({
+        kind: "document.batch",
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            kind: "document",
+            ref: expect.objectContaining({ documentId: evidenceId }),
+          }),
+        ]),
+      }),
+    );
+    expect(
+      events.filter((event) => event.type === "find.error"),
+      diagnostics.join("\n"),
+    ).toEqual([]);
     expect(events).toContainEqual({
       type: "find.decision",
       payload: expect.objectContaining({
@@ -264,6 +318,7 @@ describe("Browser Find agentic destinations through scripted production backends
     expect(results).toEqual([
       expect.objectContaining({
         sourceUrl: link,
+        title: "Workshop invitation",
         evidence: [expect.objectContaining({ documentId: evidenceId })],
       }),
     ]);
@@ -273,7 +328,29 @@ describe("Browser Find agentic destinations through scripted production backends
   }, 120_000);
   test("computes the longest run through real read-only SQL and resolves its source-bound document", async () => {
     const events = await search("my longest Strava run");
-    expect(events.filter((event) => event.type === "find.error")).toEqual([]);
+    expect(
+      events
+        .filter((event) => event.type === "agent.tool.start")
+        .map((event) => event.payload.tool),
+      diagnostics.join("\n"),
+    ).toEqual(expect.arrayContaining(["run_sql", "present_browser_results"]));
+    expect(
+      events
+        .filter((event) => event.type === "agent.tool.result")
+        .map((event) => event.payload.result),
+      diagnostics.join("\n"),
+    ).toContainEqual(
+      expect.objectContaining({
+        kind: "sql.rows",
+        rowIdentities: expect.arrayContaining([
+          expect.objectContaining({ table: "strava_activities" }),
+        ]),
+      }),
+    );
+    expect(
+      events.filter((event) => event.type === "find.error"),
+      diagnostics.join("\n"),
+    ).toEqual([]);
     const results = events
       .filter((event) => event.type === "find.results")
       .flatMap((event) => event.payload.results as Array<{ title: string; sourceUrl: string }>);
@@ -366,7 +443,7 @@ describe("Browser Find agentic destinations through scripted production backends
         await expect
           .poll(() => panel.locator("#find-agent").textContent(), { timeout: 30_000 })
           .toContain("Found the requested destination");
-        expect(await panel.locator("#find-results").textContent()).toContain("Workshop guide");
+        expect(await panel.locator("#find-results").textContent()).toContain("Workshop invitation");
         await panel.screenshot({ path: "/tmp/omnesis-extension-find-agent-results.png" });
       } finally {
         await context.close();

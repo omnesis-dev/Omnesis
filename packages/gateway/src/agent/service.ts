@@ -2293,6 +2293,9 @@ export class AgentService {
       typeof this.systemPrompt === "function"
         ? await this.systemPrompt("answer", { timeZone: options.timeZone })
         : this.systemPrompt;
+    // Builtin retrieval handles use undefined as their read-only default. The
+    // selector excludes mutates:true; this fixed allowlist also excludes citation,
+    // planning and delegation handles whose effects are unsuitable for Find.
     const retrieval = selectSubagentTools(this.tools, [
       "search_many",
       "fetch_many",
@@ -2303,7 +2306,7 @@ export class AgentService {
       "run_sql",
       "temporal_query",
       "lookup_document_by_url",
-    ]).filter((tool) => tool.mutates === false);
+    ]);
     if (options.tools.some((tool) => tool.mutates !== false)) {
       throw new AgentError("agent_unavailable", "search presentation tools must be read-only");
     }

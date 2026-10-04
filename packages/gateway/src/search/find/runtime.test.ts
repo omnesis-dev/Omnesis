@@ -6,7 +6,14 @@ import { AgentService } from "../../agent/service.js";
 import { BrowserFindEvidence, createBrowserResultsTool } from "./results-tool.js";
 import { buildBrowserFindRuntime } from "./runtime.js";
 import type { AgentEvent } from "@omnesis/core";
-import type { ChatBackend, DocumentPort, RecordPort, TurnInput } from "@omnesis/agent";
+import {
+  selectSubagentTools,
+  type ChatBackend,
+  type DocumentPort,
+  type RecordPort,
+  type TurnInput,
+  type ToolHandle,
+} from "@omnesis/agent";
 
 const document: DocumentPort = {
   fetch: async (id) =>
@@ -278,6 +285,35 @@ class PuppetBackend implements ChatBackend {
 }
 
 describe("ephemeral read-only browser search", () => {
+  it("retains builtin retrieval handles with the read-only default and excludes explicit writes", async () => {
+    const retrieval: ToolHandle[] = [];
+    const service = new AgentService({
+      backendFactory: () => new PuppetBackend(),
+      ports: {
+        document,
+        search: { search: async () => ({ query: "", durationMs: 0, results: [] }) },
+      },
+      systemPrompt: "Corpus prompt",
+    });
+    const session = await service.buildReadOnlySearchSession({
+      systemPromptSuffix: "One read-only search",
+      tools: [],
+      wrapRetrievalTool: (tool) => {
+        retrieval.push(tool);
+        return tool;
+      },
+    });
+    const fetch = retrieval.find((tool) => tool.name === "fetch_many");
+    expect(fetch).toBeDefined();
+    expect(fetch!.mutates).toBeUndefined();
+    expect(selectSubagentTools([{ ...fetch!, mutates: true }], ["fetch_many"])).toEqual([]);
+    expect(retrieval.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining(["search_many", "fetch_many"]),
+    );
+    await session.dispose();
+    await service.dispose();
+  });
+
   it("streams one grounded turn, hot-resolves the agent, excludes writes and conversation side effects", async () => {
     const backend = new PuppetBackend();
     const factory = vi.fn(() => backend);

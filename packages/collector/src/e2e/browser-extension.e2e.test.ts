@@ -29,8 +29,8 @@ import { SyntheticE2EHarness } from "./synth-harness.js";
  *
  * The extension is built with the TEST manifest (`extension/scripts/
  * test-manifest.mjs`): the wildcard-HTTPS host permission is granted at install
- * time instead of through the native dialog no automation can click, and the
- * extension id is pinned. The store ZIP is asserted never to carry that
+ * time instead of through the native dialog no automation can click. Optional
+ * API permissions are pre-granted for the same reason, and the extension id is pinned. The store ZIP is asserted never to carry that
  * variant. The gateway serves a self-signed certificate; the worker's `fetch`
  * does not honour Playwright's `ignoreHTTPSErrors`, so Chromium runs with
  * `--ignore-certificate-errors` — a test-lane concession the real extension
