@@ -222,9 +222,8 @@ async function verdictOf(id: string): Promise<Verdict | null> {
  * an operator sets.
  */
 function backdate(id: string, iso: string): void {
-  // A generous busy timeout, because this is a second writer on a file the
-  // engine holds a transaction on across awaits, right after 210 documents
-  // went through it — and this has no way to take the lease they take.
+  // Arrange the artificial age before sending events: this independent writer
+  // must not race the engine's read/write transactions while it evaluates them.
   const db = new DatabaseConstructor(join(harness.getConfigDir(), "watch.db"), { timeout: 30_000 });
   try {
     const changed = db.prepare("UPDATE watch_defs SET added_at = ? WHERE id = ?").run(iso, id);
@@ -273,6 +272,14 @@ async function waitForVerdict(
     if (last?.name === want.name && (want.because === undefined || last.because === want.because)) {
       return last;
     }
+    if (last?.name === "broken") {
+      const trace = await harness.gatewayJson<{ records: unknown[] }>(
+        `/admin/watch/watches/${id}/trace?limit=5`,
+      );
+      throw new Error(
+        `watch ${id} stopped before ${want.name}: ${last.because}; recent trace: ${JSON.stringify(trace.records).slice(0, 4096)}`,
+      );
+    }
     await new Promise((done) => setTimeout(done, 2_000));
   }
   throw new Error(
@@ -302,9 +309,9 @@ describe("the verdicts a real runtime produces about a watch that is not working
 
   test("says it admitted none, from an arm that really admitted none", async () => {
     const id = await addWatch(nothingEverMatches(await fingerprint()));
-    await pushEmails(ENOUGH_LOOKS + 10);
-    // Everything above is what the watch did; this is the only thing stated.
+    // The age is fixture setup; all subsequent activity comes from the runtime.
     backdate(id, "2026-01-01T00:00:00.000Z");
+    await pushEmails(ENOUGH_LOOKS + 10);
 
     const verdict = await waitForVerdict(id, { name: "never-matched" });
 
