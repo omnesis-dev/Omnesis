@@ -9,7 +9,7 @@ import type { WriteGate } from "../../write-gate.js";
 
 const REQUEST_TTL_MS = 10 * 60_000;
 const MAX_PENDING_REQUESTS = 256;
-interface Credential {
+export interface BrowserAuthorizationCredential {
   token: string;
   tokenId: TokenId;
   scopes: string[];
@@ -20,7 +20,7 @@ interface Authorization {
   deviceId: DeviceId;
   tokenId: TokenId;
   expiresAt: number;
-  credential?: Credential;
+  credential?: BrowserAuthorizationCredential;
   approving?: Promise<void>;
 }
 
