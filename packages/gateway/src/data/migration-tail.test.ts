@@ -58,7 +58,7 @@ const TAIL_VERSIONS = Array.from(
  * it is named here on the same terms as the rest.
  */
 const WOUND_BACK = [
-  172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189,
+  172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190,
 ];
 
 let dir: string;
@@ -74,6 +74,7 @@ afterEach(() => {
 });
 
 function undoVocabulary(db: Db): void {
+  db.exec("DROP TABLE IF EXISTS transcription_vocabulary_state");
   db.exec("DROP INDEX IF EXISTS idx_documents_vocabulary_pending");
   db.exec("DROP TABLE IF EXISTS transcription_vocabulary_document_terms");
   db.exec("DROP TABLE IF EXISTS transcription_vocabulary_terms");
@@ -271,7 +272,7 @@ function alias(db: Db, id: string, personId: string, type: string, value: string
 }
 
 describe("vocabulary migration after the released schema", () => {
-  test("upgrades schema 188 without vocabulary tables to 189", () => {
+  test("upgrades schema 188 without vocabulary tables to 190", () => {
     const old = upgrade();
     try {
       undoVocabulary(old);
@@ -282,7 +283,7 @@ describe("vocabulary migration after the released schema", () => {
     }
     const db = upgrade();
     try {
-      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 189 });
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 190 });
       expect(db.prepare("SELECT version FROM schema_migrations WHERE version = 189").get()).toEqual(
         { version: 189 },
       );
@@ -299,6 +300,33 @@ describe("vocabulary migration after the released schema", () => {
       ).toEqual({ name: "idx_documents_source_external_id" });
     } finally {
       (db as unknown as Database.Database).close();
+    }
+  });
+
+  test("upgrades released vocabulary schema without clearing old hints at boot", () => {
+    const old = upgrade();
+    try {
+      old.exec("DROP TABLE transcription_vocabulary_state");
+      old.exec("DELETE FROM schema_migrations WHERE version > 189");
+      old.exec("PRAGMA user_version = 189");
+      old.exec(`INSERT INTO transcription_vocabulary_terms VALUES
+        ('global', '', 'legacyword', 'Legacyword', 3, 1, 2, '2026-01-01')`);
+    } finally {
+      old.close();
+    }
+    const db = upgrade();
+    try {
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 190 });
+      expect(
+        db
+          .prepare("SELECT algorithm_version,generation,phase FROM transcription_vocabulary_state")
+          .get(),
+      ).toEqual({ algorithm_version: 1, generation: 1, phase: "ready" });
+      expect(db.prepare("SELECT term FROM transcription_vocabulary_terms").all()).toContainEqual({
+        term: "legacyword",
+      });
+    } finally {
+      db.close();
     }
   });
 
@@ -320,7 +348,7 @@ describe("vocabulary migration after the released schema", () => {
     }
     const db = upgrade();
     try {
-      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 189 });
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 190 });
       expect(
         db
           .prepare(

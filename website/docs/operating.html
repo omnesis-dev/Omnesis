@@ -628,9 +628,13 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           <code>inference.transcriptionVocabulary.enabled</code> to <code>true</code> in
           <code>omnesis.json</code>. The gateway learns a small vocabulary from indexed documents,
           prioritizing distinctive names and terms from the current conversation and its people
-          across sources. Vocabulary builds in bounded background batches; transcription does not
-          wait for a full build. Gateway Whisper uses these hints locally. Paired mobile apps with
-          bulk corpus read access can also fetch a small dictionary for on-device speech
+          across sources. Sent and received text both contribute; structurally marked metadata,
+          Markdown block quotes and fenced code blocks are excluded. Full names from the people
+          graph take precedence over capitalization alone. Vocabulary builds in bounded background
+          batches; transcription does not wait for a full build. When an extraction update requires
+          a rebuild, the gateway temporarily supplies no hints while it clears the old dictionary,
+          then repopulates it incrementally. Gateway Whisper uses these hints locally. Paired mobile
+          apps with bulk corpus read access can also fetch a small dictionary for on-device speech
           recognition, independently of the gateway dictation setting. Apps keep hints in memory,
           refresh due hints in the background on foreground or status activity after 30 minutes, and
           stop using them after 24 hours without a successful refresh. Recording never waits for a

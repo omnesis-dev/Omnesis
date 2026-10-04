@@ -5,6 +5,10 @@ import { normalizeEmail } from "@omnesis/core";
 import { createVoiceNoteTables } from "../../voice-notes/storage.js";
 import { findPersonByAlias } from "../../data/repositories/PersonRepository.js";
 import {
+  createTranscriptionVocabularyState,
+  transcriptionVocabularyGeneration,
+} from "./rebuild.js";
+import {
   vocabularyConversationKey,
   type VocabularySettings,
   type VocabularyDocument,
@@ -20,6 +24,7 @@ import type {
 import type { Db } from "../../data/types.js";
 
 export function createTranscriptionVocabularyTables(db: Db): void {
+  createTranscriptionVocabularyState(db);
   db.exec(`
     CREATE TABLE IF NOT EXISTS transcription_vocabulary_terms (
       scope_kind TEXT NOT NULL,
@@ -71,6 +76,8 @@ export function fetchTranscriptionVocabularyBatch(
   settings: VocabularySettings,
 ): VocabularyDocument[] {
   if (!settings.enabled) return [];
+  const generation = transcriptionVocabularyGeneration(db);
+  if (generation === null) return [];
   const rows = db
     .prepare(
       `SELECT id, content_hash, updated_at, vocabulary_revision, substr(title,1,256) AS title,
@@ -105,6 +112,7 @@ export function fetchTranscriptionVocabularyBatch(
     contentHash: row.content_hash,
     updatedAt: row.updated_at,
     revision: row.vocabulary_revision,
+    generation,
     title: row.title,
     content: row.content,
     sourceId: row.source_id,
@@ -143,6 +151,10 @@ export function applyTranscriptionVocabularyBatch(
   );
   for (let index = 0; index < input.length; index++) {
     const doc = input[index];
+    if (doc.generation !== transcriptionVocabularyGeneration(db)) {
+      skipped++;
+      continue;
+    }
     const scopes = doc.scopes.slice(0, 18);
     const terms = doc.terms.slice(0, 128);
     const total = scopes.length * terms.length;
@@ -238,7 +250,7 @@ export function getTranscriptionVocabulary(
   context: TranscriptionContext,
   settings: VocabularySettings,
 ): TranscriptionVocabulary {
-  if (!settings.enabled) return { entries: [] };
+  if (!settings.enabled || transcriptionVocabularyGeneration(db) === null) return { entries: [] };
   const profiles: Array<VocabularyScope & { weight: number }> = [
     { kind: "global", key: "", weight: 1 },
   ];
