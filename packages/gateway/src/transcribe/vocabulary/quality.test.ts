@@ -65,7 +65,13 @@ type Domain = (typeof domains)[number];
 
 function materialize(
   domain: Domain,
-  options: { rendered?: boolean; sent?: boolean; boilerplate?: boolean; count?: number } = {},
+  options: {
+    rendered?: boolean;
+    sent?: boolean;
+    boilerplate?: boolean;
+    count?: number;
+    repeat?: boolean;
+  } = {},
 ) {
   const db = createDatabase(":memory:");
   databases.push(db);
@@ -80,6 +86,10 @@ function materialize(
   );
   person.run("self", "Ivero Calden", 1, date, date, date, date);
   person.run("peer", domain.name, 0, date, date, date, date);
+  db.prepare(
+    `INSERT INTO person_aliases(id,person_id,alias,alias_type,source_id,created_at,occurrence_count)
+    VALUES ('peer-contact-name','peer',?,'name','fictional:contacts',?,1000000)`,
+  ).run(domain.name, date);
   const insert = db.prepare(
     `INSERT INTO documents(id,provider_id,source_id,external_id,title,content,content_hash,metadata,
       source_created_at,source_updated_at,ingested_at,updated_at,people_resolved_at)
@@ -91,6 +101,7 @@ function materialize(
   for (let index = 0; index < (options.count ?? domain.messages.length); index++) {
     const id = `document-${index}`;
     let body: string = domain.messages[index];
+    if (options.repeat) body = `${body}\n`.repeat(8);
     if (options.boilerplate)
       body +=
         "\n" +
@@ -192,6 +203,14 @@ describe("transcription vocabulary quality on independent fictional domains", ()
     test(`${domain.locale}: long uppercase boilerplate also needs independent evidence`, () => {
       const once = materialize(domain, { count: 1, boilerplate: true });
       expect(once.dictionary.entries.map((entry) => entry.text)).not.toContain("ZALVORINQUENREL");
+    });
+
+    test(`${domain.locale}: repetition inside one document does not corroborate mixed-case words`, () => {
+      const once = materialize(domain, { count: 1, repeat: true });
+      expect(once.dictionary.entries.map((entry) => entry.text)).not.toContain(domain.product);
+      expect(once.dictionary.entries.map((entry) => entry.text)).not.toContain(domain.acronym);
+      expect(once.prompt).toContain(domain.name);
+      useful(materialize(domain), domain);
     });
 
     test(`${domain.locale}: a novel acronym needs independent prose evidence`, () => {

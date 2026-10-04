@@ -14,7 +14,6 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { expect, test } from "vitest";
 import { SourceId, SCOPE_READ, SCOPE_WRITE_ALL } from "@omnesis/types";
-import type { ResolvedAssignment, TranscriptionContext } from "@omnesis/core";
 import { omnesisConfigSchema } from "@omnesis/config";
 import { createDatabase } from "../../db.js";
 import { createServer } from "../../server.js";
@@ -32,6 +31,7 @@ import {
   getTranscriptionVocabulary,
 } from "./storage.js";
 import { extractTranscriptionVocabulary } from "./extract.js";
+import type { ResolvedAssignment, TranscriptionContext } from "@omnesis/core";
 import type { VoiceNoteService } from "../../voice-notes/service.js";
 import type { OmnesisNotesRuntime } from "../../sources/omnesis-notes/index.js";
 
@@ -113,11 +113,19 @@ test.skipIf(!model || !audioPath)(
       VALUES ('native-vocab','fictional','whatsapp:fictional','native-vocab','','Northstar Quorvex','hash',?,
       '2026-01-01T10:00:00.000Z','2026-01-01T10:00:00.000Z','2026-01-01T10:00:00.000Z','2026-01-01T10:00:00.000Z','2026-01-01T10:00:00.000Z')`,
       ).run(JSON.stringify({ extra: { conversationId: "fictional-thread" } }));
+      db.prepare(
+        `INSERT INTO documents(id,provider_id,source_id,external_id,title,content,content_hash,metadata,
+    source_created_at,source_updated_at,ingested_at,updated_at,people_resolved_at)
+    SELECT 'native-vocab-second',provider_id,source_id,'native-vocab-second',title,
+      content || ' follow-up discussion','second-hash',metadata,
+      source_created_at,source_updated_at,ingested_at,updated_at,people_resolved_at
+    FROM documents WHERE id='native-vocab'`,
+      ).run();
       const docs = fetchTranscriptionVocabularyBatch(db, getSettings());
       expect(
         applyTranscriptionVocabularyBatch(db, extractTranscriptionVocabulary(docs, getSettings()))
           .applied,
-      ).toBe(1);
+      ).toBe(2);
       expect(
         (await vocabulary.getDictionary(context)).entries.some((entry) =>
           entry.text.includes("Quorvex"),

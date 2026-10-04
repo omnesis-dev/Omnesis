@@ -93,6 +93,14 @@ beforeEach(() => {
     VALUES ('vocab-doc','fictional','whatsapp:fictional','fictional-doc','','Quorvex Nimbrax','hash',?,
     '2026-01-01T10:00:00.000Z','2026-01-01T10:00:00.000Z','2026-01-01T10:00:00.000Z','2026-01-01T10:00:00.000Z','2026-01-01T10:00:00.000Z')`,
   ).run(JSON.stringify({ extra: { conversationId: "fictional-thread" } }));
+  db.prepare(
+    `INSERT INTO documents(id,provider_id,source_id,external_id,title,content,content_hash,metadata,
+    source_created_at,source_updated_at,ingested_at,updated_at,people_resolved_at)
+    SELECT 'vocab-doc-second',provider_id,source_id,'vocab-doc-second',title,
+      content || ' follow-up discussion','second-hash',metadata,
+      source_created_at,source_updated_at,ingested_at,updated_at,people_resolved_at
+    FROM documents WHERE id='vocab-doc'`,
+  ).run();
   const getSettings = () =>
     resolveVocabularySettings(
       omnesisConfigSchema.parse({

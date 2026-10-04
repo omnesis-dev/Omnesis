@@ -53,3 +53,37 @@ test("handles unterminated fences and bounds pathological input without inventin
   expect(text).toHaveLength(65536);
   expect(text).not.toContain("unscannedtail");
 });
+
+test("extracts only recognized layout text and decodes JSON escapes", () => {
+  const layout = JSON.stringify([
+    { bbox: [0, 1, 20, 30], category: "Heading", text: "Virelith\nQorven" },
+    { category: "Picture", bbox: [0, 0, 1, 1] },
+    { category: "Text", text: 'A "quoted" café' },
+  ]);
+  expect(vocabularyText(`  \n${layout}`)).toBe('Virelith\nQorven\n\nA "quoted" café');
+});
+
+test("keeps complete region text from a truncated layout without its schema", () => {
+  expect(
+    vocabularyText('[{"bbox":[0,1,2,3],"category":"Text","text":"Virelith\\nQorven"},{"bbox":[0'),
+  ).toBe("Virelith\nQorven");
+  expect(vocabularyText('[{"bbox":[0,1],"text":"unfinished')).toBe("");
+  expect(vocabularyText('[{"category":"Text","bbox":[0')).toBe("");
+});
+
+test("malformed layout escapes do not throw or leak raw JSON", () => {
+  expect(vocabularyText('[{"bbox":[0],"text":"invalid\\q"}')).toBe("");
+});
+
+test("caps layout recovery before parsing and preserves ordinary bracketed prose", () => {
+  const layout = '[{"bbox":[0],"text":"Virelith"},{"bbox":[0],"text":"' + "x".repeat(70000) + '"}]';
+  expect(vocabularyText(layout)).toBe("Virelith");
+  expect(vocabularyText("  [Reminder] keep the original prose.")).toBe(
+    "  [Reminder] keep the original prose.",
+  );
+  expect(vocabularyText('["ordinary", "list"]')).toBe('["ordinary", "list"]');
+});
+
+test("omits text-first incomplete layouts rather than learning JSON escapes", () => {
+  expect(vocabularyText('[{"text":"Virelith\\nQorven","bbox":[0')).toBe("");
+});

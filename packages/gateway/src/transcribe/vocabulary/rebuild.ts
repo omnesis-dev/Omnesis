@@ -5,7 +5,7 @@ import type { Db } from "../../data/types.js";
 import type { VocabularySettings } from "./types.js";
 
 /** Bump when previously accumulated hints must be replaced, not merely reranked. */
-export const VOCABULARY_ALGORITHM_VERSION = 2;
+export const VOCABULARY_ALGORITHM_VERSION = 3;
 const RESET_PAGE_SIZE = 128;
 type Phase = "ready" | "terms" | "ledger" | "documents";
 interface State {

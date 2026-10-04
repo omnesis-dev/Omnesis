@@ -6446,7 +6446,9 @@
         "packages/gateway/src/search/agent-provenance.test.ts",
         "packages/gateway/src/search/provenance-model-context.test.ts",
         "packages/gateway/src/enrichment/dates/mention-bounds.test.ts",
-        "packages/providers/strava/src/enrichment.test.ts"
+        "packages/providers/strava/src/enrichment.test.ts",
+        "packages/gateway/src/transcribe/vocabulary/identity.test.ts",
+        "packages/gateway/src/transcribe/vocabulary/storage.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -6970,7 +6972,10 @@
     },
     {
       "value": "Maya Lopez",
-      "paths": ["packages/gateway/src/merge-candidates.test.ts"],
+      "paths": [
+        "packages/gateway/src/merge-candidates.test.ts",
+        "packages/gateway/src/transcribe/vocabulary/identity.test.ts"
+      ],
       "reason": "reviewed invented fixture"
     },
     {
@@ -7120,7 +7125,8 @@
         "packages/gateway/src/search/agent-provenance.test.ts",
         "packages/gateway/src/enrichment/dates/mention-bounds.test.ts",
         "packages/gateway/src/transcribe/vocabulary/storage.test.ts",
-        "packages/providers/strava/src/enrichment.test.ts"
+        "packages/providers/strava/src/enrichment.test.ts",
+        "packages/gateway/src/transcribe/vocabulary/identity.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -8665,7 +8671,8 @@
         "packages/providers/outlook/src/onedrive.test.ts",
         "packages/collector/src/e2e/maildir-lifecycle.e2e.test.ts",
         "packages/providers/maildir/src/source.test.ts",
-        "evals/universes/graph-search/cast.json"
+        "evals/universes/graph-search/cast.json",
+        "packages/gateway/src/transcribe/vocabulary/storage.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -10357,6 +10364,36 @@
       "value": "Rohan Vale",
       "paths": ["packages/gateway/src/transcribe/vocabulary/text.test.ts"],
       "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Nexularis Virellune Orelvax",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "reason": "Invented vocabulary extraction and identity regression fixture; not sourced from indexed data."
+    },
+    {
+      "value": "Nexularis Virellunette",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "reason": "Invented vocabulary extraction and identity regression fixture; not sourced from indexed data."
+    },
+    {
+      "value": "Will Maybe",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "reason": "Invented vocabulary extraction and identity regression fixture; not sourced from indexed data."
+    },
+    {
+      "value": "Display Label",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/identity.test.ts"],
+      "reason": "Invented vocabulary extraction and identity regression fixture; not sourced from indexed data."
+    },
+    {
+      "value": "Example Office",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/identity.test.ts"],
+      "reason": "Invented vocabulary extraction and identity regression fixture; not sourced from indexed data."
+    },
+    {
+      "value": "Untrusted Label",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/identity.test.ts"],
+      "reason": "Invented vocabulary extraction and identity regression fixture; not sourced from indexed data."
     }
   ],
   "secretFixtures": [

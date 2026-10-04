@@ -61,10 +61,12 @@ test("canonical identifier fallbacks never supply grounded names or their fragme
       "<velquorin@example.org>",
     ]),
   ).toEqual([]);
-  expect(terms("", ["Nexularis Virellune <velquorin@example.org>"])).toEqual(
+  expect(terms("Nexularis Virellune", ["Nexularis Virellune <velquorin@example.org>"])).toEqual(
     expect.arrayContaining(["nexularis virellune", "nexularis", "virellune"]),
   );
-  expect(terms("", ["Nexularis Virellune <velquorin@example.org>"])).toHaveLength(3);
+  expect(
+    terms("Nexularis Virellune", ["Nexularis Virellune <velquorin@example.org>"]),
+  ).toHaveLength(3);
 });
 
 test("scans long delimiter-free and hyphenated runs without losing subsequent vocabulary", () => {
@@ -108,12 +110,12 @@ test("discards long email and dotted identifiers without retaining their fragmen
 });
 
 test("keeps clean full names ahead of components and removes display annotations", () => {
-  expect(terms("", ["Nexularis Virellune | Stellar Sound (team)"])).toEqual([
+  expect(terms("Nexularis Virellune", ["Nexularis Virellune | Stellar Sound (team)"])).toEqual([
     "nexularis virellune",
     "nexularis",
     "virellune",
   ]);
-  expect(terms("", ["Nexularis Virellune (guest)"])).toEqual([
+  expect(terms("Nexularis Virellune", ["Nexularis Virellune (guest)"])).toEqual([
     "nexularis virellune",
     "nexularis",
     "virellune",
@@ -121,8 +123,8 @@ test("keeps clean full names ahead of components and removes display annotations
   // A frequent single word is not useful just because it labels a person;
   // full names retain common components as a complete grounded phrase.
   expect(terms("", ["They"])).toEqual([]);
-  expect(terms("", ["Will May"])).toContain("will may");
-  expect(terms("", ["山田 花子"])).toContain("山田 花子");
+  expect(terms("Will May", ["Will May"])).toContain("will may");
+  expect(terms("山田 花子", ["山田 花子"])).toContain("山田 花子");
 });
 
 test("does not turn ordinary capitalized prose into multiword personal hints", () => {
@@ -133,7 +135,7 @@ test("does not turn ordinary capitalized prose into multiword personal hints", (
 });
 
 test("uppercase template text does not outrank uncommon prose or a grounded name", () => {
-  const selected = terms("VELQUORIN Nexularis", ["Virellune Orelvax"]);
+  const selected = terms("VELQUORIN Nexularis Virellune Orelvax", ["Virellune Orelvax"]);
   expect(selected.indexOf("virellune orelvax")).toBeLessThan(selected.indexOf("virellune"));
   expect(selected.indexOf("nexularis")).toBeLessThan(selected.indexOf("velquorin"));
 });
@@ -153,4 +155,14 @@ test("uses prose rather than rendered metadata as evidence in any language", () 
         "> Quoted Zeralith\n---\n**Files:** chart (QZP, 3KB)",
     ),
   ).toHaveLength(3);
+});
+
+test("linked names need a complete occurrence in cleaned prose", () => {
+  expect(terms("", ["Nexularis Virellune"])).toEqual([]);
+  expect(terms("> Nexularis Virellune", ["Nexularis Virellune"])).toEqual([]);
+  expect(terms("Nexularis Virellunette", ["Nexularis Virellune"])).not.toContain(
+    "nexularis virellune",
+  );
+  expect(terms("Will Maybe", ["Will May"])).not.toContain("will may");
+  expect(terms("will   may arrived", ["Will May"])).toContain("will may");
 });

@@ -4,12 +4,14 @@
 import { normalizeEmail } from "@omnesis/core";
 import { createVoiceNoteTables } from "../../voice-notes/storage.js";
 import { findPersonByAlias } from "../../data/repositories/PersonRepository.js";
+import { contextualVocabularyNames } from "./identity.js";
 import {
   createTranscriptionVocabularyState,
   transcriptionVocabularyGeneration,
 } from "./rebuild.js";
 import {
   vocabularyConversationKey,
+  MIN_VOCABULARY_DOCUMENTS,
   type VocabularySettings,
   type VocabularyDocument,
   type ExtractedVocabularyDocument,
@@ -191,7 +193,9 @@ export function applyTranscriptionVocabularyBatch(
             prior && prior.benefit >= term.benefit ? prior.text : term.text,
             count,
             benefit,
-            benefit * Math.log1p(count),
+            // Keep uncorroborated candidates out of the indexed top stream;
+            // filtering only after LIMIT would let singletons hide useful hints.
+            count >= MIN_VOCABULARY_DOCUMENTS ? benefit * Math.log1p(count) : 0,
             lastSeen,
           );
         }
@@ -220,13 +224,15 @@ export function applyTranscriptionVocabularyBatch(
   return { applied, skipped, remaining: [] };
 }
 
-function resolvePerson(db: Db, person: TranscriptionPerson): string | null {
+function resolvePerson(db: Db, person: TranscriptionPerson, includeSelf = false): string | null {
   if (person.isSelf) return null;
   if (person.personId) {
     const row = db
-      .prepare(`SELECT COALESCE(merged_into,id) AS id,is_self FROM people WHERE id=?`)
+      .prepare(
+        `SELECT canonical.id,canonical.is_self FROM people p JOIN people canonical ON canonical.id=COALESCE(p.merged_into,p.id) WHERE p.id=?`,
+      )
       .get(person.personId) as { id: string; is_self: number } | undefined;
-    if (row && !row.is_self) return row.id;
+    if (row && (includeSelf || !row.is_self)) return row.id;
   }
   for (const identifier of (person.identifiers ?? []).slice(0, 8)) {
     const id = findPersonByAlias(
@@ -238,7 +244,7 @@ function resolvePerson(db: Db, person: TranscriptionPerson): string | null {
       const row = db.prepare(`SELECT is_self FROM people WHERE id=?`).get(id) as
         | { is_self: number }
         | undefined;
-      if (row && !row.is_self) return id;
+      if (row && (includeSelf || !row.is_self)) return id;
     }
   }
   return null;
@@ -320,7 +326,7 @@ export function getTranscriptionVocabulary(
     for (const row of rows) {
       if (seen.has(row.term)) continue;
       seen.add(row.term);
-      if (row.benefit <= 1 && row.document_count < 2) continue;
+      if (row.document_count < MIN_VOCABULARY_DOCUMENTS) continue;
       let total = globalCounts.get(row.term);
       if (total === undefined) {
         total =
@@ -339,6 +345,23 @@ export function getTranscriptionVocabulary(
       const prior = selected.get(row.term);
       selected.set(row.term, { text: row.text, score: (prior?.score ?? 0) + score });
     }
+  }
+  // Identity evidence is a small contextual prior, not a fabricated corpus
+  // occurrence. Keep it separate from the document-frequency materialization.
+  // Only self and the speaker receive this priority; group participants still
+  // contribute normal profiles so their names cannot consume the whole prompt.
+  const identityNames = contextualVocabularyNames(
+    db,
+    context.speaker
+      ? [resolvePerson(db, context.speaker, true)].filter((id): id is string => id !== null)
+      : [],
+    context.purpose !== "source-audio" ||
+      Boolean(context.speaker?.isSelf || context.participants?.some((person) => person.isSelf)),
+  );
+  const identityScore = Math.max(0, ...[...selected.values()].map((term) => term.score)) + 1;
+  for (const [index, text] of identityNames.entries()) {
+    const term = text.normalize("NFC").toLocaleLowerCase("und");
+    selected.set(term, { text, score: identityScore + 1 / (index + 1) });
   }
   return {
     entries: [...selected.values()]

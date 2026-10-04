@@ -629,8 +629,12 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           <code>omnesis.json</code>. The gateway learns a small vocabulary from indexed documents,
           prioritizing distinctive names and terms from the current conversation and its people
           across sources. Sent and received text both contribute; structurally marked metadata,
-          Markdown block quotes and fenced code blocks are excluded. Full names from the people
-          graph take precedence over capitalization alone. Vocabulary builds in bounded background
+          Markdown block quotes and fenced code blocks are excluded, and structured OCR layouts
+          contribute their readable text. Learned terms need at least two distinct supporting
+          documents. Repetition within one document does not count as corroboration, although copies
+          stored as separate documents can still count. Configured and contact-curated names for the
+          current people supply separate identity hints. Linking a person to a document does not
+          itself count as an occurrence of their name. Vocabulary builds in bounded background
           batches; transcription does not wait for a full build. When an extraction update requires
           a rebuild, the gateway temporarily supplies no hints while it clears the old dictionary,
           then repopulates it incrementally. Gateway Whisper uses these hints locally. Paired mobile
