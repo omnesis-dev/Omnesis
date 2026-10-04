@@ -122,12 +122,13 @@ describe("Browser Find agentic destinations through scripted production backends
           }
           const result = parsed.data;
           const row = result.rows[0]!;
+          const record = parsed.data.rowIdentities[0];
           return emit("present_browser_results", {
             results: [
               {
                 destinationUrl: row[result.columns.indexOf("strava_url")],
                 title: row[result.columns.indexOf("name")],
-                evidence: { record: result.rowIdentities[0] },
+                evidence: { record },
               },
             ],
           });
