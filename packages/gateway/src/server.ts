@@ -53,6 +53,7 @@ import { mountPushRoutes } from "./http/routes/push.js";
 import { type EventBus } from "./events.js";
 import { registerModelRoutes } from "./models/routes.js";
 import { mountTranscribeRoutes } from "./http/routes/transcribe.js";
+import { mountTranscriptionVocabularyRoutes } from "./http/routes/transcription-vocabulary.js";
 import { mountVoiceNoteRoutes } from "./http/routes/voice-notes.js";
 import { VoiceNoteService, pendingVoiceNoteIds } from "./voice-notes/index.js";
 import { mountOcrRoutes } from "./http/routes/ocr.js";
@@ -466,6 +467,7 @@ export function createServer(
      * transcribe source audio (e.g. WhatsApp voice notes) during sync.
      */
     transcribeService?: import("./transcribe/index.js").TranscribeService;
+    transcriptionVocabularyService?: import("./transcribe/vocabulary/service.js").TranscriptionVocabularyService;
     /**
      * OCR service. When provided, mounts `POST /inference/ocr` (gated behind
      * the `ocr` experimental feature). The collector calls it to recognize
@@ -1227,6 +1229,8 @@ export function createServer(
     getReleaseCheck: opts?.getReleaseCheck,
     getBriefsStatus: opts?.getBriefsStatus,
     getDictationStatus: opts?.getDictationStatus,
+    getTranscriptionVocabularyEnabled: () =>
+      opts?.transcriptionVocabularyService?.enabled() ?? false,
     getDiskUsage: opts?.getDiskUsage,
   });
 
@@ -1267,6 +1271,9 @@ export function createServer(
   // when a transcribe service was wired.
   if (opts?.transcribeService) {
     mountTranscribeRoutes(app, { transcribeService: opts.transcribeService });
+  }
+  if (opts?.transcriptionVocabularyService) {
+    mountTranscriptionVocabularyRoutes(app, opts.transcriptionVocabularyService);
   }
 
   // OCR route. Mounted only when an OCR service was wired.

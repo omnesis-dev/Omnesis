@@ -204,13 +204,12 @@ export class Indexer {
     errors: number;
   }> {
     const watermark = getWatermark(this.db, "last_updated_at");
-    // The scan filters on `updated_at` but pages on `id`, so a write that
-    // lands behind the id cursor is invisible to this cycle. Its stamp is
-    // necessarily at or after the cycle began, so the watermark must not
-    // pass that instant however far ahead the documents this cycle did
-    // process have moved — otherwise the missed write sits permanently
-    // behind the filter and nothing ever re-examines it.
-    const cycleStartedAt = new Date().toISOString();
+    // UUID pagination can pass a write before its transaction commits. Hold
+    // the checkpoint at the highest timestamp already committed when the
+    // scan begins, rather than wall-clock time: an in-flight transaction can
+    // have an older stamp than the clock, but serialized monotonic writers
+    // cannot give it an older stamp than this committed boundary.
+    const committedBoundary = await this.source.getUpdatedAtBoundary();
     let indexed = 0;
     let updated = 0;
     let skipped = 0;
@@ -484,16 +483,13 @@ export class Indexer {
       }
     }
 
-    /**
-     * Persist the cycle's progress, never past the instant it began: a
-     * document written behind the id cursor carries a stamp at or after
-     * `cycleStartedAt`, and only a watermark held at that instant leaves it
-     * in front of the next cycle's filter.
-     */
+    // Keep the boundary inclusive: another transaction can commit the same
+    // millisecond after the cursor passed its ID. An initially empty source
+    // has no safe checkpoint even if documents arrive during this scan.
     const persistWatermark = (): void => {
-      if (!safeWatermark) return;
-      const next = safeWatermark > cycleStartedAt ? cycleStartedAt : safeWatermark;
-      if (next !== watermark) setWatermark(this.db, "last_updated_at", next);
+      if (!safeWatermark || !committedBoundary) return;
+      const next = safeWatermark > committedBoundary ? committedBoundary : safeWatermark;
+      if (!watermark || next > watermark) setWatermark(this.db, "last_updated_at", next);
     };
 
     // Flush the last page's embed (the loop only flushes at the top of

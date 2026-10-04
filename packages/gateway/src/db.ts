@@ -41,6 +41,7 @@ export {
   getRecentDocuments,
   listDocuments,
   listDocumentsLightweight,
+  getDocumentUpdatedAtBoundary,
   listDocumentIds,
   listDocumentsByIds,
   documentExistsForSource,

@@ -3792,6 +3792,16 @@
       "reason": "reviewed public product name"
     },
     {
+      "value": "Nexularis Virellune",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "reason": "Invented name and project fixtures for transcription vocabulary extraction."
+    },
+    {
+      "value": "Project Nexularis",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "reason": "Invented name and project fixtures for transcription vocabulary extraction."
+    },
+    {
       "value": "Steph Ango",
       "paths": ["extension/src/store-release.test.ts"],
       "reason": "reviewed upstream copyright holder"
@@ -6441,7 +6451,9 @@
         "packages/gateway/src/search/agent-provenance.test.ts",
         "packages/gateway/src/search/provenance-model-context.test.ts",
         "packages/gateway/src/enrichment/dates/mention-bounds.test.ts",
-        "packages/providers/strava/src/enrichment.test.ts"
+        "packages/providers/strava/src/enrichment.test.ts",
+        "packages/gateway/src/transcribe/vocabulary/identity.test.ts",
+        "packages/gateway/src/transcribe/vocabulary/storage.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -6965,7 +6977,10 @@
     },
     {
       "value": "Maya Lopez",
-      "paths": ["packages/gateway/src/merge-candidates.test.ts"],
+      "paths": [
+        "packages/gateway/src/merge-candidates.test.ts",
+        "packages/gateway/src/transcribe/vocabulary/identity.test.ts"
+      ],
       "reason": "reviewed invented fixture"
     },
     {
@@ -7114,7 +7129,9 @@
         "evals/universes/graph-search/cast.json",
         "packages/gateway/src/search/agent-provenance.test.ts",
         "packages/gateway/src/enrichment/dates/mention-bounds.test.ts",
-        "packages/providers/strava/src/enrichment.test.ts"
+        "packages/gateway/src/transcribe/vocabulary/storage.test.ts",
+        "packages/providers/strava/src/enrichment.test.ts",
+        "packages/gateway/src/transcribe/vocabulary/identity.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -8659,7 +8676,8 @@
         "packages/providers/outlook/src/onedrive.test.ts",
         "packages/collector/src/e2e/maildir-lifecycle.e2e.test.ts",
         "packages/providers/maildir/src/source.test.ts",
-        "evals/universes/graph-search/cast.json"
+        "evals/universes/graph-search/cast.json",
+        "packages/gateway/src/transcribe/vocabulary/storage.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -9306,7 +9324,11 @@
     },
     {
       "value": "Tell Omnesis",
-      "paths": ["ios/Sources/Omnesis/UI/PreviewMocks.swift"],
+      "paths": [
+        "ios/Sources/Omnesis/UI/PreviewMocks.swift",
+        "packages/gateway/src/transcribe/vocabulary/native.integration.test.ts",
+        "packages/gateway/src/transcribe/vocabulary/pipeline.test.ts"
+      ],
       "reason": "a feature's name in a section comment, not a person"
     },
     {
@@ -10232,6 +10254,161 @@
       "value": "Enable Tell Omnesis",
       "paths": ["packages/collector/src/e2e/browser-extension.e2e.test.ts"],
       "reason": "Public product UI phrase asserted by browser notes end-to-end coverage; not a person name."
+    },
+    {
+      "value": "Northstar Quorvex",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/native.integration.test.ts"],
+      "reason": "Invented project and team vocabulary for synthetic audio."
+    },
+    {
+      "value": "Quorvex Nimbrax",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/pipeline.test.ts"],
+      "reason": "Invented uncommon vocabulary for transcription tests."
+    },
+    {
+      "value": "Discuss Quorvex",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/storage.test.ts"],
+      "reason": "Invented vocabulary phrase in a storage test."
+    },
+    {
+      "value": "Haus Quorvex Nimbrax",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/storage.test.ts"],
+      "reason": "Invented multilingual vocabulary extraction example."
+    },
+    {
+      "value": "Tessa Rowan Vale",
+      "paths": ["packages/gateway/src/transcribe/vocabulary-adapter.test.ts"],
+      "reason": "Invented vocabulary component and phrase-boundary fixtures; no indexed corpus data."
+    },
+    {
+      "value": "Rowan Vale",
+      "paths": ["packages/gateway/src/transcribe/vocabulary-adapter.test.ts"],
+      "reason": "Invented vocabulary component and phrase-boundary fixtures; no indexed corpus data."
+    },
+    {
+      "value": "North-Rill Labs",
+      "paths": ["packages/gateway/src/transcribe/vocabulary-adapter.test.ts"],
+      "reason": "Invented vocabulary component and phrase-boundary fixtures; no indexed corpus data."
+    },
+    {
+      "value": "Tessa Rowan",
+      "paths": ["packages/gateway/src/transcribe/vocabulary-adapter.test.ts"],
+      "reason": "Invented vocabulary component and phrase-boundary fixtures; no indexed corpus data."
+    },
+    {
+      "value": "Miro Sela Vale",
+      "paths": ["packages/gateway/src/transcribe/vocabulary-adapter.test.ts"],
+      "reason": "Invented vocabulary component and phrase-boundary fixtures; no indexed corpus data."
+    },
+    {
+      "value": "Miro Vale",
+      "paths": ["packages/gateway/src/transcribe/vocabulary-adapter.test.ts"],
+      "reason": "Invented vocabulary component and phrase-boundary fixtures; no indexed corpus data."
+    },
+    {
+      "value": "Nevara Quenil",
+      "paths": ["packages/gateway/src/transcribe/vocabulary-adapter.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Ruvella Research",
+      "paths": ["packages/gateway/src/transcribe/vocabulary-adapter.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Nuvorel Valera",
+      "paths": ["packages/gateway/src/transcribe/vocabulary-adapter.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Stellar Sound",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Will May",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Hello Nexularis",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Project Virellune",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Thank You",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Virellune Orelvax",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Quoted Zeralith",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Ovelia Ternol",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/quality.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Ivero Calden",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/quality.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Dispatch Template",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/quality.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Elara Quill",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/text.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Rohan Vale",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/text.test.ts"],
+      "reason": "Invented transcription vocabulary fixture for structural text cleanup, name handling and prompt packing; no indexed corpus data."
+    },
+    {
+      "value": "Nexularis Virellune Orelvax",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "reason": "Invented vocabulary extraction and identity regression fixture; not sourced from indexed data."
+    },
+    {
+      "value": "Nexularis Virellunette",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "reason": "Invented vocabulary extraction and identity regression fixture; not sourced from indexed data."
+    },
+    {
+      "value": "Will Maybe",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "reason": "Invented vocabulary extraction and identity regression fixture; not sourced from indexed data."
+    },
+    {
+      "value": "Display Label",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/identity.test.ts"],
+      "reason": "Invented vocabulary extraction and identity regression fixture; not sourced from indexed data."
+    },
+    {
+      "value": "Example Office",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/identity.test.ts"],
+      "reason": "Invented vocabulary extraction and identity regression fixture; not sourced from indexed data."
+    },
+    {
+      "value": "Untrusted Label",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/identity.test.ts"],
+      "reason": "Invented vocabulary extraction and identity regression fixture; not sourced from indexed data."
     }
   ],
   "secretFixtures": [

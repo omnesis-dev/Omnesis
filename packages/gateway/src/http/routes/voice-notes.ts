@@ -27,6 +27,7 @@ import { MAX_AUDIO_BYTES } from "../../transcribe/index.js";
 import { BadRequestError, HttpError, ValidationError } from "../errors.js";
 import { enforceWriteScopeForSource, scope } from "../scope.js";
 import { voiceNoteMetadata } from "../schemas/index.js";
+import { transcriptionVocabularyAllowed } from "../transcription-access.js";
 import { clientIp, isLoopbackRequest } from "./admin/internals.js";
 import type { DictationFeatureStatus } from "../../dictation/index.js";
 import type { VoiceNoteService } from "../../voice-notes/index.js";
@@ -117,6 +118,7 @@ export function mountVoiceNoteRoutes(app: RouteApp, deps: VoiceNoteRoutesDeps): 
       latitude: note.latitude,
       longitude: note.longitude,
       placeName: note.placeName,
+      allowVocabulary: transcriptionVocabularyAllowed(c.get("auth").scopes),
     });
     return c.json({ id, transcription: "pending" as const }, 202);
   });

@@ -623,7 +623,40 @@ describe("AppleIMessageSource", () => {
 
       const result = await src.sync(null);
       expect(transcribeAudio).toHaveBeenCalledOnce();
+      expect(transcribeAudio).toHaveBeenCalledWith(expect.any(Uint8Array), "audio/x-caf", {
+        context: expect.objectContaining({
+          purpose: "source-audio",
+          speaker: { identifiers: [{ kind: "phone", value: "+14085550123" }] },
+          conversation: { sourceId: src.id, threadId: "+14085550123" },
+        }),
+      });
+      expect(result.documents[0].metadata.extra?.conversationId).toBe("+14085550123");
       expect(result.documents[0].content).toContain("[Audio, 0:42]: Running ten late");
+      src.dispose();
+    });
+
+    test("self-authored audio selects self while preserving conversation participants", async () => {
+      const audioPath = join(tmpDir, "self-clip.caf");
+      insertAudioMessage(audioPath);
+      testDb.prepare("UPDATE message SET is_from_me = 1 WHERE ROWID = 1").run();
+      const transcribeAudio = vi.fn(async () => ({ text: "captured speech" }));
+      const src = new AppleIMessageSource(provider, {
+        sourceId: "apple-imessage:fixture@example.org",
+        providerId: "apple:fixture@example.org",
+        transcribeAudio,
+        configDir: tmpDir,
+      });
+      await src.sync(null);
+      expect(transcribeAudio).toHaveBeenCalledWith(expect.any(Uint8Array), "audio/x-caf", {
+        context: expect.objectContaining({
+          speaker: { isSelf: true },
+          conversation: { sourceId: src.id, threadId: "+14085550123" },
+          participants: [
+            { isSelf: true },
+            { identifiers: [{ kind: "phone", value: "+14085550123" }] },
+          ],
+        }),
+      });
       src.dispose();
     });
 

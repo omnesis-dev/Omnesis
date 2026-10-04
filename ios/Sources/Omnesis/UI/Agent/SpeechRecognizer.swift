@@ -165,6 +165,15 @@ final class SpeechRecognizer {
             request.requiresOnDeviceRecognition = speechRecognizer.supportsOnDeviceRecognition
         }
 
+        // UIKit drives this synchronous session lifecycle on the main thread.
+        // The executor assertion keeps cached hints off a background caller.
+        MainActor.assumeIsolated {
+            TranscriptionVocabularyCache.shared.apply(
+                to: request,
+                supportsOnDeviceRecognition: speechRecognizer.supportsOnDeviceRecognition
+            )
+        }
+
         recognitionRequest = request
         transcript = ""
         state = .listening

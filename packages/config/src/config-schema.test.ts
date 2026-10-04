@@ -13,6 +13,34 @@ import {
   type OmnesisConfig,
 } from "./config-schema.js";
 
+describe("validateConfig — transcriptionVocabulary", () => {
+  test("accepts disabling hints independently of the transcriber assignment", () => {
+    const result = validateConfig({
+      inference: {
+        assignments: { transcriber: "local/whisper-small" },
+        transcriptionVocabulary: { enabled: false, maxTerms: 32, maxPromptTokens: 128 },
+      },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.config.inference?.transcriptionVocabulary?.enabled).toBe(false);
+  });
+
+  test.each([
+    { maxTerms: 0 },
+    { maxTerms: 129 },
+    { maxPromptTokens: 225 },
+    { batchSize: 9 },
+    { maxDocumentChars: 65537 },
+    { maxTermsPerDocument: 129 },
+    { enabled: "false" },
+    { unknownSetting: true },
+    { periodMs: 2_147_483_648 },
+    { idlePeriodMs: 2_147_483_648 },
+  ])("rejects invalid or unbounded vocabulary settings %j", (transcriptionVocabulary) => {
+    expect(validateConfig({ inference: { transcriptionVocabulary } }).ok).toBe(false);
+  });
+});
+
 describe("validateConfig — backupRetention", () => {
   test.each([0, 1, 2, 100])("accepts a nonnegative pre-update count: %s", (preUpdateCount) => {
     const result = validateConfig({ backupRetention: { preUpdateCount } });

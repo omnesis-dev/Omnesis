@@ -219,6 +219,11 @@ const SAFE_TABLES = new Set([
   "temporal_annotation_loops",
   "temporal_annotation_people",
   "temporal_annotation_projections",
+  // Keep vocabulary and its contribution ledger together with the corpus;
+  // document processing markers depend on this materialized state.
+  "transcription_vocabulary_document_terms",
+  "transcription_vocabulary_terms",
+  "transcription_vocabulary_state",
   "temporal_annotations",
   "watermark",
   "worth_answers",

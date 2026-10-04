@@ -16,6 +16,7 @@ import type {
   ProviderId as ProviderIdType,
   SourceId as SourceIdType,
   PersonMention,
+  PersonIdentifier,
 } from "@omnesis/types";
 import type { StoredMessage, StoredChat, StoredContact } from "./types.js";
 
@@ -43,6 +44,50 @@ export function buildContactsByLidJid(
     out.set(lidJid, c);
   }
   return out;
+}
+
+/** Source-native identities shared by document people and transcription context. */
+export function whatsappPersonIdentifiers(
+  senderJid: string,
+  sourceId: SourceIdType,
+  lidPhoneMap: Map<string, string>,
+  contactsByLidJid: Map<string, StoredContact>,
+  fromMe = false,
+): PersonIdentifier[] {
+  let phoneValue: string | undefined;
+  let lidValue: string | undefined;
+
+  if (senderJid.endsWith("@s.whatsapp.net")) {
+    const jidPhone = senderJid.split("@")[0];
+    phoneValue = normalizePhone("+" + jidPhone) ?? undefined;
+  } else if (senderJid.endsWith("@lid")) {
+    lidValue = senderJid.split("@")[0];
+    phoneValue = lidPhoneMap.get(lidValue);
+    // Fall back to the contact's phoneNumber field (Baileys populates
+    // this on `contacts.upsert` for known LID-mapped contacts) when
+    // the lid_pn_match-driven map hasn't seen this LID yet. This also
+    // lets the gateway people resolver merge LID-only mentions with
+    // phone-based people from other sources (iMessage etc).
+    if (!phoneValue) {
+      const viaLid = contactsByLidJid.get(senderJid);
+      const phoneJid = viaLid?.jid;
+      if (phoneJid?.endsWith("@s.whatsapp.net")) {
+        phoneValue = normalizePhone("+" + phoneJid.split("@")[0]) ?? undefined;
+      }
+    }
+  }
+
+  // For self, fall back to account phone from sourceId
+  if (fromMe && !phoneValue) {
+    const { accountId } = parseSourceKey(String(sourceId));
+    if (accountId) phoneValue = normalizePhone(accountId) ?? undefined;
+  }
+
+  const identifiers: PersonIdentifier[] = [];
+  if (phoneValue) identifiers.push({ kind: "phone", value: phoneValue });
+  if (lidValue)
+    identifiers.push({ kind: "lid", value: formatLid(WHATSAPP_LID_PLATFORM, lidValue) });
+  return identifiers;
 }
 
 /**
@@ -532,34 +577,15 @@ export function normalizeDayChat(
       contactsByLidJid,
     );
 
-    let phoneValue: string | undefined;
-    let lidValue: string | undefined;
-
-    if (senderJid.endsWith("@s.whatsapp.net")) {
-      const jidPhone = senderJid.split("@")[0];
-      phoneValue = normalizePhone("+" + jidPhone) ?? undefined;
-    } else if (senderJid.endsWith("@lid")) {
-      lidValue = senderJid.split("@")[0];
-      phoneValue = lidPhoneMap.get(lidValue);
-      // Fall back to the contact's phoneNumber field (Baileys populates
-      // this on `contacts.upsert` for known LID-mapped contacts) when
-      // the lid_pn_match-driven map hasn't seen this LID yet. This also
-      // lets the gateway people resolver merge LID-only mentions with
-      // phone-based people from other sources (iMessage etc).
-      if (!phoneValue) {
-        const viaLid = contactsByLidJid.get(senderJid);
-        const phoneJid = viaLid?.jid;
-        if (phoneJid?.endsWith("@s.whatsapp.net")) {
-          phoneValue = normalizePhone("+" + phoneJid.split("@")[0]) ?? undefined;
-        }
-      }
-    }
-
-    // For self, fall back to account phone from sourceId
-    if (fromMe && !phoneValue) {
-      const { accountId } = parseSourceKey(String(sourceId));
-      if (accountId) phoneValue = normalizePhone(accountId) ?? undefined;
-    }
+    const identifiers = whatsappPersonIdentifiers(
+      senderJid,
+      sourceId,
+      lidPhoneMap,
+      contactsByLidJid,
+      fromMe,
+    );
+    const phoneValue = identifiers.find((identity) => identity.kind === "phone")?.value;
+    const lidValue = identifiers.find((identity) => identity.kind === "lid")?.value;
 
     if (phoneValue) participantPhones.add(phoneValue);
 
@@ -567,9 +593,8 @@ export function normalizeDayChat(
       role: "participant",
       name,
       phones: phoneValue ? [phoneValue] : undefined,
-      // Namespaced on the way out only: `lidValue` is also the key of the
-      // LID→phone map above, which is keyed by the raw JID local part.
-      lids: lidValue ? [formatLid(WHATSAPP_LID_PLATFORM, lidValue)] : undefined,
+      // The shared identity helper has already namespaced the opaque LID.
+      lids: lidValue ? [lidValue] : undefined,
     });
   };
 
@@ -660,6 +685,7 @@ export function normalizeDayChat(
       people,
       extra: {
         chatJid,
+        conversationId: chatJid,
         chatName: chat?.name,
         isGroup: chat?.isGroup ?? false,
         messageCount: regularMessages.length,

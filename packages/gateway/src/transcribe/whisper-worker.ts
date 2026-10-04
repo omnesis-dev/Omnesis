@@ -76,7 +76,13 @@ send({ type: "ready" });
 async function handleRequest(header: WhisperRequestHeader, pcm: Float32Array): Promise<void> {
   const durationSec = pcm.length / 16_000;
   try {
-    const task = await whisper.transcribe(pcm, { language: header.language, format: "detail" });
+    const task = await whisper.transcribe(pcm, {
+      language: header.language,
+      format: "detail",
+      ...header.vocabularyHint,
+      // Every clip starts independently, including an unhinted clip after a hinted one.
+      no_context: true,
+    });
     const segments = await task.result;
     const text = segments
       .map((s) => s.text)

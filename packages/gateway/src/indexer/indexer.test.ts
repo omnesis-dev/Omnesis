@@ -95,6 +95,13 @@ class KindEmbedder implements Embedder {
 // Mock document source
 class MockSource implements DocumentSource {
   documents: IndexableDocument[] = [];
+
+  async getUpdatedAtBoundary(): Promise<string | null> {
+    return this.documents.reduce<string | null>(
+      (latest, doc) => (latest === null || doc.updatedAt > latest ? doc.updatedAt : latest),
+      null,
+    );
+  }
   allIds: string[] = [];
   /** Counters used to assert call shape — e.g. retryFailed should call
    *  `getByIds` once total, not once per failed doc. */
@@ -108,12 +115,11 @@ class MockSource implements DocumentSource {
     this.listUpdatedCalls += 1;
     let docs = this.documents;
     if (since) {
-      docs = docs.filter((d) => d.updatedAt > since);
+      docs = docs.filter((d) => d.updatedAt >= since);
     }
-    if (afterId) {
-      const idx = docs.findIndex((d) => d.id === afterId);
-      docs = idx >= 0 ? docs.slice(idx + 1) : docs;
-    }
+    docs = docs
+      .filter((doc) => afterId === undefined || doc.id > afterId)
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     const page = docs.slice(0, limit);
     return {
       documents: page,
@@ -125,12 +131,11 @@ class MockSource implements DocumentSource {
     this.listUpdatedLightweightCalls += 1;
     let docs = this.documents;
     if (since) {
-      docs = docs.filter((d) => d.updatedAt > since);
+      docs = docs.filter((d) => d.updatedAt >= since);
     }
-    if (afterId) {
-      const idx = docs.findIndex((d) => d.id === afterId);
-      docs = idx >= 0 ? docs.slice(idx + 1) : docs;
-    }
+    docs = docs
+      .filter((doc) => afterId === undefined || doc.id > afterId)
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     const page = docs.slice(0, limit);
     return {
       documents: page.map((d) => ({
@@ -253,12 +258,12 @@ describe("Indexer", () => {
     await indexer.indexUpdated();
     embedder.embedCount = 0;
 
-    // Second run with same watermark won't re-fetch (watermark advanced)
-    // But if we reset the watermark, it will find the doc and skip
+    // The inclusive boundary rechecks the last timestamp without re-embedding.
     const result = await indexer.indexUpdated();
 
     expect(result.indexed).toBe(0);
-    expect(result.skipped).toBe(0); // No docs returned since watermark advanced
+    expect(result.skipped).toBe(1);
+    expect(embedder.embedCount).toBe(0);
   });
 
   test("re-indexes updated documents", async () => {
@@ -373,7 +378,7 @@ describe("Indexer", () => {
 
     // Second cycle: fix the embedder, d2 should be retried
     embedder.failOn.clear();
-    // Source still has both docs (listUpdated returns docs with updatedAt > watermark)
+    // Source still has both docs (listUpdated returns docs with updatedAt >= watermark)
     // But d2's updatedAt is 02:00 and watermark is now 01:00 (only d1 succeeded)
     // So d2 will be re-fetched AND retried from the failed set
     source.documents = [
@@ -789,9 +794,8 @@ describe("Indexer", () => {
       // one's stamp — stranding it for every future cycle, since nothing
       // re-examines a document the watermark has moved past.
       //
-      // Stamps are relative to the wall clock because that is the relationship
-      // that matters: a document written while the cycle runs is stamped after
-      // the cycle began, and that is what keeps it in front of the next filter.
+      // The writes have timestamps beyond the initially committed boundary,
+      // so an inclusive checkpoint keeps the missed edit eligible next cycle.
       const at = (offsetMs: number) => new Date(Date.now() + offsetMs).toISOString();
       source.documents = [
         { ...makeDoc("d0", "original zero"), updatedAt: at(-30_000) },
@@ -831,6 +835,71 @@ describe("Indexer", () => {
       expect(getIndexedDocument(db, "d0")?.content_hash).toBe(
         makeDoc("d0", "edited zero").contentHash,
       );
+    });
+
+    test.each([0, 5_000])(
+      "recovers a new behind-cursor document committed after the initial boundary (offset %i)",
+      async (offsetMs) => {
+        vi.useFakeTimers();
+        const cycleAt = new Date("2026-08-01T12:00:00.000Z");
+        vi.setSystemTime(cycleAt);
+        const boundary = new Date(cycleAt.getTime() - 10_000).toISOString();
+        const lateStamp = new Date(cycleAt.getTime() - 10_000 + offsetMs).toISOString();
+        source.documents = [
+          { ...makeDoc("d1"), updatedAt: boundary },
+          { ...makeDoc("d2"), updatedAt: boundary },
+        ];
+        const readPage = source.listUpdatedLightweight.bind(source);
+        let pages = 0;
+        source.listUpdatedLightweight = async (since, limit, afterId) => {
+          const page = await readPage(since, limit, afterId);
+          if (++pages === 1) {
+            // The transaction began before the cycle, but becomes visible only
+            // after page one passed this new document's UUID. Another commit
+            // ahead of the cursor would otherwise advance past its old stamp.
+            source.documents.unshift({ ...makeDoc("d0", "late document"), updatedAt: lateStamp });
+            source.documents[2] = {
+              ...makeDoc("d2", "newer ahead document"),
+              updatedAt: new Date(cycleAt.getTime() + 1_000).toISOString(),
+            };
+          }
+          return page;
+        };
+        const paged = new Indexer(db, source, new DocumentChunker(), embedder, {
+          pageSize: 1,
+          betweenPageSleepMs: 0,
+        });
+        await paged.indexUpdated();
+        expect(getIndexedDocument(db, "d0")).toBeNull();
+        const checkpoint = getWatermark(db, "last_updated_at");
+        await paged.indexUpdated();
+        expect(getIndexedDocument(db, "d0")?.content_hash).toBe(
+          makeDoc("d0", "late document").contentHash,
+        );
+        expect(checkpoint).toBe(boundary);
+      },
+    );
+
+    test("does not checkpoint documents that arrive after an initially empty boundary", async () => {
+      const boundary = source.getUpdatedAtBoundary.bind(source);
+      let calls = 0;
+      source.getUpdatedAtBoundary = async () => {
+        const committed = await boundary();
+        if (++calls === 1) source.documents = [makeDoc("d1")];
+        return committed;
+      };
+      expect((await indexer.indexUpdated()).indexed).toBe(1);
+      expect(getWatermark(db, "last_updated_at")).toBeNull();
+      await indexer.indexUpdated();
+      expect(getWatermark(db, "last_updated_at")).toBe(makeDoc("d1").updatedAt);
+    });
+
+    test("does not move an existing checkpoint backwards when source timestamps recede", async () => {
+      source.documents = [{ ...makeDoc("d1"), updatedAt: "2026-08-01T12:00:00.000Z" }];
+      await indexer.indexUpdated();
+      source.documents = [{ ...makeDoc("d1"), updatedAt: "2026-08-01T11:00:00.000Z" }];
+      await indexer.indexUpdated();
+      expect(getWatermark(db, "last_updated_at")).toBe("2026-08-01T12:00:00.000Z");
     });
 
     test("a page-2 embed failure does not lose the writes flushed from page 1", async () => {

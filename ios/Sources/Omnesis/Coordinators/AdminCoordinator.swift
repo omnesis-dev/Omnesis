@@ -364,6 +364,8 @@ final class AdminCoordinator {
         deviceSocket = nil
         adminClient = nil
         searchClient = nil
+        statusSnapshot = nil
+        indexStats = nil
         watchesClient = nil
         briefsClient = nil
         privacyClient = nil
@@ -449,10 +451,12 @@ final class AdminCoordinator {
     /// gateway.
     func refreshGatewayStats() async {
         guard let client = searchClient else { return }
+        let revision = sourceRegistryRevision
         client.invalidateSearchCapabilities()
         async let status = try? client.getStatus()
         async let idx = try? client.getIndexStats()
         let (s, i) = await (status, idx)
+        guard revision == sourceRegistryRevision, searchClient === client else { return }
         if let s {
             statusSnapshot = s
         }
@@ -1186,6 +1190,13 @@ extension AdminCoordinator {
     @MainActor
     func injectAdminClientForTesting(_ client: AdminClient) {
         adminClient = client
+    }
+
+    /// Test-only: replace the read-side client without starting a socket.
+    @MainActor
+    func injectSearchClientForTesting(_ client: SearchClient) {
+        sourceRegistryRevision += 1
+        searchClient = client
     }
 
     /// Test-only: inject a stubbed `AccessClient` so a test can drive

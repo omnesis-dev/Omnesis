@@ -52,6 +52,14 @@ export interface LightweightDocumentHeader {
 }
 
 export interface DocumentSource {
+  /**
+   * Highest currently committed update timestamp, or null for an empty source.
+   * Update timestamps must be monotonic across serialized writer transactions.
+   * The indexer retains this boundary inclusively to catch commits that become
+   * visible behind its ID cursor, including equal-millisecond timestamps.
+   */
+  getUpdatedAtBoundary(): Promise<string | null>;
+
   /** Fetch documents updated since the given timestamp (paginated). */
   listUpdated(
     since: string | null,

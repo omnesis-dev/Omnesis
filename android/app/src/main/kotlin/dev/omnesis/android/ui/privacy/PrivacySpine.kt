@@ -61,6 +61,7 @@ import dev.omnesis.android.sources.SourceCatalog
 import dev.omnesis.android.transport.dto.PrivacyAuditEventSummary
 import dev.omnesis.android.transport.dto.PrivacyExchangePresentation
 import dev.omnesis.android.transport.dto.PrivacyExchangeReview
+import dev.omnesis.android.ui.agent.WorkingDots
 import dev.omnesis.android.ui.common.TimeFormat
 
 /**
@@ -201,6 +202,7 @@ private fun PrivacyCardHead(
     label: String,
     at: Long?,
     modifier: Modifier = Modifier,
+    working: Boolean = false,
 ) {
     Row(
         modifier.fillMaxWidth(),
@@ -208,6 +210,9 @@ private fun PrivacyCardHead(
         horizontalArrangement = Arrangement.spacedBy(OmSpacing.sm),
     ) {
         PrivacyActor(kind, label, Modifier.weight(1f))
+        if (working) {
+            WorkingDots(contentDescription = "Drafting answer")
+        }
         if (at != null && at > 0) {
             Text(
                 TimeFormat.relative(at),
@@ -514,7 +519,12 @@ private fun PrivacyDraftCard(
             .padding(OmSpacing.md),
         verticalArrangement = Arrangement.spacedBy(OmSpacing.sm),
     ) {
-        PrivacyCardHead(PrivacyActorKind.OMNESIS, privacyDraftActorLabel(exchange), null)
+        PrivacyCardHead(
+            PrivacyActorKind.OMNESIS,
+            privacyDraftActorLabel(exchange),
+            null,
+            working = privacyExchangeNeedsPolling(exchange) && answer == null,
+        )
         if (!answer.isNullOrBlank()) {
             PrivacyAnswerBlock(
                 answer,
@@ -611,11 +621,20 @@ private fun PrivacyDecisionCard(
         verticalArrangement = Arrangement.spacedBy(OmSpacing.sm),
     ) {
         PrivacyCardHead(PrivacyActorKind.CHECK, "Privacy check", null)
-        Text(
-            exchangeDecisionCopy(exchange),
-            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-            color = c.textPrimary,
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(OmSpacing.sm),
+        ) {
+            Text(
+                exchangeDecisionCopy(exchange),
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                color = c.textPrimary,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            if (privacyExchangeNeedsPolling(exchange) && privacyDisplayedAnswer(exchange) != null) {
+                WorkingDots(contentDescription = "Checking answer")
+            }
+        }
         if (reviewFailed) {
             exchange.failure?.message?.takeIf { it.isNotBlank() }?.let {
                 Text(

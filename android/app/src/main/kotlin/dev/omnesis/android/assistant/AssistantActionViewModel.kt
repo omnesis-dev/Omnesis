@@ -227,6 +227,7 @@ class AssistantActionViewModel @Inject constructor(
     }
 
     private fun beginRecognition() {
+        transcriber.setPurpose(if (request?.kind == AssistantActionKind.ASK) "agent" else "dictation")
         val delivery = requestGeneration
         recognitionGeneration++
         val recognition = recognitionGeneration

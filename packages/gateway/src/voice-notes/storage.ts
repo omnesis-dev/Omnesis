@@ -42,6 +42,8 @@ export interface PendingVoiceNote {
   nextAttemptAt: string;
   /** ISO-8601 instant the note was received. */
   createdAt: string;
+  /** Corpus read access at ingress; old queued audio defaults to unhinted. */
+  allowVocabulary?: boolean;
 }
 
 export interface NewPendingVoiceNote extends Omit<PendingVoiceNote, "attempts"> {
@@ -59,11 +61,20 @@ export function createVoiceNoteTables(db: Db): void {
       placeholder INTEGER NOT NULL,
       attempts INTEGER NOT NULL DEFAULT 0,
       next_attempt_at TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      allow_vocabulary INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_voice_note_transcriptions_due
       ON voice_note_transcriptions(next_attempt_at);
   `);
+  const columns = db
+    .prepare("SELECT name FROM pragma_table_info('voice_note_transcriptions')")
+    .all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === "allow_vocabulary")) {
+    db.exec(
+      "ALTER TABLE voice_note_transcriptions ADD COLUMN allow_vocabulary INTEGER NOT NULL DEFAULT 0",
+    );
+  }
 }
 
 /** Queue a note's audio. False when that note is already queued. */
@@ -71,8 +82,8 @@ export function insertPendingVoiceNote(db: Db, row: NewPendingVoiceNote): boolea
   const result = db
     .prepare(
       `INSERT OR IGNORE INTO voice_note_transcriptions
-         (note_id, audio, mime_type, language, saved_text, placeholder, attempts, next_attempt_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+         (note_id, audio, mime_type, language, saved_text, placeholder, attempts, next_attempt_at, created_at, allow_vocabulary)
+       VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
     )
     .run(
       row.noteId,
@@ -83,6 +94,7 @@ export function insertPendingVoiceNote(db: Db, row: NewPendingVoiceNote): boolea
       row.placeholder ? 1 : 0,
       row.nextAttemptAt,
       row.createdAt,
+      row.allowVocabulary === true ? 1 : 0,
     );
   return result.changes > 0;
 }
@@ -96,6 +108,7 @@ interface PendingRow {
   attempts: number;
   next_attempt_at: string;
   created_at: string;
+  allow_vocabulary: number;
 }
 
 function toPending(row: PendingRow): PendingVoiceNote {
@@ -108,6 +121,7 @@ function toPending(row: PendingRow): PendingVoiceNote {
     attempts: row.attempts,
     nextAttemptAt: row.next_attempt_at,
     createdAt: row.created_at,
+    allowVocabulary: row.allow_vocabulary === 1,
   };
 }
 
@@ -119,7 +133,7 @@ export function listDuePendingVoiceNotes(
 ): PendingVoiceNote[] {
   return db
     .prepare<[string, number], PendingRow>(
-      `SELECT note_id, mime_type, language, saved_text, placeholder, attempts, next_attempt_at, created_at
+      `SELECT note_id, mime_type, language, saved_text, placeholder, attempts, next_attempt_at, created_at, allow_vocabulary
          FROM voice_note_transcriptions
         WHERE next_attempt_at <= ?
         ORDER BY next_attempt_at, created_at
@@ -133,7 +147,7 @@ export function listDuePendingVoiceNotes(
 export function getPendingVoiceNote(db: Db, noteId: string): PendingVoiceNote | null {
   const row = db
     .prepare<[string], PendingRow>(
-      `SELECT note_id, mime_type, language, saved_text, placeholder, attempts, next_attempt_at, created_at
+      `SELECT note_id, mime_type, language, saved_text, placeholder, attempts, next_attempt_at, created_at, allow_vocabulary
          FROM voice_note_transcriptions WHERE note_id = ?`,
     )
     .get(noteId);

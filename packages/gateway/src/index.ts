@@ -101,6 +101,9 @@ import { EntailmentVerifierService } from "./inference/entailment-service.js";
 import { withSpendRecording } from "./inference/spend-recording-completer.js";
 import { loadCompletionFromResolved } from "./inference/completion-loader.js";
 import { TranscribeService } from "./transcribe/index.js";
+import { TranscriptionVocabularyService } from "./transcribe/vocabulary/service.js";
+import { resolveVocabularySettings } from "./transcribe/vocabulary/config.js";
+import { createTranscriptionVocabularyTask } from "./scheduler/tasks/transcription-vocabulary.js";
 import { OcrService } from "./ocr/index.js";
 import { ConfigBootError, ConfigStore, defaultConfigPath } from "./config-store.js";
 import { OperatorInstructionsStore } from "./instructions/store.js";
@@ -1672,8 +1675,17 @@ const tlsLifecycle = new TlsLifecycleService({
 // Speech-to-text service. Lazily loads the assigned Whisper model on first use
 // and self-heals when the assignment changes. Resolves through the same
 // InferenceRegistry as every other capability.
+const transcriptionVocabularyService = new TranscriptionVocabularyService({
+  ioGate,
+  getSettings: () => resolveVocabularySettings(configStore.get()),
+});
 const transcribeService = new TranscribeService({
   resolveAssignment: () => inferenceRegistry.resolve("transcriber"),
+  vocabulary: {
+    enabled: () => transcriptionVocabularyService.enabled(),
+    getDictionary: (context) => transcriptionVocabularyService.getDictionary(context),
+    maxPromptTokens: () => transcriptionVocabularyService.maxPromptTokens(),
+  },
 });
 // Start the Whisper runtime probe now, off the boot path, so the first
 // `/status` poll already knows whether dictation can run.
@@ -2232,6 +2244,7 @@ const app = createServer(db, DB_PATH, {
     wsServer.broadcast(makeEvent("documents.upserted", { sourceId, count }));
     // Nudge the date-enrichment pass to pick up freshly ingested docs promptly.
     dateEnrichment.kick();
+    scheduler.kickPeriodic("transcription.vocabularyBackfill");
   },
   onVoiceNoteService: (service) => {
     voiceNoteService = service;
@@ -2413,6 +2426,7 @@ const app = createServer(db, DB_PATH, {
   probeBackend: (key: string) => inferenceRegistry.probeBackend(key),
   verifyModel: (key, model, role, vopts) => inferenceRegistry.verifyModel(key, model, role, vopts),
   transcribeService,
+  transcriptionVocabularyService,
   ocrService,
   pushTransport,
   mobilePermissionNotifier,
@@ -2759,6 +2773,23 @@ await runBootDataMigrations({
 // task graph (the `getNearDupConfig` getter); the backfill scheduler
 // cadences themselves still require a gateway restart since
 // PeriodicTask reads `periodMs` once at construction.
+const transcriptionVocabularyTask = createTranscriptionVocabularyTask({
+  ioGate,
+  cpuGate,
+  writeGate,
+  getSettings: () => resolveVocabularySettings(configStore.get()),
+  log: log.child("transcription-vocabulary"),
+});
+scheduler.schedule(transcriptionVocabularyTask);
+const transcriptionVocabularyJob = periodicJob(transcriptionVocabularyTask, {
+  scheduler,
+  displayName: "Transcription vocabulary",
+  description: "Build personal vocabulary hints in bounded background batches.",
+  isDisabled: () => !transcriptionVocabularyService.enabled(),
+  category: "search",
+  tracker: new StatelessTracker(),
+});
+
 const backfillBundle = createBackfillTasks(
   {
     writeGate,
@@ -3127,6 +3158,7 @@ void answerCompletionDeliveryHandle;
 // register themselves separately once the indexer proxy is constructed
 // inside startIndexer() — the registry is the same instance.
 backgroundJobs.registerAll([
+  transcriptionVocabularyJob,
   ...backfillBundle.jobs,
   tokenUsageBundle.job,
   principalCredentialUsageBundle.job,

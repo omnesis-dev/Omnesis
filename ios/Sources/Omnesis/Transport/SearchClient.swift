@@ -1355,6 +1355,8 @@ public struct StatusSnapshot: Decodable, Sendable {
     /// The gateway dictation gate. `nil` from a gateway that
     /// predates it, which keeps every mic on the on-device recognizer.
     public let dictation: DictationStatus?
+    /// Gateway personal vocabulary opt-in; absent on older gateways.
+    public let transcriptionVocabulary: Bool
 
     public init(
         documents: Documents,
@@ -1364,7 +1366,8 @@ public struct StatusSnapshot: Decodable, Sendable {
         experimental: Bool = false,
         developer: Bool = false,
         briefs: BriefsStatus? = nil,
-        dictation: DictationStatus? = nil
+        dictation: DictationStatus? = nil,
+        transcriptionVocabulary: Bool = false
     ) {
         self.documents = documents
         self.dbSizeBytes = dbSizeBytes
@@ -1374,6 +1377,7 @@ public struct StatusSnapshot: Decodable, Sendable {
         self.developer = developer
         self.briefs = briefs
         self.dictation = dictation
+        self.transcriptionVocabulary = transcriptionVocabulary
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -1385,6 +1389,7 @@ public struct StatusSnapshot: Decodable, Sendable {
         case developer
         case briefs
         case dictation
+        case transcriptionVocabulary
     }
 
     public init(from decoder: Decoder) throws {
@@ -1401,6 +1406,7 @@ public struct StatusSnapshot: Decodable, Sendable {
         // An experimental field: a shape this app cannot read reads as absent
         // rather than failing the whole snapshot.
         dictation = try? c.decodeIfPresent(DictationStatus.self, forKey: .dictation)
+        transcriptionVocabulary = try c.decodeIfPresent(Bool.self, forKey: .transcriptionVocabulary) ?? false
     }
 
     /// What the "on disk" stat shows: the gateway's whole footprint, or the

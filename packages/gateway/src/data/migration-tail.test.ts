@@ -58,7 +58,8 @@ const TAIL_VERSIONS = Array.from(
  * it is named here on the same terms as the rest.
  */
 const WOUND_BACK = [
-  172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189,
+  172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190,
+  191,
 ];
 
 let dir: string;
@@ -73,6 +74,28 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+function undoVocabulary(db: Db): void {
+  db.exec("DROP TABLE IF EXISTS transcription_vocabulary_state");
+  db.exec("DROP INDEX IF EXISTS idx_documents_vocabulary_pending");
+  db.exec("DROP TABLE IF EXISTS transcription_vocabulary_document_terms");
+  db.exec("DROP TABLE IF EXISTS transcription_vocabulary_terms");
+  const documentColumns = db
+    .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('documents')")
+    .all()
+    .map((row) => row.name);
+  for (const column of ["vocabulary_processed_at", "vocabulary_revision"]) {
+    if (documentColumns.includes(column)) db.exec(`ALTER TABLE documents DROP COLUMN ${column}`);
+  }
+  const pendingVoiceColumns = db
+    .prepare<
+      [],
+      { name: string }
+    >("SELECT name FROM pragma_table_info('voice_note_transcriptions')")
+    .all();
+  if (pendingVoiceColumns.some((row) => row.name === "allow_vocabulary"))
+    db.exec("ALTER TABLE voice_note_transcriptions DROP COLUMN allow_vocabulary");
+}
+
 /**
  * Undo what the tail added, so the database is shaped as an install that
  * stopped at {@link BEFORE_TAIL}.
@@ -83,6 +106,7 @@ afterEach(() => {
  * real code would have written.
  */
 function windBack(db: Db): void {
+  undoVocabulary(db);
   // `sources.account` is created by the head schema as well as by the
   // migration, so leaving it in place is not neutral: the migration reads the
   // column, returns early, and the tail silently covers one fewer step.
@@ -248,6 +272,109 @@ function alias(db: Db, id: string, personId: string, type: string, value: string
   ).run(id, personId, value, type, source);
 }
 
+describe("vocabulary migration after the released schema", () => {
+  test("upgrades schema 188 without vocabulary tables to 191", () => {
+    const old = upgrade();
+    try {
+      undoVocabulary(old);
+      old.exec("DELETE FROM schema_migrations WHERE version > 188");
+      old.exec("PRAGMA user_version = 188");
+    } finally {
+      (old as unknown as Database.Database).close();
+    }
+    const db = upgrade();
+    try {
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 191 });
+      expect(db.prepare("SELECT version FROM schema_migrations WHERE version = 189").get()).toEqual(
+        { version: 189 },
+      );
+      expect(db.prepare("SELECT name FROM pragma_table_info('documents')").all()).toEqual(
+        expect.arrayContaining([
+          { name: "vocabulary_processed_at" },
+          { name: "vocabulary_revision" },
+        ]),
+      );
+      expect(
+        db
+          .prepare("SELECT name FROM sqlite_master WHERE name = 'idx_documents_source_external_id'")
+          .get(),
+      ).toEqual({ name: "idx_documents_source_external_id" });
+    } finally {
+      (db as unknown as Database.Database).close();
+    }
+  });
+
+  test("upgrades released vocabulary schema without clearing old hints at boot", () => {
+    const old = upgrade();
+    try {
+      old.exec("DROP TABLE transcription_vocabulary_state");
+      old.exec("DELETE FROM schema_migrations WHERE version > 189");
+      old.exec("PRAGMA user_version = 189");
+      old.exec(`INSERT INTO transcription_vocabulary_terms VALUES
+        ('global', '', 'legacyword', 'Legacyword', 3, 1, 2, '2026-01-01')`);
+    } finally {
+      old.close();
+    }
+    const db = upgrade();
+    try {
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 191 });
+      expect(
+        db
+          .prepare("SELECT algorithm_version,generation,phase FROM transcription_vocabulary_state")
+          .get(),
+      ).toEqual({ algorithm_version: 1, generation: 1, phase: "ready" });
+      expect(db.prepare("SELECT term FROM transcription_vocabulary_terms").all()).toContainEqual({
+        term: "legacyword",
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  test("preserves materialized vocabulary when replaying over an existing schema 187 layout", () => {
+    const old = upgrade();
+    try {
+      old.exec("DELETE FROM schema_migrations WHERE version > 187");
+      old.exec(
+        "UPDATE schema_migrations SET description = 'materialize contextual transcription vocabulary' WHERE version = 187",
+      );
+      old.exec("PRAGMA user_version = 187");
+      old.exec("DROP INDEX idx_documents_source_external_id");
+      old.exec(`INSERT INTO transcription_vocabulary_terms VALUES
+        ('global', '', 'zuvrento', 'Zuvrento', 3, 1, 2, '2026-01-01')`);
+      old.exec(`INSERT INTO transcription_vocabulary_document_terms VALUES
+        ('fixture-document', 'global', '', 'zuvrento')`);
+    } finally {
+      (old as unknown as Database.Database).close();
+    }
+    const db = upgrade();
+    try {
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 191 });
+      expect(
+        db
+          .prepare(
+            "SELECT text, document_count FROM transcription_vocabulary_terms WHERE term = 'zuvrento'",
+          )
+          .get(),
+      ).toEqual({ text: "Zuvrento", document_count: 3 });
+      expect(
+        db
+          .prepare(
+            "SELECT document_id FROM transcription_vocabulary_document_terms WHERE term = 'zuvrento'",
+          )
+          .get(),
+      ).toEqual({ document_id: "fixture-document" });
+      expect(
+        db
+          .prepare("SELECT name FROM sqlite_master WHERE name = 'idx_documents_source_external_id'")
+          .get(),
+      ).toEqual({ name: "idx_documents_source_external_id" });
+    } finally {
+      (db as unknown as Database.Database).close();
+    }
+  });
+});
+
 describe("an install several versions behind, upgrading", () => {
   test("the fixture still undoes the whole tail it replays", () => {
     // Not a property of the product: a guard on this file. Every assertion
@@ -256,7 +383,14 @@ describe("an install several versions behind, upgrading", () => {
   });
 
   test("the tail runs in order and lands on the head version", () => {
-    seedOlderInstall(() => {});
+    seedOlderInstall((old) => {
+      expect(old.prepare("SELECT name FROM pragma_table_info('documents')").all()).not.toEqual(
+        expect.arrayContaining([{ name: "vocabulary_processed_at" }]),
+      );
+      expect(
+        old.prepare("SELECT name FROM pragma_table_info('voice_note_transcriptions')").all(),
+      ).not.toEqual(expect.arrayContaining([{ name: "allow_vocabulary" }]));
+    });
     const db = upgrade();
     try {
       expect(
@@ -269,6 +403,35 @@ describe("an install several versions behind, upgrading", () => {
         .all()
         .map((row) => row.version);
       expect(recorded).toEqual(TAIL_VERSIONS);
+      expect(db.prepare("SELECT name FROM pragma_table_info('documents')").all()).toEqual(
+        expect.arrayContaining([
+          { name: "vocabulary_processed_at" },
+          { name: "vocabulary_revision" },
+        ]),
+      );
+      expect(
+        db
+          .prepare(
+            "SELECT name,dflt_value FROM pragma_table_info('voice_note_transcriptions') WHERE name='allow_vocabulary'",
+          )
+          .get(),
+      ).toEqual({ name: "allow_vocabulary", dflt_value: "0" });
+      for (const name of [
+        "transcription_vocabulary_terms",
+        "transcription_vocabulary_document_terms",
+        "idx_documents_vocabulary_pending",
+      ]) {
+        expect(db.prepare("SELECT name FROM sqlite_master WHERE name=?").get(name)).toEqual({
+          name,
+        });
+      }
+      expect(
+        db
+          .prepare(
+            "SELECT wr FROM pragma_table_list WHERE name='transcription_vocabulary_document_terms'",
+          )
+          .get(),
+      ).toEqual({ wr: 1 });
       // Recording a version and doing its work are different facts. This one
       // is the tail's cheapest step and the easiest to leave unexercised: the
       // head schema creates the same column, so a fixture that does not undo

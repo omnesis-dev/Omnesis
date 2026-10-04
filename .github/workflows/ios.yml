@@ -122,6 +122,8 @@ jobs:
     timeout-minutes: 60
     env:
       OMNESIS_CONFIG_DIR: /tmp/omnesis-ios-ci-${{ github.run_id }}
+      # Cold macOS tsx/native-module startup can exceed the shared 90s budget.
+      OMNESIS_SYNTH_READY_TIMEOUT: "300"
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -167,3 +169,14 @@ jobs:
 
       - name: lane [ios-live-e2e]
         run: exec scripts/run-ios-e2e.sh
+
+      - name: Upload live gateway failure logs
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ios-live-gateway-logs-${{ github.run_attempt }}
+          # Upload only synthetic process logs, never tokens, config or databases.
+          path: ${{ env.OMNESIS_CONFIG_DIR }}/logs/*.log
+          if-no-files-found: ignore
+          retention-days: 7

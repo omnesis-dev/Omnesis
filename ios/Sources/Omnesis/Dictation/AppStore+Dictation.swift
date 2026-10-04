@@ -9,6 +9,17 @@ import Observation
 /// advertises on `GET /status`, and whether a Tell Omnesis capture records
 /// its audio for the gateway to transcribe.
 extension AppStore {
+    /// Status polling refreshes due hints; no timer or capture-time networking.
+    func maintainTranscriptionVocabulary() {
+        let state = withObservationTracking {
+            (pairing, statusSnapshot?.transcriptionVocabulary ?? false)
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in self?.maintainTranscriptionVocabulary() }
+        }
+        TranscriptionVocabularyCache.shared.configure(pairing: state.0, enabled: state.1)
+        Task { await TranscriptionVocabularyCache.shared.refreshIfDue() }
+    }
+
     /// The paired gateway's dictation gate; nil from a gateway that predates it.
     var dictationStatus: DictationStatus? {
         statusSnapshot?.dictation

@@ -1773,7 +1773,21 @@ export const writerHandlers = {
  * non-yieldable fallback only applies when a name appears in
  * `writerHandlers` and not here.
  */
+import { advanceTranscriptionVocabularyRebuild } from "../transcribe/vocabulary/rebuild.js";
+import { applyTranscriptionVocabularyBatch } from "../transcribe/vocabulary/storage.js";
+import type {
+  VocabularySettings,
+  ExtractedVocabularyDocument,
+} from "../transcribe/vocabulary/types.js";
+
 export const writerYieldableHandlers = {
+  "vocabulary.advanceRebuild": (db: Db, token: PreemptToken, settings: VocabularySettings) =>
+    advanceTranscriptionVocabularyRebuild(db, settings, token),
+  "vocabulary.applyBatch": (db: Db, token: PreemptToken, docs: ExtractedVocabularyDocument[]) => {
+    const result = applyTranscriptionVocabularyBatch(db, docs, token);
+    if (result.remaining.length) return { kind: "yield" as const, resume: [result.remaining] };
+    return { applied: result.applied, skipped: result.skipped };
+  },
   /**
    * Cooperative-yield variant of `db.upsertDocuments`. Processes the
    * docs in chunks (one transaction per chunk); between chunks, polls

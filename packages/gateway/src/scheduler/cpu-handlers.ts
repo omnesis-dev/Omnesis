@@ -26,7 +26,10 @@ import {
   computeAutoDetectedRulesFromData,
 } from "../domain/MergeService.js";
 
+import { extractTranscriptionVocabulary } from "../transcribe/vocabulary/extract.js";
+
 export const cpuHandlers = {
+  "cpu.extractTranscriptionVocabulary": extractTranscriptionVocabulary,
   "cpu.echo": <T>(value: T): T => value,
   "cpu.nearDupSignBatch": signDocBatch,
   "cpu.nearDupVerifyBatch": verifyPairBatch,

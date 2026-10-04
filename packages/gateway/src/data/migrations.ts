@@ -79,6 +79,8 @@ import {
   createSubscriptionApprovalListIndexes,
   createSubscriptionTables,
 } from "../subscriptions/store-schema.js";
+import { createTranscriptionVocabularyState } from "../transcribe/vocabulary/rebuild.js";
+import { installTranscriptionVocabulary } from "../transcribe/vocabulary/storage.js";
 import { migrateV152AccessGrants } from "./migration-152-access-grants.js";
 import { migrateV153AccessPolicyFamilies } from "./migration-153-access-policy-families.js";
 import { markLinkStatsDirty } from "./DirtyMarks.js";
@@ -4743,6 +4745,16 @@ export const MIGRATIONS: readonly Migration[] = [
   },
   {
     version: 189,
+    description: "materialize contextual transcription vocabulary",
+    up: installTranscriptionVocabulary,
+  },
+  {
+    version: 190,
+    description: "version contextual transcription vocabulary materialization",
+    up: createTranscriptionVocabularyState,
+  },
+  {
+    version: 191,
     description: "persist page context attached to captured notes",
     up(db) {
       const cols = db
@@ -5168,6 +5180,8 @@ function rebuildForDocumentStreams(db: Db): void {
       updated_at TEXT NOT NULL,
       source_url TEXT,
       people_resolved_at TEXT,
+      vocabulary_processed_at TEXT,
+      vocabulary_revision INTEGER NOT NULL DEFAULT 0,
       links_extracted_at TEXT,
       dates_extracted_at TEXT,
       dates_truncated INTEGER,

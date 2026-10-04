@@ -19,7 +19,12 @@ import type {
   DocumentEventProfile,
   DocumentTemporalProjectionSpec,
 } from "./structured-source.js";
-import type { TranscriptionResult, OcrResult, EdgeDeclaration } from "@omnesis/core";
+import type {
+  TranscriptionResult,
+  AudioTranscribeFn,
+  OcrResult,
+  EdgeDeclaration,
+} from "@omnesis/core";
 import type { OmnesisConfig } from "@omnesis/config";
 
 /**
@@ -424,7 +429,7 @@ export interface GatewayClient {
   transcribe(
     audio: Uint8Array,
     mimeType: string,
-    opts?: { language?: string },
+    opts?: Parameters<AudioTranscribeFn>[2],
   ): Promise<TranscriptionResult | null>;
 
   /**
