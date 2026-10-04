@@ -10254,11 +10254,6 @@
       "reason": "Public product UI phrase asserted by browser notes end-to-end coverage; not a person name."
     },
     {
-      "value": "Enable Tell Omnesis",
-      "paths": ["packages/collector/src/e2e/browser-extension.e2e.test.ts"],
-      "reason": "Public product UI phrase asserted by browser notes end-to-end coverage; not a person name."
-    },
-    {
       "value": "Browser Find",
       "paths": [
         "packages/collector/src/e2e/browser-find.e2e.test.ts",
@@ -10266,11 +10261,6 @@
         "packages/collector/src/e2e/browser-extension.e2e.test.ts"
       ],
       "reason": "Public browser search feature name in end-to-end suite titles; not a person name."
-    },
-    {
-      "value": "Enable Find",
-      "paths": ["packages/collector/src/e2e/browser-extension.e2e.test.ts"],
-      "reason": "Public product permission button asserted by browser search end-to-end coverage; not a person name."
     },
     {
       "value": "Northstar Quorvex",
