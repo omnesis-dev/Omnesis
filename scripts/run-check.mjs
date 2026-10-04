@@ -260,12 +260,23 @@ export async function main(argv = process.argv.slice(2)) {
         [nodeModule("typescript/bin/tsc"), "--build", "packages/agent-integration"],
         env,
       );
-      if (code === 0)
-        code = await run(
-          process.execPath,
-          [nodeModule("eslint/bin/eslint.js"), ".", ...args],
-          lintEnv(env),
-        );
+      if (code === 0) {
+        if (args.length > 0)
+          code = await run(
+            process.execPath,
+            [nodeModule("eslint/bin/eslint.js"), ".", ...args],
+            lintEnv(env),
+          );
+        else {
+          const { runFullLint } = await import("./lib/check-lint.mjs");
+          code = await runFullLint({
+            cwd: process.cwd(),
+            executable: nodeModule("eslint/bin/eslint.js"),
+            env: lintEnv(env),
+            run,
+          });
+        }
+      }
     }
     if (!inspection) report(code === 0 ? "passed" : `failed: exit ${code}`);
     return code;

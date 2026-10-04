@@ -2181,6 +2181,11 @@
   ],
   "names": [
     {
+      "value": "Browser Tell Omnesis",
+      "paths": ["packages/gateway/src/http/services/BrowserNotesService.test.ts"],
+      "reason": "public browser notes token label, not a person"
+    },
+    {
       "value": "Account Discovery",
       "paths": ["packages/providers/whatsapp/src/provider.e2e.test.ts"],
       "reason": "reviewed existing fixture"
@@ -10239,6 +10244,16 @@
       "value": "The Brain",
       "paths": ["packages/gateway/src/http/routes/temporal.test.ts"],
       "reason": "ordinary words, not a name"
+    },
+    {
+      "value": "Tell Omnesis",
+      "paths": ["packages/collector/src/e2e/browser-extension.e2e.test.ts"],
+      "reason": "Public product UI phrase asserted by browser notes end-to-end coverage; not a person name."
+    },
+    {
+      "value": "Enable Tell Omnesis",
+      "paths": ["packages/collector/src/e2e/browser-extension.e2e.test.ts"],
+      "reason": "Public product UI phrase asserted by browser notes end-to-end coverage; not a person name."
     },
     {
       "value": "Northstar Quorvex",

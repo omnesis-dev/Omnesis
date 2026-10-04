@@ -19,9 +19,9 @@ import { bodyLimit } from "hono/body-limit";
 import { scope } from "../scope.js";
 import { BadRequestError } from "../errors.js";
 import { MAX_AUDIO_BYTES, type TranscribeService } from "../../transcribe/index.js";
-import type { RouteApp } from "./types.js";
 import { transcriptionContextSchema } from "../schemas/transcription.js";
 import { transcriptionVocabularyAllowed } from "../transcription-access.js";
+import type { RouteApp } from "./types.js";
 
 const log = createLogger("gateway:http").child("routes:transcribe");
 

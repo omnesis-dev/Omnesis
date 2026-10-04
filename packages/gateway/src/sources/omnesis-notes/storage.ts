@@ -16,13 +16,26 @@
 
 import { recordMcpToolInvocationAudit } from "../../access/store-audit.js";
 import type Database from "better-sqlite3";
-import type { NoteCaptureContext } from "@omnesis/types";
+import type { DeviceId, TokenId, NoteCaptureContext } from "@omnesis/types";
 import type { McpToolInvocationAuditInput } from "../../access/types.js";
 
 type Db = Database.Database;
 
+/** Authority checked atomically with a queued browser capture. */
+export interface BrowserNoteAuthority {
+  deviceId: DeviceId;
+  tokenId: TokenId;
+}
+
+export interface NotePageContext {
+  url: string;
+  title?: string;
+  selection?: string;
+}
+
 /** One captured note, as stored in `note_entries`. */
 export interface NoteEntry {
+  page?: NotePageContext;
   captureContext?: NoteCaptureContext | null;
   id: string;
   /** Capture-local calendar day, or gateway-local when no capture offset is available. */
@@ -80,6 +93,7 @@ export function createNoteEntriesTables(db: Db): void {
       captured_utc_offset_seconds INTEGER,
       received_at TEXT,
       capture_context TEXT,
+      page_context TEXT,
       transcribed_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_note_entries_day ON note_entries(day);
@@ -93,6 +107,8 @@ export function createNoteEntriesTables(db: Db): void {
       .all()
       .map((row) => row.name),
   );
+  if (!columns.has("page_context"))
+    db.exec("ALTER TABLE note_entries ADD COLUMN page_context TEXT");
   if (!columns.has("latitude")) db.exec("ALTER TABLE note_entries ADD COLUMN latitude REAL");
   if (!columns.has("longitude")) db.exec("ALTER TABLE note_entries ADD COLUMN longitude REAL");
   if (!columns.has("place_name")) db.exec("ALTER TABLE note_entries ADD COLUMN place_name TEXT");
@@ -108,6 +124,7 @@ export function createNoteEntriesTables(db: Db): void {
 }
 
 interface NoteEntryRow {
+  page_context: string | null;
   capture_context: string | null;
   id: string;
   day: string;
@@ -127,6 +144,7 @@ interface NoteEntryRow {
 
 function rowToEntry(row: NoteEntryRow): NoteEntry {
   return {
+    ...(row.page_context ? { page: JSON.parse(row.page_context) as NotePageContext } : {}),
     ...(row.capture_context
       ? { captureContext: JSON.parse(row.capture_context) as NoteCaptureContext }
       : {}),
@@ -157,7 +175,30 @@ export function insertNoteEntry(
   db: Db,
   entry: NoteEntry,
   audit?: McpToolInvocationAuditInput,
+  browserAuthority?: BrowserNoteAuthority,
 ): boolean {
+  // This authorization lookup belongs in the writer transaction: a reader
+  // snapshot cannot fence a token revoked while the capture waited in the queue.
+  if (browserAuthority) {
+    return db.transaction(() => {
+      const authorized = db
+        .prepare<
+          [string, string, number],
+          { scopes: string }
+        >(`SELECT tokens.scopes FROM tokens JOIN devices ON devices.id = tokens.device_id WHERE tokens.id = ? AND tokens.device_id = ? AND devices.kind = 'browser' AND devices.revoked_at IS NULL AND (tokens.expires_at IS NULL OR tokens.expires_at > ?)`)
+        .get(browserAuthority.tokenId, browserAuthority.deviceId, Date.now());
+      if (
+        !authorized ||
+        !(JSON.parse(authorized.scopes) as string[]).includes("notes:create") ||
+        entry.deviceId !== browserAuthority.deviceId
+      ) {
+        const error = new Error("Browser note authority is no longer active");
+        error.name = "BrowserNoteAuthorizationError";
+        throw error;
+      }
+      return insertNoteEntry(db, entry, audit);
+    })();
+  }
   if (audit) {
     return db.transaction(() => {
       if (
@@ -177,8 +218,8 @@ export function insertNoteEntry(
     .prepare(
       `INSERT OR IGNORE INTO note_entries
          (id, day, captured_at, updated_at, text, surface, device_id, latitude, longitude, place_name,
-          captured_time_zone_id, captured_utc_offset_seconds, received_at, capture_context)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          captured_time_zone_id, captured_utc_offset_seconds, received_at, capture_context, page_context)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       entry.id,
@@ -195,6 +236,7 @@ export function insertNoteEntry(
       entry.capturedUtcOffsetSeconds,
       entry.receivedAt,
       entry.captureContext ? JSON.stringify(entry.captureContext) : null,
+      entry.page ? JSON.stringify(entry.page) : null,
     );
   return result.changes > 0;
 }

@@ -42,8 +42,8 @@ import {
   type WhisperRequestHeader,
   type WhisperWorkerMessage,
 } from "./whisper-worker-protocol.js";
-import type { TranscribeCapability, TranscriptionResult } from "@omnesis/core";
 import { adaptTranscriptionVocabulary } from "./vocabulary-adapter.js";
+import type { TranscribeCapability, TranscriptionResult } from "@omnesis/core";
 
 const log = createLogger("gateway:transcribe:whisper");
 

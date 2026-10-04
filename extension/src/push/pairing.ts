@@ -23,18 +23,9 @@ export interface PairResult {
   gatewayVersion?: string;
 }
 
-/**
- * The oldest gateway a build of this extension pairs with: the first release
- * of its own minor. HTTP changes within a minor are additive, so a gateway on
- * the same minor (any patch) or newer speaks everything this build sends,
- * while a gateway on an older minor may lack routes or fields this build
- * relies on. Derived from the build's own version, so it moves with every
- * release instead of being maintained by hand. Unknown when the build's
- * version is not a product version (tests), in which case nothing is refused.
- */
+/** The capture contract predates optional browser notes and remains compatible across product minors. */
 export function minimumGatewayVersionFor(extensionVersion: string | undefined): string | null {
-  const parsed = extensionVersion ? parseProductVersion(extensionVersion) : null;
-  return parsed ? `${parsed.major}.${parsed.minor}.0` : null;
+  return extensionVersion && parseProductVersion(extensionVersion) ? "0.5.0" : null;
 }
 
 /** How long the health preflight may take before pairing proceeds without it. */

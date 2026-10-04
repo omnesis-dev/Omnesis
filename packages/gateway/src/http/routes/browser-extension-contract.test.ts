@@ -11,7 +11,8 @@
  *
  * For every contract route: it is registered on the app under exactly the
  * contract's method and path pattern; a well-formed request from the browser's
- * own `write:web` token (or no token, for a public route) is served; an
+ * own `write:web` token, optional `notes:create` credential, or no token for a
+ * public route is served; an
  * authenticated route refuses a missing token with 401 while a public route
  * never does; and the recipe table below stays in lockstep with the contract.
  */
@@ -20,14 +21,20 @@ import { readFileSync, existsSync, rmSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import webSource from "@omnesis/provider-web";
-import { SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL, SourceType, writeScope } from "@omnesis/types";
+import {
+  SCOPE_ADMIN,
+  SCOPE_READ,
+  SCOPE_WRITE_ALL,
+  SourceType,
+  writeScope,
+  Scope,
+} from "@omnesis/types";
 import { AnalyticsDb } from "../../analytics-db.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
 import { createDatabase } from "../../db.js";
 import { resetOwnedWebDomains } from "../../owned-web-domains.js";
 import { createServer } from "../../server.js";
-import type { Scope } from "@omnesis/types";
 import type Database from "better-sqlite3";
 
 type Db = Database.Database;
@@ -41,6 +48,7 @@ interface ContractRoute {
 interface ReleaseContract {
   deviceKind: string;
   tokenScopes: string[];
+  optionalNotesTokenScopes: string[];
   gatewayRoutes: ContractRoute[];
 }
 
@@ -63,8 +71,11 @@ function keyOf(route: ContractRoute): RouteKey {
  * public route — must receive.
  */
 interface Recipe {
-  build(): Promise<{ path: string; init: RequestInit }> | { path: string; init: RequestInit };
+  build(
+    token?: string,
+  ): Promise<{ path: string; init: RequestInit }> | { path: string; init: RequestInit };
   expected: number;
+  notesCredential?: boolean;
 }
 
 let db: Db;
@@ -73,6 +84,8 @@ let dbPath: string;
 let analyticsPath: string;
 let analyticsDb: AnalyticsDb;
 let browserToken: string;
+let notesToken: string;
+let notesRuntime: import("../../sources/omnesis-notes/index.js").OmnesisNotesRuntime | undefined;
 let adminToken: string;
 
 function cleanupDb(path: string) {
@@ -124,6 +137,43 @@ function pairingBody(pairingCode: string) {
 const pageVisitsSchema = webSource.analyticsSchemas?.find((s) => s.tableName === "page_visits");
 
 const recipes: Record<RouteKey, Recipe> = {
+  "GET /browser/notes": {
+    build: () => ({ path: "/browser/notes", init: { method: "GET" } }),
+    expected: 200,
+    notesCredential: true,
+  },
+  "POST /browser/notes": {
+    build: () => ({
+      path: "/browser/notes",
+      init: json("POST", {
+        version: 1,
+        id: randomUUID(),
+        text: "Compare the examples.",
+        page: { url: "https://example.org/article", title: "Example article" },
+      }),
+    }),
+    expected: 201,
+    notesCredential: true,
+  },
+  "POST /browser/notes/authorization": {
+    build: () => ({
+      path: "/browser/notes/authorization",
+      init: json("POST", { id: randomUUID() }),
+    }),
+    expected: 201,
+  },
+  "GET /browser/notes/authorization/:id": {
+    build: async (token = browserToken) => {
+      const result = await call(
+        "/browser/notes/authorization",
+        token,
+        json("POST", { id: randomUUID() }),
+      );
+      const { requestId } = (await result.json()) as { requestId: string };
+      return { path: `/browser/notes/authorization/${requestId}`, init: { method: "GET" } };
+    },
+    expected: 200,
+  },
   "GET /health": {
     build: () => ({ path: "/health", init: { method: "GET" } }),
     expected: 200,
@@ -193,13 +243,22 @@ beforeEach(async () => {
   db = createDatabase(dbPath);
   analyticsDb = new AnalyticsDb(analyticsPath);
   await analyticsDb.open();
-  app = createServer(db, undefined, { analyticsDb });
+  notesRuntime = undefined;
+  app = createServer(db, undefined, {
+    analyticsDb,
+    onOmnesisNotesRuntime: (runtime) => {
+      notesRuntime = runtime;
+    },
+  });
   resetOwnedWebDomains();
   browserToken = mintToken("browser", [writeScope(SourceType("web"))]);
+  notesToken = mintToken("browser", [Scope("notes:create")]);
   adminToken = mintToken("cli", [SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL]);
 });
 
 afterEach(async () => {
+  await notesRuntime?.flushAll();
+  notesRuntime?.dispose();
   await analyticsDb.close();
   db.close();
   cleanupDb(dbPath);
@@ -212,6 +271,7 @@ describe("the contract file", () => {
   test("names the browser device kind, its one scope, and at least the pairing route", () => {
     expect(contract.deviceKind).toBe("browser");
     expect(contract.tokenScopes).toEqual([writeScope(SourceType("web"))]);
+    expect(contract.optionalNotesTokenScopes).toEqual(["notes:create"]);
     expect(contract.gatewayRoutes.length).toBeGreaterThan(0);
     expect(pageVisitsSchema, "the web provider publishes a page_visits schema").toBeDefined();
   });
@@ -236,7 +296,11 @@ describe("a well-formed request is served", () => {
   test.each(contract.gatewayRoutes)("$method $path", async (route) => {
     const recipe = recipeFor(route);
     const { path, init } = await recipe.build();
-    const res = await call(path, route.authenticated ? browserToken : null, init);
+    const res = await call(
+      path,
+      route.authenticated ? (recipe.notesCredential ? notesToken : browserToken) : null,
+      init,
+    );
     expect(res.status, `${keyOf(route)} answered ${res.status}: ${await res.text()}`).toBe(
       recipe.expected,
     );
@@ -277,13 +341,15 @@ describe("pairing", () => {
     expect(body.device.name).toBe("invented browser profile");
     expect(body.scopes).toEqual(contract.tokenScopes);
 
-    // The token pairing hands out is the one the extension pushes with, so it
-    // must open every authenticated contract route, not just the minted one.
+    // Default pairing opens capture and optional authorization requests;
+    // note capture itself requires the separately approved credential.
     for (const route of contract.gatewayRoutes.filter((r) => r.authenticated)) {
       const recipe = recipeFor(route);
-      const { path, init } = await recipe.build();
+      const { path, init } = await recipe.build(body.token);
       const reply = await call(path, body.token, init);
-      expect(reply.status, `${keyOf(route)} with the paired token`).toBe(recipe.expected);
+      expect(reply.status, `${keyOf(route)} with the paired token`).toBe(
+        recipe.notesCredential ? 403 : recipe.expected,
+      );
     }
   });
 

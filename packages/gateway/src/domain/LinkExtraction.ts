@@ -15,6 +15,7 @@ import { getKnownUrlPatterns } from "../known-url-patterns.js";
 import { documentsMetadataCodec } from "../data/json-columns.js";
 import { resolveLink, linkDuplicateContentDocs } from "./LinkGraphService.js";
 import { linkExtractionInputDigest } from "./LinkExtractionInput.js";
+import { retainAttachedUrls, isRetainedUrl } from "./RetainedLinkUrls.js";
 import type { SafeUrlPatternMatcher } from "../known-url-pattern-safety.js";
 import type { ExtractedLink, GraphEdgeProvenanceKind, UrlCanonicalizerSpec } from "@omnesis/core";
 
@@ -25,8 +26,9 @@ import type { ExtractedLink, GraphEdgeProvenanceKind, UrlCanonicalizerSpec } fro
  * source of truth is `graphEdgeProvenance`; this just narrows the `undefined`
  * an unknown type would yield to a safe `source-declared`.
  */
-function provenanceKindFor(linkType: string): GraphEdgeProvenanceKind {
-  return graphEdgeProvenance(linkType) ?? "source-declared";
+function provenanceKindFor(link: ExtractedLink): GraphEdgeProvenanceKind {
+  if (isRetainedUrl(link)) return "source-declared";
+  return graphEdgeProvenance(link.type) ?? "source-declared";
 }
 
 /** `EdgeDeclaration.metadata` → the JSON string persisted in `metadata_json`. */
@@ -63,7 +65,8 @@ function metadataJsonFor(link: ExtractedLink): string | null {
  * comes back on its own).
  *
  * INTENTIONAL TRADE-OFF: a url whose target matches no source type's
- * url-id pattern is NOT kept. The targets that fail this gate are
+ * url-id pattern is NOT kept unless the document explicitly attaches it via
+ * `metadata.extra.retainedLinkUrls`. The targets that fail this gate are
  * pages no known dedicated source can own (news sites, newsletters, tracking
  * links). A Web Pages capture can still satisfy one of those URLs when it
  * already exists at extraction time; browser-history summaries and bookmark
@@ -214,7 +217,12 @@ export function processDocumentLinks(
   //    `getUrlCanonicalizers()` is per-process state and this code runs
   //    inside a writer worker, so reading it locally would give an
   //    empty registry.
-  const links = extractLinks(content, metadata, externalId, registryFromSpecs(canonicalizers));
+  const registry = registryFromSpecs(canonicalizers);
+  const links = retainAttachedUrls(
+    extractLinks(content, metadata, externalId, registry),
+    metadata,
+    registry,
+  );
 
   // 3. Bulk insert with target_doc_id=NULL. The compute reconcile pass
   //    fills in target_doc_id later. We still dedupe by
@@ -273,6 +281,7 @@ export function processDocumentLinks(
         link.type === "url" &&
         !target &&
         !sourceUrlExists.get(link.normalizedTarget) &&
+        !isRetainedUrl(link) &&
         !urlTargetCouldResolve(db, knownPatterns, link.normalizedTarget)
       ) {
         continue;
@@ -284,7 +293,7 @@ export function processDocumentLinks(
         link.normalizedTarget,
         now,
         metadataJsonFor(link),
-        provenanceKindFor(link.type),
+        provenanceKindFor(link),
         sourceId,
         now,
       );
@@ -602,7 +611,11 @@ export function extractLinksForBatch(
       contentHash: row.content_hash,
       inputDigest: linkExtractionInputDigest(row),
       sourceId: row.source_id,
-      links: extractLinks(row.content, meta, row.external_id, registry),
+      links: retainAttachedUrls(
+        extractLinks(row.content, meta, row.external_id, registry),
+        meta,
+        registry,
+      ),
     });
   }
   return withResolvedTargets(
@@ -694,6 +707,7 @@ export function resolveExtractedLinks(
         link.type === "url" &&
         urlTargetRolesReady &&
         knownUrlPatternDeclarationReady &&
+        !isRetainedUrl(link) &&
         !urlTargetCouldResolve(db, knownUrlPatterns, link.normalizedTarget)
       ) {
         (discardedUrlTargets ??= []).push(link.normalizedTarget);
@@ -945,7 +959,7 @@ export function upsertExtractedLinksBatch(
           link.normalizedTarget,
           now,
           metadataJsonFor(link),
-          provenanceKindFor(link.type),
+          provenanceKindFor(link),
           sourceId,
           now,
         );

@@ -4753,6 +4753,18 @@ export const MIGRATIONS: readonly Migration[] = [
     description: "version contextual transcription vocabulary materialization",
     up: createTranscriptionVocabularyState,
   },
+  {
+    version: 191,
+    description: "persist page context attached to captured notes",
+    up(db) {
+      const cols = db
+        .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('note_entries')")
+        .all();
+      if (cols.length > 0 && !cols.some((column) => column.name === "page_context")) {
+        db.exec("ALTER TABLE note_entries ADD COLUMN page_context TEXT");
+      }
+    },
+  },
 ];
 
 /**

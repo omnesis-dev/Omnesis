@@ -103,6 +103,8 @@ import { mountWatchV2Routes } from "./http/routes/watch.js";
 import { mountDocumentGraphRoute } from "./http/routes/document-graph.js";
 import { mountGraphWalkRoute } from "./http/routes/graph.js";
 import { mountDocumentTrailRoute } from "./http/routes/document-trail.js";
+import { mountBrowserNotesRoutes } from "./http/routes/browser-notes.js";
+import { BrowserNotesService } from "./http/services/BrowserNotesService.js";
 import { mountNotesRoutes } from "./http/routes/notes.js";
 import { NotesProvenanceService } from "./sources/omnesis-notes/provenance.js";
 import { bootOmnesisNotes, type OmnesisNotesRuntime } from "./sources/omnesis-notes/index.js";
@@ -1637,6 +1639,14 @@ export function createServer(
     const runtime = getOmnesisNotesRuntime();
     opts.onOmnesisNotesRuntime(runtime);
   }
+  mountBrowserNotesRoutes(
+    app,
+    new BrowserNotesService({
+      devices: deviceService,
+      writeGate: w,
+      runtime: getOmnesisNotesRuntime,
+    }),
+  );
   mountNotesRoutes(app, {
     provenance: new NotesProvenanceService(db),
     runtime: getOmnesisNotesRuntime,

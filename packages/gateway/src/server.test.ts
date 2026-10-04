@@ -381,7 +381,7 @@ describe("health endpoint", () => {
     expect(body.compat.watchPrivacyPolicy).toBe(1);
   });
 
-  test("advertises experimental visibility and the subscriptions capability without auth", async () => {
+  test("advertises experimental visibility and versioned browser notes capability without auth", async () => {
     const originalExperimental = process.env.OMNESIS_EXPERIMENTAL;
     const originalSynthetic = process.env.OMNESIS_SYNTHETIC;
     try {
@@ -394,6 +394,7 @@ describe("health endpoint", () => {
       expect(off.capabilities).toEqual({
         subscriptions: false,
         sourceContract: SOURCE_CONTRACT_WIRE_RANGE,
+        browserNotes: { min: 1, max: 1 },
       });
 
       process.env.OMNESIS_EXPERIMENTAL = "1";
@@ -402,6 +403,7 @@ describe("health endpoint", () => {
       expect(on.capabilities).toEqual({
         subscriptions: true,
         sourceContract: SOURCE_CONTRACT_WIRE_RANGE,
+        browserNotes: { min: 1, max: 1 },
       });
     } finally {
       if (originalExperimental === undefined) delete process.env.OMNESIS_EXPERIMENTAL;
