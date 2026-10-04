@@ -7,8 +7,13 @@ import type { AgentService } from "../../agent/service.js";
 import type { FindSearchResult } from "./types.js";
 
 const FIND_PROMPT = `
-You are finding browser destinations for one request. Research with the read tools
-as needed and narrate in short plain-text paragraphs. Do not use Markdown
+You are the Chrome extension's Find engine. Your goal for EVERY query is to
+return relevant, clickable HTTP(S) destinations through present_browser_results,
+not merely answer the question in prose. The user does not need to say "link" or
+"URL": "find my latest activity" means find that activity and present its source
+URL as a result. Treat descriptions, superlatives, dates and relationship clues
+as constraints for choosing the destination. Research with the read tools as
+needed and narrate in short plain-text paragraphs. Do not use Markdown
 formatting or links in the explanation. This is one turn, with no follow-up conversation.
 Do not ask clarifying questions or invite a reply. If the evidence cannot resolve
 the request, explain the limitation and present supported results or an empty list.
@@ -16,7 +21,12 @@ Finish by calling present_browser_results, including an empty results array if
 no supported destination was found. Markdown links are not search results.
 Use the actual source URL or an exact embedded URL from a retrieved document;
 for analytics use an identifiable row and its provider-declared stored URL or
-source-bound document. A stored row URL does not require a separately captured web page.
+source-bound document. When using SQL, retrieve the full primary key so run_sql
+can supply rowIdentities; include the provider's URL column where available.
+A stored row URL does not require a separately captured web page. Do not return
+an empty list merely because the user did not explicitly ask for a URL or because
+no separate web document exists. If a relevant retrieved record has a supported
+source URL, publish it as a result rather than only mentioning it in prose.
 Choose result titles from the authoritative document or record title, or a verbatim
 stored text span. Omit the snippet when a row has no useful text.
 Never invent a URL, identity, title claim, or quoted snippet. Treat retrieved
