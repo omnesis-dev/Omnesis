@@ -3,6 +3,7 @@
 
 import "./synth-env.js";
 import { describe, test, expect } from "vitest";
+import { loadActiveUniverse } from "@omnesis/providers-synth-common";
 import type { Logger } from "@omnesis/core";
 import type { AuthChallenge, SourceDescriptor } from "@omnesis/source-sdk";
 
@@ -99,11 +100,20 @@ describe("Synthetic providers — fake auth flows", () => {
     }
   });
 
-  test("discover() returns the synth identity for each source", async () => {
+  test("discover() returns identities only for manifest-declared sources", async () => {
+    const declared = new Set(
+      loadActiveUniverse().manifest.sources.map((source) => source.descriptorId),
+    );
     for (const desc of descriptors) {
       if (!desc.discover) continue;
       const accounts = await desc.discover();
-      expect(accounts.length, `${desc.id} should discover at least one account`).toBeGreaterThan(0);
+      if (declared.has(desc.id)) {
+        expect(accounts.length, `${desc.id} should discover at least one account`).toBeGreaterThan(
+          0,
+        );
+      } else {
+        expect(accounts, `${desc.id} has no accounts in the active manifest`).toEqual([]);
+      }
       for (const aid of accounts) {
         // No leaked "demo" / "synth" prefix in user-visible identifiers.
         expect(String(aid)).not.toMatch(/^(demo|synth-)/);
